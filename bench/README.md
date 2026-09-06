@@ -88,7 +88,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--runs` | int | `1` | Number of sequential runs, each getting its own run directory under `bench/workspace/runs/`. |
 | `--fidelity` | `dry-run` \| `live` | `dry-run` | Recorded in the run manifest. |
 | `--resume` | `RUN_ID` | — | Re-run only the PRs of `RUN_ID` still `pending` (skips `ok`/`invalid`/`drifted` and also `timeout`/`failed` — use `--retry-failed` for those). |
-| `--retry-failed` | `RUN_ID` | — | Re-run only the `timeout`/`failed` PRs of `RUN_ID`. |
+| `--retry-failed` | `RUN_ID` | — | Re-run only the `timeout`/`failed` PRs of `RUN_ID`, including failures with reasons `all_degraded` and `pipeline_failed`. |
 | `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
 | `--anchor` | `naive` | — | Instead of the code-gauntlet skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
 | `--child-auth` | `api` \| `subscription` | `api` | Which credential the **review children** spend: the metered `bench/.env` key, or your own Claude subscription capacity via `CLAUDE_CODE_OAUTH_TOKEN`. Recorded in `run.json` and as the ledger row's `auth_mode`. A `--resume`/`--retry-failed` run keeps the mode it started with; passing a flag that contradicts it is refused (exit 2) rather than mixing credentials within one run. Scoring is unaffected and stays API-keyed. See [Child auth modes](#child-auth-modes). |
@@ -261,6 +261,16 @@ per-PR watchdog firing (status `timeout`, reason `watchdog_timeout`) rather
 than a clean error — remains unexercised; this run didn't trip the window.
 Either way, `--retry-failed RUN_ID` after a reset is expected to recover the
 affected PRs.
+
+### Pipeline failure envelopes
+
+The pipeline's Workflow return envelope can classify a child as `failed` with
+reason `all_degraded` when every active discovery dimension degrades, or
+`pipeline_failed` for another `ok: false` return. Both statuses are unscored,
+like `invalid`; the difference is retry eligibility, since `failed` is included
+in `--retry-failed` while `invalid` is not. An `all_degraded` child is
+self-describing and often transient, so retrying it after the underlying service
+recovers is appropriate.
 
 ### Recommended usage, and scope
 

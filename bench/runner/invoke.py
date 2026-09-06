@@ -11,7 +11,8 @@ process session, with a watchdog that kills the whole process group on timeout (
 orphans), scans the output for AskUserQuestion (defense-in-depth -> ``invalid``),
 verifies the ``Headless config:`` echo receipt (accepted from raw stdout, the result
 envelope's ``.result``, or a collected report ``*.md`` -- see ``_echo_ok``), parses costs,
-and locates the dry-run payload. See CLAUDE.md: stdlib-only.
+reads the child's Workflow-record return envelope for pipeline failures, and locates the
+dry-run payload. See CLAUDE.md: stdlib-only.
 """
 
 import json
@@ -83,6 +84,8 @@ EXPECTED_ECHO = {
     "pr_not_found_policy": "error",
     "trivial_scope": "full",
 }
+
+ALL_DEGRADED_PREFIX = "all-degraded:"
 
 _ASKUSERQUESTION_RE = re.compile(r'"(?:name|tool_name)"\s*:\s*"AskUserQuestion"')
 
@@ -328,6 +331,18 @@ def _iter_new_wf_paths(root, baseline):
         if prev is not None and prev == (st.st_mtime_ns, st.st_size):
             continue
         yield path
+
+
+def _iter_new_wf_records(claude_home, baseline):
+    """Yield ``(path, data)`` for parseable new/changed Workflow records."""
+    root = Path(claude_home) / "config"
+    for path in _iter_new_wf_paths(root, baseline):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            yield path, data
 
 
 def _unique_target(dest_dir, name):
@@ -909,11 +924,11 @@ def extract_identity_receipt(raw_text, envelope=None, report_dirs=()):
     return None
 
 
-def scriptpath_from_record(data):
-    """Return the Workflow-tool ``scriptPath`` from a parsed ``wf_*.json`` dict.
+def _record_tool_input(data):
+    """Return the object carrying a Workflow record's tool input, or None.
 
-    Top-level ``scriptPath`` wins; otherwise look under a single wrapper key
-    (``input`` / ``toolInput`` / ``parameters``). Nested paths such as
+    Top-level fields win; otherwise a single wrapper key (``input`` /
+    ``toolInput`` / ``parameters``) holds them. Nested paths such as
     ``args.verify.scriptPath`` are intentionally ignored — a recursive walk
     would false-fail healthy skill runs.
     """
@@ -921,14 +936,20 @@ def scriptpath_from_record(data):
         return None
     sp = data.get("scriptPath")
     if isinstance(sp, str) and sp:
-        return sp
+        return data
     for key in ("input", "toolInput", "parameters"):
         nested = data.get(key)
         if isinstance(nested, dict):
             sp = nested.get("scriptPath")
             if isinstance(sp, str) and sp:
-                return sp
+                return nested
     return None
+
+
+def scriptpath_from_record(data):
+    """Return the Workflow-tool ``scriptPath`` from a parsed ``wf_*.json`` dict."""
+    holder = _record_tool_input(data)
+    return holder.get("scriptPath") if holder is not None else None
 
 
 def script_path_matches_repo(script_path, repo_root, expected_pipeline=None):
@@ -963,23 +984,85 @@ def _script_path_matches_repo(script_path, repo_root):
     return script_path_matches_repo(script_path, repo_root)
 
 
-def _new_workflow_script_paths(claude_home, baseline):
-    """Top-level Workflow ``scriptPath`` values from records changed since *baseline*."""
-    root = Path(claude_home) / "config"
+def _new_workflow_script_paths(claude_home, baseline, records=None):
+    """Top-level Workflow ``scriptPath`` values from records changed since *baseline*.
+
+    ``records`` is the materialized ``_iter_new_wf_records`` output when the caller
+    already parsed them; each record embeds the whole bundle, so parsing once per
+    invocation matters.
+    """
     paths = []
-    for path in _iter_new_wf_paths(root, baseline):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-        except (OSError, ValueError, json.JSONDecodeError):
-            continue
+    if records is None:
+        records = _iter_new_wf_records(claude_home, baseline)
+    for _path, data in records:
         sp = scriptpath_from_record(data)
         if sp:
             paths.append(sp)
     return paths
 
 
+def _workflow_failure(
+    claude_home, baseline, repo_root, output_dir, records=None
+) -> tuple[str, str] | None:
+    """Return a correlated pipeline failure ``(reason, error_text)``, if any.
+
+    Workflow records are filtered by both the checked-out pipeline identity and the
+    per-invocation output directory. A later successful record supersedes failures from
+    the same invocation, regardless of record filename ordering.
+    """
+    expected_output = os.path.realpath(str(output_dir))
+    success = False
+    failure: tuple[str, str] | None = None
+    if records is None:
+        records = _iter_new_wf_records(claude_home, baseline)
+    for _path, data in records:
+        holder = _record_tool_input(data)
+        script_path = holder.get("scriptPath") if holder is not None else None
+        if not script_path or not script_path_matches_repo(script_path, repo_root):
+            continue
+
+        args = holder.get("args")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except ValueError:
+                continue
+        if not isinstance(args, dict):
+            continue
+        record_output = args.get("outputDir")
+        if not isinstance(record_output, str):
+            continue
+        if os.path.realpath(record_output) != expected_output:
+            continue
+
+        result = data.get("result")
+        if not isinstance(result, dict):
+            continue
+        if result.get("ok") is True:
+            success = True
+            continue
+        if result.get("ok") is not False or failure is not None:
+            continue
+
+        error = result.get("error")
+        error_str = error if isinstance(error, str) else ""
+        error_text = error_str or str(result.get("failingPhase") or "")
+        gaps = result.get("gaps") or []
+        gap_has_prefix = isinstance(gaps, (list, tuple)) and any(
+            isinstance(gap, str) and gap.startswith(ALL_DEGRADED_PREFIX) for gap in gaps
+        )
+        reason = (
+            "all_degraded"
+            if error_str.startswith(ALL_DEGRADED_PREFIX) or gap_has_prefix
+            else "pipeline_failed"
+        )
+        failure = (reason, error_text)
+
+    return None if success else failure
+
+
 def _check_plugin_identity(
-    raw_text, envelope, report_dirs, claude_home, wf_baseline, repo_root
+    raw_text, envelope, report_dirs, claude_home, wf_baseline, repo_root, records=None
 ):
     """Return None if identity is clean, else a human reason fragment for stderr."""
     receipt = extract_identity_receipt(raw_text, envelope, report_dirs)
@@ -999,7 +1082,7 @@ def _check_plugin_identity(
         return f"plugin_root resolve failed: {exc}"
     if got_root != exp_root:
         return f"plugin_root {str(got_root)!r} != expected {str(exp_root)!r}"
-    for sp in _new_workflow_script_paths(claude_home, wf_baseline):
+    for sp in _new_workflow_script_paths(claude_home, wf_baseline, records=records):
         if not script_path_matches_repo(sp, repo_root):
             return f"scriptPath {sp!r} is not repo workflows/pipeline.js"
     return None
@@ -1247,6 +1330,32 @@ def invoke_review(
             reason="workflow_backgrounded",
         )
 
+    # 2c) Pipeline return envelope: the Workflow record is the durable source of the
+    #     pipeline's own result, including failures that produce no report or payload.
+    #     Parsed once here and shared with the identity gate (4).
+    wf_records = list(_iter_new_wf_records(claude_home, wf_baseline))
+    pipeline_failure = _workflow_failure(
+        claude_home,
+        wf_baseline,
+        REPO_ROOT,
+        env["CODE_GAUNTLET_OUTPUT_DIR"],
+        records=wf_records,
+    )
+    if pipeline_failure:
+        reason, error_text = pipeline_failure
+        print(
+            f"PIPELINE FAILURE during PR {number} — {reason}: {error_text[:200]}",
+            file=sys.stderr,
+        )
+        return InvokeResult(
+            "failed",
+            cost_usd=cost_usd,
+            per_model=per_model,
+            echo_ok=_echo_ok(raw_text, envelope, report_dirs),
+            raw_json_path=str(raw_path),
+            reason=reason,
+        )
+
     # 3) Config receipt (accepted from stdout, the .result envelope, or a report .md).
     echo_ok = _echo_ok(raw_text, envelope, report_dirs)
     if not echo_ok:
@@ -1268,6 +1377,7 @@ def invoke_review(
         claude_home=claude_home,
         wf_baseline=wf_baseline,
         repo_root=REPO_ROOT,
+        records=wf_records,
     )
     if identity_err:
         print(

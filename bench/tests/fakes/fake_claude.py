@@ -21,6 +21,12 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
   no_identity_echo -> full knob echo without pipeline_version/plugin_root + payload.
   bg_killed      -> the CLI background-task kill notice ahead of a clean envelope; no echo
                     anywhere and no payload.
+  all_degraded   -> normal echo + an all-degraded failure record; no payload.
+  all_degraded_gap_only -> normal echo + a gap-only all-degraded failure record; no payload.
+  pipeline_failed -> normal echo + a non-degraded failure record; no payload.
+  all_degraded_then_ok -> failure and successful records + payload.
+  all_degraded_stale_script -> an all-degraded record from a stale plugin path.
+  all_degraded_no_echo -> an all-degraded record without any echo; no payload.
 
 All CLI args are ignored for behavior selection. If FAKE_CLAUDE_PIDFILE is set, the
 process-group id is written there at startup so the watchdog test can prove the group was
@@ -221,6 +227,52 @@ def _plant_stale_workflow_record():
         json.dump(payload, fh)
 
 
+def _write_workflow_record(name, result, script_path=None, args_as_json=False):
+    """Write a realistic Workflow record for pipeline-envelope classification tests."""
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if not config_dir:
+        return
+    wf_dir = os.path.join(config_dir, "projects", "fake", "sess", "workflows")
+    os.makedirs(wf_dir, exist_ok=True)
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    args = {
+        "outputDir": os.environ.get("CODE_GAUNTLET_OUTPUT_DIR", ""),
+        "nonce": "fake",
+        "repoRoot": os.getcwd(),
+    }
+    record = {
+        "runId": name,
+        "taskId": f"task-{name}",
+        "startTime": now,
+        "timestamp": now,
+        "status": "completed",
+        "scriptPath": script_path
+        or os.path.join(_plugin_dir_from_argv(), "workflows", "pipeline.js"),
+        "args": json.dumps(args) if args_as_json else args,
+        "result": result,
+    }
+    with open(os.path.join(wf_dir, f"{name}.json"), "w") as fh:
+        json.dump(record, fh)
+
+
+def _all_degraded_result():
+    return {
+        "ok": False,
+        "error": (
+            "all-degraded: every active discovery dimension degraded - no review was "
+            "performed"
+        ),
+        "gaps": [
+            "all-degraded: every active discovery dimension degraded (bug, security)"
+        ],
+        "phaseReached": "discover",
+        "failingPhase": "discover",
+        "artifactPaths": {},
+        "stats": {"degraded": ["bug", "security"]},
+        "resolvedPolicy": {"provider": "firstParty"},
+    }
+
+
 def main():
     # A --version probe (the v3 preflight) prints only the version and exits, before any
     # mode handling -- so it never records a pgid, hangs, or emits a review envelope. The
@@ -294,6 +346,53 @@ def main():
     elif mode == "wrong_script_path":
         _plant_stale_workflow_record()
 
+    if mode in (
+        "all_degraded",
+        "all_degraded_gap_only",
+        "pipeline_failed",
+        "all_degraded_then_ok",
+        "all_degraded_stale_script",
+        "all_degraded_no_echo",
+    ):
+        if mode == "all_degraded_gap_only":
+            result = _all_degraded_result()
+            result["error"] = "pipeline failed"
+            _write_workflow_record("wf_gap_only", result, args_as_json=True)
+        elif mode == "pipeline_failed":
+            _write_workflow_record(
+                "wf_pipeline_failed",
+                {
+                    "ok": False,
+                    "error": "checkpoint-shape: phases.filter is not an object",
+                    "failingPhase": "checkpoints",
+                    "artifactPaths": {},
+                },
+            )
+        elif mode == "all_degraded_then_ok":
+            _write_workflow_record("wf_alldeg", _all_degraded_result())
+            _write_workflow_record(
+                "wf_resume",
+                {
+                    "ok": True,
+                    "phaseReached": "report",
+                    "artifactPaths": {"report": "report.md"},
+                },
+            )
+        elif mode == "all_degraded_stale_script":
+            _write_workflow_record(
+                "wf_stale_alldeg",
+                _all_degraded_result(),
+                script_path="/home/ubuntu/.claude/plugins/cache/stale/workflows/pipeline.js",
+            )
+        else:
+            _write_workflow_record(
+                "wf_alldeg",
+                _all_degraded_result(),
+            )
+        if mode == "all_degraded_no_echo":
+            stdout_lines = []
+            result_text = "Pipeline did not complete."
+
     denials = []
     if mode == "asks":
         denials = [
@@ -312,7 +411,15 @@ def main():
         )
     if stdout_lines:
         sys.stdout.write("\n".join(stdout_lines) + "\n")
-    if mode not in ("asks", "bg_killed"):
+    if mode not in (
+        "asks",
+        "bg_killed",
+        "all_degraded",
+        "all_degraded_gap_only",
+        "pipeline_failed",
+        "all_degraded_stale_script",
+        "all_degraded_no_echo",
+    ):
         _write_payload()
     if write_report:
         _write_report(ECHO_LINES)

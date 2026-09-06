@@ -54,6 +54,12 @@ class CheckpointTestCase(unittest.TestCase):
         self.cp.mark(GOLDEN_URLS[0], "ok")
         self.assertEqual(self.cp.status(GOLDEN_URLS[0]), "ok")
 
+    def test_detail_returns_stored_dict_and_empty_for_unknown(self):
+        detail = {"reason": "all_degraded", "error": "no review"}
+        self.cp.mark(GOLDEN_URLS[0], "failed", detail=detail)
+        self.assertEqual(self.cp.detail(GOLDEN_URLS[0]), detail)
+        self.assertEqual(self.cp.detail(GOLDEN_URLS[1]), {})
+
     def test_all_valid_statuses_roundtrip(self):
         valid = ["pending", "ok", "timeout", "invalid", "drifted", "failed"]
         for status, url in zip(valid, GOLDEN_URLS, strict=True):
