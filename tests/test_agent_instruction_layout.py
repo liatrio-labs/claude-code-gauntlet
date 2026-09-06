@@ -197,7 +197,10 @@ CODEX_CAP_BYTES = 32_768
 # before editing src/ why the bundle has no full-line comments or blank lines and why a
 # rebuild can fail on size. The mechanism is code, but the rule an author needs before
 # editing src/ is read only after the failure; nothing else in the tree tells them.
-AGENTS_SET_BUDGET_BYTES = 21_992
+# Raised 21_992 -> 22_345 (2026-09-05, #158/#176): authors need the shared Biome runner,
+# operational pin location, and vendored-scorer tooling boundary before editing; code
+# cannot carry these cross-surface contributor rules.
+AGENTS_SET_BUDGET_BYTES = 22_345
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

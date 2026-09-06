@@ -17,14 +17,15 @@ The v3 review pipeline. `pipeline.js` is invoked by the skill through the `Workf
 - **No wall-clock.** Timestamps arrive through the args waist (`generatedAt`); environment values
   are read by the skill and passed in `policy`.
 
-## JS lint (CI)
+## JS lint
 
-CI job `js-lint` runs Biome 2.5.6 against this directory via `workflows/biome.json`
-(lint-only). Formatter is **off**: default `lineWidth: 80` would wrap long
-`import … from` lines and break `build.js`'s single-line import `strip()` regex,
-failing `tests/test_bundle_fresh.py`. `noRestrictedGlobals` applies to `src/`
-only; `test/**` and `build.js` override it (they legitimately use `process` /
-`console`).
+CI and contributors run the same `python3 workflows/test/tools/biome_check.py`; the operational
+version and per-asset SHA-256 pins live only in `biome-pin.json`.
+To bump, regenerate every row with one command: `gh api repos/biomejs/biome/releases/tags/@biomejs/biome@<new> --jq '.assets[] | {name, digest}'`; update every entry in `biome-pin.json` together and never add package.json / a lockfile for auto-bumps (that reopens #105).
+Formatter is **off**: default `lineWidth: 80` would wrap long `import … from` lines and break
+`build.js`'s single-line import `strip()` regex, failing `tests/test_bundle_fresh.py`.
+`noRestrictedGlobals` applies to `src/` only; `test/**` and `build.js` override it (they
+legitimately use `process` / `console`).
 
 Deferred rules (measured 2026-07-30, HEAD `ebf399d`) — hit counts are why they
 stay off so a later re-evaluation need not re-derive them:

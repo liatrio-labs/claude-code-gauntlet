@@ -26,6 +26,7 @@ The PR title will be validated automatically.
 - [ ] Pipeline tests pass: `python -m pytest tests/ -q`
 - [ ] Bench self-tests pass: `python -m pytest bench/tests/ -q`
 - [ ] Workflow tests pass: `node --test workflows/test/*.test.js` (Node 24; the glob is required)
+- [ ] JS lint passes: `python3 workflows/test/tools/biome_check.py` (downloads the pinned Biome once)
 - [ ] Bundle rebuilt and byte-exact: `node workflows/build.js` then `git diff --exit-code workflows/pipeline.js`
 - [ ] Plugin manifests valid: `claude plugin validate .` (needs the Claude Code CLI; CI runs it regardless)
 - [ ] Parity fixtures regenerated with `workflows/test/tools/record_parity.py` if a deterministic transform changed
