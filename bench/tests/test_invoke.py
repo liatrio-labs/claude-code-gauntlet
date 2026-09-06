@@ -832,6 +832,21 @@ class InvokeReviewTest(InvokeTestBase):
         self.assertEqual(res.reason, "workflow_backgrounded")
         self.assertNotEqual(res.reason, "config_echo_mismatch")
 
+    def test_workflow_records_are_parsed_once_per_invocation(self):
+        # Each record embeds the whole bundle; the failure gate and the identity gate
+        # share one parse. Red when either gate re-walks the records itself.
+        calls = []
+        real = invoke._iter_new_wf_records
+
+        def counting(claude_home, baseline):
+            calls.append(1)
+            return real(claude_home, baseline)
+
+        with patch.object(invoke, "_iter_new_wf_records", counting):
+            res = self._run("all_degraded_then_ok")
+        self.assertEqual(res.status, "ok")
+        self.assertEqual(len(calls), 1)
+
     def test_all_degraded_workflow_record_is_retryable_failure(self):
         # Gate 2c must classify the pipeline's own all-degraded envelope instead of
         # falling through to no_payload.

@@ -978,10 +978,17 @@ def _script_path_matches_repo(script_path, repo_root):
     return script_path_matches_repo(script_path, repo_root)
 
 
-def _new_workflow_script_paths(claude_home, baseline):
-    """Top-level Workflow ``scriptPath`` values from records changed since *baseline*."""
+def _new_workflow_script_paths(claude_home, baseline, records=None):
+    """Top-level Workflow ``scriptPath`` values from records changed since *baseline*.
+
+    ``records`` is the materialized ``_iter_new_wf_records`` output when the caller
+    already parsed them; each record embeds the whole bundle, so parsing once per
+    invocation matters.
+    """
     paths = []
-    for _path, data in _iter_new_wf_records(claude_home, baseline):
+    if records is None:
+        records = _iter_new_wf_records(claude_home, baseline)
+    for _path, data in records:
         sp = scriptpath_from_record(data)
         if sp:
             paths.append(sp)
@@ -989,7 +996,7 @@ def _new_workflow_script_paths(claude_home, baseline):
 
 
 def _workflow_failure(
-    claude_home, baseline, repo_root, output_dir
+    claude_home, baseline, repo_root, output_dir, records=None
 ) -> tuple[str, str] | None:
     """Return a correlated pipeline failure ``(reason, error_text)``, if any.
 
@@ -1000,7 +1007,9 @@ def _workflow_failure(
     expected_output = os.path.realpath(str(output_dir))
     success = False
     failure: tuple[str, str] | None = None
-    for _path, data in _iter_new_wf_records(claude_home, baseline):
+    if records is None:
+        records = _iter_new_wf_records(claude_home, baseline)
+    for _path, data in records:
         script_path = scriptpath_from_record(data)
         if not script_path or not script_path_matches_repo(script_path, repo_root):
             continue
@@ -1049,7 +1058,7 @@ def _workflow_failure(
 
 
 def _check_plugin_identity(
-    raw_text, envelope, report_dirs, claude_home, wf_baseline, repo_root
+    raw_text, envelope, report_dirs, claude_home, wf_baseline, repo_root, records=None
 ):
     """Return None if identity is clean, else a human reason fragment for stderr."""
     receipt = extract_identity_receipt(raw_text, envelope, report_dirs)
@@ -1069,7 +1078,7 @@ def _check_plugin_identity(
         return f"plugin_root resolve failed: {exc}"
     if got_root != exp_root:
         return f"plugin_root {str(got_root)!r} != expected {str(exp_root)!r}"
-    for sp in _new_workflow_script_paths(claude_home, wf_baseline):
+    for sp in _new_workflow_script_paths(claude_home, wf_baseline, records=records):
         if not script_path_matches_repo(sp, repo_root):
             return f"scriptPath {sp!r} is not repo workflows/pipeline.js"
     return None
@@ -1319,11 +1328,14 @@ def invoke_review(
 
     # 2c) Pipeline return envelope: the Workflow record is the durable source of the
     #     pipeline's own result, including failures that produce no report or payload.
+    #     Parsed once here and shared with the identity gate (4).
+    wf_records = list(_iter_new_wf_records(claude_home, wf_baseline))
     pipeline_failure = _workflow_failure(
         claude_home,
         wf_baseline,
         REPO_ROOT,
         env["CODE_GAUNTLET_OUTPUT_DIR"],
+        records=wf_records,
     )
     if pipeline_failure:
         reason, error_text = pipeline_failure
@@ -1361,6 +1373,7 @@ def invoke_review(
         claude_home=claude_home,
         wf_baseline=wf_baseline,
         repo_root=REPO_ROOT,
+        records=wf_records,
     )
     if identity_err:
         print(
