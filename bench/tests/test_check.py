@@ -1250,9 +1250,19 @@ class SupersedeAttemptArtifactsTest(unittest.TestCase):
         (self.pr_dir / "diff.patch").write_text("diff", encoding="utf-8")
         _write_json(self.pr_dir / "workflows" / "wf_old.json", {})
         (self.pr_dir / "worktree").mkdir()
+        # Boundaries: a matching name below a nested directory (non-recursive) and a
+        # DIRECTORY named like an artifact (regular files only) must both stay put.
+        nested = self.pr_dir / "worktree" / "code-gauntlet-report-cafef00d.md"
+        nested.write_text("nested", encoding="utf-8")
+        (self.pr_dir / "code-gauntlet-patches-deadbeef.md").mkdir()
 
         moved = invoke.supersede_attempt_artifacts(self.pr_dir)
         self.assertEqual(moved, sorted(names))
+        self.assertTrue(nested.is_file())
+        self.assertTrue((self.pr_dir / "code-gauntlet-patches-deadbeef.md").is_dir())
+        self.assertFalse(
+            (self.pr_dir / "superseded" / "code-gauntlet-patches-deadbeef.md").exists()
+        )
         for name in names:
             self.assertTrue((self.pr_dir / "superseded" / name).is_file())
             self.assertFalse((self.pr_dir / name).exists())
