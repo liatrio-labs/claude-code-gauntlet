@@ -832,6 +832,43 @@ class InvokeReviewTest(InvokeTestBase):
         self.assertEqual(res.reason, "workflow_backgrounded")
         self.assertNotEqual(res.reason, "config_echo_mismatch")
 
+    def test_all_degraded_workflow_record_is_retryable_failure(self):
+        # Gate 2c must classify the pipeline's own all-degraded envelope instead of
+        # falling through to no_payload.
+        res = self._run("all_degraded")
+        self.assertEqual(res.status, "failed")
+        self.assertEqual(res.reason, "all_degraded")
+
+    def test_all_degraded_without_echo_beats_config_gate(self):
+        # The envelope gate must run before the config echo gate, even when no echo exists.
+        res = self._run("all_degraded_no_echo")
+        self.assertEqual(res.status, "failed")
+        self.assertEqual(res.reason, "all_degraded")
+
+    def test_all_degraded_gap_is_classified_from_gaps(self):
+        # A gap-only prefix is still the all-degraded envelope shape.
+        res = self._run("all_degraded_gap_only")
+        self.assertEqual(res.status, "failed")
+        self.assertEqual(res.reason, "all_degraded")
+
+    def test_other_pipeline_failure_envelope_is_classified(self):
+        # Non-degraded ok:false returns remain retryable, with their own reason.
+        res = self._run("pipeline_failed")
+        self.assertEqual(res.status, "failed")
+        self.assertEqual(res.reason, "pipeline_failed")
+
+    def test_successful_resume_record_supersedes_failure(self):
+        # A successful auto-resume wins regardless of the failing record's filename order.
+        res = self._run("all_degraded_then_ok")
+        self.assertEqual(res.status, "ok")
+
+    def test_stale_failure_record_is_left_to_identity_gate(self):
+        # The failure gate must ignore a record from another plugin checkout so gate 4
+        # can report the identity mismatch.
+        res = self._run("all_degraded_stale_script")
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_identity_mismatch")
+
     def test_claude_not_found(self):
         # PATH without the fake -> claude cannot be resolved -> failed, not a crash.
         empty_bin = Path(self.tmp) / "emptybin"
@@ -1507,6 +1544,129 @@ class WorkflowScriptPathScanTest(unittest.TestCase):
             }
         )
         self.assertEqual(sp, "/repo/workflows/pipeline.js")
+
+
+class WorkflowFailureTest(unittest.TestCase):
+    """Unit coverage for correlated Workflow return envelopes."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="bench-wf-failure-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.home = Path(self.tmp) / "claude-home"
+        self.wf_dir = self.home / "config" / "projects" / "p" / "s" / "workflows"
+        self.wf_dir.mkdir(parents=True)
+        self.output_dir = Path(self.tmp) / "output"
+        self.output_dir.mkdir()
+        self.pipeline = str(REPO_ROOT / "workflows" / "pipeline.js")
+
+    def _write(self, name, result, *, output_dir=None, script_path=None, args=None):
+        record_args = (
+            args
+            if args is not None
+            else {
+                "outputDir": str(output_dir or self.output_dir),
+                "nonce": "unit",
+                "repoRoot": str(REPO_ROOT),
+            }
+        )
+        path = self.wf_dir / name
+        path.write_text(
+            json.dumps(
+                {
+                    "scriptPath": script_path or self.pipeline,
+                    "args": record_args,
+                    "result": result,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def _failure(self, baseline=None, output_dir=None):
+        return invoke._workflow_failure(
+            self.home,
+            baseline or {},
+            REPO_ROOT,
+            output_dir or self.output_dir,
+        )
+
+    def test_success_before_failure_supersedes_in_sorted_order(self):
+        self._write("wf_a_ok.json", {"ok": True})
+        self._write("wf_z_fail.json", {"ok": False, "error": "pipeline failed"})
+        self.assertIsNone(self._failure())
+
+    def test_success_after_failure_supersedes_in_sorted_order(self):
+        self._write("wf_a_fail.json", {"ok": False, "error": "pipeline failed"})
+        self._write("wf_z_ok.json", {"ok": True})
+        self.assertIsNone(self._failure())
+
+    def test_unparseable_record_is_skipped(self):
+        (self.wf_dir / "wf_bad.json").write_text("not json", encoding="utf-8")
+        self._write("wf_good.json", {"ok": False, "error": "pipeline failed"})
+        self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
+
+    def test_missing_or_unparseable_args_are_skipped(self):
+        (self.wf_dir / "wf_missing_args.json").write_text(
+            json.dumps(
+                {
+                    "scriptPath": self.pipeline,
+                    "result": {"ok": False, "error": "pipeline failed"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        self._write(
+            "wf_bad_args.json",
+            {"ok": False, "error": "pipeline failed"},
+            args="not json",
+        )
+        self._write(
+            "wf_good.json",
+            {"ok": False, "error": "pipeline failed"},
+        )
+        self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
+
+    def test_non_dict_result_is_skipped(self):
+        self._write("wf_bad.json", "not a result")
+        self._write("wf_good.json", {"ok": False, "error": "pipeline failed"})
+        self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
+
+    def test_different_output_dir_does_not_supersede(self):
+        other = Path(self.tmp) / "other-output"
+        other.mkdir()
+        self._write("wf_a_fail.json", {"ok": False, "error": "pipeline failed"})
+        self._write("wf_z_ok.json", {"ok": True}, output_dir=other)
+        self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
+
+    def test_json_string_args_correlate_like_dict_args(self):
+        args = json.dumps({"outputDir": str(self.output_dir)})
+        self._write(
+            "wf_string_args.json",
+            {"ok": False, "error": "pipeline failed"},
+            args=args,
+        )
+        self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
+
+    def test_first_sorted_failure_wins_after_all_degraded(self):
+        # Sorted record order is the deterministic tie-breaker when failures coexist.
+        self._write(
+            "wf_pipeline.json",
+            {"ok": False, "error": "checkpoint-shape: bad phase"},
+        )
+        self._write(
+            "wf_alldeg.json",
+            {"ok": False, "error": "all-degraded: no discovery"},
+        )
+        self.assertEqual(
+            self._failure(), ("all_degraded", "all-degraded: no discovery")
+        )
+
+    def test_empty_error_uses_failing_phase(self):
+        self._write(
+            "wf_phase.json",
+            {"ok": False, "error": "", "failingPhase": "checkpoints"},
+        )
+        self.assertEqual(self._failure(), ("pipeline_failed", "checkpoints"))
 
 
 if __name__ == "__main__":

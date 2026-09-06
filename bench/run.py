@@ -899,10 +899,17 @@ def _write_child_auth_stub(manifest_path, run_id, child_auth):
 
 def _print_summary(run_id, run_dir, urls, cp, summary):
     final = defaultdict(int)
+    reasons = defaultdict(int)
     for url in urls:
-        final[cp.status(url)] += 1
+        status = cp.status(url)
+        final[status] += 1
+        if status != "ok":
+            reason = cp.detail(url).get("reason") or "unknown"
+            reasons[str(reason)] += 1
     print(f"\nRun {run_id} -> {run_dir}")
     print("  status: " + ", ".join(f"{k}={v}" for k, v in sorted(final.items())))
+    if reasons:
+        print("  reasons: " + ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
     if summary["drifted"]:
         print("  !! DRIFTED (input drift -- never scored):")
         for url, reason in summary["drifted"]:

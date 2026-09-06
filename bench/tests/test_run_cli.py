@@ -776,6 +776,31 @@ class UnexpectedErrorTest(RunTestBase):
 
 
 class ExitCodeTest(RunTestBase):
+    def test_summary_prints_non_ok_reason_histogram(self):
+        urls = self.subsets["smoke"]
+        run_dir = self.runs_root / "summary-reasons"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        cp.mark(urls[0], "failed", detail={"reason": "all_degraded"})
+        cp.mark(urls[1], "failed", detail={"reason": "no_payload"})
+        cp.mark(urls[2], "failed", detail={"reason": "no_payload"})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run._print_summary("summary-reasons", run_dir, urls, cp, {"drifted": []})
+        self.assertIn("  reasons: all_degraded=1, no_payload=2", out.getvalue())
+
+    def test_summary_omits_reason_histogram_when_all_ok(self):
+        urls = self.subsets["smoke"]
+        run_dir = self.runs_root / "summary-ok"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        for url in urls:
+            cp.mark(url, "ok")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run._print_summary("summary-ok", run_dir, urls, cp, {"drifted": []})
+        self.assertNotIn("  reasons:", out.getvalue())
+
     def test_new_run_all_ok_exits_0(self):
         self._install_runner_fakes(invoke_fn=fake_invoke_ok)
         with patch.object(run, "check_prereqs", lambda *a, **k: []):

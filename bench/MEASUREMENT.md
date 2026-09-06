@@ -128,6 +128,15 @@ failure. (Distinct from
 `bench/runner/invoke.py`'s `_workflow_backgrounded` — a status distinct from
 any of `check.py`'s G1–G6 gates.)
 
+**`failed` with `all_degraded` or `pipeline_failed` — the pipeline return envelope.**
+`bench/runner/invoke.py` reads the child Workflow record's `result` after a
+clean CLI exit. `all_degraded` comes from the `all-degraded:` prefix in
+`result.error` or `result.gaps`; any other `ok: false` result is
+`pipeline_failed`. These are failed, not invalid, because the pipeline itself
+reported the outcome. They remain unscored but are retryable with
+`--retry-failed`; an all-degraded result is self-describing and commonly
+transient.
+
 The prose identity receipt symptom belongs to **G4**, not this floor: G4 checks
 that the code-owned `pipeline_version=… (bundle)` and `plugin_root=… (resolved)`
 lines identify the active plugin, with Workflow `scriptPath` as defense in depth.

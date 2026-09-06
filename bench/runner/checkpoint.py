@@ -63,6 +63,15 @@ class Checkpoint:
         with open(path) as fh:
             return json.load(fh)["status"]
 
+    def detail(self, url) -> dict:
+        """Return the recorded detail dict for ``url``, or ``{}`` if unavailable."""
+        path = self._path(url)
+        if not os.path.exists(path):
+            return {}
+        with open(path) as fh:
+            detail = json.load(fh).get("detail")
+        return detail if isinstance(detail, dict) else {}
+
     def mark(self, url, status, detail=None):
         """Persist ``status`` (and optional ``detail``) for ``url``.
 
