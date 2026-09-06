@@ -32,6 +32,7 @@ import json
 import re
 from pathlib import Path
 
+from bench.runner import citations
 from bench.runner.invoke import (
     extract_identity_receipt,
     parse_result_envelope,
@@ -515,6 +516,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         "unknown_origin": 0,
         "workflow_records": 0,
     }
+    stats["citation_boilerplate"] = citations.measure_run(run_dir)
 
     if not run_dir.is_dir():
         return {

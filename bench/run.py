@@ -1075,6 +1075,23 @@ def _check_only(run_id):
             stats.get("unknown_origin"),
         )
     )
+    citation = stats.get("citation_boilerplate") or {}
+    findings = citation.get("findings") or {}
+    convention = findings.get("by_dimension", {}).get(
+        "convention", {"populated": 0, "absence_preamble": 0}
+    )
+    populated = findings.get("populated", 0)
+    preamble = findings.get("absence_preamble", 0)
+    rate = "n/a" if not populated else f"{preamble / populated:.3f}"
+    print(
+        "  citation_boilerplate: preamble={}/{} (rate {}), convention={}/{}".format(
+            preamble,
+            populated,
+            rate,
+            convention["absence_preamble"],
+            convention["populated"],
+        )
+    )
     for failure in result.get("failures") or []:
         print(f"  FAIL: {failure}", file=sys.stderr)
     # Naive-anchor refusal is a usage error (exit 2), not a smoke-gate failure.
