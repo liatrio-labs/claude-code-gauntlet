@@ -953,13 +953,14 @@ class CheckRunTest(unittest.TestCase):
         _build_ok_run(self.run_dir, include_workflow=False)
         pr = self.run_dir / "pr-example-repo-1"
         report = pr / "code-gauntlet-report-deadbeef.md"
+        report.write_text(_identity_echo_block(), encoding="utf-8")
         archived = pr / "superseded" / report.name
         archived.parent.mkdir()
         report.replace(archived)
-        _plant_raw_identity(pr)
-        # The raw receipt is deliberately removed: only the archived report carries it.
-        raw = pr / "raw.json"
-        raw.write_text(json.dumps({"result": "Review complete."}), encoding="utf-8")
+        raw_text = (pr / "raw.json").read_text(encoding="utf-8")
+        self.assertFalse(report.exists())
+        self.assertNotIn("pipeline_version=", raw_text)
+        self.assertNotIn("plugin_root=", raw_text)
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(any("no workflows/wf_" in f for f in result["failures"]))
