@@ -16,6 +16,14 @@ Gates (aligned with ``bench/MEASUREMENT.md``):
       Without a complete echo receipt, collected workflow records are required
       (scriptPath-only fallback).
   G5  ≥1 delivered inline comment across the run set
+  G6  Artifact completeness — G2 still parses every findings artifact it finds,
+      while G6 requires the four ARTIFACT_BASENAMES members to form one coherent
+      set (exactly one match each, one shared SHA), be non-empty, and have
+      parseable JSON members;
+      catches a timeout that lost only the report while earlier gates stayed green
+      (#165). If the pipeline ever records the timeout into a structured carrier,
+      ``test_workflow_timeout_is_not_in_pipeline_artifacts`` goes red and the G3/G6
+      calculus is redone (#146).
 
 Stdlib-only (CLAUDE.md).
 """
@@ -31,6 +39,7 @@ from bench.runner.invoke import (
     script_path_matches_repo,
     scriptpath_from_record,
 )
+from scripts.await_workflow import ARTIFACT_BASENAMES
 
 # Union-schema surface the persist boundary writes (canonical + v2 aliases).
 # A findings file may use either naming; we accept either for each pair.
@@ -42,13 +51,13 @@ _CANONICAL_OR_ALIAS = (
 # line identity: at least one of these must be present
 _LINE_FIELDS = ("line_start", "line")
 
+_FINDINGS_GLOB = ARTIFACT_BASENAMES[0].format(sha="*")
+
 _SCRIPT_PATH_RE = re.compile(r'"scriptPath"\s*:\s*"([^"]+)"')
-# Hyphen-only ``partial-artifacts``: the pipeline emits that spelling exclusively
-# (stages.js / pipeline.js gap strings and one block comment). A former ``partial.artifacts``
-# alternative treated ``.`` as any character and false-positived on TEXT-carrier
-# prose such as "partial artifacts" (#57). G3 is the *writer* degrade gate — not
-# Phase 8 timeout prose ("deliver whatever partial artifacts exist") whose
-# structural signal is ``workflow-timeout`` in ``gaps[]`` when present.
+# Hyphen-only ``partial-artifacts``: the pipeline emits that spelling exclusively. G3 is
+# the writer degrade gate; a Phase 8 timeout has no structural artifact signal.
+# The awaiter reports ``workflow-timeout`` on its own stdout marker; a report may carry
+# it only as model prose, and G6 catches a timeout that lost a deliverable.
 _DEGRADE_RE = re.compile(
     r"(no write proof|partial-artifacts)",
     re.IGNORECASE,
@@ -65,45 +74,23 @@ _SCRIPT_FIELD_OPEN_RE = re.compile(r'"script"\s*:\s*"(?:\\.|[^"\\])*\Z', re.DOTA
 # Expected pipeline entry relative to the plugin/repo root.
 PIPELINE_REL = Path("workflows") / "pipeline.js"
 
-# Where G3 looks for writer no-write-proof / partial-artifacts signals, and how
-# each carrier is read (issue #52). writeArtifacts puts that gap on the compact
-# Workflow return (gaps[]), which lands in collected workflows/wf_*.json and
-# often in raw.json's .result text — NOT in the persisted report/checkpoint
-# (those are written before the echo proof runs). Report/checkpoint remain
-# scanned as secondary carriers.
-#
-# ``_DEGRADE_RE`` matches only the hyphenated pipeline literals (``no write
-# proof``, ``partial-artifacts``). Structured carriers consult parsed ``gaps[]``
-# whose values are those exact emit strings; TEXT carriers are free model prose
-# over an arbitrary reviewed repo, so a broader separator class (e.g. matching
-# "partial artifacts") would false-positive (#57). G3 is the *writer* degrade
-# gate — Phase 8 timeout partial delivery is a different failure whose
-# structural token is ``workflow-timeout`` in ``gaps[]``, not this regex.
-#
-# STRUCTURED carriers own a real ``gaps`` array, so that parsed array is the
-# authoritative — and only — signal consulted; their raw bytes are never
-# regex-scanned:
-#   workflows/wf_*.json  carries the compact return at ``result.gaps``. It also
-#       echoes the whole workflows/pipeline.js bundle into its
-#       ``script`` field, and that bundle's source contains the sentinels as
-#       ordinary substrings ("no write proof" x3 string/template literals —
-#       writeArtifacts's four-path gap, writeArtifactsDerived's three-primary gap,
-#       and assemble's derived-path receipt check; "partial-artifacts" x2 — 1
-#       string literal + 1 block comment) — so a raw
-#       scan matches on EVERY collected record, degraded or not.
-#       ``workflows/superseded/`` (archived prior attempts; #85) is invisible:
-#       ``_iter_workflow_records`` / degrade globs are non-recursive.
-#   code-gauntlet-checkpoint-all-*.json  the persisted checkpoint's ``gaps``.
-#
-# TEXT carriers have no ``gaps`` structure to parse, so a raw-text scan is the
-# only mechanism that can ever see their signal:
-#   raw.json  the child CLI's result envelope, whose ``result`` is free prose
-#       (the model's final turn), never a nested ``gaps`` array. Measured over
-#       the retained corpus: 0/131 carry a structured ``gaps``, and 0/131 embed
-#       the bundle (max 9.5 KB — invoke.py never forwards Workflow tool-call
-#       inputs here), so scanning its bytes is both necessary and safe.
-#   code-gauntlet-report-*.md  markdown; there is no parse step to consult.
-#
+# G3 writer-degrade carrier policy (issue #52):
+# STRUCTURED carriers (``workflows/wf_*.json`` at ``result.gaps``, and the
+# persisted checkpoint's ``gaps``) are judged from the parsed array alone; their
+# raw bytes are never scanned. A wf record echoes the whole ``workflows/pipeline.js``
+# bundle into its ``script`` field, and the bundle carries both sentinels as
+# ordinary substrings. This is registered in ``docs/machine-parsed-strings.md``
+# and pinned by ``tests/test_machine_parsed_strings.py``. A structured carrier
+# that will not parse or has no ``gaps`` falls back to a raw scan with the
+# ``script`` field blanked.
+# TEXT carriers (``raw.json``, whose ``.result`` is model prose and never embeds
+# the bundle -- measured 0/131 in the retained corpus, max 9.5 KB -- and
+# ``code-gauntlet-report-*.md``) are raw-scanned as-is. The superseded archives
+# (``workflows/superseded/`` for wf records, #85; ``pr_dir/superseded/`` for
+# deliverables, #165) are invisible because every G3/G6 glob is non-recursive.
+# G3 is the writer degrade gate. A Phase 8 timeout has no structural artifact
+# signal: the awaiter reports ``workflow-timeout`` on its own stdout, and G6
+# catches a lost deliverable.
 # Do not include bench-only fixture names such as deep-review-report.md.
 _DEGRADE_STRUCTURED = "structured"
 _DEGRADE_TEXT = "text"
@@ -134,7 +121,75 @@ def _pr_dirs(run_dir):
 
 
 def _iter_findings_files(pr_dir):
-    return sorted(pr_dir.glob("code-gauntlet-findings-*.json"))
+    return sorted(pr_dir.glob(_FINDINGS_GLOB))
+
+
+def _artifact_matches(pr_dir, template):
+    """Return direct regular-file matches for one persisted artifact template."""
+    pattern = template.format(sha="*")
+    return sorted(path for path in Path(pr_dir).glob(pattern) if path.is_file())
+
+
+def _artifact_sha(template, path):
+    prefix, suffix = template.split("{sha}")
+    name = Path(path).name
+    return name[len(prefix) : -len(suffix)] if suffix else name[len(prefix) :]
+
+
+def _check_artifact_completeness(pr_dir, label):
+    """Return ``(G6 failures, satisfied artifact count)``."""
+    failures = []
+    satisfied_count = 0
+    matches_by_template = {}
+    for template in ARTIFACT_BASENAMES:
+        pattern = template.format(sha="*")
+        matches = _artifact_matches(pr_dir, template)
+        matches_by_template[template] = matches
+        if not matches:
+            failures.append(f"{label}: artifact-completeness: missing {pattern}")
+            continue
+        if len(matches) > 1:
+            failures.append(
+                f"{label}: artifact-completeness: {len(matches)} matches for "
+                f"{pattern} (want exactly one; stale attempt leftovers?)"
+            )
+            continue
+        path = matches[0]
+        try:
+            empty = path.stat().st_size == 0
+        except OSError as exc:
+            failures.append(
+                f"{label}: artifact-completeness: {path.name} not readable: {exc}"
+            )
+            continue
+        if empty:
+            failures.append(f"{label}: artifact-completeness: {path.name} is empty")
+            continue
+        if template != ARTIFACT_BASENAMES[0] and path.suffix == ".json":
+            try:
+                json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeError, OSError) as exc:
+                failures.append(
+                    f"{label}: artifact-completeness: {path.name} not parseable: {exc}"
+                )
+                continue
+        satisfied_count += 1
+
+    exact_matches = [
+        (template, matches[0])
+        for template, matches in matches_by_template.items()
+        if len(matches) == 1
+    ]
+    shas = {
+        _artifact_sha(template, path): path.name for template, path in exact_matches
+    }
+    if len(shas) > 1 and len(exact_matches) == len(ARTIFACT_BASENAMES):
+        names = ", ".join(
+            f"{path.name}={_artifact_sha(template, path)}"
+            for template, path in exact_matches
+        )
+        failures.append(f"{label}: artifact-completeness: mixed SHA values: {names}")
+    return failures, satisfied_count
 
 
 def _iter_workflow_records(pr_dir):
@@ -455,6 +510,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         "pr_dirs": 0,
         "delivered_comments": 0,
         "findings_files": 0,
+        "deliverable_artifacts": 0,
         "script_paths": 0,
         "unknown_origin": 0,
         "workflow_records": 0,
@@ -571,6 +627,11 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 if isinstance(finding, dict) and finding.get("origin") == "unknown":
                     stats["unknown_origin"] += 1
                     failures.append(f"{flabel}: origin=unknown (verify/slice degrade)")
+
+        # --- G6: every persisted deliverable is present exactly once ---
+        g6_failures, satisfied_count = _check_artifact_completeness(pr_dir, label)
+        failures.extend(g6_failures)
+        stats["deliverable_artifacts"] += satisfied_count
 
         # --- G3: writer no-write-proof / partial-artifacts ---
         for hit in _scan_degrade_text(pr_dir):

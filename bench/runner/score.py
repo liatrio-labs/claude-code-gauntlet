@@ -44,6 +44,7 @@ from bench.adjudicator.adjudicate import adjudicate as _adjudicate
 from bench.adjudicator.adjudicate import file_context, slice_hunk
 from bench.runner import invoke
 from bench.runner.costs import parse_costs
+from bench.runner.invoke import _is_superseded
 from bench.runner.ledger import append_row, manifest_auth_mode
 
 __all__ = [
@@ -296,7 +297,11 @@ def _assemble_candidates(run_dir, pr_records):
         payload_path = pr_dir / "post-review-payload.json"
         if not payload_path.is_file():
             # Tolerate a nested payload (mirrors invoke._find_payload) before concluding empty.
-            nested = sorted(pr_dir.rglob("post-review-payload.json"))
+            nested = sorted(
+                path
+                for path in pr_dir.rglob("post-review-payload.json")
+                if not _is_superseded(path)
+            )
             payload_path = nested[0] if nested else None
         if payload_path is not None and payload_path.is_file():
             result, _stats = payload_to_candidates(payload_path, url, tool=TOOL)

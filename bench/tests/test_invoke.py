@@ -872,12 +872,69 @@ class EchoReceiptSourceTest(InvokeTestBase):
             (Path(tmp) / "deep-review-report.md").write_text(receipt, encoding="utf-8")
             self.assertTrue(invoke._echo_ok("", {}, (tmp,)))
 
+    def test_archived_report_does_not_satisfy_echo(self):
+        receipt = "\n".join(
+            f"{key}={value}" for key, value in invoke.EXPECTED_ECHO.items()
+        )
+        with tempfile.TemporaryDirectory(prefix="echo-archive-") as tmp:
+            archived = Path(tmp) / "superseded" / "code-gauntlet-report-deadbeef.md"
+            archived.parent.mkdir()
+            archived.write_text(receipt, encoding="utf-8")
+            self.assertFalse(invoke._echo_in_reports((tmp,)))
+
+    def test_top_level_report_still_satisfies_echo(self):
+        receipt = "\n".join(
+            f"{key}={value}" for key, value in invoke.EXPECTED_ECHO.items()
+        )
+        with tempfile.TemporaryDirectory(prefix="echo-current-") as tmp:
+            (Path(tmp) / "code-gauntlet-report-deadbeef.md").write_text(
+                receipt, encoding="utf-8"
+            )
+            self.assertTrue(invoke._echo_in_reports((tmp,)))
+
     def test_partial_block_everywhere_is_invalid(self):
         # badecho emits a partial block in BOTH stdout and .result (no report .md).
         res = self._run("badecho")
         self.assertEqual(res.status, "invalid")
         self.assertEqual(res.reason, "config_echo_mismatch")
         self.assertFalse(res.echo_ok)
+
+    def test_archived_code_rendered_report_does_not_provide_identity(self):
+        report = (
+            "Resolved config:\n"
+            "  pipeline_version=3.26.0 (bundle)\n"
+            "  plugin_root=/code-owned/plugin (resolved)\n"
+        )
+        with tempfile.TemporaryDirectory(prefix="identity-archive-") as tmp:
+            archived = Path(tmp) / "superseded" / "code-gauntlet-report-deadbeef.md"
+            archived.parent.mkdir()
+            archived.write_text(report, encoding="utf-8")
+            self.assertIsNone(invoke.extract_identity_receipt("", {}, (tmp,)))
+
+    def test_top_level_code_rendered_report_still_provides_identity(self):
+        report = (
+            "Resolved config:\n"
+            "  pipeline_version=3.26.0 (bundle)\n"
+            "  plugin_root=/code-owned/plugin (resolved)\n"
+        )
+        with tempfile.TemporaryDirectory(prefix="identity-current-") as tmp:
+            (Path(tmp) / "code-gauntlet-report-deadbeef.md").write_text(
+                report, encoding="utf-8"
+            )
+            self.assertEqual(
+                invoke.extract_identity_receipt("", {}, (tmp,)),
+                {
+                    "pipeline_version": "3.26.0",
+                    "plugin_root": "/code-owned/plugin",
+                },
+            )
+
+    def test_find_payload_ignores_archived_nested_payload(self):
+        with tempfile.TemporaryDirectory(prefix="payload-archive-") as tmp:
+            archived = Path(tmp) / "superseded" / "post-review-payload.json"
+            archived.parent.mkdir()
+            archived.write_text("{}", encoding="utf-8")
+            self.assertIsNone(invoke._find_payload(tmp))
 
 
 class PluginIdentityGuardTest(InvokeTestBase):
