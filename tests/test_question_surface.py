@@ -22,6 +22,11 @@ SKILLS = REPO / "skills"
 # that changes the surface, with the reason in the body.
 EXPECTED_QUESTION_SITES = 9
 
+PINNED_SITES = {
+    "Task Board": "skills/code-gauntlet/SKILL.md",
+    "Delivery": "skills/code-gauntlet/references/phase8-delivery.md",
+}
+
 MAX_HEADER_CHARS = 12
 MIN_OPTIONS = 2
 MAX_OPTIONS = 4
@@ -158,6 +163,40 @@ class TestQuestionSurface(unittest.TestCase):
             EXPECTED_QUESTION_SITES,
             "question surface changed: "
             + ", ".join(f"{s['path']}:{s['header']}" for s in found),
+        )
+
+    def test_phase8_sites_live_where_pinned(self):
+        found = sites()
+        for header, expected_path in PINNED_SITES.items():
+            matches = [site for site in found if site["header"] == header]
+            with self.subTest(header=header):
+                self.assertEqual(len(matches), 1, f"expected one {header} site")
+                self.assertEqual(matches[0]["path"], expected_path)
+
+    def test_task_board_site_is_pinned_verbatim(self):
+        expected = (
+            "skills/code-gauntlet/SKILL.md",
+            "Create fix tasks on the task board from these findings?",
+            "Task Board",
+            "false",
+            [
+                (
+                    "Yes — create tasks",
+                    "One FIX task per delivered finding via TaskCreate (FIX-bug-1, FIX-conv-2, ...)",
+                ),
+                ("No — done", "Finish the review without creating tasks"),
+            ],
+        )
+        task_board = next(site for site in sites() if site["header"] == "Task Board")
+        self.assertEqual(
+            (
+                task_board["path"],
+                task_board["question"],
+                task_board["header"],
+                task_board["multiSelect"],
+                task_board["options"],
+            ),
+            expected,
         )
 
     def test_every_site_conforms_to_the_schema(self):

@@ -593,9 +593,23 @@ Never decorate a machine-parsed block (`references/report-format.md`).
 >
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): identical, and no `AskUserQuestion` is presented.
 
-> **MANDATORY GATE: Do not finish without presenting the single task-board question (Stage 2) in `references/phase8-delivery.md`.**
+> **MANDATORY GATE: Do not finish without presenting the single task-board question below (Stage 2 in references/phase8-delivery.md covers what happens after "Yes"). On "Yes" the only creation call is TaskCreate, one task per finding in the delivered payload; Phase 8 never creates issues, pull requests, or branches.**
 >
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped; do not present the offer.
+
+```
+AskUserQuestion(
+  questions: [{
+    question: "Create fix tasks on the task board from these findings?",
+    header: "Task Board",
+    multiSelect: false,
+    options: [
+      { label: "Yes — create tasks", description: "One FIX task per delivered finding via TaskCreate (FIX-bug-1, FIX-conv-2, ...)" },
+      { label: "No — done", description: "Finish the review without creating tasks" }
+    ]
+  }]
+)
+```
 
 ### Print methodology
 
