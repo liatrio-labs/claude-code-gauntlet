@@ -108,6 +108,7 @@ export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'descripti
 // security -> attack_vector, cross_file_impact -> affected_consumers (ARRAY), intent ->
 // spec_text, test_coverage -> criticality (NUMBER, a 1-10 impact scale distinct from
 // confidence's 0-100 certainty) + failure_scenario, type_design -> invalid_state_example,
+// convention -> rule_source,
 // simplification -> behavior_preserved. The pre-reconciliation declarations (type_design
 // encapsulation/invariants/enforcement/usefulness; simplification before/after) named fields
 // no agent ever emitted top-level and no code consumes — pure schema noise now removed.
@@ -117,8 +118,9 @@ export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'descripti
 // not-applicable extra must be OMITTED, never emitted as null — the agent contracts say
 // "OMIT this field", and a null here is the same retry-storm class as string confidence.
 // A multi-dimension agent (conventions-and-intent) dispatches ONCE with the UNION of its
-// rows' extras (agentSpecs in stages.js), so scoping spec_text to the `intent` row still
-// makes it declarable on that agent's convention and comment_accuracy findings — the
+// rows' extras (agentSpecs in stages.js), so scoping spec_text to the `intent` row and
+// rule_source to the `convention` row still makes both fields declarable on that agent's
+// convention and comment_accuracy findings — the
 // per-dimension scoping is documentation of ownership, not an emission restriction.
 //
 // `requiredExtra` (issue #66) names the subset of a row's OWN `schemaExtra` — never a
@@ -131,8 +133,9 @@ export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'descripti
 // table's Required-column lockstep test looks. Populated by a full audit of
 // the seven contracts: security -> attack_vector, cross_file_impact -> affected_consumers,
 // test_coverage -> criticality + failure_scenario, simplification -> behavior_preserved. Every
-// other row is `[]`: bug's hidden_errors, conventions-and-intent's claude_md_rule/spec_text,
-// and type_design's invalid_state_example all carry an explicit OMIT branch in their contract
+// other row is `[]`: bug's hidden_errors, conventions-and-intent's claude_md_rule/spec_text
+// and optional rule_source, and type_design's invalid_state_example stay contract-enforced;
+// claude_md_rule, spec_text, and invalid_state_example all carry an explicit OMIT branch in their contract
 // (conventions-and-intent additionally can't promote a single-dimension field at all — see the
 // agentSpecs comment in stages.js), so they stay contract-enforced. findingItemSchema
 // (stages.js) appends a spec's effective requiredExtra onto FINDING_REQUIRED per dispatch.
@@ -141,10 +144,13 @@ export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'descripti
 // agentType is told to OMIT them — the exact shape `requiredExtra` cannot hold (its
 // sibling-parity guard demands every row of an agentType agree, and its intersection would
 // either force every sibling to fabricate the field or silently drop it). Each entry is
-// EITHER a key of this row's OWN schemaExtra (spec_text on the intent row) OR a canonical
+// EITHER a key of this row's OWN schemaExtra (spec_text on the intent row, rule_source on the
+// convention row) OR a canonical
 // FINDING_PROP_TYPES field that is not in FINDING_REQUIRED (claude_md_rule on the convention
 // row) — never a canonical field already unconditional everywhere, which belongs in
 // FINDING_REQUIRED directly. `[]` on every other row.
+// `rule_source` is optional schemaExtra on the convention row and remains contract-enforced;
+// it is deliberately not promoted into requiredWhenDimension in this change.
 //
 // Unlike requiredExtra this cannot become a flat `required` entry on the dispatch schema: a
 // TOP-LEVEL oneOf/allOf/anyOf in input_schema is rejected outright (API 400, measured
@@ -165,7 +171,7 @@ export const DIMENSIONS = [
     // confidence stays unbound here and is clamped later — validators adjust it at runtime.
     schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
     requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: { rule_source: 'string' }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
     schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
@@ -199,8 +205,8 @@ export const AGENT_LABELS = {
 };
 
 // --- Product identity -------------------------------------------------------
-// The ONE hand-authored copy of the brand mark, the display name, and the severity
-// emoji map. Every other copy is GENERATED from here by
+// The ONE hand-authored copy of the brand mark, the display name, the severity emoji map,
+// and the rule-source label map. Every other copy is GENERATED from here by
 // scripts/generate_contract_requirements.py (--check in CI): the Python mirror in
 // scripts/post_review.py and the legends in references/report-format.md and
 // references/delivery-guide.md. Do not hand-edit a mirror.
@@ -218,6 +224,15 @@ export const SEVERITY_EMOJI = {
 // `string`, not an enum) — a constant, not a repeated literal. Pinned by
 // tests/test_post_review.py::test_unknown_severity_falls_back_to_bulb.
 export const SEVERITY_EMOJI_FALLBACK = SEVERITY_EMOJI.low;
+
+export const RULE_SOURCE_LABELS = {
+  documented_rule: 'Cited rule',
+  code_comment: 'Cited comment',
+  repo_precedent: 'Repo precedent',
+  self_inconsistency: 'Inconsistency',
+};
+// Unknown or absent rule-source values use the neutral cited-rule label.
+export const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 
 // The stage agents' models, restating each one's `model:` frontmatter explicitly so a
 // dispatch pins a full model ID instead of inheriting the session variant (see MODEL_IDS

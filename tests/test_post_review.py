@@ -1323,6 +1323,56 @@ class TestRenderCommentBody(unittest.TestCase):
 class TestOutboundRenderBounding(unittest.TestCase):
     """Issue #122 — render_comment_body composed behaviors."""
 
+    def test_rule_source_labels_are_keyed_on_claude_md_rule(self):
+        labels = {
+            "documented_rule": "Cited rule",
+            "code_comment": "Cited comment",
+            "repo_precedent": "Repo precedent",
+            "self_inconsistency": "Inconsistency",
+        }
+        for source, label in labels.items():
+            with self.subTest(source=source):
+                body = render_comment_body(
+                    {
+                        "severity": "medium",
+                        "title": "T",
+                        "body": "b",
+                        "claude_md_rule": "The cited text.",
+                        "rule_source": source,
+                    }
+                )
+                self.assertIn(f"**{label}:**", body)
+                self.assertNotIn(source, body)
+
+    def test_rule_source_unknown_values_use_fallback_and_do_not_render_raw(self):
+        for source in ("constructor", "toString", "__proto__", "unknown_kind"):
+            with self.subTest(source=source):
+                body = render_comment_body(
+                    {
+                        "severity": "medium",
+                        "title": "T",
+                        "body": "b",
+                        "claude_md_rule": "The cited text.",
+                        "rule_source": source,
+                    }
+                )
+                self.assertIn("**Cited rule:**", body)
+                self.assertNotIn(source, body)
+
+    def test_rule_source_is_ignored_when_spec_text_wins(self):
+        body = render_comment_body(
+            {
+                "severity": "medium",
+                "title": "T",
+                "body": "b",
+                "spec_text": "The specification text.",
+                "rule_source": "repo_precedent",
+            }
+        )
+        self.assertIn("**Cited rule:**", body)
+        self.assertNotIn("**Repo precedent:**", body)
+        self.assertNotIn("repo_precedent", body)
+
     def test_comment_only_claude_md_rule_omits_cited_rule_heading(self):
         finding = {
             "severity": "medium",
@@ -3243,6 +3293,21 @@ class TestDeliveryKeyStability(unittest.TestCase):
             self.assertEqual(post_review.key_material_body(finding), "SECTIONS")
         sections.assert_called_once_with(expected_material)
         branded.assert_not_called()
+
+    def test_rule_source_does_not_change_key_material(self):
+        finding = {
+            "file": "src/example.py",
+            "line": 8,
+            "title": "Example",
+            "body": "Body",
+            "claude_md_rule": "The cited rule.",
+        }
+        grounded = {**finding, "rule_source": "repo_precedent"}
+        self.assertEqual(
+            post_review.key_material_body(finding),
+            post_review.key_material_body(grounded),
+        )
+        self.assertIn("**Cited rule:**", post_review.key_material_body(grounded))
 
 
 class TestGitHubDeliveryConsolidation(_DryRunTestBase):

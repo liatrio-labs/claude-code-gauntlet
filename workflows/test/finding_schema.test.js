@@ -326,6 +326,7 @@ test('the fields issue #47 added are declared, on the right agents, with the rig
 
   const conventions = props('code-gauntlet:conventions-and-intent');
   assert.equal(conventions.spec_text.type, 'string', 'intent -> spec_text');
+  assert.equal(conventions.rule_source.type, 'string', 'convention -> rule_source');
 
   // None of the five may enter the FLAT FINDING_REQUIRED list — criticality and
   // failure_scenario ARE dispatch-required (issue #66), but through test_coverage's

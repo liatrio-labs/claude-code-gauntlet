@@ -276,6 +276,13 @@ class TestIdentityFenceGuards(unittest.TestCase):
         "brand": {"mark": "MARK", "name": "NAME"},
         "severityEmoji": {"critical": "C", "low": "L"},
         "severityEmojiFallback": "F",
+        "ruleSourceLabels": {
+            "documented_rule": "DR",
+            "code_comment": "CC",
+            "repo_precedent": "RP",
+            "self_inconsistency": "SI",
+        },
+        "ruleSourceLabelFallback": "RF",
     }
 
     # Every declared fence body, hand-typed against the placeholder IDENTITY above.
@@ -293,10 +300,18 @@ class TestIdentityFenceGuards(unittest.TestCase):
             '    "critical": "C",\n'
             '    "low": "L",\n'
             "}\n"
-            'SEVERITY_EMOJI_FALLBACK = "F"'
+            'SEVERITY_EMOJI_FALLBACK = "F"\n'
+            "RULE_SOURCE_LABELS = {\n"
+            '    "documented_rule": "DR",\n'
+            '    "code_comment": "CC",\n'
+            '    "repo_precedent": "RP",\n'
+            '    "self_inconsistency": "SI",\n'
+            "}\n"
+            'RULE_SOURCE_LABEL_FALLBACK = "RF"'
         ),
         (gen.REPORT_FORMAT_REL, "severity_legend"): (
             "Product mark: MARK (NAME). Severity emoji: C critical, L low.\n"
+            "Rule source labels: documented_rule -> DR, code_comment -> CC, repo_precedent -> RP, self_inconsistency -> SI; unknown values -> RF.\n"
             "Always use the Unicode characters, never GitHub shortcodes "
             "(`:red_circle:`) — shortcodes do\n"
             "not render in terminal/chat output."
@@ -314,7 +329,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "**Suggested fix:**\n"
             "{suggestion}\n"
             "\n"
-            "**Cited rule:**\n"
+            "**{rule_source_label}:**\n"
             "> {claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}\n"
             "\n"
             "```suggestion\n"
@@ -327,7 +342,10 @@ class TestIdentityFenceGuards(unittest.TestCase):
         (
             "skills/code-gauntlet/references/delivery-guide.md",
             "severity_legend",
-        ): "Product mark: MARK (NAME). Severity emojis: C critical, L low.",
+        ): (
+            "Product mark: MARK (NAME). Severity emojis: C critical, L low.\n"
+            "Rule source labels: documented_rule -> DR, code_comment -> CC, repo_precedent -> RP, self_inconsistency -> SI; unknown values -> RF."
+        ),
         (
             "skills/code-gauntlet/references/delivery-guide.md",
             "summary_header",
@@ -344,7 +362,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "**Suggested fix:**\n"
             "{suggestion}\n"
             "\n"
-            "**Cited rule:**\n"
+            "**{rule_source_label}:**\n"
             "> {claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}\n"
             "\n"
             "```suggestion\n"

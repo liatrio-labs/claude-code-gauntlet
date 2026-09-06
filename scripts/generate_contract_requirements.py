@@ -99,6 +99,8 @@ def load_registry(repo_root=REPO_ROOT):
         "  brand: { mark: m.BRAND_MARK, name: m.BRAND_NAME },"
         "  severityEmoji: m.SEVERITY_EMOJI,"
         "  severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK,"
+        "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
+        "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
         "  agents: m.AGENTS,"
         "})))"
     )
@@ -342,6 +344,11 @@ def _severity_pairs(identity):
     return [(emoji, name) for name, emoji in identity["severityEmoji"].items()]
 
 
+def _rule_source_pairs(identity):
+    """[(kind, label), ...] in registry declaration order."""
+    return list(identity["ruleSourceLabels"].items())
+
+
 # A placeholder fixture whose every field value is its own placeholder, run through the REAL
 # renderer, so the documented template IS the renderer's literal output. The critical finding
 # carries every optional field; the other severity examples stay minimal.
@@ -386,6 +393,7 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
             "evidence": "{finding.evidence}",
             "suggestion": "{finding.suggestion}",
             "claude_md_rule": "{finding.claude_md_rule}",
+            "rule_source": "{finding.rule_source}",
             "spec_text": "{finding.spec_text}",
             "cross_file_refs": "{finding.cross_file_refs}",
             "affected_consumers": "{finding.affected_consumers}",
@@ -488,6 +496,7 @@ _INLINE_SAMPLE_FINDING = {
     "claude_md_rule": (
         "{claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}"
     ),
+    "rule_source": "documented_rule",
     "suggested_fix_code": "{suggested_fix_code}",
 }
 
@@ -507,13 +516,15 @@ def render_inline_comment_sample(identity):
     from scripts import post_review
 
     saved = {
-        name: getattr(post_review, name)
+        name: getattr(post_review, name, None)
         for name in (
             "BRAND_MARK",
             "BRAND_NAME",
             "BRAND_TRAILER",
             "SEVERITY_EMOJI",
             "SEVERITY_EMOJI_FALLBACK",
+            "RULE_SOURCE_LABELS",
+            "RULE_SOURCE_LABEL_FALLBACK",
         )
     }
     try:
@@ -524,6 +535,8 @@ def render_inline_comment_sample(identity):
         )
         post_review.SEVERITY_EMOJI = {"severity": "{emoji}"}
         post_review.SEVERITY_EMOJI_FALLBACK = "{emoji}"
+        post_review.RULE_SOURCE_LABELS = {"documented_rule": "{rule_source_label}"}
+        post_review.RULE_SOURCE_LABEL_FALLBACK = "{rule_source_fallback}"
         rendered = post_review.render_comment_body(_INLINE_SAMPLE_FINDING)
     finally:
         for name, value in saved.items():
@@ -541,8 +554,12 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
     mark = identity["brand"]["mark"]
     name = identity["brand"]["name"]
     pairs = _severity_pairs(identity)
+    rule_source_pairs = _rule_source_pairs(identity)
     commas = ", ".join(f"{emoji} {severity}" for emoji, severity in pairs)
     slashes = " / ".join(f"{emoji} {severity}" for emoji, severity in pairs)
+    rule_source_labels = ", ".join(
+        f"{kind} -> {label}" for kind, label in rule_source_pairs
+    )
     key = (rel_path, symbol)
     if key == (REPORT_FORMAT_REL, "full_report_template"):
         return render_template_block(repo_root, identity).split("\n")
@@ -556,6 +573,10 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
         lines += [
             "}",
             f'SEVERITY_EMOJI_FALLBACK = "{identity["severityEmojiFallback"]}"',
+            "RULE_SOURCE_LABELS = {",
+            *[f'    "{kind}": "{label}",' for kind, label in rule_source_pairs],
+            "}",
+            f'RULE_SOURCE_LABEL_FALLBACK = "{identity["ruleSourceLabelFallback"]}"',
         ]
         return lines
     if symbol == "summary_header":
@@ -583,6 +604,7 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
     if key == (REPORT_FORMAT_REL, "severity_legend"):
         return [
             f"Product mark: {mark} ({name}). Severity emoji: {commas}.",
+            f"Rule source labels: {rule_source_labels}; unknown values -> {identity['ruleSourceLabelFallback']}.",
             (
                 "Always use the Unicode characters, never GitHub shortcodes (`:red_circle:`) — "
                 + "shortcodes do"
@@ -590,7 +612,10 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
             "not render in terminal/chat output.",
         ]
     if symbol == "severity_legend":
-        return [f"Product mark: {mark} ({name}). Severity emojis: {commas}."]
+        return [
+            f"Product mark: {mark} ({name}). Severity emojis: {commas}.",
+            f"Rule source labels: {rule_source_labels}; unknown values -> {identity['ruleSourceLabelFallback']}.",
+        ]
     raise SystemExit(
         f"generate_contract_requirements: no identity body for {symbol!r} in {rel_path}"
     )

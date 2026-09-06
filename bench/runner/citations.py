@@ -7,6 +7,8 @@ from pathlib import Path
 
 from scripts.await_workflow import ARTIFACT_BASENAMES
 
+# rule_source vocabulary: documented_rule, code_comment, repo_precedent, self_inconsistency.
+
 # This is a lower-bound heuristic because agents can phrase the same absence many ways.
 # Each alternative is one absence phrasing; the tuple exists so a test can rebuild the
 # pattern without any one member and prove that member is load-bearing.
@@ -118,14 +120,19 @@ def _measure_block(citations, pr_names):
             absence += is_absent
             per_pr[pr_name]["absence_preamble"] += is_absent
             dimension_stats = by_dimension.setdefault(
-                dimension, {"populated": 0, "absence_preamble": 0}
+                dimension,
+                {"populated": 0, "absence_preamble": 0, "rule_source": {"absent": 0}},
             )
             dimension_stats["populated"] += 1
             dimension_stats["absence_preamble"] += is_absent
             if isinstance(source, str) and source:
                 rule_source[source] = rule_source.get(source, 0) + 1
+                dimension_stats["rule_source"][source] = (
+                    dimension_stats["rule_source"].get(source, 0) + 1
+                )
             else:
                 rule_source["absent"] = rule_source.get("absent", 0) + 1
+                dimension_stats["rule_source"]["absent"] += 1
 
     return {
         "populated": total,
@@ -159,9 +166,14 @@ def _rate_text(block):
 
 def _convention_text(measurement):
     convention = measurement["findings"]["by_dimension"].get(
-        "convention", {"populated": 0, "absence_preamble": 0}
+        "convention",
+        {"populated": 0, "absence_preamble": 0, "rule_source": {"absent": 0}},
     )
-    return f"{convention['absence_preamble']}/{convention['populated']}"
+    histogram = ",".join(
+        f"{source}={count}"
+        for source, count in sorted(convention["rule_source"].items())
+    )
+    return f"{convention['absence_preamble']}/{convention['populated']} convention_rule_source={histogram}"
 
 
 def _merge_blocks(measurements, block_name):
@@ -179,10 +191,15 @@ def _merge_blocks(measurements, block_name):
         merged["absence_preamble"] += block["absence_preamble"]
         for dimension, stats in block["by_dimension"].items():
             target = merged["by_dimension"].setdefault(
-                dimension, {"populated": 0, "absence_preamble": 0}
+                dimension,
+                {"populated": 0, "absence_preamble": 0, "rule_source": {"absent": 0}},
             )
             target["populated"] += stats["populated"]
             target["absence_preamble"] += stats["absence_preamble"]
+            for source, count in stats["rule_source"].items():
+                target["rule_source"][source] = (
+                    target["rule_source"].get(source, 0) + count
+                )
         for source, count in block["rule_source"].items():
             merged["rule_source"][source] = merged["rule_source"].get(source, 0) + count
         for pr_name, stats in block["per_pr"].items():

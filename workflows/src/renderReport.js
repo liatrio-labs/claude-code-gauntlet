@@ -3,8 +3,10 @@
 // line-based bundle stripper cannot remove safely.
 import { SEVERITY_ORDER } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
-import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, resolvePolicy, conditionalSchemaActive } from './registry.js';
+import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, resolvePolicy, conditionalSchemaActive } from './registry.js';
 import { KNOB_REGISTRY } from './args.js';
+
+// rule_source vocabulary: documented_rule, code_comment, repo_precedent, self_inconsistency.
 
 // Fields the report renderer never emits. suggested_fix_code itself (no apply-check oracle
 // exists at report time) plus the two stamps filterFindings.js/filter_findings.py leave
@@ -177,7 +179,7 @@ function consolidateForReport(findings) {
 const REPORT_PLACED_FIELDS = new Set([
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
   'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
-  'claude_md_rule', 'spec_text', 'cross_file_refs',
+  'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
 ]);
 
 export function reportExtraFields() {
@@ -434,10 +436,15 @@ function renderFinding(builder, finding, unverified) {
     });
   }
 
-  const citedRule = isPresent(finding.claude_md_rule) ? finding.claude_md_rule : finding.spec_text;
+  const hasClaudeMdRule = isPresent(finding.claude_md_rule);
+  const citedRule = hasClaudeMdRule ? finding.claude_md_rule : finding.spec_text;
   if (isPresent(citedRule)) {
+    const source = finding.rule_source;
+    const ruleLabel = hasClaudeMdRule && typeof source === 'string' && Object.hasOwn(RULE_SOURCE_LABELS, source)
+      ? RULE_SOURCE_LABELS[source]
+      : RULE_SOURCE_LABEL_FALLBACK;
     blocks.push(() => {
-      builder.add('**Cited rule:**');
+      builder.add(`**${ruleLabel}:**`);
       builder.add();
       builder.add(reportAsText(citedRule).split(/\r?\n/).map((line) => `> ${line}`).join('\n'));
     });

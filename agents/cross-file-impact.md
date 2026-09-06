@@ -125,6 +125,7 @@ A finding that matches any category below MUST be excluded. The goal is zero fal
 **4. Pedantic nitpicks a senior engineer would not flag.** If a reasonable senior engineer doing a thorough code review would not comment on it, neither should you.
 
 **5. General code quality issues unless explicitly required in CLAUDE.md.** Style preferences, naming conventions, and structural opinions should only be flagged if the project's CLAUDE.md explicitly requires them.
+A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.
 
 **6. Issues explicitly silenced in code.** If the author has added a suppression comment (`// eslint-disable`, `@SuppressWarnings`, etc.), respect the intent. Do not flag the underlying issue.
 
