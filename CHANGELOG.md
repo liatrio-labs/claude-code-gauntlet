@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.30.0 (2026-09-06)
+
+### Bug Fixes
+
+- **bench**: Derive citation globs from the awaiter's artifact set
+  ([#299](https://github.com/liatrio-labs/claude-code-gauntlet/pull/299),
+  [`518c066`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/518c066cb3a3b2a2619316a394fff37a53e3a597))
+
+### Features
+
+- **bench**: Measure claude_md_rule absence preambles as a non-gating watch axis
+  ([#299](https://github.com/liatrio-labs/claude-code-gauntlet/pull/299),
+  [`518c066`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/518c066cb3a3b2a2619316a394fff37a53e3a597))
+
+- **bench**: Measure claude_md_rule absence preambles as a non-gating watch axis (#265)
+  ([#299](https://github.com/liatrio-labs/claude-code-gauntlet/pull/299),
+  [`518c066`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/518c066cb3a3b2a2619316a394fff37a53e3a597))
+
+### Testing
+
+- **bench**: Prove every absence-preamble alternative is load-bearing
+  ([#299](https://github.com/liatrio-labs/claude-code-gauntlet/pull/299),
+  [`518c066`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/518c066cb3a3b2a2619316a394fff37a53e3a597))
+
+
 ## v3.29.3 (2026-09-06)
 
 ### Bug Fixes
