@@ -2,6 +2,36 @@
 
 <!-- version list -->
 
+## v3.29.2 (2026-09-06)
+
+### Bug Fixes
+
+- **ci**: Address review findings on the Biome runner, boundary guard, and instruction files
+  ([#295](https://github.com/liatrio-labs/claude-code-gauntlet/pull/295),
+  [`1311d98`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1311d982a223a1235373104d4432fafe39c86aa9))
+
+### Continuous Integration
+
+- **js-lint**: Run the Biome gate from one pin file locally and in CI (#158, #176)
+  ([#295](https://github.com/liatrio-labs/claude-code-gauntlet/pull/295),
+  [`1311d98`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1311d982a223a1235373104d4432fafe39c86aa9))
+
+### Testing
+
+- **ci**: Cover cache refresh, retry-all-errors, the urllib and subprocess adapters, and the
+  boundary predicate ([#295](https://github.com/liatrio-labs/claude-code-gauntlet/pull/295),
+  [`1311d98`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1311d982a223a1235373104d4432fafe39c86aa9))
+
+- **ci**: Pin the forbidden-basename tuple to a literal before deriving fixtures
+  ([#295](https://github.com/liatrio-labs/claude-code-gauntlet/pull/295),
+  [`1311d98`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1311d982a223a1235373104d4432fafe39c86aa9))
+
+- **ci**: Pin the release URL, the exact vendored exemption, every forbidden basename, both
+  CONTRIBUTING blocks, and cache precedence
+  ([#295](https://github.com/liatrio-labs/claude-code-gauntlet/pull/295),
+  [`1311d98`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1311d982a223a1235373104d4432fafe39c86aa9))
+
+
 ## v3.29.1 (2026-09-06)
 
 ### Bug Fixes
