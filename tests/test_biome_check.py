@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import json
 import os
+import socket
 import stat
 import tempfile
 import unittest
 import urllib.error
 from contextlib import redirect_stderr
+from email.message import Message
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from workflows.test.tools import biome_check
@@ -104,6 +108,39 @@ class TestBiomeCheck(unittest.TestCase):
             self.assertIn(f"expected {checksums[asset]}", error.getvalue())
             self.assertIn("actual", error.getvalue())
             self.assertFalse(final.exists())
+            self.assertFalse(final.with_name(f"{asset}.part").exists())
+
+    @unittest.skipUnless(os.name != "nt", "mode bits are POSIX-only")
+    def test_mismatched_cache_is_refreshed_and_installed_executable(self) -> None:
+        asset = "biome-test"
+        old_data = b"stale cached binary"
+        expected_data = b"refreshed binary"
+        pin = _pin_data(TEST_VERSION, asset, hashlib.sha256(expected_data).hexdigest())
+        with tempfile.TemporaryDirectory() as directory:
+            pin_path = Path(directory) / "pin.json"
+            cache = Path(directory) / "cache"
+            final = cache.resolve() / TEST_VERSION / asset
+            final.parent.mkdir(parents=True)
+            final.write_bytes(old_data)
+            final.chmod(0o644)
+            pin_path.write_text(json.dumps(pin), encoding="utf-8")
+            fetched: list[str] = []
+
+            def fetch(url: str) -> bytes:
+                fetched.append(url)
+                return expected_data
+
+            with patch.object(biome_check, "PIN_FILE", pin_path):
+                code = main(
+                    ["--asset", asset, "--cache-dir", str(cache)],
+                    fetch=fetch,
+                    run=lambda _argv, _cwd: 0,
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(fetched), 1)
+            self.assertEqual(final.read_bytes(), expected_data)
+            self.assertEqual(stat.S_IMODE(final.stat().st_mode), 0o755)
             self.assertFalse(final.with_name(f"{asset}.part").exists())
 
     @unittest.skipUnless(os.name != "nt", "mode bits are POSIX-only")
@@ -252,6 +289,100 @@ class TestBiomeCheck(unittest.TestCase):
                 )
             self.assertEqual(code, 1)
             self.assertEqual(failed_calls, 5)
+
+    def test_retry_recovers_from_non_url_errors(self) -> None:
+        failures = (
+            socket.timeout("timed out"),  # noqa: UP041 - named regression case
+            urllib.error.HTTPError(
+                "https://example.test/biome", 503, "unavailable", Message(), None
+            ),
+            http.client.IncompleteRead(b"partial"),
+        )
+        asset = "biome-test"
+        data = b"retry-all-errors binary"
+        pin = _pin_data(TEST_VERSION, asset, hashlib.sha256(data).hexdigest())
+        with tempfile.TemporaryDirectory() as directory:
+            pin_path = Path(directory) / "pin.json"
+            pin_path.write_text(json.dumps(pin), encoding="utf-8")
+            for index, failure in enumerate(failures):
+                calls = 0
+
+                def flaky_fetch(_url: str, failure: Exception = failure) -> bytes:
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        raise failure
+                    return data
+
+                with (
+                    self.subTest(error=type(failure).__name__),
+                    patch.object(biome_check, "PIN_FILE", pin_path),
+                    patch.object(biome_check.time, "sleep") as sleep,
+                ):
+                    code = main(
+                        [
+                            "--asset",
+                            asset,
+                            "--cache-dir",
+                            str(Path(directory) / f"cache-{index}"),
+                        ],
+                        fetch=flaky_fetch,
+                        run=lambda _argv, _cwd: 0,
+                    )
+
+                self.assertEqual(code, 0)
+                self.assertEqual(calls, 2)
+                sleep.assert_called_once_with(1)
+
+    def test_fetch_url_builds_the_pinned_request(self) -> None:
+        url = "https://example.test/biome"
+        data = b"downloaded over urllib"
+        with patch.object(biome_check.urllib.request, "urlopen") as urlopen:
+            response = urlopen.return_value.__enter__.return_value
+            response.read.return_value = data
+
+            result = biome_check._fetch_url(url)
+
+        self.assertEqual(result, data)
+        urlopen.assert_called_once()
+        request = urlopen.call_args.args[0]
+        self.assertIsInstance(request, biome_check.urllib.request.Request)
+        self.assertEqual(request.full_url, url)
+        self.assertEqual(request.get_header("User-agent"), biome_check.USER_AGENT)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 30)
+
+    def test_main_wires_the_default_process_adapter(self) -> None:
+        asset = "biome-test"
+        data = b"pre-verified binary"
+        pin = _pin_data(TEST_VERSION, asset, hashlib.sha256(data).hexdigest())
+        with tempfile.TemporaryDirectory() as directory:
+            pin_path = Path(directory) / "pin.json"
+            cache = Path(directory) / "cache"
+            final = cache.resolve() / TEST_VERSION / asset
+            final.parent.mkdir(parents=True)
+            final.write_bytes(data)
+            pin_path.write_text(json.dumps(pin), encoding="utf-8")
+
+            with (
+                patch.object(biome_check, "PIN_FILE", pin_path),
+                patch.object(
+                    biome_check.subprocess,
+                    "run",
+                    return_value=SimpleNamespace(returncode=17),
+                ) as subprocess_run,
+            ):
+                code = main(
+                    ["--asset", asset, "--cache-dir", str(cache)],
+                    fetch=lambda _url: (_ for _ in ()).throw(
+                        AssertionError("pre-verified cache downloaded")
+                    ),
+                )
+
+            self.assertEqual(code, 17)
+            subprocess_run.assert_called_once_with(
+                [str(final), "check", "--error-on-warnings", "."],
+                cwd=biome_check.WORKFLOWS_DIR,
+            )
 
     def test_invalid_asset_override_is_usage_error(self) -> None:
         data = b"asset error"
