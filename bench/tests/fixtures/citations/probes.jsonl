@@ -16,3 +16,6 @@
 {"value": "AGENTS.md: 'no pip dependencies in shipped scripts/'.", "absence_preamble": false}
 {"value": "The missing field is covered by REVIEW.md section 4.", "absence_preamble": false}
 {"value": "No regression was observed after the rules change.", "absence_preamble": false}
+{"value": "CLAUDE.md does not exist in this repository; the sibling handler sets the pattern.", "absence_preamble": true}
+{"value": "AGENTS.md is missing here, so the neighbouring module is the reference.", "absence_preamble": true}
+{"value": "REVIEW.md section 2 is missing a threshold for security findings, so the default applies.", "absence_preamble": true}

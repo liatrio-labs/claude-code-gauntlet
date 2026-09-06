@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -44,6 +45,27 @@ class CitationClassifierTest(unittest.TestCase):
                     citations.has_absence_preamble(row["value"]),
                     row["absence_preamble"],
                 )
+
+    def test_every_alternative_is_load_bearing(self):
+        """Rebuilding the pattern without any one alternative flips at least one
+        fixture row, so a silently redundant alternative cannot hide in the tuple."""
+        rows = _read_jsonl(FIXTURE_DIR / "corpus_labels.jsonl") + _read_jsonl(
+            FIXTURE_DIR / "probes.jsonl"
+        )
+        alternatives = citations.ABSENCE_PREAMBLE_ALTERNATIVES
+        self.assertEqual(citations.ABSENCE_PREAMBLE_RE.pattern, "|".join(alternatives))
+        self.assertFalse(citations.ABSENCE_PREAMBLE_RE.flags & re.VERBOSE)
+        for index in range(len(alternatives)):
+            without = citations.compile_absence_pattern(
+                alternatives[:index] + alternatives[index + 1 :]
+            )
+            flipped = [
+                row["value"]
+                for row in rows
+                if (without.search(row["value"]) is not None) != row["absence_preamble"]
+            ]
+            with self.subTest(alternative=index):
+                self.assertTrue(flipped, "no fixture row depends on this alternative")
 
     def test_non_string_values_are_not_preambles(self):
         for value in (None, 0, False, [], {}):

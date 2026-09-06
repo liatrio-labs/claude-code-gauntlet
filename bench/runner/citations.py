@@ -6,14 +6,26 @@ import re
 from pathlib import Path
 
 # This is a lower-bound heuristic because agents can phrase the same absence many ways.
-ABSENCE_PREAMBLE_RE = re.compile(
-    r"\bno\s+(?:\w+\s+){0,3}(?:CLAUDE|AGENTS|REVIEW|QODO)\.md\b"
-    r"|(?:CLAUDE|AGENTS|REVIEW|QODO)\.md(?:/\w+\.md)*(?:\s+\w+){0,3}\s+(?:does\s+not\s+exist|doesn't\s+exist|is\s+absent|is\s+missing|absent|missing)\b"
-    r"|\bno\s+(?:\w+[\s-]+){0,3}(?:convention|rules?|house\s+style|style\s+guide)\s*(?:files?|documents?|guides?)?\b(?=[^\w]|$)"
-    r"|\bno\s+(?:documented|written|explicit|project|repo(?:sitory)?|machine-readable|codified)\s+(?:\w+\s+){0,2}(?:rules?|conventions?|guidelines?|standards?)\b"
-    r"|\bproject_rules_absent\b",
-    re.IGNORECASE,
+# Each alternative is one absence phrasing; the tuple exists so a test can rebuild the
+# pattern without any one member and prove that member is load-bearing.
+ABSENCE_PREAMBLE_ALTERNATIVES = (
+    r"\bno\s+(?:\w+\s+){0,3}(?:CLAUDE|AGENTS|REVIEW|QODO)\.md\b",
+    r"(?:CLAUDE|AGENTS|REVIEW|QODO)\.md(?:/\w+\.md)*(?:\s+\w+){0,3}\s+"
+    r"(?:does\s+not\s+exist|doesn't\s+exist|is\s+absent|is\s+missing|absent|missing)\b",
+    r"\bno\s+(?:\w+[\s-]+){0,3}(?:convention|rules?|house\s+style|style\s+guide)\s*"
+    r"(?:files?|documents?|guides?)?\b(?=[^\w]|$)",
+    r"\bno\s+(?:documented|written|explicit|project|repo(?:sitory)?|machine-readable|codified)"
+    r"\s+(?:\w+\s+){0,2}(?:rules?|conventions?|guidelines?|standards?)\b",
+    r"\bproject_rules_absent\b",
 )
+
+
+def compile_absence_pattern(alternatives=ABSENCE_PREAMBLE_ALTERNATIVES):
+    """Join *alternatives* into one case-insensitive pattern (never VERBOSE)."""
+    return re.compile("|".join(alternatives), re.IGNORECASE)
+
+
+ABSENCE_PREAMBLE_RE = compile_absence_pattern()
 
 _FINDINGS_GLOB = "code-gauntlet-findings-*.json"
 _POST_REVIEW_GLOB = "code-gauntlet-post-review-*.json"
