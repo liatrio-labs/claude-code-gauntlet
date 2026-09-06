@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v3.29.1 (2026-09-06)
+
+### Bug Fixes
+
+- **bench**: Add the G6 artifact-completeness gate and archive prior attempts (#165, #164, #173)
+  ([#294](https://github.com/liatrio-labs/claude-code-gauntlet/pull/294),
+  [`084b7b5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/084b7b5169534f4d7967ea6578557932d88365c3))
+
+- **bench**: Report invalid UTF-8 as a G6 parse failure and grade completeness in one pass
+  ([#294](https://github.com/liatrio-labs/claude-code-gauntlet/pull/294),
+  [`084b7b5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/084b7b5169534f4d7967ea6578557932d88365c3))
+
+### Documentation
+
+- **bench**: Say --resume archives prior attempts too, in MEASUREMENT.md and the wf-record archiver
+  docstring ([#294](https://github.com/liatrio-labs/claude-code-gauntlet/pull/294),
+  [`084b7b5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/084b7b5169534f4d7967ea6578557932d88365c3))
+
+### Testing
+
+- **bench**: Archive a receipt-bearing report in the G4 regression; ratchet the bench floor to 87.7
+  (CI #294: 88.66) ([#294](https://github.com/liatrio-labs/claude-code-gauntlet/pull/294),
+  [`084b7b5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/084b7b5169534f4d7967ea6578557932d88365c3))
+
+- **bench**: Pin the archiver's non-recursive and regular-file boundaries
+  ([#294](https://github.com/liatrio-labs/claude-code-gauntlet/pull/294),
+  [`084b7b5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/084b7b5169534f4d7967ea6578557932d88365c3))
+
+
 ## v3.29.0 (2026-09-05)
 
 ### Bug Fixes
