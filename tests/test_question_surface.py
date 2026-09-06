@@ -199,6 +199,31 @@ class TestQuestionSurface(unittest.TestCase):
             expected,
         )
 
+    def test_task_board_gate_states_the_action_boundary(self):
+        # The gate paragraph is what the orchestrator reads when it asks; the
+        # boundary it states (TaskCreate only, never an outward-facing artifact)
+        # is the mechanism issue #207 pins, so a rewrite that drops it goes red.
+        skill = (SKILLS / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
+        gate = next(
+            line
+            for line in skill.splitlines()
+            if "MANDATORY GATE" in line and "task-board question" in line
+        )
+        self.assertIn("the only creation call is TaskCreate", gate)
+        self.assertIn("never creates issues, pull requests, or branches", gate)
+
+    def test_task_board_block_sits_at_its_gate(self):
+        # Point of use: the verbatim block follows its gate and precedes the next
+        # section, so the model meets the question where the gate fires.
+        skill = (SKILLS / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
+        gate = skill.index("task-board question below")
+        block = skill.index(
+            'question: "Create fix tasks on the task board from these findings?"'
+        )
+        next_section = skill.index("### Print methodology")
+        self.assertLess(gate, block)
+        self.assertLess(block, next_section)
+
     def test_every_site_conforms_to_the_schema(self):
         offenders = {}
         for s in sites():
