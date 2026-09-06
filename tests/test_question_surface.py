@@ -174,30 +174,21 @@ class TestQuestionSurface(unittest.TestCase):
                 self.assertEqual(matches[0]["path"], expected_path)
 
     def test_task_board_site_is_pinned_verbatim(self):
-        expected = (
-            "skills/code-gauntlet/SKILL.md",
-            "Create fix tasks on the task board from these findings?",
-            "Task Board",
-            "false",
-            [
+        expected = {
+            "path": "skills/code-gauntlet/SKILL.md",
+            "question": "Create fix tasks on the task board from these findings?",
+            "header": "Task Board",
+            "multiSelect": "false",
+            "options": [
                 (
                     "Yes — create tasks",
                     "One FIX task per delivered finding via TaskCreate (FIX-bug-1, FIX-conv-2, ...)",
                 ),
                 ("No — done", "Finish the review without creating tasks"),
             ],
-        )
+        }
         task_board = next(site for site in sites() if site["header"] == "Task Board")
-        self.assertEqual(
-            (
-                task_board["path"],
-                task_board["question"],
-                task_board["header"],
-                task_board["multiSelect"],
-                task_board["options"],
-            ),
-            expected,
-        )
+        self.assertEqual(task_board, expected)
 
     def test_task_board_gate_states_the_action_boundary(self):
         # The gate paragraph is what the orchestrator reads when it asks; the
