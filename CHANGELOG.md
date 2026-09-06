@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.31.0 (2026-09-06)
+
+### Bug Fixes
+
+- **convention**: Keep the contract grounding paragraph hand-authored only and pin the rule_source
+  vocabulary ([#300](https://github.com/liatrio-labs/claude-code-gauntlet/pull/300),
+  [`0e590b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0e590b4e4e4e2d7699bf01bf86f4c63ed32425d7))
+
+### Chores
+
+- **ci**: Ratchet the bench and JS branches coverage floors from the PR #300 CI measurement
+  ([#300](https://github.com/liatrio-labs/claude-code-gauntlet/pull/300),
+  [`0e590b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0e590b4e4e4e2d7699bf01bf86f4c63ed32425d7))
+
+### Features
+
+- **convention**: Carry convention grounding in a rule_source kind and label citations by kind
+  ([#300](https://github.com/liatrio-labs/claude-code-gauntlet/pull/300),
+  [`0e590b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0e590b4e4e4e2d7699bf01bf86f4c63ed32425d7))
+
+- **convention**: Carry convention grounding in a rule_source kind and label citations by kind
+  (#265) ([#300](https://github.com/liatrio-labs/claude-code-gauntlet/pull/300),
+  [`0e590b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0e590b4e4e4e2d7699bf01bf86f4c63ed32425d7))
+
+
 ## v3.30.0 (2026-09-06)
 
 ### Bug Fixes
