@@ -40,7 +40,8 @@ takes coordinated edits across N files, fix the shape rather than documenting th
   `pyproject.toml` `[dependency-groups]` (pytest, pytest-cov, coverage) is exempt
   and never runs inside the plugin.
 - **Language-agnostic.** Scripts must not assume a language in the reviewed codebase. Use
-  `--exclude-dir` for non-source directories, never `--include=*.py`-style filters.
+  `--exclude-dir` for non-source directories, never `--include=*.py`-style filters. One exception:
+  `render_fix_tasks.py`'s module docstring documents its build-system table carve-out from this rule.
 
 ## Tests
 

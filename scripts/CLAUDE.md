@@ -24,6 +24,8 @@ assume a language in the reviewed codebase.
   fixtures in `tests/fixtures/parity/`. Change one, change both, re-record the fixture.
 - **Numbers crossing to JS must be JS-reproducible.** Both runtimes refuse non-integer or
   out-of-safe-range values rather than write an artifact whose float spelling differs by language.
+- One exception: `render_fix_tasks.py`'s module docstring documents its build-system table carve-out
+  from this rule.
 - **Always emit exactly one receipt line.** `assemble_artifacts.py`'s, `materialize_artifacts.py`'s
   and `report_patches.py`'s `main()` fall back to a hand-built minimal receipt if the real one
   will not serialize: an empty stdout is indistinguishable from a dead executor.
@@ -38,4 +40,4 @@ assume a language in the reviewed codebase.
   bytes fails loudly instead of writing empty files.
 - **Stdout carries the payload or nothing.** Human-facing status lines
   (`Output written…`, `Done:…`) go to stderr. `script_io.write_result` is the
-  shared write path for the three transform CLIs.
+  shared write path for the transform CLIs and `render_fix_tasks.py`.

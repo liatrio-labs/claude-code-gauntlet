@@ -187,13 +187,19 @@ See `references/delivery-guide.md` for the findings JSON schema and validation d
 
 The question itself is the block under the Phase 8 MANDATORY GATE in SKILL.md; it is asked there, verbatim.
 
-"Yes" creates a FIX task for every finding in the delivered set — the `artifactPaths.postReview` entries
-when the user chose "Post to PR", otherwise the same payload's entries as listed in the report. There is
-no third "let me pick" option: hand-selection was the unbounded question loop this issue removed. A user
-who wants a subset says so in chat and you create that subset.
+"Yes" creates one FIX task for every finding in the delivered set. When `artifactPaths.postReview` is
+null, the delivery set was not persisted, so do not present the task-board offer and create no tasks.
 
-Create the tasks using the task-creation flow in `references/delivery-guide.md` (metadata per
-`references/fix-task-metadata.md`). After creating: "Created N tasks from review findings."
+Run this command after a Yes answer:
+
+```bash
+python3 "{plugin_root}/scripts/render_fix_tasks.py" "<artifactPaths.postReview>" --repo-root "<repoRoot>"
+```
+
+Parse stdout as a JSON array and assert that its length equals the delivered count. For each object,
+call `TaskCreate(subject, description)` and then `TaskUpdate(taskId, metadata)`. Stop on any parse,
+count, or call failure and report it. Never fall back to hand composition. After creating, report the
+number of created tasks.
 
 The `ignore:` list is user-edited by hand per the #94 contract (`references/review-md-spec.md` →
 Ignore); no Phase 8 write path exists.
