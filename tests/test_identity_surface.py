@@ -155,6 +155,11 @@ class TestIdentitySurface(unittest.TestCase):
             _codepoints(post_review.SEVERITY_EMOJI_FALLBACK),
             _codepoints(identity["severityEmojiFallback"]),
         )
+        self.assertEqual(post_review.RULE_SOURCE_LABELS, identity["ruleSourceLabels"])
+        self.assertEqual(
+            post_review.RULE_SOURCE_LABEL_FALLBACK,
+            identity["ruleSourceLabelFallback"],
+        )
 
     def test_the_mark_is_the_pinned_codepoint_sequence(self):
         """T-GLYPH: the mark is U+2694 U+FE0F and collides with nothing else rendered."""

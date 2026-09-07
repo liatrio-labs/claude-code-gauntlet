@@ -242,7 +242,8 @@ mini-20260903-204424-e8b3af7; every child echoed `conditionalSchema: true`) 7/14
 6/6, so the aggregate cannot separate the schema change from composition; on the
 PRs common to both eras the paired rate is flat or worse. Read-out instruction: at
 Smoke B and the wave-end paired mini run `python3 -m bench.runner.citations <run_dir>`
-and record both the preamble rate and the `rule_source` histogram.
+and record the convention-dimension `rule_source` histogram for `documented_rule`,
+`code_comment`, `repo_precedent`, and `self_inconsistency`.
 
 code-simplifier malformed StructuredOutput (PR-310 one-off) — not reproduced:
 9 dispatches across the 3 V3.1 measured runs, zero events.

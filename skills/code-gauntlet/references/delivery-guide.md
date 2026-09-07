@@ -26,7 +26,7 @@ from the fields you supply. Its output, for reference:
 **Suggested fix:**
 {suggestion}
 
-**Cited rule:**
+**{rule_source_label}:**
 > {claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}
 
 ```suggestion
@@ -74,6 +74,7 @@ that case.
 
 <!-- generated-from-registry-identity:severity_legend — do not edit; run scripts/generate_contract_requirements.py -->
 Product mark: ⚔️ (Code Gauntlet). Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
+Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment, repo_precedent -> Repo precedent, self_inconsistency -> Inconsistency; unknown values -> Cited rule.
 <!-- /generated-from-registry-identity:severity_legend -->
 
 ### Using post_review.py
@@ -112,7 +113,8 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
             "title": "Finding title",
             "body": "Detailed explanation and context",
             "suggestion": "prose fix advice (optional; renders as a **Suggested fix:** block)",
-            "claude_md_rule": "the cited project rule (optional; renders as **Cited rule:**)",
+            "claude_md_rule": "the cited project rule (optional; heading is keyed by rule_source)",
+            "rule_source": "documented_rule|code_comment|repo_precedent|self_inconsistency (when claude_md_rule is present)",
             "spec_text": "the contradicted spec text (optional; renders as **Cited rule:** when there is no claude_md_rule)",
             "suggested_fix_code": "code block (optional; renders as suggestion)"
         }
@@ -137,7 +139,7 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
   - `title` — one-line finding summary
   - `body` — explanation and context (delivery alias of canonical `description`; see boundary note above)
   - `suggestion` — optional prose fix advice, rendered under a **Suggested fix:** heading. Carried on every finding the pipeline produces (canonical schema), so the delivery JSON should pass it straight through.
-  - `claude_md_rule` / `spec_text` — optional; whichever survives sanitize renders under a **Cited rule:** heading as a blockquote (`claude_md_rule` preferred when both survive). These are how a convention or intent finding shows the reviewer the rule it is measured against.
+  - `claude_md_rule` / `spec_text` — optional; whichever survives sanitize renders under a heading as a blockquote (`claude_md_rule` preferred when both survive). When `claude_md_rule` is rendered, `rule_source` selects **Cited rule**, **Cited comment**, **Repo precedent**, or **Inconsistency**. Unknown or absent values use **Cited rule**. A `spec_text` fallback uses **Cited rule**. The raw `rule_source` value is never rendered.
   - `suggested_fix_code` — optional code block, rendered as a committable GitHub/GitLab suggestion IF it passes `post_review.py`'s deterministic apply-check at the render site; otherwise stripped and the finding falls back to the prose `suggestion`. Emitted by discovery agents when the fix is a byte-exact drop-in replacement, or supplied directly by a caller's own post-review JSON — same gate either way.
   - Every optional field above treats `null`, `""` and whitespace-only identically to absent: no heading is emitted at all.
 - `owner` — repository owner (GitHub org/user or GitLab group)

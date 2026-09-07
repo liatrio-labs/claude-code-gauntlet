@@ -146,8 +146,16 @@ class CitationMeasurementTest(unittest.TestCase):
             "absence_preamble": 1,
             "rate": 1 / 3,
             "by_dimension": {
-                "convention": {"populated": 2, "absence_preamble": 1},
-                "comment_accuracy": {"populated": 1, "absence_preamble": 0},
+                "convention": {
+                    "populated": 2,
+                    "absence_preamble": 1,
+                    "rule_source": {"absent": 1, "repo_precedent": 1},
+                },
+                "comment_accuracy": {
+                    "populated": 1,
+                    "absence_preamble": 0,
+                    "rule_source": {"absent": 1},
+                },
             },
             "rule_source": {"absent": 2, "repo_precedent": 1},
             "per_pr": {"pr-example-repo-1": {"populated": 3, "absence_preamble": 1}},
@@ -157,8 +165,16 @@ class CitationMeasurementTest(unittest.TestCase):
             "absence_preamble": 1,
             "rate": 1 / 2,
             "by_dimension": {
-                "convention": {"populated": 1, "absence_preamble": 1},
-                "comment_accuracy": {"populated": 1, "absence_preamble": 0},
+                "convention": {
+                    "populated": 1,
+                    "absence_preamble": 1,
+                    "rule_source": {"absent": 1},
+                },
+                "comment_accuracy": {
+                    "populated": 1,
+                    "absence_preamble": 0,
+                    "rule_source": {"absent": 1},
+                },
             },
             "rule_source": {"absent": 2},
             "per_pr": {"pr-example-repo-1": {"populated": 2, "absence_preamble": 1}},
@@ -168,6 +184,14 @@ class CitationMeasurementTest(unittest.TestCase):
             {"findings": expected_block, "post_review": expected_post_review_block},
         )
 
+    def test_non_convention_source_does_not_move_convention_histogram(self):
+        measured = citations.measure_run(self.run_dir)["findings"]["by_dimension"]
+        self.assertEqual(
+            measured["convention"]["rule_source"], {"absent": 1, "repo_precedent": 1}
+        )
+        self.assertEqual(measured["comment_accuracy"]["rule_source"], {"absent": 1})
+        self.assertNotIn("repo_precedent", measured["comment_accuracy"]["rule_source"])
+
     def test_cli_prints_human_lines_and_json_round_trips(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -175,11 +199,11 @@ class CitationMeasurementTest(unittest.TestCase):
         lines = stdout.getvalue().splitlines()
         self.assertEqual(
             lines[0],
-            "mini-test findings=1/3 (0.333) post_review=1/2 (0.500) convention=1/2",
+            "mini-test findings=1/3 (0.333) post_review=1/2 (0.500) convention=1/2 convention_rule_source=absent=1,repo_precedent=1",
         )
         self.assertEqual(
             lines[1],
-            "total findings=1/3 (0.333) post_review=1/2 (0.500) convention=1/2",
+            "total findings=1/3 (0.333) post_review=1/2 (0.500) convention=1/2 convention_rule_source=absent=1,repo_precedent=1",
         )
 
         stdout = io.StringIO()

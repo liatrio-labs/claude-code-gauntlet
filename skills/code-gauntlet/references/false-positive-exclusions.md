@@ -69,6 +69,7 @@ If a reasonable senior engineer doing a thorough code review would not comment o
 ## 5. General code quality issues unless explicitly required in CLAUDE.md
 
 Style preferences, naming conventions, and structural opinions should only be flagged if the project's CLAUDE.md (or equivalent configuration) explicitly requires them.
+A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded.
 
 **Examples:**
 

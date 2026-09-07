@@ -392,6 +392,18 @@ class TestPromptInjectionArtifactsMirror(unittest.TestCase):
             f"{reference_name} in: {sorted(offenders)}",
         )
 
+    def test_precedent_exclusion_is_pinned_in_canonical_and_convention_contract(self):
+        sentence = (
+            "A convention finding grounded in an in-repo precedent names the files "
+            "that establish the pattern; a preference with no named precedent stays excluded."
+        )
+        canonical = (
+            REPO / "skills/code-gauntlet/references/false-positive-exclusions.md"
+        ).read_text()
+        convention = (REPO / "agents/conventions-and-intent.md").read_text()
+        self.assertIn(sentence, canonical)
+        self.assertIn(sentence, convention)
+
 
 if __name__ == "__main__":
     unittest.main()

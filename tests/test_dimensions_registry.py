@@ -46,6 +46,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(REPO))
 
+from scripts import generate_contract_requirements as contract_gen  # noqa: E402
 from scripts.filter_findings import _FIELD_RENAMES  # noqa: E402
 
 DELIVERY_GUIDE = REPO / "skills/code-gauntlet/references/delivery-guide.md"
@@ -63,6 +64,7 @@ _DESCRIPTION_KEY = re.compile(r"['\"]description['\"]\s*:")
 PIPELINE_STAMPED = {"origin"}
 
 REPORT_FORMAT = REPO / "skills/code-gauntlet/references/report-format.md"
+CONVENTION_CONTRACT = REPO / "agents" / "conventions-and-intent.md"
 
 # Each agent's output contract is a fenced ```json block. Both blocks count — the template
 # (placeholder values) and the worked example — because a field present in one and missing
@@ -382,6 +384,20 @@ def table_named(tables, keyword):
             f"{keyword!r}, found {hits} among {list(tables)}"
         )
     return tables[hits[0]]
+
+
+def convention_output_requirements(text):
+    """Return the hand-authored Convention output requirements section."""
+    match = re.search(
+        r"^### Convention output requirements\n(?P<body>.*?)(?=^## )",
+        text,
+        re.DOTALL | re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(
+            "conventions-and-intent.md has no bounded Convention output requirements section"
+        )
+    return match.group("body")
 
 
 def claude_md_bullet(anchor):
@@ -1056,6 +1072,38 @@ class TestClaudeMdFieldLists(unittest.TestCase):
             "agents/AGENTS.md's per-dimension extras bullet has drifted from "
             "registry.js DIMENSIONS[].schemaExtra",
         )
+
+
+class TestConventionOutputRequirements(unittest.TestCase):
+    def test_rule_source_vocabulary_and_worked_example_match_registry(self):
+        labels = set(contract_gen.load_registry(str(REPO))["ruleSourceLabels"])
+        section = convention_output_requirements(CONVENTION_CONTRACT.read_text())
+        values = re.search(
+            r"^Allowed values are (?P<values>.+)\.$", section, re.MULTILINE
+        )
+        self.assertIsNotNone(
+            values, "the convention contract must enumerate rule_source values"
+        )
+        listed = set(re.findall(r"`([^`]+)`", values.group("values")))
+        self.assertEqual(
+            labels,
+            listed,
+            "the convention contract's rule_source vocabulary must match registry.js",
+        )
+
+        blocks = contract_blocks("conventions-and-intent")
+        examples = [
+            block
+            for block in blocks
+            if not any(
+                isinstance(value, str) and value.startswith("<")
+                for value in block.values()
+            )
+        ]
+        self.assertEqual(1, len(examples), "expected one worked convention example")
+        value = examples[0].get("rule_source")
+        self.assertIsInstance(value, str)
+        self.assertIn(value, labels)
 
 
 class TestReportFormatFieldTables(unittest.TestCase):

@@ -25,6 +25,7 @@ Input JSON schema:
                 "body": "...",
                 "suggestion": "...",         # optional — **Suggested fix:**; sanitized + redacted; uncapped
                 "claude_md_rule": "...",     # optional — **Cited rule:** (wins over spec_text); sanitized, redacted, capped at 500, blockquoted
+                "rule_source": "documented_rule", # optional — label key when claude_md_rule is rendered
                 "spec_text": "...",          # optional — **Cited rule:** when no claude_md_rule; same treatment
                 "suggested_fix_code": "..."  # optional — the ```suggestion fence: a COMMITTABLE patch
                                              #            replacing exactly lines [line, end_line]. Rendered
@@ -1315,8 +1316,8 @@ def _degraded_entry(filepath, line, finding, valid_lines, line_texts):
 def _key_material_finding(finding):
     """Return the copy whose render seeds a DELIVERY KEY.
 
-    ``suggested_fix_code`` comes off UNCONDITIONALLY — not gated — so a key does
-    not depend on the field at all: it is the same whether the finding ships
+    ``suggested_fix_code`` and ``rule_source`` come off UNCONDITIONALLY — not gated —
+    so a key does not depend on either field at all: it is the same whether the finding ships
     grouped or individually, the same whichever way the apply-check went, and
     byte-equal to the key a pre-#63 run computed for the same finding.
     Prior-delivery dedup (#132/#208) is retry-safe only while keys are stable
@@ -1327,10 +1328,13 @@ def _key_material_finding(finding):
     field, so it is excluded structurally by :func:`key_material_body` calling
     :func:`_finding_sections`, never by stripping a suffix.
     """
-    if not isinstance(finding, dict) or "suggested_fix_code" not in finding:
+    if not isinstance(finding, dict) or not any(
+        field in finding for field in ("suggested_fix_code", "rule_source")
+    ):
         return finding
     stripped = dict(finding)
-    del stripped["suggested_fix_code"]
+    stripped.pop("suggested_fix_code", None)
+    stripped.pop("rule_source", None)
     return stripped
 
 
@@ -1504,6 +1508,13 @@ SEVERITY_EMOJI = {
     "low": "💡",
 }
 SEVERITY_EMOJI_FALLBACK = "💡"
+RULE_SOURCE_LABELS = {
+    "documented_rule": "Cited rule",
+    "code_comment": "Cited comment",
+    "repo_precedent": "Repo precedent",
+    "self_inconsistency": "Inconsistency",
+}
+RULE_SOURCE_LABEL_FALLBACK = "Cited rule"
 # /generated-from-registry-identity:constants
 # One mark per delivered SURFACE, never per element: an inline comment/discussion body
 # carries the trailer once at the end; the summary body carries the header instead, and the
@@ -1544,8 +1555,13 @@ def _finding_sections(finding, *, fence_offsets=None):
     rule_text = _prepared_prose(finding.get("claude_md_rule"), cap=True)
     if not rule_text:
         rule_text = _prepared_prose(finding.get("spec_text"), cap=True)
+    rule_label = RULE_SOURCE_LABEL_FALLBACK
+    if rule_text and _prepared_prose(finding.get("claude_md_rule"), cap=True):
+        source = finding.get("rule_source")
+        if isinstance(source, str):
+            rule_label = RULE_SOURCE_LABELS.get(source, RULE_SOURCE_LABEL_FALLBACK)
     if rule_text:
-        parts += ["", "**Cited rule:**", _blockquote(rule_text)]
+        parts += ["", f"**{rule_label}:**", _blockquote(rule_text)]
 
     # `criticality`, `failure_scenario`, `evidence`, `confidence`, and
     # `dimension` are deliberately NOT rendered into posted PR comments

@@ -53,7 +53,10 @@ _DETAIL_FIELDS_BY_DIMENSION = {
         "criticality",
         "failure_scenario",
     ),
-    "convention": ("claude_md_rule",),
+    "convention": (
+        "rule_source",
+        "claude_md_rule",
+    ),
     "intent": ("spec_text",),
     "comment_accuracy": (),
     "type_design": ("invalid_state_example",),

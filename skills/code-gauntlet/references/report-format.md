@@ -9,6 +9,7 @@ clean outcome is meaningful — it confirms the pipeline ran and found nothing.
 
 <!-- generated-from-registry-identity:severity_legend — do not edit; run scripts/generate_contract_requirements.py -->
 Product mark: ⚔️ (Code Gauntlet). Severity emoji: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
+Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment, repo_precedent -> Repo precedent, self_inconsistency -> Inconsistency; unknown values -> Cited rule.
 Always use the Unicode characters, never GitHub shortcodes (`:red_circle:`) — shortcodes do
 not render in terminal/chat output.
 <!-- /generated-from-registry-identity:severity_legend -->
@@ -73,6 +74,8 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `cross_file_refs` | array | no | Other files involved in the finding |
 | `suggested_fix_code` | string | no | Exact replacement source for `file:line_start-line_end`, emitted by discovery agents only when the fix is a byte-exact, drop-in replacement for exactly those lines. The report body never carries this field — the renderer excludes it and its removal stamps through the registry-derived `reportExtraFields()` projection in `workflows/src/renderReport.js`. Delivery renders it as a committable GitHub/GitLab `suggestion` block after `scripts/post_review.py`'s deterministic apply-check (one-click apply) — non-string, stale, wrong-range, wrong-anchor, or oversized fails the check and the finding downgrades to the prose `suggestion` instead; on GitLab, the render-site apply range is the discussion anchor plus offsets, not the stated range directly, so a span the anchor and offsets can't realize within GitLab's cap downgrades the same way. A fence that passes every per-finding check can still be withheld when an earlier, higher-priority kept fence claims an overlapping apply range in the same file (`overlaps_kept_fence`), because the platforms refuse or mis-apply batches with overlapping suggestions. The report *path* renders the kept patches only through `scripts/report_patches.py`'s sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — a read-only apply-check over the pinned diff, run once at Phase 8; platform render-site constraints and the set-level overlap withholding are not applied there, so a patch listed in that artifact may still downgrade at delivery. |
 
+For convention findings, `rule_source` selects the heading for `claude_md_rule`: `documented_rule` uses **Cited rule**, `code_comment` uses **Cited comment**, `repo_precedent` uses **Repo precedent**, and `self_inconsistency` uses **Inconsistency**. Intent findings include `spec_text` and omit `rule_source`; comment_accuracy findings omit `rule_source`, `claude_md_rule`, and `spec_text`. Unknown or absent values use **Cited rule**. A `spec_text` fallback also uses **Cited rule**. The raw `rule_source` value is never rendered.
+
 ### Per-dimension fields
 
 | Field | Type | Dimension | Required | Description |
@@ -83,6 +86,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `criticality` | number | test_coverage | yes | A 1-10 IMPACT scale, distinct from `confidence`'s 0-100 certainty scale, emitted as a number and never quoted. |
 | `failure_scenario` | string | test_coverage | yes | Concrete scenario the missing coverage would miss |
 | `spec_text` | string | intent | conditional | The spec/requirement text the code is checked against |
+| `rule_source` | string | convention | no | The grounding kind that selects the cited heading when `claude_md_rule` is rendered |
 | `invalid_state_example` | string | type_design | no | A concrete value the current types allow but shouldn't |
 | `behavior_preserved` | string | simplification | yes | Why the simplification is behavior-preserving |
 
@@ -319,7 +323,7 @@ and whitespace-only all count as absent, and no heading is emitted at all.
 **Suggested fix:**
 {suggestion}
 
-**Cited rule:**
+**{rule_source_label}:**
 > {claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}
 
 ```suggestion
