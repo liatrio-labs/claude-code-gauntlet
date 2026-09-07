@@ -8,13 +8,13 @@ In v3 the review stages run **inside** the workflow. Phase 3 is a single `Workfl
 
 ```
 Workflow(
-  scriptPath: "{plugin_root}/workflows/pipeline.js",
+  name: "code-gauntlet:code-gauntlet-pipeline",
   args: { ...the args object assembled in Phase 2... }
 )
 ```
 
 - **One call.** The workflow orchestrates all eight stages and persists artifacts. Do not split work across calls, and do not run any review stage inline in the main session.
-- **`scriptPath` is a repo file path.** The plugin ships `workflows/pipeline.js` as a plain file; there is no native plugin-workflow component, so invocation is always by `scriptPath`. Never copy the bundle into `.claude/workflows/` (avoids version drift).
+- **Registered-name invocation.** The plugin registers this workflow as `code-gauntlet:code-gauntlet-pipeline`; invoke it by that name. Never pass `scriptPath` into the plugin cache or copy the bundle elsewhere, because the CLI's read gate refuses the cache path interactively.
 - **Args arrive as one object.** The workflow normalizes a JSON-string-or-object waist, validates it (`validateArgs`), and rejects an unknown `argsVersion` or a missing required field before any dispatch.
 - **The return is compact:** `{ ok, phaseReached, stats, artifactPaths: { findings, report, postReview, checkpoints }, checkpoints, resolvedPolicy, gaps }`. Full findings/report and the pre-selected delivery payload live on disk at `artifactPaths.*` — Phase 8 reads them.
 

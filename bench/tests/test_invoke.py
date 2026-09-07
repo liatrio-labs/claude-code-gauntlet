@@ -28,6 +28,11 @@ from bench.runner.costs import parse_costs  # noqa: E402
 from bench.runner.invoke import InvokeResult, build_env, invoke_review  # noqa: E402
 
 FAKE = Path(__file__).resolve().parent / "fakes" / "fake_claude.py"
+BUNDLE_BYTES = (REPO_ROOT / "workflows" / "pipeline.js").read_bytes()
+BUNDLE_TEXT = BUNDLE_BYTES.decode("utf-8")
+DIFFERENT_BUNDLE_TEXT = ("x" if BUNDLE_TEXT[0] != "x" else "y") + BUNDLE_TEXT[1:]
+# Hand-typed oracle for the parser, independent of the implementation constant.
+EXPECTED_PIPELINE_META_NAME = "code-gauntlet-pipeline"
 
 PR = {
     "owner": "octo",
@@ -1009,6 +1014,27 @@ class PluginIdentityGuardTest(InvokeTestBase):
         res = self._run("ok")
         self.assertEqual(res.status, "ok")
 
+    def test_session_workflow_record_uses_name_and_bundle_identity(self):
+        res = self._run("by_name_record")
+        self.assertEqual(res.status, "ok", res.reason)
+
+        home = invoke._claude_home(self.run_dir, {})
+        record_path = (
+            home
+            / "config"
+            / "projects"
+            / "fake"
+            / "sess"
+            / "workflows"
+            / "wf_by_name.json"
+        )
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        self.assertEqual(record["workflowName"], "code-gauntlet-pipeline")
+        self.assertEqual(record["script"], BUNDLE_TEXT)
+        self.assertFalse(
+            invoke.script_path_matches_repo(record["scriptPath"], REPO_ROOT)
+        )
+
     def _plant_wf(self, name, script_path, *, nested=False):
         """Plant a wf_*.json under the shared claude-home derived from self.run_dir."""
         home = invoke._claude_home(self.run_dir, os.environ)
@@ -1389,6 +1415,17 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         ver = invoke.read_pipeline_version(REPO_ROOT)
         self.assertRegex(ver, r"^\d+\.\d+\.\d+")
 
+    def test_pipeline_meta_name_matches_source_oracle(self):
+        self.assertEqual(invoke.PIPELINE_META_NAME, EXPECTED_PIPELINE_META_NAME)
+        self.assertEqual(invoke._read_pipeline_meta_name(), EXPECTED_PIPELINE_META_NAME)
+
+    def test_read_pipeline_meta_name_missing_source_returns_none(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(invoke, "REPO_ROOT", Path(tmp)),
+        ):
+            self.assertIsNone(invoke._read_pipeline_meta_name())
+
     def test_parse_identity_echo_extracts_both_fields(self):
         text = (
             "Headless config:\n"
@@ -1410,6 +1447,17 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         got = invoke.parse_identity_echo("pipeline_version=1.0.0 (bundle)\n")
         self.assertEqual(got.get("pipeline_version"), "1.0.0")
         self.assertNotIn("plugin_root", got)
+
+    def test_record_identity_rejects_lone_surrogate_without_raising(self):
+        record = {
+            "workflowName": EXPECTED_PIPELINE_META_NAME,
+            "script": BUNDLE_TEXT + "\ud800",
+        }
+        self.assertFalse(invoke.record_identifies_repo_bundle(record, REPO_ROOT))
+        self.assertIn(
+            "script bytes differ",
+            invoke.workflow_record_identity_reason(record, REPO_ROOT),
+        )
 
     def test_extract_identity_receipt_from_envelope_result(self):
         block = (
@@ -1574,7 +1622,17 @@ class WorkflowFailureTest(unittest.TestCase):
         self.output_dir.mkdir()
         self.pipeline = str(REPO_ROOT / "workflows" / "pipeline.js")
 
-    def _write(self, name, result, *, output_dir=None, script_path=None, args=None):
+    def _write(
+        self,
+        name,
+        result,
+        *,
+        output_dir=None,
+        script_path=None,
+        args=None,
+        workflow_name=None,
+        script=None,
+    ):
         record_args = (
             args
             if args is not None
@@ -1585,16 +1643,16 @@ class WorkflowFailureTest(unittest.TestCase):
             }
         )
         path = self.wf_dir / name
-        path.write_text(
-            json.dumps(
-                {
-                    "scriptPath": script_path or self.pipeline,
-                    "args": record_args,
-                    "result": result,
-                }
-            ),
-            encoding="utf-8",
-        )
+        record = {
+            "scriptPath": script_path or self.pipeline,
+            "args": record_args,
+            "result": result,
+        }
+        if workflow_name is not None:
+            record["workflowName"] = workflow_name
+        if script is not None:
+            record["script"] = script
+        path.write_text(json.dumps(record), encoding="utf-8")
         return path
 
     def _failure(self, baseline=None, output_dir=None):
@@ -1701,6 +1759,126 @@ class WorkflowFailureTest(unittest.TestCase):
             {"ok": False, "error": "", "failingPhase": "checkpoints"},
         )
         self.assertEqual(self._failure(), ("pipeline_failed", "checkpoints"))
+
+    def test_workflow_failure_classifies_by_name_record(self):
+        self._write(
+            "wf_by_name.json",
+            {"ok": False, "error": "pipeline failed"},
+            script_path="/session/workflows/code-gauntlet-pipeline-wf.js",
+            workflow_name=EXPECTED_PIPELINE_META_NAME,
+            script=BUNDLE_TEXT,
+        )
+        self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
+
+    def test_workflow_failure_classifies_by_name_record_without_script_path(self):
+        path = self.wf_dir / "wf_by_name_no_path.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "runId": "wf_by_name_no_path",
+                    "workflowName": EXPECTED_PIPELINE_META_NAME,
+                    "script": BUNDLE_TEXT,
+                    "args": {"outputDir": str(self.output_dir)},
+                    "result": {"ok": False, "error": "pipeline failed"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
+
+    def test_wrapper_record_uses_top_level_identity_and_nested_args(self):
+        for wrapper in ("input", "toolInput"):
+            with self.subTest(wrapper=wrapper):
+                path = self.wf_dir / f"wf_{wrapper}.json"
+                record = {
+                    "runId": path.stem,
+                    "workflowName": EXPECTED_PIPELINE_META_NAME,
+                    "script": BUNDLE_TEXT,
+                    wrapper: {
+                        "scriptPath": "/session/workflows/code-gauntlet-pipeline-wf.js",
+                        "args": {"outputDir": str(self.output_dir), "nonce": "unit"},
+                    },
+                    "result": {"ok": False, "error": "pipeline failed"},
+                }
+                path.write_text(json.dumps(record), encoding="utf-8")
+                self.assertTrue(invoke.record_identifies_repo_bundle(record, REPO_ROOT))
+                self.assertEqual(
+                    self._failure(), ("pipeline_failed", "pipeline failed")
+                )
+                args_only = dict(record)
+                args_only[wrapper] = {"args": record[wrapper]["args"]}
+                args_only_path = self.wf_dir / f"wf_{wrapper}_args_only.json"
+                args_only_path.write_text(json.dumps(args_only), encoding="utf-8")
+                self.assertIs(invoke._record_args_holder(args_only), args_only[wrapper])
+                self.assertEqual(
+                    invoke._workflow_failure(
+                        self.home,
+                        {},
+                        REPO_ROOT,
+                        self.output_dir,
+                        records=[(args_only_path, args_only)],
+                    ),
+                    ("pipeline_failed", "pipeline failed"),
+                )
+
+    def _identity_text(self):
+        return "\n".join(
+            [
+                *(f"{key}={value}" for key, value in invoke.EXPECTED_ECHO.items()),
+                f"pipeline_version={invoke.read_pipeline_version(REPO_ROOT)} (bundle)",
+                f"plugin_root={REPO_ROOT} (resolved)",
+            ]
+        )
+
+    def _check_identity_record(self, record):
+        return invoke._check_plugin_identity(
+            self._identity_text(),
+            None,
+            (),
+            self.home,
+            {},
+            REPO_ROOT,
+            records=[(self.wf_dir / "wf_identity.json", record)],
+        )
+
+    def test_plugin_identity_accepts_by_name_record(self):
+        error = self._check_identity_record(
+            {
+                "scriptPath": "/session/workflows/code-gauntlet-pipeline-wf.js",
+                "workflowName": EXPECTED_PIPELINE_META_NAME,
+                "script": BUNDLE_TEXT,
+            }
+        )
+        self.assertIsNone(error, error)
+
+    def test_plugin_identity_rejects_different_by_name_bundle(self):
+        error = self._check_identity_record(
+            {
+                "scriptPath": "/session/workflows/code-gauntlet-pipeline-wf.js",
+                "workflowName": EXPECTED_PIPELINE_META_NAME,
+                "script": DIFFERENT_BUNDLE_TEXT,
+            }
+        )
+        self.assertIsNotNone(error)
+        self.assertIn("script bytes differ", error)
+        self.assertTrue(error.startswith("scriptPath '/session/workflows"), error)
+
+    def test_pipeline_bundle_hash_missing_file_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-pipeline.js"
+            self.assertIsNone(invoke.pipeline_bundle_sha256(tmp, missing))
+
+    def test_identity_reason_loads_expected_hash_when_not_supplied(self):
+        record = {
+            "workflowName": EXPECTED_PIPELINE_META_NAME,
+            "script": BUNDLE_TEXT + "different",
+        }
+        with patch.object(
+            invoke, "pipeline_bundle_sha256", return_value="not-the-script-hash"
+        ) as load_hash:
+            reason = invoke.workflow_record_identity_reason(record, REPO_ROOT)
+        self.assertIn("script bytes differ", reason)
+        load_hash.assert_called_once_with(REPO_ROOT, None)
 
 
 if __name__ == "__main__":

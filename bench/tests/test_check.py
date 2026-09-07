@@ -23,6 +23,10 @@ from bench.runner import check, citations, invoke  # noqa: E402
 from scripts.await_workflow import ARTIFACT_BASENAMES  # noqa: E402
 
 PIPELINE = str(REPO_ROOT / "workflows" / "pipeline.js")
+BUNDLE_TEXT = (REPO_ROOT / "workflows" / "pipeline.js").read_text(encoding="utf-8")
+DIFFERENT_BUNDLE_TEXT = ("x" if BUNDLE_TEXT[0] != "x" else "y") + BUNDLE_TEXT[1:]
+# Hand-typed oracle for the parser, independent of the implementation constant.
+EXPECTED_PIPELINE_META_NAME = "code-gauntlet-pipeline"
 
 
 def _write_json(path, obj):
@@ -90,7 +94,13 @@ def _ok_finding(origin="new"):
     }
 
 
-def _wf_record(script_path=PIPELINE, *, include_verify=True):
+def _wf_record(
+    script_path=PIPELINE,
+    *,
+    include_verify=True,
+    workflow_name=EXPECTED_PIPELINE_META_NAME,
+    script=BUNDLE_TEXT,
+):
     """Shape of a per-child Workflow record (the real scriptPath carrier).
 
     Real skill runs also persist ``args.verify.scriptPath`` → verify_findings.py;
@@ -99,6 +109,8 @@ def _wf_record(script_path=PIPELINE, *, include_verify=True):
     rec = {
         "runId": "wf_test-0001",
         "scriptPath": script_path,
+        "workflowName": workflow_name,
+        "script": script,
         "status": "completed",
     }
     if include_verify:
@@ -186,7 +198,13 @@ def _build_ok_run(
             )
         if include_workflow:
             _write_json(
-                pr_dir / "workflows" / "wf_test-0001.json", _wf_record(script_path)
+                pr_dir / "workflows" / "wf_test-0001.json",
+                _wf_record(
+                    script_path,
+                    script=BUNDLE_TEXT
+                    if script_path == PIPELINE
+                    else DIFFERENT_BUNDLE_TEXT,
+                ),
             )
         # Result envelope only — no tool_uses / scriptPath (matches production raw.json).
         _write_json(
@@ -859,7 +877,116 @@ class CheckRunTest(unittest.TestCase):
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
-        self.assertTrue(any("scriptPath" in f for f in result["failures"]))
+        self.assertTrue(
+            any(
+                "scriptPath" in f
+                and "path not repo bundle" in f
+                and "script bytes differ" in f
+                for f in result["failures"]
+            ),
+            result["failures"],
+        )
+
+    def test_pipeline_meta_name_matches_source_oracle(self):
+        self.assertEqual(invoke.PIPELINE_META_NAME, EXPECTED_PIPELINE_META_NAME)
+        self.assertEqual(invoke._read_pipeline_meta_name(), EXPECTED_PIPELINE_META_NAME)
+
+    def _rewrite_workflow_record(self, **updates):
+        path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record.update(updates)
+        _write_json(path, record)
+
+    def test_g4_by_name_record_passes_with_session_script_path(self):
+        _build_ok_run(self.run_dir)
+        self._rewrite_workflow_record(
+            scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
+            workflowName=EXPECTED_PIPELINE_META_NAME,
+            script=BUNDLE_TEXT,
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+
+    def test_g4_by_name_record_rejects_wrong_workflow_name(self):
+        _build_ok_run(self.run_dir)
+        self._rewrite_workflow_record(
+            scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
+            workflowName="wrong-pipeline",
+            script=BUNDLE_TEXT,
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("workflowName mismatch" in f for f in result["failures"]),
+            result["failures"],
+        )
+
+    def test_g4_by_name_record_rejects_missing_script(self):
+        _build_ok_run(self.run_dir)
+        self._rewrite_workflow_record(
+            scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
+            workflowName=EXPECTED_PIPELINE_META_NAME,
+            script=None,
+        )
+        path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        del record["script"]
+        _write_json(path, record)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("script bytes differ" in f for f in result["failures"]),
+            result["failures"],
+        )
+
+    def test_g4_by_name_record_rejects_different_bundle(self):
+        _build_ok_run(self.run_dir)
+        self._rewrite_workflow_record(
+            scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
+            workflowName=EXPECTED_PIPELINE_META_NAME,
+            script=DIFFERENT_BUNDLE_TEXT,
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("script bytes differ" in f for f in result["failures"]),
+            result["failures"],
+        )
+
+    def test_g4_by_name_record_rejects_lone_surrogate_without_raising(self):
+        _build_ok_run(self.run_dir)
+        self._rewrite_workflow_record(
+            scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
+            workflowName=EXPECTED_PIPELINE_META_NAME,
+            script=BUNDLE_TEXT + "\ud800",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("script bytes differ" in f for f in result["failures"]),
+            result["failures"],
+        )
+
+    def test_g4_wrapper_record_uses_top_level_identity(self):
+        for wrapper in ("input", "toolInput"):
+            with self.subTest(wrapper=wrapper):
+                _build_ok_run(self.run_dir)
+                path = (
+                    self.run_dir
+                    / "pr-example-repo-1"
+                    / "workflows"
+                    / "wf_test-0001.json"
+                )
+                record = json.loads(path.read_text(encoding="utf-8"))
+                args = record.pop("args")
+                record.pop("scriptPath")
+                record[wrapper] = {
+                    "scriptPath": "/session/workflows/code-gauntlet-pipeline-wf.js",
+                    "args": args,
+                }
+                _write_json(path, record)
+                result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+                self.assertTrue(result["ok"], result["failures"])
 
     def test_g4_echo_identity_mismatch_fails(self):
         """Clean scriptPath but stale identity receipt in raw.json .result fails G4."""
@@ -958,6 +1085,82 @@ class CheckRunTest(unittest.TestCase):
             },
         )
         self.assertEqual(check._extract_script_paths(wf), [PIPELINE])
+
+    def test_unparseable_wf_record_without_identity_fields_fails_g4(self):
+        _build_ok_run(self.run_dir)
+        wf_path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
+        wf_path.write_text(
+            '{\n  "runId": "wf_test-0001",\n  "status": "completed"\n',
+            encoding="utf-8",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["failures"],
+            [
+                "pr-example-repo-1: wf_test-0001.json has no scriptPath or "
+                "script field found"
+            ],
+        )
+
+    def test_valid_wf_record_without_identity_fields_fails_g4(self):
+        _build_ok_run(self.run_dir)
+        wf_path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
+        _write_json(wf_path, {"runId": "wf_test-0001", "status": "completed"})
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["failures"],
+            [
+                "pr-example-repo-1: wf_test-0001.json has no scriptPath or "
+                "script field found"
+            ],
+        )
+
+    def test_unparseable_wf_record_with_repo_script_path_passes_g4(self):
+        _build_ok_run(self.run_dir)
+        wf_path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
+        wf_path.write_text(
+            "{\n"
+            '  "runId": "wf_test-0001",\n'
+            '  "scriptPath": ' + json.dumps(PIPELINE) + ",\n"
+            '  "status": "completed"\n',
+            encoding="utf-8",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+
+    def test_script_path_stats_count_legacy_corrupt_and_by_name_records(self):
+        cases = {
+            "legacy": 1,
+            "corrupt": 1,
+            "by_name": 0,
+        }
+        for name, expected_paths in cases.items():
+            case_dir = Path(self.tmp) / name
+            _build_ok_run(case_dir)
+            wf_dir = case_dir / "pr-example-repo-1" / "workflows"
+            wf_path = wf_dir / "wf_test-0001.json"
+            if name == "corrupt":
+                wf_path.write_text(
+                    '{"runId":"wf_corrupt","scriptPath":'
+                    + json.dumps(PIPELINE)
+                    + ',"status":"completed"',
+                    encoding="utf-8",
+                )
+            elif name == "by_name":
+                _write_json(
+                    wf_path,
+                    {
+                        "runId": "wf_by_name",
+                        "workflowName": EXPECTED_PIPELINE_META_NAME,
+                        "script": BUNDLE_TEXT,
+                        "status": "completed",
+                    },
+                )
+            result = check.check_run(case_dir, repo_root=REPO_ROOT)
+            self.assertTrue(result["ok"], result["failures"])
+            self.assertEqual(result["stats"]["script_paths"], expected_paths)
 
     def test_missing_workflow_records_fails_g4(self):
         """Without an echo identity receipt, missing wf records still hard-fail G4."""

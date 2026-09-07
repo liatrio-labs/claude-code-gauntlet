@@ -11,10 +11,10 @@ Gates (aligned with ``bench/MEASUREMENT.md``):
   G3  Zero ``origin=unknown`` findings; no writer no-write-proof / partial-artifacts
   G4  Plugin identity — Headless config echo receipts (``pipeline_version``,
       ``plugin_root``) are primary; a complete valid receipt is sufficient when
-      no ``workflows/wf_*.json`` records were collected. When records exist,
-      top-level Workflow ``scriptPath`` is also checked (defense-in-depth).
-      Without a complete echo receipt, collected workflow records are required
-      (scriptPath-only fallback).
+      no ``workflows/wf_*.json`` records were collected. When records exist, the
+      echoed ``script`` bytes and ``workflowName`` identify the repo bundle when
+      present; legacy ``scriptPath`` records remain accepted. Without a complete
+      echo receipt, collected workflow records are required.
   G5  ≥1 delivered inline comment across the run set
   G6  Artifact completeness — G2 still parses every findings artifact it finds,
       while G6 requires the four ARTIFACT_BASENAMES members to form one coherent
@@ -36,9 +36,13 @@ from bench.runner import citations
 from bench.runner.invoke import (
     extract_identity_receipt,
     parse_result_envelope,
+    pipeline_bundle_sha256,
     read_pipeline_version,
+    record_identifies_repo_bundle,
     script_path_matches_repo,
     scriptpath_from_record,
+    workflow_record_fields,
+    workflow_record_identity_reason,
 )
 from scripts.await_workflow import ARTIFACT_BASENAMES
 
@@ -292,10 +296,9 @@ def _validate_payload_fields(payload, label):
 def _extract_script_paths(path):
     """Return the Workflow-tool ``scriptPath`` from a ``wf_*.json`` record.
 
-    G4 checks plugin identity via the child Workflow invocation path
-    (``workflows/pipeline.js``). Nested paths such as ``args.verify.scriptPath``
-    (``scripts/verify_findings.py``) are intentionally ignored — see
-    :func:`bench.runner.invoke.scriptpath_from_record`.
+    This remains the path-only fallback for corrupt records. Nested paths such as
+    ``args.verify.scriptPath`` (``scripts/verify_findings.py``) are intentionally
+    ignored — see :func:`bench.runner.invoke.scriptpath_from_record`.
     """
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     try:
@@ -641,7 +644,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 f"{label}: writer degrade signal in {hit} (no-write-proof / partial-artifacts)"
             )
 
-        # --- G4: plugin identity (echo receipt primary; scriptPath defense-in-depth) ---
+        # --- G4: plugin identity (echo receipt primary; record identity for Workflow records) ---
         id_failures, identity_ok = _check_echo_identity(pr_dir, repo_root, label)
         failures.extend(id_failures)
 
@@ -658,18 +661,53 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 )
         else:
             script_paths = []
+            expected_bundle_hash = pipeline_bundle_sha256(repo_root, expected_pipeline)
             for wf_path in wf_records:
-                script_paths.extend(_extract_script_paths(wf_path))
-            stats["script_paths"] += len(script_paths)
-            if not script_paths:
-                failures.append(
-                    f"{label}: workflows/wf_*.json present but no scriptPath field found"
-                )
-            for sp in script_paths:
-                if not _script_path_ok(sp, expected_pipeline, repo_root=repo_root):
+                text = Path(wf_path).read_text(encoding="utf-8", errors="replace")
+                try:
+                    record = json.loads(text)
+                except (json.JSONDecodeError, ValueError):
+                    paths = _extract_script_paths(wf_path)
+                    script_paths.extend(paths)
+                    if not paths:
+                        failures.append(
+                            f"{label}: {wf_path.name} has no scriptPath or script field found"
+                        )
+                    for sp in paths:
+                        if not _script_path_ok(
+                            sp, expected_pipeline, repo_root=repo_root
+                        ):
+                            failures.append(
+                                f"{label}: {wf_path.name} scriptPath {sp!r} "
+                                f"is not under {str(expected_pipeline)!r} "
+                                "(path not repo bundle)"
+                            )
+                    continue
+                sp, _workflow_name, script = workflow_record_fields(record)
+                if isinstance(sp, str) and sp:
+                    script_paths.append(sp)
+                if not sp and not script:
                     failures.append(
-                        f"{label}: scriptPath {sp!r} is not under {str(expected_pipeline)!r}"
+                        f"{label}: {wf_path.name} has no scriptPath or script field found"
                     )
+                    continue
+                if not record_identifies_repo_bundle(
+                    record,
+                    repo_root,
+                    expected_pipeline=expected_pipeline,
+                    expected_bundle_hash=expected_bundle_hash,
+                ):
+                    reason = workflow_record_identity_reason(
+                        record,
+                        repo_root,
+                        expected_pipeline=expected_pipeline,
+                        expected_bundle_hash=expected_bundle_hash,
+                    )
+                    failures.append(
+                        f"{label}: {wf_path.name} scriptPath {sp!r} "
+                        f"does not identify repo bundle ({reason})"
+                    )
+            stats["script_paths"] += len(script_paths)
 
     stats["delivered_comments"] = total_comments
 

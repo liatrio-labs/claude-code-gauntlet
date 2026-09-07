@@ -39,7 +39,7 @@ and STOP. Do not attempt to reproduce the pipeline inline — the clean break to
 
 ### Plugin root resolution
 
-Resolve `plugin_root` from this SKILL.md's path — go up two directories from `skills/code-gauntlet/`. **Never search the filesystem for it.** A recorded run (2026-07-30) that resolved it with `find / -type d -name code-gauntlet` picked version **3.2.3** out of a four-version plugin cache while **3.3.1** was the installed one, and reviewed the PR with stale scripts and a stale bundle. The path you were loaded from is the only correct answer; a `find` hit is a coin flip between every version ever installed. The workflow entry is `{plugin_root}/workflows/pipeline.js`; retained scripts (`verify_findings.py`, `post_review.py`) live under `{plugin_root}/scripts/`. Confirming `{plugin_root}/scripts/`, `{plugin_root}/agents/`, and `{plugin_root}/workflows/` exist happens inside the Phase 1 composite call below — not as its own round trip.
+Resolve `plugin_root` from this SKILL.md's path — go up two directories from `skills/code-gauntlet/`. **Never search the filesystem for it.** A recorded run (2026-07-30) that resolved it with `find / -type d -name code-gauntlet` picked version **3.2.3** out of a four-version plugin cache while **3.3.1** was the installed one, and reviewed the PR with stale scripts and a stale bundle. The path you were loaded from is the only correct answer; a `find` hit is a coin flip between every version ever installed. The plugin registers the workflow as `code-gauntlet:code-gauntlet-pipeline`; `{plugin_root}/workflows/pipeline.js` is its source and the identity receipt's authority. Never pass that path to `Workflow`: the CLI's read gate refuses a `scriptPath` in the plugin cache during interactive runs. Retained scripts (`verify_findings.py`, `post_review.py`) live under `{plugin_root}/scripts/`. Confirming `{plugin_root}/scripts/`, `{plugin_root}/agents/`, and `{plugin_root}/workflows/` exist happens inside the Phase 1 composite call below — not as its own round trip.
 
 > **Shell hygiene — binds here, the first site that needs it.** User shells commonly alias `ls`/`cp`/`grep` to incompatible replacements: an `ls`→`eza --icons` alias broke exactly this directory listing on a recorded run, because this reminder previously appeared only in Phase 2, after the damage was already done. In every Bash call in this skill, prefer `git ls-files` / `find` for file enumeration, and prefix coreutils with `command` (`command ls`, `command cp`) when you must use them. This sentence is deliberately repeated verbatim at the Phase 2 composite below rather than cross-referenced once — the same duplication doctrine for the false-positive exclusion list and complete-read contract for which `agents/AGENTS.md` says "Do not refactor them into a shared read." A future refactor that collapses this into a single cross-reference reintroduces the exact failure it fixes.
 
@@ -513,7 +513,7 @@ place the decision could silently drop.
 
 ```
 Workflow(
-  scriptPath: "{plugin_root}/workflows/pipeline.js",
+  name: "code-gauntlet:code-gauntlet-pipeline",
   args: { ...the args object assembled in Phase 2... }
 )
 ```

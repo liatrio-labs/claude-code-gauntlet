@@ -24,6 +24,7 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
   all_degraded   -> normal echo + an all-degraded failure record; no payload.
   all_degraded_gap_only -> normal echo + a gap-only all-degraded failure record; no payload.
   pipeline_failed -> normal echo + a non-degraded failure record; no payload.
+  by_name_record -> normal echo + a successful session-style Workflow record + payload.
   all_degraded_then_ok -> failure and successful records + payload.
   all_degraded_stale_script -> an all-degraded record from a stale plugin path.
   all_degraded_no_echo -> an all-degraded record without any echo; no payload.
@@ -69,6 +70,42 @@ def _pipeline_version(plugin_dir):
         return "0.0.0"
     m = re.search(r"const\s+PIPELINE_VERSION\s*=\s*['\"]([^'\"]+)['\"]", text)
     return m.group(1) if m else "0.0.0"
+
+
+def _pipeline_workflow_name(plugin_dir):
+    path = os.path.join(plugin_dir, "workflows", "src", "pipeline_entry.js")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    match = re.search(
+        r"export\s+const\s+meta\s*=\s*\{\s*name:\s*['\"]([^'\"]+)['\"]",
+        text,
+    )
+    return match.group(1) if match else None
+
+
+def _pipeline_script(plugin_dir):
+    path = os.path.join(plugin_dir, "workflows", "pipeline.js")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _session_workflow_script_path(config_dir):
+    claude_home = os.path.dirname(config_dir)
+    return os.path.join(
+        claude_home,
+        "projects",
+        "fake",
+        "sess",
+        "workflows",
+        "scripts",
+        "code-gauntlet-pipeline-wf_1.js",
+    )
 
 
 def echo_lines(plugin_root=None, pipeline_version=None):
@@ -227,7 +264,14 @@ def _plant_stale_workflow_record():
         json.dump(payload, fh)
 
 
-def _write_workflow_record(name, result, script_path=None, args_as_json=False):
+def _write_workflow_record(
+    name,
+    result,
+    script_path=None,
+    args_as_json=False,
+    workflow_name=None,
+    script=None,
+):
     """Write a realistic Workflow record for pipeline-envelope classification tests."""
     config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
     if not config_dir:
@@ -235,6 +279,7 @@ def _write_workflow_record(name, result, script_path=None, args_as_json=False):
     wf_dir = os.path.join(config_dir, "projects", "fake", "sess", "workflows")
     os.makedirs(wf_dir, exist_ok=True)
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    plugin_dir = _plugin_dir_from_argv()
     args = {
         "outputDir": os.environ.get("CODE_GAUNTLET_OUTPUT_DIR", ""),
         "nonce": "fake",
@@ -248,6 +293,12 @@ def _write_workflow_record(name, result, script_path=None, args_as_json=False):
         "status": "completed",
         "scriptPath": script_path
         or os.path.join(_plugin_dir_from_argv(), "workflows", "pipeline.js"),
+        "workflowName": (
+            workflow_name
+            if workflow_name is not None
+            else _pipeline_workflow_name(plugin_dir)
+        ),
+        "script": script if script is not None else _pipeline_script(plugin_dir),
         "args": json.dumps(args) if args_as_json else args,
         "result": result,
     }
@@ -350,6 +401,7 @@ def main():
         "all_degraded",
         "all_degraded_gap_only",
         "pipeline_failed",
+        "by_name_record",
         "all_degraded_then_ok",
         "all_degraded_stale_script",
         "all_degraded_no_echo",
@@ -368,6 +420,14 @@ def main():
                     "artifactPaths": {},
                 },
             )
+        elif mode == "by_name_record":
+            _write_workflow_record(
+                "wf_by_name",
+                {"ok": True, "phaseReached": "report"},
+                script_path=_session_workflow_script_path(
+                    os.environ.get("CLAUDE_CONFIG_DIR", "")
+                ),
+            )
         elif mode == "all_degraded_then_ok":
             _write_workflow_record("wf_alldeg", _all_degraded_result())
             _write_workflow_record(
@@ -383,6 +443,7 @@ def main():
                 "wf_stale_alldeg",
                 _all_degraded_result(),
                 script_path="/home/ubuntu/.claude/plugins/cache/stale/workflows/pipeline.js",
+                workflow_name="stale-plugin-pipeline",
             )
         else:
             _write_workflow_record(
