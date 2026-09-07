@@ -15,6 +15,7 @@ reads the child's Workflow-record return envelope for pipeline failures, and loc
 dry-run payload. See CLAUDE.md: stdlib-only.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -30,6 +31,7 @@ from bench.runner.costs import parse_costs
 from bench.runner.ledger import API_AUTH_MODE, AUTH_MODES, SUBSCRIPTION_AUTH_MODE
 
 __all__ = [
+    "PIPELINE_META_NAME",
     "InvokeResult",
     "_claude_home",
     "api_key_helper_files",
@@ -39,18 +41,40 @@ __all__ = [
     "invoke_review",
     "parse_identity_echo",
     "parse_result_envelope",
+    "pipeline_bundle_sha256",
     "pr_dir_name",
     "read_pipeline_version",
+    "record_identifies_repo_bundle",
     "resolve_claude_home",
     "script_path_matches_repo",
     "scriptpath_from_record",
     "snapshot_workflow_records",
     "supersede_attempt_artifacts",
     "supersede_workflow_records",
+    "workflow_record_fields",
 ]
 
 # Repo root == the code-gauntlet plugin dir. bench/runner/invoke.py -> parents[2].
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_PIPELINE_META_NAME_RE = re.compile(
+    r"export\s+const\s+meta\s*=\s*\{\s*name:\s*['\"]([^'\"]+)['\"]"
+)
+
+
+def _read_pipeline_meta_name():
+    path = REPO_ROOT / "workflows" / "src" / "pipeline_entry.js"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = _PIPELINE_META_NAME_RE.search(text)
+    return match.group(1) if match else None
+
+
+# Read from the source entry at import time so the registered workflow name has one
+# source of truth and cannot drift from the bundle's metadata.
+PIPELINE_META_NAME = _read_pipeline_meta_name()
 
 # The metered-key .env (repo-root-relative). build_env loads ANTHROPIC_API_KEY from
 # here into every child env. A module global so tests can repoint it at a tempfile.
@@ -952,6 +976,43 @@ def scriptpath_from_record(data):
     return holder.get("scriptPath") if holder is not None else None
 
 
+def workflow_record_fields(data):
+    """Return ``(scriptPath, workflowName, script)`` from a parsed Workflow record.
+
+    Workflow records normally carry these fields in the same top-level object as the
+    tool input. Older CLI shapes may wrap the tool input under ``input``,
+    ``toolInput``, or ``parameters``. The top-level name/script are retained as a
+    fallback because newer records can place those receipt fields beside a wrapper.
+    """
+    if not isinstance(data, dict):
+        return (None, None, None)
+    holder = _record_tool_input(data)
+    if holder is None and any(
+        data.get(key) is not None for key in ("scriptPath", "workflowName", "script")
+    ):
+        holder = data
+    if holder is None:
+        return (None, data.get("workflowName"), data.get("script"))
+    return (
+        holder.get("scriptPath"),
+        holder.get("workflowName", data.get("workflowName")),
+        holder.get("script", data.get("script")),
+    )
+
+
+def pipeline_bundle_sha256(repo_root, expected_pipeline=None):
+    """Return the SHA-256 hex digest of the expected repo bundle, or None."""
+    path = (
+        Path(expected_pipeline)
+        if expected_pipeline is not None
+        else Path(repo_root) / "workflows" / "pipeline.js"
+    )
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 def script_path_matches_repo(script_path, repo_root, expected_pipeline=None):
     """True when *script_path* identifies ``{repo_root}/workflows/pipeline.js``.
 
@@ -977,6 +1038,61 @@ def script_path_matches_repo(script_path, repo_root, expected_pipeline=None):
         return (Path(repo_root) / candidate).resolve() == expected
     except OSError:
         return False
+
+
+def record_identifies_repo_bundle(
+    record, repo_root, expected_pipeline=None, *, expected_bundle_hash=None
+):
+    """True when a Workflow record identifies the repo's pipeline bundle.
+
+    Older records are identified by a ``scriptPath`` resolving to the repo bundle.
+    Name-based records use the workflow metadata name plus the exact UTF-8 bundle
+    bytes echoed in their ``script`` field. The expected hash is optional so callers
+    can cache one repo read for a batch without sharing a cache across repo roots.
+    """
+    script_path, workflow_name, script = workflow_record_fields(record)
+    if isinstance(script_path, str) and script_path_matches_repo(
+        script_path, repo_root, expected_pipeline=expected_pipeline
+    ):
+        return True
+    if workflow_name != PIPELINE_META_NAME or not isinstance(script, str):
+        return False
+    if expected_bundle_hash is None:
+        expected_bundle_hash = pipeline_bundle_sha256(repo_root, expected_pipeline)
+    if expected_bundle_hash is None:
+        return False
+    return hashlib.sha256(script.encode("utf-8")).hexdigest() == expected_bundle_hash
+
+
+def workflow_record_identity_reason(
+    record, repo_root, expected_pipeline=None, *, expected_bundle_hash=None
+):
+    """Return concise reasons why a parsed Workflow record is not repo-identified."""
+    script_path, workflow_name, script = workflow_record_fields(record)
+    if not script_path and not script:
+        return "no scriptPath or script field"
+    reasons = []
+    if not (
+        isinstance(script_path, str)
+        and script_path_matches_repo(
+            script_path, repo_root, expected_pipeline=expected_pipeline
+        )
+    ):
+        reasons.append("path not repo bundle")
+    if workflow_name != PIPELINE_META_NAME:
+        reasons.append("workflowName mismatch")
+    if not isinstance(script, str):
+        reasons.append("script bytes differ")
+    else:
+        if expected_bundle_hash is None:
+            expected_bundle_hash = pipeline_bundle_sha256(repo_root, expected_pipeline)
+        if (
+            expected_bundle_hash is None
+            or hashlib.sha256(script.encode("utf-8")).hexdigest()
+            != expected_bundle_hash
+        ):
+            reasons.append("script bytes differ")
+    return "; ".join(reasons) or "not repo bundle"
 
 
 # Backward-compatible private alias used by existing tests.
@@ -1008,17 +1124,24 @@ def _workflow_failure(
 
     Workflow records are filtered by both the checked-out pipeline identity and the
     per-invocation output directory. A later successful record supersedes failures from
-    the same invocation, regardless of record filename ordering.
+    the same invocation, regardless of record filename ordering. New records identify
+    the pipeline by workflow name plus bundle content; older path records remain valid.
     """
     expected_output = os.path.realpath(str(output_dir))
     success = False
     failure: tuple[str, str] | None = None
     if records is None:
         records = _iter_new_wf_records(claude_home, baseline)
+    expected_pipeline = Path(repo_root) / "workflows" / "pipeline.js"
+    expected_bundle_hash = pipeline_bundle_sha256(repo_root, expected_pipeline)
     for _path, data in records:
         holder = _record_tool_input(data)
-        script_path = holder.get("scriptPath") if holder is not None else None
-        if not script_path or not script_path_matches_repo(script_path, repo_root):
+        if not record_identifies_repo_bundle(
+            data,
+            repo_root,
+            expected_pipeline=expected_pipeline,
+            expected_bundle_hash=expected_bundle_hash,
+        ):
             continue
 
         args = holder.get("args")
@@ -1082,9 +1205,27 @@ def _check_plugin_identity(
         return f"plugin_root resolve failed: {exc}"
     if got_root != exp_root:
         return f"plugin_root {str(got_root)!r} != expected {str(exp_root)!r}"
-    for sp in _new_workflow_script_paths(claude_home, wf_baseline, records=records):
-        if not script_path_matches_repo(sp, repo_root):
-            return f"scriptPath {sp!r} is not repo workflows/pipeline.js"
+    if records is None:
+        records = list(_iter_new_wf_records(claude_home, wf_baseline))
+    expected_pipeline = Path(repo_root) / "workflows" / "pipeline.js"
+    expected_bundle_hash = pipeline_bundle_sha256(repo_root, expected_pipeline)
+    for _path, data in records:
+        if not record_identifies_repo_bundle(
+            data,
+            repo_root,
+            expected_pipeline=expected_pipeline,
+            expected_bundle_hash=expected_bundle_hash,
+        ):
+            script_path, _workflow_name, _script = workflow_record_fields(data)
+            reason = workflow_record_identity_reason(
+                data,
+                repo_root,
+                expected_pipeline=expected_pipeline,
+                expected_bundle_hash=expected_bundle_hash,
+            )
+            if script_path:
+                return f"scriptPath {script_path!r} is not repo workflows/pipeline.js ({reason})"
+            return f"Workflow record has no scriptPath ({reason})"
     return None
 
 
@@ -1368,8 +1509,8 @@ def invoke_review(
             reason="config_echo_mismatch",
         )
 
-    # 4) Plugin identity receipt: echo + new Workflow scriptPath records must resolve
-    #    to this checkout before the run can score.
+    # 4) Plugin identity receipt: echo + new Workflow records must identify this
+    #    checkout before the run can score.
     identity_err = _check_plugin_identity(
         raw_text,
         envelope,

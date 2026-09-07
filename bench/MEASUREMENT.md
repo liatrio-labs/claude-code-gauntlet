@@ -90,10 +90,12 @@ python3 bench/run.py --check <RUN_ID>
    `plugin_root`, those receipts are validated against the repo's
    `workflows/pipeline.js` version and plugin root (primary). A complete valid
    echo receipt is sufficient even when no `pr_dir/workflows/wf_*.json` records
-   were collected. When records exist, top-level Workflow `scriptPath` is also
-   checked (defense in depth). Without a complete echo receipt, G4 requires
-   collected workflow records and falls back to scriptPath-only (not `raw.json`,
-   which is only the result envelope — parsed tolerantly for preamble/stderr).
+   were collected. When records exist, the record's `script` bytes and
+   `workflowName` identify the repo bundle (primary when present);
+   `scriptPath` resolving to the repo bundle remains accepted for older records.
+   Without a complete echo receipt, G4 requires collected workflow records and
+   falls back to the record identity check (or scriptPath-only for corrupt
+   records).
 5. ≥1 delivered comment across the run set
 6. Artifact completeness — findings, report, post-review, and checkpoint-all are
    each present exactly once, non-empty, and JSON members are parseable

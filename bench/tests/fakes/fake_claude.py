@@ -71,6 +71,29 @@ def _pipeline_version(plugin_dir):
     return m.group(1) if m else "0.0.0"
 
 
+def _pipeline_workflow_name(plugin_dir):
+    path = os.path.join(plugin_dir, "workflows", "src", "pipeline_entry.js")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    match = re.search(
+        r"export\s+const\s+meta\s*=\s*\{\s*name:\s*['\"]([^'\"]+)['\"]",
+        text,
+    )
+    return match.group(1) if match else None
+
+
+def _pipeline_script(plugin_dir):
+    path = os.path.join(plugin_dir, "workflows", "pipeline.js")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
 def echo_lines(plugin_root=None, pipeline_version=None):
     root = plugin_root if plugin_root is not None else _plugin_dir_from_argv()
     ver = pipeline_version if pipeline_version is not None else _pipeline_version(root)
@@ -227,7 +250,14 @@ def _plant_stale_workflow_record():
         json.dump(payload, fh)
 
 
-def _write_workflow_record(name, result, script_path=None, args_as_json=False):
+def _write_workflow_record(
+    name,
+    result,
+    script_path=None,
+    args_as_json=False,
+    workflow_name=None,
+    script=None,
+):
     """Write a realistic Workflow record for pipeline-envelope classification tests."""
     config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
     if not config_dir:
@@ -235,6 +265,7 @@ def _write_workflow_record(name, result, script_path=None, args_as_json=False):
     wf_dir = os.path.join(config_dir, "projects", "fake", "sess", "workflows")
     os.makedirs(wf_dir, exist_ok=True)
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    plugin_dir = _plugin_dir_from_argv()
     args = {
         "outputDir": os.environ.get("CODE_GAUNTLET_OUTPUT_DIR", ""),
         "nonce": "fake",
@@ -248,6 +279,12 @@ def _write_workflow_record(name, result, script_path=None, args_as_json=False):
         "status": "completed",
         "scriptPath": script_path
         or os.path.join(_plugin_dir_from_argv(), "workflows", "pipeline.js"),
+        "workflowName": (
+            workflow_name
+            if workflow_name is not None
+            else _pipeline_workflow_name(plugin_dir)
+        ),
+        "script": script if script is not None else _pipeline_script(plugin_dir),
         "args": json.dumps(args) if args_as_json else args,
         "result": result,
     }
@@ -383,6 +420,7 @@ def main():
                 "wf_stale_alldeg",
                 _all_degraded_result(),
                 script_path="/home/ubuntu/.claude/plugins/cache/stale/workflows/pipeline.js",
+                workflow_name="stale-plugin-pipeline",
             )
         else:
             _write_workflow_record(

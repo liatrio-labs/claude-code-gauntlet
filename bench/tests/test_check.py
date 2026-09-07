@@ -23,6 +23,8 @@ from bench.runner import check, citations, invoke  # noqa: E402
 from scripts.await_workflow import ARTIFACT_BASENAMES  # noqa: E402
 
 PIPELINE = str(REPO_ROOT / "workflows" / "pipeline.js")
+BUNDLE_TEXT = (REPO_ROOT / "workflows" / "pipeline.js").read_text(encoding="utf-8")
+DIFFERENT_BUNDLE_TEXT = ("x" if BUNDLE_TEXT[0] != "x" else "y") + BUNDLE_TEXT[1:]
 
 
 def _write_json(path, obj):
@@ -90,7 +92,13 @@ def _ok_finding(origin="new"):
     }
 
 
-def _wf_record(script_path=PIPELINE, *, include_verify=True):
+def _wf_record(
+    script_path=PIPELINE,
+    *,
+    include_verify=True,
+    workflow_name=invoke.PIPELINE_META_NAME,
+    script=BUNDLE_TEXT,
+):
     """Shape of a per-child Workflow record (the real scriptPath carrier).
 
     Real skill runs also persist ``args.verify.scriptPath`` → verify_findings.py;
@@ -99,6 +107,8 @@ def _wf_record(script_path=PIPELINE, *, include_verify=True):
     rec = {
         "runId": "wf_test-0001",
         "scriptPath": script_path,
+        "workflowName": workflow_name,
+        "script": script,
         "status": "completed",
     }
     if include_verify:
@@ -186,7 +196,13 @@ def _build_ok_run(
             )
         if include_workflow:
             _write_json(
-                pr_dir / "workflows" / "wf_test-0001.json", _wf_record(script_path)
+                pr_dir / "workflows" / "wf_test-0001.json",
+                _wf_record(
+                    script_path,
+                    script=BUNDLE_TEXT
+                    if script_path == PIPELINE
+                    else DIFFERENT_BUNDLE_TEXT,
+                ),
             )
         # Result envelope only — no tool_uses / scriptPath (matches production raw.json).
         _write_json(
@@ -859,7 +875,77 @@ class CheckRunTest(unittest.TestCase):
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
-        self.assertTrue(any("scriptPath" in f for f in result["failures"]))
+        self.assertTrue(
+            any(
+                "scriptPath" in f
+                and "path not repo bundle" in f
+                and "script bytes differ" in f
+                for f in result["failures"]
+            ),
+            result["failures"],
+        )
+
+    def _rewrite_workflow_record(self, **updates):
+        path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record.update(updates)
+        _write_json(path, record)
+
+    def test_g4_by_name_record_passes_with_session_script_path(self):
+        _build_ok_run(self.run_dir)
+        self._rewrite_workflow_record(
+            scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
+            workflowName=invoke.PIPELINE_META_NAME,
+            script=BUNDLE_TEXT,
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+
+    def test_g4_by_name_record_rejects_wrong_workflow_name(self):
+        _build_ok_run(self.run_dir)
+        self._rewrite_workflow_record(
+            scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
+            workflowName="wrong-pipeline",
+            script=BUNDLE_TEXT,
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("workflowName mismatch" in f for f in result["failures"]),
+            result["failures"],
+        )
+
+    def test_g4_by_name_record_rejects_missing_script(self):
+        _build_ok_run(self.run_dir)
+        self._rewrite_workflow_record(
+            scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
+            workflowName=invoke.PIPELINE_META_NAME,
+            script=None,
+        )
+        path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        del record["script"]
+        _write_json(path, record)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("script bytes differ" in f for f in result["failures"]),
+            result["failures"],
+        )
+
+    def test_g4_by_name_record_rejects_different_bundle(self):
+        _build_ok_run(self.run_dir)
+        self._rewrite_workflow_record(
+            scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
+            workflowName=invoke.PIPELINE_META_NAME,
+            script=DIFFERENT_BUNDLE_TEXT,
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("script bytes differ" in f for f in result["failures"]),
+            result["failures"],
+        )
 
     def test_g4_echo_identity_mismatch_fails(self):
         """Clean scriptPath but stale identity receipt in raw.json .result fails G4."""

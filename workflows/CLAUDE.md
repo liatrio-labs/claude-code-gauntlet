@@ -5,7 +5,7 @@
 # workflows/
 
 The v3 review pipeline. `pipeline.js` is invoked by the skill through the `Workflow` tool
-(`scriptPath` + args); it has no disk, shell, or `process.env`.
+(name + args); it has no disk, shell, or `process.env`.
 
 ## Runtime
 

@@ -9,10 +9,10 @@ replayed all 11 completed agents from cache with **zero re-billed tokens**.
 ## 1. `resumeFromRunId` first
 
 Every Workflow invocation returns a `runId` (also visible in `/workflows`). Re-launch the
-SAME script with the SAME args plus `resumeFromRunId`:
+same registered workflow with the same args plus `resumeFromRunId`:
 
 ```
-Workflow({ scriptPath: "<plugin_root>/workflows/pipeline.js", args: <the identical args waist>, resumeFromRunId: "wf_..." })
+Workflow({ name: "code-gauntlet:code-gauntlet-pipeline", args: <the identical args waist>, resumeFromRunId: "wf_..." })
 ```
 
 - Completed `agent()` calls with unchanged (prompt, opts) return their cached results
