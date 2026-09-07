@@ -1420,9 +1420,11 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         self.assertEqual(invoke._read_pipeline_meta_name(), EXPECTED_PIPELINE_META_NAME)
 
     def test_read_pipeline_meta_name_missing_source_returns_none(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(invoke, "REPO_ROOT", Path(tmp)):
-                self.assertIsNone(invoke._read_pipeline_meta_name())
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(invoke, "REPO_ROOT", Path(tmp)),
+        ):
+            self.assertIsNone(invoke._read_pipeline_meta_name())
 
     def test_parse_identity_echo_extracts_both_fields(self):
         text = (
