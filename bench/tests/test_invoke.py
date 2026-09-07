@@ -1419,6 +1419,11 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         self.assertEqual(invoke.PIPELINE_META_NAME, EXPECTED_PIPELINE_META_NAME)
         self.assertEqual(invoke._read_pipeline_meta_name(), EXPECTED_PIPELINE_META_NAME)
 
+    def test_read_pipeline_meta_name_missing_source_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(invoke, "REPO_ROOT", Path(tmp)):
+                self.assertIsNone(invoke._read_pipeline_meta_name())
+
     def test_parse_identity_echo_extracts_both_fields(self):
         text = (
             "Headless config:\n"
@@ -1440,6 +1445,17 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         got = invoke.parse_identity_echo("pipeline_version=1.0.0 (bundle)\n")
         self.assertEqual(got.get("pipeline_version"), "1.0.0")
         self.assertNotIn("plugin_root", got)
+
+    def test_record_identity_rejects_lone_surrogate_without_raising(self):
+        record = {
+            "workflowName": EXPECTED_PIPELINE_META_NAME,
+            "script": BUNDLE_TEXT + "\ud800",
+        }
+        self.assertFalse(invoke.record_identifies_repo_bundle(record, REPO_ROOT))
+        self.assertIn(
+            "script bytes differ",
+            invoke.workflow_record_identity_reason(record, REPO_ROOT),
+        )
 
     def test_extract_identity_receipt_from_envelope_result(self):
         block = (
@@ -1768,6 +1784,41 @@ class WorkflowFailureTest(unittest.TestCase):
         )
         self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
 
+    def test_wrapper_record_uses_top_level_identity_and_nested_args(self):
+        for wrapper in ("input", "toolInput"):
+            with self.subTest(wrapper=wrapper):
+                path = self.wf_dir / f"wf_{wrapper}.json"
+                record = {
+                    "runId": path.stem,
+                    "workflowName": EXPECTED_PIPELINE_META_NAME,
+                    "script": BUNDLE_TEXT,
+                    wrapper: {
+                        "scriptPath": "/session/workflows/code-gauntlet-pipeline-wf.js",
+                        "args": {"outputDir": str(self.output_dir), "nonce": "unit"},
+                    },
+                    "result": {"ok": False, "error": "pipeline failed"},
+                }
+                path.write_text(json.dumps(record), encoding="utf-8")
+                self.assertTrue(invoke.record_identifies_repo_bundle(record, REPO_ROOT))
+                self.assertEqual(
+                    self._failure(), ("pipeline_failed", "pipeline failed")
+                )
+                args_only = dict(record)
+                args_only[wrapper] = {"args": record[wrapper]["args"]}
+                args_only_path = self.wf_dir / f"wf_{wrapper}_args_only.json"
+                args_only_path.write_text(json.dumps(args_only), encoding="utf-8")
+                self.assertIs(invoke._record_args_holder(args_only), args_only[wrapper])
+                self.assertEqual(
+                    invoke._workflow_failure(
+                        self.home,
+                        {},
+                        REPO_ROOT,
+                        self.output_dir,
+                        records=[(args_only_path, args_only)],
+                    ),
+                    ("pipeline_failed", "pipeline failed"),
+                )
+
     def _identity_text(self):
         return "\n".join(
             [
@@ -1808,6 +1859,24 @@ class WorkflowFailureTest(unittest.TestCase):
         )
         self.assertIsNotNone(error)
         self.assertIn("script bytes differ", error)
+        self.assertTrue(error.startswith("scriptPath '/session/workflows"), error)
+
+    def test_pipeline_bundle_hash_missing_file_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-pipeline.js"
+            self.assertIsNone(invoke.pipeline_bundle_sha256(tmp, missing))
+
+    def test_identity_reason_loads_expected_hash_when_not_supplied(self):
+        record = {
+            "workflowName": EXPECTED_PIPELINE_META_NAME,
+            "script": BUNDLE_TEXT + "different",
+        }
+        with patch.object(
+            invoke, "pipeline_bundle_sha256", return_value="not-the-script-hash"
+        ) as load_hash:
+            reason = invoke.workflow_record_identity_reason(record, REPO_ROOT)
+        self.assertIn("script bytes differ", reason)
+        load_hash.assert_called_once_with(REPO_ROOT, None)
 
 
 if __name__ == "__main__":

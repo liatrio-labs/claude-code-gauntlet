@@ -1003,12 +1003,13 @@ def workflow_record_fields(data):
     if not isinstance(data, dict):
         return (None, None, None)
     holder = _record_tool_input(data)
-    if holder is None and any(
-        data.get(key) is not None for key in ("scriptPath", "workflowName", "script")
-    ):
-        holder = data
     if holder is None:
-        return (None, data.get("workflowName"), data.get("script"))
+        if any(
+            data.get(key) is not None
+            for key in ("scriptPath", "workflowName", "script")
+        ):
+            return (None, data.get("workflowName"), data.get("script"))
+        return (None, None, None)
     return (
         holder.get("scriptPath"),
         holder.get("workflowName", data.get("workflowName")),
@@ -1077,7 +1078,10 @@ def record_identifies_repo_bundle(
         expected_bundle_hash = pipeline_bundle_sha256(repo_root, expected_pipeline)
     if expected_bundle_hash is None:
         return False
-    return hashlib.sha256(script.encode("utf-8")).hexdigest() == expected_bundle_hash
+    return (
+        hashlib.sha256(script.encode("utf-8", errors="surrogatepass")).hexdigest()
+        == expected_bundle_hash
+    )
 
 
 def workflow_record_identity_reason(
@@ -1104,7 +1108,9 @@ def workflow_record_identity_reason(
             expected_bundle_hash = pipeline_bundle_sha256(repo_root, expected_pipeline)
         if (
             expected_bundle_hash is None
-            or hashlib.sha256(script.encode("utf-8")).hexdigest()
+            or hashlib.sha256(
+                script.encode("utf-8", errors="surrogatepass")
+            ).hexdigest()
             != expected_bundle_hash
         ):
             reasons.append("script bytes differ")
