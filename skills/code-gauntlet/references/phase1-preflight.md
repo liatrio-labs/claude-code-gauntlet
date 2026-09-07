@@ -202,8 +202,10 @@ Resolved config:
   review_md=absent (discovery)
 ```
 
-`source ∈ env|default|fixed|discovery`. A headless run prints `Headless config:` instead and never this
-block; the two are mutually exclusive and both satisfy the Phase 2 gate.
+`source ∈ env|default|fixed|discovery`. Each `value` is the printed token as a string; an unset
+interactive cap is `"null"`, while `limits.deliveryCap` remains the typed `null`. A headless run
+prints `Headless config:` instead and never this block; the two are mutually exclusive and both
+satisfy the Phase 2 gate.
 
 ---
 

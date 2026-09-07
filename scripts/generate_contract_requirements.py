@@ -72,7 +72,7 @@ IDENTITY_FENCES = {
     # D9's chat convention names the mark in prose. A hand-authored fourth copy would
     # break the one-edit property (a registry edit + a generator run + a hand edit
     # nothing turns red on), so it is generated like the rest.
-    "skills/code-gauntlet/SKILL.md": ["chat_identity"],
+    "skills/code-gauntlet/SKILL.md": ["chat_identity", "config_receipt"],
 }
 
 # English phrasing for fields that carry a dimension-conditional requirement. Not derivable
@@ -87,8 +87,7 @@ _CONDITIONAL_NOUNS = {
 def load_registry(repo_root=REPO_ROOT):
     """The live schema declaration, imported from the ESM source (mirrors the test helper)."""
     node_src = (
-        "const t = v => typeof v === 'string' ? v : v.type;"
-        "import('./workflows/src/registry.js').then(m => console.log(JSON.stringify({"
+        "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/args.js')]).then(([m, a]) => console.log(JSON.stringify({"
         "  required: m.FINDING_REQUIRED,"
         "  canonicalFields: Object.keys(m.FINDING_PROP_TYPES),"
         "  dimensions: m.DIMENSIONS.map(d => ({"
@@ -103,6 +102,7 @@ def load_registry(repo_root=REPO_ROOT):
         "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
         "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
         "  agents: m.AGENTS,"
+        "  knobs: a.KNOB_REGISTRY.map(d => ({ key: d.key, modes: d.modes, example: d.example })),"
         "})))"
     )
     out = subprocess.run(
@@ -622,6 +622,32 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
                 + "carries no other"
             ),
             "emoji, except severity emoji when listing findings.",
+        ]
+    if symbol == "config_receipt":
+
+        def receipt(mode):
+            rendered = {}
+            for knob in identity["knobs"]:
+                if mode not in knob["modes"]:
+                    continue
+                value, source = knob["example"][mode]
+                rendered[knob["key"]] = {"value": value, "source": source}
+            return json.dumps(rendered, indent=4, ensure_ascii=False).splitlines()
+
+        return [
+            'Every `configEcho` value is the printed token as a string; an unset interactive cap is the string `"null"`, and a JSON null there is accepted, spelled `"null"`, and disclosed as a gap; `limits.deliveryCap` carries the typed null.',
+            "",
+            "**Interactive receipt:**",
+            "",
+            "```json",
+            *receipt("interactive"),
+            "```",
+            "",
+            "**Headless receipt:**",
+            "",
+            "```json",
+            *receipt("headless"),
+            "```",
         ]
     if symbol == "inline_legend":
         return [

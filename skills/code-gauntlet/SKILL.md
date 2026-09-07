@@ -372,7 +372,7 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // ONLY when the 2e trivial-scope gate asked; omit otherwise
   policy: { tier, subagentModel, provider, gateway },
-  configEcho: { key: { value, source } },  // REQUIRED; exact resolved knob receipt, in registry order when rendered
+  configEcho: { key: { value: "<printed token, a string>", source } },  // REQUIRED; see the generated config receipt below
   pluginRoot,  // REQUIRED absolute plugin root; script paths must stay under {pluginRoot}/scripts/
   reviewScope: { requested: "incremental" | "full", kind: "incremental" | "full", since: string | null,
                  commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,
@@ -417,6 +417,76 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   }
 }
 ```
+
+<!-- generated-from-registry-identity:config_receipt — do not edit; run scripts/generate_contract_requirements.py -->
+Every `configEcho` value is the printed token as a string; an unset interactive cap is the string `"null"`, and a JSON null there is accepted, spelled `"null"`, and disclosed as a gap; `limits.deliveryCap` carries the typed null.
+
+**Interactive receipt:**
+
+```json
+{
+    "model_tier": {
+        "value": "optimized",
+        "source": "fixed"
+    },
+    "pr_comment_cap": {
+        "value": "null",
+        "source": "default"
+    },
+    "delivery_tier": {
+        "value": "all",
+        "source": "default"
+    },
+    "review_md": {
+        "value": "absent",
+        "source": "discovery"
+    }
+}
+```
+
+**Headless receipt:**
+
+```json
+{
+    "model_tier": {
+        "value": "optimized",
+        "source": "default"
+    },
+    "delivery": {
+        "value": "markdown",
+        "source": "default"
+    },
+    "post_mode": {
+        "value": "dry-run",
+        "source": "default"
+    },
+    "pr_comment_cap": {
+        "value": "6",
+        "source": "default"
+    },
+    "delivery_tier": {
+        "value": "all",
+        "source": "default"
+    },
+    "draft_policy": {
+        "value": "review",
+        "source": "default"
+    },
+    "reviewed_policy": {
+        "value": "full",
+        "source": "default"
+    },
+    "pr_not_found_policy": {
+        "value": "error",
+        "source": "default"
+    },
+    "trivial_scope": {
+        "value": "full",
+        "source": "default"
+    }
+}
+```
+<!-- /generated-from-registry-identity:config_receipt -->
 
 `mode` is `"headless"` under `CODE_GAUNTLET_HEADLESS=1`, else `"interactive"`. Never call `new Date()` inside the workflow — `generatedAt` is the only clock.
 

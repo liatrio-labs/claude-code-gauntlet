@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
-  stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, LIMIT_DEFAULTS,
+  stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, nullRespellGap, LIMIT_DEFAULTS,
   resolveReviewConfig, computeLightEligible, nullToleranceRejectedKeys, KNOB_REGISTRY, safeReceiptValue,
 } from '../src/args.js';
 
@@ -198,6 +198,18 @@ test('T182-ARGS: every registry receipt value rule and source rule is focused', 
   assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, review_md: { value: 'present', source: 'discovery' } } }).ok, false);
   const interactiveInvalid = validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, review_md: { value: 'other', source: 'discovery' } } });
   assert.ok(interactiveInvalid.errors.some((error) => error.includes('configEcho.review_md.value')));
+});
+
+test('T303-ARGS: every registry example satisfies its value and source rules', () => {
+  for (const descriptor of KNOB_REGISTRY) {
+    for (const mode of descriptor.modes) {
+      const example = descriptor.example[mode];
+      assert.ok(Array.isArray(example), `${descriptor.key} needs a ${mode} example`);
+      const [value, source] = example;
+      assert.equal(descriptor.valueRule(value, mode), true, `${mode} ${descriptor.key} example value`);
+      assert.ok(descriptor.allowedSources[mode].includes(source), `${mode} ${descriptor.key} example source`);
+    }
+  }
 });
 
 test('T182-ARGS: receipt lockstep rejects mismatches before any stage can dispatch', () => {
@@ -907,6 +919,57 @@ test('normalizeArgsReport reports drops on both the object and JSON-string forms
   const r2 = normalizeArgsReport(JSON.stringify({ ...good, exclusionPatterns: null, persist: null }));
   assert.deepEqual(r2.dropped.slice().sort(), ['exclusionPatterns', 'persist']);
   assert.deepEqual(normalizeArgsReport(good).dropped, []);
+});
+
+test('T303-ARGS: interactive JSON null cap is respelled, validated, and reported without mutation', () => {
+  const input = {
+    ...good,
+    limits: { ...good.limits, deliveryCap: null },
+    configEcho: { ...good.configEcho, pr_comment_cap: { value: null, source: 'default' } },
+  };
+  const before = JSON.parse(JSON.stringify(input));
+  const normalized = normalizeArgs(input);
+  const report = normalizeArgsReport(input);
+
+  assert.equal(normalized.configEcho.pr_comment_cap.value, 'null');
+  assert.deepEqual(report.respelled, ['configEcho.pr_comment_cap.value']);
+  assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
+  assert.deepEqual(input, before, 'normalization must not mutate the caller object');
+  assert.equal(nullRespellGap(report.respelled[0]).includes('printed token "null"'), true);
+});
+
+test('T303-ARGS: headless JSON null cap is still refused', () => {
+  const headless = {
+    ...good,
+    mode: 'headless',
+    limits: { ...good.limits, deliveryCap: null },
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'default' },
+      delivery: { value: 'markdown', source: 'default' },
+      post_mode: { value: 'dry-run', source: 'default' },
+      pr_comment_cap: { value: null, source: 'default' },
+      delivery_tier: { value: 'all', source: 'default' },
+      draft_policy: { value: 'review', source: 'default' },
+      reviewed_policy: { value: 'full', source: 'default' },
+      pr_not_found_policy: { value: 'error', source: 'default' },
+      trivial_scope: { value: 'full', source: 'default' },
+    },
+  };
+  const report = normalizeArgsReport(JSON.stringify(headless));
+  assert.deepEqual(report.respelled, []);
+  const result = validateArgs(report.args);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('configEcho.pr_comment_cap.value')));
+});
+
+test('T303-ARGS: interactive JSON null on model_tier is still refused', () => {
+  const input = {
+    ...good,
+    configEcho: { ...good.configEcho, model_tier: { value: null, source: 'fixed' } },
+  };
+  const normalized = normalizeArgs(input);
+  assert.equal(normalized.configEcho.model_tier.value, null);
+  assert.equal(validateArgs(normalized).ok, false);
 });
 test('parseEntryArgs does NOT strip stamped nulls — runWith owns the strip so it can disclose it', () => {
   // If the entry stripped first, runWith would see an already-clean waist and the silent

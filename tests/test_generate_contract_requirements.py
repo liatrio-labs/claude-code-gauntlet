@@ -311,6 +311,67 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "self_inconsistency": "SI",
         },
         "ruleSourceLabelFallback": "RF",
+        "knobs": [
+            {
+                "key": "model_tier",
+                "modes": ["headless", "interactive"],
+                "example": {
+                    "headless": ["optimized", "default"],
+                    "interactive": ["optimized", "fixed"],
+                },
+            },
+            {
+                "key": "delivery",
+                "modes": ["headless"],
+                "example": {"headless": ["markdown", "default"]},
+            },
+            {
+                "key": "post_mode",
+                "modes": ["headless"],
+                "example": {"headless": ["dry-run", "default"]},
+            },
+            {
+                "key": "pr_comment_cap",
+                "modes": ["headless", "interactive"],
+                "example": {
+                    "headless": ["6", "default"],
+                    "interactive": ["null", "default"],
+                },
+            },
+            {
+                "key": "delivery_tier",
+                "modes": ["headless", "interactive"],
+                "example": {
+                    "headless": ["all", "default"],
+                    "interactive": ["all", "default"],
+                },
+            },
+            {
+                "key": "draft_policy",
+                "modes": ["headless"],
+                "example": {"headless": ["review", "default"]},
+            },
+            {
+                "key": "reviewed_policy",
+                "modes": ["headless"],
+                "example": {"headless": ["full", "default"]},
+            },
+            {
+                "key": "pr_not_found_policy",
+                "modes": ["headless"],
+                "example": {"headless": ["error", "default"]},
+            },
+            {
+                "key": "trivial_scope",
+                "modes": ["headless"],
+                "example": {"headless": ["full", "default"]},
+            },
+            {
+                "key": "review_md",
+                "modes": ["interactive"],
+                "example": {"interactive": ["absent", "discovery"]},
+            },
+        ],
     }
 
     # Every declared fence body, hand-typed against the placeholder IDENTITY above.
@@ -440,6 +501,75 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "The final delivery summary opens with `MARK NAME` on its first line and "
             "carries no other\n"
             "emoji, except severity emoji when listing findings."
+        ),
+        ("skills/code-gauntlet/SKILL.md", "config_receipt"): (
+            'Every `configEcho` value is the printed token as a string; an unset interactive cap is the string `"null"`, and a JSON null there is accepted, spelled `"null"`, and disclosed as a gap; `limits.deliveryCap` carries the typed null.\n'
+            "\n"
+            "**Interactive receipt:**\n"
+            "\n"
+            "```json\n"
+            "{\n"
+            '    "model_tier": {\n'
+            '        "value": "optimized",\n'
+            '        "source": "fixed"\n'
+            "    },\n"
+            '    "pr_comment_cap": {\n'
+            '        "value": "null",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "delivery_tier": {\n'
+            '        "value": "all",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "review_md": {\n'
+            '        "value": "absent",\n'
+            '        "source": "discovery"\n'
+            "    }\n"
+            "}\n"
+            "```\n"
+            "\n"
+            "**Headless receipt:**\n"
+            "\n"
+            "```json\n"
+            "{\n"
+            '    "model_tier": {\n'
+            '        "value": "optimized",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "delivery": {\n'
+            '        "value": "markdown",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "post_mode": {\n'
+            '        "value": "dry-run",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "pr_comment_cap": {\n'
+            '        "value": "6",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "delivery_tier": {\n'
+            '        "value": "all",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "draft_policy": {\n'
+            '        "value": "review",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "reviewed_policy": {\n'
+            '        "value": "full",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "pr_not_found_policy": {\n'
+            '        "value": "error",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "trivial_scope": {\n'
+            '        "value": "full",\n'
+            '        "source": "default"\n'
+            "    }\n"
+            "}\n"
+            "```"
         ),
     }
 

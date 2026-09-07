@@ -361,7 +361,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 | `changedFiles` | the changed-file array, by value (Summarize bucketing; the workflow has no disk access) |
 | `changedLines` | total changed line count, by value (Summarize bucketing threshold) |
 | `riskTable` | the Phase 2e per-file risk classification, by value, as `[{ path, risk }]` — `path` set must equal `changedFiles` exactly (missing or extra paths fail loud; see Phase 2e's risk-level table for the `risk` contract) |
-| `configEcho` | the required keyed receipt `{ key: { value, source } }` for every mode-specific knob; values and sources must satisfy the headless/interactive contract and mirror the resolved decisions |
+| `configEcho` | the required keyed receipt `{ key: { value, source } }` for every mode-specific knob; each `value` is the printed token as a string, and values and sources must satisfy the headless/interactive contract and mirror the resolved decisions |
 | `pluginRoot` | the required absolute POSIX path to this plugin; `persist.assembleScriptPath` and `verify.scriptPath`, when present, must start with `{pluginRoot}/scripts/` |
 | `reviewScope` | `{ requested, kind, since, commits, detector }`, copied from the prior-review state; `detector` is `null` for local/branch targets, otherwise copy `previously_reviewed`, `sha_resolvable`, `head_advanced`, `sha_is_ancestor`, `incremental_safe`, and `error` (the first detector error or `null`) verbatim. `kind=incremental` requires `requested=incremental` and `detector.incremental_safe=true`; an incremental request that becomes full retains the detector so the renderer can derive the fallback reason |
 | `policy` | `{ tier, subagentModel, provider, gateway }` — see below |
