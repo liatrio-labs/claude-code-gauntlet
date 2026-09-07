@@ -24,6 +24,7 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
   all_degraded   -> normal echo + an all-degraded failure record; no payload.
   all_degraded_gap_only -> normal echo + a gap-only all-degraded failure record; no payload.
   pipeline_failed -> normal echo + a non-degraded failure record; no payload.
+  by_name_record -> normal echo + a successful session-style Workflow record + payload.
   all_degraded_then_ok -> failure and successful records + payload.
   all_degraded_stale_script -> an all-degraded record from a stale plugin path.
   all_degraded_no_echo -> an all-degraded record without any echo; no payload.
@@ -92,6 +93,19 @@ def _pipeline_script(plugin_dir):
             return fh.read()
     except OSError:
         return None
+
+
+def _session_workflow_script_path(config_dir):
+    claude_home = os.path.dirname(config_dir)
+    return os.path.join(
+        claude_home,
+        "projects",
+        "fake",
+        "sess",
+        "workflows",
+        "scripts",
+        "code-gauntlet-pipeline-wf_1.js",
+    )
 
 
 def echo_lines(plugin_root=None, pipeline_version=None):
@@ -387,6 +401,7 @@ def main():
         "all_degraded",
         "all_degraded_gap_only",
         "pipeline_failed",
+        "by_name_record",
         "all_degraded_then_ok",
         "all_degraded_stale_script",
         "all_degraded_no_echo",
@@ -404,6 +419,14 @@ def main():
                     "failingPhase": "checkpoints",
                     "artifactPaths": {},
                 },
+            )
+        elif mode == "by_name_record":
+            _write_workflow_record(
+                "wf_by_name",
+                {"ok": True, "phaseReached": "report"},
+                script_path=_session_workflow_script_path(
+                    os.environ.get("CLAUDE_CONFIG_DIR", "")
+                ),
             )
         elif mode == "all_degraded_then_ok":
             _write_workflow_record("wf_alldeg", _all_degraded_result())

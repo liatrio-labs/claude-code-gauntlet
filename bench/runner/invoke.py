@@ -970,6 +970,22 @@ def _record_tool_input(data):
     return None
 
 
+def _record_args_holder(data):
+    """Return the object carrying a Workflow record's ``args``, or None."""
+    holder = _record_tool_input(data)
+    if holder is not None:
+        return holder
+    if not isinstance(data, dict):
+        return None
+    if "args" in data:
+        return data
+    for key in ("input", "toolInput", "parameters"):
+        nested = data.get(key)
+        if isinstance(nested, dict) and "args" in nested:
+            return nested
+    return None
+
+
 def scriptpath_from_record(data):
     """Return the Workflow-tool ``scriptPath`` from a parsed ``wf_*.json`` dict."""
     holder = _record_tool_input(data)
@@ -1135,7 +1151,6 @@ def _workflow_failure(
     expected_pipeline = Path(repo_root) / "workflows" / "pipeline.js"
     expected_bundle_hash = pipeline_bundle_sha256(repo_root, expected_pipeline)
     for _path, data in records:
-        holder = _record_tool_input(data)
         if not record_identifies_repo_bundle(
             data,
             repo_root,
@@ -1144,6 +1159,9 @@ def _workflow_failure(
         ):
             continue
 
+        holder = _record_args_holder(data)
+        if holder is None:
+            continue
         args = holder.get("args")
         if isinstance(args, str):
             try:

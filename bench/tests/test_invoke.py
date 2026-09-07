@@ -1014,6 +1014,27 @@ class PluginIdentityGuardTest(InvokeTestBase):
         res = self._run("ok")
         self.assertEqual(res.status, "ok")
 
+    def test_session_workflow_record_uses_name_and_bundle_identity(self):
+        res = self._run("by_name_record")
+        self.assertEqual(res.status, "ok", res.reason)
+
+        home = invoke._claude_home(self.run_dir, {})
+        record_path = (
+            home
+            / "config"
+            / "projects"
+            / "fake"
+            / "sess"
+            / "workflows"
+            / "wf_by_name.json"
+        )
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        self.assertEqual(record["workflowName"], "code-gauntlet-pipeline")
+        self.assertEqual(record["script"], BUNDLE_TEXT)
+        self.assertFalse(
+            invoke.script_path_matches_repo(record["scriptPath"], REPO_ROOT)
+        )
+
     def _plant_wf(self, name, script_path, *, nested=False):
         """Plant a wf_*.json under the shared claude-home derived from self.run_dir."""
         home = invoke._claude_home(self.run_dir, os.environ)
@@ -1728,6 +1749,22 @@ class WorkflowFailureTest(unittest.TestCase):
             script_path="/session/workflows/code-gauntlet-pipeline-wf.js",
             workflow_name=EXPECTED_PIPELINE_META_NAME,
             script=BUNDLE_TEXT,
+        )
+        self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
+
+    def test_workflow_failure_classifies_by_name_record_without_script_path(self):
+        path = self.wf_dir / "wf_by_name_no_path.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "runId": "wf_by_name_no_path",
+                    "workflowName": EXPECTED_PIPELINE_META_NAME,
+                    "script": BUNDLE_TEXT,
+                    "args": {"outputDir": str(self.output_dir)},
+                    "result": {"ok": False, "error": "pipeline failed"},
+                }
+            ),
+            encoding="utf-8",
         )
         self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
 
