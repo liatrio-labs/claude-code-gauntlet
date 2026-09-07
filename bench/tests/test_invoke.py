@@ -31,6 +31,8 @@ FAKE = Path(__file__).resolve().parent / "fakes" / "fake_claude.py"
 BUNDLE_BYTES = (REPO_ROOT / "workflows" / "pipeline.js").read_bytes()
 BUNDLE_TEXT = BUNDLE_BYTES.decode("utf-8")
 DIFFERENT_BUNDLE_TEXT = ("x" if BUNDLE_TEXT[0] != "x" else "y") + BUNDLE_TEXT[1:]
+# Hand-typed oracle for the parser, independent of the implementation constant.
+EXPECTED_PIPELINE_META_NAME = "code-gauntlet-pipeline"
 
 PR = {
     "owner": "octo",
@@ -1392,6 +1394,10 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         ver = invoke.read_pipeline_version(REPO_ROOT)
         self.assertRegex(ver, r"^\d+\.\d+\.\d+")
 
+    def test_pipeline_meta_name_matches_source_oracle(self):
+        self.assertEqual(invoke.PIPELINE_META_NAME, EXPECTED_PIPELINE_META_NAME)
+        self.assertEqual(invoke._read_pipeline_meta_name(), EXPECTED_PIPELINE_META_NAME)
+
     def test_parse_identity_echo_extracts_both_fields(self):
         text = (
             "Headless config:\n"
@@ -1720,7 +1726,7 @@ class WorkflowFailureTest(unittest.TestCase):
             "wf_by_name.json",
             {"ok": False, "error": "pipeline failed"},
             script_path="/session/workflows/code-gauntlet-pipeline-wf.js",
-            workflow_name=invoke.PIPELINE_META_NAME,
+            workflow_name=EXPECTED_PIPELINE_META_NAME,
             script=BUNDLE_TEXT,
         )
         self.assertEqual(self._failure(), ("pipeline_failed", "pipeline failed"))
@@ -1749,7 +1755,7 @@ class WorkflowFailureTest(unittest.TestCase):
         error = self._check_identity_record(
             {
                 "scriptPath": "/session/workflows/code-gauntlet-pipeline-wf.js",
-                "workflowName": invoke.PIPELINE_META_NAME,
+                "workflowName": EXPECTED_PIPELINE_META_NAME,
                 "script": BUNDLE_TEXT,
             }
         )
@@ -1759,7 +1765,7 @@ class WorkflowFailureTest(unittest.TestCase):
         error = self._check_identity_record(
             {
                 "scriptPath": "/session/workflows/code-gauntlet-pipeline-wf.js",
-                "workflowName": invoke.PIPELINE_META_NAME,
+                "workflowName": EXPECTED_PIPELINE_META_NAME,
                 "script": DIFFERENT_BUNDLE_TEXT,
             }
         )

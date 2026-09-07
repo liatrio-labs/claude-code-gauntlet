@@ -25,6 +25,8 @@ from scripts.await_workflow import ARTIFACT_BASENAMES  # noqa: E402
 PIPELINE = str(REPO_ROOT / "workflows" / "pipeline.js")
 BUNDLE_TEXT = (REPO_ROOT / "workflows" / "pipeline.js").read_text(encoding="utf-8")
 DIFFERENT_BUNDLE_TEXT = ("x" if BUNDLE_TEXT[0] != "x" else "y") + BUNDLE_TEXT[1:]
+# Hand-typed oracle for the parser, independent of the implementation constant.
+EXPECTED_PIPELINE_META_NAME = "code-gauntlet-pipeline"
 
 
 def _write_json(path, obj):
@@ -96,7 +98,7 @@ def _wf_record(
     script_path=PIPELINE,
     *,
     include_verify=True,
-    workflow_name=invoke.PIPELINE_META_NAME,
+    workflow_name=EXPECTED_PIPELINE_META_NAME,
     script=BUNDLE_TEXT,
 ):
     """Shape of a per-child Workflow record (the real scriptPath carrier).
@@ -885,6 +887,10 @@ class CheckRunTest(unittest.TestCase):
             result["failures"],
         )
 
+    def test_pipeline_meta_name_matches_source_oracle(self):
+        self.assertEqual(invoke.PIPELINE_META_NAME, EXPECTED_PIPELINE_META_NAME)
+        self.assertEqual(invoke._read_pipeline_meta_name(), EXPECTED_PIPELINE_META_NAME)
+
     def _rewrite_workflow_record(self, **updates):
         path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -895,7 +901,7 @@ class CheckRunTest(unittest.TestCase):
         _build_ok_run(self.run_dir)
         self._rewrite_workflow_record(
             scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
-            workflowName=invoke.PIPELINE_META_NAME,
+            workflowName=EXPECTED_PIPELINE_META_NAME,
             script=BUNDLE_TEXT,
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
@@ -919,7 +925,7 @@ class CheckRunTest(unittest.TestCase):
         _build_ok_run(self.run_dir)
         self._rewrite_workflow_record(
             scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
-            workflowName=invoke.PIPELINE_META_NAME,
+            workflowName=EXPECTED_PIPELINE_META_NAME,
             script=None,
         )
         path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
@@ -937,7 +943,7 @@ class CheckRunTest(unittest.TestCase):
         _build_ok_run(self.run_dir)
         self._rewrite_workflow_record(
             scriptPath="/session/workflows/code-gauntlet-pipeline-wf.js",
-            workflowName=invoke.PIPELINE_META_NAME,
+            workflowName=EXPECTED_PIPELINE_META_NAME,
             script=DIFFERENT_BUNDLE_TEXT,
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
@@ -1044,6 +1050,36 @@ class CheckRunTest(unittest.TestCase):
             },
         )
         self.assertEqual(check._extract_script_paths(wf), [PIPELINE])
+
+    def test_unparseable_wf_record_without_identity_fields_fails_g4(self):
+        _build_ok_run(self.run_dir)
+        wf_path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
+        wf_path.write_text(
+            '{\n  "runId": "wf_test-0001",\n  "status": "completed"\n',
+            encoding="utf-8",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["failures"],
+            [
+                "pr-example-repo-1: wf_test-0001.json has no scriptPath or "
+                "script field found"
+            ],
+        )
+
+    def test_unparseable_wf_record_with_repo_script_path_passes_g4(self):
+        _build_ok_run(self.run_dir)
+        wf_path = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
+        wf_path.write_text(
+            "{\n"
+            '  "runId": "wf_test-0001",\n'
+            '  "scriptPath": ' + json.dumps(PIPELINE) + ",\n"
+            '  "status": "completed"\n',
+            encoding="utf-8",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
 
     def test_missing_workflow_records_fails_g4(self):
         """Without an echo identity receipt, missing wf records still hard-fail G4."""
