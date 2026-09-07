@@ -137,7 +137,7 @@ echo "target=$TARGET_SHA current=$CURRENT_SHA"
 echo "=== checkout ==="
 if [ "$TARGET_SHA" = "$CURRENT_SHA" ]; then
   echo "already at target, no checkout needed"
-elif [ "{mode}" = "headless" ]; then
+elif [ "${CODE_GAUNTLET_HEADLESS:-}" = "1" ]; then
   echo "HEADLESS INPUT ERROR: working tree HEAD $CURRENT_SHA != PR head $TARGET_SHA"
   exit 1
 else
@@ -181,7 +181,7 @@ else:
 "
 ```
 
-Headless mode uses the retained `configResult.mode`. The `checkout` section above handles this branch inline before any checkout, then stops on a mismatched head. See `references/headless-mode.md`.
+Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `checkout` section above already handles this branch inline — the `elif` fires before any `gh pr checkout` is attempted and `exit 1`s the whole composite call immediately, so `sha`/`owner_repo`/`prior_review`/`stale_truncate` never run against the wrong commit. `CODE_GAUNTLET_HEADLESS` is read directly by the script (not pre-resolved by the model), so this is self-contained regardless of who assembles the call. See `references/headless-mode.md`.
 
 **`status`/`checkout` duplicate `references/phase2-triage.md` 2b — 2b is the owner.** 2b's target-type table (PR/MR, branch, local) and its checkout-failure STOP are canonical; this composite is one concrete instantiation of that table (the PR/MR row) plus the headless row. For **branch/local targets**, apply 2b's table directly: in `status`, replace `TARGET_SHA=$(gh pr view ...)` with `TARGET_SHA=$(git rev-parse <branch>)` (branch comparison) or drop the `status`/`checkout` sections entirely and set `TARGET_SHA=$CURRENT_SHA` (local changes — always a no-op, per 2b step 1); in `checkout`, replace `gh pr checkout {pr_number}` with `git checkout <branch>` (branch comparison) or nothing (local changes). **Checkout failure** (2b step 4): the `checkout` section's `||` clause already exits non-zero on a failed `gh pr checkout`/`git checkout` — on that exit, stop and print 2b step 4's message (`Unable to checkout [branch/PR]. The review requires the target code to be accessible locally. You can checkout the branch manually and re-run the review.`); no fallback.
 
@@ -324,15 +324,13 @@ Stamp both values verbatim. Never estimate them, never carry them over from an e
 
 ### Assemble the args object and record environment overrides
 
-Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). Resolve `policy.provider` using the existing provider precedence. Stamp `policy.gateway` using the existing gateway rule, and warn when `CLAUDE_CODE_SUBAGENT_MODEL` overrides the stage policy. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string and generate a nonce matching `^[A-Za-z0-9._-]+$`.
+Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). Resolve `policy.provider` from the environment in the same Bash call — first match wins, and a flag counts as SET only when its value is truthy the way Claude Code itself parses it (`1`/`true`/`yes`/`on`, case-insensitive — `0`/`false`/empty leave the session first-party): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` alone does NOT change the provider: an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin (a gateway with non-standard names uses the `CLAUDE_CODE_SUBAGENT_MODEL` escape hatch). It DOES set `policy.gateway`, though: stamp `true` iff `ANTHROPIC_BASE_URL` is set, after trimming whitespace, to a non-blank value (it is a URL — any non-blank value counts, no truthy-flag parsing like the provider flags above), else `false`. `policy.gateway` turns off the pipeline's conditional per-dimension schema construct on the conventions-and-intent dispatch (a gateway forwards `input_schema` verbatim to whatever backend it fronts, which could be an unmeasured third-party surface even though the session itself reads as firstParty) while leaving the first-party model-ID pin untouched. The workflow cannot read `process.env`, so this capture is the only path — on `firstParty` the pipeline pins full first-party model IDs (immune to session-variant cascade); on every other provider it dispatches bare aliases (`sonnet`/`opus`), the only spelling the provider's deployment mapping resolves (first-party IDs pass through unchecked on Bedrock/Vertex/Foundry and fail as invalid model identifiers). **If `CLAUDE_CODE_SUBAGENT_MODEL` is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). For a PR/MR target, also stamp `delivery.prIdentity = { owner, repo, pr_number, sha_full, title }` — `owner`/`repo`/`pr_number` from the resolved PR, `sha_full` from `git rev-parse HEAD`, and `title` from the `gh pr view {pr_number} --json state,isDraft,title,url` this phase already runs (`SKILL.md:59`; GitLab: `glab mr view {pr_number} --output json | jq -r '.title'`). `title` is **optional** — omit it when the fetch produced nothing; the report title then falls back to `owner/repo#N`. Omit `prIdentity` entirely for local-diff reviews.
 
 Copy `configResult.waist.configEcho` verbatim. Never stamp `configEcho.review_md`; the workflow derives it from `reviewConfigPath` during discovery.
 
 The workflow derives `limits.deliveryCap` from the copied receipt. Stamp `limits: {}` unless a genuine REVIEW.md-set override exists.
 
 The workflow derives `delivery.tier` from the copied receipt. Stamp `delivery` only as `{ prIdentity }` for PR/MR targets.
-
-Stamp `delivery.prIdentity = { owner, repo, pr_number, sha_full, title }` from the resolved target and checked-out head. `title` is optional when the platform provides none.
 
 Stamp `riskTable` — the Phase 2e per-file risk classification, verbatim, as `[{ path, risk }]` covering EXACTLY the `changedFiles` set. Interactive runs stamp `scopeAnswer` only when the trivial-scope question fires. Never stamp a headless `scopeAnswer`; the workflow derives it from the resolver receipt.
 

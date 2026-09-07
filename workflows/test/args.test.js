@@ -4,6 +4,7 @@ import {
   ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
   stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, nullRespellGap, LIMIT_DEFAULTS,
   resolveReviewConfig, computeLightEligible, nullToleranceRejectedKeys, KNOB_REGISTRY, safeReceiptValue,
+  matchesRule,
 } from '../src/args.js';
 
 const good = {
@@ -208,8 +209,8 @@ test('T182-ARGS: every registry receipt value rule and source rule is focused', 
   assert.ok(interactiveInvalid.errors.some((error) => error.includes('configEcho.review_md.value')));
 });
 
-test('T305-ARGS: registry defaults and rule metadata are JSON-safe and valid', () => {
-  const rowKeys = ['key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'derivedFrom', 'nullReceipt'];
+test('registry rule metadata has the complete projected row shape', () => {
+  const rowKeys = ['key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'derivedFrom', 'deriveWhen', 'nullReceipt'];
   for (const descriptor of KNOB_REGISTRY) {
     assert.deepEqual(Object.keys(descriptor), rowKeys);
     assert.equal('example' in descriptor, false);
@@ -252,6 +253,51 @@ test('T305-ARGS: registry defaults and rule metadata are JSON-safe and valid', (
       assert.equal(validateArgs(fixture).ok, true, `${mode} ${descriptor.key} default value`);
       assert.ok(descriptor.allowedSources[mode].includes(source), `${mode} ${descriptor.key} default source`);
     }
+  }
+});
+
+test('matchesRule evaluates every rule kind and fails closed for lures', () => {
+  const enumRule = { kind: 'enum', values: ['optimized'] };
+  const csvRule = { kind: 'csv_subset', values: ['chat', 'markdown'] };
+  const positiveRule = { kind: 'positive_digits' };
+  const digitsRule = { kind: 'digits_or_null' };
+  const cases = [
+    [enumRule, 'optimized', 'headless', true],
+    [enumRule, 'Optimized', 'headless', false],
+    [csvRule, '', 'headless', false],
+    [csvRule, 'chat,markdown', 'headless', true],
+    [csvRule, 'chat,,markdown', 'headless', false],
+    [csvRule, 'chat,chat', 'headless', false],
+    [csvRule, 'chat, markdown', 'headless', false],
+    [csvRule, 'Chat', 'headless', false],
+    [positiveRule, '1', 'headless', true],
+    [positiveRule, '0', 'headless', false],
+    [positiveRule, '00', 'headless', false],
+    [positiveRule, '01', 'headless', false],
+    [positiveRule, '-1', 'headless', false],
+    [positiveRule, ' 5', 'headless', false],
+    [positiveRule, '5 ', 'headless', false],
+    [positiveRule, '١', 'headless', false],
+    [positiveRule, '9007199254740992', 'headless', false],
+    [positiveRule, '9007199254740991', 'headless', true],
+    [digitsRule, '0', 'interactive', true],
+    [digitsRule, 'null', 'interactive', true],
+    [digitsRule, '00', 'interactive', false],
+    [digitsRule, '01', 'interactive', false],
+    [digitsRule, '-1', 'interactive', false],
+    [digitsRule, ' 5', 'interactive', false],
+    [digitsRule, '5 ', 'interactive', false],
+    [digitsRule, '١', 'interactive', false],
+    [digitsRule, '9007199254740991', 'interactive', true],
+    [digitsRule, '9007199254740992', 'interactive', false],
+    [{ kind: 'bogus' }, 'x', 'headless', false],
+    [{ headless: enumRule }, 'optimized', 'interactive', false],
+  ];
+  for (const [rule, value, mode, expected] of cases) {
+    assert.equal(matchesRule(rule, value, mode), expected, JSON.stringify({ rule, value, mode }));
+  }
+  for (const value of [null, 1, false, [], {}]) {
+    assert.equal(matchesRule(enumRule, value, 'headless'), false, JSON.stringify(value));
   }
 });
 
@@ -355,6 +401,21 @@ test('T305-ARGS: normalizeArgs derives typed waist fields from the receipt once'
   });
   assert.equal(fullHeadless.scopeAnswer, 'full');
   assert.deepEqual(validateArgs(fullHeadless), { ok: true, errors: [] });
+
+  const scopeDescriptor = KNOB_REGISTRY.find(({ key }) => key === 'trivial_scope');
+  const originalDeriveWhen = scopeDescriptor.deriveWhen;
+  const ineligibleHeadless = {
+    ...headless,
+    riskTable: [{ path: 'a.js', risk: 'medium' }],
+  };
+  try {
+    scopeDescriptor.deriveWhen = null;
+    assert.equal(normalizeArgs(ineligibleHeadless).scopeAnswer, 'light');
+    scopeDescriptor.deriveWhen = originalDeriveWhen;
+    assert.equal(normalizeArgs(ineligibleHeadless).scopeAnswer, undefined);
+  } finally {
+    scopeDescriptor.deriveWhen = originalDeriveWhen;
+  }
 
   const stamped = normalizeArgs({
     ...interactive,

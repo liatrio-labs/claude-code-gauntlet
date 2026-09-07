@@ -109,7 +109,8 @@ def load_registry(repo_root=REPO_ROOT):
         "  knobs: a.KNOB_REGISTRY.map(d => ({"
         "    key: d.key, modes: d.modes, allowedSources: d.allowedSources, rule: d.rule,"
         "    env: d.env, reviewMdKey: d.reviewMdKey, defaults: d.defaults, type: d.type,"
-        "    waistPath: d.waistPath, derivedFrom: d.derivedFrom, nullReceipt: d.nullReceipt,"
+        "    waistPath: d.waistPath, derivedFrom: d.derivedFrom, deriveWhen: d.deriveWhen,"
+        "    nullReceipt: d.nullReceipt,"
         "  })),"
         "})))"
     )

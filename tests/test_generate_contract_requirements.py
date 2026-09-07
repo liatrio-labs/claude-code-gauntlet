@@ -5,6 +5,7 @@ dicts and small file fragments, so a regression in the splice/table-rewrite/sent
 logic fails here without needing `node` or the real agent files.
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -333,6 +334,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
                 "type": "string",
                 "waistPath": None,
                 "derivedFrom": None,
+                "deriveWhen": None,
                 "nullReceipt": [],
             },
             {
@@ -346,6 +348,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
                 "type": "string",
                 "waistPath": "nested.beta",
                 "derivedFrom": None,
+                "deriveWhen": None,
                 "nullReceipt": ["headless"],
             },
         ],
@@ -573,6 +576,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             '        "type": "string",\n'
             '        "waistPath": None,\n'
             '        "derivedFrom": None,\n'
+            '        "deriveWhen": None,\n'
             '        "nullReceipt": [],\n'
             "    },\n"
             "    {\n"
@@ -602,6 +606,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             '        "type": "string",\n'
             '        "waistPath": "nested.beta",\n'
             '        "derivedFrom": None,\n'
+            '        "deriveWhen": None,\n'
             '        "nullReceipt": [\n'
             '            "headless",\n'
             "        ],\n"
@@ -735,36 +740,93 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         gen.apply_targets(str(self.root), check_only=False)
         self.assertEqual(gen.apply_targets(str(self.root), check_only=True), [])
 
+    def test_projected_knob_rows_have_the_exact_registry_shape(self):
+        rows = gen.load_registry(str(REPO))["knobs"]
+        expected = [
+            "key",
+            "modes",
+            "allowedSources",
+            "rule",
+            "env",
+            "reviewMdKey",
+            "defaults",
+            "type",
+            "waistPath",
+            "derivedFrom",
+            "deriveWhen",
+            "nullReceipt",
+        ]
+        for row in rows:
+            self.assertEqual(list(row), expected)
+
     def test_resolver_fence_is_a_ruff_format_fixed_point(self):
         gen.apply_targets(str(self.root), check_only=False)
         ruff = shutil.which("ruff")
         self.assertIsNotNone(
             ruff, "ruff is required for the generated Python fence test"
         )
-        result = subprocess.run(
-            [
-                ruff,
-                "format",
-                "--check",
-                str(self.root / "scripts" / "resolve_config.py"),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        resolver_path = str(self.root / "scripts" / "resolve_config.py")
+        results = []
+        for command in (
+            [ruff, "format", resolver_path],
+            [ruff, "format", "--check", resolver_path],
+            [ruff, "format", resolver_path],
+            [ruff, "format", "--check", resolver_path],
+        ):
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            results.append(result)
+        self.assertNotIn("reformatted", results[2].stdout)
         self.assertEqual(gen.apply_targets(str(self.root), check_only=True), [])
 
-    def test_stale_resolver_fence_does_not_rewrite_receipt(self):
+    def test_stale_resolver_fence_does_not_change_the_skill_receipt(self):
         gen.apply_targets(str(self.root), check_only=False)
         resolver_path = self.root / "scripts" / "resolve_config.py"
-        resolver_path.write_text(
-            resolver_path.read_text(encoding="utf-8").replace(
-                '        "nullReceipt": [],\n', "", 1
-            ),
-            encoding="utf-8",
+        skill_path = self.root / "skills" / "code-gauntlet" / "SKILL.md"
+        stale_skill = skill_path.read_bytes().replace(
+            b"  model_tier=optimized (fixed)", b"  model_tier=STALE (fixed)", 1
         )
-        stale = gen.apply_targets(str(self.root), check_only=True)
-        self.assertEqual(stale, ["scripts/resolve_config.py"])
+        skill_path.write_bytes(stale_skill)
+        self.assertIn(b"  model_tier=STALE (fixed)", skill_path.read_bytes())
+        gen.apply_targets(str(self.root), check_only=False)
+        skill_before = skill_path.read_bytes()
+        self.assertNotIn(b"  model_tier=STALE (fixed)", skill_before)
+        resolver_before = resolver_path.read_text(encoding="utf-8")
+        resolver = gen._load_resolver(str(REPO))
+        registry = gen.load_registry(str(REPO))["knobs"]
+        for mode in ("interactive", "headless"):
+            expected = resolver.serialize_receipt(
+                mode,
+                resolver.resolve(mode, {}, None, "pr", registry=registry)["configEcho"],
+                registry=registry,
+            )
+            self.assertIn(expected.encode(), skill_before)
+        cases = {
+            "field deletion": resolver_before.replace(
+                '        "deriveWhen": None,\n', "", 1
+            ),
+            "row reorder": self._reorder_resolver_rows(resolver_before),
+        }
+        for label, corrupted in cases.items():
+            with self.subTest(corruption=label):
+                resolver_path.write_text(corrupted, encoding="utf-8")
+                stale = gen.apply_targets(str(self.root), check_only=True)
+                self.assertEqual(stale, ["scripts/resolve_config.py"])
+                self.assertEqual(skill_path.read_bytes(), skill_before)
+                resolver_path.write_text(resolver_before, encoding="utf-8")
+
+    @staticmethod
+    def _reorder_resolver_rows(source):
+        start = source.index("KNOB_REGISTRY = [")
+        end = source.index("\n# /generated-from-registry-identity:knob_registry", start)
+        fence = source[start:end]
+        rows = re.findall(r"(?ms)^    \{\n.*?^    \},", fence)
+        if len(rows) < 2:
+            raise AssertionError("resolver fence needs at least two rows")
+        reordered = (
+            "KNOB_REGISTRY = [\n" + "\n".join([rows[1], rows[0], *rows[2:]]) + "\n]"
+        )
+        return source[:start] + reordered + source[end:]
 
     def test_a_knob_added_to_args_stales_and_then_repairs_both_consumers(self):
         gen.apply_targets(str(self.root), check_only=False)

@@ -25,7 +25,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 MAX_SAFE_INTEGER = 9007199254740991
 _SCRIPT_ROOT = os.path.realpath(os.path.dirname(os.path.dirname(__file__)))
@@ -74,6 +74,7 @@ KNOB_REGISTRY = [
         "type": "string",
         "waistPath": None,
         "derivedFrom": None,
+        "deriveWhen": None,
         "nullReceipt": [],
     },
     {
@@ -107,6 +108,7 @@ KNOB_REGISTRY = [
         "type": "csv_list",
         "waistPath": None,
         "derivedFrom": None,
+        "deriveWhen": None,
         "nullReceipt": [],
     },
     {
@@ -138,6 +140,7 @@ KNOB_REGISTRY = [
         "type": "string",
         "waistPath": None,
         "derivedFrom": None,
+        "deriveWhen": None,
         "nullReceipt": [],
     },
     {
@@ -179,6 +182,7 @@ KNOB_REGISTRY = [
         "type": "int_or_null",
         "waistPath": "limits.deliveryCap",
         "derivedFrom": None,
+        "deriveWhen": None,
         "nullReceipt": [
             "interactive",
         ],
@@ -221,6 +225,7 @@ KNOB_REGISTRY = [
         "type": "string",
         "waistPath": "delivery.tier",
         "derivedFrom": None,
+        "deriveWhen": None,
         "nullReceipt": [],
     },
     {
@@ -252,6 +257,7 @@ KNOB_REGISTRY = [
         "type": "string",
         "waistPath": None,
         "derivedFrom": None,
+        "deriveWhen": None,
         "nullReceipt": [],
     },
     {
@@ -284,6 +290,7 @@ KNOB_REGISTRY = [
         "type": "string",
         "waistPath": None,
         "derivedFrom": None,
+        "deriveWhen": None,
         "nullReceipt": [],
     },
     {
@@ -315,6 +322,7 @@ KNOB_REGISTRY = [
         "type": "string",
         "waistPath": None,
         "derivedFrom": None,
+        "deriveWhen": None,
         "nullReceipt": [],
     },
     {
@@ -346,6 +354,7 @@ KNOB_REGISTRY = [
         "type": "string",
         "waistPath": "scopeAnswer",
         "derivedFrom": None,
+        "deriveWhen": "lightEligible",
         "nullReceipt": [],
     },
     {
@@ -376,6 +385,7 @@ KNOB_REGISTRY = [
         "type": "string",
         "waistPath": None,
         "derivedFrom": "reviewConfigPath",
+        "deriveWhen": None,
         "nullReceipt": [],
     },
 ]
@@ -406,8 +416,15 @@ def _safe_integer(value: str) -> bool:
         return False
 
 
-def matches_rule(rule: Any, value: Any, mode: str) -> bool:
+def matches_rule(
+    rule: Any,
+    value: Any,
+    mode: str,
+    *,
+    registry: Sequence[Mapping[str, Any]] | None = None,
+) -> bool:
     """Return whether a string satisfies a registry rule for ``mode``."""
+    _registry_rows(registry)
     selected = _selected_rule(rule, mode)
     if not isinstance(value, str) or not isinstance(selected, dict):
         return False
@@ -562,7 +579,7 @@ def resolve(
         env_name = row.get("env")
         if isinstance(env_name, str) and env_name in environ:
             env_value = environ[env_name]
-            if not matches_rule(row.get("rule"), env_value, mode):
+            if not matches_rule(row.get("rule"), env_value, mode, registry=rows):
                 raise ResolverError(_invalid_message(row, env_value, mode))
             # An interactive model pin is a validation-only pin.  Its source remains
             # fixed because the row does not allow env as an interactive source.
@@ -573,7 +590,7 @@ def resolve(
             and row.get("reviewMdKey") is not None
             and "review_md" in row.get("allowedSources", {}).get(mode, [])
         ):
-            if not matches_rule(row.get("rule"), review_value, mode):
+            if not matches_rule(row.get("rule"), review_value, mode, registry=rows):
                 raise ResolverError(
                     _invalid_message(row, review_value, mode, review_value=True)
                 )
@@ -686,7 +703,21 @@ def parse_default_delivery(text: str | None) -> str | None:
     """Return the root Default Delivery candidate, or ``None`` when it is unset."""
     if not isinstance(text, str):
         return None
-    lines = text.splitlines()
+    body = _default_delivery_body(re.split(r"\r\n|\r|\n", text))
+    if body is None:
+        return None
+    cleaned = re.sub(r"<!--.*?-->", "", "\n".join(body), flags=re.DOTALL)
+    candidate = next(
+        (line.strip() for line in re.split(r"\r\n|\r|\n", cleaned) if line.strip()),
+        None,
+    )
+    if candidate is None or not _CANDIDATE_RE.fullmatch(candidate):
+        return None
+    return candidate
+
+
+def _default_delivery_body(lines: Sequence[str]) -> list[str] | None:
+    """Return the root Default Delivery body before a shape boundary."""
     start = next(
         (
             index
@@ -704,13 +735,7 @@ def parse_default_delivery(text: str | None) -> str | None:
         ):
             break
         body.append(line)
-    cleaned = re.sub(r"<!--.*?-->", "", "\n".join(body), flags=re.DOTALL)
-    candidate = next(
-        (line.strip() for line in cleaned.splitlines() if line.strip()), None
-    )
-    if candidate is None or not _CANDIDATE_RE.fullmatch(candidate):
-        return None
-    return candidate
+    return body
 
 
 def _git_repo_root(cwd: str) -> str:
@@ -755,8 +780,18 @@ def probe_review_md(repo_root: str) -> tuple[bool, str | None]:
         raise ResolverSetupError(f"cannot read root REVIEW.md: {exc}") from exc
 
 
+class _ResolverArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        raise ResolverSetupError(message)
+
+    def exit(self, status: int = 0, message: str | None = None) -> NoReturn:
+        detail = (message or "argument parsing failed").strip()
+        raise ResolverSetupError(detail)
+
+
 def _parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(
+    return _ResolverArgumentParser(
+        add_help=False,
         description="Resolve the code-gauntlet configuration.",
         exit_on_error=False,
     )
@@ -773,8 +808,9 @@ def run(
     parser.add_argument("--plugin-root", default=None)
     try:
         args = parser.parse_args([] if argv is None else argv)
-    except (argparse.ArgumentError, SystemExit):
-        return 2, "", ""
+    except (argparse.ArgumentError, ResolverSetupError) as exc:
+        detail = " ".join(str(exc).splitlines()).strip()
+        return 2, "", f"RESOLVER SETUP ERROR: {detail}\n"
 
     env = environ if environ is not None else os.environ
     try:

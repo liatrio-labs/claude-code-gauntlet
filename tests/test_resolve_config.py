@@ -101,6 +101,39 @@ class TestDefaultDeliveryParser(unittest.TestCase):
                 "chat",
             )
 
+    def test_root_heading_ends_the_section(self):
+        text = "## Default Delivery\n<!--\n# Ignore\n-->\nchat\n"
+        self.assertIsNone(resolver.parse_default_delivery(text))
+
+    def test_unicode_line_separator_does_not_split_a_value_line(self):
+        self.assertIsNone(
+            resolver.parse_default_delivery("## Default Delivery\nchat\u2028markdown\n")
+        )
+
+    def test_fenced_value_is_not_read_after_a_blank_body(self):
+        text = "## Default Delivery\n\n```yaml\nchat\n```\n"
+        self.assertEqual(
+            resolver._default_delivery_body(re.split(r"\r\n|\r|\n", text)), [""]
+        )
+        self.assertIsNone(resolver.parse_default_delivery(text))
+
+    def test_shipped_root_scaffold_is_unset_and_uses_the_default(self):
+        spec = (REPO / "skills/code-gauntlet/references/review-md-spec.md").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(
+            r"### Root REVIEW\.md template\n\n(````markdown\n.*?\n````)",
+            spec,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        scaffold = match.group(1)
+        result = resolver.resolve("headless", {}, scaffold, "pr")
+        self.assertEqual(
+            result["configEcho"]["delivery"],
+            {"value": "markdown", "source": "default"},
+        )
+
 
 class TestResolvePureFunctions(unittest.TestCase):
     def test_empty_environment_defaults_have_one_wire_copy(self):
@@ -167,6 +200,25 @@ class TestResolvePureFunctions(unittest.TestCase):
             from_env["configEcho"]["delivery"], {"value": "markdown", "source": "env"}
         )
 
+    def test_delivery_precedence_uses_each_distinct_value(self):
+        review = "## Default Delivery\nchat,pr_comments\n"
+        env = {"CODE_GAUNTLET_DELIVERY": "chat"}
+        from_env = resolver.resolve("headless", env, review, "pr")
+        self.assertEqual(
+            from_env["configEcho"]["delivery"],
+            {"value": "chat", "source": "env"},
+        )
+        from_review = resolver.resolve("headless", {}, review, "pr")
+        self.assertEqual(
+            from_review["configEcho"]["delivery"],
+            {"value": "chat,pr_comments", "source": "review_md"},
+        )
+        from_default = resolver.resolve("headless", {}, None, "pr")
+        self.assertEqual(
+            from_default["configEcho"]["delivery"],
+            {"value": "markdown", "source": "default"},
+        )
+
     def test_interactive_model_pin_is_validated_but_fixed(self):
         result = resolver.resolve(
             "interactive",
@@ -204,6 +256,29 @@ class TestResolvePureFunctions(unittest.TestCase):
             resolver.resolve(
                 "headless", {}, "## Default Delivery\nchat,pr_comments", "local"
             )
+
+    def test_pr_mr_and_unset_targets_accept_pr_comments(self):
+        review = "## Default Delivery\nchat,pr_comments"
+        for target in ("pr", "mr", None):
+            with self.subTest(source="env", target=target):
+                result = resolver.resolve(
+                    "headless",
+                    {"CODE_GAUNTLET_DELIVERY": "chat,pr_comments"},
+                    None,
+                    target,
+                )
+                self.assertEqual(
+                    result["configEcho"]["delivery"]["value"], "chat,pr_comments"
+                )
+                self.assertEqual(result["configEcho"]["delivery"]["source"], "env")
+            with self.subTest(source="review_md", target=target):
+                result = resolver.resolve("headless", {}, review, target)
+                self.assertEqual(
+                    result["configEcho"]["delivery"]["value"], "chat,pr_comments"
+                )
+                self.assertEqual(
+                    result["configEcho"]["delivery"]["source"], "review_md"
+                )
 
 
 class TestResolverCli(unittest.TestCase):
@@ -300,14 +375,70 @@ class TestResolverCli(unittest.TestCase):
         proc = self.run_cli("--target", "wrong")
         self.assertEqual(proc.returncode, 2)
         self.assertEqual(proc.stdout, "")
-        self.assertEqual(proc.stderr, "")
+        self.assertEqual(proc.stderr.count("\n"), 1)
+        self.assertTrue(proc.stderr.startswith("RESOLVER SETUP ERROR: "))
         code, stdout, stderr = resolver.run(["--target", "wrong"], {})
-        self.assertEqual((code, stdout, stderr), (2, "", ""))
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr.count("\n"), 1)
+        self.assertTrue(stderr.startswith("RESOLVER SETUP ERROR: "))
         with tempfile.TemporaryDirectory() as directory:
             code, stdout, stderr = resolver.run(["--cwd", directory], {})
         self.assertEqual(code, 2)
         self.assertEqual(stdout, "")
         self.assertIn("RESOLVER SETUP ERROR:", stderr)
+
+    def test_plugin_root_must_match_and_matching_symlink_is_allowed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, stdout, stderr = resolver.run(["--plugin-root", directory], {})
+            self.assertEqual(
+                (code, stdout, stderr),
+                (2, "", "RESOLVER SETUP ERROR: plugin root mismatch\n"),
+            )
+            link = Path(directory) / "plugin"
+            link.symlink_to(REPO, target_is_directory=True)
+            proc = self.run_cli("--plugin-root", str(link))
+            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(
+                json.loads(proc.stdout)["identity"]["plugin_root"], str(REPO)
+            )
+
+            mismatch = subprocess.run(
+                [sys.executable, str(SCRIPT), "--plugin-root", directory],
+                cwd=REPO,
+                env=clean_environment(),
+                capture_output=True,
+            )
+            self.assertEqual(mismatch.returncode, 2)
+            self.assertEqual(mismatch.stdout, b"")
+            self.assertEqual(
+                mismatch.stderr,
+                b"RESOLVER SETUP ERROR: plugin root mismatch\n",
+            )
+
+    def test_argument_failures_are_one_line_and_stream_silent_before_run(self):
+        cases = [
+            ("--help",),
+            ("--unknown",),
+            ("--target", "wrong"),
+            ("--target",),
+        ]
+        for argv in cases:
+            with self.subTest(argv=argv):
+                code, stdout, stderr = resolver.run(list(argv), {})
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, "")
+                self.assertTrue(stderr.startswith("RESOLVER SETUP ERROR: "))
+                self.assertEqual(stderr.count("\n"), 1)
+                proc = subprocess.run(
+                    [sys.executable, str(SCRIPT), *argv],
+                    cwd=REPO,
+                    env=clean_environment(),
+                    capture_output=True,
+                )
+                self.assertEqual(proc.returncode, 2)
+                self.assertEqual(proc.stdout, b"")
+                self.assertEqual(proc.stderr.count(b"\n"), 1)
 
     def test_missing_bundle_version_is_setup_failure(self):
         with tempfile.TemporaryDirectory() as directory:

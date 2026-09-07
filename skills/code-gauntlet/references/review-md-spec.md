@@ -135,7 +135,7 @@ Controls how review results are delivered. A comma-separated list of delivery me
 - `pr_comments` — Post findings as inline PR/MR comments
 - `markdown` — Surface the path to the already-persisted report under the output directory (`artifactPaths.report`); no default new file
 
-Read in **headless mode only**, where it sits between the `CODE_GAUNTLET_DELIVERY` env pin and the headless default. Interactive runs ignore it and ask once at the end of the run instead (`references/phase8-delivery.md` Stage 1) — the report is on disk either way, so the decision costs nothing to defer.
+Read in **headless mode only**, where the resolver considers it between the environment pin and the headless default. Interactive runs ignore it and ask once at the end of the run instead (`references/phase8-delivery.md` Stage 1) — the report is on disk either way, so the decision costs nothing to defer.
 
 ```
 

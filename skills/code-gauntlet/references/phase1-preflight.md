@@ -58,7 +58,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 ## Eligibility Checks
 
-> Headless mode presents none of the `AskUserQuestion` gates here. The draft gate branches on `configResult.resolved.draft_policy`, and the previously-reviewed gate branches on `configResult.resolved.reviewed_policy`. Closed/merged does not stop the run. Trivial-only changes still stop deterministically. See `references/headless-mode.md`.
+> Headless mode presents none of the `AskUserQuestion` gates here. The draft gate branches on `configResult.resolved.draft_policy` (`review` proceeds, `skip` stops); the previously-reviewed gate, which runs in Phase 2 after checkout, branches on `configResult.resolved.reviewed_policy` (`incremental`, `full`, or `skip`). Closed/merged does not stop the run headless — it proceeds against the pinned head exactly as resolved, with posting and delivery governed by the resolver result. Trivial-only changes still stop deterministically. See `references/headless-mode.md`.
 
 1. **Closed/merged?** — Stop: "This PR is already closed/merged. No review needed."
 
@@ -204,7 +204,7 @@ The resolver owns configuration values. The workflow derives typed waist fields 
 
 Used when ALL files are low-risk AND total lines <50:
 
-> Headless exception: do not present this `AskUserQuestion`. The workflow derives headless `scopeAnswer` from the resolver receipt. See `references/headless-mode.md`.
+> Headless exception: do not present this `AskUserQuestion`. The workflow derives headless `scopeAnswer` from the resolver receipt: `light` runs bugs and security only, while `full` runs all dimensions. See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(

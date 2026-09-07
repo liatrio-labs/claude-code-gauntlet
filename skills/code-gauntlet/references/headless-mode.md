@@ -1,8 +1,8 @@
 # Headless Mode Reference
 
-Code-gauntlet runs unattended when `CODE_GAUNTLET_HEADLESS=1`. The resolver supplies every configuration decision, so the skill never prompts for those decisions.
+Code-gauntlet runs unattended when `CODE_GAUNTLET_HEADLESS=1`. In headless mode there is no user to answer an `AskUserQuestion`, so **every interactive gate is resolved deterministically from the resolver result** and the skill never prompts. A single `AskUserQuestion` call in a headless run deadlocks the process — the harness marks such runs invalid.
 
-This file is the authority for the headless contract: the environment table, resolver precedence, validation, hard rules, gate outcomes, and the `Headless config:` block.
+This file is the authority for the headless contract: the environment table, resolver precedence, validation, the hard rules that always hold, the per-gate resolution, and the `Headless config:` block.
 
 ---
 
@@ -64,8 +64,8 @@ The **orchestrator** (the session running this skill and the workflow's own reas
 
 ## Hard rules (always true when headless — no env var toggles these)
 
-- **PR-comment selection is deterministic.** The resolver's delivery list and the workflow's derived tier and cap select `artifactPaths.postReview`. The pipeline posts that payload verbatim.
-- **Closed/merged PRs are reviewed, not skipped.** The headless branch runs against the pinned head. Posting follows the resolver's `post_mode` and delivery list, not PR state. **Markdown delivery in headless** means the report is already persisted at `artifactPaths.report`; no additional file is written.
+- **PR-comment selection is deterministic.** The set posted is the pipeline's pre-selected `artifactPaths.postReview` payload — the challenge-survivors filtered by the resolver's delivery list and receipt-derived tier (`all` by default -> every survivor, main and suggestion tags alike; `main_only` -> main-tagged only), then ranked and capped at the receipt-derived delivery cap. Posted verbatim, never re-filtered or re-ranked. The default `all` is deliberate — headless posts everything that survives the blind challenge. The per-finding walkthrough and the dismissed-findings gate no longer exist in either mode.
+- **Closed/merged PRs are reviewed, not skipped.** The interactive closed/merged stop does not apply — headless runs the full pipeline against the pinned head exactly as resolved. Posting follows the resolver's `post_mode` and delivery list regardless of PR state. **Markdown delivery in headless** means the report is already persisted at `artifactPaths.report`; no additional file is written.
 - **`gh pr checkout` is never run.** Headless never checks out, fetches, or stashes to move the working tree — the harness pre-places a worktree pinned at the review head, and a checkout would abandon it for the live branch head. Instead verify the tree is already at the intended commit: compare `git rev-parse HEAD` against the PR's live head (`gh pr view <n> --json headRefOid`). If they match, review the current checkout as-is; if they differ, print `HEADLESS INPUT ERROR: working tree HEAD <sha> != PR head <sha>` and stop with a non-zero outcome — never silently review a different commit than the one pinned.
 - **The Phase 3 wait is a held turn, never a yielded one.** Run `{plugin_root}/scripts/await_workflow.py` under an explicit Bash `timeout: 600000` and branch on its exit code; SKILL.md's "Wait protocol — MANDATORY" owns the full flow. Headless is where this matters most: a `-p` run blocks on background tasks still running at turn end only up to `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) and then terminates them, so a child that ends its turn to wait for the completion notification loses any review that outlasts the ceiling. Bench children set that variable to `"0"` (wait unbounded) and so are already insulated; an ordinary headless run on the default is not, which is why the protocol may never be skipped here.
 - **Task board = none.** The Phase 8 task-board offer is skipped; no tasks are created.
@@ -85,12 +85,12 @@ Every interactive gate in the pipeline maps to a deterministic headless outcome.
 | Phase 1 configuration resolution | Resolve every knob per precedence; print the `Headless config:` block. No question in either mode since issue #35 — interactive prints `Resolved config:` instead. |
 | Phase 2 entry gate | Passes if the `Headless config:` block was printed in Phase 1 (interactive: `Resolved config:`). The gate reads resolved state, never whether a prompt occurred. |
 | PR-not-found (resolution failure) | `resolved.pr_not_found_policy`: `error` stops the run; `local` proceeds as a local review. |
-| Closed / merged PR (eligibility) | Proceed — do not stop. Review the pinned head as resolved; posting follows `resolved.post_mode` and delivery follows `resolved.delivery`. (Interactive mode stops here; headless does not.) |
+| Closed / merged PR (eligibility) | Proceed — do not stop. Review the pinned head as resolved; posting follows `resolved.post_mode` and delivery follows `resolved.delivery` regardless of PR state. (Interactive mode stops here; headless does not.) |
 | Draft PR | `resolved.draft_policy`: `review` proceeds; `skip` stops the run. |
-| Previously reviewed (Phase 2 2b-post step 3, after checkout) | `resolved.reviewed_policy`: `incremental` scopes the diff to new commits only when `detect_prior_review.py`'s `incremental_safe` is true; unsafe history degrades to `full` and discloses the degradation. `skip` stops the run only when `sha_is_ancestor` is true. |
-| Trivial / light-scope (all low-risk, <50 lines) | The workflow derives headless `scopeAnswer` from the resolver receipt and the risk table. |
+| Previously reviewed (Phase 2 2b-post step 3, after checkout) | `resolved.reviewed_policy`: `incremental` scopes the diff to new commits only when `detect_prior_review.py`'s `incremental_safe` is true; when the head has not advanced, the recorded SHA is unresolvable, history was rewritten, or detection errored, it degrades to `full` and discloses the degradation. `skip` stops the run only when `previously_reviewed` is true and `sha_is_ancestor` is true; on rewritten history it proceeds as a full review with the degradation disclosed. Detection is read-only and exits successfully for every outcome. |
+| Trivial / light-scope (all low-risk, <50 lines) | The workflow derives headless `scopeAnswer` from the resolver receipt and the risk table: `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`), and `full` runs all seven dimensions. |
 | REVIEW.md detection (root setup + subdirectory offer) | Discovered configs apply as in interactive mode: root defaults plus matching subtree overrides; never invoke `build-review-md`. |
-| Phase 8 Stage 1 (delivery question) | Not asked. Deliver per `resolved.delivery` and post `artifactPaths.postReview` verbatim. The workflow derives tier and cap from the resolver receipt. Posting follows `resolved.post_mode`. |
+| Phase 8 Stage 1 (delivery question) | Not asked. Deliver per `resolved.delivery` and post `artifactPaths.postReview` verbatim. The workflow derives tier and cap from the resolver receipt. Posting follows `resolved.post_mode`; `dry-run` captures the payload without posting. |
 | Phase 8 Stage 2 (task board) | Skipped. |
 
 ---
