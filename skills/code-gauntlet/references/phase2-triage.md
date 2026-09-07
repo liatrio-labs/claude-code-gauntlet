@@ -54,7 +54,7 @@ If the SHA matches → proceed to 2c.
 | Branch name | `git checkout <branch>` |
 | Local changes | no-op |
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): never run any checkout command from
+> Headless exception (`configResult.mode == "headless"`): never run any checkout command from
 > this table — the harness pre-places the working tree at the pinned head. If the
 > step-2 SHA comparison mismatches, print `HEADLESS INPUT ERROR: working tree HEAD
 > <sha> != PR head <sha>` and stop with a non-zero outcome; never silently review
@@ -167,7 +167,7 @@ Merge configs hierarchically — thresholds override and ignore patterns accumul
 finding subtree, while free prose remains shared — via the raw `args.reviewMd` handoff described
 in SKILL.md, never by hand-parsing here.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): identical behavior, minus the notice — REVIEW.md is
+> Headless mode has identical behavior, minus the notice — REVIEW.md is
 > read-only headless and `build-review-md` is never invoked. The hierarchical parse still runs. See
 > `references/headless-mode.md`.
 
@@ -190,7 +190,7 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). Stamp the answer verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow itself derives the dimension flags from `scopeAnswer` together with the `riskTable`/`changedLines` you are already stamping (`deriveAgentFlags`, `workflows/src/stages.js`): a `light` answer runs only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven. Announce the actual dimension set — `bugs, security` for light, the full list for full. `args.riskTable` is REQUIRED on every run regardless of the answer (or of whether this question was even asked) — see Args Preparation below.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not ask — use `$CODE_GAUNTLET_TRIVIAL_SCOPE` (`light` or `full`, stamped verbatim into `args.scopeAnswer`). At args assembly, **re-read the variable with a fresh `echo`** — never recall its value from earlier context (a live run recalled `full` while the actual value was `light`). See `references/headless-mode.md` and the assembly rule in SKILL.md.
+> Headless exception: do not ask. The workflow derives headless `scopeAnswer` from the resolver receipt. Interactive runs stamp the question answer. See `references/headless-mode.md` and SKILL.md.
 
 Only stamp `scopeAnswer` when this gate actually fired (every file low-risk AND total lines <50); omit it entirely otherwise — the args waist refuses a `scopeAnswer` the riskTable/changedLines don't support, and refuses a light-eligible riskTable with no `scopeAnswer` at all (the gate must have asked).
 
@@ -344,14 +344,14 @@ If the file came out **empty**, omit both fields — test `not content`, not `li
 
 Assemble the args waist the workflow consumes. It is a single JSON object passed as the `Workflow` tool's `args` parameter (Phase 3) — not written to disk. The workflow validates it up front (`validateArgs`) and rejects a malformed waist before any dispatch.
 
-**Omit optional fields you have no value for — never stamp an explicit `null`.** The waist tolerates an explicit `null` as equivalent to absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`, but omitting is the norm: a live run once stamped `reviewConfig: null` and paid a 21.3s round trip re-deriving it before dispatch. Two fields are the opposite case — `null` there is a meaningful value, not a stand-in for absent: `reviewConfigPath: null` (no REVIEW.md found — pure provenance) is fine, and `limits.deliveryCap: null` (uncapped delivery) is an explicit choice, not an oversight — do not "fix" either one away.
+**Omit optional fields you have no value for; never stamp an explicit `null`.** The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`. Keep `reviewConfigPath: null` when REVIEW.md is absent; it records provenance. The workflow derives `limits.deliveryCap` from the resolver receipt, including an uncapped `null` value.
 
 **Required fields (`validateArgs` fails loud without them):**
 
 | Field | Value |
 |---|---|
 | `argsVersion` | `1` |
-| `mode` | `"headless"` under `CODE_GAUNTLET_HEADLESS=1`, else `"interactive"` |
+| `mode` | Copy `configResult.mode` from the resolver JSON |
 | `repoRoot` | `git rev-parse --show-toplevel` |
 | `outputDir` | resolved `{output_dir}` (absolute) |
 | `headShaShort` | `head_sha_short` from 2b-post |
@@ -361,18 +361,18 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 | `changedFiles` | the changed-file array, by value (Summarize bucketing; the workflow has no disk access) |
 | `changedLines` | total changed line count, by value (Summarize bucketing threshold) |
 | `riskTable` | the Phase 2e per-file risk classification, by value, as `[{ path, risk }]` — `path` set must equal `changedFiles` exactly (missing or extra paths fail loud; see Phase 2e's risk-level table for the `risk` contract) |
-| `configEcho` | the required keyed receipt `{ key: { value, source } }` for every mode-specific knob; each `value` is the printed token as a string, and values and sources must satisfy the headless/interactive contract and mirror the resolved decisions |
+| `configEcho` | Copy `configResult.waist.configEcho` verbatim. It is the only model-stamped configuration receipt. |
 | `pluginRoot` | the required absolute POSIX path to this plugin; `persist.assembleScriptPath` and `verify.scriptPath`, when present, must start with `{pluginRoot}/scripts/` |
 | `reviewScope` | `{ requested, kind, since, commits, detector }`, copied from the prior-review state; `detector` is `null` for local/branch targets, otherwise copy `previously_reviewed`, `sha_resolvable`, `head_advanced`, `sha_is_ancestor`, `incremental_safe`, and `error` (the first detector error or `null`) verbatim. `kind=incremental` requires `requested=incremental` and `detector.incremental_safe=true`; an incremental request that becomes full retains the detector so the renderer can derive the fallback reason |
 | `policy` | `{ tier, subagentModel, provider, gateway }` — see below |
-| `limits` | pass only genuine overrides — a REVIEW.md-set value, or the env-threaded `deliveryCap` — never the full table. `normalizeArgs` fills `summarizeBucketSize`/`validateBatch`/`challengeCap`/`verifySliceSize` from `LIMIT_DEFAULTS` (`workflows/src/args.js`) for any key you leave absent; stamp `{}` (or just `{ deliveryCap }`) rather than restating those numbers here. `deliveryCap`/`discoveryCap` are never defaulted — their absence/`null` is meaningful, not a hole waiting to be filled |
-| `delivery` | `{ tier: "all" \| "main_only", prIdentity: { owner, repo, pr_number, sha_full, title? } }` — which challenge-survivors reach the delivery payload (default `all`), plus the PR/MR identity the report title and the post-review wrapper are built from; whole field optional (absent ⇒ tier `all`, no identity), `prIdentity.title` optional within it |
+| `limits` | Stamp `{}` unless a genuine REVIEW.md-set override exists. The workflow derives the typed delivery cap from the copied receipt. |
+| `delivery` | For PR/MR targets, stamp only `{ prIdentity: { owner, repo, pr_number, sha_full, title? } }`. The workflow derives the typed delivery tier from the copied receipt. Omit it for local targets. |
 
-`limits.deliveryCap` is the Phase 8 PR-comment cap, threaded from `CODE_GAUNTLET_PR_COMMENT_CAP` (the same knob echoed as `pr_comment_cap`; headless default `6`, bench `25`) — the **workflow cannot read `process.env`**, so passing it through the waist is the only path. `delivery.tier` resolves identically in both modes from `CODE_GAUNTLET_DELIVERY_TIER` (default `all`) — no user answer feeds it since issue #35 removed the Phase 1 tier question; same env-blindness as `deliveryCap`, same reason it rides the waist. The Challenge stage hands every survivor to the workflow's `selectDelivery(survivors, deliveryCap, tier)`, which applies the tier (`all` keeps every survivor, `main_only` keeps main-tagged only), ranks, and keeps the top `deliveryCap` as the persisted post-review payload (`artifactPaths.postReview`) Phase 8 posts verbatim. Omit `deliveryCap` (or leave it `null`) to deliver uncapped; omit `delivery` to default the tier to `all`.
+The resolver owns the cap and tier values. `normalizeArgs` derives `limits.deliveryCap` and `delivery.tier` from the copied receipt when those waist fields are absent. The Challenge stage applies those typed values before Phase 8 posts `artifactPaths.postReview` verbatim.
 
 **`policy` (model policy the workflow runs under):**
 
-- `tier` — always `"optimized"`, the single benchmarked policy. Not read from REVIEW.md in either mode (issue #153); the env knob `CODE_GAUNTLET_MODEL_TIER` keeps its fail-loud contract unchanged. Alternate model modes are roadmap work (issue #17).
+- `tier` — copy `configResult.resolved.model_tier`; the resolver owns its value and source.
 - `subagentModel` — read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment (or `null`). **The workflow cannot read `process.env`**, so this capture is the only path for it. If set, warn the user and record it in the methodology — it silently overrides the entire per-stage model policy.
 - `provider` — which API provider the session runs on, resolved from the environment (first match wins; a flag counts only when truthy per Claude Code's own parsing — `1`/`true`/`yes`/`on`, case-insensitive): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` does not change the provider — an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin. Same capture-only path as `subagentModel`. On `firstParty` the workflow pins full first-party model IDs; on any other value it dispatches bare aliases (`sonnet`/`opus`) because third-party providers use deployment-specific model IDs and pass first-party names through unchecked, failing every agent dispatch as an invalid model identifier. Any other spelling is rejected at the waist (`invalid policy.provider`).
 - `gateway` — optional boolean (issue #218): `true` iff `ANTHROPIC_BASE_URL` is set, after trimming whitespace, to a non-blank value, else `false`. `ANTHROPIC_BASE_URL` does NOT change `provider` (above), but it DOES set `policy.gateway`, which turns off the pipeline's conditional per-dimension schema construct on the conventions-and-intent dispatch — a gateway forwards `input_schema` verbatim to whatever backend it fronts, an unmeasured surface even though the session itself reads as `firstParty` — while leaving the first-party model-ID pin from `provider` untouched. The waist treats an omitted `gateway` identically to a stamped `false` (the construct stays active), so this capture is not optional in practice: an orchestrator that never resolves `ANTHROPIC_BASE_URL` and never stamps this field leaves the conditional construct fail-OPEN on every gateway session, silently sending the construct to whatever unmeasured backend the gateway fronts.

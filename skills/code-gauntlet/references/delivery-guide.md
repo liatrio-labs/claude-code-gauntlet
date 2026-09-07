@@ -219,7 +219,7 @@ The `findings` key is reserved/optional — present only when the caller supplie
 **Never create tasks automatically.** The single Yes/No task-board question in Phase 8 Stage 2
 (`references/phase8-delivery.md`) is the consent gate; this section covers what happens after a "Yes".
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped (Phase 8 Stage 2), so no tasks are created and this section does not run. See `references/headless-mode.md`.
+> Headless mode exception: the task board is skipped (Phase 8 Stage 2), so no tasks are created and this section does not run. See `references/headless-mode.md`.
 
 ### Create FIX tasks
 
@@ -242,7 +242,8 @@ Canonical behavior is the "Markdown only" branch of Phase 8 Stage 1 in `phase8-d
 
 ## Chat
 
-**Headless only** (`CODE_GAUNTLET_DELIVERY` includes `chat`): the full report body is included in the
-final response message (which already repeats the `Headless config:` block). Interactive runs have no
+**Headless only** (`configResult.resolved.delivery` includes `"chat"`): the full report body is included in the
+final response message. The report carries the `Headless config:` block. If no report materializes, repeat
+the block from the Phase 1 Bash result as the fallback receipt. Interactive runs have no
 chat delivery method — the Phase 8 delivery question offers Post to PR/MR or markdown-only, and chat gets
 only the short completion summary.

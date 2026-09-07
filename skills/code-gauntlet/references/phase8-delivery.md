@@ -44,7 +44,7 @@ Never hand-write an artifact from `persistReturn`'s contents. The whole channel 
 2. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists markdown-only —
    report the path plus a short chat summary — and report the `gaps`.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): never prompt. Auto-resume **once** when `return.checkpoints` has a `.phases` map; otherwise (truncated, or the retry also fails) deliver the partial report + `gaps` and stop. See `references/headless-mode.md`.
+> Headless mode exception: never prompt. Auto-resume **once** when `return.checkpoints` has a `.phases` map; otherwise (truncated, or the retry also fails) deliver the partial report + `gaps` and stop. See `references/headless-mode.md`.
 
 **Surface the integer gap count in report methodology regardless of `ok`**; at delivery, include the full `gaps` entries in chat as post-report gap details. Each entry names a degraded or skipped stage (unverified findings, skipped validation batch, capped challenges, partial artifacts).
 
@@ -76,16 +76,15 @@ Always use the full 40-character SHA from `git rev-parse HEAD`.
 **Re-check eligibility** — verify the PR is still open. If closed/merged: deliver markdown-only — report the
 path of `artifactPaths.report` plus a short chat summary, and skip posting.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged markdown-only restriction does not apply — headless delivers per `CODE_GAUNTLET_DELIVERY` regardless of PR state (a merged PR is still delivered via `pr_comments`, which in `dry-run` captures the payload without posting). Posting obeys `CODE_GAUNTLET_POST_MODE`. See `references/headless-mode.md`.
+> Headless mode exception: the closed/merged markdown-only restriction does not apply. Delivery follows `configResult.resolved.delivery`, and posting follows `configResult.resolved.post_mode`. See `references/headless-mode.md`.
 
 **Question 1 of 2 — Delivery.** The report already exists on disk; the only open question is whether the
 findings also post to the PR. Ask once, after materialization, before anything is posted:
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not present this `AskUserQuestion`. Deliver per
-> `CODE_GAUNTLET_DELIVERY` and post `artifactPaths.postReview` **verbatim** — the workflow already applied
-> the delivery tier (`$CODE_GAUNTLET_DELIVERY_TIER`, default `all`) plus rank + cap
-> `$CODE_GAUNTLET_PR_COMMENT_CAP`. Posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` ⇒
-> `post_review.py --dry-run`). See `references/headless-mode.md`.
+> Headless mode exception: do not present this `AskUserQuestion`. Deliver per
+> `configResult.resolved.delivery` and post `artifactPaths.postReview` **verbatim**. The workflow derives
+> delivery tier and cap from the resolver receipt. Posting follows `configResult.resolved.post_mode`.
+> See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(
@@ -122,8 +121,8 @@ methodology pointer. Never dump the full report into the conversation unprompted
 
 **Post via post_review.py — only on a "Post to PR/MR" answer.** A "Markdown only" answer ends Stage 1 at
 the completion summary above: skip this whole posting step, run nothing, and go straight to Stage 2. (A
-headless run reaches this step only when `CODE_GAUNTLET_DELIVERY` includes `pr_comments`, and its posting
-obeys `CODE_GAUNTLET_POST_MODE`.)
+headless run reaches this step only when `configResult.resolved.delivery` includes `"pr_comments"`, and its posting
+follows `configResult.resolved.post_mode`.)
 
 **When `delivery.prIdentity` was set in the args waist, the persisted `artifactPaths.postReview` file
 already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, review_body, findings }`) —
@@ -172,7 +171,7 @@ python3 {plugin_root}/scripts/post_review.py "{output_dir}/code-gauntlet-post-re
 """)
 ```
 
-> Headless carve-out (`CODE_GAUNTLET_POST_MODE=dry-run`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting. `post_review.py` self-enforces this regardless — it reads `CODE_GAUNTLET_POST_MODE` directly and treats `dry-run` as `--dry-run` even when the flag is omitted (belt-and-braces) — but pass the flag explicitly so the dry-run intent is visible in the command.
+> Headless carve-out (`configResult.resolved.post_mode == "dry-run"`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting. `post_review.py` self-enforces this regardless — it reads `CODE_GAUNTLET_POST_MODE` directly and treats `dry-run` as `--dry-run` even when the flag is omitted (belt-and-braces) — but pass the flag explicitly so the dry-run intent is visible in the command.
 
 See `references/delivery-guide.md` for the findings JSON schema and validation details.
 
@@ -182,7 +181,7 @@ See `references/delivery-guide.md` for the findings JSON schema and validation d
 
 **Question 2 of 2 — and the last question of the run.** One call, Yes/No shaped. Never a per-finding loop.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped — present no
+> Headless mode exception: the task board is skipped — present no
 > `AskUserQuestion` and create no tasks. See `references/headless-mode.md`.
 
 The question itself is the block under the Phase 8 MANDATORY GATE in SKILL.md; it is asked there, verbatim.
