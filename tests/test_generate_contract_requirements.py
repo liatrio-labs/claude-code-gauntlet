@@ -315,7 +315,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             {
                 "key": "alpha",
                 "modes": ["headless", "interactive"],
-                "example": {
+                "defaults": {
                     "headless": ["h-alpha", "env"],
                     "interactive": ["null", "default"],
                 },
@@ -323,7 +323,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             {
                 "key": "beta",
                 "modes": ["headless"],
-                "example": {"headless": ["h-beta", "default"]},
+                "defaults": {"headless": ["h-beta", "default"]},
             },
         ],
     }

@@ -102,7 +102,7 @@ def load_registry(repo_root=REPO_ROOT):
         "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
         "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
         "  agents: m.AGENTS,"
-        "  knobs: a.KNOB_REGISTRY.map(d => ({ key: d.key, modes: d.modes, example: d.example })),"
+        "  knobs: a.KNOB_REGISTRY.map(d => ({ key: d.key, modes: d.modes, defaults: d.defaults })),"
         "})))"
     )
     out = subprocess.run(
@@ -630,7 +630,7 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
             for knob in identity["knobs"]:
                 if mode not in knob["modes"]:
                     continue
-                value, source = knob["example"][mode]
+                value, source = knob["defaults"][mode]
                 rendered[knob["key"]] = {"value": value, "source": source}
             return json.dumps(rendered, indent=4, ensure_ascii=False).splitlines()
 

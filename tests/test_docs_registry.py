@@ -138,7 +138,7 @@ class TestDocsRegistry(unittest.TestCase):
             for knob in registry["knobs"]:
                 if mode not in knob["modes"]:
                     continue
-                value, source = knob["example"][mode]
+                value, source = knob["defaults"][mode]
                 expected[mode][knob["key"]] = {"value": value, "source": source}
 
         path = REPO / "skills" / "code-gauntlet" / "SKILL.md"
