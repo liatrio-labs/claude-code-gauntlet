@@ -14,10 +14,13 @@ Scope: git-tracked files only (``git ls-files``), so gitignored local artifacts
 never fail the suite.
 """
 
+import json
 import re
 import subprocess
 import unittest
 from pathlib import Path
+
+from scripts import generate_contract_requirements as contract_generator
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -126,6 +129,38 @@ def _individually_classified_rows_section():
 
 
 class TestDocsRegistry(unittest.TestCase):
+    def test_generated_config_receipt_matches_registry_examples(self):
+        """The generated receipt examples stay pinned to each registry row's examples."""
+        registry = contract_generator.load_registry(str(REPO))
+        expected = {}
+        for mode in ("interactive", "headless"):
+            expected[mode] = {}
+            for knob in registry["knobs"]:
+                if mode not in knob["modes"]:
+                    continue
+                value, source = knob["example"][mode]
+                expected[mode][knob["key"]] = {"value": value, "source": source}
+
+        path = REPO / "skills" / "code-gauntlet" / "SKILL.md"
+        text = path.read_text()
+        open_marker, close_marker = contract_generator.identity_marker_lines(
+            "config_receipt", "skills/code-gauntlet/SKILL.md"
+        )
+        start = text.index(open_marker) + len(open_marker)
+        end = text.index(close_marker, start)
+        body = text[start:end]
+        for mode, label in (("interactive", "Interactive"), ("headless", "Headless")):
+            match = re.search(
+                rf"\*\*{label} receipt:\*\*\n\n```json\n(.*?)\n```",
+                body,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(match, f"missing {mode} config receipt fence")
+            actual = json.loads(match.group(1))
+            self.assertEqual(
+                actual, expected[mode], f"{mode} receipt drifted from KNOB_REGISTRY"
+            )
+
     def test_config_receipt_examples_follow_registry_order(self):
         """Every skill example must render knobs in the source registry's mode order."""
         args_source = (REPO / "workflows" / "src" / "args.js").read_text()

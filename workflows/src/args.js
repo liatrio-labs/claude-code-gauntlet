@@ -71,16 +71,17 @@ const positiveDigits = (value) => digits(value) && !/^0+$/.test(value);
 export const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
 
 export const KNOB_REGISTRY = [
-  { key: 'model_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['fixed'] }, valueRule: (value) => value === 'optimized' },
-  { key: 'delivery', modes: ['headless'], allowedSources: { headless: ['env', 'review_md', 'default'] }, valueRule: deliveryValue },
-  { key: 'post_mode', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['dry-run', 'live'].includes(value) },
-  { key: 'pr_comment_cap', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value, mode) => mode === 'headless' ? positiveDigits(value) : (value === 'null' || digits(value)) },
-  { key: 'delivery_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value) => DELIVERY_TIERS.includes(value) },
-  { key: 'draft_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['review', 'skip'].includes(value) },
-  { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['incremental', 'full', 'skip'].includes(value) },
-  { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['local', 'error'].includes(value) },
-  { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => SCOPE_ANSWERS.includes(value) },
-  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, valueRule: (value) => ['present', 'absent'].includes(value) },
+  { key: 'model_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['fixed'] }, valueRule: (value) => value === 'optimized', example: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] } },
+  { key: 'delivery', modes: ['headless'], allowedSources: { headless: ['env', 'review_md', 'default'] }, valueRule: deliveryValue, example: { headless: ['markdown', 'default'] } },
+  { key: 'post_mode', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['dry-run', 'live'].includes(value), example: { headless: ['dry-run', 'default'] } },
+  // The receipt is the printed token. A JSON null is accepted only interactively as the spelling of printed null.
+  { key: 'pr_comment_cap', modes: ['headless', 'interactive'], nullReceipt: ['interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value, mode) => mode === 'headless' ? positiveDigits(value) : (value === 'null' || digits(value)), example: { headless: ['6', 'default'], interactive: ['null', 'default'] } },
+  { key: 'delivery_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value) => DELIVERY_TIERS.includes(value), example: { headless: ['all', 'default'], interactive: ['all', 'default'] } },
+  { key: 'draft_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['review', 'skip'].includes(value), example: { headless: ['review', 'default'] } },
+  { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['incremental', 'full', 'skip'].includes(value), example: { headless: ['full', 'default'] } },
+  { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['local', 'error'].includes(value), example: { headless: ['error', 'default'] } },
+  { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => SCOPE_ANSWERS.includes(value), example: { headless: ['full', 'default'] } },
+  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, valueRule: (value) => ['present', 'absent'].includes(value), example: { interactive: ['absent', 'discovery'] } },
 ];
 
 // Shared with PATH_CONTROL_RE further down (declared locally there because it sits inside
@@ -204,6 +205,12 @@ export function nullToleranceGap(key) {
   return `null_arg: args.${key} arrived as a literal null and was treated as ABSENT — ${why}. Omit ${key} entirely (or stamp a well-formed value); do not stamp null.`;
 }
 
+// nullRespellGap(key) -> the disclosure for a JSON null respelled as a printed receipt token.
+// The receipt and typed configuration stay unchanged; only the receipt spelling crosses the waist.
+export function nullRespellGap(key) {
+  return `null_receipt: args.${key} arrived as a literal null and was spelled as the printed token "null"; the receipt and the configuration are unchanged; stamp the string "null".`;
+}
+
 // nullToleranceRejectedKeys(cleanArgs, dropped) -> the subset of `dropped` whose stamped null
 // validateArgs would ACTUALLY have rejected — i.e. the keys where the tolerance changed the
 // outcome and there is therefore something to disclose.
@@ -246,7 +253,7 @@ function withNullAt(args, key) {
   return out;
 }
 
-// stripNullOptionalsReport(args) -> { args, dropped }
+// stripNullOptionalsReport(args) -> { args, dropped, respelled }
 // Drops a literal top-level null for the narrow NULLABLE_TOP_LEVEL allowlist (and, inside a
 // present `delivery` object, a literal null for its `prIdentity`/`tier` sub-fields), and
 // names every key it dropped so the caller can DISCLOSE the substitution.
@@ -255,8 +262,9 @@ function withNullAt(args, key) {
 // are still there). Non-object input (undefined, null, a string) passes through as-is with
 // an empty `dropped`; there is nothing to strip.
 export function stripNullOptionalsReport(args) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return { args, dropped: [] };
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return { args, dropped: [], respelled: [] };
   const dropped = [];
+  const respelled = [];
   const out = { ...args };
   for (const k of NULLABLE_TOP_LEVEL) {
     if (out[k] === null) { delete out[k]; dropped.push(k); }
@@ -290,7 +298,21 @@ export function stripNullOptionalsReport(args) {
     }
     out.limits = limits;
   }
-  return { args: out, dropped };
+  // The receipt is the printed token: interactively, a JSON null is accepted as the spelling
+  // of printed null, disclosed as a gap while validateConfigEcho remains strict.
+  if (isPlainObject(out.configEcho) && typeof out.mode === 'string') {
+    const configEcho = { ...out.configEcho };
+    for (const descriptor of KNOB_REGISTRY) {
+      if (!descriptor.nullReceipt || !descriptor.nullReceipt.includes(out.mode)) continue;
+      const entry = configEcho[descriptor.key];
+      if (isPlainObject(entry) && entry.value === null) {
+        configEcho[descriptor.key] = { ...entry, value: 'null' };
+        respelled.push(`configEcho.${descriptor.key}.value`);
+      }
+    }
+    out.configEcho = configEcho;
+  }
+  return { args: out, dropped, respelled };
 }
 
 export function normalizeArgsReport(raw) {

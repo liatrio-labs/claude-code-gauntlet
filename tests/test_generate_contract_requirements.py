@@ -311,6 +311,21 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "self_inconsistency": "SI",
         },
         "ruleSourceLabelFallback": "RF",
+        "knobs": [
+            {
+                "key": "alpha",
+                "modes": ["headless", "interactive"],
+                "example": {
+                    "headless": ["h-alpha", "env"],
+                    "interactive": ["null", "default"],
+                },
+            },
+            {
+                "key": "beta",
+                "modes": ["headless"],
+                "example": {"headless": ["h-beta", "default"]},
+            },
+        ],
     }
 
     # Every declared fence body, hand-typed against the placeholder IDENTITY above.
@@ -440,6 +455,35 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "The final delivery summary opens with `MARK NAME` on its first line and "
             "carries no other\n"
             "emoji, except severity emoji when listing findings."
+        ),
+        ("skills/code-gauntlet/SKILL.md", "config_receipt"): (
+            'Every `configEcho` value is the printed token as a string; an unset interactive cap is the string `"null"`, and a JSON null there is accepted, spelled `"null"`, and disclosed as a gap; `limits.deliveryCap` carries the typed null.\n'
+            "\n"
+            "**Interactive receipt:**\n"
+            "\n"
+            "```json\n"
+            "{\n"
+            '    "alpha": {\n'
+            '        "value": "null",\n'
+            '        "source": "default"\n'
+            "    }\n"
+            "}\n"
+            "```\n"
+            "\n"
+            "**Headless receipt:**\n"
+            "\n"
+            "```json\n"
+            "{\n"
+            '    "alpha": {\n'
+            '        "value": "h-alpha",\n'
+            '        "source": "env"\n'
+            "    },\n"
+            '    "beta": {\n'
+            '        "value": "h-beta",\n'
+            '        "source": "default"\n'
+            "    }\n"
+            "}\n"
+            "```"
         ),
     }
 

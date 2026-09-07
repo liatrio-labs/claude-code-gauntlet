@@ -739,6 +739,27 @@ test('a clean waist records NO null_arg gap (disclosure is not noise)', async ()
   assert.deepEqual(out.gaps.filter((g) => /null_arg/.test(g)), []);
 });
 
+test('T303: interactive null receipt is respelled, disclosed, and rendered as the printed token', async () => {
+  const args = validArgs({
+    mode: 'interactive',
+    limits: { deliveryCap: null },
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'fixed' },
+      pr_comment_cap: { value: null, source: 'default' },
+      delivery_tier: { value: 'all', source: 'default' },
+      review_md: { value: 'absent', source: 'discovery' },
+    },
+  });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+
+  assert.equal(out.ok, true, `a receipt null must not reject the run; gaps: ${out.gaps}`);
+  assert.ok(out.gaps.some((gap) => gap.startsWith('null_receipt: args.configEcho.pr_comment_cap.value')));
+  assert.ok(persisted, 'the report must reach the persistence seam');
+  assert.match(persisted.report, /pr_comment_cap=null \(default\)/);
+  assert.equal(args.configEcho.pr_comment_cap.value, null, 'the input waist stays unchanged');
+});
+
 test('L3-1: a stamped persist:null runs instead of hard-rejecting the whole run, and is disclosed', async () => {
   // persist was added to the waist but left OFF the null-tolerance allowlist the same diff
   // introduced for its siblings, so `persist: null` rejected the run outright.

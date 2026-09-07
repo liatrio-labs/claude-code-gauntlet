@@ -525,8 +525,8 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
         else:
             echo = {
                 "model_tier": {"value": "optimized", "source": "fixed"},
-                "delivery_tier": {"value": "all", "source": "default"},
                 "pr_comment_cap": {"value": "null", "source": "default"},
+                "delivery_tier": {"value": "all", "source": "default"},
                 "review_md": {"value": "absent", "source": "discovery"},
             }
             expected = {

@@ -21,7 +21,7 @@ import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
-import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible } from './args.js';
+import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible } from './args.js';
 import { renderReport, coerceReportFindings } from './renderReport.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
@@ -3839,8 +3839,11 @@ export async function runWith(ctx, rawArgs) {
   // Normalize from entry.waist, not rawArgs: entryArgs has already unwrapped every JSON
   // layer, and normalizeArgsReport peels exactly one — re-normalizing the raw value would
   // hand validateArgs a string for any waist encoded more than once.
-  const { args: A, dropped: droppedNulls } = normalizeArgsReport(entry.waist);
-  const nullArgGaps = nullToleranceRejectedKeys(A, droppedNulls).map(nullToleranceGap);
+  const { args: A, dropped: droppedNulls, respelled: respelledNulls } = normalizeArgsReport(entry.waist);
+  const nullArgGaps = [
+    ...nullToleranceRejectedKeys(A, droppedNulls).map(nullToleranceGap),
+    ...respelledNulls.map(nullRespellGap),
+  ];
   const check = validateArgs(A);
   if (!check.ok) {
     // The field list says WHAT is wrong; SKILL_RECOVERY_LINE says where the fields come

@@ -2234,16 +2234,16 @@ const digits = (value) => typeof value === 'string' && /^\d+$/.test(value);
 const positiveDigits = (value) => digits(value) && !/^0+$/.test(value);
 const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
 const KNOB_REGISTRY = [
-  { key: 'model_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['fixed'] }, valueRule: (value) => value === 'optimized' },
-  { key: 'delivery', modes: ['headless'], allowedSources: { headless: ['env', 'review_md', 'default'] }, valueRule: deliveryValue },
-  { key: 'post_mode', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['dry-run', 'live'].includes(value) },
-  { key: 'pr_comment_cap', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value, mode) => mode === 'headless' ? positiveDigits(value) : (value === 'null' || digits(value)) },
-  { key: 'delivery_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value) => DELIVERY_TIERS.includes(value) },
-  { key: 'draft_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['review', 'skip'].includes(value) },
-  { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['incremental', 'full', 'skip'].includes(value) },
-  { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['local', 'error'].includes(value) },
-  { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => SCOPE_ANSWERS.includes(value) },
-  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, valueRule: (value) => ['present', 'absent'].includes(value) },
+  { key: 'model_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['fixed'] }, valueRule: (value) => value === 'optimized', example: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] } },
+  { key: 'delivery', modes: ['headless'], allowedSources: { headless: ['env', 'review_md', 'default'] }, valueRule: deliveryValue, example: { headless: ['markdown', 'default'] } },
+  { key: 'post_mode', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['dry-run', 'live'].includes(value), example: { headless: ['dry-run', 'default'] } },
+  { key: 'pr_comment_cap', modes: ['headless', 'interactive'], nullReceipt: ['interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value, mode) => mode === 'headless' ? positiveDigits(value) : (value === 'null' || digits(value)), example: { headless: ['6', 'default'], interactive: ['null', 'default'] } },
+  { key: 'delivery_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value) => DELIVERY_TIERS.includes(value), example: { headless: ['all', 'default'], interactive: ['all', 'default'] } },
+  { key: 'draft_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['review', 'skip'].includes(value), example: { headless: ['review', 'default'] } },
+  { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['incremental', 'full', 'skip'].includes(value), example: { headless: ['full', 'default'] } },
+  { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['local', 'error'].includes(value), example: { headless: ['error', 'default'] } },
+  { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => SCOPE_ANSWERS.includes(value), example: { headless: ['full', 'default'] } },
+  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, valueRule: (value) => ['present', 'absent'].includes(value), example: { interactive: ['absent', 'discovery'] } },
 ];
 const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
 function validatePathSegments(value, label, { separateSlashErrors = false, requireBasename = false } = {}) {
@@ -2296,6 +2296,9 @@ function nullToleranceGap(key) {
   const why = NULL_TOLERANCE_CONSEQUENCE[key] || 'the run proceeds as if the field had not been supplied';
   return `null_arg: args.${key} arrived as a literal null and was treated as ABSENT — ${why}. Omit ${key} entirely (or stamp a well-formed value); do not stamp null.`;
 }
+function nullRespellGap(key) {
+  return `null_receipt: args.${key} arrived as a literal null and was spelled as the printed token "null"; the receipt and the configuration are unchanged; stamp the string "null".`;
+}
 function nullToleranceRejectedKeys(cleanArgs, dropped) {
   if (!Array.isArray(dropped) || dropped.length === 0) return [];
   const baseline = validateArgs(cleanArgs).errors.length;
@@ -2320,8 +2323,9 @@ function withNullAt(args, key) {
   return out;
 }
 function stripNullOptionalsReport(args) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return { args, dropped: [] };
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return { args, dropped: [], respelled: [] };
   const dropped = [];
+  const respelled = [];
   const out = { ...args };
   for (const k of NULLABLE_TOP_LEVEL) {
     if (out[k] === null) { delete out[k]; dropped.push(k); }
@@ -2350,7 +2354,19 @@ function stripNullOptionalsReport(args) {
     }
     out.limits = limits;
   }
-  return { args: out, dropped };
+  if (isPlainObject(out.configEcho) && typeof out.mode === 'string') {
+    const configEcho = { ...out.configEcho };
+    for (const descriptor of KNOB_REGISTRY) {
+      if (!descriptor.nullReceipt || !descriptor.nullReceipt.includes(out.mode)) continue;
+      const entry = configEcho[descriptor.key];
+      if (isPlainObject(entry) && entry.value === null) {
+        configEcho[descriptor.key] = { ...entry, value: 'null' };
+        respelled.push(`configEcho.${descriptor.key}.value`);
+      }
+    }
+    out.configEcho = configEcho;
+  }
+  return { args: out, dropped, respelled };
 }
 function normalizeArgsReport(raw) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -4814,8 +4830,11 @@ function compactMethodology(m) {
 async function runWith(ctx, rawArgs) {
   const entry = entryArgs(rawArgs);
   if (!entry.ok) return entry.envelope;
-  const { args: A, dropped: droppedNulls } = normalizeArgsReport(entry.waist);
-  const nullArgGaps = nullToleranceRejectedKeys(A, droppedNulls).map(nullToleranceGap);
+  const { args: A, dropped: droppedNulls, respelled: respelledNulls } = normalizeArgsReport(entry.waist);
+  const nullArgGaps = [
+    ...nullToleranceRejectedKeys(A, droppedNulls).map(nullToleranceGap),
+    ...respelledNulls.map(nullRespellGap),
+  ];
   const check = validateArgs(A);
   if (!check.ok) {
     return makeArgsRejectEnvelope(
