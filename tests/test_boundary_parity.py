@@ -27,6 +27,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,7 @@ sys.path.insert(0, str(REPO))
 import scripts.post_review as post_review  # noqa: E402
 import scripts.report_patches as report_patches  # noqa: E402
 from bench.runner import invoke  # noqa: E402
+from scripts import resolve_config  # noqa: E402
 
 RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
 
@@ -591,6 +593,152 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
                 },
                 mode,
             )
+
+    def _render_receipt(self, mode, echo, pipeline_version, plugin_root):
+        fixture = {
+            "mode": mode,
+            "configEcho": echo,
+            "pluginRoot": plugin_root,
+            "pipelineVersion": pipeline_version,
+            "reviewScope": {
+                "requested": "full",
+                "kind": "full",
+                "since": None,
+                "commits": None,
+                "detector": None,
+            },
+            "policy": {"tier": "optimized", "provider": "firstParty", "gateway": False},
+            "deliveryTier": "all",
+            "deliveryCap": None,
+            "gapCount": 0,
+            "summary": "summary",
+            "findings": [],
+            "unverified": [],
+            "dimensions": {"dispatched": [], "degraded": []},
+            "stats": {
+                "discovered": 0,
+                "validate": {},
+                "filter": {},
+                "challenge": {},
+                "merge": {},
+            },
+        }
+        node = (
+            "import('./workflows/src/renderReport.js').then(m => "
+            "process.stdout.write(m.renderReport(" + json.dumps(fixture) + ")))"
+        )
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", node],
+            cwd=str(REPO),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        match = re.search(
+            rf"```text\n(({('Headless' if mode == 'headless' else 'Resolved')} config:\n(?:  [^\n]+\n)+))```",
+            proc.stdout,
+        )
+        self.assertIsNotNone(match)
+        return match.group(1).rstrip("\n")
+
+    def test_resolver_block_matches_report_renderer_with_receipt_lures(self):
+        for mode in ("interactive", "headless"):
+            resolved = resolve_config.resolve(mode, {}, None, "pr")
+            echo = json.loads(json.dumps(resolved["configEcho"]))
+            echo[next(iter(echo))]["value"] = "value\n`` forged"
+            echo[next(iter(echo))]["source"] = "source\t  with  spaces"
+            if mode == "interactive":
+                echo["review_md"] = {"value": "absent", "source": "discovery"}
+            identity = {
+                "pipeline_version": "version\r\n`` forged",
+                "plugin_root": " /absolute/`root`  ",
+            }
+            expected = resolve_config.render_block(mode, echo, identity)
+            actual = self._render_receipt(
+                mode, echo, identity["pipeline_version"], identity["plugin_root"]
+            )
+            self.assertEqual(actual, expected, mode)
+
+    def _validate_resolver_waist(self, payload, *, light_eligible=False):
+        script = (
+            "import { normalizeArgs, validateArgs } from './workflows/src/args.js';"
+            "import { validArgs } from './workflows/test/helpers/pipelineMock.js';"
+            "const payload = "
+            + json.dumps(payload)
+            + ";"
+            + "const args = validArgs();"
+            + "args.mode = payload.mode;"
+            + "args.configEcho = payload.waist.configEcho;"
+            + "args.limits = {...args.limits}; delete args.limits.deliveryCap;"
+            + "delete args.delivery; delete args.scopeAnswer;"
+            + (
+                "args.riskTable = [{path:'a.js', risk:'low'}]; args.changedLines = 1;"
+                if light_eligible
+                else ""
+            )
+            + "const normalized = normalizeArgs(args);"
+            + "process.stdout.write(JSON.stringify({result: validateArgs(normalized), args: normalized}));"
+        )
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=str(REPO),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_resolver_waist_derives_typed_fields_before_validate_args(self):
+        cases = [
+            ("headless", {}, False),
+            (
+                "headless",
+                {
+                    "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
+                    "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
+                },
+                False,
+            ),
+            ("headless", {"CODE_GAUNTLET_TRIVIAL_SCOPE": "light"}, True),
+            ("interactive", {}, False),
+            (
+                "interactive",
+                {
+                    "CODE_GAUNTLET_PR_COMMENT_CAP": "0",
+                    "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
+                },
+                False,
+            ),
+            ("interactive", {"CODE_GAUNTLET_PR_COMMENT_CAP": "null"}, False),
+        ]
+        for mode, env, light_eligible in cases:
+            with self.subTest(mode=mode, env=env):
+                payload = resolve_config.resolve(mode, env, None, "pr")
+                payload["mode"] = mode
+                result = self._validate_resolver_waist(
+                    payload, light_eligible=light_eligible
+                )
+                self.assertTrue(result["result"]["ok"], result["result"]["errors"])
+                args = result["args"]
+                self.assertEqual(
+                    args["limits"]["deliveryCap"],
+                    None
+                    if mode == "interactive"
+                    and env.get("CODE_GAUNTLET_PR_COMMENT_CAP") in (None, "null")
+                    else (
+                        int(env["CODE_GAUNTLET_PR_COMMENT_CAP"])
+                        if "CODE_GAUNTLET_PR_COMMENT_CAP" in env
+                        else (6 if mode == "headless" else None)
+                    ),
+                )
+                self.assertEqual(
+                    args["delivery"]["tier"],
+                    env.get("CODE_GAUNTLET_DELIVERY_TIER", "all"),
+                )
+                if light_eligible:
+                    self.assertEqual(args["scopeAnswer"], "light")
 
 
 if __name__ == "__main__":

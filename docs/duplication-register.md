@@ -40,7 +40,7 @@ reconcile to 116 pairs plus the ten tool-invisible relationships.
 
 ## Individually classified rows
 
-Forty-six rows: 35 `intentional-and-documented`, 11 `intentional-but-undocumented`.
+Forty-nine rows: 38 `intentional-and-documented`, 11 `intentional-but-undocumented`.
 
 | Pair | Classification | Reason | Doc ref |
 | --- | --- | --- | --- |
@@ -60,6 +60,9 @@ Forty-six rows: 35 `intentional-and-documented`, 11 `intentional-but-undocumente
 | `workflows/src/findingDedup.js` (23 ln) ↔ `scripts/finding_dedup.py` (57 ln) | intentional-and-documented | Smallest of the five twins; fixtures at `tests/fixtures/parity/finding_dedup/`. | `scripts/AGENTS.md:17-19` |
 | `stages.js:2343` fnv1a32 + `:493` DELTA_KEYS ↔ `assemble_artifacts.py:178` fnv1a32 + `verify_findings.py:1061` `_DELTA_FIELDS` | intentional-and-documented | Only the unavoidable JS↔Python crossing is duplicated: the Python side has exactly one `fnv1a32` and both other modules import it (`verify_findings.py:91` carries an in-code note against a third copy). | `workflows/AGENTS.md:43-48,59-60` |
 | `stages.js` `VERIFY_SLICE_FIELDS` ↔ `verify_findings.py` `_SLICE_INPUT_FIELDS` | intentional-and-documented | Cross-language crossing: the verify slice input is projected to the fields the script consults, in the same list order in both runtimes. `tests/test_verify_findings.py` pins the pair in lockstep. | `workflows/AGENTS.md` (The verify boundary) |
+| `workflows/src/args.js` `matchesRule` ↔ `scripts/resolve_config.py` `matches_rule` | intentional-and-documented | Cross-runtime rule interpreters use the same registry vocabulary and fail-closed lure set. | `tests/test_resolve_config.py` |
+| `workflows/src/renderReport.js` `receiptLines`/`receiptSafe`/`oneLine` ↔ `scripts/resolve_config.py` `render_block`/`receipt_safe`/`one_line` | intentional-and-documented | The resolver's Phase 1 receipt is pinned to the report renderer's valid-waist receipt, including order and sanitization. | `tests/test_boundary_parity.py` |
+| `workflows/src/pipeline_entry.js` `PIPELINE_VERSION` regex ↔ `bench/runner/invoke.py`, `tests/test_bundle_fresh.py`, `scripts/resolve_config.py` | intentional-and-documented | Each consumer independently reads the bundle identity because the workflow and retained scripts have different runtime boundaries. | `tests/test_resolve_config.py` |
 | `workflows/test/args.test.js:8-16` ↔ `workflows/test/entry_guard.test.js:23-31` | intentional-and-documented | The copy carries its own written justification at the copy site: a shared fixture module lets one bad edit silently rebaseline both suites. | `workflows/test/entry_guard.test.js:19-21` |
 | `merge_findings` fixtures: `dropped_no_id_both_channels` ↔ `unterminated_brace` | intentional-and-documented | Byte-diffed: differ only in what each case name exercises. Machine-generated goldens; consolidating breaks the byte-compare freshness assertion. | `tests/fixtures/parity/README.md` |
 | `merge_findings` fixtures: `dropped_no_id_both_channels` ↔ `truncation_m5_no_false_positive` | intentional-and-documented | Byte-diffed: identical three-field delta to the row above. Same generated-golden mechanism. | `tests/fixtures/parity/README.md` |

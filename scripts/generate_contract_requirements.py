@@ -27,11 +27,13 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
+import uuid
 from typing import Any
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -56,6 +58,7 @@ _IDENTITY_MARKER_RE = re.compile(
 IDENTITY_FENCES = {
     "scripts/post_review.py": ["constants"],
     "scripts/render_fix_tasks.py": ["constants", "detail_fields"],
+    "scripts/resolve_config.py": ["knob_registry"],
     REPORT_FORMAT_REL: [
         "severity_legend",
         "inline_legend",
@@ -73,6 +76,7 @@ IDENTITY_FENCES = {
     # break the one-edit property (a registry edit + a generator run + a hand edit
     # nothing turns red on), so it is generated like the rest.
     "skills/code-gauntlet/SKILL.md": ["chat_identity", "config_receipt"],
+    "skills/code-gauntlet/references/headless-mode.md": ["headless_env_table"],
 }
 
 # English phrasing for fields that carry a dimension-conditional requirement. Not derivable
@@ -102,7 +106,11 @@ def load_registry(repo_root=REPO_ROOT):
         "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
         "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
         "  agents: m.AGENTS,"
-        "  knobs: a.KNOB_REGISTRY.map(d => ({ key: d.key, modes: d.modes, defaults: d.defaults })),"
+        "  knobs: a.KNOB_REGISTRY.map(d => ({"
+        "    key: d.key, modes: d.modes, allowedSources: d.allowedSources, rule: d.rule,"
+        "    env: d.env, reviewMdKey: d.reviewMdKey, defaults: d.defaults, type: d.type,"
+        "    waistPath: d.waistPath, derivedFrom: d.derivedFrom, nullReceipt: d.nullReceipt,"
+        "  })),"
         "})))"
     )
     out = subprocess.run(
@@ -348,6 +356,79 @@ def _severity_pairs(identity):
 def _rule_source_pairs(identity):
     """[(kind, label), ...] in registry declaration order."""
     return list(identity["ruleSourceLabels"].items())
+
+
+def _python_literal(value, indent=0):
+    """Render JSON-safe data as a fully exploded, ruff-stable Python literal."""
+    pad = " " * indent
+    if value is None:
+        return "None"
+    if value is True:
+        return "True"
+    if value is False:
+        return "False"
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        lines = ["["]
+        for item in value:
+            rendered = _python_literal(item, indent + 4)
+            item_lines = rendered.splitlines()
+            lines.append(" " * (indent + 4) + item_lines[0])
+            lines.extend(item_lines[1:])
+            lines[-1] += ","
+        lines.append(pad + "]")
+        return "\n".join(lines)
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        lines = ["{"]
+        for key, item in value.items():
+            rendered = _python_literal(item, indent + 4)
+            item_lines = rendered.splitlines()
+            lines.append(
+                " " * (indent + 4)
+                + json.dumps(str(key), ensure_ascii=False)
+                + ": "
+                + item_lines[0]
+            )
+            lines.extend(item_lines[1:])
+            lines[-1] += ","
+        lines.append(pad + "}")
+        return "\n".join(lines)
+    raise SystemExit(f"cannot render non-JSON registry value: {value!r}")
+
+
+def _load_resolver(repo_root):
+    """Load resolve_config.py by path under a unique module name."""
+    path = os.path.join(repo_root, "scripts", "resolve_config.py")
+    module_name = f"_contract_resolver_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"cannot load resolver module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _rule_values(row, mode):
+    rule = row.get("rule")
+    if isinstance(rule, dict) and "kind" not in rule:
+        rule = rule.get(mode)
+    if not isinstance(rule, dict):
+        return "valid value"
+    kind = rule.get("kind")
+    if kind == "positive_digits":
+        return "positive integer"
+    if kind == "digits_or_null":
+        return "digits or null"
+    values = rule.get("values")
+    if isinstance(values, list):
+        return ",".join(str(value) for value in values)
+    return "valid value"
 
 
 # A placeholder fixture whose every field value is its own placeholder, run through the REAL
@@ -615,6 +696,24 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
             f"`{mark} *{name}*` to every rendered comment body — one mark per delivered "
             "surface, never one per finding. Never hand-type either."
         ]
+    if symbol == "knob_registry":
+        return [
+            "KNOB_REGISTRY = " + _python_literal(identity["knobs"], indent=0),
+        ]
+    if symbol == "headless_env_table":
+        lines = [
+            "| Variable | Values | Default |",
+            "| --- | --- | --- |",
+        ]
+        for row in identity["knobs"]:
+            if not row.get("env"):
+                continue
+            mode = "headless"
+            env_name = row["env"]
+            values = _rule_values(row, mode)
+            default = row.get("defaults", {}).get(mode, ["", ""])[0]
+            lines.append(f"| `{env_name}` | `{values}` | `{default}` |")
+        return lines
     if symbol == "chat_identity":
         return [
             (
@@ -624,29 +723,57 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
             "emoji, except severity emoji when listing findings.",
         ]
     if symbol == "config_receipt":
-
-        def receipt(mode):
-            rendered = {}
-            for knob in identity["knobs"]:
-                if mode not in knob["modes"]:
-                    continue
-                value, source = knob["defaults"][mode]
-                rendered[knob["key"]] = {"value": value, "source": source}
-            return json.dumps(rendered, indent=4, ensure_ascii=False).splitlines()
-
+        resolver = _load_resolver(repo_root)
+        docs_identity = {
+            "pipeline_version": "{pipeline_version}",
+            "plugin_root": "/absolute/path/to/claude-code-gauntlet",
+        }
+        rendered = {}
+        receipts = {}
+        for mode in ("interactive", "headless"):
+            resolved = resolver.resolve(
+                mode,
+                {},
+                None,
+                "pr",
+                registry=identity["knobs"],
+            )
+            receipts[mode] = resolver.serialize_receipt(
+                mode,
+                resolved["configEcho"],
+                registry=identity["knobs"],
+            ).splitlines()
+            rendered[mode] = resolver.render_block(
+                mode,
+                resolved["configEcho"],
+                docs_identity,
+                registry=identity["knobs"],
+            ).splitlines()
         return [
-            'Every `configEcho` value is the printed token as a string; an unset interactive cap is the string `"null"`, and a JSON null there is accepted, spelled `"null"`, and disclosed as a gap; `limits.deliveryCap` carries the typed null.',
+            "The resolver owns the printed configuration block and the keyed `configEcho` receipt.",
+            "",
+            "**Interactive block:**",
+            "",
+            "```text",
+            *rendered["interactive"],
+            "```",
             "",
             "**Interactive receipt:**",
             "",
             "```json",
-            *receipt("interactive"),
+            *receipts["interactive"],
+            "```",
+            "",
+            "**Headless block:**",
+            "",
+            "```text",
+            *rendered["headless"],
             "```",
             "",
             "**Headless receipt:**",
             "",
             "```json",
-            *receipt("headless"),
+            *receipts["headless"],
             "```",
         ]
     if symbol == "inline_legend":

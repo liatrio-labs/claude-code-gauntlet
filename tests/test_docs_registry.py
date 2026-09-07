@@ -129,18 +129,10 @@ def _individually_classified_rows_section():
 
 
 class TestDocsRegistry(unittest.TestCase):
-    def test_generated_config_receipt_matches_registry_examples(self):
-        """The generated receipt examples stay pinned to each registry row's examples."""
-        registry = contract_generator.load_registry(str(REPO))
-        expected = {}
-        for mode in ("interactive", "headless"):
-            expected[mode] = {}
-            for knob in registry["knobs"]:
-                if mode not in knob["modes"]:
-                    continue
-                value, source = knob["defaults"][mode]
-                expected[mode][knob["key"]] = {"value": value, "source": source}
-
+    def test_generated_config_receipt_matches_resolver_fixtures(self):
+        """The generated receipts stay pinned to the resolver's empty-env fixtures."""
+        registry = contract_generator.load_registry(str(REPO))["knobs"]
+        resolver = contract_generator._load_resolver(str(REPO))
         path = REPO / "skills" / "code-gauntlet" / "SKILL.md"
         text = path.read_text()
         open_marker, close_marker = contract_generator.identity_marker_lines(
@@ -157,9 +149,22 @@ class TestDocsRegistry(unittest.TestCase):
             )
             self.assertIsNotNone(match, f"missing {mode} config receipt fence")
             actual = json.loads(match.group(1))
+            expected = resolver.resolve(mode, {}, None, "pr", registry=registry)[
+                "configEcho"
+            ]
             self.assertEqual(
-                actual, expected[mode], f"{mode} receipt drifted from KNOB_REGISTRY"
+                actual, expected, f"{mode} receipt drifted from KNOB_REGISTRY"
             )
+        interactive = json.loads(
+            re.search(
+                r"\*\*Interactive receipt:\*\*\n\n```json\n(.*?)\n```",
+                body,
+                re.DOTALL,
+            ).group(1)
+        )
+        self.assertEqual(
+            list(interactive), ["model_tier", "pr_comment_cap", "delivery_tier"]
+        )
 
     def test_config_receipt_examples_follow_registry_order(self):
         """Every skill example must render knobs in the source registry's mode order."""
@@ -169,30 +174,43 @@ class TestDocsRegistry(unittest.TestCase):
             args_source,
         )
         self.assertTrue(descriptors, "KNOB_REGISTRY descriptors not found")
-        expected = {}
-        for key, modes_text in descriptors:
-            for mode in re.findall(r"'([^']+)'", modes_text):
-                expected.setdefault(mode, []).append(key)
+        registry = contract_generator.load_registry(str(REPO))["knobs"]
+        expected = {
+            mode: [
+                row["key"]
+                for row in registry
+                if mode in row["modes"] and row.get("derivedFrom") is None
+            ]
+            for mode in ("interactive", "headless")
+        }
+        skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text()
+        open_marker, close_marker = contract_generator.identity_marker_lines(
+            "config_receipt", "skills/code-gauntlet/SKILL.md"
+        )
+        start = skill.index(open_marker)
+        generated = skill[start : skill.index(close_marker, start)]
+        for mode, label in (("interactive", "Interactive"), ("headless", "Headless")):
+            match = re.search(
+                rf"\*\*{label} block:\*\*\n\n```text\n(.*?)\n```",
+                generated,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(match)
+            keys = re.findall(r"^  ([A-Za-z_]+)=", match.group(1), re.MULTILINE)
+            self.assertEqual(keys[:-2], expected[mode])
 
-        block_pattern = re.compile(
-            r"(?m)^(Headless|Resolved) config:\n((?:^  [^\n]+\n?)+)"
+        report = (REPO / "skills/code-gauntlet/references/report-format.md").read_text()
+        report_match = re.search(
+            r"^Resolved config:\n((?:^  [^\n]+\n?)+)", report, re.MULTILINE
         )
-        seen_blocks = []
-        for path in (REPO / "skills").rglob("*.md"):
-            text = path.read_text()
-            for match in block_pattern.finditer(text):
-                mode = "headless" if match.group(1) == "Headless" else "interactive"
-                keys = re.findall(r"^  ([A-Za-z_]+)=", match.group(2), re.MULTILINE)
-                knob_keys = [key for key in keys if key in expected[mode]]
-                self.assertEqual(
-                    knob_keys,
-                    expected[mode],
-                    f"{path}: {match.group(1)} config example is not in registry order",
-                )
-                seen_blocks.append((path, mode))
-        self.assertGreaterEqual(
-            len(seen_blocks), 4, "expected all receipt examples in skills/"
+        self.assertIsNotNone(report_match)
+        report_keys = re.findall(
+            r"^  ([A-Za-z_]+)=", report_match.group(1), re.MULTILINE
         )
+        full_expected = [
+            row["key"] for row in registry if "interactive" in row["modes"]
+        ]
+        self.assertEqual(report_keys[:-2], full_expected)
 
     def test_every_tracked_docs_file_is_allowlisted(self):
         offenders = []

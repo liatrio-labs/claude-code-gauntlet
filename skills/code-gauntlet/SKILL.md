@@ -419,7 +419,18 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
 ```
 
 <!-- generated-from-registry-identity:config_receipt — do not edit; run scripts/generate_contract_requirements.py -->
-Every `configEcho` value is the printed token as a string; an unset interactive cap is the string `"null"`, and a JSON null there is accepted, spelled `"null"`, and disclosed as a gap; `limits.deliveryCap` carries the typed null.
+The resolver owns the printed configuration block and the keyed `configEcho` receipt.
+
+**Interactive block:**
+
+```text
+Resolved config:
+  model_tier=optimized (fixed)
+  pr_comment_cap=null (default)
+  delivery_tier=all (default)
+  pipeline_version={pipeline_version} (bundle)
+  plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
+```
 
 **Interactive receipt:**
 
@@ -436,12 +447,25 @@ Every `configEcho` value is the printed token as a string; an unset interactive 
     "delivery_tier": {
         "value": "all",
         "source": "default"
-    },
-    "review_md": {
-        "value": "absent",
-        "source": "discovery"
     }
 }
+```
+
+**Headless block:**
+
+```text
+Headless config:
+  model_tier=optimized (default)
+  delivery=markdown (default)
+  post_mode=dry-run (default)
+  pr_comment_cap=6 (default)
+  delivery_tier=all (default)
+  draft_policy=review (default)
+  reviewed_policy=full (default)
+  pr_not_found_policy=error (default)
+  trivial_scope=full (default)
+  pipeline_version={pipeline_version} (bundle)
+  plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
 ```
 
 **Headless receipt:**

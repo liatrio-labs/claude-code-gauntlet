@@ -1,0 +1,405 @@
+"""Tests for the registry-driven configuration resolver."""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from scripts import generate_contract_requirements as generator
+from scripts import resolve_config as resolver
+
+REPO = Path(__file__).resolve().parents[1]
+SCRIPT = REPO / "scripts" / "resolve_config.py"
+
+
+def clean_environment(**overrides):
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("CODE_GAUNTLET_")
+    }
+    env.update(overrides)
+    return env
+
+
+def expected_rule_values(row, mode="headless"):
+    rule = row["rule"]
+    if "kind" not in rule:
+        rule = rule[mode]
+    if rule["kind"] == "positive_digits":
+        return "positive integer"
+    if rule["kind"] == "digits_or_null":
+        return "digits or null"
+    return ",".join(rule["values"])
+
+
+class TestRuleInterpreter(unittest.TestCase):
+    def test_rules_are_exact_and_fail_closed(self):
+        enum = {"kind": "enum", "values": ["Chat"]}
+        csv = {"kind": "csv_subset", "values": ["chat", "markdown"]}
+        positive = {"kind": "positive_digits"}
+        digits = {"kind": "digits_or_null"}
+        self.assertTrue(resolver.matches_rule(enum, "Chat", "headless"))
+        self.assertFalse(resolver.matches_rule(enum, "chat", "headless"))
+        self.assertTrue(resolver.matches_rule(csv, "chat,markdown", "headless"))
+        for value in ("", "chat,,markdown", "chat,chat", "chat, markdown", "Chat"):
+            self.assertFalse(resolver.matches_rule(csv, value, "headless"))
+        self.assertTrue(resolver.matches_rule(positive, "1", "headless"))
+        self.assertFalse(resolver.matches_rule(positive, "0", "headless"))
+        self.assertTrue(resolver.matches_rule(digits, "0", "interactive"))
+        self.assertTrue(resolver.matches_rule(digits, "null", "interactive"))
+        self.assertFalse(resolver.matches_rule(digits, "00", "interactive"))
+        self.assertFalse(resolver.matches_rule(digits, "01", "interactive"))
+        self.assertFalse(
+            resolver.matches_rule(digits, "9007199254740992", "interactive")
+        )
+        self.assertFalse(
+            resolver.matches_rule(digits, "\N{ARABIC-INDIC DIGIT ONE}", "interactive")
+        )
+        self.assertFalse(resolver.matches_rule({"kind": "bogus"}, "x", "headless"))
+        self.assertFalse(
+            resolver.matches_rule(
+                {"headless": {"kind": "enum", "values": ["x"]}},
+                "x",
+                "interactive",
+            )
+        )
+        self.assertFalse(
+            resolver.matches_rule({"kind": "enum", "values": [1]}, 1, "headless")
+        )
+
+
+class TestDefaultDeliveryParser(unittest.TestCase):
+    def test_heading_termination_and_comments(self):
+        cases = {
+            "## Default Delivery\nchat,pr_comments\n## Ignore\nmarkdown": "chat,pr_comments",
+            "## Default Delivery\nchat\n### Ignore\nmarkdown": "chat",
+            "## Default Delivery\nchat\n```yaml\nmarkdown\n```:": "chat",
+            "## Default Delivery\nchat\n~~~\nmarkdown\n~~~": "chat",
+            "## Default Delivery\n<!-- chat,\npr_comments -->\nmarkdown": "markdown",
+            "## Default Delivery\n<!-- chat,pr_comments -->": None,
+            "## Default Delivery\nprose about chat": None,
+            "## Default Delivery\nchat, pr_comments": None,
+            "## Default Delivery\nChat": None,
+            "## Default Delivery\nchat,,markdown": None,
+            "# Default Delivery\nchat": None,
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(resolver.parse_default_delivery(text), expected)
+
+    def test_universal_newlines_and_root_heading(self):
+        for newline in ("\n", "\r\n", "\r"):
+            self.assertEqual(
+                resolver.parse_default_delivery(
+                    f"prefix{newline}## Default Delivery{newline}{newline}  chat{newline}"
+                ),
+                "chat",
+            )
+
+
+class TestResolvePureFunctions(unittest.TestCase):
+    def test_empty_environment_defaults_have_one_wire_copy(self):
+        interactive = resolver.resolve("interactive", {}, None, "pr")
+        self.assertEqual(
+            interactive,
+            {
+                "configEcho": {
+                    "model_tier": {"value": "optimized", "source": "fixed"},
+                    "pr_comment_cap": {"value": "null", "source": "default"},
+                    "delivery_tier": {"value": "all", "source": "default"},
+                },
+                "waist": {
+                    "configEcho": {
+                        "model_tier": {"value": "optimized", "source": "fixed"},
+                        "pr_comment_cap": {"value": "null", "source": "default"},
+                        "delivery_tier": {"value": "all", "source": "default"},
+                    }
+                },
+                "resolved": {"model_tier": "optimized"},
+            },
+        )
+        headless = resolver.resolve("headless", {}, None, "pr")
+        self.assertEqual(
+            list(headless["configEcho"]),
+            [
+                "model_tier",
+                "delivery",
+                "post_mode",
+                "pr_comment_cap",
+                "delivery_tier",
+                "draft_policy",
+                "reviewed_policy",
+                "pr_not_found_policy",
+                "trivial_scope",
+            ],
+        )
+        self.assertEqual(headless["configEcho"]["pr_comment_cap"]["value"], "6")
+        self.assertEqual(headless["resolved"]["delivery"], ["markdown"])
+        self.assertNotIn("pr_comment_cap", headless["resolved"])
+        self.assertEqual(headless["waist"], {"configEcho": headless["configEcho"]})
+
+    def test_delivery_precedence_is_env_then_review_then_default(self):
+        review = "## Default Delivery\nchat,pr_comments\n## Ignore\n"
+        from_review = resolver.resolve("headless", {}, review, "pr")
+        self.assertEqual(
+            from_review["configEcho"]["delivery"],
+            {"value": "chat,pr_comments", "source": "review_md"},
+        )
+        from_default = resolver.resolve(
+            "headless", {}, "## Default Delivery\n<!-- chat -->", "pr"
+        )
+        self.assertEqual(
+            from_default["configEcho"]["delivery"],
+            {"value": "markdown", "source": "default"},
+        )
+        from_env = resolver.resolve(
+            "headless",
+            {"CODE_GAUNTLET_DELIVERY": "markdown"},
+            review,
+            "pr",
+        )
+        self.assertEqual(
+            from_env["configEcho"]["delivery"], {"value": "markdown", "source": "env"}
+        )
+
+    def test_interactive_model_pin_is_validated_but_fixed(self):
+        result = resolver.resolve(
+            "interactive",
+            {"CODE_GAUNTLET_MODEL_TIER": "optimized"},
+            "## Default Delivery\nchat",
+            "pr",
+        )
+        self.assertEqual(
+            result["configEcho"]["model_tier"],
+            {"value": "optimized", "source": "fixed"},
+        )
+        with self.assertRaises(resolver.ResolverError):
+            resolver.resolve(
+                "interactive",
+                {"CODE_GAUNTLET_MODEL_TIER": "standard"},
+                None,
+                "pr",
+            )
+
+    def test_local_delivery_rejects_pr_comments_from_env_or_review(self):
+        with self.assertRaisesRegex(
+            resolver.ResolverError,
+            r"HEADLESS CONFIG ERROR: CODE_GAUNTLET_DELIVERY=chat,pr_comments not in \{chat,markdown\}",
+        ):
+            resolver.resolve(
+                "headless",
+                {"CODE_GAUNTLET_DELIVERY": "chat,pr_comments"},
+                None,
+                "local",
+            )
+        with self.assertRaisesRegex(
+            resolver.ResolverError,
+            r"HEADLESS CONFIG ERROR: REVIEW\.md default_delivery=chat,pr_comments not in \{chat,markdown\}",
+        ):
+            resolver.resolve(
+                "headless", {}, "## Default Delivery\nchat,pr_comments", "local"
+            )
+
+
+class TestResolverCli(unittest.TestCase):
+    def run_cli(self, *args, **values):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), *args],
+            cwd=REPO,
+            env=clean_environment(**values),
+            capture_output=True,
+            text=True,
+        )
+
+    def test_success_shape_identity_and_stderr_block(self):
+        proc = self.run_cli("--target", "pr", CODE_GAUNTLET_HEADLESS="1")
+        self.assertEqual(proc.returncode, 0)
+        self.assertTrue(proc.stdout.endswith("\n"))
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["target"], "pr")
+        self.assertNotIn("configEcho", payload)
+        self.assertEqual(
+            set(payload), {"mode", "target", "block", "waist", "resolved", "identity"}
+        )
+        self.assertEqual(payload["identity"]["pipeline_version"], "3.32.2")
+        self.assertEqual(payload["identity"]["plugin_root"], str(REPO))
+        self.assertEqual(payload["block"] + "\n", proc.stderr)
+        self.assertTrue(proc.stderr.startswith("Headless config:\n"))
+
+    def test_no_target_and_interactive_shape(self):
+        proc = self.run_cli()
+        self.assertEqual(proc.returncode, 0)
+        payload = json.loads(proc.stdout)
+        self.assertIsNone(payload["target"])
+        self.assertEqual(payload["mode"], "interactive")
+        self.assertEqual(
+            list(payload["waist"]["configEcho"]),
+            ["model_tier", "pr_comment_cap", "delivery_tier"],
+        )
+        self.assertTrue(proc.stderr.startswith("Resolved config:\n"))
+
+    def test_invalid_pins_are_exact_and_stdout_is_empty(self):
+        cases = [
+            ("CODE_GAUNTLET_MODEL_TIER", "bad", "{optimized}"),
+            ("CODE_GAUNTLET_DELIVERY", "bad", "{chat,pr_comments,markdown}"),
+            ("CODE_GAUNTLET_POST_MODE", "later", "{dry-run,live}"),
+            ("CODE_GAUNTLET_PR_COMMENT_CAP", "0", "{positive integer}"),
+            ("CODE_GAUNTLET_DELIVERY_TIER", "branch_only", "{all,main_only}"),
+            ("CODE_GAUNTLET_DRAFT_POLICY", "defer", "{review,skip}"),
+            ("CODE_GAUNTLET_REVIEWED_POLICY", "partial", "{incremental,full,skip}"),
+            ("CODE_GAUNTLET_PR_NOT_FOUND_POLICY", "ignore", "{local,error}"),
+            ("CODE_GAUNTLET_TRIVIAL_SCOPE", "none", "{light,full}"),
+        ]
+        for variable, value, allowed in cases:
+            proc = self.run_cli(
+                "--target", "pr", CODE_GAUNTLET_HEADLESS="1", **{variable: value}
+            )
+            self.assertEqual(proc.returncode, 1, variable)
+            self.assertEqual(proc.stdout, "", variable)
+            self.assertEqual(
+                proc.stderr,
+                f"HEADLESS CONFIG ERROR: {variable}={value} not in {allowed}\n",
+            )
+        proc = self.run_cli(
+            "--target",
+            "pr",
+            CODE_GAUNTLET_PR_COMMENT_CAP="not-a-cap",
+        )
+        self.assertEqual(
+            proc.stderr,
+            "HEADLESS CONFIG ERROR: CODE_GAUNTLET_PR_COMMENT_CAP=not-a-cap not in {digits or null}\n",
+        )
+
+    def test_interactive_and_numeric_pin_matrix(self):
+        proc = self.run_cli(CODE_GAUNTLET_PR_COMMENT_CAP="null")
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(
+            proc.stdout
+            and json.loads(proc.stdout)["waist"]["configEcho"]["pr_comment_cap"][
+                "value"
+            ],
+            "null",
+        )
+        for value in (
+            "00",
+            "01",
+            "06",
+            "9007199254740992",
+            "\N{ARABIC-INDIC DIGIT ONE}",
+        ):
+            proc = self.run_cli(CODE_GAUNTLET_PR_COMMENT_CAP=value)
+            self.assertEqual(proc.returncode, 1, value)
+            self.assertIn("{digits or null}", proc.stderr)
+
+    def test_usage_and_setup_fail_without_process_stream_noise(self):
+        proc = self.run_cli("--target", "wrong")
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(proc.stdout, "")
+        self.assertEqual(proc.stderr, "")
+        code, stdout, stderr = resolver.run(["--target", "wrong"], {})
+        self.assertEqual((code, stdout, stderr), (2, "", ""))
+        with tempfile.TemporaryDirectory() as directory:
+            code, stdout, stderr = resolver.run(["--cwd", directory], {})
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("RESOLVER SETUP ERROR:", stderr)
+
+    def test_missing_bundle_version_is_setup_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = root / "workflows" / "pipeline.js"
+            bundle.parent.mkdir()
+            bundle.write_text("const not_version = 'x';", encoding="utf-8")
+            with self.assertRaises(resolver.ResolverSetupError):
+                resolver.read_pipeline_version(str(root))
+
+    def test_control_values_are_json_encoded_on_the_error_line(self):
+        for value in ("bad\nvalue", "bad\rvalue", "bad\x00value", "bad`value"):
+            code, stdout, stderr = resolver.run(
+                ["--target", "pr"],
+                {"CODE_GAUNTLET_HEADLESS": "1", "CODE_GAUNTLET_DELIVERY": value},
+            )
+            self.assertEqual(code, 1)
+            self.assertEqual(stdout, "")
+            expected_value = (
+                json.dumps(value, ensure_ascii=False)
+                if "\n" in value or "\r" in value or "\x00" in value
+                else value
+            )
+            self.assertEqual(
+                stderr,
+                f"HEADLESS CONFIG ERROR: CODE_GAUNTLET_DELIVERY={expected_value} not in {{chat,pr_comments,markdown}}\n",
+            )
+
+
+class TestGeneratedDataContracts(unittest.TestCase):
+    def test_generated_receipts_are_resolver_fixtures(self):
+        registry = generator.load_registry(str(REPO))["knobs"]
+        text = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+        open_marker, close_marker = generator.identity_marker_lines(
+            "config_receipt", "skills/code-gauntlet/SKILL.md"
+        )
+        body = text.split(open_marker, 1)[1].split(close_marker, 1)[0]
+        for mode, label in (("interactive", "Interactive"), ("headless", "Headless")):
+            match = re.search(
+                rf"\*\*{label} receipt:\*\*\n\n```json\n(.*?)\n```",
+                body,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(match)
+            expected = resolver.resolve(mode, {}, None, "pr", registry=registry)[
+                "configEcho"
+            ]
+            self.assertEqual(json.loads(match.group(1)), expected)
+
+    def test_headless_table_is_registry_locked(self):
+        registry = generator.load_registry(str(REPO))["knobs"]
+        text = (REPO / "skills/code-gauntlet/references/headless-mode.md").read_text(
+            encoding="utf-8"
+        )
+        rows = {
+            match.group(1): (match.group(2), match.group(3))
+            for match in re.finditer(
+                r"\| `(CODE_GAUNTLET_[A-Z_]+)` \| `([^`]*)` \| `([^`]*)` \|", text
+            )
+        }
+        expected = {
+            row["env"]: (expected_rule_values(row), str(row["defaults"]["headless"][0]))
+            for row in registry
+            if row["env"]
+        }
+        self.assertEqual(rows, expected)
+
+    def test_machine_parsed_producer_sets_are_exact(self):
+        text = (REPO / "docs/machine-parsed-strings.md").read_text(encoding="utf-8")
+        expected = {
+            "Headless config:": {
+                "workflows/src/renderReport.js",
+                "skills/code-gauntlet/references/report-format.md",
+                "skills/code-gauntlet/references/headless-mode.md",
+                "skills/code-gauntlet/SKILL.md",
+                "scripts/resolve_config.py",
+            },
+            "Resolved config:": {
+                "workflows/src/renderReport.js",
+                "skills/code-gauntlet/references/report-format.md",
+                "skills/code-gauntlet/SKILL.md",
+                "scripts/resolve_config.py",
+            },
+            "HEADLESS CONFIG ERROR:": {
+                "skills/code-gauntlet/references/headless-mode.md",
+                "scripts/resolve_config.py",
+            },
+        }
+        for token, paths in expected.items():
+            row = next(
+                line for line in text.splitlines() if line.startswith(f"| `{token}`")
+            )
+            cells = [cell.strip() for cell in row.strip("|").split("|")]
+            actual = {item.strip(" `") for item in cells[1].split(",")}
+            self.assertEqual(actual, paths, token)

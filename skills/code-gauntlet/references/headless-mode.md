@@ -8,20 +8,31 @@ This file is the authority for the headless contract: the env variables, their p
 
 ## Env contract
 
-Read once at Phase 1 entry. Every value is echoed in a `Headless config:` block (stdout) and recorded in the report methodology section. An invalid value fails loud naming the variable — never a silent fallback, never a question.
+Read once at Phase 1 entry. The resolver emits the `Headless config:` block and the Phase 1 Bash result carries it; every value is also recorded in the report methodology section. `CODE_GAUNTLET_HEADLESS=1` selects headless mode; any other value selects interactive mode.
 
-| Variable | Values (headless default) | Pins |
-|---|---|---|
-| `CODE_GAUNTLET_HEADLESS` | `1` | master switch |
-| `CODE_GAUNTLET_MODEL_TIER` | `optimized` (`optimized`) — the single benchmarked policy; any other value fails loud | Phase 1 gate (a) |
-| `CODE_GAUNTLET_DELIVERY` | subset of `chat,pr_comments,markdown` (`markdown`) | Phase 1 gate (b); `pr_comments` illegal for local targets |
-| `CODE_GAUNTLET_POST_MODE` | `dry-run`\|`live` (`dry-run`) | whether post_review.py gets `--dry-run`; post_review.py also reads this var directly and self-enforces dry-run (belt-and-braces) |
-| `CODE_GAUNTLET_PR_COMMENT_CAP` | int (`6`) | Phase 8 Stage 1 cap; threaded into `limits.deliveryCap` so the workflow's `selectDelivery` applies it; bench sets 25 (flood guard) |
-| `CODE_GAUNTLET_DELIVERY_TIER` | `all`\|`main_only` (`all`) | which challenge-survivors post as PR comments; threaded into `args.delivery.tier` for `selectDelivery`; default `all` posts everything (bench leaves it unset → `all`) |
-| `CODE_GAUNTLET_DRAFT_POLICY` | `review`\|`skip` (`review`) | draft-PR gate |
-| `CODE_GAUNTLET_REVIEWED_POLICY` | `incremental`\|`full`\|`skip` (`full`) | previously-reviewed gate, every branch |
-| `CODE_GAUNTLET_PR_NOT_FOUND_POLICY` | `local`\|`error` (`error`) | resolution-failure gate |
-| `CODE_GAUNTLET_TRIVIAL_SCOPE` | `light`\|`full` (`full`) | trivial-PR scope gate — stamped verbatim into `args.scopeAnswer`; the workflow derives dimension flags from it plus `riskTable`/`changedLines` (`light` -> Discover runs bugs+security only, `full` -> all dimensions) |
+<!-- generated-from-registry-identity:headless_env_table — do not edit; run scripts/generate_contract_requirements.py -->
+| Variable | Values | Default |
+| --- | --- | --- |
+| `CODE_GAUNTLET_MODEL_TIER` | `optimized` | `optimized` |
+| `CODE_GAUNTLET_DELIVERY` | `chat,pr_comments,markdown` | `markdown` |
+| `CODE_GAUNTLET_POST_MODE` | `dry-run,live` | `dry-run` |
+| `CODE_GAUNTLET_PR_COMMENT_CAP` | `positive integer` | `6` |
+| `CODE_GAUNTLET_DELIVERY_TIER` | `all,main_only` | `all` |
+| `CODE_GAUNTLET_DRAFT_POLICY` | `review,skip` | `review` |
+| `CODE_GAUNTLET_REVIEWED_POLICY` | `incremental,full,skip` | `full` |
+| `CODE_GAUNTLET_PR_NOT_FOUND_POLICY` | `local,error` | `error` |
+| `CODE_GAUNTLET_TRIVIAL_SCOPE` | `light,full` | `full` |
+<!-- /generated-from-registry-identity:headless_env_table -->
+
+- `CODE_GAUNTLET_MODEL_TIER` is validated by the resolver and controls the fixed model tier.
+- `CODE_GAUNTLET_DELIVERY` selects delivery methods; `pr_comments` is invalid for local targets.
+- `CODE_GAUNTLET_POST_MODE` controls whether posting is dry-run or live.
+- `CODE_GAUNTLET_PR_COMMENT_CAP` supplies the headless delivery cap.
+- `CODE_GAUNTLET_DELIVERY_TIER` selects all survivors or main-tagged survivors.
+- `CODE_GAUNTLET_DRAFT_POLICY` controls the draft-PR gate.
+- `CODE_GAUNTLET_REVIEWED_POLICY` controls the previously-reviewed gate.
+- `CODE_GAUNTLET_PR_NOT_FOUND_POLICY` controls resolution failure.
+- `CODE_GAUNTLET_TRIVIAL_SCOPE` controls the trivial-PR scope gate.
 
 ---
 
