@@ -2,6 +2,39 @@
 
 <!-- version list -->
 
+## v3.32.2 (2026-09-07)
+
+### Bug Fixes
+
+- **skills**: Invoke the review workflow by its registered name and judge bench identity by bundle
+  content ([#306](https://github.com/liatrio-labs/claude-code-gauntlet/pull/306),
+  [`6d1dacb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6d1dacb4765cc999dd9318956ff73c4926e1eef1))
+
+- **skills**: Invoke the review workflow by its registered name; bench identity by bundle content
+  (#302) ([#306](https://github.com/liatrio-labs/claude-code-gauntlet/pull/306),
+  [`6d1dacb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6d1dacb4765cc999dd9318956ff73c4926e1eef1))
+
+### Code Style
+
+- **bench**: Combine the nested with in the meta-name test
+  ([#306](https://github.com/liatrio-labs/claude-code-gauntlet/pull/306),
+  [`6d1dacb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6d1dacb4765cc999dd9318956ff73c4926e1eef1))
+
+### Testing
+
+- **bench**: Classify by-name records without a scriptPath and pin the fake writer's by-name fields
+  ([#306](https://github.com/liatrio-labs/claude-code-gauntlet/pull/306),
+  [`6d1dacb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6d1dacb4765cc999dd9318956ff73c4926e1eef1))
+
+- **bench**: Make bundle hashing surrogate-safe and pin every changed identity branch
+  ([#306](https://github.com/liatrio-labs/claude-code-gauntlet/pull/306),
+  [`6d1dacb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6d1dacb4765cc999dd9318956ff73c4926e1eef1))
+
+- **bench**: Pin the corrupt-record G4 fallback and an independent workflow-name oracle
+  ([#306](https://github.com/liatrio-labs/claude-code-gauntlet/pull/306),
+  [`6d1dacb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6d1dacb4765cc999dd9318956ff73c4926e1eef1))
+
+
 ## v3.32.1 (2026-09-07)
 
 ### Bug Fixes
