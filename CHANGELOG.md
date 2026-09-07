@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v3.32.0 (2026-09-07)
+
+### Bug Fixes
+
+- **scripts**: Address the gauntlet review on the FIX-task renderer and label cited rules by kind
+  ([#301](https://github.com/liatrio-labs/claude-code-gauntlet/pull/301),
+  [`ebe47ea`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ebe47ea2ee65076d08b203675740a5704d1d3d71))
+
+- **scripts**: Let argparse own the missing --repo-root exit and pin the renderer's guarantees
+  ([#301](https://github.com/liatrio-labs/claude-code-gauntlet/pull/301),
+  [`ebe47ea`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ebe47ea2ee65076d08b203675740a5704d1d3d71))
+
+### Features
+
+- **scripts**: Render Phase 8 FIX-task payloads in code with render_fix_tasks.py
+  ([#301](https://github.com/liatrio-labs/claude-code-gauntlet/pull/301),
+  [`ebe47ea`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ebe47ea2ee65076d08b203675740a5704d1d3d71))
+
+- **scripts**: Render Phase 8 FIX-task payloads in code with render_fix_tasks.py (#296)
+  ([#301](https://github.com/liatrio-labs/claude-code-gauntlet/pull/301),
+  [`ebe47ea`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ebe47ea2ee65076d08b203675740a5704d1d3d71))
+
+
 ## v3.31.0 (2026-09-06)
 
 ### Bug Fixes
