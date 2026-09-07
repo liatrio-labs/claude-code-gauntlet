@@ -188,6 +188,14 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")
 
+    def test_non_finite_confidence_is_a_content_failure(self):
+        for value in (float("nan"), float("inf")):
+            with self.subTest(value=value):
+                self.write_artifact([self.finding(confidence=value)])
+                result = self.run_renderer()
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+
     def test_missing_required_key_is_a_content_failure(self):
         finding = self.finding()
         del finding["dimension"]
@@ -579,7 +587,7 @@ class RenderFixTasksTest(unittest.TestCase):
             first["metadata"]["proof_artifacts"],
             [{"type": "file", "path": "src/prod.py"}],
         )
-        self.assertIn("1 paths rejected", result.stderr)
+        self.assertIn("1 path rejected", result.stderr)
 
     def test_malformed_cross_file_refs_are_ignored_everywhere(self):
         self.git_repo()
@@ -588,7 +596,12 @@ class RenderFixTasksTest(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("x", encoding="utf-8")
         self.git_add("src/prod.py", "src/prod_test.py")
-        for malformed in ("tests/test_prod.py", ["tests/test_prod.py", 7]):
+        cases = (
+            ("tests/test_prod.py", [], 0),
+            (["tests/test_prod.py", 7], ["tests/test_prod.py"], 1),
+            (7, [], 0),
+        )
+        for malformed, expected_refs, expected_rejected in cases:
             with self.subTest(malformed=malformed):
                 self.write_artifact(
                     [
@@ -601,13 +614,35 @@ class RenderFixTasksTest(unittest.TestCase):
                         )
                     ]
                 )
-                task = self.output(self.run_renderer())[0]
+                result = self.run_renderer()
+                task = self.output(result)[0]
                 scope = task["metadata"]["scope"]
-                self.assertEqual(scope["files_to_modify"], [])
-                self.assertEqual(scope["patterns_to_follow"], ["src/prod_test.py"])
+                self.assertEqual(scope["files_to_modify"], expected_refs)
                 self.assertEqual(
-                    task["metadata"]["review_context"]["cross_file_refs"], []
+                    scope["patterns_to_follow"],
+                    [] if expected_refs else ["src/prod_test.py"],
                 )
+                self.assertEqual(
+                    task["metadata"]["review_context"]["cross_file_refs"],
+                    expected_refs,
+                )
+                summary = f"({expected_rejected} {'path' if expected_rejected == 1 else 'paths'} rejected)"
+                self.assertIn(summary, result.stderr)
+
+    def test_setext_headings_are_escaped_in_description_and_suggestion(self):
+        self.write_artifact(
+            [
+                self.finding(
+                    description="Description H1\n====\n\nDescription H2\n----",
+                    suggestion="Suggestion H1\n====\n\nSuggestion H2\n----",
+                )
+            ]
+        )
+        description = self.output(self.run_renderer())[0]["description"]
+        self.assertIn("Description H1\n\\====", description)
+        self.assertIn("Description H2\n\\----", description)
+        self.assertIn("Suggestion H1\n\\====", description)
+        self.assertIn("Suggestion H2\n\\----", description)
 
     def test_dimension_details_for_cross_file_impact_and_convention(self):
         findings = [
@@ -627,9 +662,7 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertIn(
             "**Affected consumers:** src/a.py, src/b.py", tasks[0]["description"]
         )
-        self.assertIn(
-            "**Claude md rule:** Use the project rule.", tasks[1]["description"]
-        )
+        self.assertIn("**Cited rule:** Use the project rule.", tasks[1]["description"])
 
     def test_every_generated_detail_field_renders_and_matches_registry(self):
         identity = contract_generator.load_registry(str(REPO))
@@ -659,9 +692,17 @@ class RenderFixTasksTest(unittest.TestCase):
                         ]
                     )
                     task = self.output(self.run_renderer())[0]
+                    if field == "rule_source":
+                        self.assertNotIn("Rule source", task["description"])
+                        self.assertNotIn(value, task["description"])
+                        continue
                     details = task["description"].split("## Details\n", 1)[1]
                     details = details.split("\n\n## Toolchain", 1)[0]
-                    label = field.replace("_", " ").capitalize()
+                    label = (
+                        "Cited rule"
+                        if field == "claude_md_rule"
+                        else field.replace("_", " ").capitalize()
+                    )
                     self.assertEqual(details, f"**{label}:** {value}")
 
     def test_absolute_inside_nul_non_directory_missing_root_and_nonexistent_confined(
@@ -682,6 +723,13 @@ class RenderFixTasksTest(unittest.TestCase):
             tasks[2]["metadata"]["scope"]["files_to_modify"], ["src/deleted.py"]
         )
         self.assertIn("2 paths rejected", result.stderr)
+
+    def test_windows_absolute_path_is_rejected(self):
+        self.write_artifact([self.finding(file=r"C:\Windows\System32\hosts")])
+        result = self.run_renderer()
+        task = self.output(result)[0]
+        self.assertEqual(task["metadata"]["scope"]["files_to_modify"], [])
+        self.assertIn("(1 path rejected)", result.stderr)
 
         missing_root = self.run_renderer(root=self.root / "does-not-exist")
         self.assertEqual(missing_root.returncode, 1)
@@ -717,6 +765,27 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertEqual(
             task["metadata"]["review_context"]["blame_classification"], "unknown"
         )
+
+    def test_rule_source_is_a_label_for_cited_rule_details(self):
+        for source, label in (
+            ("repo_precedent", "Repo precedent"),
+            ("new_kind", "Cited rule"),
+        ):
+            with self.subTest(source=source):
+                self.write_artifact(
+                    [
+                        self.finding(
+                            dimension="convention",
+                            claude_md_rule="Use the project rule.",
+                            rule_source=source,
+                        )
+                    ]
+                )
+                task = self.output(self.run_renderer())[0]
+                details = task["description"].split("## Details\n", 1)[1]
+                self.assertIn(f"**{label}:** Use the project rule.", details)
+                self.assertNotIn("Rule source", details)
+                self.assertNotIn(source, task["description"])
 
     def test_hostile_markdown_is_sanitized_and_evidence_fence_is_long_enough(self):
         evidence = "payload````\r\n```\r\n<!-- evidence -->"
@@ -764,9 +833,16 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertIsInstance(json.loads(result.stdout), list)
         self.assertNotIn("Rendered", result.stdout)
         self.assertIn(
-            f"Rendered 1 FIX tasks from {self.artifact} (0 paths rejected)",
+            f"Rendered 1 FIX task from {self.artifact} (0 paths rejected)",
             result.stderr,
         )
+
+    def test_rejection_summary_uses_singular_path(self):
+        self.write_artifact([self.finding(file="../outside.py")])
+        result = self.run_renderer()
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Rendered 1 FIX task", result.stderr)
+        self.assertIn("(1 path rejected)", result.stderr)
 
     def test_renderer_imports_only_stdlib_and_local_script_io(self):
         tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))

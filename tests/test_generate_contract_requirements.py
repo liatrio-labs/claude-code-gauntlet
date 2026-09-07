@@ -337,6 +337,22 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "}\n"
             'RULE_SOURCE_LABEL_FALLBACK = "RF"'
         ),
+        ("scripts/render_fix_tasks.py", "constants"): (
+            'BRAND_MARK = "MARK"\n'
+            'BRAND_NAME = "NAME"\n'
+            "SEVERITY_EMOJI = {\n"
+            '    "critical": "C",\n'
+            '    "low": "L",\n'
+            "}\n"
+            'SEVERITY_EMOJI_FALLBACK = "F"\n'
+            "RULE_SOURCE_LABELS = {\n"
+            '    "documented_rule": "DR",\n'
+            '    "code_comment": "CC",\n'
+            '    "repo_precedent": "RP",\n'
+            '    "self_inconsistency": "SI",\n'
+            "}\n"
+            'RULE_SOURCE_LABEL_FALLBACK = "RF"'
+        ),
         ("scripts/render_fix_tasks.py", "detail_fields"): (
             "_DETAIL_FIELDS_BY_DIMENSION = {\n"
             '    "bug": ("hidden_errors",),\n'

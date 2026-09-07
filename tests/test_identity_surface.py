@@ -227,7 +227,7 @@ class TestIdentitySurface(unittest.TestCase):
         )
 
     def test_the_declaring_sources_carry_no_literal_mark_bytes(self):
-        """docs/machine-parsed-strings.md lists four producers of the mark and
+        """docs/machine-parsed-strings.md lists five producers of the mark and
         deliberately omits registry.js and the bundle, because both declare it as
         escapes and contain none of its literal bytes. A pasted glyph in either would
         turn that row into the phantom the registry forbids, so the absence is

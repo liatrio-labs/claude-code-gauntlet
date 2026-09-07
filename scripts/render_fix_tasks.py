@@ -44,6 +44,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from script_io import write_result
 
+# generated-from-registry-identity:constants — do not edit; run scripts/generate_contract_requirements.py
+BRAND_MARK = "⚔️"
+BRAND_NAME = "Code Gauntlet"
+SEVERITY_EMOJI = {
+    "critical": "🔴",
+    "high": "🟠",
+    "medium": "🟡",
+    "low": "💡",
+}
+SEVERITY_EMOJI_FALLBACK = "💡"
+RULE_SOURCE_LABELS = {
+    "documented_rule": "Cited rule",
+    "code_comment": "Cited comment",
+    "repo_precedent": "Repo precedent",
+    "self_inconsistency": "Inconsistency",
+}
+RULE_SOURCE_LABEL_FALLBACK = "Cited rule"
+# /generated-from-registry-identity:constants
+
 # generated-from-registry-identity:detail_fields — do not edit; run scripts/generate_contract_requirements.py
 _DETAIL_FIELDS_BY_DIMENSION = {
     "bug": ("hidden_errors",),
@@ -106,7 +125,8 @@ def _safe_prose(value):
         or not (ord(character) < 32 or 0x7F <= ord(character) <= 0x9F)
     )
     text = COMMENT_RE.sub("&lt;!--", text)
-    return HEADING_RE.sub(r"\1\\\2", text)
+    text = HEADING_RE.sub(r"\1\\\2", text)
+    return re.sub(r"(?m)^([ ]{0,3})(=+|-+)[ \t]*$", r"\1\\\2", text)
 
 
 def _code_span(value):
@@ -204,15 +224,14 @@ def _path_info(value, root):
 
 def _valid_cross_file_refs(finding, root):
     raw, present = _field(finding, "cross_file_refs", optional=True)
-    if (
-        not present
-        or not isinstance(raw, list)
-        or not all(isinstance(value, str) for value in raw)
-    ):
+    if not present or not isinstance(raw, list):
         return [], 0
     accepted = []
     rejected = 0
     for value in raw:
+        if not isinstance(value, str):
+            rejected += 1
+            continue
         ok, _ = _path_info(value, root)
         if ok:
             accepted.append(value)
@@ -264,10 +283,8 @@ class SiblingIndex:
             candidate_base = posixpath.basename(candidate_normalized)
             same_extension = posixpath.splitext(candidate_base)[1].lower() == extension
             ratio = difflib.SequenceMatcher(None, candidate_base, basename).ratio()
-            candidates.append(
-                (not same_extension, -ratio, candidate, candidate_normalized)
-            )
-        candidates.sort(key=lambda item: item[:3])
+            candidates.append((not same_extension, -ratio, candidate))
+        candidates.sort()
         return [item[2] for item in candidates[:2]]
 
 
@@ -404,10 +421,21 @@ def _details(finding):
         if field not in finding:
             continue
         value = _detail_value(finding[field])
-        if value is not None:
+        if field == "rule_source":
+            continue
+        if value is None:
+            continue
+        if field == "claude_md_rule":
+            source = finding.get("rule_source")
+            label = (
+                RULE_SOURCE_LABELS.get(source, RULE_SOURCE_LABEL_FALLBACK)
+                if isinstance(source, str)
+                else RULE_SOURCE_LABEL_FALLBACK
+            )
+        else:
             label = field.replace("_", " ")
-            label = label[:1].upper() + label[1:]
-            lines.append(f"**{label}:** {value}")
+        label = label[:1].upper() + label[1:]
+        lines.append(f"**{label}:** {value}")
     return lines
 
 
@@ -471,9 +499,7 @@ def _task(finding, root, toolchain, sibling_index, delivered, rejected_count):
     title = _one_line(finding["title"])
     severity = _one_line(finding["severity"])
     dimension = _one_line(finding["dimension"])
-    complexity = "standard" if severity.lower() in ("critical", "high") else "trivial"
-    if severity.lower() not in ("medium", "low"):
-        complexity = "standard"
+    complexity = "trivial" if severity.lower() in ("medium", "low") else "standard"
     metadata = {
         "task_type": "review-fix",
         "task_id": f"FIX-{finding_id}",
@@ -501,7 +527,7 @@ def _task(finding, root, toolchain, sibling_index, delivered, rejected_count):
             "finding_id": finding["id"],
             "dimension": finding["dimension"],
             "confidence": finding["confidence"],
-            "evidence": evidence if (evidence := finding.get("evidence", "")) else "",
+            "evidence": finding.get("evidence") or "",
             "cross_file_refs": refs,
             "blame_classification": finding.get("origin")
             if isinstance(finding.get("origin"), str)
@@ -570,8 +596,11 @@ def main(argv=None):
         return 1
     for note in notes:
         print(f"WARNING: {note}", file=sys.stderr)
+    task_label = "task" if len(tasks) == 1 else "tasks"
+    path_label = "path" if rejected_count == 1 else "paths"
     print(
-        f"Rendered {len(tasks)} FIX tasks from {args.post_review} ({rejected_count} paths rejected)",
+        f"Rendered {len(tasks)} FIX {task_label} from {args.post_review} "
+        f"({rejected_count} {path_label} rejected)",
         file=sys.stderr,
     )
     return 0

@@ -55,7 +55,7 @@ _IDENTITY_MARKER_RE = re.compile(
 # {rel_path: [symbol, ...]} — the fences this file must carry, exactly once each.
 IDENTITY_FENCES = {
     "scripts/post_review.py": ["constants"],
-    "scripts/render_fix_tasks.py": ["detail_fields"],
+    "scripts/render_fix_tasks.py": ["constants", "detail_fields"],
     REPORT_FORMAT_REL: [
         "severity_legend",
         "inline_legend",
