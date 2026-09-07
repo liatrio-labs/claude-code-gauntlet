@@ -2,6 +2,26 @@
 
 <!-- version list -->
 
+## v3.32.1 (2026-09-07)
+
+### Bug Fixes
+
+- **args**: Accept a JSON null pr_comment_cap receipt interactively and generate the receipt
+  examples ([#303](https://github.com/liatrio-labs/claude-code-gauntlet/pull/303),
+  [`08ec74e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08ec74edbd32909aa6ff456d806cd737cb5bc513))
+
+- **args**: Tolerate a JSON null pr_comment_cap receipt and generate receipt examples
+  ([#303](https://github.com/liatrio-labs/claude-code-gauntlet/pull/303),
+  [`08ec74e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08ec74edbd32909aa6ff456d806cd737cb5bc513))
+
+### Testing
+
+- **args**: Pin the nullReceipt lookup, strict null, passthrough report shape, and gap text; shrink
+  the receipt oracle to synthetic knobs
+  ([#303](https://github.com/liatrio-labs/claude-code-gauntlet/pull/303),
+  [`08ec74e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08ec74edbd32909aa6ff456d806cd737cb5bc513))
+
+
 ## v3.32.0 (2026-09-07)
 
 ### Bug Fixes
