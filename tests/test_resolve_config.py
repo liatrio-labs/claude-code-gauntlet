@@ -469,6 +469,95 @@ class TestResolverCli(unittest.TestCase):
 
 
 class TestGeneratedDataContracts(unittest.TestCase):
+    def test_phase1_config_composite_is_r8_exact_and_has_no_review_root_section(self):
+        skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+        start = skill.find('echo "=== config ==="')
+        end = skill.find('echo "=== pr_view ==="', start)
+        self.assertNotEqual(start, -1)
+        self.assertNotEqual(end, -1)
+        expected = "\n".join(
+            (
+                'echo "=== config ==="',
+                'if ! CONFIG_JSON=$(python3 "{plugin_root}/scripts/resolve_config.py" --target {target_type} --plugin-root "{plugin_root}"); then',
+                '  echo "config: FAILED"',
+                "  exit 1",
+                "fi",
+                'echo "$CONFIG_JSON"',
+            )
+        )
+        self.assertEqual(skill[start:end].rstrip("\n"), expected)
+        self.assertNotIn("review_md_root", skill)
+
+    def test_pr_not_found_headless_gate_is_targetless_and_resolved(self):
+        text = (REPO / "skills/code-gauntlet/references/phase1-preflight.md").read_text(
+            encoding="utf-8"
+        )
+        line = next(
+            line
+            for line in text.splitlines()
+            if line.startswith("> Headless exception")
+        )
+        self.assertEqual(
+            line,
+            "> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): call `scripts/resolve_config.py` with no `--target` on this path. The question is never presented in headless mode. Branch on `resolved.pr_not_found_policy`: `error` stops the run, and `local` proceeds with `pr_number` cleared. See `references/headless-mode.md`.",
+        )
+
+    def test_config_blocks_have_only_the_three_documented_producers(self):
+        pattern = re.compile(r"(?m)^(?:Resolved|Headless) config:\n(?:^  .*\n?)+")
+        actual = {}
+        for path in sorted((REPO / "skills/code-gauntlet").rglob("*.md")):
+            blocks = pattern.findall(path.read_text(encoding="utf-8"))
+            if blocks:
+                actual[str(path.relative_to(REPO))] = len(blocks)
+        self.assertEqual(
+            actual,
+            {
+                "skills/code-gauntlet/SKILL.md": 2,
+                "skills/code-gauntlet/references/headless-mode.md": 1,
+                "skills/code-gauntlet/references/report-format.md": 1,
+            },
+        )
+
+    def test_headless_final_message_fallback_sentence_is_retained(self):
+        text = (REPO / "skills/code-gauntlet/references/headless-mode.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "If no report materializes, repeat the block in the final message as the fallback receipt.",
+            text,
+        )
+
+    def test_headless_gate_index_names_the_resolved_knob_for_each_gate(self):
+        text = (REPO / "skills/code-gauntlet/references/headless-mode.md").read_text(
+            encoding="utf-8"
+        )
+        rows = {}
+        for line in text.splitlines():
+            if not line.startswith("|"):
+                continue
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) == 2:
+                rows[cells[0]] = cells[1]
+        required = {
+            "PR-not-found (resolution failure)": ("resolved.pr_not_found_policy",),
+            "Draft PR": ("resolved.draft_policy",),
+            "Previously reviewed (Phase 2 2b-post step 3, after checkout)": (
+                "resolved.reviewed_policy",
+            ),
+            "Trivial / light-scope (all low-risk, <50 lines)": (
+                "resolved.trivial_scope",
+            ),
+            "Phase 8 Stage 1 (delivery question)": (
+                "resolved.delivery",
+                "resolved.post_mode",
+            ),
+        }
+        for gate, knobs in required.items():
+            row = next((value for key, value in rows.items() if key == gate), None)
+            self.assertIsNotNone(row, gate)
+            for knob in knobs:
+                self.assertIn(knob, row, gate)
+
     def test_generated_receipts_are_resolver_fixtures(self):
         registry = generator.load_registry(str(REPO))["knobs"]
         text = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")

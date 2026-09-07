@@ -34,7 +34,7 @@ The user's input determines the review target. Resolve it before eligibility che
 
 **Validation:** After resolving to PR/MR mode, verify the PR/MR exists by running `gh pr view {pr_number}` (or `glab mr view`). If the command fails, do NOT silently fall back to local mode — ask the user:
 
-> Headless exception: call `scripts/resolve_config.py` without a target on this path. Branch on `resolved.pr_not_found_policy`: `error` stops the run, and `local` proceeds with `pr_number` cleared. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): call `scripts/resolve_config.py` with no `--target` on this path. The question is never presented in headless mode. Branch on `resolved.pr_not_found_policy`: `error` stops the run, and `local` proceeds with `pr_number` cleared. See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(

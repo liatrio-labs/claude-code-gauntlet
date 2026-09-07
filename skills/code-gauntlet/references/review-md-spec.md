@@ -135,7 +135,17 @@ Controls how review results are delivered. A comma-separated list of delivery me
 - `pr_comments` — Post findings as inline PR/MR comments
 - `markdown` — Surface the path to the already-persisted report under the output directory (`artifactPaths.report`); no default new file
 
-Read in **headless mode only**, where the resolver considers it between the environment pin and the headless default. Interactive runs ignore it and ask once at the end of the run instead (`references/phase8-delivery.md` Stage 1) — the report is on disk either way, so the decision costs nothing to defer.
+Only the root `REVIEW.md` may provide this setting. The section opener is a line matching
+`^## Default Delivery[ \t]*$`. Its body ends before the first line matching
+`^#{1,6}[ \t]`, a fence opener matching ``^[ \t]{0,3}(`{3,}|~{3,})``, or EOF.
+Remove HTML comments from the body non-greedily across lines. Take the first remaining
+non-blank line and trim it. It is a candidate only when it matches `^[a-z_]+(,[a-z_]+)*$`.
+Any other remainder, including prose, comment residue, or nothing, means the setting is unset
+and the next precedence source applies. The delivery rule validates candidates; unknown tokens,
+duplicates, and `pr_comments` on a local target fail loud as `HEADLESS CONFIG ERROR: REVIEW.md default_delivery=<value> not in {chat,pr_comments,markdown}`.
+For a local target, the error uses `{chat,markdown}`.
+An environment pin wins over this setting. Interactive mode ignores it. The scaffold's
+commented value reads as unset.
 
 ```
 

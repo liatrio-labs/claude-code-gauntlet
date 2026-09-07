@@ -344,7 +344,10 @@ If the file came out **empty**, omit both fields — test `not content`, not `li
 
 Assemble the args waist the workflow consumes. It is a single JSON object passed as the `Workflow` tool's `args` parameter (Phase 3) — not written to disk. The workflow validates it up front (`validateArgs`) and rejects a malformed waist before any dispatch.
 
-**Omit optional fields you have no value for; never stamp an explicit `null`.** The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`. Keep `reviewConfigPath: null` when REVIEW.md is absent; it records provenance. The workflow derives `limits.deliveryCap` from the resolver receipt, including an uncapped `null` value.
+**Omit optional fields you have no value for; never stamp an explicit `null`.**
+The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`.
+Keep `reviewConfigPath: null` when REVIEW.md is absent; it records provenance.
+The workflow derives `limits.deliveryCap` from the resolver receipt, including an uncapped `null` value.
 
 **Required fields (`validateArgs` fails loud without them):**
 

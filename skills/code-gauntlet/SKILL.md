@@ -87,7 +87,12 @@ gh pr diff {pr_number} --name-only
 
 On success, stdout is one absolute path line — store it as `{output_dir}` / `args.outputDir`. Ignore establishment (including `.git/info/exclude` append when needed) is owned by `ensure_output_dir.py` in this call; Phase 2 does not re-run it.
 
-Store: `output_dir`; the plugin-dir confirmation; the resolver JSON and stderr block; the PR state; and the changed-file list. The resolver owns its configuration inputs.
+Store: `output_dir` from section 1.
+Store the plugin-dir confirmation from section 2. If a directory is missing, stop because `plugin_root` was resolved wrong.
+Store the resolver JSON and stderr block from section 3. Retain them as `configResult`; its stderr block is the Phase 2 gate.
+Store the PR state from section 4. It feeds eligibility checks 1 and 2.
+Store the changed-file list from section 5. It feeds eligibility check 4; the worked command is in `references/phase1-preflight.md`.
+The resolver owns its configuration inputs.
 
 **Do not resolve the head SHA yet** — it is computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
 
@@ -208,7 +213,7 @@ review existed. In headless mode it is `configResult.resolved.reviewed_policy`, 
 `detector.incremental_safe: true` and the detector's safe `last_reviewed_sha` as `since`; otherwise use
 `kind: "full"` and retain the detector so the renderer can derive the fallback explanation.
 
-> Headless mode still runs the `prior_review` section. Detection is read-only and safe under any resolved post mode. Apply `configResult.resolved.reviewed_policy` instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed` AND `sha_is_ancestor` — never on rewritten history, where it degrades to `full` instead). A `DEFERRED` truncation resolves the same way it does interactively: run the unconditional truncate loop for every policy outcome except a `skip` that actually stops the run. See `references/headless-mode.md`.
+> Headless mode still runs the `prior_review` section. Detection is read-only and safe under any resolved post mode. Apply `configResult.resolved.reviewed_policy` instead of asking. `skip` stops the run only when `previously_reviewed` is true AND `sha_is_ancestor` is true. An `incremental` policy uses `incremental_safe`; otherwise it degrades to `full` and discloses the reason. Rewritten history has `sha_is_ancestor` false, so `skip` proceeds as a full review with the degradation disclosed. A `DEFERRED` truncation resolves the same way it does interactively. Run the unconditional truncate loop for every policy outcome except a `skip` that actually stops the run. See `references/headless-mode.md`.
 
 All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (AGENTS.md/QODO.md pointer resolution, `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` before it is written — see "Write the shared agent context file" below). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see "Assemble the args object" below). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. The Phase 2 stale-file truncation glob (`code-gauntlet-*-{head_sha_short}.*`, see `stale_truncate` above) matches on the `*` between `code-gauntlet-` and `-{head_sha_short}`, so it already covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
 

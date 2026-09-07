@@ -1,6 +1,6 @@
 # Headless Mode Reference
 
-Code-gauntlet runs unattended when `CODE_GAUNTLET_HEADLESS=1`. In headless mode there is no user to answer an `AskUserQuestion`, so **every interactive gate is resolved deterministically from the resolver result** and the skill never prompts. A single `AskUserQuestion` call in a headless run deadlocks the process — the harness marks such runs invalid.
+Code-gauntlet runs unattended when `CODE_GAUNTLET_HEADLESS=1`. In headless mode, no `AskUserQuestion` is ever presented: every interactive gate is resolved deterministically from the resolver result. A single `AskUserQuestion` call in a headless run deadlocks the process — the harness marks such runs invalid.
 
 This file is the authority for the headless contract: the environment table, resolver precedence, validation, the hard rules that always hold, the per-gate resolution, and the `Headless config:` block.
 
@@ -71,7 +71,7 @@ The **orchestrator** (the session running this skill and the workflow's own reas
 - **Task board = none.** The Phase 8 task-board offer is skipped; no tasks are created.
 - **REVIEW.md setup and subdirectory notices = suppressed.** Neither is a question in either mode any more (issue #35); headless additionally suppresses the notice text, since no operator is reading it.
 - **`build-review-md` is never invoked.** Headless runs never launch the REVIEW.md configuration wizard.
-- **REVIEW.md is read-only.** Both remaining write paths (root scaffold, subdirectory scaffold) are disabled; the dismissed-findings append path no longer exists in either mode (issue #35). Reads run unchanged: the Phase 1 quick-check for `default_delivery`, the Phase 2d hierarchical parse, and the JS `filterStage`'s consumption of the parsed `reviewConfig`/`exclusionPatterns` (passed through the args waist).
+- **REVIEW.md is read-only.** Both remaining write paths (root scaffold, subdirectory scaffold) are disabled; the dismissed-findings append path no longer exists in either mode (issue #35). The resolver reads the Phase 1 quick-check for `default_delivery`. Phase 2d performs the hierarchical parse. The JS `filterStage` consumes the parsed `reviewConfig`/`exclusionPatterns` (passed through the args waist).
 - **The apply-checked patches render step is unconditional.** It runs on every Phase 8 pass whenever `artifactPaths.findings` is non-null — the same rule as interactive mode, no headless carve-out. It is read-only and posts nothing; its artifact path is named alongside the report path wherever the report path is disclosed.
 
 ---
@@ -88,7 +88,7 @@ Every interactive gate in the pipeline maps to a deterministic headless outcome.
 | Closed / merged PR (eligibility) | Proceed — do not stop. Review the pinned head as resolved; posting follows `resolved.post_mode` and delivery follows `resolved.delivery` regardless of PR state. (Interactive mode stops here; headless does not.) |
 | Draft PR | `resolved.draft_policy`: `review` proceeds; `skip` stops the run. |
 | Previously reviewed (Phase 2 2b-post step 3, after checkout) | `resolved.reviewed_policy`: `incremental` scopes the diff to new commits only when `detect_prior_review.py`'s `incremental_safe` is true; when the head has not advanced, the recorded SHA is unresolvable, history was rewritten, or detection errored, it degrades to `full` and discloses the degradation. `skip` stops the run only when `previously_reviewed` is true and `sha_is_ancestor` is true; on rewritten history it proceeds as a full review with the degradation disclosed. Detection is read-only and exits successfully for every outcome. |
-| Trivial / light-scope (all low-risk, <50 lines) | The workflow derives headless `scopeAnswer` from the resolver receipt and the risk table: `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`), and `full` runs all seven dimensions. |
+| Trivial / light-scope (all low-risk, <50 lines) | `resolved.trivial_scope` controls the workflow's derived `scopeAnswer`: `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`), and `full` runs all seven dimensions. |
 | REVIEW.md detection (root setup + subdirectory offer) | Discovered configs apply as in interactive mode: root defaults plus matching subtree overrides; never invoke `build-review-md`. |
 | Phase 8 Stage 1 (delivery question) | Not asked. Deliver per `resolved.delivery` and post `artifactPaths.postReview` verbatim. The workflow derives tier and cap from the resolver receipt. Posting follows `resolved.post_mode`; `dry-run` captures the payload without posting. |
 | Phase 8 Stage 2 (task board) | Skipped. |
@@ -118,10 +118,9 @@ The nine echoed knobs are followed by `pipeline_version` and `plugin_root` ident
 
 The example shows a bench-configured run (env overrides throughout) except `delivery_tier`, which bench leaves unset so it resolves to the `all` default — the benchmark posts every challenge-survivor, which is the intended default. A run relying on headless defaults would show e.g. `delivery=markdown (default)` and `pr_comment_cap=6 (default)`, and a REVIEW.md-sourced value would show e.g. `delivery=chat (review_md)`.
 
-The pipeline renders the block in the report's last `Review Methodology` section. At delivery,
-point the chat methodology to that section and include the materialization proof, patches path,
-delivery outcome, post-report gaps, and duration. If no report materializes, repeat the block in
-the final message as the fallback receipt; do not claim the three surfaces are byte-identical.
+The pipeline renders the block in the report's last `Review Methodology` section. At delivery, point the chat methodology to that section and include the materialization proof, patches path, delivery outcome, post-report gaps, and duration.
+If no report materializes, repeat the block in the final message as the fallback receipt.
+Do not claim the three surfaces are byte-identical.
 
 ---
 

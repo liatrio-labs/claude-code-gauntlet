@@ -1027,6 +1027,7 @@ class TestDocContract(unittest.TestCase):
                 if "resolved.reviewed_policy" in line
                 and re.search(r"\bskip\b", line, re.IGNORECASE)
                 and "stops the run" in line
+                and "previously_reviewed" in line
             ]
             with self.subTest(path=rel):
                 self.assertTrue(
