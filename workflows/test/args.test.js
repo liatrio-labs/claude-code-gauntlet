@@ -780,9 +780,13 @@ test('stripNullOptionalsReport does NOT strip policy.subagentModel: null (no-ove
 test('stripNullOptionalsReport leaves a non-null, non-allowlisted-field waist untouched', () => {
   assert.deepEqual(stripNullOptionalsReport(good).args, good);
 });
-test('stripNullOptionalsReport passes through non-object input (undefined, string) without throwing', () => {
-  assert.equal(stripNullOptionalsReport(undefined).args, undefined);
-  assert.equal(stripNullOptionalsReport(null).args, null);
+test('stripNullOptionalsReport passes through non-object input without throwing', () => {
+  for (const input of [undefined, null, 'not an object', ['not', 'an', 'object']]) {
+    const report = stripNullOptionalsReport(input);
+    assert.equal(report.args, input);
+    assert.deepEqual(report.dropped, []);
+    assert.deepEqual(report.respelled, []);
+  }
 });
 
 test('normalizeArgs strips stamped nulls on the object-passthrough form so validateArgs accepts them', () => {
@@ -936,6 +940,39 @@ test('T303-ARGS: interactive JSON null cap is respelled, validated, and reported
   assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
   assert.deepEqual(input, before, 'normalization must not mutate the caller object');
   assert.equal(nullRespellGap(report.respelled[0]).includes('printed token "null"'), true);
+});
+
+test('T303-ARGS: null respelling consults the nullReceipt mode allowlist', () => {
+  const input = {
+    ...good,
+    mode: 'Interactive',
+    configEcho: { ...good.configEcho, pr_comment_cap: { value: null, source: 'default' } },
+  };
+  const report = normalizeArgsReport(JSON.stringify(input));
+
+  assert.equal(report.args.configEcho.pr_comment_cap.value, null);
+  assert.deepEqual(report.respelled, []);
+  const result = validateArgs(report.args);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.includes('invalid mode: Interactive'));
+});
+
+test('T303-ARGS: an absent receipt value is not respelled', () => {
+  const input = {
+    ...good,
+    configEcho: { ...good.configEcho, pr_comment_cap: { source: 'default' } },
+  };
+  const report = normalizeArgsReport(input);
+
+  assert.equal('value' in report.args.configEcho.pr_comment_cap, false);
+  assert.deepEqual(report.respelled, []);
+});
+
+test('T303-ARGS: nullRespellGap keeps its complete operator disclosure', () => {
+  assert.equal(
+    nullRespellGap('pr_comment_cap'),
+    'null_receipt: args.pr_comment_cap arrived as a literal null and was spelled as the printed token "null"; the receipt and the configuration are unchanged; stamp the string "null".',
+  );
 });
 
 test('T303-ARGS: headless JSON null cap is still refused', () => {
