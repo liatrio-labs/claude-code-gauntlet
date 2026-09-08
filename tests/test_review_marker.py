@@ -1016,7 +1016,7 @@ class TestDocContract(unittest.TestCase):
         or a backward force-push) the reviewed commit is no longer an ancestor
         of HEAD, so the tree is effectively unreviewed and `skip` must not
         discard it. Keyed on substantive tokens (`sha_is_ancestor`, `skip`, the
-        `REVIEWED_POLICY` env var) rather than an exact sentence, so it survives
+        `resolved.reviewed_policy` field) rather than an exact sentence, so it survives
         rewording; the failure message names both files so the next person
         knows to sync them."""
         for rel in (self.SKILL_REL, self.HEADLESS_MODE_REL):
@@ -1024,15 +1024,16 @@ class TestDocContract(unittest.TestCase):
             matching_lines = [
                 line
                 for line in text.splitlines()
-                if "REVIEWED_POLICY" in line
+                if "resolved.reviewed_policy" in line
                 and re.search(r"\bskip\b", line, re.IGNORECASE)
                 and "stops the run" in line
+                and "previously_reviewed" in line
             ]
             with self.subTest(path=rel):
                 self.assertTrue(
                     matching_lines,
                     f"{rel} has no line stating the headless `skip` stop-condition "
-                    "for the previously-reviewed gate (REVIEWED_POLICY + skip + "
+                    "for the previously-reviewed gate (resolved.reviewed_policy + skip + "
                     f"'stops the run') — sync {self.SKILL_REL} and "
                     f"{self.HEADLESS_MODE_REL} so both describe the same behavior.",
                 )

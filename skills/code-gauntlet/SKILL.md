@@ -47,9 +47,9 @@ Resolve `plugin_root` from this SKILL.md's path — go up two directories from `
 
 Parse the user's input to determine the review target before eligibility checks — the target type affects every subsequent step. Store `target_type` (`pr`, `mr`, or `local`) and `pr_number` (if applicable). The ARGUMENTS value is the user's explicit input — a bare number (e.g., `1`, `42`) is always a PR/MR number. Resolve it via `gh pr view` before considering any other target type. Do not compare it against the branch name or second-guess it; the branch may track a different upstream PR. See `references/phase1-preflight.md` for resolution logic, validation, and the PR-not-found template. (One case needs its own round trip before the composite below: "review" with no number/URL, resolved via `gh pr view --json number --jq '.number'` for the current branch — the composite needs `pr_number` as an input, so this must run first.)
 
-### Phase 1 composite: output dir, plugin confirmation, PR state, REVIEW.md, trivial-check file list
+### Phase 1 composite: output dir, plugin confirmation, config, PR state, trivial-check file list
 
-One Bash call gathers every independent Phase-1 input at once: output-directory setup, the plugin-root confirmation, the PR state eligibility checks 1–2 need, a root-level REVIEW.md quick-check for the pre-flight gate, and the changed-file list eligibility check 4 needs. None of these five depend on each other — only what comes after this call (gate answers, eligibility decisions) depends on its output.
+One Bash call gathers every independent Phase-1 input at once: output-directory setup, plugin confirmation, config resolution, PR state, and the changed-file list. None of these depend on each other.
 
 ```bash
 echo "=== output_dir ==="
@@ -62,11 +62,15 @@ echo "$OUTPUT_DIR"
 echo "=== plugin_dirs ==="
 command ls "{plugin_root}/scripts" "{plugin_root}/agents" "{plugin_root}/workflows"
 
+echo "=== config ==="
+if ! CONFIG_JSON=$(python3 "{plugin_root}/scripts/resolve_config.py" --target {target_type} --plugin-root "{plugin_root}"); then
+  echo "config: FAILED"
+  exit 1
+fi
+echo "$CONFIG_JSON"
+
 echo "=== pr_view ==="
 gh pr view {pr_number} --json state,isDraft,title,url
-
-echo "=== review_md_root ==="
-test -f REVIEW.md && cat REVIEW.md || echo "NONE"
 
 echo "=== changed_files ==="
 gh pr diff {pr_number} --name-only
@@ -83,7 +87,12 @@ gh pr diff {pr_number} --name-only
 
 On success, stdout is one absolute path line — store it as `{output_dir}` / `args.outputDir`. Ignore establishment (including `.git/info/exclude` append when needed) is owned by `ensure_output_dir.py` in this call; Phase 2 does not re-run it.
 
-Store: `output_dir` (section 1); the plugin-dir confirmation (section 2 — if any directory is missing, stop, `plugin_root` was resolved wrong); the PR's `state`/`isDraft` (section 3, feeds eligibility checks 1 and 2 below); the REVIEW.md root text or `NONE` (section 4, feeds the Phase 1 configuration resolution and the REVIEW.md-presence notice); and the changed-file list (section 5, feeds eligibility check 4 below — the same primitive the recorded run got wrong by inventing `gh pr diff --stat`, which does not exist; see `references/phase1-preflight.md` eligibility check 4 for the worked command).
+Store: `output_dir` from section 1.
+Store the plugin-dir confirmation from section 2. If a directory is missing, stop because `plugin_root` was resolved wrong.
+Store the resolver JSON and stderr block from section 3. Retain them as `configResult`; its stderr block is the Phase 2 gate.
+Store the PR state from section 4. It feeds eligibility checks 1 and 2.
+Store the changed-file list from section 5. It feeds eligibility check 4; the worked command is in `references/phase1-preflight.md`.
+The resolver owns its configuration inputs.
 
 **Do not resolve the head SHA yet** — it is computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
 
@@ -93,57 +102,28 @@ Reads from the composite above — no new Bash calls here.
 
 1. **Closed/merged?** (`pr_view.state`) → Stop.
 
-   > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do **not** stop — headless reviews closed/merged PRs, proceeding against the pinned head exactly as resolved. Benchmarking historical merged PRs is the headless use case; posting safety is governed by `CODE_GAUNTLET_POST_MODE` (`dry-run` posts nothing) and delivery follows `CODE_GAUNTLET_DELIVERY`, not PR state. See `references/headless-mode.md`.
+   > Headless exception (`configResult.mode == "headless"`): do **not** stop — headless reviews closed/merged PRs, proceeding against the pinned head exactly as resolved. Posting safety uses `configResult.resolved.post_mode`, and delivery uses `configResult.resolved.delivery`, not PR state. See `references/headless-mode.md`.
 2. **Draft?** (`pr_view.isDraft`) → Ask user (template in `references/phase1-preflight.md`).
 3. **Previously reviewed?** → Deferred to Phase 2 (after checkout, `phase2-triage.md` 2b-post step 3) — the gate needs the PR's tree to compare commits. Runs `detect_prior_review.py`; gates incremental vs full vs skip on `incremental_safe` (templates and degradations in `references/phase1-preflight.md` → "Previously-Reviewed Gate").
 4. **Trivially simple?** (`changed_files` from the composite above) → If ONLY lockfile/generated/auto-formatted changes, stop.
 
-### Resolve configuration — no questions asked
+### Resolve configuration
 
-Phase 1 asks the user nothing. Every knob that used to be a question is now resolved from state, and
-Phase 1 ends by printing a **resolved-config echo** that Phase 2 gates on.
+The Phase 1 composite calls `scripts/resolve_config.py`. It reads `CODE_GAUNTLET_HEADLESS` to select `headless` or `interactive` mode.
 
-> **Headless branch (`CODE_GAUNTLET_HEADLESS=1`):** resolve every knob (`model_tier`, `delivery`,
-> `post_mode`, `pr_comment_cap`, `delivery_tier`, `draft_policy`, `reviewed_policy`,
-> `pr_not_found_policy`, `trivial_scope`) per `references/headless-mode.md` using precedence
-> env > REVIEW.md explicit > headless default, print the `Headless config:` block to stdout, and
-> continue. An invalid value fails loud per the validation rule in that reference; it never falls back.
+The resolver owns precedence and validation. It renders the configuration block to stderr in the Bash result under `=== config ===`.
 
-**Interactive resolution.** `policy.tier` is always `"optimized"` — the single benchmarked configuration
-(discovery on Sonnet with security-reviewer on Opus); nothing in REVIEW.md is read for it and nothing
-asks. `delivery.tier` and `limits.deliveryCap` resolve in Phase 2 from their env pins
-(`CODE_GAUNTLET_DELIVERY_TIER`, `CODE_GAUNTLET_PR_COMMENT_CAP`), falling through to the pipeline defaults
-when unset. Where the review is *delivered* is decided at the end of the run, in Phase 8, once the report
-exists — not guessed at up front. REVIEW.md presence is not settled here — the Phase 1 composite's
-`review_md_root` covers the repo root only, not the full changed-file directory set; if the root quick-check
-finds none, the Phase 2d discovery walk emits the canonical non-blocking notice
-(`references/review-md-spec.md` → Discovery).
+That stderr block is the Phase 2 entry gate. Retain the JSON as `configResult`, including `mode`, `waist`, `resolved`, and `identity`.
 
-**Print the resolved-config echo.** Interactive runs end Phase 1 with this block on stdout. It is the
-Phase 2 entry gate's input — a receipt that configuration was resolved, not that a prompt was shown.
-The values below are an example — substitute the resolved ones:
+Copy `configResult.waist.configEcho` verbatim. For later decisions, use only `configResult.resolved.<knob>`.
 
-```text
-Resolved config:
-  model_tier=optimized (fixed)
-  pr_comment_cap=null (default)
-  delivery_tier=all (default)
-  review_md=absent (discovery)
-```
-
-One line per knob, `key=value (source)` where `source ∈ env|default|fixed|discovery`. `delivery_tier` and
-`pr_comment_cap` read `(env)` when their env pin is set. `review_md` is `present` or `absent` from the
-composite's `review_md_root` section. Emit all four lines every interactive run; a headless run emits
-`Headless config:` instead and never this block.
+The resolver returns its JSON on stdout. A resolver failure stops the composite with `config: FAILED`.
 
 ---
 
 ## Phase 2: Target, Triage & Args Preparation
 
-> **Entry gate — resolved state, not prompt history:** proceed only when Phase 1 printed its
-> resolved-config echo — `Resolved config:` interactively, `Headless config:` headless. If neither was
-> printed, configuration was never resolved: return to Phase 1's "Resolve configuration" section and
-> print it. Never gate on whether a question was asked; the happy path asks none.
+> **Entry gate — resolver result:** proceed only when the `Resolved config:` or `Headless config:` block appears in the `=== config ===` Bash result. Retain its JSON as `configResult`.
 
 Identify the review target, gather the git artifacts the workflow consumes, and assemble the args object. This is a fast pass in the main context — the review stages run later, inside the workflow. Read `references/phase2-triage.md` for the full sub-steps (VCS detection, checkout, risk classification, REVIEW.md parse) and the args-preparation walkthrough.
 
@@ -228,12 +208,12 @@ stamp `{ requested: "full", kind: "full", since: null, commits: null, detector: 
 copy these detector values into `detector` without rewriting them: `previously_reviewed`, `sha_resolvable`,
 `head_advanced`, `sha_is_ancestor`, and `incremental_safe`; set `error` to the first `prior_review.errors`
 value or `null`. The interactive `requested` value is the recorded gate answer, or `"full"` when no prior
-review existed. In headless mode it is `configEcho.reviewed_policy.value`, except `"skip"` records
+review existed. In headless mode it is `configResult.resolved.reviewed_policy`, except `"skip"` records
 `requested: "full"`. Use `kind: "incremental"` only for an incremental answer with
 `detector.incremental_safe: true` and the detector's safe `last_reviewed_sha` as `since`; otherwise use
 `kind: "full"` and retain the detector so the renderer can derive the fallback explanation.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `prior_review` section still runs — detection is read-only and safe under any `CODE_GAUNTLET_POST_MODE`. Apply `CODE_GAUNTLET_REVIEWED_POLICY` to its result instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed` AND `sha_is_ancestor` — never on rewritten history, where it degrades to `full` instead). A `DEFERRED` truncation resolves the same way it does interactively: run the unconditional truncate loop for every policy outcome except a `skip` that actually stops the run. See `references/headless-mode.md`.
+> Headless mode still runs the `prior_review` section. Detection is read-only and safe under any resolved post mode. Apply `configResult.resolved.reviewed_policy` instead of asking. `skip` stops the run only when `previously_reviewed` is true AND `sha_is_ancestor` is true. An `incremental` policy uses `incremental_safe`; otherwise it degrades to `full` and discloses the reason. Rewritten history has `sha_is_ancestor` false, so `skip` proceeds as a full review with the degradation disclosed. A `DEFERRED` truncation resolves the same way it does interactively. Run the unconditional truncate loop for every policy outcome except a `skip` that actually stops the run. See `references/headless-mode.md`.
 
 All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (AGENTS.md/QODO.md pointer resolution, `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` before it is written — see "Write the shared agent context file" below). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see "Assemble the args object" below). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. The Phase 2 stale-file truncation glob (`code-gauntlet-*-{head_sha_short}.*`, see `stale_truncate` above) matches on the `*` between `code-gauntlet-` and `-{head_sha_short}`, so it already covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
 
@@ -349,17 +329,19 @@ Stamp both values verbatim. Never estimate them, never carry them over from an e
 
 ### Assemble the args object and record environment overrides
 
-Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). Resolve `policy.provider` from the environment in the same Bash call — first match wins, and a flag counts as SET only when its value is truthy the way Claude Code itself parses it (`1`/`true`/`yes`/`on`, case-insensitive — `0`/`false`/empty leave the session first-party): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` alone does NOT change the provider: an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin (a gateway with non-standard names uses the `CLAUDE_CODE_SUBAGENT_MODEL` escape hatch). It DOES set `policy.gateway`, though: stamp `true` iff `ANTHROPIC_BASE_URL` is set, after trimming whitespace, to a non-blank value (it is a URL — any non-blank value counts, no truthy-flag parsing like the provider flags above), else `false`. `policy.gateway` turns off the pipeline's conditional per-dimension schema construct on the conventions-and-intent dispatch (a gateway forwards `input_schema` verbatim to whatever backend it fronts, which could be an unmeasured third-party surface even though the session itself reads as firstParty) while leaving the first-party model-ID pin untouched. The workflow cannot read `process.env`, so this capture is the only path — on `firstParty` the pipeline pins full first-party model IDs (immune to session-variant cascade); on every other provider it dispatches bare aliases (`sonnet`/`opus`), the only spelling the provider's deployment mapping resolves (first-party IDs pass through unchecked on Bedrock/Vertex/Foundry and fail as invalid model identifiers). **If `CLAUDE_CODE_SUBAGENT_MODEL` is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). Resolve `delivery.tier` here — there is no Phase 1 answer to thread any more (issue #35). Precedence is the same in both modes: `CODE_GAUNTLET_DELIVERY_TIER` env pin (`"all"` or `"main_only"`) > omit the field entirely, which the pipeline reads as `all`. REVIEW.md has no delivery-tier key, so its slot in the precedence chain is vacuous today; if one is ever added it sits between the env pin and the default. `deliveryCap` comes from `CODE_GAUNTLET_PR_COMMENT_CAP` on the same terms, and now applies interactively too. The workflow can read neither env var, so these captures are the only path. For a PR/MR target, also stamp `delivery.prIdentity = { owner, repo, pr_number, sha_full, title }` — `owner`/`repo`/`pr_number` from the resolved PR, `sha_full` from `git rev-parse HEAD`, and `title` from the `gh pr view {pr_number} --json state,isDraft,title,url` this phase already runs (`SKILL.md:59`; GitLab: `glab mr view {pr_number} --output json | jq -r '.title'`). `title` is **optional** — omit it when the fetch produced nothing; the report title then falls back to `owner/repo#N`. Omit `prIdentity` entirely for local-diff reviews.
+Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). Resolve `policy.provider` from the environment in the same Bash call — first match wins, and a flag counts as SET only when its value is truthy the way Claude Code itself parses it (`1`/`true`/`yes`/`on`, case-insensitive — `0`/`false`/empty leave the session first-party): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` alone does NOT change the provider: an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin (a gateway with non-standard names uses the `CLAUDE_CODE_SUBAGENT_MODEL` escape hatch). It DOES set `policy.gateway`, though: stamp `true` iff `ANTHROPIC_BASE_URL` is set, after trimming whitespace, to a non-blank value (it is a URL — any non-blank value counts, no truthy-flag parsing like the provider flags above), else `false`. `policy.gateway` turns off the pipeline's conditional per-dimension schema construct on the conventions-and-intent dispatch (a gateway forwards `input_schema` verbatim to whatever backend it fronts, which could be an unmeasured third-party surface even though the session itself reads as firstParty) while leaving the first-party model-ID pin untouched. The workflow cannot read `process.env`, so this capture is the only path — on `firstParty` the pipeline pins full first-party model IDs (immune to session-variant cascade); on every other provider it dispatches bare aliases (`sonnet`/`opus`), the only spelling the provider's deployment mapping resolves (first-party IDs pass through unchecked on Bedrock/Vertex/Foundry and fail as invalid model identifiers). **If `CLAUDE_CODE_SUBAGENT_MODEL` is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). For a PR/MR target, also stamp `delivery.prIdentity = { owner, repo, pr_number, sha_full, title }` — `owner`/`repo`/`pr_number` from the resolved PR, `sha_full` from `git rev-parse HEAD`, and `title` from the `gh pr view {pr_number} --json state,isDraft,title,url` this phase already runs (`SKILL.md:59`; GitLab: `glab mr view {pr_number} --output json | jq -r '.title'`). `title` is **optional** — omit it when the fetch produced nothing; the report title then falls back to `owner/repo#N`. Omit `prIdentity` entirely for local-diff reviews.
 
-Stamp `riskTable` — the Phase 2e per-file risk classification, verbatim, as `[{ path, risk }]` covering EXACTLY the `changedFiles` set (the args waist refuses a missing or extra path). Stamp `scopeAnswer` only when the trivial-scope gate in 2e actually asked (2e's "Light Review for Trivial PRs" — every file LOW risk AND `changedLines < 50`); omit it otherwise. For a headless run, re-read the fresh env value at THIS step, never a remembered one (a live verification run recalled `full` here while its own Phase-1 echo said `light`):
+Copy `configResult.waist.configEcho` verbatim. Never stamp `configEcho.review_md`; the workflow derives it from `reviewConfigPath` during discovery.
 
-```bash
-Bash(command="echo ${CODE_GAUNTLET_TRIVIAL_SCOPE:-full}")  # headless: re-read NOW; interactive: use the recorded "Light review" answer
-```
+The workflow derives `limits.deliveryCap` from the copied receipt. Stamp `limits: {}` unless a genuine REVIEW.md-set override exists.
 
-`scopeAnswer` is `"light"` or `"full"` — literally that echo (headless) or the recorded interactive answer, nothing derived. The pipeline itself computes dimension eligibility from `riskTable`/`changedLines`/`scopeAnswer` (`deriveAgentFlags`, `workflows/src/stages.js`) and refuses the run before any dispatch if `scopeAnswer` is incoherent with the riskTable/changedLines it was answered against (`"light"` when not every file is low risk or lines >= 50; or the reverse — eligible with no `scopeAnswer` stamped at all). There is no `agentFlags` field to stamp any more, and the waist hard-rejects one if present — the orchestrator's only scope job is producing `riskTable` and echoing `scopeAnswer` when asked.
+The workflow derives `delivery.tier` from the copied receipt. Stamp `delivery` only as `{ prIdentity }` for PR/MR targets.
 
-**Omit optional fields you have no value for — never stamp an explicit `null`.** The waist tolerates an explicit `null` as equivalent to absent for `reviewConfig`, `exclusionPatterns`, `reviewMd`, `exclusionsText`, `delivery`, `checkpoints`, `persist`, and `scopeAnswer`, but omitting is the norm: a live run once stamped `reviewConfig: null` and paid a 21.3s round trip re-deriving it before dispatch. Two fields are the opposite case — `null` there is a meaningful value, not a stand-in for absent, so do not "fix" it away: `reviewConfigPath: null` (no REVIEW.md found — pure provenance) and `limits.deliveryCap: null` (uncapped delivery — an explicit choice, not an oversight).
+Stamp `riskTable` — the Phase 2e per-file risk classification, verbatim, as `[{ path, risk }]` covering EXACTLY the `changedFiles` set. Interactive runs stamp `scopeAnswer` only when the trivial-scope question fires. Never stamp a headless `scopeAnswer`; the workflow derives it from the resolver receipt.
+
+`scopeAnswer` is `"light"` or `"full"`. The workflow validates interactive answers and derives headless eligibility from the receipt, `riskTable`, and `changedLines`.
+
+**Omit optional fields you have no value for — never stamp an explicit `null`.** The waist tolerates an explicit `null` as equivalent to absent for `reviewConfig`, `exclusionPatterns`, `reviewMd`, `exclusionsText`, `delivery`, `checkpoints`, `persist`, and `scopeAnswer`. Keep `reviewConfigPath: null` when discovery finds no REVIEW.md; it is provenance. The workflow derives the typed cap from the receipt, so do not stamp `limits.deliveryCap`.
 
 Assemble the args waist (see `references/phase2-triage.md` for the full field list and shapes):
 
@@ -370,24 +352,15 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   repoRoot, outputDir, headShaShort, nonce, generatedAt,
   diffPath, changedFilesPath, reviewConfigPath,
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
-  scopeAnswer: "light" | "full",  // ONLY when the 2e trivial-scope gate asked; omit otherwise
+  scopeAnswer: "light" | "full",  // interactive answer only; headless scope is workflow-derived
   policy: { tier, subagentModel, provider, gateway },
-  configEcho: { key: { value: "<printed token, a string>", source } },  // REQUIRED; see the generated config receipt below
+  configEcho: configResult.waist.configEcho,  // REQUIRED; copy verbatim from the resolver
   pluginRoot,  // REQUIRED absolute plugin root; script paths must stay under {pluginRoot}/scripts/
   reviewScope: { requested: "incremental" | "full", kind: "incremental" | "full", since: string | null,
                  commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,
                  head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED; copied from prior-review state
-  limits: { deliveryCap },  // pass ONLY genuine overrides — a REVIEW.md-set value, or the
-                             // env-threaded deliveryCap — never the full table:
-                             // normalizeArgs fills summarizeBucketSize/validateBatch/
-                             // challengeCap/verifySliceSize from LIMIT_DEFAULTS (args.js)
-                             // when they're absent, so stamping the benchmarked numbers
-                             // here just triplicates a value the code already owns,
-                             // and a malformed or unknown limits key now refuses the run
-                             // at validateArgs before any paid stage dispatches, rather
-                             // than falling through to the LIMIT_DEFAULTS fallback silently.
-  delivery: { tier: "all" | "main_only",     // Phase 8 PR-comment tier (default "all"); consumed by selectDelivery
-              prIdentity: { owner, repo, pr_number, sha_full, title } },  // PR/MR targets ONLY (title optional; omit prIdentity for local-diff reviews):
+  limits: {},  // workflow derives deliveryCap; use a genuine REVIEW.md override when present
+  delivery: { prIdentity: { owner, repo, pr_number, sha_full, title } },  // PR/MR targets only; workflow derives tier
                                              // the artifact-writer then persists postReview as the post_review-ready
                                              // wrapper { owner, repo, pr_number, sha, review_body, findings } so
                                              // Phase 8 posts it without hand-assembly
@@ -419,7 +392,18 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
 ```
 
 <!-- generated-from-registry-identity:config_receipt — do not edit; run scripts/generate_contract_requirements.py -->
-Every `configEcho` value is the printed token as a string; an unset interactive cap is the string `"null"`, and a JSON null there is accepted, spelled `"null"`, and disclosed as a gap; `limits.deliveryCap` carries the typed null.
+The resolver owns the printed configuration block and the keyed `configEcho` receipt.
+
+**Interactive block:**
+
+```text
+Resolved config:
+  model_tier=optimized (fixed)
+  pr_comment_cap=null (default)
+  delivery_tier=all (default)
+  pipeline_version={pipeline_version} (bundle)
+  plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
+```
 
 **Interactive receipt:**
 
@@ -436,12 +420,25 @@ Every `configEcho` value is the printed token as a string; an unset interactive 
     "delivery_tier": {
         "value": "all",
         "source": "default"
-    },
-    "review_md": {
-        "value": "absent",
-        "source": "discovery"
     }
 }
+```
+
+**Headless block:**
+
+```text
+Headless config:
+  model_tier=optimized (default)
+  delivery=markdown (default)
+  post_mode=dry-run (default)
+  pr_comment_cap=6 (default)
+  delivery_tier=all (default)
+  draft_policy=review (default)
+  reviewed_policy=full (default)
+  pr_not_found_policy=error (default)
+  trivial_scope=full (default)
+  pipeline_version={pipeline_version} (bundle)
+  plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
 ```
 
 **Headless receipt:**
@@ -488,7 +485,7 @@ Every `configEcho` value is the printed token as a string; an unset interactive 
 ```
 <!-- /generated-from-registry-identity:config_receipt -->
 
-`mode` is `"headless"` under `CODE_GAUNTLET_HEADLESS=1`, else `"interactive"`. Never call `new Date()` inside the workflow — `generatedAt` is the only clock.
+`mode` comes from `configResult.mode`. Never call `new Date()` inside the workflow — `generatedAt` is the only clock.
 
 **`persist` (optional, but stamp it).** It selects which of three channels puts the artifacts on disk.
 
@@ -611,11 +608,11 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
    - On any mid-run workflow **crash** (a thrown `error` with no return value, a killed background task, or a lost compact return), follow `references/crash-recovery.md` — **`resumeFromRunId` first** (replays completed agents from cache at zero re-billed cost), journal-first diagnosis (`failingPhase` names the stage that threw), and only then the checkpoint paths above.
 3. **Surface the integer gap count in report methodology regardless of `ok`**; at delivery, include the full `gaps` entries in chat as post-report gap details. Each entry names a degraded or skipped stage (unverified findings, skipped validation batch, capped challenges, partial artifacts).
 
-> **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — this is where the ceiling actually bites: a `-p` child that yields its turn has its still-running workflow terminated once `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) elapses, so headless runs must **hold the turn and await a terminal result with `await_workflow.py` before Phase 8, never assume completion**. Deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier and cap, so never re-filter, re-rank, or re-apply them; posting obeys `$CODE_GAUNTLET_POST_MODE`. The task board (Stage 2) is skipped and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The report carries the code-rendered `Headless config:` receipt. The final message repeats that block only as a fallback when the report never materialized. See `references/headless-mode.md`.
+> **Headless hard rules (`configResult.mode == "headless"`):** **the Phase 3 wait protocol is non-negotiable here** — this is where the ceiling actually bites: a `-p` child that yields its turn has its still-running workflow terminated once `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) elapses, so headless runs must **hold the turn and await a terminal result with `await_workflow.py` before Phase 8, never assume completion**. Deliver per `configResult.resolved.delivery` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier and cap, so never re-filter, re-rank, or re-apply them; posting obeys `configResult.resolved.post_mode`. The task board (Stage 2) is skipped and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The report carries the code-rendered `Headless config:` receipt. The final message repeats that block only as a fallback when the report never materialized. See `references/headless-mode.md`.
 
 > Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver markdown-only — report the path plus a short chat summary).
 >
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged markdown-only restriction does not apply — headless delivery follows `CODE_GAUNTLET_DELIVERY` regardless of PR state (posting still obeys `CODE_GAUNTLET_POST_MODE`). See `references/headless-mode.md`.
+> Headless mode exception (`configResult.mode == "headless"`): the closed/merged markdown-only restriction does not apply. Delivery follows `configResult.resolved.delivery`, and posting follows `configResult.resolved.post_mode`. See `references/headless-mode.md`.
 
 ### Render apply-checked patches — whenever `artifactPaths.findings` is non-null
 
@@ -637,7 +634,7 @@ Branch on the **exit code**, never on how the output reads:
 
 Deliver per the Phase 8 delivery question (`references/phase8-delivery.md` Stage 1). **Posting is gated on
 that answer:** run `post_review.py` only when the user chose "Post to PR/MR" (headless: only when
-`CODE_GAUNTLET_DELIVERY` includes `pr_comments`); a "Markdown only" answer posts nothing — report the
+`configResult.resolved.delivery` includes `"pr_comments"`); a "Markdown only" answer posts nothing — report the
 saved report's path and move to Stage 2. **PR-comment
 selection is the pipeline's job, not yours:** the delivery set is `artifactPaths.postReview` — the
 survivors the pipeline already selected per `args.delivery.tier` (`all` by default → every survivor
@@ -661,11 +658,11 @@ Never decorate a machine-parsed block (`references/report-format.md`).
 > **MANDATORY GATE: Do not re-filter or re-rank the pipeline's `postReview` payload before posting.** The
 > PR-comment set is that payload verbatim on every path — there is no selection UI to narrow it.
 >
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): identical, and no `AskUserQuestion` is presented.
+> Headless mode exception (`configResult.mode == "headless"`): identical, and no `AskUserQuestion` is presented.
 
 > **MANDATORY GATE: Do not finish without presenting the single task-board question below (Stage 2 in references/phase8-delivery.md covers what happens after "Yes"). On "Yes" the only creation call is TaskCreate, one task per finding in the delivered payload; Phase 8 never creates issues, pull requests, or branches.**
 >
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped; do not present the offer.
+> Headless mode exception (`configResult.mode == "headless"`): the task board is skipped; do not present the offer.
 > Partial-artifacts exception: when `artifactPaths.postReview` is null, do not present the offer; say that no delivery set was persisted, so no tasks can be created.
 
 ```
@@ -688,8 +685,8 @@ After the user answers "Yes", run `python3 "{plugin_root}/scripts/render_fix_tas
 
 The report's last section is the code-rendered Review Methodology. After delivery, point the chat
 methodology at that section and add only the materialization proof, patches path, delivery outcome,
-post-report gaps, and wall-clock duration known to the orchestrator. If the report never
-materialized, the final message repeats only the resolved config receipt block from the return.
+post-report gaps, and wall-clock duration known to the orchestrator. If the report never materializes,
+repeat only the resolver block from the Phase 1 Bash result.
 It must not recreate policy, per-stage models, scope, stats, gaps, or dimensions.
 
 ---

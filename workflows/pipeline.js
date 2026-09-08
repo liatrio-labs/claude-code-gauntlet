@@ -2221,30 +2221,40 @@ const ARGS_VERSION = 1;
 const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope'];
 const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 const DELIVERY_TIERS = ['all', 'main_only'];
+const SCOPE_ANSWERS = ['light', 'full'];
 const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
 const CONTROL_RE = /[\u0000-\u001F\u007F]/;
-const deliveryValue = (value) => {
-  if (typeof value !== 'string' || value === '') return false;
-  const parts = value.split(',');
-  return parts.length > 0
-    && parts.every((part) => ['chat', 'pr_comments', 'markdown'].includes(part))
-    && new Set(parts).size === parts.length;
-};
-const digits = (value) => typeof value === 'string' && /^\d+$/.test(value);
-const positiveDigits = (value) => digits(value) && !/^0+$/.test(value);
 const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
 const KNOB_REGISTRY = [
-  { key: 'model_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['fixed'] }, valueRule: (value) => value === 'optimized', example: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] } },
-  { key: 'delivery', modes: ['headless'], allowedSources: { headless: ['env', 'review_md', 'default'] }, valueRule: deliveryValue, example: { headless: ['markdown', 'default'] } },
-  { key: 'post_mode', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['dry-run', 'live'].includes(value), example: { headless: ['dry-run', 'default'] } },
-  { key: 'pr_comment_cap', modes: ['headless', 'interactive'], nullReceipt: ['interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value, mode) => mode === 'headless' ? positiveDigits(value) : (value === 'null' || digits(value)), example: { headless: ['6', 'default'], interactive: ['null', 'default'] } },
-  { key: 'delivery_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value) => DELIVERY_TIERS.includes(value), example: { headless: ['all', 'default'], interactive: ['all', 'default'] } },
-  { key: 'draft_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['review', 'skip'].includes(value), example: { headless: ['review', 'default'] } },
-  { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['incremental', 'full', 'skip'].includes(value), example: { headless: ['full', 'default'] } },
-  { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['local', 'error'].includes(value), example: { headless: ['error', 'default'] } },
-  { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => SCOPE_ANSWERS.includes(value), example: { headless: ['full', 'default'] } },
-  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, valueRule: (value) => ['present', 'absent'].includes(value), example: { interactive: ['absent', 'discovery'] } },
+  { key: 'model_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['fixed'] }, rule: { kind: 'enum', values: ['optimized'] }, env: 'CODE_GAUNTLET_MODEL_TIER', reviewMdKey: null, defaults: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, type: 'string', waistPath: null, derivedFrom: null, deriveWhen: null, nullReceipt: [] },
+  { key: 'delivery', modes: ['headless'], allowedSources: { headless: ['env', 'review_md', 'default'] }, rule: { kind: 'csv_subset', values: ['chat', 'pr_comments', 'markdown'] }, env: 'CODE_GAUNTLET_DELIVERY', reviewMdKey: 'default_delivery', defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, derivedFrom: null, deriveWhen: null, nullReceipt: [] },
+  { key: 'post_mode', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['dry-run', 'live'] }, env: 'CODE_GAUNTLET_POST_MODE', reviewMdKey: null, defaults: { headless: ['dry-run', 'default'] }, type: 'string', waistPath: null, derivedFrom: null, deriveWhen: null, nullReceipt: [] },
+  { key: 'pr_comment_cap', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, rule: { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, env: 'CODE_GAUNTLET_PR_COMMENT_CAP', reviewMdKey: null, defaults: { headless: ['6', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null', waistPath: 'limits.deliveryCap', derivedFrom: null, deriveWhen: null, nullReceipt: ['interactive'] },
+  { key: 'delivery_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', reviewMdKey: null, defaults: { headless: ['all', 'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', derivedFrom: null, deriveWhen: null, nullReceipt: [] },
+  { key: 'draft_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['review', 'skip'] }, env: 'CODE_GAUNTLET_DRAFT_POLICY', reviewMdKey: null, defaults: { headless: ['review', 'default'] }, type: 'string', waistPath: null, derivedFrom: null, deriveWhen: null, nullReceipt: [] },
+  { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['incremental', 'full', 'skip'] }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: null, derivedFrom: null, deriveWhen: null, nullReceipt: [] },
+  { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['local', 'error'] }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error', 'default'] }, type: 'string', waistPath: null, derivedFrom: null, deriveWhen: null, nullReceipt: [] },
+  { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'scopeAnswer', derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [] },
+  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null, derivedFrom: 'reviewConfigPath', deriveWhen: null, nullReceipt: [] },
 ];
+function matchesRule(rule, value, mode) {
+  if (typeof value !== 'string' || rule === null || typeof rule !== 'object' || Array.isArray(rule)) return false;
+  const selected = typeof rule.kind === 'string' ? rule : rule[mode];
+  if (selected === null || typeof selected !== 'object' || Array.isArray(selected)) return false;
+  if (selected.kind === 'enum') return Array.isArray(selected.values) && selected.values.includes(value);
+  if (selected.kind === 'csv_subset') {
+    if (!Array.isArray(selected.values) || value === '') return false;
+    const parts = value.split(',');
+    return parts.every((part) => selected.values.includes(part)) && new Set(parts).size === parts.length;
+  }
+  if (selected.kind === 'positive_digits') {
+    return /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
+  }
+  if (selected.kind === 'digits_or_null') {
+    return value === 'null' || (/^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value)));
+  }
+  return false;
+}
 const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
 function validatePathSegments(value, label, { separateSlashErrors = false, requireBasename = false } = {}) {
   const errors = [];
@@ -2265,7 +2275,6 @@ function validatePathSegments(value, label, { separateSlashErrors = false, requi
   return errors;
 }
 const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist', 'scopeAnswer'];
-const SCOPE_ANSWERS = ['light', 'full'];
 const RISK_LEVELS = ['low', 'medium', 'high'];
 const LIMIT_DEFAULTS = {
   summarizeBucketSize: 20,
@@ -2368,9 +2377,75 @@ function stripNullOptionalsReport(args) {
   }
   return { args: out, dropped, respelled };
 }
+function receiptEntryFor(args, descriptor) {
+  const mode = args.mode;
+  const entry = args.configEcho[descriptor.key];
+  if (!isPlainObject(entry) || typeof entry.value !== 'string' || typeof entry.source !== 'string') return null;
+  if (!safeReceiptValue(entry.value) || !matchesRule(descriptor.rule, entry.value, mode)) return null;
+  if (!descriptor.allowedSources[mode] || !descriptor.allowedSources[mode].includes(entry.source)) return null;
+  return entry;
+}
+function dottedValue(object, path) {
+  let current = object;
+  for (const part of path.split('.')) {
+    if (current === null || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    current = current[part];
+  }
+  return current;
+}
+function setDottedValue(object, path, value) {
+  const parts = path.split('.');
+  let current = object;
+  for (const part of parts.slice(0, -1)) {
+    if (current[part] === undefined) current[part] = {};
+    else if (!isPlainObject(current[part])) return false;
+    current[part] = { ...current[part] };
+    current = current[part];
+  }
+  const leaf = parts.at(-1);
+  if (current[leaf] !== undefined) return false;
+  current[leaf] = value;
+  return true;
+}
+function typedReceiptValue(descriptor, value) {
+  if (descriptor.type === 'string') return value;
+  if (descriptor.type === 'csv_list') return value.split(',');
+  if (descriptor.type === 'int_or_null') return value === 'null' ? null : Number(value);
+  return undefined;
+}
+function deriveConfigWaist(args) {
+  if (!isPlainObject(args) || !isPlainObject(args.configEcho) || typeof args.mode !== 'string') return args;
+  const out = { ...args };
+  const configEcho = { ...args.configEcho };
+  let configEchoChanged = false;
+  for (const descriptor of KNOB_REGISTRY) {
+    if (!descriptor.modes.includes(args.mode)) continue;
+    if (descriptor.derivedFrom === 'reviewConfigPath' && !Object.hasOwn(configEcho, descriptor.key)) {
+      configEcho[descriptor.key] = {
+        value: args.reviewConfigPath != null ? 'present' : 'absent',
+        source: 'discovery',
+      };
+      configEchoChanged = true;
+      continue;
+    }
+    if (!descriptor.waistPath || dottedValue(out, descriptor.waistPath) !== undefined) continue;
+    const root = descriptor.waistPath.split('.')[0];
+    if (out[root] === undefined && REQUIRED.includes(root)) continue;
+    const entry = receiptEntryFor(args, descriptor);
+    if (!entry) continue;
+    if (descriptor.deriveWhen === 'lightEligible'
+      && !computeLightEligible(args.riskTable, args.changedLines)) continue;
+    const value = typedReceiptValue(descriptor, entry.value);
+    if (value !== undefined) setDottedValue(out, descriptor.waistPath, value);
+  }
+  if (configEchoChanged) out.configEcho = configEcho;
+  return out;
+}
 function normalizeArgsReport(raw) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  return stripNullOptionalsReport(parsed);
+  const report = stripNullOptionalsReport(parsed);
+  report.args = deriveConfigWaist(report.args);
+  return report;
 }
 function normalizeArgs(raw) {
   return normalizeArgsReport(raw).args;
@@ -2444,7 +2519,7 @@ function validateConfigEcho(args, errors) {
       errors.push(`configEcho.${descriptor.key}.value must be a string`);
     } else {
       if (!safeReceiptValue(entry.value)) errors.push(`configEcho.${descriptor.key}.value must be single-line and contain no controls or backticks`);
-      if (!descriptor.valueRule(entry.value, mode)) errors.push(`configEcho.${descriptor.key}.value is invalid for ${mode}`);
+      if (!matchesRule(descriptor.rule, entry.value, mode)) errors.push(`configEcho.${descriptor.key}.value is invalid for ${mode}`);
     }
     if (typeof entry.source !== 'string' || !descriptor.allowedSources[mode].includes(entry.source)) {
       errors.push(`configEcho.${descriptor.key}.source is invalid for ${mode}`);
@@ -2887,7 +2962,8 @@ function validateArgs(args) {
   }
   const capEcho = configEchoValue(args, 'pr_comment_cap');
   if (capEcho !== undefined && isPlainObject(args.limits)) {
-    const capValueWellFormed = capEcho === 'null' || digits(capEcho);
+    const capDescriptor = KNOB_REGISTRY.find((descriptor) => descriptor.key === 'pr_comment_cap');
+    const capValueWellFormed = capDescriptor && matchesRule(capDescriptor.rule, capEcho, args.mode);
     if (!capValueWellFormed) {
     } else if (args.mode === 'headless' && typeof args.limits.deliveryCap !== 'number') {
       errors.push('headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap');
@@ -2906,6 +2982,9 @@ function validateArgs(args) {
       }
     }
     const trivialEcho = configEchoValue(args, 'trivial_scope');
+    if (trivialEcho === 'light' && !computeLightEligible(args.riskTable, args.changedLines)) {
+      errors.push('configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= 50) — the orchestrator answered a light/full question the gate never asked');
+    }
     if (args.scopeAnswer !== undefined && trivialEcho !== undefined && args.scopeAnswer !== trivialEcho) {
       errors.push('scopeAnswer does not match configEcho.trivial_scope');
     }

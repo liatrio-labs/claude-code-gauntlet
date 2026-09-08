@@ -55,14 +55,17 @@ The config block can go anywhere in the file — the parser searches for it inde
 heading. It is shown here after `## Rules` only because that's how the scaffolding templates below
 lay a file out.
 
-One more setting is read through a separate mechanism: the root REVIEW.md text is checked directly for a
-`## Default Delivery` heading (not the config block above, and not the Filter stage's
-`parseReviewMd`/`parse_review_md`), and only in headless mode, where it feeds `CODE_GAUNTLET_DELIVERY`
-precedence. A `## Model Tier` heading is **no longer read anywhere** (issue #153): the model policy is
-fixed to the single benchmarked configuration, and the only remaining pin is the fail-loud
-`CODE_GAUNTLET_MODEL_TIER` env knob documented in `references/headless-mode.md`. An existing
-`## Model Tier` section in a repo's REVIEW.md is inert prose — harmless, and no longer worth removing or
-warning about.
+One more setting is read through a separate mechanism. The resolver checks only the root REVIEW.md for a line matching `^## Default Delivery[ \t]*$`.
+
+Its body ends at the next ATX heading matching `^#{1,6}[ \t]`, a fence opener matching `^[ \t]{0,3}(`{3,}|~{3,})`, or EOF. Universal newlines are supported.
+
+Remove paired HTML comments, including multiline comments, before selecting the first remaining non-blank line.
+
+Trim that line. It is a candidate only when it matches `^[a-z_]+(,[a-z_]+)*$`; otherwise the setting is unset. The delivery rule validates candidates, including unknown tokens, duplicates, and local `pr_comments` values.
+
+An environment pin wins over this value and the headless default. Interactive mode ignores it. The scaffold's commented `<!-- chat,pr_comments -->` value is unset.
+
+A `## Model Tier` heading is inert prose. The model policy remains fixed, and its environment pin is documented in `references/headless-mode.md`.
 
 **Legacy forms.** `parseReviewMd`/`parse_review_md` also still recognize the pre-rename block
 forms — a fenced ```` ```deep-review ```` block and an `<!-- deep-review-config -->` comment block
@@ -132,7 +135,17 @@ Controls how review results are delivered. A comma-separated list of delivery me
 - `pr_comments` — Post findings as inline PR/MR comments
 - `markdown` — Surface the path to the already-persisted report under the output directory (`artifactPaths.report`); no default new file
 
-Read in **headless mode only**, where it sits between the `CODE_GAUNTLET_DELIVERY` env pin and the headless default. Interactive runs ignore it and ask once at the end of the run instead (`references/phase8-delivery.md` Stage 1) — the report is on disk either way, so the decision costs nothing to defer.
+Only the root `REVIEW.md` may provide this setting. The section opener is a line matching
+`^## Default Delivery[ \t]*$`. Its body ends before the first line matching
+`^#{1,6}[ \t]`, a fence opener matching ``^[ \t]{0,3}(`{3,}|~{3,})``, or EOF.
+Remove HTML comments from the body non-greedily across lines. Take the first remaining
+non-blank line and trim it. It is a candidate only when it matches `^[a-z_]+(,[a-z_]+)*$`.
+Any other remainder, including prose, comment residue, or nothing, means the setting is unset
+and the next precedence source applies. The delivery rule validates candidates; unknown tokens,
+duplicates, and `pr_comments` on a local target fail loud as `HEADLESS CONFIG ERROR: REVIEW.md default_delivery=<value> not in {chat,pr_comments,markdown}`.
+For a local target, the error uses `{chat,markdown}`.
+An environment pin wins over this setting. Interactive mode ignores it. The scaffold's
+commented value reads as unset.
 
 ```
 
@@ -266,7 +279,7 @@ question** (issue #35). Emit at most one notice per run, alongside the triage an
 
 - **All locations covered** → say nothing and proceed.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): suppress both notices — discovered configs apply
+> Headless mode exception: suppress both notices — discovered configs apply
 > exactly as in interactive mode (root defaults plus matching subtree overrides), `build-review-md` is
 > never invoked, and REVIEW.md is read-only. The hierarchical parse still runs; no REVIEW.md is
 > created. See `references/headless-mode.md`.

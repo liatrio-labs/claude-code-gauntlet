@@ -27,6 +27,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,7 @@ sys.path.insert(0, str(REPO))
 import scripts.post_review as post_review  # noqa: E402
 import scripts.report_patches as report_patches  # noqa: E402
 from bench.runner import invoke  # noqa: E402
+from scripts import resolve_config  # noqa: E402
 
 RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
 
@@ -591,6 +593,339 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
                 },
                 mode,
             )
+
+    def _render_receipt(self, mode, echo, pipeline_version, plugin_root):
+        fixture = {
+            "mode": mode,
+            "configEcho": echo,
+            "pluginRoot": plugin_root,
+            "pipelineVersion": pipeline_version,
+            "reviewScope": {
+                "requested": "full",
+                "kind": "full",
+                "since": None,
+                "commits": None,
+                "detector": None,
+            },
+            "policy": {"tier": "optimized", "provider": "firstParty", "gateway": False},
+            "deliveryTier": "all",
+            "deliveryCap": None,
+            "gapCount": 0,
+            "summary": "summary",
+            "findings": [],
+            "unverified": [],
+            "dimensions": {"dispatched": [], "degraded": []},
+            "stats": {
+                "discovered": 0,
+                "validate": {},
+                "filter": {},
+                "challenge": {},
+                "merge": {},
+            },
+        }
+        node = (
+            "import('./workflows/src/renderReport.js').then(m => "
+            "process.stdout.write(m.renderReport(" + json.dumps(fixture) + ")))"
+        )
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", node],
+            cwd=str(REPO),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        match = re.search(
+            rf"```text\n(({('Headless' if mode == 'headless' else 'Resolved')} config:\n(?:  [^\n]+\n)+))```",
+            proc.stdout,
+        )
+        self.assertIsNotNone(match)
+        return match.group(1).rstrip("\n")
+
+    def test_resolver_block_matches_report_renderer_with_receipt_lures(self):
+        lures = ["`", "\r", "\n", "\t", "  ", ""]
+        for mode in ("interactive", "headless"):
+            resolved = resolve_config.resolve(mode, {}, None, "pr")
+            echo = json.loads(json.dumps(resolved["configEcho"]))
+            if mode == "interactive":
+                echo["review_md"] = {"value": "absent", "source": "discovery"}
+            for key in echo:
+                for field in ("value", "source"):
+                    for lure in lures:
+                        with self.subTest(mode=mode, key=key, field=field, lure=lure):
+                            changed = json.loads(json.dumps(echo))
+                            changed[key][field] = lure
+                            identity = {
+                                "pipeline_version": "version",
+                                "plugin_root": "/absolute/root",
+                            }
+                            expected = resolve_config.render_block(
+                                mode, changed, identity
+                            )
+                            actual = self._render_receipt(
+                                mode,
+                                changed,
+                                identity["pipeline_version"],
+                                identity["plugin_root"],
+                            )
+                            self.assertEqual(actual, expected)
+            for field in ("pipeline_version", "plugin_root"):
+                for lure in lures:
+                    with self.subTest(mode=mode, field=field, lure=lure):
+                        identity = {
+                            "pipeline_version": "version",
+                            "plugin_root": "/absolute/root",
+                        }
+                        identity[field] = lure
+                        expected = resolve_config.render_block(mode, echo, identity)
+                        actual = self._render_receipt(
+                            mode,
+                            echo,
+                            identity["pipeline_version"],
+                            identity["plugin_root"],
+                        )
+                        self.assertEqual(actual, expected)
+
+    def _validate_resolver_waist(self, payload, *, light_eligible=False):
+        script = (
+            "import { normalizeArgs, validateArgs } from './workflows/src/args.js';"
+            "import { validArgs } from './workflows/test/helpers/pipelineMock.js';"
+            "const payload = "
+            + json.dumps(payload)
+            + ";"
+            + "const args = validArgs();"
+            + "args.mode = payload.mode;"
+            + "args.configEcho = payload.waist.configEcho;"
+            + "args.limits = {...args.limits}; delete args.limits.deliveryCap;"
+            + "delete args.delivery; delete args.scopeAnswer;"
+            + (
+                "args.riskTable = [{path:'a.js', risk:'low'}]; args.changedLines = 1;"
+                if light_eligible
+                else ""
+            )
+            + "const normalized = normalizeArgs(args);"
+            + "process.stdout.write(JSON.stringify({result: validateArgs(normalized), args: normalized}));"
+        )
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=str(REPO),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_resolver_waist_derives_typed_fields_before_validate_args(self):
+        cases = [
+            ("headless", {}, False),
+            (
+                "headless",
+                {
+                    "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
+                    "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
+                },
+                False,
+            ),
+            ("headless", {"CODE_GAUNTLET_TRIVIAL_SCOPE": "light"}, True),
+            ("interactive", {}, False),
+            (
+                "interactive",
+                {
+                    "CODE_GAUNTLET_PR_COMMENT_CAP": "0",
+                    "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
+                },
+                False,
+            ),
+            ("interactive", {"CODE_GAUNTLET_PR_COMMENT_CAP": "null"}, False),
+        ]
+        for mode, env, light_eligible in cases:
+            with self.subTest(mode=mode, env=env):
+                payload = resolve_config.resolve(mode, env, None, "pr")
+                payload["mode"] = mode
+                result = self._validate_resolver_waist(
+                    payload, light_eligible=light_eligible
+                )
+                self.assertTrue(result["result"]["ok"], result["result"]["errors"])
+                args = result["args"]
+                self.assertEqual(
+                    args["limits"]["deliveryCap"],
+                    None
+                    if mode == "interactive"
+                    and env.get("CODE_GAUNTLET_PR_COMMENT_CAP") in (None, "null")
+                    else (
+                        int(env["CODE_GAUNTLET_PR_COMMENT_CAP"])
+                        if "CODE_GAUNTLET_PR_COMMENT_CAP" in env
+                        else (6 if mode == "headless" else None)
+                    ),
+                )
+                self.assertEqual(
+                    args["delivery"]["tier"],
+                    env.get("CODE_GAUNTLET_DELIVERY_TIER", "all"),
+                )
+                if light_eligible:
+                    self.assertEqual(args["scopeAnswer"], "light")
+
+    def test_resolver_cap_matrix_reaches_validate_args_only_for_canonical_values(self):
+        caps = (
+            "00",
+            "01",
+            "06",
+            "0",
+            "6",
+            "25",
+            "9007199254740991",
+            "9007199254740992",
+            "null",
+        )
+        for mode in ("headless", "interactive"):
+            for cap in caps:
+                env = {"CODE_GAUNTLET_PR_COMMENT_CAP": cap}
+                if mode == "headless":
+                    env["CODE_GAUNTLET_HEADLESS"] = "1"
+                with self.subTest(mode=mode, cap=cap):
+                    code, stdout, stderr = resolve_config.run(["--target", "pr"], env)
+                    accepted = (
+                        cap in {"6", "25", "9007199254740991"}
+                        if mode == "headless"
+                        else cap in {"0", "6", "25", "9007199254740991", "null"}
+                    )
+                    if not accepted:
+                        self.assertEqual(code, 1)
+                        self.assertEqual(stdout, "")
+                        self.assertEqual(stderr.count("\n"), 1)
+                        continue
+                    self.assertEqual(code, 0, stderr)
+                    payload = json.loads(stdout)
+                    result = self._validate_resolver_waist(payload)
+                    self.assertTrue(result["result"]["ok"], result["result"]["errors"])
+                    expected = None if cap == "null" else int(cap)
+                    self.assertEqual(result["args"]["limits"]["deliveryCap"], expected)
+
+    def test_rule_verdicts_match_between_python_and_exported_javascript(self):
+        arabic_one = "\u0661"
+        cases = [
+            {
+                "rule": {"kind": "enum", "values": ["optimized"]},
+                "value": "optimized",
+                "mode": "headless",
+            },
+            {
+                "rule": {"kind": "enum", "values": ["optimized"]},
+                "value": "Optimized",
+                "mode": "headless",
+            },
+            {
+                "rule": {"kind": "csv_subset", "values": ["chat", "markdown"]},
+                "value": "chat,markdown",
+                "mode": "headless",
+            },
+            {
+                "rule": {"kind": "csv_subset", "values": ["chat", "markdown"]},
+                "value": "",
+                "mode": "headless",
+            },
+            {
+                "rule": {"kind": "csv_subset", "values": ["chat", "markdown"]},
+                "value": "chat,,markdown",
+                "mode": "headless",
+            },
+            {
+                "rule": {"kind": "csv_subset", "values": ["chat", "markdown"]},
+                "value": "chat,chat",
+                "mode": "headless",
+            },
+            {
+                "rule": {"kind": "csv_subset", "values": ["chat", "markdown"]},
+                "value": "Chat",
+                "mode": "headless",
+            },
+            {
+                "rule": {"kind": "positive_digits"},
+                "value": "1",
+                "mode": "headless",
+            },
+            {"rule": {"kind": "positive_digits"}, "value": "0", "mode": "headless"},
+            {"rule": {"kind": "positive_digits"}, "value": "00", "mode": "headless"},
+            {"rule": {"kind": "positive_digits"}, "value": "01", "mode": "headless"},
+            {"rule": {"kind": "positive_digits"}, "value": "-1", "mode": "headless"},
+            {"rule": {"kind": "positive_digits"}, "value": " 5", "mode": "headless"},
+            {"rule": {"kind": "positive_digits"}, "value": "5 ", "mode": "headless"},
+            {
+                "rule": {"kind": "positive_digits"},
+                "value": "9007199254740991",
+                "mode": "headless",
+            },
+            {
+                "rule": {"kind": "positive_digits"},
+                "value": "9007199254740992",
+                "mode": "headless",
+            },
+            {
+                "rule": {"kind": "positive_digits"},
+                "value": arabic_one,
+                "mode": "headless",
+            },
+            {"rule": {"kind": "digits_or_null"}, "value": "00", "mode": "interactive"},
+            {"rule": {"kind": "digits_or_null"}, "value": "0", "mode": "interactive"},
+            {"rule": {"kind": "digits_or_null"}, "value": "01", "mode": "interactive"},
+            {"rule": {"kind": "digits_or_null"}, "value": "-1", "mode": "interactive"},
+            {"rule": {"kind": "digits_or_null"}, "value": " 5", "mode": "interactive"},
+            {"rule": {"kind": "digits_or_null"}, "value": "5 ", "mode": "interactive"},
+            {
+                "rule": {"kind": "digits_or_null"},
+                "value": arabic_one,
+                "mode": "interactive",
+            },
+            {
+                "rule": {"kind": "digits_or_null"},
+                "value": "9007199254740991",
+                "mode": "interactive",
+            },
+            {
+                "rule": {"kind": "digits_or_null"},
+                "value": "9007199254740992",
+                "mode": "interactive",
+            },
+            {
+                "rule": {"kind": "digits_or_null"},
+                "value": "null",
+                "mode": "interactive",
+            },
+            {"rule": {"kind": "bogus"}, "value": "x", "mode": "headless"},
+            {
+                "rule": {"headless": {"kind": "enum", "values": ["x"]}},
+                "value": "x",
+                "mode": "interactive",
+            },
+            {
+                "rule": {"headless": {"kind": "enum", "values": ["x"]}},
+                "value": "x",
+            },
+            {"rule": {"kind": "enum", "values": ["x"]}, "value": 1, "mode": "headless"},
+            {"rule": {"kind": "enum", "values": ["x"]}, "value": "x"},
+        ]
+        node_cases = json.dumps(cases, ensure_ascii=False)
+        script = (
+            "import('./workflows/src/args.js').then(m => { const cases = "
+            + node_cases
+            + "; process.stdout.write(JSON.stringify(cases.map(c => Object.hasOwn(c, 'mode')"
+            + " ? m.matchesRule(c.rule, c.value, c.mode) : m.matchesRule(c.rule, c.value)))); })"
+        )
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=str(REPO),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        js_verdicts = json.loads(proc.stdout)
+        python_verdicts = [
+            resolve_config.matches_rule(case["rule"], case["value"], case.get("mode"))
+            for case in cases
+        ]
+        self.assertEqual(js_verdicts, python_verdicts)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import {
   ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
   stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, nullRespellGap, LIMIT_DEFAULTS,
   resolveReviewConfig, computeLightEligible, nullToleranceRejectedKeys, KNOB_REGISTRY, safeReceiptValue,
+  matchesRule,
 } from '../src/args.js';
 
 const good = {
@@ -31,10 +32,18 @@ const good = {
 };
 
 test('normalizeArgs parses a JSON string (session tool-call form)', () => {
-  assert.deepEqual(normalizeArgs(JSON.stringify(good)), good);
+  assert.deepEqual(normalizeArgs(JSON.stringify(good)), {
+    ...good,
+    delivery: { tier: 'all' },
+    limits: { ...good.limits, deliveryCap: null },
+  });
 });
 test('normalizeArgs passes an object through (workflow-nesting form)', () => {
-  assert.deepEqual(normalizeArgs(good), good);
+  assert.deepEqual(normalizeArgs(good), {
+    ...good,
+    delivery: { tier: 'all' },
+    limits: { ...good.limits, deliveryCap: null },
+  });
 });
 test('validateArgs accepts a well-formed waist', () => {
   assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
@@ -200,16 +209,256 @@ test('T182-ARGS: every registry receipt value rule and source rule is focused', 
   assert.ok(interactiveInvalid.errors.some((error) => error.includes('configEcho.review_md.value')));
 });
 
-test('T303-ARGS: every registry example satisfies its value and source rules', () => {
+test('registry rule metadata has the complete projected row shape', () => {
+  const rowKeys = ['key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'derivedFrom', 'deriveWhen', 'nullReceipt'];
   for (const descriptor of KNOB_REGISTRY) {
+    assert.deepEqual(Object.keys(descriptor), rowKeys);
+    assert.equal('example' in descriptor, false);
+    assert.equal('valueRule' in descriptor, false);
     for (const mode of descriptor.modes) {
-      const example = descriptor.example[mode];
-      assert.ok(Array.isArray(example), `${descriptor.key} needs a ${mode} example`);
-      const [value, source] = example;
-      assert.equal(descriptor.valueRule(value, mode), true, `${mode} ${descriptor.key} example value`);
-      assert.ok(descriptor.allowedSources[mode].includes(source), `${mode} ${descriptor.key} example source`);
+      const defaults = descriptor.defaults[mode];
+      assert.ok(Array.isArray(defaults), `${descriptor.key} needs ${mode} defaults`);
+      const [value, source] = defaults;
+      const fixture = mode === 'headless'
+        ? {
+          ...good,
+          mode,
+          delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 's' } },
+          configEcho: {
+            model_tier: { value: 'optimized', source: 'default' },
+            delivery: { value: 'markdown', source: 'default' },
+            post_mode: { value: 'dry-run', source: 'default' },
+            pr_comment_cap: { value: '6', source: 'default' },
+            delivery_tier: { value: 'all', source: 'default' },
+            draft_policy: { value: 'review', source: 'default' },
+            reviewed_policy: { value: 'full', source: 'default' },
+            pr_not_found_policy: { value: 'error', source: 'default' },
+            trivial_scope: { value: 'full', source: 'default' },
+          },
+          limits: { ...good.limits, deliveryCap: 6 },
+        }
+        : {
+          ...good,
+          configEcho: {
+            model_tier: { value: 'optimized', source: 'fixed' },
+            pr_comment_cap: { value: 'null', source: 'default' },
+            delivery_tier: { value: 'all', source: 'default' },
+            review_md: { value: 'absent', source: 'discovery' },
+          },
+          limits: { ...good.limits, deliveryCap: null },
+        };
+      fixture.configEcho = { ...fixture.configEcho, [descriptor.key]: { value, source } };
+      if (descriptor.key === 'pr_comment_cap') fixture.limits.deliveryCap = value === 'null' ? null : Number(value);
+      if (descriptor.key === 'delivery_tier') fixture.delivery = { tier: value };
+      assert.equal(validateArgs(fixture).ok, true, `${mode} ${descriptor.key} default value`);
+      assert.ok(descriptor.allowedSources[mode].includes(source), `${mode} ${descriptor.key} default source`);
     }
   }
+});
+
+test('matchesRule evaluates every rule kind and fails closed for lures', () => {
+  const enumRule = { kind: 'enum', values: ['optimized'] };
+  const csvRule = { kind: 'csv_subset', values: ['chat', 'markdown'] };
+  const positiveRule = { kind: 'positive_digits' };
+  const digitsRule = { kind: 'digits_or_null' };
+  const cases = [
+    [enumRule, 'optimized', 'headless', true],
+    [enumRule, 'Optimized', 'headless', false],
+    [csvRule, '', 'headless', false],
+    [csvRule, 'chat,markdown', 'headless', true],
+    [csvRule, 'chat,,markdown', 'headless', false],
+    [csvRule, 'chat,chat', 'headless', false],
+    [csvRule, 'chat, markdown', 'headless', false],
+    [csvRule, 'Chat', 'headless', false],
+    [positiveRule, '1', 'headless', true],
+    [positiveRule, '0', 'headless', false],
+    [positiveRule, '00', 'headless', false],
+    [positiveRule, '01', 'headless', false],
+    [positiveRule, '-1', 'headless', false],
+    [positiveRule, ' 5', 'headless', false],
+    [positiveRule, '5 ', 'headless', false],
+    [positiveRule, '١', 'headless', false],
+    [positiveRule, '9007199254740992', 'headless', false],
+    [positiveRule, '9007199254740991', 'headless', true],
+    [digitsRule, '0', 'interactive', true],
+    [digitsRule, 'null', 'interactive', true],
+    [digitsRule, '00', 'interactive', false],
+    [digitsRule, '01', 'interactive', false],
+    [digitsRule, '-1', 'interactive', false],
+    [digitsRule, ' 5', 'interactive', false],
+    [digitsRule, '5 ', 'interactive', false],
+    [digitsRule, '١', 'interactive', false],
+    [digitsRule, '9007199254740991', 'interactive', true],
+    [digitsRule, '9007199254740992', 'interactive', false],
+    [{ kind: 'bogus' }, 'x', 'headless', false],
+    [{ headless: enumRule }, 'optimized', 'interactive', false],
+  ];
+  for (const [rule, value, mode, expected] of cases) {
+    assert.equal(matchesRule(rule, value, mode), expected, JSON.stringify({ rule, value, mode }));
+  }
+  for (const value of [null, 1, false, [], {}]) {
+    assert.equal(matchesRule(enumRule, value, 'headless'), false, JSON.stringify(value));
+  }
+});
+
+test('T305-ARGS: registry rule interpreter is exact, canonical, and fail-closed', () => {
+  const valid = (mode, key, value, overrides = {}) => {
+    const fixture = mode === 'headless'
+      ? {
+        ...good,
+        mode,
+        delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 's' } },
+        configEcho: {
+          model_tier: { value: 'optimized', source: 'default' },
+          delivery: { value: 'markdown', source: 'default' },
+          post_mode: { value: 'dry-run', source: 'default' },
+          pr_comment_cap: { value: '6', source: 'default' },
+          delivery_tier: { value: 'all', source: 'default' },
+          draft_policy: { value: 'review', source: 'default' },
+          reviewed_policy: { value: 'full', source: 'default' },
+          pr_not_found_policy: { value: 'error', source: 'default' },
+          trivial_scope: { value: 'full', source: 'default' },
+        },
+        limits: { ...good.limits, deliveryCap: 6 },
+      }
+      : {
+        ...good,
+        configEcho: {
+          model_tier: { value: 'optimized', source: 'fixed' },
+          pr_comment_cap: { value: 'null', source: 'default' },
+          delivery_tier: { value: 'all', source: 'default' },
+          review_md: { value: 'absent', source: 'discovery' },
+        },
+        limits: { ...good.limits, deliveryCap: null },
+      };
+    fixture.configEcho = { ...fixture.configEcho, [key]: { ...fixture.configEcho[key], value } };
+    if (key === 'pr_comment_cap' && ['0', '6', '9007199254740991'].includes(value)) {
+      fixture.limits.deliveryCap = Number(value);
+    }
+    if (key === 'pr_comment_cap' && value === 'null') fixture.limits.deliveryCap = null;
+    if (key === 'delivery_tier' && ['all', 'main_only'].includes(value)) fixture.delivery = { tier: value };
+    return validateArgs({ ...fixture, ...overrides });
+  };
+
+  assert.equal(valid('headless', 'model_tier', 'optimized').ok, true);
+  assert.equal(valid('headless', 'model_tier', 'Optimized').ok, false);
+  assert.equal(valid('headless', 'delivery', 'chat,markdown').ok, true);
+  for (const lure of ['', 'chat,,markdown', 'chat,chat', 'chat, markdown', 'Chat']) {
+    assert.equal(valid('headless', 'delivery', lure).ok, false, `csv lure ${JSON.stringify(lure)}`);
+  }
+  for (const lure of ['0', '00', '01', '-1', ' 5', '5 ', '9007199254740992', '١']) {
+    assert.equal(valid('headless', 'pr_comment_cap', lure).ok, false, `positive lure ${JSON.stringify(lure)}`);
+  }
+  assert.equal(valid('headless', 'pr_comment_cap', '9007199254740991').ok, true);
+  for (const lure of ['00', '01', '-1', ' 5', '5 ', '9007199254740992', '١']) {
+    assert.equal(valid('interactive', 'pr_comment_cap', lure).ok, false, `cap lure ${JSON.stringify(lure)}`);
+  }
+  assert.equal(valid('interactive', 'pr_comment_cap', '0').ok, true);
+  assert.equal(valid('interactive', 'pr_comment_cap', '9007199254740991').ok, true);
+  assert.equal(valid('interactive', 'pr_comment_cap', 'null').ok, true);
+  assert.equal(valid('headless', 'post_mode', 'bogus').ok, false);
+});
+
+test('T305-ARGS: normalizeArgs derives typed waist fields from the receipt once', () => {
+  const interactive = {
+    ...good,
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'fixed' },
+      pr_comment_cap: { value: '7', source: 'env' },
+      delivery_tier: { value: 'main_only', source: 'env' },
+    },
+  };
+  const normalizedInteractive = normalizeArgs(interactive);
+  assert.deepEqual(normalizedInteractive.limits.deliveryCap, 7);
+  assert.deepEqual(normalizedInteractive.delivery, { tier: 'main_only' });
+  assert.deepEqual(normalizedInteractive.configEcho.review_md, { value: 'absent', source: 'discovery' });
+  assert.deepEqual(validateArgs(normalizedInteractive), { ok: true, errors: [] });
+
+  const headless = {
+    ...good,
+    mode: 'headless',
+    riskTable: [{ path: 'a.js', risk: 'low' }],
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'default' },
+      delivery: { value: 'markdown', source: 'default' },
+      post_mode: { value: 'dry-run', source: 'default' },
+      pr_comment_cap: { value: '6', source: 'default' },
+      delivery_tier: { value: 'all', source: 'default' },
+      draft_policy: { value: 'review', source: 'default' },
+      reviewed_policy: { value: 'full', source: 'default' },
+      pr_not_found_policy: { value: 'error', source: 'default' },
+      trivial_scope: { value: 'light', source: 'default' },
+    },
+  };
+  const normalizedHeadless = normalizeArgs(headless);
+  assert.equal(normalizedHeadless.limits.deliveryCap, 6);
+  assert.deepEqual(normalizedHeadless.delivery, { tier: 'all' });
+  assert.equal(normalizedHeadless.scopeAnswer, 'light');
+  assert.deepEqual(validateArgs(normalizedHeadless), { ok: true, errors: [] });
+  const fullHeadless = normalizeArgs({
+    ...headless,
+    configEcho: { ...headless.configEcho, trivial_scope: { value: 'full', source: 'default' } },
+  });
+  assert.equal(fullHeadless.scopeAnswer, 'full');
+  assert.deepEqual(validateArgs(fullHeadless), { ok: true, errors: [] });
+
+  const scopeDescriptor = KNOB_REGISTRY.find(({ key }) => key === 'trivial_scope');
+  const originalDeriveWhen = scopeDescriptor.deriveWhen;
+  const ineligibleHeadless = {
+    ...headless,
+    riskTable: [{ path: 'a.js', risk: 'medium' }],
+  };
+  try {
+    scopeDescriptor.deriveWhen = null;
+    assert.equal(normalizeArgs(ineligibleHeadless).scopeAnswer, 'light');
+    scopeDescriptor.deriveWhen = originalDeriveWhen;
+    assert.equal(normalizeArgs(ineligibleHeadless).scopeAnswer, undefined);
+  } finally {
+    scopeDescriptor.deriveWhen = originalDeriveWhen;
+  }
+
+  const stamped = normalizeArgs({
+    ...interactive,
+    limits: { ...interactive.limits, deliveryCap: 3 },
+    delivery: { tier: 'all' },
+  });
+  assert.equal(stamped.limits.deliveryCap, 3);
+  assert.equal(stamped.delivery.tier, 'all');
+  assert.equal(interactive.delivery, undefined);
+  assert.equal(interactive.limits.deliveryCap, undefined);
+});
+
+test('T305-ARGS: derivation does not synthesize a missing required limits root', () => {
+  const input = { ...good };
+  delete input.limits;
+  const normalized = normalizeArgs(input);
+  assert.equal('limits' in normalized, false);
+  assert.equal(validateArgs(normalized).ok, false);
+});
+
+test('T305-ARGS: an ineligible light receipt is rejected and is not derived', () => {
+  const input = {
+    ...good,
+    mode: 'headless',
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'default' },
+      delivery: { value: 'markdown', source: 'default' },
+      post_mode: { value: 'dry-run', source: 'default' },
+      pr_comment_cap: { value: '6', source: 'default' },
+      delivery_tier: { value: 'all', source: 'default' },
+      draft_policy: { value: 'review', source: 'default' },
+      reviewed_policy: { value: 'full', source: 'default' },
+      pr_not_found_policy: { value: 'error', source: 'default' },
+      trivial_scope: { value: 'light', source: 'default' },
+    },
+  };
+  const normalized = normalizeArgs(input);
+  assert.equal(normalized.limits.deliveryCap, 6);
+  assert.deepEqual(normalized.delivery, { tier: 'all' });
+  assert.equal(normalized.scopeAnswer, undefined);
+  const result = validateArgs(normalized);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('configEcho.trivial_scope')));
 });
 
 test('T182-ARGS: receipt lockstep rejects mismatches before any stage can dispatch', () => {
@@ -794,7 +1043,7 @@ test('normalizeArgs strips stamped nulls on the object-passthrough form so valid
   const normalized = normalizeArgs(a);
   assert.equal('reviewConfig' in normalized, false);
   assert.equal('exclusionPatterns' in normalized, false);
-  assert.equal('delivery' in normalized, false);
+  assert.deepEqual(normalized.delivery, { tier: 'all' });
   assert.equal('checkpoints' in normalized, false);
   assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
 });
@@ -802,7 +1051,7 @@ test('normalizeArgs strips stamped nulls on the JSON-string form too', () => {
   const raw = JSON.stringify({ ...good, reviewConfig: null, delivery: { tier: null, prIdentity: null } });
   const normalized = normalizeArgs(raw);
   assert.equal('reviewConfig' in normalized, false);
-  assert.deepEqual(normalized.delivery, {});
+  assert.deepEqual(normalized.delivery, { tier: 'all' });
   assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
 });
 test('normalizeArgs leaves a malformed non-null reviewConfig alone for validateArgs to reject loudly', () => {
@@ -812,8 +1061,9 @@ test('normalizeArgs leaves a malformed non-null reviewConfig alone for validateA
   assert.ok(r.errors.some((e) => e.includes('reviewConfig.ignore')));
 });
 test('normalizeArgs still round-trips a fully well-formed waist unchanged (no over-stripping)', () => {
-  assert.deepEqual(normalizeArgs(good), good);
-  assert.deepEqual(normalizeArgs(JSON.stringify(good)), good);
+  const expected = { ...good, delivery: { tier: 'all' }, limits: { ...good.limits, deliveryCap: null } };
+  assert.deepEqual(normalizeArgs(good), expected);
+  assert.deepEqual(normalizeArgs(JSON.stringify(good)), expected);
 });
 
 // --- L3-1: the persist waist is null-tolerated AND shape-checked -------------
@@ -1192,7 +1442,7 @@ test('LIMIT_DEFAULTS covers exactly the five benchmarked/bound keys, never deliv
 test('normalizeArgs fills every absent limits key from LIMIT_DEFAULTS', () => {
   const raw = { ...good, limits: {} };
   const out = normalizeArgs(raw);
-  assert.deepEqual(out.limits, LIMIT_DEFAULTS);
+  assert.deepEqual(out.limits, { ...LIMIT_DEFAULTS, deliveryCap: null });
 });
 
 test('normalizeArgs fills only the MISSING limits keys, leaving every provided value untouched', () => {

@@ -2,7 +2,7 @@
 
 Workflow-tool availability check, review target resolution, eligibility logic, the error-path AskUserQuestion templates, and question-free configuration resolution for Phase 1.
 
-> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) happens in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Output-directory resolve/ignore/mkdir is owned by `scripts/ensure_output_dir.py` in Phase 1's composite (SKILL.md) — not Phase 2. Phase 1's own Bash work is that composite (ensure_output_dir + plugin-dir confirmation, PR state, a root REVIEW.md quick-check, and the trivial-check file list) — no checkout-dependent state.
+> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) happens in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Output-directory resolve/ignore/mkdir is owned by `scripts/ensure_output_dir.py` in Phase 1's composite (SKILL.md) — not Phase 2. Phase 1's own Bash work is that composite (ensure_output_dir, plugin confirmation, config resolution, PR state, and changed-file list) — no checkout-dependent state.
 
 ---
 
@@ -34,7 +34,7 @@ The user's input determines the review target. Resolve it before eligibility che
 
 **Validation:** After resolving to PR/MR mode, verify the PR/MR exists by running `gh pr view {pr_number}` (or `glab mr view`). If the command fails, do NOT silently fall back to local mode — ask the user:
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not present this `AskUserQuestion`. Apply `CODE_GAUNTLET_PR_NOT_FOUND_POLICY` — `error` stops the run, `local` proceeds as a local review with `pr_number` cleared. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): call `scripts/resolve_config.py` with no `--target` on this path. The question is never presented in headless mode. Branch on `resolved.pr_not_found_policy`: `error` stops the run, and `local` proceeds with `pr_number` cleared. See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(
@@ -58,7 +58,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 ## Eligibility Checks
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): none of the `AskUserQuestion` gates in this section are presented. The draft gate applies `CODE_GAUNTLET_DRAFT_POLICY` (`review` proceeds, `skip` stops); the previously-reviewed gate — which runs in Phase 2 after checkout, see below — applies `CODE_GAUNTLET_REVIEWED_POLICY` (`incremental` / `full` / `skip`). Closed/merged does **not** stop the run headless — it proceeds against the pinned head exactly as resolved (benchmarking historical merged PRs is the headless use case; posting safety is governed by `CODE_GAUNTLET_POST_MODE`, and `dry-run` posts nothing). Trivial-only-changes still stops deterministically. See `references/headless-mode.md`.
+> Headless mode presents none of the `AskUserQuestion` gates here. The draft gate branches on `configResult.resolved.draft_policy` (`review` proceeds, `skip` stops); the previously-reviewed gate, which runs in Phase 2 after checkout, branches on `configResult.resolved.reviewed_policy` (`incremental`, `full`, or `skip`). Closed/merged does not stop the run headless — it proceeds against the pinned head exactly as resolved, with posting and delivery governed by the resolver result. Trivial-only changes still stop deterministically. See `references/headless-mode.md`.
 
 1. **Closed/merged?** — Stop: "This PR is already closed/merged. No review needed."
 
@@ -182,30 +182,17 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
 > (PR not found, draft PR, previously reviewed) are unaffected: they fire on anomalies, not on the happy
 > path.
 
+The resolver owns configuration values. The workflow derives typed waist fields from its receipt.
+
 | Config key | Resolution |
 |---|---|
-| `policy.tier` | Always `optimized`, the single benchmarked policy. Not read from REVIEW.md, not asked, not configurable interactively. The env knob `CODE_GAUNTLET_MODEL_TIER` keeps its fail-loud contract (`headless-mode.md`) — an explicit operator pin naming anything else is an error, never healed. |
-| `delivery.tier` | Stamped in Phase 2: `CODE_GAUNTLET_DELIVERY_TIER` env pin > omit (pipeline default `all` — every challenge-survivor is delivered). |
-| `limits.deliveryCap` | Stamped in Phase 2 from `CODE_GAUNTLET_PR_COMMENT_CAP`; absent/`null` means uncapped, which is a meaningful value, not a hole. |
-| Delivery destination | Not resolved here. Phase 8 asks once, after the report exists (`references/phase8-delivery.md` Stage 1). |
-| REVIEW.md presence | Not settled here — the Phase 2d discovery walk emits the canonical non-blocking notice (`references/review-md-spec.md` → Discovery). |
+| `policy.tier` | The resolver owns `model_tier`. Copy `configResult.resolved.model_tier`; the workflow derives the typed policy value. |
+| `delivery.tier` | The resolver owns `delivery_tier`. Copy its receipt entry; the workflow derives the typed tier. |
+| `limits.deliveryCap` | The resolver owns `pr_comment_cap`. Copy its receipt entry; the workflow derives the typed cap. |
+| Delivery destination | The resolver owns headless delivery methods. Interactive delivery remains the Phase 8 question after the report exists (`references/phase8-delivery.md` Stage 1). |
+| REVIEW.md presence | Discovery derives `configEcho.review_md` from `reviewConfigPath` and emits the canonical notice (`references/review-md-spec.md` → Discovery). |
 
-**Resolved-config echo.** Interactive Phase 1 ends by printing the block below to stdout; Phase 2 gates on
-its presence (SKILL.md → "Entry gate"). Keep it byte-identical to SKILL.md's copy. The values below are an
-example — substitute the resolved ones:
-
-```text
-Resolved config:
-  model_tier=optimized (fixed)
-  pr_comment_cap=null (default)
-  delivery_tier=all (default)
-  review_md=absent (discovery)
-```
-
-`source ∈ env|default|fixed|discovery`. Each `value` is the printed token as a string; an unset
-interactive cap is `"null"`, while `limits.deliveryCap` remains the typed `null`. A headless run
-prints `Headless config:` instead and never this block; the two are mutually exclusive and both
-satisfy the Phase 2 gate.
+**Resolved-config echo.** The generated `config_receipt` fence in SKILL.md contains both resolver fixtures. Phase 1 uses the resolver block in the Bash result, and Phase 2 gates on that result.
 
 ---
 
@@ -217,7 +204,7 @@ satisfy the Phase 2 gate.
 
 Used when ALL files are low-risk AND total lines <50:
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not present this `AskUserQuestion`. Apply `CODE_GAUNTLET_TRIVIAL_SCOPE` — `light` runs bugs+security only, `full` runs all dimensions. See `references/headless-mode.md`.
+> Headless exception: do not present this `AskUserQuestion`. The workflow derives headless `scopeAnswer` from the resolver receipt: `light` runs bugs and security only, while `full` runs all dimensions. See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(
