@@ -189,6 +189,7 @@ The resolver owns configuration values. The workflow derives typed waist fields 
 | `policy.tier` | The resolver owns `model_tier`. Copy `configResult.resolved.model_tier`; the workflow derives the typed policy value. |
 | `delivery.tier` | The resolver owns `delivery_tier`. Copy its receipt entry; the workflow derives the typed tier. |
 | `limits.deliveryCap` | The resolver owns `pr_comment_cap`. Copy its receipt entry; the workflow derives the typed cap. |
+| `reviewScope.requested` | Headless PR/MR targets omit it; the workflow derives it from `configEcho.reviewed_policy`, mapping `skip` to `full`. Local and branch targets stamp `full`. Interactive targets stamp the gate answer. |
 | Delivery destination | The resolver owns headless delivery methods. Interactive delivery remains the Phase 8 question after the report exists (`references/phase8-delivery.md` Stage 1). |
 | REVIEW.md presence | Discovery derives `configEcho.review_md` from `reviewConfigPath` and emits the canonical notice (`references/review-md-spec.md` → Discovery). |
 

@@ -333,9 +333,11 @@ class TestIdentityFenceGuards(unittest.TestCase):
                 },
                 "type": "string",
                 "waistPath": None,
+                "waistMap": None,
                 "derivedFrom": None,
                 "deriveWhen": None,
                 "nullReceipt": [],
+                "resolvedKey": True,
             },
             {
                 "key": "beta",
@@ -347,9 +349,11 @@ class TestIdentityFenceGuards(unittest.TestCase):
                 "defaults": {"headless": ["h-beta", "default"]},
                 "type": "string",
                 "waistPath": "nested.beta",
+                "waistMap": None,
                 "derivedFrom": None,
                 "deriveWhen": None,
                 "nullReceipt": ["headless"],
+                "resolvedKey": False,
             },
         ],
     }
@@ -575,9 +579,11 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "        },\n"
             '        "type": "string",\n'
             '        "waistPath": None,\n'
+            '        "waistMap": None,\n'
             '        "derivedFrom": None,\n'
             '        "deriveWhen": None,\n'
             '        "nullReceipt": [],\n'
+            '        "resolvedKey": True,\n'
             "    },\n"
             "    {\n"
             '        "key": "beta",\n'
@@ -605,11 +611,13 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "        },\n"
             '        "type": "string",\n'
             '        "waistPath": "nested.beta",\n'
+            '        "waistMap": None,\n'
             '        "derivedFrom": None,\n'
             '        "deriveWhen": None,\n'
             '        "nullReceipt": [\n'
             '            "headless",\n'
             "        ],\n"
+            '        "resolvedKey": False,\n'
             "    },\n"
             "]"
         ),
@@ -741,7 +749,8 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         self.assertEqual(gen.apply_targets(str(self.root), check_only=True), [])
 
     def test_projected_knob_rows_have_the_exact_registry_shape(self):
-        rows = gen.load_registry(str(REPO))["knobs"]
+        identity = gen.load_registry(str(REPO))
+        rows = identity["knobs"]
         expected = [
             "key",
             "modes",
@@ -752,12 +761,16 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             "defaults",
             "type",
             "waistPath",
+            "waistMap",
             "derivedFrom",
             "deriveWhen",
             "nullReceipt",
+            "resolvedKey",
         ]
         for row in rows:
             self.assertEqual(list(row), expected)
+        live_keys = identity["knobKeys"]
+        self.assertEqual([list(row) for row in rows], live_keys)
 
     @unittest.skipUnless(
         shutil.which("ruff"), "ruff is not installed (it is a pre-commit-pinned tool)"
@@ -836,7 +849,8 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             "  { key: 'added', modes: ['headless'], allowedSources: { headless: ['default'] }, "
             "rule: { kind: 'enum', values: ['value'] }, env: 'CODE_GAUNTLET_ADDED', "
             "reviewMdKey: null, defaults: { headless: ['value', 'default'] }, type: 'string', "
-            "waistPath: null, derivedFrom: null, nullReceipt: [] },\n"
+            "waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, "
+            "nullReceipt: [], resolvedKey: false },\n"
         )
         args_path.write_text(
             source.replace("\n];", "\n" + row + "];", 1), encoding="utf-8"

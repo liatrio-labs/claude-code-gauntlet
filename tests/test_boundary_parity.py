@@ -688,7 +688,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
 
     def _validate_resolver_waist(self, payload, *, light_eligible=False):
         script = (
-            "import { normalizeArgs, validateArgs } from './workflows/src/args.js';"
+            "import { normalizeArgsReport, validateArgs } from './workflows/src/args.js';"
             "import { validArgs } from './workflows/test/helpers/pipelineMock.js';"
             "const payload = "
             + json.dumps(payload)
@@ -698,12 +698,13 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
             + "args.configEcho = payload.waist.configEcho;"
             + "args.limits = {...args.limits}; delete args.limits.deliveryCap;"
             + "delete args.delivery; delete args.scopeAnswer;"
+            + "if (Object.hasOwn(payload, 'reviewScope')) args.reviewScope = payload.reviewScope;"
             + (
                 "args.riskTable = [{path:'a.js', risk:'low'}]; args.changedLines = 1;"
                 if light_eligible
                 else ""
             )
-            + "const normalized = normalizeArgs(args);"
+            + "const normalized = normalizeArgsReport(args).args;"
             + "process.stdout.write(JSON.stringify({result: validateArgs(normalized), args: normalized}));"
         )
         proc = subprocess.run(
@@ -765,6 +766,37 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
                 )
                 if light_eligible:
                     self.assertEqual(args["scopeAnswer"], "light")
+
+    def test_headless_review_scope_derivation_matches_the_hand_typed_boundary_table(
+        self,
+    ):
+        expected = {"full": "full", "incremental": "incremental", "skip": "full"}
+        detector = {
+            "previously_reviewed": True,
+            "sha_resolvable": True,
+            "head_advanced": True,
+            "sha_is_ancestor": True,
+            "incremental_safe": True,
+            "error": None,
+        }
+        for policy, requested in expected.items():
+            with self.subTest(policy=policy):
+                payload = resolve_config.resolve(
+                    "headless",
+                    {"CODE_GAUNTLET_REVIEWED_POLICY": policy},
+                    None,
+                    "pr",
+                )
+                payload["mode"] = "headless"
+                payload["reviewScope"] = {
+                    "kind": "incremental" if policy == "incremental" else "full",
+                    "since": "abc123" if policy == "incremental" else None,
+                    "commits": None,
+                    "detector": detector,
+                }
+                result = self._validate_resolver_waist(payload)
+                self.assertTrue(result["result"]["ok"], result["result"]["errors"])
+                self.assertEqual(result["args"]["reviewScope"]["requested"], requested)
 
     def test_resolver_cap_matrix_reaches_validate_args_only_for_canonical_values(self):
         caps = (

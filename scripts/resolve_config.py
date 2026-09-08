@@ -73,9 +73,11 @@ KNOB_REGISTRY = [
         },
         "type": "string",
         "waistPath": None,
+        "waistMap": None,
         "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
+        "resolvedKey": True,
     },
     {
         "key": "delivery",
@@ -107,9 +109,11 @@ KNOB_REGISTRY = [
         },
         "type": "csv_list",
         "waistPath": None,
+        "waistMap": None,
         "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
+        "resolvedKey": True,
     },
     {
         "key": "post_mode",
@@ -139,9 +143,11 @@ KNOB_REGISTRY = [
         },
         "type": "string",
         "waistPath": None,
+        "waistMap": None,
         "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
+        "resolvedKey": True,
     },
     {
         "key": "pr_comment_cap",
@@ -181,11 +187,13 @@ KNOB_REGISTRY = [
         },
         "type": "int_or_null",
         "waistPath": "limits.deliveryCap",
+        "waistMap": None,
         "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [
             "interactive",
         ],
+        "resolvedKey": False,
     },
     {
         "key": "delivery_tier",
@@ -224,9 +232,11 @@ KNOB_REGISTRY = [
         },
         "type": "string",
         "waistPath": "delivery.tier",
+        "waistMap": None,
         "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
+        "resolvedKey": False,
     },
     {
         "key": "draft_policy",
@@ -256,9 +266,11 @@ KNOB_REGISTRY = [
         },
         "type": "string",
         "waistPath": None,
+        "waistMap": None,
         "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
+        "resolvedKey": True,
     },
     {
         "key": "reviewed_policy",
@@ -288,10 +300,14 @@ KNOB_REGISTRY = [
             ],
         },
         "type": "string",
-        "waistPath": None,
+        "waistPath": "reviewScope.requested",
+        "waistMap": {
+            "skip": "full",
+        },
         "derivedFrom": None,
-        "deriveWhen": None,
+        "deriveWhen": "priorReviewDetector",
         "nullReceipt": [],
+        "resolvedKey": True,
     },
     {
         "key": "pr_not_found_policy",
@@ -321,9 +337,11 @@ KNOB_REGISTRY = [
         },
         "type": "string",
         "waistPath": None,
+        "waistMap": None,
         "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
+        "resolvedKey": True,
     },
     {
         "key": "trivial_scope",
@@ -353,9 +371,11 @@ KNOB_REGISTRY = [
         },
         "type": "string",
         "waistPath": "scopeAnswer",
+        "waistMap": None,
         "derivedFrom": None,
         "deriveWhen": "lightEligible",
         "nullReceipt": [],
+        "resolvedKey": False,
     },
     {
         "key": "review_md",
@@ -384,9 +404,11 @@ KNOB_REGISTRY = [
         },
         "type": "string",
         "waistPath": None,
+        "waistMap": None,
         "derivedFrom": "reviewConfigPath",
         "deriveWhen": None,
         "nullReceipt": [],
+        "resolvedKey": False,
     },
 ]
 # /generated-from-registry-identity:knob_registry
@@ -610,7 +632,7 @@ def resolve(
                 )
             )
         config_echo[key] = {"value": str(value), "source": str(source)}
-        if row.get("waistPath") is None:
+        if row.get("resolvedKey"):
             resolved[key] = _typed_value(row, str(value))
     return {
         "configEcho": config_echo,

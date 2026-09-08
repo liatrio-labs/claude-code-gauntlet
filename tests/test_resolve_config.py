@@ -176,6 +176,23 @@ class TestResolvePureFunctions(unittest.TestCase):
         self.assertNotIn("pr_comment_cap", headless["resolved"])
         self.assertEqual(headless["waist"], {"configEcho": headless["configEcho"]})
 
+    def test_resolved_contains_only_hand_typed_gate_inputs(self):
+        expected = {
+            "headless": {
+                "model_tier",
+                "delivery",
+                "post_mode",
+                "draft_policy",
+                "reviewed_policy",
+                "pr_not_found_policy",
+            },
+            "interactive": {"model_tier"},
+        }
+        for mode, keys in expected.items():
+            with self.subTest(mode=mode):
+                result = resolver.resolve(mode, {}, None, "pr")
+                self.assertEqual(set(result["resolved"]), keys)
+
     def test_delivery_precedence_is_env_then_review_then_default(self):
         review = "## Default Delivery\nchat,pr_comments\n## Ignore\n"
         from_review = resolver.resolve("headless", {}, review, "pr")
@@ -560,6 +577,51 @@ class TestGeneratedDataContracts(unittest.TestCase):
             self.assertIsNotNone(row, gate)
             for knob in knobs:
                 self.assertIn(knob, row, gate)
+
+    def test_skill_resolved_mentions_match_resolved_key_contract(self):
+        expected = {
+            "model_tier",
+            "delivery",
+            "post_mode",
+            "draft_policy",
+            "reviewed_policy",
+            "pr_not_found_policy",
+        }
+        false_rows = {
+            row["key"]
+            for row in generator.load_registry(str(REPO))["knobs"]
+            if not row["resolvedKey"]
+        }
+        for path in sorted((REPO / "skills").rglob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            for match in re.finditer(r"resolved\.([a-z_][a-z0-9_]*)", text):
+                key = match.group(1)
+                if key in false_rows:
+                    sentence_start = text.rfind(".", 0, match.start()) + 1
+                    sentence = text[sentence_start : text.find(".", match.end()) + 1]
+                    self.assertRegex(sentence, rf"\bno\b.*resolved\.{re.escape(key)}")
+                    continue
+                self.assertIn(key, expected, str(path))
+
+    def test_every_waist_leaf_has_a_derived_field_sentence(self):
+        docs = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted((REPO / "skills").rglob("*.md"))
+        )
+        sentences = re.split(r"(?<=[.!?])\s+", docs)
+        rows = generator.load_registry(str(REPO))["knobs"]
+        for row in rows:
+            if not row["waistPath"]:
+                continue
+            leaf = row["waistPath"].rsplit(".", 1)[-1]
+            leaf_re = re.compile(rf"(?:`{re.escape(leaf)}`|\b{re.escape(leaf)}\b)")
+            self.assertTrue(
+                any(
+                    "derives" in sentence and leaf_re.search(sentence)
+                    for sentence in sentences
+                ),
+                row["waistPath"],
+            )
 
     def test_generated_receipts_are_resolver_fixtures(self):
         registry = generator.load_registry(str(REPO))["knobs"]

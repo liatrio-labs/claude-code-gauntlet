@@ -203,15 +203,16 @@ Local/branch targets: drop the `owner_repo`/`prior_review` sections entirely (no
 
 After this call: interpret `prior_review`'s JSON per `references/phase1-preflight.md` → "Previously-Reviewed Gate" (branch order, question templates, degradations — unchanged). **Incremental** stores `last_reviewed_sha` for Composite B's incremental diff branch below. **Skip** stops the run here.
 
-Stamp `reviewScope` from this resolved state before assembling the waist. For local or branch targets,
-stamp `{ requested: "full", kind: "full", since: null, commits: null, detector: null }`. For a PR/MR,
-copy these detector values into `detector` without rewriting them: `previously_reviewed`, `sha_resolvable`,
-`head_advanced`, `sha_is_ancestor`, and `incremental_safe`; set `error` to the first `prior_review.errors`
-value or `null`. The interactive `requested` value is the recorded gate answer, or `"full"` when no prior
-review existed. In headless mode it is `configResult.resolved.reviewed_policy`, except `"skip"` records
-`requested: "full"`. Use `kind: "incremental"` only for an incremental answer with
-`detector.incremental_safe: true` and the detector's safe `last_reviewed_sha` as `since`; otherwise use
-`kind: "full"` and retain the detector so the renderer can derive the fallback explanation.
+Stamp `reviewScope` from this resolved state before assembling the waist. Local and branch targets still
+stamp `{ requested: "full", kind: "full", since: null, commits: null, detector: null }`. Headless PR/MR
+targets omit `requested`. The workflow derives `requested` from `configEcho.reviewed_policy`; `skip`
+derives `full`. Interactive targets stamp the recorded gate answer. PR/MR targets copy detector values
+into `detector` without rewriting them: `previously_reviewed`, `sha_resolvable`, `head_advanced`,
+`sha_is_ancestor`, and `incremental_safe`. Set `error` to the first `prior_review.errors` value or `null`.
+Use `kind: "incremental"` only for an incremental answer with `detector.incremental_safe: true`.
+Use the detector's safe `last_reviewed_sha` as `since`.
+Otherwise use `kind: "full"` and retain the detector.
+The renderer derives the fallback explanation from retained detector facts.
 
 > Headless mode still runs the `prior_review` section. Detection is read-only and safe under any resolved post mode. Apply `configResult.resolved.reviewed_policy` instead of asking. `skip` stops the run only when `previously_reviewed` is true AND `sha_is_ancestor` is true. An `incremental` policy uses `incremental_safe`; otherwise it degrades to `full` and discloses the reason. Rewritten history has `sha_is_ancestor` false, so `skip` proceeds as a full review with the degradation disclosed. A `DEFERRED` truncation resolves the same way it does interactively. Run the unconditional truncate loop for every policy outcome except a `skip` that actually stops the run. See `references/headless-mode.md`.
 
@@ -339,6 +340,8 @@ The workflow derives `delivery.tier` from the copied receipt. Stamp `delivery` o
 
 Stamp `riskTable` — the Phase 2e per-file risk classification, verbatim, as `[{ path, risk }]` covering EXACTLY the `changedFiles` set. Interactive runs stamp `scopeAnswer` only when the trivial-scope question fires. Never stamp a headless `scopeAnswer`; the workflow derives it from the resolver receipt.
 
+Headless PR/MR targets never stamp `reviewScope.requested`; the workflow derives it from the copied receipt.
+
 `scopeAnswer` is `"light"` or `"full"`. The workflow validates interactive answers and derives headless eligibility from the receipt, `riskTable`, and `changedLines`.
 
 **Omit optional fields you have no value for — never stamp an explicit `null`.** The waist tolerates an explicit `null` as equivalent to absent for `reviewConfig`, `exclusionPatterns`, `reviewMd`, `exclusionsText`, `delivery`, `checkpoints`, `persist`, and `scopeAnswer`. Keep `reviewConfigPath: null` when discovery finds no REVIEW.md; it is provenance. The workflow derives the typed cap from the receipt, so do not stamp `limits.deliveryCap`.
@@ -358,7 +361,7 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   pluginRoot,  // REQUIRED absolute plugin root; script paths must stay under {pluginRoot}/scripts/
   reviewScope: { requested: "incremental" | "full", kind: "incremental" | "full", since: string | null,
                  commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,
-                 head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED; copied from prior-review state
+                 head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED; headless PR/MR requested is workflow-derived
   limits: {},  // workflow derives deliveryCap; use a genuine REVIEW.md override when present
   delivery: { prIdentity: { owner, repo, pr_number, sha_full, title } },  // PR/MR targets only; workflow derives tier
                                              // the artifact-writer then persists postReview as the post_review-ready
