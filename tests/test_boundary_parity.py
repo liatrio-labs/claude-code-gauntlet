@@ -767,6 +767,41 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
                 if light_eligible:
                     self.assertEqual(args["scopeAnswer"], "light")
 
+    def test_resolver_waist_derivation_carries_all_typed_fields_together(self):
+        detector = {
+            "previously_reviewed": True,
+            "sha_resolvable": True,
+            "head_advanced": True,
+            "sha_is_ancestor": True,
+            "incremental_safe": True,
+            "error": None,
+        }
+        payload = resolve_config.resolve(
+            "headless",
+            {
+                "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
+                "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
+                "CODE_GAUNTLET_REVIEWED_POLICY": "skip",
+                "CODE_GAUNTLET_TRIVIAL_SCOPE": "light",
+            },
+            None,
+            "pr",
+        )
+        payload["mode"] = "headless"
+        payload["reviewScope"] = {
+            "kind": "full",
+            "since": None,
+            "commits": None,
+            "detector": detector,
+        }
+        result = self._validate_resolver_waist(payload, light_eligible=True)
+        self.assertTrue(result["result"]["ok"], result["result"]["errors"])
+        args = result["args"]
+        self.assertEqual(args["limits"]["deliveryCap"], 25)
+        self.assertEqual(args["delivery"]["tier"], "main_only")
+        self.assertEqual(args["reviewScope"]["requested"], "full")
+        self.assertEqual(args["scopeAnswer"], "light")
+
     def test_headless_review_scope_derivation_matches_the_hand_typed_boundary_table(
         self,
     ):

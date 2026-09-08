@@ -127,6 +127,51 @@ class TestIdentitySurface(unittest.TestCase):
             "### Deliver",
             "### Print methodology",
         ),
+        (
+            "skills/code-gauntlet/SKILL.md",
+            "config_receipt",
+        ): (
+            "### Assemble the args object and record environment overrides",
+            "### Wait protocol — MANDATORY",
+        ),
+        (
+            "skills/code-gauntlet/SKILL.md",
+            "derived_waist_fields",
+        ): (
+            "### Assemble the args object and record environment overrides",
+            "### Wait protocol — MANDATORY",
+        ),
+        (
+            "skills/code-gauntlet/references/phase2-triage.md",
+            "derived_waist_fields",
+        ): ("## Args Preparation", "## Triage Announcement"),
+        (
+            "skills/code-gauntlet/references/phase1-preflight.md",
+            "derived_waist_fields",
+        ): (
+            "## Configuration Resolution (no questions)",
+            "## Light Review Template (Phase 2d)",
+        ),
+        (
+            "skills/code-gauntlet/references/report-format.md",
+            "severity_legend",
+        ): ("# Code Gauntlet Report Format", "## GitHub Permalink Format"),
+        (
+            "skills/code-gauntlet/references/report-format.md",
+            "full_report_template",
+        ): ("## Full Report Template", "## Review Dimensions Summary"),
+        (
+            "skills/code-gauntlet/references/report-format.md",
+            "inline_legend",
+        ): ("## Inline PR Comment Format", "**`suggested_fix_code` field:**"),
+        (
+            "skills/code-gauntlet/references/delivery-guide.md",
+            "severity_legend",
+        ): ("### Comment body format", "### Using post_review.py"),
+        (
+            "skills/code-gauntlet/references/headless-mode.md",
+            "headless_env_table",
+        ): ("## Env contract", "## Precedence"),
     }
 
     @classmethod
@@ -213,6 +258,15 @@ class TestIdentitySurface(unittest.TestCase):
                     text.index(end),
                     "identity fence moved below its owning section",
                 )
+
+    def test_every_markdown_identity_fence_has_an_owning_section(self):
+        declared = {
+            (rel_path, symbol)
+            for rel_path, symbols in gen.IDENTITY_FENCES.items()
+            if rel_path.endswith(".md")
+            for symbol in symbols
+        }
+        self.assertTrue(declared <= set(self.IDENTITY_OWNING_SECTIONS))
 
     def test_the_severity_map_is_the_repo_severity_order(self):
         """Key order is the render order of every generated legend, and the key SET

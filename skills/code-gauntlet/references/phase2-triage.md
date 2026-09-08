@@ -188,9 +188,9 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 ### Light Review for Trivial PRs
 
-If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). Stamp the answer verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow itself derives the dimension flags from `scopeAnswer` together with the `riskTable`/`changedLines` you are already stamping (`deriveAgentFlags`, `workflows/src/stages.js`): a `light` answer runs only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven. Announce the actual dimension set — `bugs, security` for light, the full list for full. `args.riskTable` is REQUIRED on every run regardless of the answer (or of whether this question was even asked) — see Args Preparation below.
+If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). Stamp the answer verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow itself computes the dimension flags from `scopeAnswer` together with the `riskTable`/`changedLines` you are already stamping (`deriveAgentFlags`, `workflows/src/stages.js`): a `light` answer runs only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven. Announce the actual dimension set — `bugs, security` for light, the full list for full. `args.riskTable` is REQUIRED on every run regardless of the answer (or of whether this question was even asked) — see Args Preparation below.
 
-> Headless exception: do not ask. The workflow derives headless `scopeAnswer` from the resolver receipt. Interactive runs stamp the question answer. See `references/headless-mode.md` and SKILL.md.
+> Headless exception: do not ask, and leave `scopeAnswer` out; interactive runs stamp the question answer.
 
 Only stamp `scopeAnswer` when this gate actually fired (every file low-risk AND total lines <50); omit it entirely otherwise — the args waist refuses a `scopeAnswer` the riskTable/changedLines don't support, and refuses a light-eligible riskTable with no `scopeAnswer` at all (the gate must have asked).
 
@@ -347,7 +347,6 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 **Omit optional fields you have no value for; never stamp an explicit `null`.**
 The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`.
 Keep `reviewConfigPath: null` when REVIEW.md is absent; it records provenance.
-The workflow derives `limits.deliveryCap` from the resolver receipt, including an uncapped `null` value.
 
 **Required fields (`validateArgs` fails loud without them):**
 
@@ -366,12 +365,25 @@ The workflow derives `limits.deliveryCap` from the resolver receipt, including a
 | `riskTable` | the Phase 2e per-file risk classification, by value, as `[{ path, risk }]` — `path` set must equal `changedFiles` exactly (missing or extra paths fail loud; see Phase 2e's risk-level table for the `risk` contract) |
 | `configEcho` | Copy `configResult.waist.configEcho` verbatim. It is the only model-stamped configuration receipt. |
 | `pluginRoot` | the required absolute POSIX path to this plugin; `persist.assembleScriptPath` and `verify.scriptPath`, when present, must start with `{pluginRoot}/scripts/` |
-| `reviewScope` | Headless PR/MR targets omit `requested`. The workflow derives it from `configEcho.reviewed_policy` and maps `skip` to `full`. Interactive PR/MR targets stamp the gate answer, or `full` when no prior review exists. Local and branch targets stamp `full`. Copy detector facts verbatim for PR/MR targets. Use `kind=incremental` only for an incremental request with `detector.incremental_safe=true`. Set `since` to the detector's safe `last_reviewed_sha` only for incremental kind. Set `since` to `null` otherwise. Retain detector facts when an incremental request becomes full. The renderer derives the fallback reason from retained detector facts. |
+| `reviewScope` | Headless PR/MR targets omit `requested` (see the derived waist fields under "Args Preparation"). Interactive PR/MR targets stamp the gate answer, or `full` when no prior review exists. Local and branch targets stamp `full`. Copy detector facts verbatim for PR/MR targets. Use `kind=incremental` only for an incremental request with `detector.incremental_safe=true`. Set `since` to the detector's safe `last_reviewed_sha` only for incremental kind. Set `since` to `null` otherwise. Retain detector facts when an incremental request becomes full. The renderer computes the fallback reason from retained detector facts. |
 | `policy` | `{ tier, subagentModel, provider, gateway }` — see below |
-| `limits` | Stamp `{}` unless a genuine REVIEW.md-set override exists. The workflow derives the typed delivery cap from the copied receipt. |
-| `delivery` | For PR/MR targets, stamp only `{ prIdentity: { owner, repo, pr_number, sha_full, title? } }`. The workflow derives the typed delivery tier from the copied receipt. Omit it for local targets. |
+| `limits` | Stamp `{}` unless a genuine REVIEW.md-set override exists. |
+| `delivery` | For PR/MR targets, stamp only `{ prIdentity: { owner, repo, pr_number, sha_full, title? } }`. Omit it for local targets. |
 
-The resolver owns the cap, tier, and review scope policy values. `normalizeArgs` derives `limits.deliveryCap`, `delivery.tier`, and headless PR/MR `reviewScope.requested` from the copied receipt when those waist fields are absent. The Challenge stage applies those typed values before Phase 8 posts `artifactPaths.postReview` verbatim.
+<!-- generated-from-registry-identity:derived_waist_fields — do not edit; run scripts/generate_contract_requirements.py -->
+The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.
+
+- `limits.deliveryCap` (headless and interactive runs): from `configEcho.pr_comment_cap`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `deliveryCap` out of it.
+- `delivery.tier` (headless and interactive runs): from `configEcho.delivery_tier`. Leave `tier` out of any stamped `delivery`.
+- `reviewScope.requested` (headless runs, when `reviewScope.detector` is an object): from `configEcho.reviewed_policy`; `skip` derives as `full`. Stamp `reviewScope` and leave `requested` out of it.
+- `scopeAnswer` (headless runs, when every changed file is low risk and fewer than 50 lines changed): from `configEcho.trivial_scope`. Leave it out.
+
+The workflow fills these receipt entries itself; never stamp them.
+
+- `configEcho.review_md` (interactive runs): `present` when `reviewConfigPath` is set, else `absent`.
+<!-- /generated-from-registry-identity:derived_waist_fields -->
+
+The Challenge stage applies the receipt-backed tier and cap before Phase 8 posts `artifactPaths.postReview` verbatim.
 
 **`policy` (model policy the workflow runs under):**
 

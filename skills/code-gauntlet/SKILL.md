@@ -205,8 +205,7 @@ After this call: interpret `prior_review`'s JSON per `references/phase1-prefligh
 
 Stamp `reviewScope` from this resolved state before assembling the waist.
 Local and branch targets stamp `{ requested: "full", kind: "full", since: null, commits: null, detector: null }`.
-Headless PR/MR targets omit `requested`.
-The workflow derives it from `configEcho.reviewed_policy` and maps `skip` to `full`.
+Headless PR/MR targets omit `requested` (see the derived waist fields under "Assemble the args object").
 Interactive targets stamp the recorded gate answer, or `"full"` when no prior review existed.
 PR/MR targets copy detector values verbatim into `detector`.
 Copy `previously_reviewed`, `sha_resolvable`, `head_advanced`, `sha_is_ancestor`, and `incremental_safe`.
@@ -335,17 +334,29 @@ Stamp both values verbatim. Never estimate them, never carry them over from an e
 
 Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). Resolve `policy.provider` from the environment in the same Bash call — first match wins, and a flag counts as SET only when its value is truthy the way Claude Code itself parses it (`1`/`true`/`yes`/`on`, case-insensitive — `0`/`false`/empty leave the session first-party): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` alone does NOT change the provider: an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin (a gateway with non-standard names uses the `CLAUDE_CODE_SUBAGENT_MODEL` escape hatch). It DOES set `policy.gateway`, though: stamp `true` iff `ANTHROPIC_BASE_URL` is set, after trimming whitespace, to a non-blank value (it is a URL — any non-blank value counts, no truthy-flag parsing like the provider flags above), else `false`. `policy.gateway` turns off the pipeline's conditional per-dimension schema construct on the conventions-and-intent dispatch (a gateway forwards `input_schema` verbatim to whatever backend it fronts, which could be an unmeasured third-party surface even though the session itself reads as firstParty) while leaving the first-party model-ID pin untouched. The workflow cannot read `process.env`, so this capture is the only path — on `firstParty` the pipeline pins full first-party model IDs (immune to session-variant cascade); on every other provider it dispatches bare aliases (`sonnet`/`opus`), the only spelling the provider's deployment mapping resolves (first-party IDs pass through unchecked on Bedrock/Vertex/Foundry and fail as invalid model identifiers). **If `CLAUDE_CODE_SUBAGENT_MODEL` is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). For a PR/MR target, also stamp `delivery.prIdentity = { owner, repo, pr_number, sha_full, title }` — `owner`/`repo`/`pr_number` from the resolved PR, `sha_full` from `git rev-parse HEAD`, and `title` from the `gh pr view {pr_number} --json state,isDraft,title,url` this phase already runs (`SKILL.md:59`; GitLab: `glab mr view {pr_number} --output json | jq -r '.title'`). `title` is **optional** — omit it when the fetch produced nothing; the report title then falls back to `owner/repo#N`. Omit `prIdentity` entirely for local-diff reviews.
 
-Copy `configResult.waist.configEcho` verbatim. Never stamp `configEcho.review_md`; the workflow derives it from `reviewConfigPath` during discovery.
+Copy `configResult.waist.configEcho` verbatim.
+<!-- generated-from-registry-identity:derived_waist_fields — do not edit; run scripts/generate_contract_requirements.py -->
+The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.
 
-The workflow derives `limits.deliveryCap` from the copied receipt. Stamp `limits: {}` unless a genuine REVIEW.md-set override exists.
+- `limits.deliveryCap` (headless and interactive runs): from `configEcho.pr_comment_cap`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `deliveryCap` out of it.
+- `delivery.tier` (headless and interactive runs): from `configEcho.delivery_tier`. Leave `tier` out of any stamped `delivery`.
+- `reviewScope.requested` (headless runs, when `reviewScope.detector` is an object): from `configEcho.reviewed_policy`; `skip` derives as `full`. Stamp `reviewScope` and leave `requested` out of it.
+- `scopeAnswer` (headless runs, when every changed file is low risk and fewer than 50 lines changed): from `configEcho.trivial_scope`. Leave it out.
 
-The workflow derives `delivery.tier` from the copied receipt. Stamp `delivery` only as `{ prIdentity }` for PR/MR targets.
+The workflow fills these receipt entries itself; never stamp them.
 
-Stamp `riskTable` — the Phase 2e per-file risk classification, verbatim, as `[{ path, risk }]` covering EXACTLY the `changedFiles` set. Interactive runs stamp `scopeAnswer` only when the trivial-scope question fires. Never stamp a headless `scopeAnswer`; the workflow derives it from the resolver receipt.
+- `configEcho.review_md` (interactive runs): `present` when `reviewConfigPath` is set, else `absent`.
+<!-- /generated-from-registry-identity:derived_waist_fields -->
 
-`scopeAnswer` is `"light"` or `"full"`. The workflow validates interactive answers and derives headless eligibility from the receipt, `riskTable`, and `changedLines`.
+Stamp `limits: {}` unless a genuine REVIEW.md-set override exists.
 
-**Omit optional fields you have no value for — never stamp an explicit `null`.** The waist tolerates an explicit `null` as equivalent to absent for `reviewConfig`, `exclusionPatterns`, `reviewMd`, `exclusionsText`, `delivery`, `checkpoints`, `persist`, and `scopeAnswer`. Keep `reviewConfigPath: null` when discovery finds no REVIEW.md; it is provenance. The workflow derives the typed cap from the receipt, so do not stamp `limits.deliveryCap`.
+Stamp `delivery` only as `{ prIdentity }` for PR/MR targets.
+
+Stamp `riskTable` — the Phase 2e per-file risk classification, verbatim, as `[{ path, risk }]` covering EXACTLY the `changedFiles` set. Interactive runs stamp `scopeAnswer` only when the trivial-scope question fires and MUST stamp it when the gate fired (`validateArgs` rejects a light-eligible waist with no `scopeAnswer`).
+
+`scopeAnswer` is `"light"` or `"full"`.
+
+**Omit optional fields you have no value for — never stamp an explicit `null`.** The waist tolerates an explicit `null` as equivalent to absent for `reviewConfig`, `exclusionPatterns`, `reviewMd`, `exclusionsText`, `delivery`, `checkpoints`, `persist`, and `scopeAnswer`. Keep `reviewConfigPath: null` when discovery finds no REVIEW.md; it is provenance.
 
 Assemble the args waist (see `references/phase2-triage.md` for the full field list and shapes):
 
@@ -356,15 +367,15 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   repoRoot, outputDir, headShaShort, nonce, generatedAt,
   diffPath, changedFilesPath, reviewConfigPath,
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
-  scopeAnswer: "light" | "full",  // interactive answer only; headless scope is workflow-derived
+  scopeAnswer: "light" | "full",  // interactive answer only when the trivial-scope question fires
   policy: { tier, subagentModel, provider, gateway },
   configEcho: configResult.waist.configEcho,  // REQUIRED; copy verbatim from the resolver
   pluginRoot,  // REQUIRED absolute plugin root; script paths must stay under {pluginRoot}/scripts/
   reviewScope: { requested: "incremental" | "full", kind: "incremental" | "full", since: string | null,
                  commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,
                  head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED
-  limits: {},  // workflow derives deliveryCap; use a genuine REVIEW.md override when present
-  delivery: { prIdentity: { owner, repo, pr_number, sha_full, title } },  // PR/MR targets only; workflow derives tier
+  limits: {},  // stamp {} unless a genuine REVIEW.md override exists
+  delivery: { prIdentity: { owner, repo, pr_number, sha_full, title } },  // PR/MR targets only
                                              // the artifact-writer then persists postReview as the post_review-ready
                                              // wrapper { owner, repo, pr_number, sha, review_body, findings } so
                                              // Phase 8 posts it without hand-assembly

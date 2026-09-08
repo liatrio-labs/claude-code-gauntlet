@@ -82,8 +82,8 @@ path of `artifactPaths.report` plus a short chat summary, and skip posting.
 findings also post to the PR. Ask once, after materialization, before anything is posted:
 
 > Headless mode exception: do not present this `AskUserQuestion`. Deliver per
-> `configResult.resolved.delivery` and post `artifactPaths.postReview` **verbatim**. The workflow derives
-> delivery tier and cap from the resolver receipt. Posting follows `configResult.resolved.post_mode`.
+> `configResult.resolved.delivery` and post `artifactPaths.postReview` **verbatim**. The Challenge stage
+> applies the receipt-backed tier and cap before Phase 8 posts `artifactPaths.postReview` verbatim.
 > See `references/headless-mode.md`.
 
 ```

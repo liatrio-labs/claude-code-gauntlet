@@ -16,6 +16,11 @@ the registry is the source, the sentences are a generated, marker-fenced block, 
 test runs this script in `--check` mode so drift fails the build instead of a hand-authored
 lockstep comparison.
 
+The configuration registry is also projected into the generated derived-waist fence. Its
+`deriveWhen` and `derivedFrom` descriptions are checked against the live predicates and
+provenance fillers before any target is written, so an unknown registry name or unsupported
+receipt type fails loudly instead of producing an incomplete instruction.
+
 Two anchor phrases are machine-parsed elsewhere (see `docs/machine-parsed-strings.md` and
 `tests/test_dimensions_registry.py`): "required by the dispatch schema" (requiredExtra sense)
 and "dimension-conditional dispatch requirement" (requiredWhenDimension sense). Both are baked
@@ -75,7 +80,13 @@ IDENTITY_FENCES = {
     # D9's chat convention names the mark in prose. A hand-authored fourth copy would
     # break the one-edit property (a registry edit + a generator run + a hand edit
     # nothing turns red on), so it is generated like the rest.
-    "skills/code-gauntlet/SKILL.md": ["chat_identity", "config_receipt"],
+    "skills/code-gauntlet/SKILL.md": [
+        "chat_identity",
+        "config_receipt",
+        "derived_waist_fields",
+    ],
+    "skills/code-gauntlet/references/phase2-triage.md": ["derived_waist_fields"],
+    "skills/code-gauntlet/references/phase1-preflight.md": ["derived_waist_fields"],
     "skills/code-gauntlet/references/headless-mode.md": ["headless_env_table"],
 }
 
@@ -92,7 +103,8 @@ def load_registry(repo_root=REPO_ROOT):
     """The live schema declaration, imported from the ESM source (mirrors the test helper)."""
     node_src = (
         "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/args.js')]).then(([m, a]) => console.log(JSON.stringify({"
-        "  required: m.FINDING_REQUIRED,"
+        "  findingRequired: m.FINDING_REQUIRED,"
+        "  required: a.REQUIRED,"
         "  canonicalFields: Object.keys(m.FINDING_PROP_TYPES),"
         "  dimensions: m.DIMENSIONS.map(d => ({"
         "    dimension: d.dimension, agentType: d.agentType,"
@@ -108,6 +120,8 @@ def load_registry(repo_root=REPO_ROOT):
         "  agents: m.AGENTS,"
         "  knobs: a.KNOB_REGISTRY.map(d => ({ ...d })),"
         "  knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d)),"
+        "  deriveWhen: Object.fromEntries(Object.entries(a.DERIVE_WHEN).map(([name, d]) => [name, d.describe])),"
+        "  derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM).map(([name, d]) => [name, d.describe])),"
         "})))"
     )
     out = subprocess.run(
@@ -284,7 +298,8 @@ def known_fields(registry):
 
 def field_required_status(field, registry):
     """'yes' / 'conditional' / 'no' — the tri-state Required column value for `field`."""
-    if field in registry["required"]:
+    finding_required = registry.get("findingRequired", registry.get("required", []))
+    if field in finding_required:
         return "yes"
     for row in registry["dimensions"]:
         if field in row["requiredExtra"]:
@@ -623,6 +638,124 @@ def render_inline_comment_sample(identity):
     return "````markdown\n" + rendered + "\n````"
 
 
+_DERIVED_WAIST_TYPES = {"string", "csv_list", "int_or_null"}
+
+
+def _identity_description(identity, table_name, name):
+    if table_name not in identity:
+        raise SystemExit(f"identity_body: identity lacks a {table_name} key")
+    descriptions = identity[table_name]
+    if name not in descriptions:
+        raise SystemExit(
+            f"identity_body: {table_name} has no describe entry for {name!r}"
+        )
+    description = descriptions[name]
+    if not isinstance(description, str) or not description.strip():
+        raise SystemExit(
+            f"identity_body: {table_name} description for {name!r} is empty or whitespace"
+        )
+    return description
+
+
+def _validate_derived_waist_identity(identity):
+    """Validate every registry metadata value needed by the derived-waist renderer."""
+    for table_name in ("deriveWhen", "derivedFrom"):
+        if table_name not in identity:
+            raise SystemExit(f"identity_body: identity lacks a {table_name} key")
+    for row in identity["knobs"]:
+        row_type = row.get("type")
+        if row_type not in _DERIVED_WAIST_TYPES:
+            raise SystemExit(
+                f"identity_body: row {row.get('key')!r} has unknown type {row_type!r}"
+            )
+        for table_name in ("deriveWhen", "derivedFrom"):
+            name = row.get(table_name)
+            if name is not None:
+                _identity_description(identity, table_name, name)
+
+
+def _modes_phrase(modes):
+    names = list(modes)
+    if len(names) == 1:
+        return f"{names[0]} runs"
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]} runs"
+    return f"{', '.join(names[:-1])}, and {names[-1]} runs"
+
+
+def _derived_waist_instruction(row, required):
+    path = row["waistPath"]
+    parts = path.split(".")
+    if len(parts) == 1:
+        return "Leave it out."
+    root, leaf = parts[0], parts[-1]
+    if root in required:
+        return f"Stamp `{root}` and leave `{leaf}` out of it."
+    return f"Leave `{leaf}` out of any stamped `{root}`."
+
+
+def _derived_waist_body(identity):
+    _validate_derived_waist_identity(identity)
+    rows = identity["knobs"]
+    waist_rows = [row for row in rows if row.get("waistPath") is not None]
+    derived_rows = [row for row in rows if row.get("derivedFrom") is not None]
+    lines = []
+    if waist_rows:
+        lines.extend(
+            [
+                "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.",
+                "",
+            ]
+        )
+        for row in waist_rows:
+            type_note = ""
+            if row["type"] == "int_or_null":
+                type_note = "; digits derive as a JSON number"
+                if row.get("nullReceipt"):
+                    type_note += (
+                        f"; on {_modes_phrase(row['nullReceipt'])} the receipt spelling "
+                        "`null` derives as JSON `null`"
+                    )
+            elif row["type"] == "csv_list":
+                type_note = "; the comma-separated value derives as a list"
+            condition = ""
+            if row.get("deriveWhen") is not None:
+                condition = ", when " + _identity_description(
+                    identity, "deriveWhen", row["deriveWhen"]
+                )
+            line = (
+                f"- `{row['waistPath']}` ({_modes_phrase(row['modes'])}{condition}): "
+                f"from `configEcho.{row['key']}`{type_note}"
+            )
+            if row.get("waistMap") is not None:
+                for source, target in row["waistMap"].items():
+                    line += f"; `{source}` derives as `{target}`"
+            line += ". " + _derived_waist_instruction(row, identity["required"])
+            lines.append(line)
+    if derived_rows:
+        if lines:
+            lines.extend(
+                [
+                    "",
+                    "The workflow fills these receipt entries itself; never stamp them.",
+                    "",
+                ]
+            )
+        else:
+            lines.append(
+                "The workflow fills these receipt entries itself; never stamp them."
+            )
+        for row in derived_rows:
+            description = _identity_description(
+                identity, "derivedFrom", row["derivedFrom"]
+            )
+            lines.append(
+                f"- `configEcho.{row['key']}` ({_modes_phrase(row['modes'])}): "
+                f"{description}."
+            )
+    return lines
+
+
 def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
     """The generated lines for one fence — keyed by BOTH file and symbol.
 
@@ -773,6 +906,8 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
             *receipts["headless"],
             "```",
         ]
+    if symbol == "derived_waist_fields":
+        return _derived_waist_body(identity)
     if symbol == "inline_legend":
         return [
             f"`{{emoji}}` is {slashes}, `{{SEVERITY}}` is the severity uppercased.",

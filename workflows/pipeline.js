@@ -2285,7 +2285,7 @@ const LIMIT_DEFAULTS = {
 };
 function computeLightEligible(riskTable, changedLines) {
   if (!Array.isArray(riskTable)) return false;
-  if (typeof changedLines !== 'number' || !(changedLines < 50)) return false;
+  if (typeof changedLines !== 'number' || !(changedLines < LIGHT_SCOPE_MAX_CHANGED_LINES)) return false;
   return riskTable.every((entry) => entry && entry.risk === 'low');
 }
 const NULL_TOLERANCE_CONSEQUENCE = {
@@ -2422,6 +2422,24 @@ function mappedReceiptValue(descriptor, value) {
 function isPriorReviewDetector(args) {
   return isPlainObject(args?.reviewScope?.detector);
 }
+const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
+const DERIVE_WHEN = {
+  lightEligible: {
+    holds: (args) => computeLightEligible(args.riskTable, args.changedLines),
+    describe: `every changed file is low risk and fewer than ${LIGHT_SCOPE_MAX_CHANGED_LINES} lines changed`,
+  },
+  priorReviewDetector: {
+    holds: isPriorReviewDetector,
+    describe: '`reviewScope.detector` is an object',
+  },
+};
+const DERIVED_FROM = {
+  reviewConfigPath: {
+    fill: (args) => (args.reviewConfigPath != null ? 'present' : 'absent'),
+    source: 'discovery',
+    describe: '`present` when `reviewConfigPath` is set, else `absent`',
+  },
+};
 function deriveConfigWaist(args) {
   if (!isPlainObject(args) || !isPlainObject(args.configEcho) || typeof args.mode !== 'string') return args;
   const out = { ...args };
@@ -2429,10 +2447,13 @@ function deriveConfigWaist(args) {
   let configEchoChanged = false;
   for (const descriptor of KNOB_REGISTRY) {
     if (!descriptor.modes.includes(args.mode)) continue;
-    if (descriptor.derivedFrom === 'reviewConfigPath' && !Object.hasOwn(configEcho, descriptor.key)) {
+    if (descriptor.derivedFrom !== null
+      && Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)
+      && !Object.hasOwn(configEcho, descriptor.key)) {
+      const derivation = DERIVED_FROM[descriptor.derivedFrom];
       configEcho[descriptor.key] = {
-        value: args.reviewConfigPath != null ? 'present' : 'absent',
-        source: 'discovery',
+        value: derivation.fill(args),
+        source: derivation.source,
       };
       configEchoChanged = true;
       continue;
@@ -2442,9 +2463,9 @@ function deriveConfigWaist(args) {
     if (out[root] === undefined && REQUIRED.includes(root)) continue;
     const entry = receiptEntryFor(args, descriptor);
     if (!entry) continue;
-    if (descriptor.deriveWhen === 'lightEligible'
-      && !computeLightEligible(args.riskTable, args.changedLines)) continue;
-    if (descriptor.deriveWhen === 'priorReviewDetector' && !isPriorReviewDetector(args)) continue;
+    if (descriptor.deriveWhen !== null
+      && (!Object.hasOwn(DERIVE_WHEN, descriptor.deriveWhen)
+        || !DERIVE_WHEN[descriptor.deriveWhen].holds(args))) continue;
     const value = mappedReceiptValue(descriptor, entry.value);
     if (value !== undefined) setDottedValue(out, descriptor.waistPath, value);
   }
@@ -2692,7 +2713,7 @@ function validateArgs(args) {
   if (riskTableWellFormed && scopeAnswerWellFormed && typeof args.changedLines === 'number') {
     const lightEligible = computeLightEligible(args.riskTable, args.changedLines);
     if (args.scopeAnswer === 'light' && !lightEligible) {
-      errors.push('scopeAnswer is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= 50) — the orchestrator answered a light/full question the gate never asked');
+      errors.push(`scopeAnswer is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked`);
     }
     if (lightEligible && args.scopeAnswer === undefined) {
       errors.push('riskTable/changedLines are light-eligible but scopeAnswer is missing — the light/full gate must have asked, and its answer must be stamped as scopeAnswer');
@@ -2995,7 +3016,7 @@ function validateArgs(args) {
     }
     const trivialEcho = configEchoValue(args, 'trivial_scope');
     if (trivialEcho === 'light' && !computeLightEligible(args.riskTable, args.changedLines)) {
-      errors.push('configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= 50) — the orchestrator answered a light/full question the gate never asked');
+      errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked`);
     }
     if (args.scopeAnswer !== undefined && trivialEcho !== undefined && args.scopeAnswer !== trivialEcho) {
       errors.push('scopeAnswer does not match configEcho.trivial_scope');
