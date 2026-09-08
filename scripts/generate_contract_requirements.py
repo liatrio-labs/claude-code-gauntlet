@@ -106,12 +106,8 @@ def load_registry(repo_root=REPO_ROOT):
         "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
         "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
         "  agents: m.AGENTS,"
-        "  knobs: a.KNOB_REGISTRY.map(d => ({"
-        "    key: d.key, modes: d.modes, allowedSources: d.allowedSources, rule: d.rule,"
-        "    env: d.env, reviewMdKey: d.reviewMdKey, defaults: d.defaults, type: d.type,"
-        "    waistPath: d.waistPath, derivedFrom: d.derivedFrom, deriveWhen: d.deriveWhen,"
-        "    nullReceipt: d.nullReceipt,"
-        "  })),"
+        "  knobs: a.KNOB_REGISTRY.map(d => ({ ...d })),"
+        "  knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d)),"
         "})))"
     )
     out = subprocess.run(

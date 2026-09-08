@@ -4,7 +4,7 @@ import {
   ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
   stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, nullRespellGap, LIMIT_DEFAULTS,
   resolveReviewConfig, computeLightEligible, nullToleranceRejectedKeys, KNOB_REGISTRY, safeReceiptValue,
-  matchesRule,
+  matchesRule, isPriorReviewDetector,
 } from '../src/args.js';
 
 const good = {
@@ -30,6 +30,40 @@ const good = {
     maxLineSpan: 100,
   },
 };
+
+const priorReviewDetector = {
+  previously_reviewed: true,
+  sha_resolvable: true,
+  head_advanced: true,
+  sha_is_ancestor: true,
+  incremental_safe: true,
+  error: null,
+};
+
+function headlessArgs(reviewedPolicy = 'full', reviewScope = {}) {
+  return {
+    ...good,
+    mode: 'headless',
+    delivery: {},
+    limits: { ...good.limits, deliveryCap: 6 },
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'default' },
+      delivery: { value: 'markdown', source: 'default' },
+      post_mode: { value: 'dry-run', source: 'default' },
+      pr_comment_cap: { value: '6', source: 'default' },
+      delivery_tier: { value: 'all', source: 'default' },
+      draft_policy: { value: 'review', source: 'default' },
+      reviewed_policy: { value: reviewedPolicy, source: 'default' },
+      pr_not_found_policy: { value: 'error', source: 'default' },
+      trivial_scope: { value: 'full', source: 'default' },
+    },
+    reviewScope: {
+      requested: 'full', kind: 'full', since: null, commits: null,
+      detector: priorReviewDetector,
+      ...reviewScope,
+    },
+  };
+}
 
 test('normalizeArgs parses a JSON string (session tool-call form)', () => {
   assert.deepEqual(normalizeArgs(JSON.stringify(good)), {
@@ -210,11 +244,22 @@ test('T182-ARGS: every registry receipt value rule and source rule is focused', 
 });
 
 test('registry rule metadata has the complete projected row shape', () => {
-  const rowKeys = ['key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'derivedFrom', 'deriveWhen', 'nullReceipt'];
+  const rowKeys = ['key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'waistMap', 'derivedFrom', 'deriveWhen', 'nullReceipt', 'resolvedKey'];
+  const resolvedKeys = new Map([
+    ['model_tier', true], ['delivery', true], ['post_mode', true], ['draft_policy', true],
+    ['reviewed_policy', true], ['pr_not_found_policy', true], ['pr_comment_cap', false],
+    ['delivery_tier', false], ['trivial_scope', false], ['review_md', false],
+  ]);
   for (const descriptor of KNOB_REGISTRY) {
     assert.deepEqual(Object.keys(descriptor), rowKeys);
     assert.equal('example' in descriptor, false);
     assert.equal('valueRule' in descriptor, false);
+    assert.equal(typeof descriptor.resolvedKey, 'boolean');
+    assert.equal(descriptor.resolvedKey, resolvedKeys.get(descriptor.key));
+    assert.deepEqual(
+      descriptor.waistMap,
+      descriptor.key === 'reviewed_policy' ? { skip: 'full' } : null,
+    );
     for (const mode of descriptor.modes) {
       const defaults = descriptor.defaults[mode];
       assert.ok(Array.isArray(defaults), `${descriptor.key} needs ${mode} defaults`);
@@ -252,6 +297,30 @@ test('registry rule metadata has the complete projected row shape', () => {
       if (descriptor.key === 'delivery_tier') fixture.delivery = { tier: value };
       assert.equal(validateArgs(fixture).ok, true, `${mode} ${descriptor.key} default value`);
       assert.ok(descriptor.allowedSources[mode].includes(source), `${mode} ${descriptor.key} default source`);
+    }
+  }
+});
+
+test('registry waist maps use valid source keys and typed destination domains', () => {
+  const waistDomains = {
+    'delivery.tier': ['all', 'main_only'],
+    scopeAnswer: ['light', 'full'],
+    'reviewScope.requested': ['full', 'incremental'],
+  };
+  for (const descriptor of KNOB_REGISTRY.filter(({ waistMap }) => waistMap !== null)) {
+    const domain = waistDomains[descriptor.waistPath];
+    assert.ok(domain, `${descriptor.key} needs a hand-typed waist domain`);
+    for (const mode of descriptor.modes) {
+      const rule = descriptor.rule.kind ? descriptor.rule : descriptor.rule[mode];
+      for (const key of Object.keys(descriptor.waistMap)) {
+        assert.equal(matchesRule(descriptor.rule, key, mode), true, `${descriptor.key} maps invalid ${key}`);
+      }
+      for (const sourceValue of rule.values || []) {
+        const mappedValue = Object.hasOwn(descriptor.waistMap, sourceValue)
+          ? descriptor.waistMap[sourceValue]
+          : sourceValue;
+        assert.ok(domain.includes(mappedValue), `${descriptor.key} maps ${sourceValue} outside ${descriptor.waistPath}`);
+      }
     }
   }
 });
@@ -426,6 +495,129 @@ test('T305-ARGS: normalizeArgs derives typed waist fields from the receipt once'
   assert.equal(stamped.delivery.tier, 'all');
   assert.equal(interactive.delivery, undefined);
   assert.equal(interactive.limits.deliveryCap, undefined);
+});
+
+test('T309-ARGS: headless PR review scope derives requested through the registry map', () => {
+  const cases = [
+    ['full', { kind: 'full', since: null, commits: null }, 'full'],
+    ['incremental', { kind: 'incremental', since: 'abc123', commits: null }, 'incremental'],
+    ['skip', { kind: 'full', since: null, commits: null }, 'full'],
+  ];
+  for (const [policy, scope, expected] of cases) {
+    const input = headlessArgs(policy, scope);
+    delete input.reviewScope.requested;
+    const before = JSON.parse(JSON.stringify(input));
+    const normalized = normalizeArgs(input);
+    assert.equal(normalized.reviewScope.requested, expected, policy);
+    assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] }, policy);
+    assert.deepEqual(input, before, `${policy} normalization must not mutate the caller object`);
+    assert.equal(isPriorReviewDetector(input), true);
+  }
+});
+
+test('T309-ARGS: review policy waistMap drives derivation and caller lockstep together', () => {
+  const descriptor = KNOB_REGISTRY.find(({ key }) => key === 'reviewed_policy');
+  const original = descriptor.waistMap;
+  try {
+    descriptor.waistMap = { skip: 'incremental' };
+    const omitted = headlessArgs('skip', { kind: 'full', since: null, commits: null });
+    delete omitted.reviewScope.requested;
+    assert.equal(normalizeArgs(omitted).reviewScope.requested, 'incremental');
+    const stamped = headlessArgs('skip', { requested: 'incremental', kind: 'full', since: null, commits: null });
+    assert.deepEqual(validateArgs(stamped), { ok: true, errors: [] });
+  } finally {
+    descriptor.waistMap = original;
+  }
+});
+
+test('T309-ARGS: interactive review policy receipts never derive reviewScope.requested', () => {
+  const input = {
+    ...good,
+    configEcho: {
+      ...good.configEcho,
+      reviewed_policy: { value: 'incremental', source: 'env' },
+    },
+    reviewScope: {
+      kind: 'full', since: null, commits: null, detector: priorReviewDetector,
+    },
+  };
+  assert.equal(normalizeArgs(input).reviewScope.requested, undefined);
+  assert.equal(isPriorReviewDetector(input), true);
+
+  const descriptor = KNOB_REGISTRY.find(({ key }) => key === 'reviewed_policy');
+  const originalModes = descriptor.modes;
+  const originalSources = descriptor.allowedSources;
+  try {
+    descriptor.modes = [...originalModes, 'interactive'];
+    descriptor.allowedSources = {
+      ...originalSources,
+      interactive: ['env', 'default'],
+    };
+    assert.equal(normalizeArgs(input).reviewScope.requested, 'incremental');
+  } finally {
+    descriptor.modes = originalModes;
+    descriptor.allowedSources = originalSources;
+  }
+});
+
+test('T309-ARGS: a stamped requested value survives and reports only the detector-backed lockstep mismatch', () => {
+  const args = headlessArgs('full', {
+    requested: 'incremental', kind: 'full', since: null, commits: null,
+  });
+  const normalized = normalizeArgs(args);
+  assert.equal(normalized.reviewScope.requested, 'incremental');
+  assert.deepEqual(validateArgs(normalized).errors, [
+    'reviewScope.requested does not match configEcho.reviewed_policy',
+  ]);
+});
+
+test('T309-ARGS: required reviewScope is not synthesized by receipt derivation', () => {
+  const input = headlessArgs('full');
+  delete input.reviewScope;
+  // The priorReviewDetector gate also blocks this derivation.
+  // Whole-mechanism mutation: remove the REQUIRED-root guard and deriveWhen gate together.
+  const normalized = normalizeArgs(input);
+  assert.equal(normalized.reviewScope, undefined);
+  assert.deepEqual(validateArgs(normalized).errors, [
+    'missing required field: reviewScope',
+  ]);
+});
+
+test('T309-ARGS: required limits is not synthesized by receipt derivation', () => {
+  const input = headlessArgs('full');
+  delete input.limits;
+  // Mutation: remove the REQUIRED-root guard alone.
+  const normalized = normalizeArgs(input);
+  assert.equal(normalized.limits, undefined);
+  assert.deepEqual(validateArgs(normalized).errors, [
+    'missing required field: limits',
+  ]);
+});
+
+test('T309-ARGS: malformed reviewed policy receipt derives nothing and reports the requested enum error', () => {
+  const input = headlessArgs('bogus', { kind: 'full', since: null, commits: null });
+  delete input.reviewScope.requested;
+  const normalized = normalizeArgs(input);
+  assert.equal(normalized.reviewScope.requested, undefined);
+  const result = validateArgs(normalized);
+  assert.ok(result.errors.includes('reviewScope.requested must be full or incremental'));
+});
+
+test('T309-ARGS: local and branch scopes stay stamped while detector-backed lockstep is gated', () => {
+  for (const policy of ['full', 'incremental', 'skip']) {
+    const stamped = headlessArgs(policy, {
+      requested: 'full', kind: 'full', since: null, commits: null, detector: null,
+    });
+    assert.deepEqual(validateArgs(normalizeArgs(stamped)), { ok: true, errors: [] }, policy);
+
+    const omitted = headlessArgs(policy, {
+      kind: 'full', since: null, commits: null, detector: null,
+    });
+    delete omitted.reviewScope.requested;
+    const normalized = normalizeArgs(omitted);
+    assert.equal(normalized.reviewScope.requested, undefined, policy);
+    assert.ok(validateArgs(normalized).errors.includes('reviewScope.requested must be full or incremental'), policy);
+  }
 });
 
 test('T305-ARGS: derivation does not synthesize a missing required limits root', () => {
@@ -626,7 +818,7 @@ test('T182-ARGS: headless review policy and reviewScope requested value stay in 
     },
     limits: { ...good.limits, deliveryCap: 1 },
     delivery: {},
-    reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
+    reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: priorReviewDetector },
   };
   const result = validateArgs(headless);
   assert.equal(result.ok, false);

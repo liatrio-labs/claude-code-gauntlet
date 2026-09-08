@@ -366,12 +366,12 @@ The workflow derives `limits.deliveryCap` from the resolver receipt, including a
 | `riskTable` | the Phase 2e per-file risk classification, by value, as `[{ path, risk }]` — `path` set must equal `changedFiles` exactly (missing or extra paths fail loud; see Phase 2e's risk-level table for the `risk` contract) |
 | `configEcho` | Copy `configResult.waist.configEcho` verbatim. It is the only model-stamped configuration receipt. |
 | `pluginRoot` | the required absolute POSIX path to this plugin; `persist.assembleScriptPath` and `verify.scriptPath`, when present, must start with `{pluginRoot}/scripts/` |
-| `reviewScope` | `{ requested, kind, since, commits, detector }`, copied from the prior-review state; `detector` is `null` for local/branch targets, otherwise copy `previously_reviewed`, `sha_resolvable`, `head_advanced`, `sha_is_ancestor`, `incremental_safe`, and `error` (the first detector error or `null`) verbatim. `kind=incremental` requires `requested=incremental` and `detector.incremental_safe=true`; an incremental request that becomes full retains the detector so the renderer can derive the fallback reason |
+| `reviewScope` | Headless PR/MR targets omit `requested`. The workflow derives it from `configEcho.reviewed_policy` and maps `skip` to `full`. Interactive PR/MR targets stamp the gate answer, or `full` when no prior review exists. Local and branch targets stamp `full`. Copy detector facts verbatim for PR/MR targets. Use `kind=incremental` only for an incremental request with `detector.incremental_safe=true`. Set `since` to the detector's safe `last_reviewed_sha` only for incremental kind. Set `since` to `null` otherwise. Retain detector facts when an incremental request becomes full. The renderer derives the fallback reason from retained detector facts. |
 | `policy` | `{ tier, subagentModel, provider, gateway }` — see below |
 | `limits` | Stamp `{}` unless a genuine REVIEW.md-set override exists. The workflow derives the typed delivery cap from the copied receipt. |
 | `delivery` | For PR/MR targets, stamp only `{ prIdentity: { owner, repo, pr_number, sha_full, title? } }`. The workflow derives the typed delivery tier from the copied receipt. Omit it for local targets. |
 
-The resolver owns the cap and tier values. `normalizeArgs` derives `limits.deliveryCap` and `delivery.tier` from the copied receipt when those waist fields are absent. The Challenge stage applies those typed values before Phase 8 posts `artifactPaths.postReview` verbatim.
+The resolver owns the cap, tier, and review scope policy values. `normalizeArgs` derives `limits.deliveryCap`, `delivery.tier`, and headless PR/MR `reviewScope.requested` from the copied receipt when those waist fields are absent. The Challenge stage applies those typed values before Phase 8 posts `artifactPaths.postReview` verbatim.
 
 **`policy` (model policy the workflow runs under):**
 
