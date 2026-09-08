@@ -2,6 +2,37 @@
 
 <!-- version list -->
 
+## v3.33.1 (2026-09-08)
+
+### Bug Fixes
+
+- **bench**: Scrub ambient CODE_GAUNTLET_* pins from bench children; derive BENCH_ENV and
+  EXPECTED_ECHO from the knob registry
+  ([#312](https://github.com/liatrio-labs/claude-code-gauntlet/pull/312),
+  [`1271c66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1271c662a8701312602bdb9d12d025ba0b5a2741))
+
+- **bench**: Scrub ambient CODE_GAUNTLET_* pins from bench children; derive BENCH_ENV and
+  EXPECTED_ECHO from the knob registry (#308)
+  ([#312](https://github.com/liatrio-labs/claude-code-gauntlet/pull/312),
+  [`1271c66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1271c662a8701312602bdb9d12d025ba0b5a2741))
+
+### Refactoring
+
+- **bench**: Reuse the argv plugin root in the fake echo instead of recomputing it
+  ([#312](https://github.com/liatrio-labs/claude-code-gauntlet/pull/312),
+  [`1271c66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1271c662a8701312602bdb9d12d025ba0b5a2741))
+
+### Testing
+
+- **bench**: Assert each pin-key guard by its own message so a deleted guard cannot pass through a
+  KeyError ([#312](https://github.com/liatrio-labs/claude-code-gauntlet/pull/312),
+  [`1271c66`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1271c662a8701312602bdb9d12d025ba0b5a2741))
+
+- **resolver**: Read the expected pipeline_version from the bundle instead of a hard-coded release
+  string ([#310](https://github.com/liatrio-labs/claude-code-gauntlet/pull/310),
+  [`d63b8d0`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d63b8d0ad5940980a34bd34fd6de0fc88931699c))
+
+
 ## v3.33.0 (2026-09-08)
 
 ### Bug Fixes
