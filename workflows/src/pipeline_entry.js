@@ -14,7 +14,7 @@ import { parseEntryArgs } from './args.js';
 // the WORKFLOW rather than the skill. The skill invokes this bundle by the registered
 // name below with the Phases 1-2 args waist. Anything else refuses before dispatch.
 export const meta = { name: 'code-gauntlet-pipeline', description: 'code-gauntlet v3 pipeline: phases 3-8 orchestration (Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Report) + artifact persistence', whenToUse: 'The code-gauntlet SKILL invokes this bundle by its registered name code-gauntlet:code-gauntlet-pipeline with the Phases 1-2 args waist. Invoked with anything else, it refuses before dispatch. Keep meta.name different from the skill name so slash-command resolution stays with the skill.', phases: ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'] };
-const PIPELINE_VERSION = '3.33.1';
+const PIPELINE_VERSION = '3.34.0';
 
 // run(rawArgs) — the thin public entry. Builds the real-globals ctx and delegates to
 // runWith (in stages.js), which owns arg validation, the top-level try/catch, the full

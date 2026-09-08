@@ -2,6 +2,28 @@
 
 <!-- version list -->
 
+## v3.34.0 (2026-09-08)
+
+### Bug Fixes
+
+- **args**: Mode-aware resolved-key prose scan; isolate the required-root regressions per waist
+  root; single headless omission rule in the skill prose
+  ([#313](https://github.com/liatrio-labs/claude-code-gauntlet/pull/313),
+  [`a020c41`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a020c41d2ead0c4923f5f262ece5e820aa1fb091))
+
+### Features
+
+- **args**: Derive reviewScope.requested from the resolved reviewed_policy for headless PR/MR
+  targets; resolvedKey decides the resolver's typed map
+  ([#313](https://github.com/liatrio-labs/claude-code-gauntlet/pull/313),
+  [`a020c41`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a020c41d2ead0c4923f5f262ece5e820aa1fb091))
+
+- **args**: Derive reviewScope.requested from the resolved reviewed_policy; resolvedKey decides the
+  resolver's typed map (#309)
+  ([#313](https://github.com/liatrio-labs/claude-code-gauntlet/pull/313),
+  [`a020c41`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a020c41d2ead0c4923f5f262ece5e820aa1fb091))
+
+
 ## v3.33.1 (2026-09-08)
 
 ### Bug Fixes
