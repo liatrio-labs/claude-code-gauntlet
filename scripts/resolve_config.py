@@ -416,15 +416,8 @@ def _safe_integer(value: str) -> bool:
         return False
 
 
-def matches_rule(
-    rule: Any,
-    value: Any,
-    mode: str,
-    *,
-    registry: Sequence[Mapping[str, Any]] | None = None,
-) -> bool:
+def matches_rule(rule: Any, value: Any, mode: str) -> bool:
     """Return whether a string satisfies a registry rule for ``mode``."""
-    _registry_rows(registry)
     selected = _selected_rule(rule, mode)
     if not isinstance(value, str) or not isinstance(selected, dict):
         return False
@@ -579,7 +572,7 @@ def resolve(
         env_name = row.get("env")
         if isinstance(env_name, str) and env_name in environ:
             env_value = environ[env_name]
-            if not matches_rule(row.get("rule"), env_value, mode, registry=rows):
+            if not matches_rule(row.get("rule"), env_value, mode):
                 raise ResolverError(_invalid_message(row, env_value, mode))
             # An interactive model pin is a validation-only pin.  Its source remains
             # fixed because the row does not allow env as an interactive source.
@@ -590,7 +583,7 @@ def resolve(
             and row.get("reviewMdKey") is not None
             and "review_md" in row.get("allowedSources", {}).get(mode, [])
         ):
-            if not matches_rule(row.get("rule"), review_value, mode, registry=rows):
+            if not matches_rule(row.get("rule"), review_value, mode):
                 raise ResolverError(
                     _invalid_message(row, review_value, mode, review_value=True)
                 )

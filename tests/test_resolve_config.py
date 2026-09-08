@@ -545,7 +545,7 @@ class TestGeneratedDataContracts(unittest.TestCase):
                 "resolved.reviewed_policy",
             ),
             "Trivial / light-scope (all low-risk, <50 lines)": (
-                "resolved.trivial_scope",
+                "configEcho.trivial_scope",
             ),
             "Phase 8 Stage 1 (delivery question)": (
                 "resolved.delivery",
