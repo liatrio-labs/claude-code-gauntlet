@@ -2,6 +2,54 @@
 
 <!-- version list -->
 
+## v3.33.0 (2026-09-08)
+
+### Bug Fixes
+
+- **resolver**: Drop the unused registry parameter from matches_rule; the light-scope gate row names
+  the receipt entry ([#307](https://github.com/liatrio-labs/claude-code-gauntlet/pull/307),
+  [`21cfce3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21cfce3d0084e7b779ec2d5d7fd5110a24b4987e))
+
+- **resolver**: Registry-driven derive predicate, exported rule interpreter, twin-safe grammar and
+  the review-round tests ([#307](https://github.com/liatrio-labs/claude-code-gauntlet/pull/307),
+  [`21cfce3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21cfce3d0084e7b779ec2d5d7fd5110a24b4987e))
+
+### Documentation
+
+- **headless**: Trim rewritten sentences to the length rule and drop an issue citation
+  ([#307](https://github.com/liatrio-labs/claude-code-gauntlet/pull/307),
+  [`21cfce3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21cfce3d0084e7b779ec2d5d7fd5110a24b4987e))
+
+- **skill**: Phase 1 resolves configuration through resolve_config.py; later gates read its typed
+  result ([#307](https://github.com/liatrio-labs/claude-code-gauntlet/pull/307),
+  [`21cfce3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21cfce3d0084e7b779ec2d5d7fd5110a24b4987e))
+
+- **skill**: Restore the routed Store sentence, the headless no-prompt rule and the skip condition;
+  pin the resolver call sites
+  ([#307](https://github.com/liatrio-labs/claude-code-gauntlet/pull/307),
+  [`21cfce3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21cfce3d0084e7b779ec2d5d7fd5110a24b4987e))
+
+### Features
+
+- One code-owned resolver for the resolved config; the workflow derives the typed waist from the
+  receipt (#305) ([#307](https://github.com/liatrio-labs/claude-code-gauntlet/pull/307),
+  [`21cfce3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21cfce3d0084e7b779ec2d5d7fd5110a24b4987e))
+
+- **args**: Registry-driven rule data and typed-waist derivation from the config receipt
+  ([#307](https://github.com/liatrio-labs/claude-code-gauntlet/pull/307),
+  [`21cfce3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21cfce3d0084e7b779ec2d5d7fd5110a24b4987e))
+
+- **scripts**: Code-owned config resolver with generated registry, receipts and env table
+  ([#307](https://github.com/liatrio-labs/claude-code-gauntlet/pull/307),
+  [`21cfce3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21cfce3d0084e7b779ec2d5d7fd5110a24b4987e))
+
+### Testing
+
+- **generator**: Skip the ruff fixed-point test when the pre-commit-pinned ruff is absent, as the
+  filter generator test does ([#307](https://github.com/liatrio-labs/claude-code-gauntlet/pull/307),
+  [`21cfce3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21cfce3d0084e7b779ec2d5d7fd5110a24b4987e))
+
+
 ## v3.32.2 (2026-09-07)
 
 ### Bug Fixes
