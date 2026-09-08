@@ -574,13 +574,23 @@ test('T309-ARGS: a stamped requested value survives and reports only the detecto
 test('T309-ARGS: required reviewScope is not synthesized by receipt derivation', () => {
   const input = headlessArgs('full');
   delete input.reviewScope;
-  delete input.limits;
+  // The priorReviewDetector gate also blocks this derivation.
+  // Whole-mechanism mutation: remove the REQUIRED-root guard and deriveWhen gate together.
   const normalized = normalizeArgs(input);
   assert.equal(normalized.reviewScope, undefined);
+  assert.deepEqual(validateArgs(normalized).errors, [
+    'missing required field: reviewScope',
+  ]);
+});
+
+test('T309-ARGS: required limits is not synthesized by receipt derivation', () => {
+  const input = headlessArgs('full');
+  delete input.limits;
+  // Mutation: remove the REQUIRED-root guard alone.
+  const normalized = normalizeArgs(input);
   assert.equal(normalized.limits, undefined);
   assert.deepEqual(validateArgs(normalized).errors, [
     'missing required field: limits',
-    'missing required field: reviewScope',
   ]);
 });
 
