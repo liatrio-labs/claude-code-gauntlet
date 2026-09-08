@@ -114,7 +114,7 @@ def echo_lines(plugin_root=None, pipeline_version=None):
         sys.path.insert(0, plugin_root_from_argv)
     from bench.runner import invoke
 
-    root = plugin_root if plugin_root is not None else _plugin_dir_from_argv()
+    root = plugin_root if plugin_root is not None else plugin_root_from_argv
     ver = pipeline_version if pipeline_version is not None else _pipeline_version(root)
     return [
         "Headless config:",
