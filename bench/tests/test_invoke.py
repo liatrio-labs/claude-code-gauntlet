@@ -251,9 +251,15 @@ class BuildEnvTest(InvokeTestBase):
                 "rule": {"kind": "enum", "values": ["ok"]},
             }
         ]
-        with self.assertRaisesRegex(ValueError, r"BENCH_PINS.*'example'"):
+        # Each arm names its own guard message: a deleted key-set guard would fall through
+        # to a KeyError on the missing pin, which the missing-arm regex must not accept.
+        with self.assertRaisesRegex(
+            ValueError, r"BENCH_PINS key set mismatch: missing key\(s\) 'example'$"
+        ):
             invoke.build_bench_env({}, registry)
-        with self.assertRaisesRegex(ValueError, r"BENCH_PINS.*'extra'"):
+        with self.assertRaisesRegex(
+            ValueError, r"BENCH_PINS key set mismatch: unexpected key\(s\) 'extra'$"
+        ):
             invoke.build_bench_env(
                 {"example": "ok", "extra": "ok"},
                 registry,
