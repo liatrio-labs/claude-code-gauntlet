@@ -301,7 +301,10 @@ class TestResolverCli(unittest.TestCase):
         self.assertEqual(
             set(payload), {"mode", "target", "block", "waist", "resolved", "identity"}
         )
-        self.assertEqual(payload["identity"]["pipeline_version"], "3.32.2")
+        # The release commit bumps plugin.json and the bundle together; the manifest is
+        # the oracle the resolver does not read, so a wrong bundle read goes red here.
+        manifest = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text())
+        self.assertEqual(payload["identity"]["pipeline_version"], manifest["version"])
         self.assertEqual(payload["identity"]["plugin_root"], str(REPO))
         self.assertEqual(payload["block"] + "\n", proc.stderr)
         self.assertTrue(proc.stderr.startswith("Headless config:\n"))
