@@ -852,6 +852,67 @@ class MultiRunTest(RunTestBase):
         self.assertEqual(fingerprint["CODE_GAUNTLET_MODEL_TIER"], "optimized")
         self.assertEqual(fingerprint["timeout_s"], 45 * 60)
 
+    def test_manifest_records_config_echo_and_ambient_scrub(self):
+        import types
+
+        args = types.SimpleNamespace(
+            anchor=None,
+            fidelity="dry-run",
+            tool="deep-review-v3",
+            child_model=None,
+            child_auth="api",
+        )
+        run_dir = self.tmp / "manifest-provenance"
+        run_dir.mkdir()
+        with patch.dict(
+            os.environ,
+            {
+                "PATH": os.environ.get("PATH", ""),
+                "CODE_GAUNTLET_TASKS_DIR": "/junk/tasks",
+                "CODE_GAUNTLET_FUTURE_SENTINEL": "x",
+            },
+            clear=True,
+        ):
+            expected_removed = run.invoke.scrub_ambient(os.environ)[1]
+            run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
+        manifest = json.loads((run_dir / "run.json").read_text())
+        fingerprint = manifest["env_fingerprint"]
+        self.assertEqual(
+            set(fingerprint),
+            {
+                "CODE_GAUNTLET_HEADLESS",
+                "CODE_GAUNTLET_MODEL_TIER",
+                "CODE_GAUNTLET_DELIVERY",
+                "CODE_GAUNTLET_POST_MODE",
+                "CODE_GAUNTLET_PR_COMMENT_CAP",
+                "CODE_GAUNTLET_DELIVERY_TIER",
+                "CODE_GAUNTLET_DRAFT_POLICY",
+                "CODE_GAUNTLET_REVIEWED_POLICY",
+                "CODE_GAUNTLET_PR_NOT_FOUND_POLICY",
+                "CODE_GAUNTLET_TRIVIAL_SCOPE",
+                "timeout_s",
+                "child_auth",
+                "config_echo",
+                "ambient_scrubbed",
+            },
+        )
+        self.assertEqual(
+            set(fingerprint["config_echo"]),
+            {
+                "model_tier",
+                "delivery",
+                "post_mode",
+                "pr_comment_cap",
+                "delivery_tier",
+                "draft_policy",
+                "reviewed_policy",
+                "pr_not_found_policy",
+                "trivial_scope",
+            },
+        )
+        self.assertEqual(fingerprint["config_echo"], run.invoke.EXPECTED_ECHO_RECEIPT)
+        self.assertEqual(fingerprint["ambient_scrubbed"], expected_removed)
+
 
 class ToolWiringTest(RunTestBase):
     """--tool threads into the manifest and forwards to invoke_review (v3 default)."""

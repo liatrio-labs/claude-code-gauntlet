@@ -840,10 +840,17 @@ def _child_auth_for(args, run_id=None):
 
 
 def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
-    env_fingerprint = dict(invoke.BENCH_ENV)  # the 9 CODE_GAUNTLET_* values
+    """Write run provenance, including the shell scrub observed at manifest time.
+
+    A resume in a different shell does not rewrite this manifest.
+    """
+    env_fingerprint = dict(invoke.BENCH_ENV)  # the registry CODE_GAUNTLET_* values
     env_fingerprint["timeout_s"] = timeout_s
     child_auth = _resolve_child_auth(getattr(args, "child_auth", None))
     env_fingerprint["child_auth"] = child_auth
+    _, ambient_scrubbed = invoke.scrub_ambient(os.environ)
+    env_fingerprint["config_echo"] = invoke.EXPECTED_ECHO_RECEIPT
+    env_fingerprint["ambient_scrubbed"] = ambient_scrubbed
     invocation = (
         f"naive:single-pass max-turns={NAIVE_MAX_TURNS}"
         if args.anchor == "naive"

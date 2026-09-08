@@ -95,6 +95,15 @@ class HeadlessEchoIdentityContractTest(unittest.TestCase):
         with patch.object(invoke, "EXPECTED_ECHO", DOC_ECHO_VALUES):
             self.assertTrue(invoke._echo_in_text("\n".join(substituted)))
 
+    def test_every_doc_knob_line_uses_the_resolver_receipt_source(self):
+        block = self._echo_block()
+        for key, entry in invoke.EXPECTED_ECHO_RECEIPT.items():
+            match = re.search(
+                rf"(?m)^[ \t]*{re.escape(key)}=[^\n]+ \(([^)]+)\)$", block
+            )
+            self.assertIsNotNone(match, f"missing doc line for {key}")
+            self.assertEqual(match.group(1), entry["source"], key)
+
 
 if __name__ == "__main__":
     unittest.main()

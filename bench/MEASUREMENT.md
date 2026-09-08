@@ -117,7 +117,7 @@ A red checker does **not** by itself mean the change under test is broken. Two
 failure modes fire on clean code and both have been observed on branches that
 were otherwise correct, so triage the reason before drawing a conclusion.
 
-**`config_echo_mismatch` — the eight/nine-knob echo floor.** This label means
+**`config_echo_mismatch` — the registry-knob echo floor.** This label means
 the runner did not find every expected configuration knob in any accepted source;
 it is separate from the G4 identity check for `pipeline_version` and `plugin_root`.
 The report now carries the code-rendered knob receipt, so once the report is
