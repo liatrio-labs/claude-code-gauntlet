@@ -100,11 +100,11 @@ _CONDITIONAL_NOUNS = {
 
 
 def load_registry(repo_root=REPO_ROOT):
-    """The live schema declaration, imported from the ESM source (mirrors the test helper)."""
+    """Import the live schemas and keep finding and waist required lists distinct."""
     node_src = (
         "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/args.js')]).then(([m, a]) => console.log(JSON.stringify({"
-        "  findingRequired: m.FINDING_REQUIRED,"
-        "  required: a.REQUIRED,"
+        "  required: m.FINDING_REQUIRED,"
+        "  waistRequired: a.REQUIRED,"
         "  canonicalFields: Object.keys(m.FINDING_PROP_TYPES),"
         "  dimensions: m.DIMENSIONS.map(d => ({"
         "    dimension: d.dimension, agentType: d.agentType,"
@@ -298,8 +298,7 @@ def known_fields(registry):
 
 def field_required_status(field, registry):
     """'yes' / 'conditional' / 'no' — the tri-state Required column value for `field`."""
-    finding_required = registry.get("findingRequired", registry.get("required", []))
-    if field in finding_required:
+    if field in registry["required"]:
         return "yes"
     for row in registry["dimensions"]:
         if field in row["requiredExtra"]:
@@ -659,7 +658,7 @@ def _identity_description(identity, table_name, name):
 
 def _validate_derived_waist_identity(identity):
     """Validate every registry metadata value needed by the derived-waist renderer."""
-    for table_name in ("deriveWhen", "derivedFrom"):
+    for table_name in ("deriveWhen", "derivedFrom", "waistRequired"):
         if table_name not in identity:
             raise SystemExit(f"identity_body: identity lacks a {table_name} key")
     for row in identity["knobs"]:
@@ -683,13 +682,13 @@ def _modes_phrase(modes):
     return f"{', '.join(names[:-1])}, and {names[-1]} runs"
 
 
-def _derived_waist_instruction(row, required):
+def _derived_waist_instruction(row, waist_required):
     path = row["waistPath"]
     parts = path.split(".")
     if len(parts) == 1:
         return "Leave it out."
     root, leaf = parts[0], parts[-1]
-    if root in required:
+    if root in waist_required:
         return f"Stamp `{root}` and leave `{leaf}` out of it."
     return f"Leave `{leaf}` out of any stamped `{root}`."
 
@@ -730,7 +729,7 @@ def _derived_waist_body(identity):
             if row.get("waistMap") is not None:
                 for source, target in row["waistMap"].items():
                     line += f"; `{source}` derives as `{target}`"
-            line += ". " + _derived_waist_instruction(row, identity["required"])
+            line += ". " + _derived_waist_instruction(row, identity["waistRequired"])
             lines.append(line)
     if derived_rows:
         if lines:

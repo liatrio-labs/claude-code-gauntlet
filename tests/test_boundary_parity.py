@@ -43,7 +43,7 @@ sys.path.insert(0, str(REPO))
 import scripts.post_review as post_review  # noqa: E402
 import scripts.report_patches as report_patches  # noqa: E402
 from bench.runner import invoke  # noqa: E402
-from scripts import resolve_config  # noqa: E402
+from scripts import generate_contract_requirements, resolve_config  # noqa: E402
 
 RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
 
@@ -510,6 +510,18 @@ class TestReportPatchesBoundary(unittest.TestCase):
 class TestReportMethodologyRuntimeParity(unittest.TestCase):
     """The Python receipt consumers accept the real JS renderer output in both modes."""
 
+    _DERIVED_WAIST_BULLET_RE = re.compile(
+        r"^- `(?P<path>[^`]+)` "
+        r"\((?P<modes>headless runs|interactive runs|headless and interactive runs)"
+        r"(?:, when (?P<condition>[^)]+))?\): "
+        r"from `configEcho\.(?P<receipt>[^`]+)`(?P<notes>.*?)\. "
+        r"(?P<instruction>"
+        r"Stamp `(?P<stamp_root>[^`]+)` and leave `(?P<stamp_leaf>[^`]+)` out of it\."
+        r"|Leave `(?P<omit_leaf>[^`]+)` out of any stamped `(?P<omit_root>[^`]+)`\."
+        r"|Leave it out\."
+        r")$"
+    )
+
     def _render(self, mode):
         if mode == "headless":
             echo = {
@@ -801,6 +813,166 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
         self.assertEqual(args["delivery"]["tier"], "main_only")
         self.assertEqual(args["reviewScope"]["requested"], "full")
         self.assertEqual(args["scopeAnswer"], "light")
+
+    def test_derived_waist_fence_is_followable_against_the_live_runtime(self):
+        identity = generate_contract_requirements.load_registry(str(REPO))
+        body = "\n".join(
+            generate_contract_requirements.identity_body(
+                "skills/code-gauntlet/SKILL.md",
+                "derived_waist_fields",
+                identity,
+            )
+        )
+        waist_body = body.split(
+            "\n\nThe workflow fills these receipt entries itself; never stamp them.\n\n",
+            1,
+        )[0]
+        bullet_lines = [
+            line for line in waist_body.split("\n") if line.startswith("- ")
+        ]
+        rows = []
+        for line in bullet_lines:
+            match = self._DERIVED_WAIST_BULLET_RE.fullmatch(line)
+            self.assertIsNotNone(match, line)
+            groups = match.groupdict()
+            instruction = groups["instruction"]
+            if groups["stamp_root"] is not None:
+                action = "stamp"
+                root = groups["stamp_root"]
+                leaf = groups["stamp_leaf"]
+            elif groups["omit_root"] is not None:
+                action = "omit_root"
+                root = groups["omit_root"]
+                leaf = groups["omit_leaf"]
+            else:
+                action = "omit_root"
+                root = groups["path"]
+                leaf = None
+            notes = groups["notes"]
+            rows.append(
+                {
+                    "path": groups["path"],
+                    "modes": groups["modes"],
+                    "condition": groups["condition"],
+                    "receipt": groups["receipt"],
+                    "notes": notes,
+                    "instruction": instruction,
+                    "action": action,
+                    "root": root,
+                    "leaf": leaf,
+                    "map": dict(re.findall(r"; `([^`]+)` derives as `([^`]+)`", notes)),
+                }
+            )
+        self.assertEqual(len(rows), len(bullet_lines))
+
+        detector = {
+            "previously_reviewed": True,
+            "sha_resolvable": True,
+            "head_advanced": True,
+            "sha_is_ancestor": True,
+            "incremental_safe": True,
+            "error": None,
+        }
+        condition_fixtures = {
+            "`reviewScope.detector` is an object": {
+                "reviewScope": {
+                    "kind": "full",
+                    "since": None,
+                    "commits": None,
+                    "detector": detector,
+                }
+            },
+            "every changed file is low risk and fewer than 50 lines changed": {
+                "riskTable": [{"path": "a.js", "risk": "low"}],
+                "changedLines": 1,
+            },
+        }
+        for row in rows:
+            if row["condition"] is not None:
+                self.assertIn(row["condition"], condition_fixtures)
+
+        modes = {
+            "headless runs": {"headless"},
+            "interactive runs": {"interactive"},
+            "headless and interactive runs": {"headless", "interactive"},
+        }
+        env = {
+            "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
+            "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
+            "CODE_GAUNTLET_REVIEWED_POLICY": "skip",
+            "CODE_GAUNTLET_TRIVIAL_SCOPE": "light",
+        }
+        for mode in ("headless", "interactive"):
+            with self.subTest(mode=mode):
+                payload = resolve_config.resolve(mode, env, None, "pr")
+                relevant = [row for row in rows if mode in modes[row["modes"]]]
+                overrides = {}
+                for row in relevant:
+                    if row["condition"] is not None:
+                        overrides.update(condition_fixtures[row["condition"]])
+                expected = {}
+                for row in relevant:
+                    receipt = payload["waist"]["configEcho"].get(row["receipt"])
+                    self.assertIsNotNone(receipt, row["receipt"])
+                    value = row["map"].get(receipt["value"], receipt["value"])
+                    if "digits derive as a JSON number" in row["notes"]:
+                        value = None if value == "null" else int(value)
+                    elif "comma-separated value derives as a list" in row["notes"]:
+                        value = value.split(",")
+                    expected[row["path"]] = value
+
+                spec = {
+                    "mode": mode,
+                    "configEcho": payload["waist"]["configEcho"],
+                    "rows": [
+                        {
+                            "path": row["path"],
+                            "action": row["action"],
+                            "root": row["root"],
+                        }
+                        for row in relevant
+                    ],
+                    "overrides": overrides,
+                    "expected": expected,
+                }
+                script = (
+                    "import { normalizeArgsReport, validateArgs } from './workflows/src/args.js';"
+                    "import { validArgs } from './workflows/test/helpers/pipelineMock.js';"
+                    "const spec = "
+                    + json.dumps(spec)
+                    + ";"
+                    + "const args = validArgs({ mode: spec.mode });"
+                    + "args.mode = spec.mode;"
+                    + "args.configEcho = spec.configEcho;"
+                    + "Object.assign(args, spec.overrides);"
+                    + "for (const row of spec.rows) delete args[row.root];"
+                    + "for (const row of spec.rows) {"
+                    + "  if (row.action === 'stamp') {"
+                    + "    args[row.root] = {};"
+                    + "    if (row.root === 'reviewScope' && spec.overrides.reviewScope) "
+                    + "Object.assign(args[row.root], spec.overrides.reviewScope);"
+                    + "  }"
+                    + "}"
+                    + "const normalized = normalizeArgsReport(args);"
+                    + "process.stdout.write(JSON.stringify({ result: validateArgs(normalized.args), args: normalized.args }));"
+                )
+                proc = subprocess.run(
+                    ["node", "--input-type=module", "-e", script],
+                    cwd=str(REPO),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                result = json.loads(proc.stdout)
+                self.assertTrue(result["result"]["ok"], result["result"]["errors"])
+                for path, expected_value in expected.items():
+                    current = result["args"]
+                    for part in path.split("."):
+                        self.assertIsInstance(current, dict, path)
+                        self.assertIn(part, current, path)
+                        current = current[part]
+                    self.assertEqual(current, expected_value, path)
 
     def test_headless_review_scope_derivation_matches_the_hand_typed_boundary_table(
         self,

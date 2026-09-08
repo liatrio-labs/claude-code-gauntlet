@@ -771,26 +771,6 @@ function derivedWaistFixture(mode) {
   return input;
 }
 
-test('T9: the registry projection builds a valid waist with every derived leaf omitted', () => {
-  for (const mode of ['headless', 'interactive']) {
-    const input = derivedWaistFixture(mode);
-    for (const descriptor of KNOB_REGISTRY.filter(({ waistPath }) => waistPath !== null)) {
-      if (!descriptor.modes.includes(mode)) continue;
-      deleteDottedFixtureValue(input, descriptor.waistPath);
-    }
-    const normalized = normalizeArgs(input);
-    const result = validateArgs(normalized);
-    assert.deepEqual(result, { ok: true, errors: [] }, mode);
-    for (const descriptor of KNOB_REGISTRY.filter(({ waistPath }) => waistPath !== null)) {
-      if (!descriptor.modes.includes(mode)) continue;
-      assert.notEqual(dottedFixtureValue(normalized, descriptor.waistPath), undefined, descriptor.key);
-    }
-    if (mode === 'interactive') {
-      assert.deepEqual(normalized.configEcho.review_md, { value: 'absent', source: 'discovery' });
-    }
-  }
-});
-
 test('T10: every waist row derives in each declared mode and not in its mode twin', () => {
   for (const descriptor of KNOB_REGISTRY.filter(({ waistPath }) => waistPath !== null)) {
     for (const mode of descriptor.modes) {
@@ -799,15 +779,31 @@ test('T10: every waist row derives in each declared mode and not in its mode twi
       const normalized = normalizeArgs(input);
       assert.notEqual(dottedFixtureValue(normalized, descriptor.waistPath), undefined, `${descriptor.key}/${mode}`);
     }
-    const twinMode = descriptor.modes.includes('headless') ? 'interactive' : 'headless';
-    if (descriptor.modes.includes(twinMode)) continue;
-    const twin = derivedWaistFixture(twinMode);
-    twin.configEcho[descriptor.key] = { value: descriptor.key === 'trivial_scope' ? 'light' : 'full', source: 'default' };
-    twin.riskTable = [{ path: 'a.js', risk: 'low' }];
-    twin.changedLines = 1;
-    twin.reviewScope.detector = priorReviewDetector;
-    deleteDottedFixtureValue(twin, descriptor.waistPath);
-    assert.equal(dottedFixtureValue(normalizeArgs(twin), descriptor.waistPath), undefined, `${descriptor.key}/${twinMode}`);
+  }
+
+  const originalLength = KNOB_REGISTRY.length;
+  try {
+    KNOB_REGISTRY.push({
+      key: 'twin_probe',
+      modes: ['headless'],
+      allowedSources: { headless: ['default'], interactive: ['default'] },
+      rule: { kind: 'enum', values: ['v'] },
+      env: null,
+      reviewMdKey: null,
+      defaults: { headless: ['v', 'default'], interactive: ['v', 'default'] },
+      type: 'string',
+      waistPath: 'twinProbe',
+      waistMap: null,
+      derivedFrom: null,
+      deriveWhen: null,
+      nullReceipt: [],
+      resolvedKey: false,
+    });
+    const twin = derivedWaistFixture('interactive');
+    twin.configEcho.twin_probe = { value: 'v', source: 'default' };
+    assert.equal(normalizeArgs(twin).twinProbe, undefined);
+  } finally {
+    KNOB_REGISTRY.length = originalLength;
   }
 });
 

@@ -81,9 +81,7 @@ path of `artifactPaths.report` plus a short chat summary, and skip posting.
 **Question 1 of 2 — Delivery.** The report already exists on disk; the only open question is whether the
 findings also post to the PR. Ask once, after materialization, before anything is posted:
 
-> Headless mode exception: do not present this `AskUserQuestion`. Deliver per
-> `configResult.resolved.delivery` and post `artifactPaths.postReview` **verbatim**. The Challenge stage
-> applies the receipt-backed tier and cap before Phase 8 posts `artifactPaths.postReview` verbatim.
+> Headless mode exception: do not present this `AskUserQuestion`; deliver per `configResult.resolved.delivery`, with the Challenge stage applying the receipt-backed tier and cap before Phase 8 posts `artifactPaths.postReview` verbatim.
 > See `references/headless-mode.md`.
 
 ```

@@ -316,7 +316,17 @@ class TestIdentityFenceGuards(unittest.TestCase):
         "ruleSourceLabelFallback": "RF",
         "deriveWhen": {"gamma": "the gamma condition holds"},
         "derivedFrom": {"delta": "the delta source is present"},
-        "required": ["nested", "limits"],
+        "required": [
+            "id",
+            "file",
+            "line_start",
+            "title",
+            "description",
+            "severity",
+            "confidence",
+            "dimension",
+        ],
+        "waistRequired": ["nested", "limits"],
         "knobs": [
             {
                 "key": "alpha",
@@ -1045,6 +1055,10 @@ class TestIdentityFenceGuards(unittest.TestCase):
             del identity[missing]
             cases.append((f"missing {missing}", identity, missing))
 
+        missing_waist_required = deepcopy(self.IDENTITY)
+        del missing_waist_required["waistRequired"]
+        cases.append(("missing waistRequired", missing_waist_required, "waistRequired"))
+
         missing_description = deepcopy(self.IDENTITY)
         del missing_description["deriveWhen"]["gamma"]
         cases.append(("missing description", missing_description, "gamma"))
@@ -1142,6 +1156,19 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         )
         self.assertEqual(
             identity["required"],
+            [
+                "id",
+                "file",
+                "line_start",
+                "title",
+                "description",
+                "severity",
+                "confidence",
+                "dimension",
+            ],
+        )
+        self.assertEqual(
+            identity["waistRequired"],
             [
                 "mode",
                 "repoRoot",

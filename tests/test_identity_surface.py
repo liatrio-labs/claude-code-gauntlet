@@ -144,7 +144,10 @@ class TestIdentitySurface(unittest.TestCase):
         (
             "skills/code-gauntlet/references/phase2-triage.md",
             "derived_waist_fields",
-        ): ("## Args Preparation", "## Triage Announcement"),
+        ): (
+            "## Args Preparation",
+            "**`policy` (model policy the workflow runs under):**",
+        ),
         (
             "skills/code-gauntlet/references/phase1-preflight.md",
             "derived_waist_fields",
