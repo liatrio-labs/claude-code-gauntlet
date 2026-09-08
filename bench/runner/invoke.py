@@ -1,6 +1,6 @@
 """Headless invoker for a single golden PR (spec H3 "Per-PR flow", H8 hang guard).
 
-``build_env`` assembles the pinned, isolated invocation context: the 9 bench
+``build_env`` assembles the pinned, isolated invocation context: the registry-pinned bench
 ``CODE_GAUNTLET_*`` knobs, the per-run output dir, ``GH_REPO``, and an isolated
 ``HOME``/``CLAUDE_CONFIG_DIR`` so operator config can never leak in. It also pre-seeds
 the isolated ``.claude.json`` with the worktree marked trusted -- a headless run cannot
@@ -29,12 +29,24 @@ from pathlib import Path
 
 from bench.runner.costs import parse_costs
 from bench.runner.ledger import API_AUTH_MODE, AUTH_MODES, SUBSCRIPTION_AUTH_MODE
+from scripts.resolve_config import (
+    KNOB_REGISTRY,
+    ResolverError,
+    ResolverSetupError,
+    matches_rule,
+    resolve,
+)
 
 __all__ = [
+    "BENCH_ENV",
+    "BENCH_PINS",
+    "EXPECTED_ECHO",
+    "EXPECTED_ECHO_RECEIPT",
     "PIPELINE_META_NAME",
     "InvokeResult",
     "_claude_home",
     "api_key_helper_files",
+    "build_bench_env",
     "build_env",
     "collect_workflow_records",
     "extract_identity_receipt",
@@ -48,6 +60,7 @@ __all__ = [
     "resolve_claude_home",
     "script_path_matches_repo",
     "scriptpath_from_record",
+    "scrub_ambient",
     "snapshot_workflow_records",
     "supersede_attempt_artifacts",
     "supersede_workflow_records",
@@ -80,24 +93,9 @@ PIPELINE_META_NAME = _read_pipeline_meta_name()
 # here into every child env. A module global so tests can repoint it at a tempfile.
 ENV_PATH = REPO_ROOT / "bench" / ".env"
 
-# The 9 bench values (spec H2 table, bench overrides): pinned explicitly on every run
-# so the harness is drift-immune even though the skill defines its own defaults.
-BENCH_ENV = {
-    "CODE_GAUNTLET_HEADLESS": "1",
-    "CODE_GAUNTLET_MODEL_TIER": "optimized",
-    "CODE_GAUNTLET_DELIVERY": "pr_comments,markdown",
-    "CODE_GAUNTLET_POST_MODE": "dry-run",
-    "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
-    "CODE_GAUNTLET_DRAFT_POLICY": "review",
-    "CODE_GAUNTLET_REVIEWED_POLICY": "full",
-    "CODE_GAUNTLET_PR_NOT_FOUND_POLICY": "error",
-    "CODE_GAUNTLET_TRIVIAL_SCOPE": "full",
-}
-
-# The resolved-config receipt the runner asserts against (Task 3 echo format). Keys are
-# the 9 knob lines under the "Headless config:" header; CODE_GAUNTLET_HEADLESS itself is
-# the master switch and is not echoed as a knob. Values are the bench expectations.
-EXPECTED_ECHO = {
+# Bench owns this policy and pins every headless registry knob with an env name. Registry
+# defaults never feed the bench, so a registry default drift cannot silently change a run.
+BENCH_PINS = {
     "model_tier": "optimized",
     "delivery": "pr_comments,markdown",
     "post_mode": "dry-run",
@@ -108,6 +106,54 @@ EXPECTED_ECHO = {
     "pr_not_found_policy": "error",
     "trivial_scope": "full",
 }
+
+
+def build_bench_env(pins, registry):
+    """Build the bench-owned headless env from a complete, validated pin map."""
+    rows = [
+        row
+        for row in registry
+        if "headless" in row.get("modes", []) and isinstance(row.get("env"), str)
+    ]
+    expected_keys = {row.get("key") for row in rows}
+    actual_keys = set(pins)
+    if actual_keys != expected_keys:
+        missing = expected_keys - actual_keys
+        extra = actual_keys - expected_keys
+        details = []
+        if missing:
+            details.append(
+                "missing key(s) "
+                + ", ".join(repr(key) for key in sorted(missing, key=repr))
+            )
+        if extra:
+            details.append(
+                "unexpected key(s) "
+                + ", ".join(repr(key) for key in sorted(extra, key=repr))
+            )
+        raise ValueError("BENCH_PINS key set mismatch: " + "; ".join(details))
+
+    env = {"CODE_GAUNTLET_HEADLESS": "1"}
+    for row in rows:
+        key = row["key"]
+        value = pins[key]
+        if not matches_rule(row.get("rule"), value, "headless"):
+            raise ValueError(f"BENCH_PINS[{key!r}]={value!r} is invalid for headless")
+        env[row["env"]] = value
+    return env
+
+
+BENCH_ENV = build_bench_env(BENCH_PINS, KNOB_REGISTRY)
+
+
+try:
+    EXPECTED_ECHO_RECEIPT = resolve("headless", BENCH_ENV, None, "pr")["configEcho"]
+except (ResolverError, ResolverSetupError) as exc:
+    raise RuntimeError(
+        f"BENCH_PINS cannot resolve the expected echo receipt: {exc}"
+    ) from exc
+
+EXPECTED_ECHO = {key: entry["value"] for key, entry in EXPECTED_ECHO_RECEIPT.items()}
 
 ALL_DEGRADED_PREFIX = "all-degraded:"
 
@@ -614,6 +660,13 @@ def _claude_auth_env(base_env, child_auth):
     )
 
 
+def scrub_ambient(env):
+    """Remove every CODE_GAUNTLET_* variable and return the clean env and names removed."""
+    removed = sorted(name for name in env if name.startswith("CODE_GAUNTLET_"))
+    clean = {name: value for name, value in env.items() if name not in removed}
+    return clean, removed
+
+
 def build_env(pr, run_dir, base_env, child_auth=API_AUTH_MODE):
     """Assemble the pinned isolated env for one PR invocation (side effect: seeds trust).
 
@@ -631,7 +684,7 @@ def build_env(pr, run_dir, base_env, child_auth=API_AUTH_MODE):
     is an ambient prerequisite, not part of the claude-config isolation.
     """
     run_dir = Path(run_dir)
-    env = dict(base_env)
+    env, _ = scrub_ambient(base_env)
     env.update(BENCH_ENV)
     auth_updates, auth_removals = _claude_auth_env(base_env, child_auth)
     for name in auth_removals:

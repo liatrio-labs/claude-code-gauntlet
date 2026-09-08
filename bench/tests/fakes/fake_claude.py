@@ -2,7 +2,7 @@
 """Fake ``claude`` binary for invoke.py tests. Placed on PATH as ``claude``.
 
 Behavior is selected by env ``FAKE_CLAUDE_MODE``:
-  ok             -> canned "Headless config:" echo (9 bench knobs) + a success result
+  ok             -> canned resolver "Headless config:" echo + a success result
                     envelope (total_cost_usd 1.23, modelUsage, usage, empty
                     permission_denials), and a fake post-review-payload.json under
                     $CODE_GAUNTLET_OUTPUT_DIR.
@@ -109,19 +109,19 @@ def _session_workflow_script_path(config_dir):
 
 
 def echo_lines(plugin_root=None, pipeline_version=None):
+    plugin_root_from_argv = _plugin_dir_from_argv()
+    if plugin_root_from_argv and plugin_root_from_argv not in sys.path:
+        sys.path.insert(0, plugin_root_from_argv)
+    from bench.runner import invoke
+
     root = plugin_root if plugin_root is not None else _plugin_dir_from_argv()
     ver = pipeline_version if pipeline_version is not None else _pipeline_version(root)
     return [
         "Headless config:",
-        "  model_tier=optimized (env)",
-        "  delivery=pr_comments,markdown (env)",
-        "  post_mode=dry-run (env)",
-        "  pr_comment_cap=25 (env)",
-        "  delivery_tier=all (default)",
-        "  draft_policy=review (env)",
-        "  reviewed_policy=full (env)",
-        "  pr_not_found_policy=error (env)",
-        "  trivial_scope=full (env)",
+        *[
+            f"  {key}={entry['value']} ({entry['source']})"
+            for key, entry in invoke.EXPECTED_ECHO_RECEIPT.items()
+        ],
         f"  pipeline_version={ver} (bundle)",
         f"  plugin_root={root} (resolved)",
     ]

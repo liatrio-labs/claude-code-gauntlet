@@ -105,7 +105,7 @@ Headless config:
   delivery=pr_comments,markdown (env)
   post_mode=dry-run (env)
   pr_comment_cap=25 (env)
-  delivery_tier=all (default)
+  delivery_tier=all (env)
   draft_policy=review (env)
   reviewed_policy=full (env)
   pr_not_found_policy=error (env)
@@ -116,7 +116,7 @@ Headless config:
 
 The nine echoed knobs are followed by `pipeline_version` and `plugin_root` identity lines. The report renders the validated waist, and the Phase 1 Bash result carries the resolver block.
 
-The example shows a bench-configured run (env overrides throughout) except `delivery_tier`, which bench leaves unset so it resolves to the `all` default — the benchmark posts every challenge-survivor, which is the intended default. A run relying on headless defaults would show e.g. `delivery=markdown (default)` and `pr_comment_cap=6 (default)`, and a REVIEW.md-sourced value would show e.g. `delivery=chat (review_md)`.
+The example shows a bench-configured run with environment pins. A run relying on headless defaults would show e.g. `delivery=markdown (default)` and `pr_comment_cap=6 (default)`, and a REVIEW.md-sourced value would show e.g. `delivery=chat (review_md)`.
 
 The pipeline renders the block in the report's last `Review Methodology` section. At delivery, point the chat methodology to that section and include the materialization proof, patches path, delivery outcome, post-report gaps, and duration.
 If no report materializes, repeat the block in the final message as the fallback receipt.

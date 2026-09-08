@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -33,6 +34,30 @@ BUNDLE_TEXT = BUNDLE_BYTES.decode("utf-8")
 DIFFERENT_BUNDLE_TEXT = ("x" if BUNDLE_TEXT[0] != "x" else "y") + BUNDLE_TEXT[1:]
 # Hand-typed oracle for the parser, independent of the implementation constant.
 EXPECTED_PIPELINE_META_NAME = "code-gauntlet-pipeline"
+
+HAND_TYPED_BENCH_ENV = {
+    "CODE_GAUNTLET_HEADLESS": "1",
+    "CODE_GAUNTLET_MODEL_TIER": "optimized",
+    "CODE_GAUNTLET_DELIVERY": "pr_comments,markdown",
+    "CODE_GAUNTLET_POST_MODE": "dry-run",
+    "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
+    "CODE_GAUNTLET_DELIVERY_TIER": "all",
+    "CODE_GAUNTLET_DRAFT_POLICY": "review",
+    "CODE_GAUNTLET_REVIEWED_POLICY": "full",
+    "CODE_GAUNTLET_PR_NOT_FOUND_POLICY": "error",
+    "CODE_GAUNTLET_TRIVIAL_SCOPE": "full",
+}
+HAND_TYPED_ECHO_RECEIPT = {
+    "model_tier": {"value": "optimized", "source": "env"},
+    "delivery": {"value": "pr_comments,markdown", "source": "env"},
+    "post_mode": {"value": "dry-run", "source": "env"},
+    "pr_comment_cap": {"value": "25", "source": "env"},
+    "delivery_tier": {"value": "all", "source": "env"},
+    "draft_policy": {"value": "review", "source": "env"},
+    "reviewed_policy": {"value": "full", "source": "env"},
+    "pr_not_found_policy": {"value": "error", "source": "env"},
+    "trivial_scope": {"value": "full", "source": "env"},
+}
 
 PR = {
     "owner": "octo",
@@ -84,6 +109,9 @@ class InvokeTestBase(unittest.TestCase):
         bindir = self.install_fake()
         overrides = {
             "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
+            "PYTHONPATH": str(REPO_ROOT)
+            + os.pathsep
+            + os.environ.get("PYTHONPATH", ""),
             "FAKE_CLAUDE_MODE": mode,
         }
         if extra_env:
@@ -139,17 +167,142 @@ class PrDirNameTest(unittest.TestCase):
 
 
 class BuildEnvTest(InvokeTestBase):
-    def test_sets_nine_bench_values(self):
+    def test_sets_ten_bench_values(self):
         env = build_env(PR, self.run_dir, {})
+        self.assertEqual(
+            {key: env[key] for key in HAND_TYPED_BENCH_ENV}, HAND_TYPED_BENCH_ENV
+        )
+
+    def test_scrubs_all_ambient_bench_prefixes_before_overlay(self):
+        ambient = {
+            "CODE_GAUNTLET_TASKS_DIR": "/junk/tasks",
+            "CODE_GAUNTLET_BIOME_CACHE": "/junk/biome",
+            "CODE_GAUNTLET_FUTURE_SENTINEL": "x",
+            "CODE_GAUNTLET_HEADLESS": "0",
+            "CODE_GAUNTLET_MODEL_TIER": "optimized",
+            "CODE_GAUNTLET_DELIVERY": "chat",
+            "CODE_GAUNTLET_POST_MODE": "live",
+            "CODE_GAUNTLET_PR_COMMENT_CAP": "1",
+            "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
+            "CODE_GAUNTLET_DRAFT_POLICY": "skip",
+            "CODE_GAUNTLET_REVIEWED_POLICY": "skip",
+            "CODE_GAUNTLET_PR_NOT_FOUND_POLICY": "local",
+            "CODE_GAUNTLET_TRIVIAL_SCOPE": "light",
+            "OTHER": "preserved",
+        }
+        env = build_env(PR, self.run_dir, ambient)
+        self.assertEqual(
+            {key for key in env if key.startswith("CODE_GAUNTLET_")},
+            set(invoke.BENCH_ENV) | {"CODE_GAUNTLET_OUTPUT_DIR"},
+        )
         self.assertEqual(env["CODE_GAUNTLET_HEADLESS"], "1")
-        self.assertEqual(env["CODE_GAUNTLET_MODEL_TIER"], "optimized")
-        self.assertEqual(env["CODE_GAUNTLET_DELIVERY"], "pr_comments,markdown")
-        self.assertEqual(env["CODE_GAUNTLET_POST_MODE"], "dry-run")
-        self.assertEqual(env["CODE_GAUNTLET_PR_COMMENT_CAP"], "25")
-        self.assertEqual(env["CODE_GAUNTLET_DRAFT_POLICY"], "review")
-        self.assertEqual(env["CODE_GAUNTLET_REVIEWED_POLICY"], "full")
-        self.assertEqual(env["CODE_GAUNTLET_PR_NOT_FOUND_POLICY"], "error")
-        self.assertEqual(env["CODE_GAUNTLET_TRIVIAL_SCOPE"], "full")
+        self.assertEqual(env["OTHER"], "preserved")
+
+    def test_scrub_ambient_returns_clean_copy_and_sorted_removed_names(self):
+        clean, removed = invoke.scrub_ambient(
+            {
+                "CODE_GAUNTLET_Z": "z",
+                "KEEP": "yes",
+                "CODE_GAUNTLET_A": "a",
+            }
+        )
+        self.assertEqual(clean, {"KEEP": "yes"})
+        self.assertEqual(removed, ["CODE_GAUNTLET_A", "CODE_GAUNTLET_Z"])
+
+    def test_real_resolver_subprocess_receives_the_built_env(self):
+        ambient = dict(os.environ)
+        ambient.update(
+            {
+                "CODE_GAUNTLET_TASKS_DIR": "/junk/tasks",
+                "CODE_GAUNTLET_BIOME_CACHE": "/junk/biome",
+                "CODE_GAUNTLET_HEADLESS": "0",
+                "CODE_GAUNTLET_MODEL_TIER": "optimized",
+                "CODE_GAUNTLET_DELIVERY": "chat",
+                "CODE_GAUNTLET_POST_MODE": "live",
+                "CODE_GAUNTLET_PR_COMMENT_CAP": "1",
+                "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
+                "CODE_GAUNTLET_DRAFT_POLICY": "skip",
+                "CODE_GAUNTLET_REVIEWED_POLICY": "skip",
+                "CODE_GAUNTLET_PR_NOT_FOUND_POLICY": "local",
+                "CODE_GAUNTLET_TRIVIAL_SCOPE": "light",
+            }
+        )
+        built = build_env(PR, self.run_dir, ambient)
+        result = subprocess.run(
+            ["python3", "scripts/resolve_config.py", "--target", "pr"],
+            cwd=REPO_ROOT,
+            env=built,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads(result.stdout)["waist"]["configEcho"]
+        self.assertEqual(receipt, HAND_TYPED_ECHO_RECEIPT)
+        self.assertNotIn("CODE_GAUNTLET_TASKS_DIR", built)
+        self.assertNotIn("CODE_GAUNTLET_BIOME_CACHE", built)
+
+    def test_build_bench_env_rejects_missing_and_extra_pin_keys(self):
+        registry = [
+            {
+                "key": "example",
+                "modes": ["headless"],
+                "env": "CODE_GAUNTLET_EXAMPLE",
+                "rule": {"kind": "enum", "values": ["ok"]},
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, r"BENCH_PINS.*'example'"):
+            invoke.build_bench_env({}, registry)
+        with self.assertRaisesRegex(ValueError, r"BENCH_PINS.*'extra'"):
+            invoke.build_bench_env(
+                {"example": "ok", "extra": "ok"},
+                registry,
+            )
+
+    def test_build_bench_env_rejects_invalid_pin_value(self):
+        registry = [
+            {
+                "key": "example",
+                "modes": ["headless"],
+                "env": "CODE_GAUNTLET_EXAMPLE",
+                "rule": {"kind": "enum", "values": ["ok"]},
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, r"BENCH_PINS\['example'\]"):
+            invoke.build_bench_env({"example": "bad"}, registry)
+
+    def test_expected_echo_is_the_resolver_receipt_and_bench_pin_oracle(self):
+        self.assertEqual(invoke.EXPECTED_ECHO_RECEIPT, HAND_TYPED_ECHO_RECEIPT)
+        self.assertEqual(
+            invoke.EXPECTED_ECHO,
+            {key: entry["value"] for key, entry in HAND_TYPED_ECHO_RECEIPT.items()},
+        )
+        headless_rows = [
+            row
+            for row in invoke.KNOB_REGISTRY
+            if "headless" in row["modes"] and row.get("env")
+        ]
+        self.assertEqual(
+            {row["env"]: invoke.BENCH_ENV[row["env"]] for row in headless_rows},
+            {
+                key: value
+                for key, value in HAND_TYPED_BENCH_ENV.items()
+                if key != "CODE_GAUNTLET_HEADLESS"
+            },
+        )
+        self.assertEqual(
+            {row["key"]: invoke.BENCH_ENV[row["env"]] for row in headless_rows},
+            invoke.EXPECTED_ECHO,
+        )
+        self.assertEqual(
+            {row["key"] for row in headless_rows}, set(HAND_TYPED_ECHO_RECEIPT)
+        )
+        self.assertTrue(
+            all(
+                entry["source"] == "env"
+                for entry in invoke.EXPECTED_ECHO_RECEIPT.values()
+            )
+        )
 
     def test_output_dir_and_gh_repo(self):
         env = build_env(PR, self.run_dir, {})
