@@ -69,6 +69,17 @@ class TestNodeDiagnostic(unittest.TestCase):
             r"node --input-type=module -e .+\n$",
         )
 
+    def test_failed_node_reports_the_child_stderr_tail(self):
+        node_src = (
+            "process.on('uncaughtException', error => { console.error(error.message); "
+            "process.exit(1); }); throw new Error('forced JS failure')"
+        )
+        with self.assertRaises(SystemExit) as raised:
+            gen._run_node(node_src, str(REPO))
+        message = str(raised.exception)
+        self.assertTrue(message.endswith(": forced JS failure"), message)
+        self.assertEqual(message.count("\n"), 0)
+
 
 class TestConditionalParagraphs(unittest.TestCase):
     def setUp(self):

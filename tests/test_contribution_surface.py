@@ -135,6 +135,26 @@ def _pre_commit_hook_block(text, hook_id):
     return text[start:end]
 
 
+def _pre_commit_repo_block(text, hook_id):
+    """Return the unique enclosing repo block for a hook."""
+    hook_start, _ = _pre_commit_hook_span(text, hook_id)
+    repo_markers = list(re.finditer(r"(?m)^  - repo:\s*[^\n]*$", text))
+    enclosing = []
+    for index, marker in enumerate(repo_markers):
+        end = (
+            repo_markers[index + 1].start()
+            if index + 1 < len(repo_markers)
+            else len(text)
+        )
+        if marker.start() < hook_start < end:
+            enclosing.append(text[marker.start() : end])
+    if len(enclosing) != 1:
+        raise AssertionError(
+            f"expected exactly one enclosing repo block for {hook_id}, found {len(enclosing)}"
+        )
+    return enclosing[0]
+
+
 def _pre_commit_hook_value(block, key):
     matches = re.findall(rf"(?m)^        {re.escape(key)}:\s*(.*?)\s*$", block)
     if len(matches) != 1:
@@ -1272,6 +1292,16 @@ def _ci_step_run_bodies(step: str) -> list[str]:
     return inline + _ci_run_blocks(step)
 
 
+def _ci_setup_node_steps(text: str) -> list[tuple[str, int, str]]:
+    """Every setup-node step, with its job and zero-based step index."""
+    return [
+        (job_id, index, step)
+        for job_id, job in _ci_job_blocks(text)
+        for index, step in enumerate(_ci_step_blocks(job))
+        if "actions/setup-node@" in step
+    ]
+
+
 def _copy_tracked_tree(destination: Path) -> None:
     result = subprocess.run(
         ["git", "ls-files", "-z"],
@@ -1314,6 +1344,14 @@ class TestContractFenceHook(unittest.TestCase):
         self.assertGreater(contract_start, agent_start)
 
         block = _pre_commit_hook_block(text, "contract-fences-current")
+        repo_block = _pre_commit_repo_block(text, "contract-fences-current")
+        repo_header = re.match(r"(?m)^  - repo:\s*(.*?)\s*$", repo_block)
+        self.assertIsNotNone(repo_header)
+        self.assertEqual(_unquote(repo_header.group(1)), "local")
+        self.assertEqual(
+            _pre_commit_hook_value(block, "name"),
+            "generated contract fences are current (regenerate with scripts/generate_contract_requirements.py)",
+        )
         self.assertEqual(
             _pre_commit_hook_value(block, "entry"),
             "python3 scripts/generate_contract_requirements.py --check",
@@ -1331,8 +1369,17 @@ class TestContractFenceHook(unittest.TestCase):
         )
         scope = re.compile(files_pattern)
 
+        declared_inputs = contract_gen.declared_inputs(str(REPO))
+        self.assertTrue(
+            {
+                "scripts/post_review.py",
+                "scripts/resolve_config.py",
+                "scripts/review_marker.py",
+            }.issubset(declared_inputs),
+            declared_inputs,
+        )
         paths = set(contract_gen.compute_targets(str(REPO)))
-        paths.update(contract_gen.declared_inputs(str(REPO)))
+        paths.update(declared_inputs)
         for path in sorted(paths):
             with self.subTest(path=path):
                 self.assertIsNotNone(scope.match(path), path)
@@ -1392,20 +1439,28 @@ class TestCiNodePin(unittest.TestCase):
     def test_node_is_pinned_before_every_relevant_ci_job(self):
         text = _read(".github/workflows/ci.yml")
         version = _ci_workflow_tests_node_version(text)
-        self.assertEqual(
-            re.findall(
-                r'(?m)^env:\n  NODE_VERSION:\s*["\']?([^"\'\s]+)["\']?\s*$',
-                text,
-            ),
-            [version],
-        )
-        setup_node_uses = re.findall(
-            r"(?m)^\s+uses:\s*actions/setup-node@([0-9a-f]{40})\s+#\s+v\S+$",
-            text,
-        )
-        self.assertTrue(setup_node_uses)
+        workflow_versions = re.findall(r"(?m)^env:\n  NODE_VERSION:\s*(.*?)\s*$", text)
+        self.assertEqual(len(workflow_versions), 1)
+        self.assertEqual(_unquote(workflow_versions[0]), version)
+        self.assertEqual(len(re.findall(r"(?m)^  NODE_VERSION:", text)), 1)
+
+        setup_steps = _ci_setup_node_steps(text)
+        self.assertTrue(setup_steps)
+        self.assertEqual(text.count("actions/setup-node@"), len(setup_steps))
+        setup_node_uses = []
+        for job_id, index, step in setup_steps:
+            with self.subTest(setup_node=(job_id, index)):
+                uses = re.search(
+                    r"(?m)^\s+uses:\s*actions/setup-node@([0-9a-f]{40})\s+#\s+v\S+$",
+                    step,
+                )
+                self.assertIsNotNone(uses)
+                setup_node_uses.append(uses.group(1))
+                self.assertEqual(
+                    re.findall(r"(?m)^\s+node-version:\s*(.*?)\s*$", step),
+                    ["${{ env.NODE_VERSION }}"],
+                )
         self.assertEqual(len(set(setup_node_uses)), 1)
-        self.assertEqual(text.count("actions/setup-node@"), len(setup_node_uses))
 
         bare_node = re.compile(r"(?<![A-Za-z0-9_-])node ")
         consumer_markers = ("pre-commit run", "python -m pytest tests/")
@@ -1430,18 +1485,6 @@ class TestCiNodePin(unittest.TestCase):
             with self.subTest(job=job_id):
                 self.assertTrue(setup_indexes)
                 self.assertLess(min(setup_indexes), min(consumer_indexes))
-                for index in setup_indexes:
-                    step = steps[index]
-                    uses = re.search(
-                        r"(?m)^\s+uses:\s*actions/setup-node@([0-9a-f]{40})\s+#\s+v\S+$",
-                        step,
-                    )
-                    self.assertIsNotNone(uses)
-                    self.assertEqual(uses.group(1), setup_node_uses[0])
-                    node_versions = re.findall(
-                        r"(?m)^\s+node-version:\s*(.*?)\s*$", step
-                    )
-                    self.assertEqual(node_versions, ["${{ env.NODE_VERSION }}"])
 
         contributing = _read("CONTRIBUTING.md")
         self.assertIn(f"CI pins Node `{version}` exactly", contributing)
@@ -1473,13 +1516,26 @@ class TestCoverageGateCommandIdentity(unittest.TestCase):
         self.assertEqual(set(flags), set(scope["includes"]))
 
     def test_contributing_documents_the_ci_node_version_pin(self):
-        version = _ci_workflow_tests_node_version(_read(".github/workflows/ci.yml"))
+        text = _read(".github/workflows/ci.yml")
+        version = _ci_workflow_tests_node_version(text)
         contributing = _read("CONTRIBUTING.md")
         self.assertIn(f"`{version}`", contributing)
-        self.assertIn(
-            "node-version: ${{ env.NODE_VERSION }}",
-            _read(".github/workflows/ci.yml"),
-        )
+        setup_steps = _ci_setup_node_steps(text)
+        self.assertTrue(setup_steps)
+        uses = []
+        for job_id, index, step in setup_steps:
+            with self.subTest(setup_node=(job_id, index)):
+                pinned = re.search(
+                    r"(?m)^\s+uses:\s*actions/setup-node@([0-9a-f]{40})\s+#\s+v\S+$",
+                    step,
+                )
+                self.assertIsNotNone(pinned)
+                uses.append(pinned.group(1))
+                self.assertEqual(
+                    re.findall(r"(?m)^\s+node-version:\s*(.*?)\s*$", step),
+                    ["${{ env.NODE_VERSION }}"],
+                )
+        self.assertEqual(len(set(uses)), 1)
 
 
 if __name__ == "__main__":
