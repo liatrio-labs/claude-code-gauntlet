@@ -1378,10 +1378,28 @@ class TestContractFenceHook(unittest.TestCase):
             }.issubset(declared_inputs),
             declared_inputs,
         )
+        self.assertTrue(
+            {
+                "workflows/src/registry.js",
+                "workflows/src/args.js",
+                "workflows/src/renderReport.js",
+            }.issubset(declared_inputs),
+            declared_inputs,
+        )
+        self.assertTrue(
+            {
+                "workflows/src/filterFindings.js",
+                "workflows/src/applyChallenges.js",
+                "workflows/src/applyValidations.js",
+            }.issubset(declared_inputs),
+            declared_inputs,
+        )
         paths = set(contract_gen.compute_targets(str(REPO)))
         paths.update(declared_inputs)
         for path in sorted(paths):
             with self.subTest(path=path):
+                if path in declared_inputs:
+                    self.assertTrue((REPO / path).is_file(), path)
                 self.assertIsNotNone(scope.match(path), path)
 
     def test_contract_fence_hook_rejects_stale_fence_without_writing(self):
