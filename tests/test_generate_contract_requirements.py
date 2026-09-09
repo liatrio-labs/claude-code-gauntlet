@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from typing import ClassVar
 
@@ -313,6 +314,19 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "self_inconsistency": "SI",
         },
         "ruleSourceLabelFallback": "RF",
+        "deriveWhen": {"gamma": "the gamma condition holds"},
+        "derivedFrom": {"delta": "the delta source is present"},
+        "required": [
+            "id",
+            "file",
+            "line_start",
+            "title",
+            "description",
+            "severity",
+            "confidence",
+            "dimension",
+        ],
+        "waistRequired": ["nested", "limits"],
         "knobs": [
             {
                 "key": "alpha",
@@ -348,11 +362,97 @@ class TestIdentityFenceGuards(unittest.TestCase):
                 "reviewMdKey": None,
                 "defaults": {"headless": ["h-beta", "default"]},
                 "type": "string",
-                "waistPath": "nested.beta",
+                "waistPath": "optional.beta",
                 "waistMap": None,
                 "derivedFrom": None,
                 "deriveWhen": None,
                 "nullReceipt": ["headless"],
+                "resolvedKey": False,
+            },
+            {
+                "key": "gamma",
+                "modes": ["headless", "interactive"],
+                "allowedSources": {
+                    "headless": ["default"],
+                    "interactive": ["default"],
+                },
+                "rule": {"kind": "enum", "values": ["raw"]},
+                "env": None,
+                "reviewMdKey": None,
+                "defaults": {
+                    "headless": ["raw", "default"],
+                    "interactive": ["raw", "default"],
+                },
+                "type": "string",
+                "waistPath": "nested.gamma",
+                "waistMap": {"raw": "mapped"},
+                "derivedFrom": None,
+                "deriveWhen": "gamma",
+                "nullReceipt": [],
+                "resolvedKey": False,
+            },
+            {
+                "key": "epsilon",
+                "modes": ["interactive"],
+                "allowedSources": {"interactive": ["default"]},
+                "rule": {"kind": "digits_or_null"},
+                "env": None,
+                "reviewMdKey": None,
+                "defaults": {"interactive": ["null", "default"]},
+                "type": "int_or_null",
+                "waistPath": "limits.nullable",
+                "waistMap": None,
+                "derivedFrom": None,
+                "deriveWhen": None,
+                "nullReceipt": ["interactive"],
+                "resolvedKey": False,
+            },
+            {
+                "key": "zeta",
+                "modes": ["headless"],
+                "allowedSources": {"headless": ["default"]},
+                "rule": {"kind": "positive_digits"},
+                "env": None,
+                "reviewMdKey": None,
+                "defaults": {"headless": ["1", "default"]},
+                "type": "int_or_null",
+                "waistPath": "delivery.count",
+                "waistMap": None,
+                "derivedFrom": None,
+                "deriveWhen": None,
+                "nullReceipt": [],
+                "resolvedKey": False,
+            },
+            {
+                "key": "eta",
+                "modes": ["headless"],
+                "allowedSources": {"headless": ["default"]},
+                "rule": {"kind": "csv_subset", "values": ["a", "b"]},
+                "env": None,
+                "reviewMdKey": None,
+                "defaults": {"headless": ["a,b", "default"]},
+                "type": "csv_list",
+                "waistPath": "delivery.items",
+                "waistMap": None,
+                "derivedFrom": None,
+                "deriveWhen": None,
+                "nullReceipt": [],
+                "resolvedKey": False,
+            },
+            {
+                "key": "delta",
+                "modes": ["interactive"],
+                "allowedSources": {"interactive": ["discovery"]},
+                "rule": {"kind": "enum", "values": ["present"]},
+                "env": None,
+                "reviewMdKey": None,
+                "defaults": {"interactive": ["present", "discovery"]},
+                "type": "string",
+                "waistPath": None,
+                "waistMap": None,
+                "derivedFrom": "delta",
+                "deriveWhen": None,
+                "nullReceipt": [],
                 "resolvedKey": False,
             },
         ],
@@ -494,6 +594,8 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "```text\n"
             "Resolved config:\n"
             "  alpha=i-alpha (fixed)\n"
+            "  gamma=raw (default)\n"
+            "  epsilon=null (default)\n"
             "  pipeline_version={pipeline_version} (bundle)\n"
             "  plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)\n"
             "```\n"
@@ -505,6 +607,14 @@ class TestIdentityFenceGuards(unittest.TestCase):
             '    "alpha": {\n'
             '        "value": "i-alpha",\n'
             '        "source": "fixed"\n'
+            "    },\n"
+            '    "gamma": {\n'
+            '        "value": "raw",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "epsilon": {\n'
+            '        "value": "null",\n'
+            '        "source": "default"\n'
             "    }\n"
             "}\n"
             "```\n"
@@ -515,6 +625,9 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "Headless config:\n"
             "  alpha=h-alpha (env)\n"
             "  beta=h-beta (default)\n"
+            "  gamma=raw (default)\n"
+            "  zeta=1 (default)\n"
+            "  eta=a,b (default)\n"
             "  pipeline_version={pipeline_version} (bundle)\n"
             "  plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)\n"
             "```\n"
@@ -530,9 +643,69 @@ class TestIdentityFenceGuards(unittest.TestCase):
             '    "beta": {\n'
             '        "value": "h-beta",\n'
             '        "source": "default"\n'
+            "    },\n"
+            '    "gamma": {\n'
+            '        "value": "raw",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "zeta": {\n'
+            '        "value": "1",\n'
+            '        "source": "default"\n'
+            "    },\n"
+            '    "eta": {\n'
+            '        "value": "a,b",\n'
+            '        "source": "default"\n'
             "    }\n"
             "}\n"
             "```"
+        ),
+        (
+            "skills/code-gauntlet/SKILL.md",
+            "derived_waist_fields",
+        ): (
+            "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.\n"
+            "\n"
+            "- `optional.beta` (headless runs): from `configEcho.beta`. Leave `beta` out of any stamped `optional`.\n"
+            "- `nested.gamma` (headless and interactive runs, when the gamma condition holds): from `configEcho.gamma`; `raw` derives as `mapped`. Stamp `nested` and leave `gamma` out of it.\n"
+            "- `limits.nullable` (interactive runs): from `configEcho.epsilon`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `nullable` out of it.\n"
+            "- `delivery.count` (headless runs): from `configEcho.zeta`; digits derive as a JSON number. Leave `count` out of any stamped `delivery`.\n"
+            "- `delivery.items` (headless runs): from `configEcho.eta`; the comma-separated value derives as a list. Leave `items` out of any stamped `delivery`.\n"
+            "\n"
+            "The workflow fills these receipt entries itself; never stamp them.\n"
+            "\n"
+            "- `configEcho.delta` (interactive runs): the delta source is present."
+        ),
+        (
+            "skills/code-gauntlet/references/phase2-triage.md",
+            "derived_waist_fields",
+        ): (
+            "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.\n"
+            "\n"
+            "- `optional.beta` (headless runs): from `configEcho.beta`. Leave `beta` out of any stamped `optional`.\n"
+            "- `nested.gamma` (headless and interactive runs, when the gamma condition holds): from `configEcho.gamma`; `raw` derives as `mapped`. Stamp `nested` and leave `gamma` out of it.\n"
+            "- `limits.nullable` (interactive runs): from `configEcho.epsilon`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `nullable` out of it.\n"
+            "- `delivery.count` (headless runs): from `configEcho.zeta`; digits derive as a JSON number. Leave `count` out of any stamped `delivery`.\n"
+            "- `delivery.items` (headless runs): from `configEcho.eta`; the comma-separated value derives as a list. Leave `items` out of any stamped `delivery`.\n"
+            "\n"
+            "The workflow fills these receipt entries itself; never stamp them.\n"
+            "\n"
+            "- `configEcho.delta` (interactive runs): the delta source is present."
+        ),
+        (
+            "skills/code-gauntlet/references/phase1-preflight.md",
+            "derived_waist_fields",
+        ): (
+            "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.\n"
+            "\n"
+            "- `optional.beta` (headless runs): from `configEcho.beta`. Leave `beta` out of any stamped `optional`.\n"
+            "- `nested.gamma` (headless and interactive runs, when the gamma condition holds): from `configEcho.gamma`; `raw` derives as `mapped`. Stamp `nested` and leave `gamma` out of it.\n"
+            "- `limits.nullable` (interactive runs): from `configEcho.epsilon`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `nullable` out of it.\n"
+            "- `delivery.count` (headless runs): from `configEcho.zeta`; digits derive as a JSON number. Leave `count` out of any stamped `delivery`.\n"
+            "- `delivery.items` (headless runs): from `configEcho.eta`; the comma-separated value derives as a list. Leave `items` out of any stamped `delivery`.\n"
+            "\n"
+            "The workflow fills these receipt entries itself; never stamp them.\n"
+            "\n"
+            "- `configEcho.delta` (interactive runs): the delta source is present."
         ),
         ("scripts/resolve_config.py", "knob_registry"): (
             "KNOB_REGISTRY = [\n"
@@ -610,13 +783,180 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "            ],\n"
             "        },\n"
             '        "type": "string",\n'
-            '        "waistPath": "nested.beta",\n'
+            '        "waistPath": "optional.beta",\n'
             '        "waistMap": None,\n'
             '        "derivedFrom": None,\n'
             '        "deriveWhen": None,\n'
             '        "nullReceipt": [\n'
             '            "headless",\n'
             "        ],\n"
+            '        "resolvedKey": False,\n'
+            "    },\n"
+            "    {\n"
+            '        "key": "gamma",\n'
+            '        "modes": [\n'
+            '            "headless",\n'
+            '            "interactive",\n'
+            "        ],\n"
+            '        "allowedSources": {\n'
+            '            "headless": [\n'
+            '                "default",\n'
+            "            ],\n"
+            '            "interactive": [\n'
+            '                "default",\n'
+            "            ],\n"
+            "        },\n"
+            '        "rule": {\n'
+            '            "kind": "enum",\n'
+            '            "values": [\n'
+            '                "raw",\n'
+            "            ],\n"
+            "        },\n"
+            '        "env": None,\n'
+            '        "reviewMdKey": None,\n'
+            '        "defaults": {\n'
+            '            "headless": [\n'
+            '                "raw",\n'
+            '                "default",\n'
+            "            ],\n"
+            '            "interactive": [\n'
+            '                "raw",\n'
+            '                "default",\n'
+            "            ],\n"
+            "        },\n"
+            '        "type": "string",\n'
+            '        "waistPath": "nested.gamma",\n'
+            '        "waistMap": {\n'
+            '            "raw": "mapped",\n'
+            "        },\n"
+            '        "derivedFrom": None,\n'
+            '        "deriveWhen": "gamma",\n'
+            '        "nullReceipt": [],\n'
+            '        "resolvedKey": False,\n'
+            "    },\n"
+            "    {\n"
+            '        "key": "epsilon",\n'
+            '        "modes": [\n'
+            '            "interactive",\n'
+            "        ],\n"
+            '        "allowedSources": {\n'
+            '            "interactive": [\n'
+            '                "default",\n'
+            "            ],\n"
+            "        },\n"
+            '        "rule": {\n'
+            '            "kind": "digits_or_null",\n'
+            "        },\n"
+            '        "env": None,\n'
+            '        "reviewMdKey": None,\n'
+            '        "defaults": {\n'
+            '            "interactive": [\n'
+            '                "null",\n'
+            '                "default",\n'
+            "            ],\n"
+            "        },\n"
+            '        "type": "int_or_null",\n'
+            '        "waistPath": "limits.nullable",\n'
+            '        "waistMap": None,\n'
+            '        "derivedFrom": None,\n'
+            '        "deriveWhen": None,\n'
+            '        "nullReceipt": [\n'
+            '            "interactive",\n'
+            "        ],\n"
+            '        "resolvedKey": False,\n'
+            "    },\n"
+            "    {\n"
+            '        "key": "zeta",\n'
+            '        "modes": [\n'
+            '            "headless",\n'
+            "        ],\n"
+            '        "allowedSources": {\n'
+            '            "headless": [\n'
+            '                "default",\n'
+            "            ],\n"
+            "        },\n"
+            '        "rule": {\n'
+            '            "kind": "positive_digits",\n'
+            "        },\n"
+            '        "env": None,\n'
+            '        "reviewMdKey": None,\n'
+            '        "defaults": {\n'
+            '            "headless": [\n'
+            '                "1",\n'
+            '                "default",\n'
+            "            ],\n"
+            "        },\n"
+            '        "type": "int_or_null",\n'
+            '        "waistPath": "delivery.count",\n'
+            '        "waistMap": None,\n'
+            '        "derivedFrom": None,\n'
+            '        "deriveWhen": None,\n'
+            '        "nullReceipt": [],\n'
+            '        "resolvedKey": False,\n'
+            "    },\n"
+            "    {\n"
+            '        "key": "eta",\n'
+            '        "modes": [\n'
+            '            "headless",\n'
+            "        ],\n"
+            '        "allowedSources": {\n'
+            '            "headless": [\n'
+            '                "default",\n'
+            "            ],\n"
+            "        },\n"
+            '        "rule": {\n'
+            '            "kind": "csv_subset",\n'
+            '            "values": [\n'
+            '                "a",\n'
+            '                "b",\n'
+            "            ],\n"
+            "        },\n"
+            '        "env": None,\n'
+            '        "reviewMdKey": None,\n'
+            '        "defaults": {\n'
+            '            "headless": [\n'
+            '                "a,b",\n'
+            '                "default",\n'
+            "            ],\n"
+            "        },\n"
+            '        "type": "csv_list",\n'
+            '        "waistPath": "delivery.items",\n'
+            '        "waistMap": None,\n'
+            '        "derivedFrom": None,\n'
+            '        "deriveWhen": None,\n'
+            '        "nullReceipt": [],\n'
+            '        "resolvedKey": False,\n'
+            "    },\n"
+            "    {\n"
+            '        "key": "delta",\n'
+            '        "modes": [\n'
+            '            "interactive",\n'
+            "        ],\n"
+            '        "allowedSources": {\n'
+            '            "interactive": [\n'
+            '                "discovery",\n'
+            "            ],\n"
+            "        },\n"
+            '        "rule": {\n'
+            '            "kind": "enum",\n'
+            '            "values": [\n'
+            '                "present",\n'
+            "            ],\n"
+            "        },\n"
+            '        "env": None,\n'
+            '        "reviewMdKey": None,\n'
+            '        "defaults": {\n'
+            '            "interactive": [\n'
+            '                "present",\n'
+            '                "discovery",\n'
+            "            ],\n"
+            "        },\n"
+            '        "type": "string",\n'
+            '        "waistPath": None,\n'
+            '        "waistMap": None,\n'
+            '        "derivedFrom": "delta",\n'
+            '        "deriveWhen": None,\n'
+            '        "nullReceipt": [],\n'
             '        "resolvedKey": False,\n'
             "    },\n"
             "]"
@@ -708,6 +1048,33 @@ class TestIdentityFenceGuards(unittest.TestCase):
             gen.identity_body("x.md", "nope", self.IDENTITY)
         self.assertIn("no identity body", str(ctx.exception))
 
+    def test_derived_waist_identity_guards_fail_loud(self):
+        cases = []
+        for missing in ("deriveWhen", "derivedFrom"):
+            identity = deepcopy(self.IDENTITY)
+            del identity[missing]
+            cases.append((f"missing {missing}", identity, missing))
+
+        missing_waist_required = deepcopy(self.IDENTITY)
+        del missing_waist_required["waistRequired"]
+        cases.append(("missing waistRequired", missing_waist_required, "waistRequired"))
+
+        missing_description = deepcopy(self.IDENTITY)
+        del missing_description["deriveWhen"]["gamma"]
+        cases.append(("missing description", missing_description, "gamma"))
+
+        empty_description = deepcopy(self.IDENTITY)
+        empty_description["deriveWhen"]["gamma"] = "  \t"
+        cases.append(("empty description", empty_description, "gamma"))
+
+        unknown_type = deepcopy(self.IDENTITY)
+        unknown_type["knobs"][1]["type"] = "number"
+        cases.append(("unknown type", unknown_type, "number"))
+
+        for label, identity, needle in cases:
+            with self.subTest(case=label), self.assertRaisesRegex(SystemExit, needle):
+                gen.identity_body("x.md", "derived_waist_fields", identity)
+
     def test_declared_fences_are_filled_from_the_identity(self):
         rel = "skills/code-gauntlet/references/delivery-guide.md"
         lines = []
@@ -771,6 +1138,55 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             self.assertEqual(list(row), expected)
         live_keys = identity["knobKeys"]
         self.assertEqual([list(row) for row in rows], live_keys)
+
+    def test_projected_waist_identity_is_the_hand_typed_registry_contract(self):
+        identity = gen.load_registry(str(REPO))
+        self.assertEqual(
+            identity["deriveWhen"],
+            {
+                "lightEligible": "every changed file is low risk and fewer than 50 lines changed",
+                "priorReviewDetector": "`reviewScope.detector` is an object",
+            },
+        )
+        self.assertEqual(
+            identity["derivedFrom"],
+            {
+                "reviewConfigPath": "`present` when `reviewConfigPath` is set, else `absent`",
+            },
+        )
+        self.assertEqual(
+            identity["required"],
+            [
+                "id",
+                "file",
+                "line_start",
+                "title",
+                "description",
+                "severity",
+                "confidence",
+                "dimension",
+            ],
+        )
+        self.assertEqual(
+            identity["waistRequired"],
+            [
+                "mode",
+                "repoRoot",
+                "outputDir",
+                "headShaShort",
+                "nonce",
+                "generatedAt",
+                "diffPath",
+                "changedFiles",
+                "changedLines",
+                "riskTable",
+                "policy",
+                "limits",
+                "configEcho",
+                "pluginRoot",
+                "reviewScope",
+            ],
+        )
 
     @unittest.skipUnless(
         shutil.which("ruff"), "ruff is not installed (it is a pre-commit-pinned tool)"
@@ -847,19 +1263,60 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         source = args_path.read_text(encoding="utf-8")
         row = (
             "  { key: 'added', modes: ['headless'], allowedSources: { headless: ['default'] }, "
-            "rule: { kind: 'enum', values: ['value'] }, env: 'CODE_GAUNTLET_ADDED', "
+            "rule: { kind: 'enum', values: ['value'] }, env: null, "
             "reviewMdKey: null, defaults: { headless: ['value', 'default'] }, type: 'string', "
-            "waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, "
+            "waistPath: 'nested.added', waistMap: null, derivedFrom: null, deriveWhen: null, "
             "nullReceipt: [], resolvedKey: false },\n"
         )
         args_path.write_text(
             source.replace("\n];", "\n" + row + "];", 1), encoding="utf-8"
         )
         stale = gen.apply_targets(str(self.root), check_only=True)
-        self.assertIn("scripts/resolve_config.py", stale)
-        self.assertIn("skills/code-gauntlet/SKILL.md", stale)
+        self.assertEqual(
+            stale,
+            [
+                "scripts/resolve_config.py",
+                "skills/code-gauntlet/SKILL.md",
+                "skills/code-gauntlet/references/phase2-triage.md",
+                "skills/code-gauntlet/references/phase1-preflight.md",
+            ],
+        )
         gen.apply_targets(str(self.root), check_only=False)
         self.assertEqual(gen.apply_targets(str(self.root), check_only=True), [])
+
+    def test_changing_only_a_waist_path_stales_the_three_derived_fences(self):
+        gen.apply_targets(str(self.root), check_only=False)
+        args_path = self.root / "workflows" / "src" / "args.js"
+        source = args_path.read_text(encoding="utf-8")
+        changed = source.replace(
+            "waistPath: 'delivery.tier'",
+            "waistPath: 'delivery.level'",
+            1,
+        )
+        args_path.write_text(changed, encoding="utf-8")
+
+        # Keep the resolver mirror current for this isolated semantic change. The receipt
+        # fixture has no waistPath, so only the three derived-waist mirrors should drift.
+        resolver_path = self.root / "scripts" / "resolve_config.py"
+        resolver_identity = gen.load_registry(str(self.root))
+        resolver_text = resolver_path.read_text(encoding="utf-8")
+        resolver_path.write_text(
+            gen.fill_identity_fences(
+                resolver_text,
+                "scripts/resolve_config.py",
+                resolver_identity,
+                str(self.root),
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            gen.apply_targets(str(self.root), check_only=True),
+            [
+                "skills/code-gauntlet/SKILL.md",
+                "skills/code-gauntlet/references/phase2-triage.md",
+                "skills/code-gauntlet/references/phase1-preflight.md",
+            ],
+        )
 
     def test_write_mode_regenerates_a_hand_edited_sentence(self):
         target = self.root / "agents" / "security-reviewer.md"
@@ -948,6 +1405,16 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             gen.apply_targets(str(self.root), check_only=True)
         self.assertIn("unmatched identity marker", str(raised.exception))
         self.assertIn("severity_legend", str(raised.exception))
+
+    def test_unknown_derive_when_in_args_fails_loud(self):
+        args_path = self.root / "workflows" / "src" / "args.js"
+        source = args_path.read_text(encoding="utf-8")
+        args_path.write_text(
+            source.replace("deriveWhen: 'lightEligible'", "deriveWhen: 'nonsense'", 1),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(SystemExit, "deriveWhen.*nonsense"):
+            gen.apply_targets(str(self.root), check_only=True)
 
     def test_a_missing_identity_fence_fails_loud(self):
         """A declared symbol with no fence must abort rather than ship a stale hand copy."""

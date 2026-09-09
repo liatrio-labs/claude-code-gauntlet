@@ -568,7 +568,7 @@ class TestGeneratedDataContracts(unittest.TestCase):
                 "resolved.reviewed_policy",
             ),
             "Trivial / light-scope (all low-risk, <50 lines)": (
-                "configEcho.trivial_scope",
+                "CODE_GAUNTLET_TRIVIAL_SCOPE",
             ),
             "Phase 8 Stage 1 (delivery question)": (
                 "resolved.delivery",
@@ -639,25 +639,85 @@ class TestGeneratedDataContracts(unittest.TestCase):
             ):
                 assert_mentions_are_valid()
 
-    def test_every_waist_leaf_has_a_derived_field_sentence(self):
-        docs = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in sorted((REPO / "skills").rglob("*.md"))
-        )
-        sentences = re.split(r"(?<=[.!?])\s+", docs)
+    def test_derived_field_mentions_outside_fences_match_the_inventory(self):
         rows = generator.load_registry(str(REPO))["knobs"]
-        for row in rows:
-            if not row["waistPath"]:
-                continue
-            leaf = row["waistPath"].rsplit(".", 1)[-1]
-            leaf_re = re.compile(rf"(?:`{re.escape(leaf)}`|\b{re.escape(leaf)}\b)")
-            self.assertTrue(
-                any(
-                    "derives" in sentence and leaf_re.search(sentence)
-                    for sentence in sentences
-                ),
-                row["waistPath"],
+        tokens = [row["waistPath"] for row in rows if row["waistPath"] is not None] + [
+            f"configEcho.{row['key']}" for row in rows if row["derivedFrom"] is not None
+        ]
+        patterns = {
+            token: re.compile(rf"(?<![\w.]){re.escape(token)}(?!\w)")
+            for token in tokens
+        }
+        expected = {
+            ("skills/code-gauntlet/SKILL.md", "limits.deliveryCap"): 2,
+            ("skills/code-gauntlet/SKILL.md", "scopeAnswer"): 7,
+            (
+                "skills/code-gauntlet/references/delivery-guide.md",
+                "limits.deliveryCap",
+            ): 1,
+            (
+                "skills/code-gauntlet/references/phase1-preflight.md",
+                "scopeAnswer",
+            ): 2,
+            (
+                "skills/code-gauntlet/references/phase2-triage.md",
+                "scopeAnswer",
+            ): 4,
+            (
+                "skills/code-gauntlet/references/phase3-dispatch.md",
+                "limits.deliveryCap",
+            ): 1,
+            (
+                "skills/code-gauntlet/references/phase3-dispatch.md",
+                "scopeAnswer",
+            ): 1,
+            (
+                "skills/code-gauntlet/references/phase8-delivery.md",
+                "limits.deliveryCap",
+            ): 2,
+        }
+
+        def assert_inventory():
+            actual = {}
+            for path in sorted(SKILL_ROOT.rglob("*.md")):
+                rel_path = (
+                    "skills/code-gauntlet/" + path.relative_to(SKILL_ROOT).as_posix()
+                )
+                inside_fence = False
+                counts = {token: 0 for token in tokens}
+                for line in path.read_text(encoding="utf-8").split("\n"):
+                    marker = generator._IDENTITY_MARKER_RE.match(line)
+                    if marker:
+                        inside_fence = not bool(marker.group("close"))
+                        continue
+                    if not inside_fence:
+                        for token, pattern in patterns.items():
+                            counts[token] += bool(pattern.search(line))
+                actual.update(
+                    {
+                        (rel_path, token): count
+                        for token, count in counts.items()
+                        if count
+                    }
+                )
+            self.assertEqual(actual, expected)
+
+        assert_inventory()
+
+        with tempfile.TemporaryDirectory() as directory:
+            temp_root = Path(directory) / "skills" / "code-gauntlet"
+            shutil.copytree(SKILL_ROOT, temp_root)
+            injected = temp_root / "references" / "phase2-triage.md"
+            injected.write_text(
+                injected.read_text(encoding="utf-8")
+                + "\nThe workflow fills `limits.deliveryCap` from `configEcho.pr_comment_cap`.\n",
+                encoding="utf-8",
             )
+            with (
+                mock.patch.object(sys.modules[__name__], "SKILL_ROOT", temp_root),
+                self.assertRaises(AssertionError),
+            ):
+                assert_inventory()
 
     def test_generated_receipts_are_resolver_fixtures(self):
         registry = generator.load_registry(str(REPO))["knobs"]

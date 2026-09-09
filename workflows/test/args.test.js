@@ -4,6 +4,7 @@ import {
   ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
   stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, nullRespellGap, LIMIT_DEFAULTS,
   resolveReviewConfig, computeLightEligible, nullToleranceRejectedKeys, KNOB_REGISTRY, safeReceiptValue,
+  REQUIRED, LIGHT_SCOPE_MAX_CHANGED_LINES, DERIVE_WHEN, DERIVED_FROM,
   matchesRule, isPriorReviewDetector,
 } from '../src/args.js';
 
@@ -325,6 +326,62 @@ test('registry waist maps use valid source keys and typed destination domains', 
   }
 });
 
+test('T2: the light eligibility predicate, description, and validation arms share one limit', () => {
+  assert.match(DERIVE_WHEN.lightEligible.describe, new RegExp(String(LIGHT_SCOPE_MAX_CHANGED_LINES)));
+  assert.equal(
+    DERIVE_WHEN.lightEligible.describe,
+    'every changed file is low risk and fewer than 50 lines changed',
+  );
+  assert.equal(
+    computeLightEligible([{ path: 'a', risk: 'low' }], LIGHT_SCOPE_MAX_CHANGED_LINES - 1),
+    true,
+  );
+  assert.equal(
+    computeLightEligible([{ path: 'a', risk: 'low' }], LIGHT_SCOPE_MAX_CHANGED_LINES),
+    false,
+  );
+
+  const lightAnswer = validateArgs({
+    ...good,
+    changedLines: LIGHT_SCOPE_MAX_CHANGED_LINES,
+    riskTable: [{ path: 'a.js', risk: 'low' }],
+    scopeAnswer: 'light',
+  });
+  assert.ok(lightAnswer.errors.some((error) => error.includes(`changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}`)));
+
+  const headless = headlessArgs();
+  headless.riskTable = [{ path: 'a.js', risk: 'medium' }];
+  headless.configEcho.trivial_scope = { value: 'light', source: 'default' };
+  const receiptAnswer = validateArgs(headless);
+  assert.ok(receiptAnswer.errors.some((error) => error.includes(`changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}`)));
+});
+
+test('T5: derivation tables and registry names are bidirectionally complete', () => {
+  const deriveNames = new Set(
+    KNOB_REGISTRY.filter(({ deriveWhen }) => deriveWhen !== null).map(({ deriveWhen }) => deriveWhen),
+  );
+  const derivedNames = new Set(
+    KNOB_REGISTRY.filter(({ derivedFrom }) => derivedFrom !== null).map(({ derivedFrom }) => derivedFrom),
+  );
+  assert.deepEqual(deriveNames, new Set(Object.keys(DERIVE_WHEN)));
+  assert.deepEqual(derivedNames, new Set(Object.keys(DERIVED_FROM)));
+  for (const [name, entry] of Object.entries(DERIVE_WHEN)) {
+    assert.equal(typeof entry.holds, 'function', name);
+    assert.equal(typeof entry.describe, 'string', name);
+    assert.ok(entry.describe.trim(), name);
+  }
+  for (const [name, entry] of Object.entries(DERIVED_FROM)) {
+    assert.equal(typeof entry.fill, 'function', name);
+    assert.equal(typeof entry.source, 'string', name);
+    assert.equal(typeof entry.describe, 'string', name);
+    assert.ok(entry.describe.trim(), name);
+  }
+  assert.equal(
+    KNOB_REGISTRY.some(({ derivedFrom, waistPath }) => derivedFrom !== null && waistPath !== null),
+    false,
+  );
+});
+
 test('matchesRule evaluates every rule kind and fails closed for lures', () => {
   const enumRule = { kind: 'enum', values: ['optimized'] };
   const csvRule = { kind: 'csv_subset', values: ['chat', 'markdown'] };
@@ -603,6 +660,40 @@ test('T309-ARGS: malformed reviewed policy receipt derives nothing and reports t
   assert.ok(result.errors.includes('reviewScope.requested must be full or incremental'));
 });
 
+test('T4: unknown deriveWhen names fail closed without throwing', () => {
+  const descriptors = ['nonsense', 'toString'].map((deriveWhen, index) => ({
+    key: `unknown_${index}`,
+    modes: ['headless'],
+    allowedSources: { headless: ['default'] },
+    rule: { kind: 'enum', values: ['value'] },
+    env: null,
+    reviewMdKey: null,
+    defaults: { headless: ['value', 'default'] },
+    type: 'string',
+    waistPath: `unknown_${index}.field`,
+    waistMap: null,
+    derivedFrom: null,
+    deriveWhen,
+    nullReceipt: [],
+    resolvedKey: false,
+  }));
+  const input = headlessArgs();
+  for (const descriptor of descriptors) {
+    input.configEcho[descriptor.key] = { value: 'value', source: 'default' };
+  }
+  const originalLength = KNOB_REGISTRY.length;
+  try {
+    KNOB_REGISTRY.push(...descriptors);
+    const normalized = normalizeArgsReport(input).args;
+    for (const descriptor of descriptors) {
+      assert.equal(normalized[descriptor.key], undefined, descriptor.deriveWhen);
+      assert.equal(normalized[descriptor.waistPath.split('.')[0]], undefined, descriptor.deriveWhen);
+    }
+  } finally {
+    KNOB_REGISTRY.length = originalLength;
+  }
+});
+
 test('T309-ARGS: local and branch scopes stay stamped while detector-backed lockstep is gated', () => {
   for (const policy of ['full', 'incremental', 'skip']) {
     const stamped = headlessArgs(policy, {
@@ -617,6 +708,102 @@ test('T309-ARGS: local and branch scopes stay stamped while detector-backed lock
     const normalized = normalizeArgs(omitted);
     assert.equal(normalized.reviewScope.requested, undefined, policy);
     assert.ok(validateArgs(normalized).errors.includes('reviewScope.requested must be full or incremental'), policy);
+  }
+});
+
+test('T11: headless local or branch scope does not derive requested', () => {
+  const input = headlessArgs('full', {
+    requested: undefined,
+    kind: 'full',
+    since: null,
+    commits: null,
+    detector: null,
+  });
+  delete input.reviewScope.requested;
+  const normalized = normalizeArgs(input);
+  assert.equal(normalized.reviewScope.requested, undefined);
+  assert.ok(validateArgs(normalized).errors.includes('reviewScope.requested must be full or incremental'));
+});
+
+function dottedFixtureValue(object, path) {
+  return path.split('.').reduce((current, part) => current?.[part], object);
+}
+
+function deleteDottedFixtureValue(object, path) {
+  const parts = path.split('.');
+  const leaf = parts.pop();
+  const parent = parts.reduce((current, part) => current?.[part], object);
+  if (parent) delete parent[leaf];
+}
+
+function derivedWaistFixture(mode) {
+  if (mode === 'headless') {
+    const input = headlessArgs('skip');
+    input.riskTable = [{ path: 'a.js', risk: 'low' }];
+    input.changedLines = 1;
+    input.configEcho.trivial_scope = { value: 'light', source: 'default' };
+    delete input.limits;
+    input.delivery = {};
+    delete input.reviewScope.requested;
+    const requiredRoots = new Set(REQUIRED);
+    for (const descriptor of KNOB_REGISTRY.filter(({ waistPath }) => waistPath !== null)) {
+      const root = descriptor.waistPath.split('.')[0];
+      if (descriptor.modes.includes(mode) && requiredRoots.has(root) && input[root] === undefined) {
+        input[root] = {};
+      }
+    }
+    return input;
+  }
+  const input = structuredClone(good);
+  input.configEcho = {
+    ...input.configEcho,
+    pr_comment_cap: { value: '7', source: 'env' },
+    delivery_tier: { value: 'main_only', source: 'env' },
+  };
+  delete input.limits;
+  const requiredRoots = new Set(REQUIRED);
+  for (const descriptor of KNOB_REGISTRY.filter(({ waistPath }) => waistPath !== null)) {
+    const root = descriptor.waistPath.split('.')[0];
+    if (descriptor.modes.includes(mode) && requiredRoots.has(root) && input[root] === undefined) {
+      input[root] = {};
+    }
+  }
+  return input;
+}
+
+test('T10: every waist row derives in each declared mode and not in its mode twin', () => {
+  for (const descriptor of KNOB_REGISTRY.filter(({ waistPath }) => waistPath !== null)) {
+    for (const mode of descriptor.modes) {
+      const input = derivedWaistFixture(mode);
+      deleteDottedFixtureValue(input, descriptor.waistPath);
+      const normalized = normalizeArgs(input);
+      assert.notEqual(dottedFixtureValue(normalized, descriptor.waistPath), undefined, `${descriptor.key}/${mode}`);
+    }
+  }
+
+  const originalLength = KNOB_REGISTRY.length;
+  try {
+    KNOB_REGISTRY.push({
+      key: 'twin_probe',
+      modes: ['headless'],
+      allowedSources: { headless: ['default'], interactive: ['default'] },
+      rule: { kind: 'enum', values: ['v'] },
+      env: null,
+      reviewMdKey: null,
+      defaults: { headless: ['v', 'default'], interactive: ['v', 'default'] },
+      type: 'string',
+      waistPath: 'twinProbe',
+      waistMap: null,
+      derivedFrom: null,
+      deriveWhen: null,
+      nullReceipt: [],
+      resolvedKey: false,
+    });
+    const twin = derivedWaistFixture('interactive');
+    twin.configEcho.twin_probe = { value: 'v', source: 'default' };
+    assert.equal(normalizeArgs(twin).twinProbe, undefined);
+  } finally {
+    KNOB_REGISTRY.length = originalLength;
   }
 });
 

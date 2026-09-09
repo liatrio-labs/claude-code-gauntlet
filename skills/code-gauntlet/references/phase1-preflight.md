@@ -182,16 +182,27 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
 > (PR not found, draft PR, previously reviewed) are unaffected: they fire on anomalies, not on the happy
 > path.
 
-The resolver owns configuration values. The workflow derives typed waist fields from its receipt.
+The resolver owns configuration values. The generated block below names the waist fields the workflow derives from its receipt.
 
 | Config key | Resolution |
 |---|---|
-| `policy.tier` | The resolver owns `model_tier`. Copy `configResult.resolved.model_tier`; the workflow derives the typed policy value. |
-| `delivery.tier` | The resolver owns `delivery_tier`. Copy its receipt entry; the workflow derives the typed tier. |
-| `limits.deliveryCap` | The resolver owns `pr_comment_cap`. Copy its receipt entry; the workflow derives the typed cap. |
-| `reviewScope.requested` | Headless PR/MR targets omit it; the workflow derives it from `configEcho.reviewed_policy`, mapping `skip` to `full`. Local and branch targets stamp `full`. Interactive targets stamp the gate answer. |
+| `policy.tier` | Copy `configResult.resolved.model_tier`; `validateArgs` accepts only `optimized`. |
 | Delivery destination | The resolver owns headless delivery methods. Interactive delivery remains the Phase 8 question after the report exists (`references/phase8-delivery.md` Stage 1). |
-| REVIEW.md presence | Discovery derives `configEcho.review_md` from `reviewConfigPath` and emits the canonical notice (`references/review-md-spec.md` → Discovery). |
+
+<!-- generated-from-registry-identity:derived_waist_fields — do not edit; run scripts/generate_contract_requirements.py -->
+The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.
+
+- `limits.deliveryCap` (headless and interactive runs): from `configEcho.pr_comment_cap`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `deliveryCap` out of it.
+- `delivery.tier` (headless and interactive runs): from `configEcho.delivery_tier`. Leave `tier` out of any stamped `delivery`.
+- `reviewScope.requested` (headless runs, when `reviewScope.detector` is an object): from `configEcho.reviewed_policy`; `skip` derives as `full`. Stamp `reviewScope` and leave `requested` out of it.
+- `scopeAnswer` (headless runs, when every changed file is low risk and fewer than 50 lines changed): from `configEcho.trivial_scope`. Leave it out.
+
+The workflow fills these receipt entries itself; never stamp them.
+
+- `configEcho.review_md` (interactive runs): `present` when `reviewConfigPath` is set, else `absent`.
+<!-- /generated-from-registry-identity:derived_waist_fields -->
+
+Discovery emits the canonical REVIEW.md notice (see `references/review-md-spec.md` -> Discovery).
 
 **Resolved-config echo.** The generated `config_receipt` fence in SKILL.md contains both resolver fixtures. Phase 1 uses the resolver block in the Bash result, and Phase 2 gates on that result.
 
@@ -201,11 +212,11 @@ The resolver owns configuration values. The workflow derives typed waist fields 
 
 > **Note:** This template is triggered during Phase 2d (risk classification). It lives here because it is a pre-flight UX decision — the user's answer affects what review dimensions run, so it is collected alongside the other pre-flight gates.
 
-> The answer is stamped verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow derives the dimension flags itself from `scopeAnswer` plus the Phase 2e `riskTable`/`changedLines` (`deriveAgentFlags`, `workflows/src/stages.js`): `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven. Announce the actual dimensions that will run.
+> The answer is stamped verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow computes the dimension flags itself from `scopeAnswer` plus the Phase 2e `riskTable`/`changedLines` (`deriveAgentFlags`, `workflows/src/stages.js`): `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven. Announce the actual dimensions that will run.
 
 Used when ALL files are low-risk AND total lines <50:
 
-> Headless exception: do not present this `AskUserQuestion`. The workflow derives headless `scopeAnswer` from the resolver receipt: `light` runs bugs and security only, while `full` runs all dimensions. See `references/headless-mode.md`.
+> Headless exception: do not present this `AskUserQuestion`; leave `scopeAnswer` out. See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(
