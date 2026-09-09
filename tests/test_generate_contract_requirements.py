@@ -5,6 +5,7 @@ dicts and small file fragments, so a regression in the splice/table-rewrite/sent
 logic fails here without needing `node` or the real agent files.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -41,6 +42,32 @@ class TestDispatchRequiredSentence(unittest.TestCase):
         self.assertIn("all must always be present", sentence)
         self.assertNotIn("either", sentence)
         self.assertNotIn("both", sentence)
+
+
+class TestNodeDiagnostic(unittest.TestCase):
+    def test_missing_node_reports_one_actionable_line(self):
+        with tempfile.TemporaryDirectory() as empty_path:
+            env = os.environ.copy()
+            env["PATH"] = empty_path
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO / "scripts" / "generate_contract_requirements.py"),
+                    "--check",
+                ],
+                cwd=REPO,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.count("\n"), 1, result.stderr)
+        self.assertRegex(
+            result.stderr,
+            r"^generate_contract_requirements: node 24 command failed: "
+            r"node --input-type=module -e .+\n$",
+        )
 
 
 class TestConditionalParagraphs(unittest.TestCase):

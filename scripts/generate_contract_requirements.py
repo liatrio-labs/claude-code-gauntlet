@@ -99,6 +99,68 @@ _CONDITIONAL_NOUNS = {
 }
 
 
+_NODE_PROGRAM_ROOTS = (
+    "workflows/src/registry.js",
+    "workflows/src/args.js",
+    "workflows/src/renderReport.js",
+)
+_WORKFLOW_RELATIVE_IMPORT_RE = re.compile(
+    r"^\s*(?:import|export)\b.*?\bfrom\s+['\"](\.[^'\"]+)['\"]",
+    re.MULTILINE,
+)
+_SCRIPT_INPUTS = (
+    "scripts/generate_contract_requirements.py",
+    "scripts/resolve_config.py",
+    "scripts/post_review.py",
+    "scripts/detect_prior_review.py",
+    "scripts/diff_lines.py",
+    "scripts/review_marker.py",
+)
+
+
+def _run_node(node_src, repo_root):
+    """Run one of the generator's Node programs with a concise failure diagnostic."""
+    command = ["node", "--input-type=module", "-e", node_src]
+    try:
+        return subprocess.run(
+            command,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        raise SystemExit(
+            "generate_contract_requirements: node 24 command failed: "
+            + " ".join(command)
+        ) from None
+
+
+def _workflow_import_closure(repo_root):
+    """Return the relative workflows/src modules used by both Node programs."""
+    pending = list(_NODE_PROGRAM_ROOTS)
+    seen = set()
+    while pending:
+        rel_path = pending.pop()
+        if rel_path in seen:
+            continue
+        seen.add(rel_path)
+        path = os.path.join(repo_root, rel_path)
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        base = os.path.dirname(rel_path)
+        for specifier in _WORKFLOW_RELATIVE_IMPORT_RE.findall(source):
+            imported = os.path.normpath(os.path.join(base, specifier))
+            if imported not in seen:
+                pending.append(imported)
+    return seen
+
+
+def declared_inputs(repo_root=REPO_ROOT):
+    """Return generator sources and every local module that can affect its output."""
+    return set(_SCRIPT_INPUTS) | _workflow_import_closure(repo_root)
+
+
 def load_registry(repo_root=REPO_ROOT):
     """Import the live schemas and keep finding and waist required lists distinct."""
     node_src = (
@@ -124,13 +186,7 @@ def load_registry(repo_root=REPO_ROOT):
         "  derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM).map(([name, d]) => [name, d.describe])),"
         "})))"
     )
-    out = subprocess.run(
-        ["node", "--input-type=module", "-e", node_src],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    out = _run_node(node_src, repo_root)
     return json.loads(out.stdout)
 
 
@@ -571,13 +627,7 @@ def render_template_block(repo_root, identity):
         "import('./workflows/src/renderReport.js').then(m => "
         "process.stdout.write(m.renderReport(" + json.dumps(fixture) + ")))"
     )
-    out = subprocess.run(
-        ["node", "--input-type=module", "-e", node_src],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    out = _run_node(node_src, repo_root)
     return "````markdown\n" + out.stdout + "\n````"
 
 
