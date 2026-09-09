@@ -877,8 +877,11 @@ test('T9: special cap arms report one fault and suppress the generic template', 
   const headless = headlessArgs();
   headless.limits = { ...headless.limits, deliveryCap: '1' };
   const headlessResult = validateArgs(headless);
-  assert.equal(headlessResult.errors.length, 1);
-  assert.equal(headlessResult.errors.some((error) => /does not match configEcho/.test(error)), false);
+  // Mutation: restore the every-non-number presence arm; a present string must keep its shape
+  // error rather than being rewritten as a receipt-presence error.
+  assert.deepEqual(headlessResult.errors, [
+    'limits.deliveryCap must be null, absent, or a non-negative safe integer when present',
+  ]);
 
   const interactive = { ...good, limits: { ...good.limits, deliveryCap: null }, configEcho: {
     ...good.configEcho, pr_comment_cap: { value: '5', source: 'default' },
@@ -964,7 +967,10 @@ test('T15: ineligible light receipt plus a present scopeAnswer uses the two dedi
   args.configEcho.trivial_scope = { value: 'light', source: 'default' };
   const result = validateArgs(args);
   assert.ok(result.errors.some((error) => error.startsWith('scopeAnswer is "full"')));
-  assert.ok(result.errors.some((error) => error.startsWith('configEcho.trivial_scope is "light"')));
+  const receiptError = result.errors.find((error) => error.startsWith('configEcho.trivial_scope is "light"'));
+  assert.ok(receiptError);
+  // Mutation: append the scopeAnswer fix to the receipt arm, which has no waist operand.
+  assert.doesNotMatch(receiptError, /omit scopeAnswer/);
   // Mutation: retain the deleted scopeAnswer equality arm; no generic equality is valid here.
   assert.equal(result.errors.some((error) => error.includes('scopeAnswer does not match configEcho')), false);
 });
@@ -1343,7 +1349,12 @@ test('T182-ARGS: headless deliveryCap must be numeric for the receipt', () => {
     if (label !== 'absent') limits.deliveryCap = deliveryCap;
     const result = validateArgs({ ...base, limits });
     assert.equal(result.ok, false, label);
-    assert.ok(result.errors.some((error) => error.includes('headless limits.deliveryCap must be a number')), `${label}: ${result.errors.join('; ')}`);
+    // Mutation: restore the every-non-number presence arm; the string case must retain only
+    // its focused shape error.
+    const expected = label === 'non-number'
+      ? 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present'
+      : 'headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap';
+    assert.deepEqual(result.errors, [expected], label);
   }
 });
 

@@ -2447,10 +2447,13 @@ function deriveWhenHolds(descriptor, args) {
   return descriptor.deriveWhen === null
     || (Object.hasOwn(DERIVE_WHEN, descriptor.deriveWhen) && DERIVE_WHEN[descriptor.deriveWhen].holds(args));
 }
-function deriveConfigWaist(args, derivedPaths = []) {
-  if (!isPlainObject(args) || !isPlainObject(args.configEcho) || typeof args.mode !== 'string') return args;
+function deriveConfigWaist(args) {
+  if (!isPlainObject(args) || !isPlainObject(args.configEcho) || typeof args.mode !== 'string') {
+    return { args, derivedPaths: [] };
+  }
   const out = { ...args };
   const configEcho = { ...args.configEcho };
+  const derivedPaths = [];
   let configEchoChanged = false;
   for (const descriptor of KNOB_REGISTRY) {
     if (!descriptor.modes.includes(args.mode)) continue;
@@ -2477,13 +2480,14 @@ function deriveConfigWaist(args, derivedPaths = []) {
     }
   }
   if (configEchoChanged) out.configEcho = configEcho;
-  return out;
+  return { args: out, derivedPaths };
 }
 function normalizeArgsReport(raw) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
   const report = stripNullOptionalsReport(parsed);
-  report.derivedPaths = [];
-  report.args = deriveConfigWaist(report.args, report.derivedPaths);
+  const { args, derivedPaths } = deriveConfigWaist(report.args);
+  report.args = args;
+  report.derivedPaths = derivedPaths;
   return report;
 }
 function normalizeArgs(raw) {
@@ -2998,14 +3002,16 @@ function validateArgs(args) {
     const capDescriptor = KNOB_REGISTRY.find((descriptor) => descriptor.key === 'pr_comment_cap');
     const capEntry = capDescriptor ? receiptEntryFor(args, capDescriptor) : null;
     if (isPlainObject(args.limits) && capEntry !== null) {
-      if (args.mode === 'headless' && typeof args.limits.deliveryCap !== 'number') {
-        const capShapeError = 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present';
-        const shapeErrorIndex = errors.indexOf(capShapeError);
-        if (shapeErrorIndex !== -1) errors.splice(shapeErrorIndex, 1);
+      const capValue = args.limits.deliveryCap;
+      const capShapeInvalid = capValue !== undefined && capValue !== null
+        && (!Number.isSafeInteger(capValue) || capValue < 0);
+      if (capShapeInvalid) {
+        reported.add('limits.deliveryCap');
+      } else if (args.mode === 'headless' && (capValue === undefined || capValue === null)) {
         errors.push('headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap');
         reported.add('limits.deliveryCap');
       } else if (args.mode === 'interactive'
-        && (args.limits.deliveryCap === null || args.limits.deliveryCap === undefined)
+        && (capValue === null || capValue === undefined)
         && capEntry.value !== 'null') {
         errors.push('configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null');
         reported.add('limits.deliveryCap');
@@ -3025,7 +3031,7 @@ function validateArgs(args) {
       const trivialEntry = trivialDescriptor ? receiptEntryFor(args, trivialDescriptor) : null;
       if (trivialEntry !== null && trivialEntry.value === 'light'
         && !computeLightEligible(args.riskTable, args.changedLines)) {
-        errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked; omit scopeAnswer`);
+        errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked`);
         reported.add('scopeAnswer');
       }
       const deliveryEcho = configEchoValue(args, 'delivery');
