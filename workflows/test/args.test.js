@@ -684,6 +684,21 @@ test('T4: unknown deriveWhen names fail closed without throwing', () => {
   const originalLength = KNOB_REGISTRY.length;
   try {
     KNOB_REGISTRY.push(...descriptors);
+    const unstampedInput = headlessArgs();
+    for (const descriptor of descriptors) {
+      unstampedInput.configEcho[descriptor.key] = { value: 'value', source: 'default' };
+    }
+    let unstampedReport;
+    assert.doesNotThrow(() => {
+      unstampedReport = normalizeArgsReport(unstampedInput);
+    });
+    // Mutation: bypass the unknown-name guard in deriveConfigWaist only. Neither
+    // unknown deriveWhen name may derive its waist path from a receipt.
+    for (const descriptor of descriptors) {
+      const root = descriptor.waistPath.split('.')[0];
+      assert.equal(unstampedReport.args[root], undefined, descriptor.deriveWhen);
+      assert.equal(unstampedReport.derivedPaths.includes(descriptor.waistPath), false, descriptor.deriveWhen);
+    }
     for (const descriptor of descriptors) {
       input[descriptor.waistPath.split('.')[0]] = { field: 'value' };
     }
@@ -904,6 +919,7 @@ test('T10: a mode twin is not lockstep-validated outside its declared modes', ()
     });
     const args = { ...good, configEcho: { ...good.configEcho, mode_twin_probe: { value: 'value', source: 'default' } }, modeTwinProbe: { value: 'wrong' } };
     const result = validateArgs(args);
+    // Mutation: removing descriptor.modes.includes(args.mode) from the lockstep pass turns it red.
     assert.equal(result.errors.some((error) => error.includes('configEcho has unexpected key(s): mode_twin_probe')), true);
     assert.equal(result.errors.some((error) => /does not match configEcho/.test(error)), false);
   } finally {
