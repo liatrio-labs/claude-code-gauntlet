@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.35.0 (2026-09-09)
+
+### Features
+
+- **registry**: Generate the derived-waist-field instructions from the knob registry (#311)
+  ([#314](https://github.com/liatrio-labs/claude-code-gauntlet/pull/314),
+  [`682c2b7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/682c2b7a76be1103e3a205168fafaa51556fdf89))
+
+
 ## v3.34.0 (2026-09-08)
 
 ### Bug Fixes
