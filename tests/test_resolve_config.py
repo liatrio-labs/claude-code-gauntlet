@@ -650,7 +650,7 @@ class TestGeneratedDataContracts(unittest.TestCase):
         }
         expected = {
             ("skills/code-gauntlet/SKILL.md", "limits.deliveryCap"): 2,
-            ("skills/code-gauntlet/SKILL.md", "scopeAnswer"): 7,
+            ("skills/code-gauntlet/SKILL.md", "scopeAnswer"): 6,
             (
                 "skills/code-gauntlet/references/delivery-guide.md",
                 "limits.deliveryCap",

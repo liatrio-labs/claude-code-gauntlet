@@ -3839,9 +3839,14 @@ export async function runWith(ctx, rawArgs) {
   // Normalize from entry.waist, not rawArgs: entryArgs has already unwrapped every JSON
   // layer, and normalizeArgsReport peels exactly one — re-normalizing the raw value would
   // hand validateArgs a string for any waist encoded more than once.
-  const { args: A, dropped: droppedNulls, respelled: respelledNulls } = normalizeArgsReport(entry.waist);
+  const {
+    args: A,
+    dropped: droppedNulls,
+    respelled: respelledNulls,
+    derivedPaths,
+  } = normalizeArgsReport(entry.waist);
   const nullArgGaps = [
-    ...nullToleranceRejectedKeys(A, droppedNulls).map(nullToleranceGap),
+    ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map(nullToleranceGap),
     ...respelledNulls.map(nullRespellGap),
   ];
   const check = validateArgs(A);

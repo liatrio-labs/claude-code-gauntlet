@@ -720,16 +720,33 @@ test('F4-3: checkpoints:null discloses NOTHING — validateArgs never rejected i
   assert.match(named[0], /reviewConfig/);
 });
 
-test('F4-3: every OTHER nullable key still discloses (the filter is not a blanket mute)', async () => {
-  // delivery.tier / delivery.prIdentity are nested drops; each is rejected by validateArgs as
-  // a stamped null, so each keeps its disclosure.
+test('F4-3: every non-derived nullable key still discloses (the filter is not a blanket mute)', async () => {
+  // delivery.tier is immediately re-derived from its receipt, so R7 deliberately suppresses
+  // its null disclosure. delivery.prIdentity has no derivation and keeps its disclosure.
   const args = validArgs({ delivery: { tier: null, prIdentity: null } });
   const out = await runWith(makeCtx(args), args);
   assert.equal(out.ok, true);
   const named = out.gaps.filter((g) => /^null_arg: /.test(g));
-  assert.equal(named.length, 2, `got: ${named}`);
-  assert.ok(named.some((g) => g.includes('delivery.tier')));
+  // Mutation: pass no derivedPaths through stages.js, which would disclose delivery.tier too.
+  assert.equal(named.length, 1, `got: ${named}`);
   assert.ok(named.some((g) => g.includes('delivery.prIdentity')));
+});
+
+test('R7: a derived headless scopeAnswer null is normalized and not disclosed', async () => {
+  const base = validArgs();
+  const args = validArgs({
+    riskTable: [{ path: 'a.js', risk: 'low' }],
+    changedLines: 10,
+    scopeAnswer: null,
+    configEcho: {
+      ...base.configEcho,
+      trivial_scope: { value: 'light', source: 'default' },
+    },
+  });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true, `a derived null must not reject the run; gaps: ${out.gaps}`);
+  // Mutation: omit derivedPaths from the stages.js differential probe.
+  assert.deepEqual(out.gaps.filter((g) => /^null_arg: /.test(g)), []);
 });
 
 test('a clean waist records NO null_arg gap (disclosure is not noise)', async () => {

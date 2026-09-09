@@ -2308,10 +2308,13 @@ function nullToleranceGap(key) {
 function nullRespellGap(key) {
   return `null_receipt: args.${key} arrived as a literal null and was spelled as the printed token "null"; the receipt and the configuration are unchanged; stamp the string "null".`;
 }
-function nullToleranceRejectedKeys(cleanArgs, dropped) {
+function nullToleranceRejectedKeys(cleanArgs, dropped, derivedPaths = []) {
   if (!Array.isArray(dropped) || dropped.length === 0) return [];
+  const derived = new Set(Array.isArray(derivedPaths) ? derivedPaths : []);
   const baseline = validateArgs(cleanArgs).errors.length;
-  return dropped.filter((key) => validateArgs(withNullAt(cleanArgs, key)).errors.length > baseline);
+  return dropped
+    .filter((key) => !derived.has(key))
+    .filter((key) => validateArgs(withNullAt(cleanArgs, key)).errors.length > baseline);
 }
 function withNullAt(args, key) {
   const base = (args && typeof args === 'object' && !Array.isArray(args)) ? args : {};
@@ -2440,7 +2443,11 @@ const DERIVED_FROM = {
     describe: '`present` when `reviewConfigPath` is set, else `absent`',
   },
 };
-function deriveConfigWaist(args) {
+function deriveWhenHolds(descriptor, args) {
+  return descriptor.deriveWhen === null
+    || (Object.hasOwn(DERIVE_WHEN, descriptor.deriveWhen) && DERIVE_WHEN[descriptor.deriveWhen].holds(args));
+}
+function deriveConfigWaist(args, derivedPaths = []) {
   if (!isPlainObject(args) || !isPlainObject(args.configEcho) || typeof args.mode !== 'string') return args;
   const out = { ...args };
   const configEcho = { ...args.configEcho };
@@ -2463,11 +2470,11 @@ function deriveConfigWaist(args) {
     if (out[root] === undefined && REQUIRED.includes(root)) continue;
     const entry = receiptEntryFor(args, descriptor);
     if (!entry) continue;
-    if (descriptor.deriveWhen !== null
-      && (!Object.hasOwn(DERIVE_WHEN, descriptor.deriveWhen)
-        || !DERIVE_WHEN[descriptor.deriveWhen].holds(args))) continue;
+    if (!deriveWhenHolds(descriptor, args)) continue;
     const value = mappedReceiptValue(descriptor, entry.value);
-    if (value !== undefined) setDottedValue(out, descriptor.waistPath, value);
+    if (value !== undefined && setDottedValue(out, descriptor.waistPath, value)) {
+      derivedPaths.push(descriptor.waistPath);
+    }
   }
   if (configEchoChanged) out.configEcho = configEcho;
   return out;
@@ -2475,7 +2482,8 @@ function deriveConfigWaist(args) {
 function normalizeArgsReport(raw) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
   const report = stripNullOptionalsReport(parsed);
-  report.args = deriveConfigWaist(report.args);
+  report.derivedPaths = [];
+  report.args = deriveConfigWaist(report.args, report.derivedPaths);
   return report;
 }
 function normalizeArgs(raw) {
@@ -2712,11 +2720,12 @@ function validateArgs(args) {
   const scopeAnswerWellFormed = args.scopeAnswer === undefined || SCOPE_ANSWERS.includes(args.scopeAnswer);
   if (riskTableWellFormed && scopeAnswerWellFormed && typeof args.changedLines === 'number') {
     const lightEligible = computeLightEligible(args.riskTable, args.changedLines);
-    if (args.scopeAnswer === 'light' && !lightEligible) {
-      errors.push(`scopeAnswer is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked`);
-    }
-    if (lightEligible && args.scopeAnswer === undefined) {
-      errors.push('riskTable/changedLines are light-eligible but scopeAnswer is missing — the light/full gate must have asked, and its answer must be stamped as scopeAnswer');
+    if ((args.scopeAnswer !== undefined) !== lightEligible) {
+      if (args.scopeAnswer !== undefined) {
+        errors.push(`scopeAnswer is "${args.scopeAnswer}" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked; omit scopeAnswer`);
+      } else {
+        errors.push('riskTable/changedLines are light-eligible but scopeAnswer is missing — the light/full gate must have asked, and its answer must be stamped as scopeAnswer');
+      }
     }
   }
   if (args.policy && typeof args.policy === 'object' && !Array.isArray(args.policy)
@@ -2984,54 +2993,74 @@ function validateArgs(args) {
       }
     }
   }
-  const deliveryTierEcho = configEchoValue(args, 'delivery_tier');
-  if (deliveryTierEcho !== undefined && (args.delivery === undefined || args.delivery === null || isPlainObject(args.delivery))) {
-    const effectiveTier = isPlainObject(args.delivery) && args.delivery.tier != null ? args.delivery.tier : 'all';
-    if (deliveryTierEcho === 'all' || deliveryTierEcho === 'main_only') {
-      if (deliveryTierEcho !== effectiveTier) errors.push('configEcho.delivery_tier does not match delivery.tier');
-    }
-  }
-  const capEcho = configEchoValue(args, 'pr_comment_cap');
-  if (capEcho !== undefined && isPlainObject(args.limits)) {
+  const reported = new Set();
+  if (isPlainObject(args.configEcho)) {
     const capDescriptor = KNOB_REGISTRY.find((descriptor) => descriptor.key === 'pr_comment_cap');
-    const capValueWellFormed = capDescriptor && matchesRule(capDescriptor.rule, capEcho, args.mode);
-    if (!capValueWellFormed) {
-    } else if (args.mode === 'headless' && typeof args.limits.deliveryCap !== 'number') {
-      errors.push('headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap');
-    } else if (typeof args.limits.deliveryCap === 'number' && capEcho !== String(args.limits.deliveryCap)) {
-      errors.push('configEcho.pr_comment_cap does not match limits.deliveryCap');
-    } else if (args.mode === 'interactive' && (args.limits.deliveryCap === null || args.limits.deliveryCap === undefined) && capEcho !== 'null') {
-      errors.push('configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null');
-    }
-  }
-  if (args.mode === 'headless') {
-    const reviewedPolicyEcho = configEchoValue(args, 'reviewed_policy');
-    const reviewedPolicyDescriptor = KNOB_REGISTRY.find(({ key }) => key === 'reviewed_policy');
-    if (isPriorReviewDetector(args) && isPlainObject(args.reviewScope)
-      && reviewedPolicyDescriptor && ['incremental', 'full', 'skip'].includes(reviewedPolicyEcho)) {
-      const requestedScope = mappedReceiptValue(reviewedPolicyDescriptor, reviewedPolicyEcho);
-      if (args.reviewScope.requested !== requestedScope) {
-        errors.push('reviewScope.requested does not match configEcho.reviewed_policy');
+    const capEntry = capDescriptor ? receiptEntryFor(args, capDescriptor) : null;
+    if (isPlainObject(args.limits) && capEntry !== null) {
+      if (args.mode === 'headless' && typeof args.limits.deliveryCap !== 'number') {
+        const capShapeError = 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present';
+        const shapeErrorIndex = errors.indexOf(capShapeError);
+        if (shapeErrorIndex !== -1) errors.splice(shapeErrorIndex, 1);
+        errors.push('headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap');
+        reported.add('limits.deliveryCap');
+      } else if (args.mode === 'interactive'
+        && (args.limits.deliveryCap === null || args.limits.deliveryCap === undefined)
+        && capEntry.value !== 'null') {
+        errors.push('configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null');
+        reported.add('limits.deliveryCap');
       }
     }
-    const trivialEcho = configEchoValue(args, 'trivial_scope');
-    if (trivialEcho === 'light' && !computeLightEligible(args.riskTable, args.changedLines)) {
-      errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked`);
+    const tierDescriptor = KNOB_REGISTRY.find((descriptor) => descriptor.key === 'delivery_tier');
+    const tierEntry = tierDescriptor ? receiptEntryFor(args, tierDescriptor) : null;
+    const stampedTier = dottedValue(args, 'delivery.tier');
+    if (tierEntry !== null
+      && (args.delivery === undefined || args.delivery === null || isPlainObject(args.delivery))
+      && (stampedTier === undefined || stampedTier === null)) {
+      reported.add('delivery.tier');
+      if (tierEntry.value !== 'all') errors.push('configEcho.delivery_tier does not match delivery.tier');
     }
-    if (args.scopeAnswer !== undefined && trivialEcho !== undefined && args.scopeAnswer !== trivialEcho) {
-      errors.push('scopeAnswer does not match configEcho.trivial_scope');
-    }
-    const deliveryEcho = configEchoValue(args, 'delivery');
-    if (deliveryEcho && deliveryEcho.split(',').includes('pr_comments')
-      && (!isPlainObject(args.delivery) || args.delivery.prIdentity === undefined || args.delivery.prIdentity === null)) {
-      errors.push('delivery.prIdentity is required when configEcho.delivery contains pr_comments');
+    if (args.mode === 'headless') {
+      const trivialDescriptor = KNOB_REGISTRY.find((descriptor) => descriptor.key === 'trivial_scope');
+      const trivialEntry = trivialDescriptor ? receiptEntryFor(args, trivialDescriptor) : null;
+      if (trivialEntry !== null && trivialEntry.value === 'light'
+        && !computeLightEligible(args.riskTable, args.changedLines)) {
+        errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked; omit scopeAnswer`);
+        reported.add('scopeAnswer');
+      }
+      const deliveryEcho = configEchoValue(args, 'delivery');
+      if (deliveryEcho && deliveryEcho.split(',').includes('pr_comments')
+        && (!isPlainObject(args.delivery) || args.delivery.prIdentity === undefined || args.delivery.prIdentity === null)) {
+        errors.push('delivery.prIdentity is required when configEcho.delivery contains pr_comments');
+      }
     }
   }
-  if (args.mode === 'interactive') {
-    const reviewMdEcho = configEchoValue(args, 'review_md');
-    if (['present', 'absent'].includes(reviewMdEcho)) {
-      const expectedReviewMd = args.reviewConfigPath != null ? 'present' : 'absent';
-      if (reviewMdEcho !== expectedReviewMd) errors.push('configEcho.review_md does not match reviewConfigPath');
+  if (isPlainObject(args.configEcho)) {
+    for (const descriptor of KNOB_REGISTRY) {
+      if (!descriptor.modes.includes(args.mode) || descriptor.waistPath === null) continue;
+      if (reported.has(descriptor.waistPath)) continue;
+      const entry = receiptEntryFor(args, descriptor);
+      if (entry === null) continue;
+      if (!deriveWhenHolds(descriptor, args)) continue;
+      const stamped = dottedValue(args, descriptor.waistPath);
+      if (stamped === undefined) continue;
+      const expected = mappedReceiptValue(descriptor, entry.value);
+      if (expected === undefined) continue;
+      const matches = descriptor.type === 'csv_list'
+        ? Array.isArray(stamped)
+          && stamped.length === expected.length
+          && stamped.every((value, index) => value === expected[index])
+        : stamped === expected;
+      if (!matches) errors.push(`${descriptor.waistPath} does not match configEcho.${descriptor.key}`);
+    }
+    for (const descriptor of KNOB_REGISTRY) {
+      if (!descriptor.modes.includes(args.mode)
+        || descriptor.derivedFrom === null
+        || !Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)) continue;
+      const entry = receiptEntryFor(args, descriptor);
+      if (entry !== null && entry.value !== DERIVED_FROM[descriptor.derivedFrom].fill(args)) {
+        errors.push(`configEcho.${descriptor.key} does not match ${descriptor.derivedFrom}`);
+      }
     }
   }
   return { ok: errors.length === 0, errors };
@@ -4942,9 +4971,14 @@ function compactMethodology(m) {
 async function runWith(ctx, rawArgs) {
   const entry = entryArgs(rawArgs);
   if (!entry.ok) return entry.envelope;
-  const { args: A, dropped: droppedNulls, respelled: respelledNulls } = normalizeArgsReport(entry.waist);
+  const {
+    args: A,
+    dropped: droppedNulls,
+    respelled: respelledNulls,
+    derivedPaths,
+  } = normalizeArgsReport(entry.waist);
   const nullArgGaps = [
-    ...nullToleranceRejectedKeys(A, droppedNulls).map(nullToleranceGap),
+    ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map(nullToleranceGap),
     ...respelledNulls.map(nullRespellGap),
   ];
   const check = validateArgs(A);
