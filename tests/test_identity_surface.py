@@ -269,7 +269,7 @@ class TestIdentitySurface(unittest.TestCase):
             if rel_path.endswith(".md")
             for symbol in symbols
         }
-        self.assertTrue(declared <= set(self.IDENTITY_OWNING_SECTIONS))
+        self.assertLessEqual(declared, set(self.IDENTITY_OWNING_SECTIONS))
 
     def test_the_severity_map_is_the_repo_severity_order(self):
         """Key order is the render order of every generated legend, and the key SET
