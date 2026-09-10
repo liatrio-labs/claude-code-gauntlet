@@ -334,6 +334,11 @@ function receiptEntryFor(args, descriptor) {
   return entry;
 }
 
+function receiptEntryForKey(args, key) {
+  const descriptor = KNOB_REGISTRY.find((candidate) => candidate.key === key);
+  return descriptor ? receiptEntryFor(args, descriptor) : null;
+}
+
 function dottedValue(object, path) {
   let current = object;
   for (const part of path.split('.')) {
@@ -439,7 +444,8 @@ function deriveConfigWaist(args) {
 }
 
 // normalizeArgsReport(raw) -> { args, dropped, respelled, derivedPaths }
-// `derivedPaths` identifies dropped nulls whose fields were immediately re-derived.
+// `derivedPaths` identifies waist paths the receipt filled because they were absent after null-stripping,
+// whether originally missing or dropped as an explicit null.
 export function normalizeArgsReport(raw) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
   const report = stripNullOptionalsReport(parsed);
@@ -1278,8 +1284,7 @@ export function validateArgs(args) {
   // refusals from also producing the generic waist-path mismatch below.
   const reported = new Set();
   if (isPlainObject(args.configEcho)) {
-    const capDescriptor = KNOB_REGISTRY.find((descriptor) => descriptor.key === 'pr_comment_cap');
-    const capEntry = capDescriptor ? receiptEntryFor(args, capDescriptor) : null;
+    const capEntry = receiptEntryForKey(args, 'pr_comment_cap');
     if (isPlainObject(args.limits) && capEntry !== null) {
       const capValue = args.limits.deliveryCap;
       const capShapeInvalid = capValue !== undefined && capValue !== null
@@ -1297,8 +1302,7 @@ export function validateArgs(args) {
       }
     }
 
-    const tierDescriptor = KNOB_REGISTRY.find((descriptor) => descriptor.key === 'delivery_tier');
-    const tierEntry = tierDescriptor ? receiptEntryFor(args, tierDescriptor) : null;
+    const tierEntry = receiptEntryForKey(args, 'delivery_tier');
     const stampedTier = dottedValue(args, 'delivery.tier');
     if (tierEntry !== null
       && (args.delivery === undefined || args.delivery === null || isPlainObject(args.delivery))
@@ -1308,8 +1312,7 @@ export function validateArgs(args) {
     }
 
     if (args.mode === 'headless') {
-      const trivialDescriptor = KNOB_REGISTRY.find((descriptor) => descriptor.key === 'trivial_scope');
-      const trivialEntry = trivialDescriptor ? receiptEntryFor(args, trivialDescriptor) : null;
+      const trivialEntry = receiptEntryForKey(args, 'trivial_scope');
       if (trivialEntry !== null && trivialEntry.value === 'light'
         && !computeLightEligible(args.riskTable, args.changedLines)) {
         errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked`);

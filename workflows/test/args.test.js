@@ -714,7 +714,7 @@ test('T4: unknown deriveWhen names fail closed without throwing', () => {
   }
 });
 
-test('T1: a newly registered waist row is validated against its mapped receipt', () => {
+test('T315-ARGS: a newly registered waist row is validated against its mapped receipt', () => {
   const originalLength = KNOB_REGISTRY.length;
   try {
     KNOB_REGISTRY.push({
@@ -737,7 +737,7 @@ test('T1: a newly registered waist row is validated against its mapped receipt',
   }
 });
 
-test('T2: every real waist row and mode has one exact lockstep oracle pair', () => {
+test('T315-ARGS: every real waist row and mode has one exact lockstep oracle pair', () => {
   const cases = {
     'headless:limits.deliveryCap': {
       path: 'limits.deliveryCap', key: 'pr_comment_cap', receipt: '6',
@@ -793,7 +793,7 @@ test('T2: every real waist row and mode has one exact lockstep oracle pair', () 
   }
 });
 
-test('T3: derivedFrom rows reject a receipt that disagrees with their source', () => {
+test('T315-ARGS: derivedFrom rows reject a receipt that disagrees with their source', () => {
   const originalLength = KNOB_REGISTRY.length;
   try {
     KNOB_REGISTRY.push({
@@ -815,7 +815,7 @@ test('T3: derivedFrom rows reject a receipt that disagrees with their source', (
   }
 });
 
-test('T5: an unhandled registry type is accepted without a false lockstep violation', () => {
+test('T315-ARGS: an unhandled registry type is accepted without a false lockstep violation', () => {
   const originalLength = KNOB_REGISTRY.length;
   try {
     KNOB_REGISTRY.push({
@@ -834,7 +834,7 @@ test('T5: an unhandled registry type is accepted without a false lockstep violat
   }
 });
 
-test('T6: csv_list lockstep equality is ordered and element-wise', () => {
+test('T315-ARGS: csv_list lockstep equality is ordered and element-wise', () => {
   const originalLength = KNOB_REGISTRY.length;
   try {
     KNOB_REGISTRY.push({
@@ -856,7 +856,7 @@ test('T6: csv_list lockstep equality is ordered and element-wise', () => {
   }
 });
 
-test('T7: a stamped null is data and is compared by the generic pass', () => {
+test('T315-ARGS: a stamped null is data and is compared by the generic pass', () => {
   const originalLength = KNOB_REGISTRY.length;
   try {
     KNOB_REGISTRY.push({
@@ -875,7 +875,7 @@ test('T7: a stamped null is data and is compared by the generic pass', () => {
   }
 });
 
-test('T8: malformed receipts produce focused errors without lockstep cascades', () => {
+test('T315-ARGS: malformed receipts produce focused errors without lockstep cascades', () => {
   const cap = headlessArgs();
   cap.configEcho.pr_comment_cap = { value: '007', source: 'default' };
   cap.limits = { ...cap.limits, deliveryCap: 1 };
@@ -888,7 +888,7 @@ test('T8: malformed receipts produce focused errors without lockstep cascades', 
   assert.deepEqual(validateArgs(tier).errors, ['configEcho.delivery_tier.source is invalid for headless']);
 });
 
-test('T9: special cap arms report one fault and suppress the generic template', () => {
+test('T315-ARGS: special cap arms report one fault and suppress the generic template', () => {
   const headless = headlessArgs();
   headless.limits = { ...headless.limits, deliveryCap: '1' };
   const headlessResult = validateArgs(headless);
@@ -906,7 +906,7 @@ test('T9: special cap arms report one fault and suppress the generic template', 
   assert.deepEqual(interactiveResult.errors, ['configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null']);
 });
 
-test('T10: a mode twin is not lockstep-validated outside its declared modes', () => {
+test('T315-ARGS: a mode twin is not lockstep-validated outside its declared modes', () => {
   const originalLength = KNOB_REGISTRY.length;
   try {
     KNOB_REGISTRY.push({
@@ -927,7 +927,7 @@ test('T10: a mode twin is not lockstep-validated outside its declared modes', ()
   }
 });
 
-test('T11: missing or null configEcho stays a focused validation refusal', () => {
+test('T315-ARGS: missing or null configEcho stays a focused validation refusal', () => {
   for (const configEcho of [undefined, null]) {
     const args = { ...good };
     if (configEcho === undefined) delete args.configEcho;
@@ -938,7 +938,7 @@ test('T11: missing or null configEcho stays a focused validation refusal', () =>
   }
 });
 
-test('T12: any present scopeAnswer is refused when the light gate was ineligible', () => {
+test('T316-ARGS: any present scopeAnswer is refused when the light gate was ineligible', () => {
   // Mutation: revert the biconditional to the old light-only and missing-only checks.
   const interactive = validateArgs({ ...good, scopeAnswer: 'full' });
   assert.equal(interactive.errors.filter((error) => /scopeAnswer/.test(error)).length, 1);
@@ -952,7 +952,7 @@ test('T12: any present scopeAnswer is refused when the light gate was ineligible
   assert.match(result.errors.find((error) => /scopeAnswer is/.test(error)), /the orchestrator answered a light\/full question the gate never asked/);
 });
 
-test('T13: eligible scope accepts both values and a headless receipt derives either value', () => {
+test('T316-ARGS: eligible scope accepts both values and a headless receipt derives either value', () => {
   for (const scopeAnswer of ['light', 'full']) {
     // Mutation: implement the biconditional as scopeAnswer === "light" iff eligible.
     assert.deepEqual(validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 10, scopeAnswer }), { ok: true, errors: [] });
@@ -965,7 +965,7 @@ test('T13: eligible scope accepts both values and a headless receipt derives eit
   assert.equal(derived.scopeAnswer, 'full');
 });
 
-test('T14: a headless caller-stamped scopeAnswer equal to the derived receipt stays accepted', () => {
+test('T316-ARGS: a headless caller-stamped scopeAnswer equal to the derived receipt stays accepted', () => {
   const args = headlessArgs();
   args.riskTable = [{ path: 'a.js', risk: 'low' }];
   args.changedLines = 10;
@@ -976,7 +976,7 @@ test('T14: a headless caller-stamped scopeAnswer equal to the derived receipt st
   assert.deepEqual(validateArgs(normalizeArgs(args)), { ok: true, errors: [] });
 });
 
-test('T15: ineligible light receipt plus a present scopeAnswer uses the two dedicated refusals', () => {
+test('T316-ARGS: ineligible light receipt plus a present scopeAnswer uses the two dedicated refusals', () => {
   const args = headlessArgs();
   args.riskTable = [{ path: 'a.js', risk: 'medium' }];
   args.scopeAnswer = 'full';
@@ -991,7 +991,7 @@ test('T15: ineligible light receipt plus a present scopeAnswer uses the two dedi
   assert.equal(result.errors.some((error) => error.includes('scopeAnswer does not match configEcho')), false);
 });
 
-test('T16: derived null scopeAnswer is disclosed as no gap after normalization', () => {
+test('T316-ARGS: derived null scopeAnswer is disclosed as no gap after normalization', () => {
   const input = headlessArgs();
   input.riskTable = [{ path: 'a.js', risk: 'low' }];
   input.changedLines = 10;
@@ -1004,7 +1004,7 @@ test('T16: derived null scopeAnswer is disclosed as no gap after normalization',
   assert.deepEqual(nullToleranceRejectedKeys(report.args, report.dropped, report.derivedPaths), []);
 });
 
-test('T18: direct special-arm fixtures isolate absence rules from generic equality', () => {
+test('T315-ARGS: direct special-arm fixtures isolate absence rules from generic equality', () => {
   const interactiveCap = {
     ...good,
     limits: { ...good.limits },
