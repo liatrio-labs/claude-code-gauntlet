@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v3.37.0 (2026-09-10)
+
+### Bug Fixes
+
+- **args**: Cap presence arm yields to the shape error; receipt refusal drops the omit hint
+  ([#319](https://github.com/liatrio-labs/claude-code-gauntlet/pull/319),
+  [`1b19bfd`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b19bfdf1d494ebb8888447e66b75e7f2bef3817))
+
+### Features
+
+- **args**: Registry-driven waist lockstep and scopeAnswer presence rule (#315, #316)
+  ([#319](https://github.com/liatrio-labs/claude-code-gauntlet/pull/319),
+  [`1b19bfd`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b19bfdf1d494ebb8888447e66b75e7f2bef3817))
+
+### Refactoring
+
+- **args**: ReceiptEntryForKey helper; widen the phase2 scopeAnswer refusal note; T315/T316 test ids
+  ([#319](https://github.com/liatrio-labs/claude-code-gauntlet/pull/319),
+  [`1b19bfd`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b19bfdf1d494ebb8888447e66b75e7f2bef3817))
+
+### Testing
+
+- **args**: Exercise the unknown deriveWhen guard through derivation; name T10's mutation
+  ([#319](https://github.com/liatrio-labs/claude-code-gauntlet/pull/319),
+  [`1b19bfd`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1b19bfdf1d494ebb8888447e66b75e7f2bef3817))
+
+
 ## v3.36.0 (2026-09-10)
 
 ### Bug Fixes
