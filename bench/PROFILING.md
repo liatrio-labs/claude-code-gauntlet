@@ -58,18 +58,19 @@ With neither `--out-json` nor `--out-md`, both are printed to stdout. `RUN_ID` i
   run's shape has drifted and the rest of the report should be treated with
   suspicion. `durationMs` is not independently re-derived (it defines the workflow
   wall clock everything else is measured against).
-- **Stage profile** — stages are derived by grouping `workflowProgress[]` labels:
-  `summarize`, `discover` (the 7 discovery agentTypes, grouped together), the pure-JS
-  `merge`/`filter` transform phases (no agent — see `workflows/src/stages.js`
-  `runPhase('merge', ...)` / `runPhase('filter', ...)`; only observable as the gap
-  between the stages either side), `verify-slice-*`,
-  `validate-batch-*`, `challenge-*`, `report-writer`, `artifact-writer`. No
-  `report-writer` bucket exists in runs after v3.25 — the Report stage dispatches
-  nothing. The bucket is kept so the archived corpus still profiles. `avg
-  concurrency` = agent-seconds used / stage span (how "full" the stage was on
-  average); `max concurrency` is the actual peak overlap from a sweep-line over each
-  agent's `[startedAt, startedAt+durationMs]` interval (closed; a touching start/end
-  counts as overlap).
+- **Stage profile** — stages are derived by grouping `workflowProgress[]` through the
+  ordered `STAGE_RULES` data table in `bench/profile_run.py`: label prefixes, exact
+  labels, and discovery `agentType` membership are represented in one place. A
+  historical rule is included only when that bucket ran, and its row carries
+  `historical: true` plus the rule's `historical_note`; a live rule with zero agents
+  remains an `UNAVAILABLE` row. The pure-JS `merge`/`filter` transform phases have no
+  agent and are observable only as gaps between the stages either side. The
+  transform-gap resolver uses the nearest earlier and later rows that carry a span,
+  so omitted or spanless rows cannot change the endpoints. `avg concurrency` =
+  agent-seconds used / stage span (how "full" the stage was on average); `max
+  concurrency` is the actual peak overlap from a sweep-line over each agent's
+  `[startedAt,startedAt+durationMs]` interval (closed; a touching start/end counts as
+  overlap).
 - **Parallel-capacity accounting** — for each stage, `capacity = slowest-agent duration
   × slots` (slots = however many agents were actually dispatched in that stage), `used
   = Σ durationMs`, `idle = capacity − used`. High idle % on a fan-out stage means the

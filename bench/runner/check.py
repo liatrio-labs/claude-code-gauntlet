@@ -80,22 +80,23 @@ _SCRIPT_FIELD_OPEN_RE = re.compile(r'"script"\s*:\s*"(?:\\.|[^"\\])*\Z', re.DOTA
 PIPELINE_REL = Path("workflows") / "pipeline.js"
 
 # G3 writer-degrade carrier policy (issue #52):
-# STRUCTURED carriers (``workflows/wf_*.json`` at ``result.gaps``, and the
-# persisted checkpoint's ``gaps``) are judged from the parsed array alone; their
-# raw bytes are never scanned. A wf record echoes the whole ``workflows/pipeline.js``
-# bundle into its ``script`` field, and the bundle carries both sentinels as
-# ordinary substrings. This is registered in ``docs/machine-parsed-strings.md``
-# and pinned by ``tests/test_machine_parsed_strings.py``. A structured carrier
-# that will not parse or has no ``gaps`` falls back to a raw scan with the
-# ``script`` field blanked.
-# TEXT carriers (``raw.json``, whose ``.result`` is model prose and never embeds
-# the bundle -- measured 0/131 in the retained corpus, max 9.5 KB -- and
-# ``code-gauntlet-report-*.md``) are raw-scanned as-is. The superseded archives
-# (``workflows/superseded/`` for wf records, #85; ``pr_dir/superseded/`` for
-# deliverables, #165) are invisible because every G3/G6 glob is non-recursive.
-# G3 is the writer degrade gate. A Phase 8 timeout has no structural artifact
-# signal: the awaiter reports ``workflow-timeout`` on its own stdout, and G6
-# catches a lost deliverable.
+# The report is rendered before persistence from data that carries only a gap COUNT, so
+# code-owned report text cannot carry the writer-degrade signal (render_report.test.js
+# T-G3). Every persistence path (legacy by-value writer, derived writer, RETURN fallback,
+# replay) pushes the signal through ``partial()`` into ``writeOut.gaps`` and the
+# Workflow-return structured carrier. Every renderer-era report hit in the retained
+# corpus was model prose. ``raw.json`` stays a TEXT carrier. STRUCTURED carriers
+# (``workflows/wf_*.json`` at ``result.gaps``, and the persisted checkpoint's ``gaps``)
+# are judged from the parsed array alone; their raw bytes are never scanned. A wf record
+# echoes the whole ``workflows/pipeline.js`` bundle into its ``script`` field, and the
+# bundle carries both sentinels as ordinary substrings. This is registered in
+# ``docs/machine-parsed-strings.md`` and pinned by ``tests/test_machine_parsed_strings.py``.
+# A structured carrier that will not parse or has no ``gaps`` falls back to a raw scan
+# with the ``script`` field blanked. The superseded archives (``workflows/superseded/``
+# for wf records, #85; ``pr_dir/superseded/`` for deliverables, #165) are invisible
+# because every G3/G6 glob is non-recursive. G3 is the writer degrade gate. A Phase 8
+# timeout has no structural artifact signal: the awaiter reports ``workflow-timeout``
+# on its own stdout, and G6 catches a lost deliverable.
 # Do not include bench-only fixture names such as deep-review-report.md.
 _DEGRADE_STRUCTURED = "structured"
 _DEGRADE_TEXT = "text"
@@ -103,7 +104,6 @@ _DEGRADE_TEXT = "text"
 _DEGRADE_CARRIER_POLICY = {
     "workflows/wf_*.json": _DEGRADE_STRUCTURED,
     "raw.json": _DEGRADE_TEXT,
-    "code-gauntlet-report-*.md": _DEGRADE_TEXT,
     "code-gauntlet-checkpoint-all-*.json": _DEGRADE_STRUCTURED,
 }
 
