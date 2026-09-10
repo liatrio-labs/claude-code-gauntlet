@@ -5,6 +5,7 @@ dicts and small file fragments, so a regression in the splice/table-rewrite/sent
 logic fails here without needing `node` or the real agent files.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -41,6 +42,43 @@ class TestDispatchRequiredSentence(unittest.TestCase):
         self.assertIn("all must always be present", sentence)
         self.assertNotIn("either", sentence)
         self.assertNotIn("both", sentence)
+
+
+class TestNodeDiagnostic(unittest.TestCase):
+    def test_missing_node_reports_one_actionable_line(self):
+        with tempfile.TemporaryDirectory() as empty_path:
+            env = os.environ.copy()
+            env["PATH"] = empty_path
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO / "scripts" / "generate_contract_requirements.py"),
+                    "--check",
+                ],
+                cwd=REPO,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.count("\n"), 1, result.stderr)
+        self.assertRegex(
+            result.stderr,
+            r"^generate_contract_requirements: node 24 command failed: "
+            r"node --input-type=module -e .+\n$",
+        )
+
+    def test_failed_node_reports_the_child_stderr_tail(self):
+        node_src = (
+            "process.on('uncaughtException', error => { console.error(error.message); "
+            "process.exit(1); }); throw new Error('forced JS failure')"
+        )
+        with self.assertRaises(SystemExit) as raised:
+            gen._run_node(node_src, str(REPO))
+        message = str(raised.exception)
+        self.assertTrue(message.endswith(": forced JS failure"), message)
+        self.assertEqual(message.count("\n"), 0)
 
 
 class TestConditionalParagraphs(unittest.TestCase):

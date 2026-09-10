@@ -33,7 +33,8 @@ ladder, costs, and pre-registered owner options.
 1. Fork and clone the repository.
 2. Ensure you have Python 3.10 or newer installed (for the test suite and pre-commit hooks). CI runs the pipeline
    suite on 3.10, 3.11, and 3.12.
-3. Set up the development environment:
+3. Ensure Node `24.18.0` is installed; the `contract-fences-current` pre-commit hook uses it to verify generated fences.
+4. Set up the development environment:
 
 ```bash
 pip install pre-commit

@@ -25,11 +25,14 @@ would make a test vacuously pass.
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from scripts import generate_contract_requirements as contract_gen
 
 REPO = Path(__file__).resolve().parents[1]
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
@@ -111,6 +114,54 @@ RESERVED_OPTIONS = {"none", "true", "false", "yes", "no", "on", "off"}
 
 def _read(path):
     return (REPO / path).read_text(encoding="utf-8")
+
+
+def _pre_commit_hook_span(text, hook_id):
+    """Return the unique local hook's character span, failing closed on drift."""
+    marker = re.compile(rf"(?m)^      - id: {re.escape(hook_id)}\s*$")
+    matches = list(marker.finditer(text))
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected exactly one {hook_id} hook block, found {len(matches)}"
+        )
+    start = matches[0].start()
+    following = re.search(r"(?m)^      - id: [^\n]+$", text[matches[0].end() :])
+    end = matches[0].end() + following.start() if following else len(text)
+    return start, end
+
+
+def _pre_commit_hook_block(text, hook_id):
+    start, end = _pre_commit_hook_span(text, hook_id)
+    return text[start:end]
+
+
+def _pre_commit_repo_block(text, hook_id):
+    """Return the unique enclosing repo block for a hook."""
+    hook_start, _ = _pre_commit_hook_span(text, hook_id)
+    repo_markers = list(re.finditer(r"(?m)^  - repo:\s*[^\n]*$", text))
+    enclosing = []
+    for index, marker in enumerate(repo_markers):
+        end = (
+            repo_markers[index + 1].start()
+            if index + 1 < len(repo_markers)
+            else len(text)
+        )
+        if marker.start() < hook_start < end:
+            enclosing.append(text[marker.start() : end])
+    if len(enclosing) != 1:
+        raise AssertionError(
+            f"expected exactly one enclosing repo block for {hook_id}, found {len(enclosing)}"
+        )
+    return enclosing[0]
+
+
+def _pre_commit_hook_value(block, key):
+    matches = re.findall(rf"(?m)^        {re.escape(key)}:\s*(.*?)\s*$", block)
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected exactly one {key}: key in hook block, found {len(matches)}"
+        )
+    return _unquote(matches[0])
 
 
 def _unquote(value):
@@ -1196,6 +1247,77 @@ def _ci_run_blocks(text: str) -> list[str]:
     return blocks
 
 
+def _ci_job_blocks(text: str) -> list[tuple[str, str]]:
+    """Job bodies from ci.yml, using the file's fixed two-space job indentation."""
+    lines = text.splitlines()
+    jobs_index = next(
+        (index for index, line in enumerate(lines) if line == "jobs:"), None
+    )
+    if jobs_index is None:
+        raise AssertionError("ci.yml is missing jobs:")
+    starts = []
+    for index in range(jobs_index + 1, len(lines)):
+        line = lines[index]
+        if line and not line.startswith(" ") and not line.startswith("#"):
+            break
+        match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if match:
+            starts.append((index, match.group(1)))
+    jobs = []
+    for position, (start, job_id) in enumerate(starts):
+        end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
+        jobs.append((job_id, "\n".join(lines[start:end])))
+    return jobs
+
+
+def _ci_step_blocks(job: str) -> list[str]:
+    """Step bodies from one ci.yml job."""
+    lines = job.splitlines()
+    starts = [index for index, line in enumerate(lines) if re.match(r"^      - ", line)]
+    return [
+        "\n".join(
+            lines[
+                start : starts[position + 1]
+                if position + 1 < len(starts)
+                else len(lines)
+            ]
+        )
+        for position, start in enumerate(starts)
+    ]
+
+
+def _ci_step_run_bodies(step: str) -> list[str]:
+    """Inline and block-scalar run bodies from one step."""
+    inline = re.findall(r"(?m)^\s+run:\s+(?!\|-?$)(.+?)\s*$", step)
+    return inline + _ci_run_blocks(step)
+
+
+def _ci_setup_node_steps(text: str) -> list[tuple[str, int, str]]:
+    """Every setup-node step, with its job and zero-based step index."""
+    return [
+        (job_id, index, step)
+        for job_id, job in _ci_job_blocks(text)
+        for index, step in enumerate(_ci_step_blocks(job))
+        if "actions/setup-node@" in step
+    ]
+
+
+def _copy_tracked_tree(destination: Path) -> None:
+    result = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPO,
+        check=True,
+        capture_output=True,
+    )
+    for relative in result.stdout.decode().split("\0"):
+        if not relative:
+            continue
+        source = REPO / relative
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+
 def _ci_gate_commands(text: str) -> set[str]:
     return {
         b for b in _ci_run_blocks(text) if any(marker in b for marker in GATE_MARKERS)
@@ -1203,21 +1325,198 @@ def _ci_gate_commands(text: str) -> set[str]:
 
 
 def _ci_workflow_tests_node_version(text: str) -> str:
-    """The node-version: value under the workflow-tests job (stdlib; no PyYAML)."""
-    lines = text.splitlines()
-    in_job = False
-    for line in lines:
-        if re.match(r"^  workflow-tests:\s*$", line):
-            in_job = True
-            continue
-        if in_job and re.match(r"^  \S", line):
-            break
-        if not in_job:
-            continue
-        match = re.match(r'^\s+node-version:\s*["\']?([^"\']+)["\']?\s*$', line)
-        if match:
-            return match.group(1).strip()
-    raise AssertionError("ci.yml workflow-tests job missing node-version:")
+    """The workflow-level Node version used by ci.yml."""
+    matches = re.findall(
+        r'(?m)^env:\n  NODE_VERSION:\s*["\']?([^"\'\s]+)["\']?\s*$', text
+    )
+    if len(matches) != 1:
+        raise AssertionError(
+            f"ci.yml must declare exactly one workflow NODE_VERSION, found {len(matches)}"
+        )
+    return str(matches[0])
+
+
+class TestContractFenceHook(unittest.TestCase):
+    def test_contract_fence_hook_is_scoped_and_covers_derived_inputs(self):
+        text = _read(".pre-commit-config.yaml")
+        contract_start, _ = _pre_commit_hook_span(text, "contract-fences-current")
+        agent_start, _ = _pre_commit_hook_span(text, "agent-instruction-layout")
+        self.assertGreater(contract_start, agent_start)
+
+        block = _pre_commit_hook_block(text, "contract-fences-current")
+        repo_block = _pre_commit_repo_block(text, "contract-fences-current")
+        repo_header = re.match(r"(?m)^  - repo:\s*(.*?)\s*$", repo_block)
+        self.assertIsNotNone(repo_header)
+        self.assertEqual(_unquote(repo_header.group(1)), "local")
+        self.assertEqual(
+            _pre_commit_hook_value(block, "name"),
+            "generated contract fences are current (regenerate with scripts/generate_contract_requirements.py)",
+        )
+        self.assertEqual(
+            _pre_commit_hook_value(block, "entry"),
+            "python3 scripts/generate_contract_requirements.py --check",
+        )
+        self.assertEqual(_pre_commit_hook_value(block, "pass_filenames"), "false")
+        self.assertEqual(_pre_commit_hook_value(block, "language"), "system")
+        self.assertNotRegex(block, r"(?m)^\s+always_run:")
+        stage_values = re.findall(r"(?m)^        stages:\s*(.*?)\s*$", block)
+        if stage_values:
+            stages = _unquote(stage_values[0])
+            self.assertRegex(stages, r"\[\s*pre-commit(?:\s*,|\s*\])")
+        files_pattern = _pre_commit_hook_value(block, "files")
+        self.assertEqual(
+            files_pattern, "^(agents|skills/code-gauntlet|scripts|workflows)/"
+        )
+        scope = re.compile(files_pattern)
+
+        declared_inputs = contract_gen.declared_inputs(str(REPO))
+        self.assertTrue(
+            {
+                "scripts/post_review.py",
+                "scripts/resolve_config.py",
+                "scripts/review_marker.py",
+            }.issubset(declared_inputs),
+            declared_inputs,
+        )
+        self.assertTrue(
+            {
+                "workflows/src/registry.js",
+                "workflows/src/args.js",
+                "workflows/src/renderReport.js",
+            }.issubset(declared_inputs),
+            declared_inputs,
+        )
+        self.assertTrue(
+            {
+                "workflows/src/filterFindings.js",
+                "workflows/src/applyChallenges.js",
+                "workflows/src/applyValidations.js",
+            }.issubset(declared_inputs),
+            declared_inputs,
+        )
+        paths = set(contract_gen.compute_targets(str(REPO)))
+        paths.update(declared_inputs)
+        for path in sorted(paths):
+            with self.subTest(path=path):
+                if path in declared_inputs:
+                    self.assertTrue((REPO / path).is_file(), path)
+                self.assertIsNotNone(scope.match(path), path)
+
+    def test_contract_fence_hook_rejects_stale_fence_without_writing(self):
+        config = _read(".pre-commit-config.yaml")
+        block = _pre_commit_hook_block(config, "contract-fences-current")
+        entry = shlex.split(_pre_commit_hook_value(block, "entry"))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _copy_tracked_tree(root)
+            target = root / "skills/code-gauntlet/references/phase1-preflight.md"
+            clean_result = subprocess.run(
+                entry,
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                clean_result.returncode,
+                0,
+                clean_result.stdout + clean_result.stderr,
+            )
+
+            lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+            open_marker, close_marker = contract_gen.identity_marker_lines(
+                "derived_waist_fields",
+                "skills/code-gauntlet/references/phase1-preflight.md",
+            )
+            open_index = lines.index(open_marker + "\n")
+            close_index = lines.index(close_marker + "\n")
+            body_index = next(
+                index
+                for index in range(open_index + 1, close_index)
+                if lines[index].strip()
+            )
+            lines[body_index] = lines[body_index].rstrip("\n") + " stale\n"
+            corrupted = "".join(lines).encode()
+            target.write_bytes(corrupted)
+
+            stale_result = subprocess.run(
+                entry,
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(stale_result.returncode, 1)
+            self.assertIn(
+                "skills/code-gauntlet/references/phase1-preflight.md",
+                stale_result.stderr,
+            )
+            self.assertEqual(target.read_bytes(), corrupted)
+
+
+class TestCiNodePin(unittest.TestCase):
+    def test_node_is_pinned_before_every_relevant_ci_job(self):
+        text = _read(".github/workflows/ci.yml")
+        version = _ci_workflow_tests_node_version(text)
+        workflow_versions = re.findall(r"(?m)^env:\n  NODE_VERSION:\s*(.*?)\s*$", text)
+        self.assertEqual(len(workflow_versions), 1)
+        self.assertEqual(_unquote(workflow_versions[0]), version)
+        self.assertEqual(len(re.findall(r"(?m)^  NODE_VERSION:", text)), 1)
+
+        setup_steps = _ci_setup_node_steps(text)
+        self.assertTrue(setup_steps)
+        self.assertEqual(text.count("actions/setup-node@"), len(setup_steps))
+        setup_node_uses = []
+        for job_id, index, step in setup_steps:
+            with self.subTest(setup_node=(job_id, index)):
+                uses = re.search(
+                    r"(?m)^\s+uses:\s*actions/setup-node@([0-9a-f]{40})\s+#\s+v\S+$",
+                    step,
+                )
+                self.assertIsNotNone(uses)
+                setup_node_uses.append(uses.group(1))
+                self.assertEqual(
+                    re.findall(r"(?m)^\s+node-version:\s*(.*?)\s*$", step),
+                    ["${{ env.NODE_VERSION }}"],
+                )
+        self.assertEqual(len(set(setup_node_uses)), 1)
+
+        bare_node = re.compile(r"(?<![A-Za-z0-9_-])node ")
+        consumer_markers = ("pre-commit run", "python -m pytest tests/")
+        for job_id, job in _ci_job_blocks(text):
+            steps = _ci_step_blocks(job)
+            consumer_indexes = [
+                index
+                for index, step in enumerate(steps)
+                if any(
+                    marker in body or bare_node.search(body)
+                    for body in _ci_step_run_bodies(step)
+                    for marker in consumer_markers
+                )
+            ]
+            if not consumer_indexes:
+                continue
+            setup_indexes = [
+                index
+                for index, step in enumerate(steps)
+                if "actions/setup-node@" in step
+            ]
+            with self.subTest(job=job_id):
+                self.assertTrue(setup_indexes)
+                self.assertLess(min(setup_indexes), min(consumer_indexes))
+
+        contributing = _read("CONTRIBUTING.md")
+        self.assertIn(f"CI pins Node `{version}` exactly", contributing)
+
+    def test_getting_started_declares_the_node_prerequisite_for_the_hook(self):
+        text = _read("CONTRIBUTING.md")
+        section = text.split("## Getting Started\n", 1)[1].split("\n## ", 1)[0]
+        version = _ci_workflow_tests_node_version(_read(".github/workflows/ci.yml"))
+        sentences = re.findall(r"(?m)^.*contract-fences-current.*\.$", section)
+        self.assertEqual(len(sentences), 1)
+        self.assertIn(f"Node `{version}`", sentences[0])
+        self.assertLess(
+            section.index(sentences[0]), section.index("pre-commit install")
+        )
 
 
 class TestCoverageGateCommandIdentity(unittest.TestCase):
@@ -1235,10 +1534,26 @@ class TestCoverageGateCommandIdentity(unittest.TestCase):
         self.assertEqual(set(flags), set(scope["includes"]))
 
     def test_contributing_documents_the_ci_node_version_pin(self):
-        version = _ci_workflow_tests_node_version(_read(".github/workflows/ci.yml"))
+        text = _read(".github/workflows/ci.yml")
+        version = _ci_workflow_tests_node_version(text)
         contributing = _read("CONTRIBUTING.md")
         self.assertIn(f"`{version}`", contributing)
-        self.assertIn(f'node-version: "{version}"', _read(".github/workflows/ci.yml"))
+        setup_steps = _ci_setup_node_steps(text)
+        self.assertTrue(setup_steps)
+        uses = []
+        for job_id, index, step in setup_steps:
+            with self.subTest(setup_node=(job_id, index)):
+                pinned = re.search(
+                    r"(?m)^\s+uses:\s*actions/setup-node@([0-9a-f]{40})\s+#\s+v\S+$",
+                    step,
+                )
+                self.assertIsNotNone(pinned)
+                uses.append(pinned.group(1))
+                self.assertEqual(
+                    re.findall(r"(?m)^\s+node-version:\s*(.*?)\s*$", step),
+                    ["${{ env.NODE_VERSION }}"],
+                )
+        self.assertEqual(len(set(uses)), 1)
 
 
 if __name__ == "__main__":

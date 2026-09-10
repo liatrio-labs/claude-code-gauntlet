@@ -100,6 +100,17 @@ repos:
         files: ^(CLAUDE\.md|AGENTS\.md|[^/]+/(AGENTS|CLAUDE)\.md|scripts/sync_agent_rules\.py)$
         pass_filenames: false
 
+      # This checks generated contract fences and tables against the registry and renderer.
+      # Its scope is the owning roots because targets and inputs are derived by the
+      # generator, so a new target under an existing root needs no hook edit. Node 24 must
+      # be on PATH; the JavaScript suite already requires it.
+      - id: contract-fences-current
+        name: generated contract fences are current (regenerate with scripts/generate_contract_requirements.py)
+        entry: python3 scripts/generate_contract_requirements.py --check
+        language: system
+        files: ^(agents|skills/code-gauntlet|scripts|workflows)/
+        pass_filenames: false
+
       - id: zizmor
         name: audit GitHub Actions workflows with zizmor
         entry: zizmor

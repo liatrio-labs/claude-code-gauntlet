@@ -99,6 +99,151 @@ _CONDITIONAL_NOUNS = {
 }
 
 
+_NODE_PROGRAM_ROOTS = (
+    "workflows/src/registry.js",
+    "workflows/src/args.js",
+    "workflows/src/renderReport.js",
+)
+_WORKFLOW_RELATIVE_IMPORT_RE = re.compile(
+    r"^\s*(?:import|export)\b.*?\bfrom\s+['\"](\.[^'\"]+)['\"]",
+    re.MULTILINE,
+)
+_PYTHON_FROM_IMPORT_RE = re.compile(
+    r"^\s*from\s+(?P<module>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+import\s+"
+    r"(?P<names>[^\n#]+)$",
+    re.MULTILINE,
+)
+_PYTHON_IMPORT_RE = re.compile(
+    r"^\s*import\s+(?P<modules>[^\n#]+)$",
+    re.MULTILINE,
+)
+_DYNAMIC_SCRIPT_PATH_RE = re.compile(
+    r"os\.path\.join\(\s*repo_root\s*,\s*['\"]scripts['\"]\s*,\s*"
+    r"['\"](?P<path>[^'\"]+\.py)['\"]\s*\)",
+)
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _script_module_path(module, repo_root):
+    """Resolve a module name to a Python file under scripts/, if it exists."""
+    if module == "scripts":
+        return None
+    if module.startswith("scripts."):
+        module = module[len("scripts.") :]
+    elif "." in module:
+        return None
+    rel_path = os.path.join("scripts", *module.split(".")) + ".py"
+    if os.path.isfile(os.path.join(repo_root, rel_path)):
+        return rel_path
+    return None
+
+
+def _python_imported_script_paths(source, repo_root):
+    """Find local Python modules named by absolute or direct-invocation imports."""
+    imported = set()
+    for match in _PYTHON_FROM_IMPORT_RE.finditer(source):
+        module = match.group("module")
+        names = [part.strip().split()[0] for part in match.group("names").split(",")]
+        if module == "scripts":
+            for name in names:
+                path = _script_module_path(f"scripts.{name}", repo_root)
+                if path:
+                    imported.add(path)
+        else:
+            path = _script_module_path(module, repo_root)
+            if path:
+                imported.add(path)
+    for match in _PYTHON_IMPORT_RE.finditer(source):
+        for part in match.group("modules").split(","):
+            module = part.strip().split()[0]
+            path = _script_module_path(module, repo_root)
+            if path:
+                imported.add(path)
+    for match in _DYNAMIC_SCRIPT_PATH_RE.finditer(source):
+        rel_path = os.path.normpath(os.path.join("scripts", match.group("path")))
+        if rel_path.startswith("scripts/") and os.path.isfile(
+            os.path.join(repo_root, rel_path)
+        ):
+            imported.add(rel_path)
+    return imported
+
+
+def _python_import_closure(repo_root):
+    """Return the generator and every local Python module in its import closure."""
+    pending = ["scripts/generate_contract_requirements.py"]
+    seen = set()
+    while pending:
+        rel_path = pending.pop()
+        if rel_path in seen:
+            continue
+        seen.add(rel_path)
+        path = os.path.join(repo_root, rel_path)
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        for imported in _python_imported_script_paths(source, repo_root):
+            if imported not in seen:
+                pending.append(imported)
+    return seen
+
+
+def _stderr_tail(stderr):
+    """Return a single-line, bounded tail from a failed child process."""
+    for line in reversed((stderr or "").splitlines()):
+        clean = _CONTROL_RE.sub("", line)
+        if clean.strip():
+            return clean[-200:]
+    return ""
+
+
+def _node_failure_message(command, stderr=None):
+    command_text = " ".join(_CONTROL_RE.sub("", part) for part in command)
+    message = "generate_contract_requirements: node 24 command failed: " + command_text
+    tail = _stderr_tail(stderr)
+    return f"{message}: {tail}" if tail else message
+
+
+def _run_node(node_src, repo_root):
+    """Run one of the generator's Node programs with a concise failure diagnostic."""
+    command = ["node", "--input-type=module", "-e", node_src]
+    try:
+        return subprocess.run(
+            command,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError:
+        raise SystemExit(_node_failure_message(command)) from None
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(_node_failure_message(command, error.stderr)) from None
+
+
+def _workflow_import_closure(repo_root):
+    """Return the relative workflows/src modules used by both Node programs."""
+    pending = list(_NODE_PROGRAM_ROOTS)
+    seen = set()
+    while pending:
+        rel_path = pending.pop()
+        if rel_path in seen:
+            continue
+        seen.add(rel_path)
+        path = os.path.join(repo_root, rel_path)
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        base = os.path.dirname(rel_path)
+        for specifier in _WORKFLOW_RELATIVE_IMPORT_RE.findall(source):
+            imported = os.path.normpath(os.path.join(base, specifier))
+            if imported not in seen:
+                pending.append(imported)
+    return seen
+
+
+def declared_inputs(repo_root=REPO_ROOT):
+    """Return generator sources and every local module that can affect its output."""
+    return _python_import_closure(repo_root) | _workflow_import_closure(repo_root)
+
+
 def load_registry(repo_root=REPO_ROOT):
     """Import the live schemas and keep finding and waist required lists distinct."""
     node_src = (
@@ -124,13 +269,7 @@ def load_registry(repo_root=REPO_ROOT):
         "  derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM).map(([name, d]) => [name, d.describe])),"
         "})))"
     )
-    out = subprocess.run(
-        ["node", "--input-type=module", "-e", node_src],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    out = _run_node(node_src, repo_root)
     return json.loads(out.stdout)
 
 
@@ -571,13 +710,7 @@ def render_template_block(repo_root, identity):
         "import('./workflows/src/renderReport.js').then(m => "
         "process.stdout.write(m.renderReport(" + json.dumps(fixture) + ")))"
     )
-    out = subprocess.run(
-        ["node", "--input-type=module", "-e", node_src],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    out = _run_node(node_src, repo_root)
     return "````markdown\n" + out.stdout + "\n````"
 
 
