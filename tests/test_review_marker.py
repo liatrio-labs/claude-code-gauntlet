@@ -37,6 +37,7 @@ Covers:
     detect_signal, and post_review.py has no second build_footer definition.
 """
 
+import inspect
 import json
 import os
 import re
@@ -494,12 +495,14 @@ class TestIdempotence(unittest.TestCase):
 
 class TestRemovedFindingsSlot(unittest.TestCase):
     def test_build_marker_rejects_findings_keyword(self):
-        # Mutation: restore build_marker's findings parameter; this test must go red.
+        # Mutation: restore build_marker's findings parameter, forwarding or not.
+        self.assertNotIn("findings", inspect.signature(build_marker).parameters)
         with self.assertRaises(TypeError):
             build_marker(SHA_40, 2, findings=[{"id": 1}])
 
     def test_build_footer_rejects_findings_keyword(self):
-        # Mutation: restore build_footer's findings parameter; this test must go red.
+        # Mutation: restore build_footer's findings parameter, forwarding or not.
+        self.assertNotIn("findings", inspect.signature(build_footer).parameters)
         with self.assertRaises(TypeError):
             build_footer(2, SHA_40, body="", findings=[{"id": 1}])
 
