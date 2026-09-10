@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.36.0 (2026-09-10)
+
+### Bug Fixes
+
+- **lint**: Derive the generator's Python inputs; pin every setup-node step to the env
+  ([#318](https://github.com/liatrio-labs/claude-code-gauntlet/pull/318),
+  [`887cdd7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/887cdd7927c1354e1b1b1ed3d8003dfa3a4bc908))
+
+### Features
+
+- **lint**: Verify generated contract fences at commit time
+  ([#318](https://github.com/liatrio-labs/claude-code-gauntlet/pull/318),
+  [`887cdd7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/887cdd7927c1354e1b1b1ed3d8003dfa3a4bc908))
+
+- **lint**: Verify generated contract fences at commit time (#317)
+  ([#318](https://github.com/liatrio-labs/claude-code-gauntlet/pull/318),
+  [`887cdd7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/887cdd7927c1354e1b1b1ed3d8003dfa3a4bc908))
+
+### Testing
+
+- **lint**: Anchor the JavaScript half of the generator's declared inputs
+  ([#318](https://github.com/liatrio-labs/claude-code-gauntlet/pull/318),
+  [`887cdd7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/887cdd7927c1354e1b1b1ed3d8003dfa3a4bc908))
+
+
 ## v3.35.0 (2026-09-09)
 
 ### Features
