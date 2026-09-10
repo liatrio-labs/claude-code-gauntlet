@@ -39,8 +39,8 @@ Covers:
     not raise, and the CLI must still exit 0 with valid JSON on stdout.
   - CLI end-to-end via --bodies-file with git subprocess calls patched: stdout
     parses as exactly one JSON object, exit 0, fields match. Non-ASCII content
-    (a marker's `findings` extension slot, a non-ASCII bodies-file path) still
-    prints parseable, ASCII-safe JSON (ensure_ascii=True).
+    (a marker key name and version, a non-ASCII bodies-file path) still prints
+    parseable, ASCII-safe JSON (ensure_ascii=True).
   - remote_slug() accepts scp-style (git@host:owner/repo) and any-scheme
     (https, http, ssh, git, git+ssh) remote URLs, with optional user@, :port,
     and trailing slash, and keeps GitLab subgroup paths intact in *repo*.
@@ -1182,15 +1182,29 @@ class TestCliBodiesFile(_CliTestBase):
 
 class TestNonAsciiOutputIsAsciiSafe(_CliTestBase):
     """Output is printed with json.dumps(result, indent=2) and the default
-    ensure_ascii=True, so non-ASCII content anywhere in the payload — the
-    marker's `findings` extension slot, or gh/glab stderr text surfaced into
-    errors[] — cannot raise UnicodeEncodeError under an ASCII stdout. Pinned by
-    asserting stdout contains only ASCII codepoints yet still round-trips
-    through json.loads to the original unicode values."""
+    ensure_ascii=True, so non-ASCII content anywhere in the payload — a marker
+    key name or version, or gh/glab stderr text surfaced into errors[] — cannot
+    raise UnicodeEncodeError under an ASCII stdout. Pinned by asserting stdout
+    contains only ASCII codepoints yet still round-trips through json.loads to
+    the original unicode values."""
 
-    def test_marker_findings_with_non_ascii_prints_parseable_ascii_safe_json(self):
-        findings_payload = [{"title": "café bug \U0001f41b"}]
-        marker_body = review_marker.build_marker(FULL_SHA, 1, findings=findings_payload)
+    def test_marker_key_and_version_with_non_ascii_print_parseable_ascii_safe_json(
+        self,
+    ):
+        # Mutation: change the CLI print to ensure_ascii=False; the ASCII assertion
+        # must go red while the unicode key name and version still round-trip.
+        unknown_key = "future_é"
+        version = "3.0 café 🐛"
+        payload = {
+            "version": version,
+            "findings_count": 1,
+            "sha": FULL_SHA,
+            unknown_key: "ignored",
+        }
+        marker_body = (
+            f"<!-- {review_marker.MARKER_TOKEN}: "
+            f"{json.dumps(payload, separators=(',', ':'))} -->"
+        )
         entries = [
             {
                 "body": marker_body,
@@ -1215,7 +1229,8 @@ class TestNonAsciiOutputIsAsciiSafe(_CliTestBase):
             "stdout must be pure ASCII under ensure_ascii=True",
         )
         result = json.loads(raw)
-        self.assertEqual(result["marker"]["findings"], findings_payload)
+        self.assertEqual(result["marker"]["version"], version)
+        self.assertEqual(result["marker"]["unknown_keys"], [unknown_key])
 
     def test_bodies_file_read_error_with_non_ascii_path_is_ascii_safe(self):
         missing_path = os.path.join(self.tmp, "café-missing.json")
@@ -1462,25 +1477,23 @@ class TestSanitizeMarker(unittest.TestCase):
         self.assertNotIn("attacker_field", out)
         self.assertNotIn("SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR", json.dumps(out))
 
-    def test_huge_value_is_truncated_not_echoed_verbatim(self):
-        """Assert the OUTCOME (the payload is bounded) rather than which branch
-        produced it: values are clipped individually before the whole-payload cap
-        is consulted, so a single huge value never reaches the `truncated`
-        fallback. Pinning the branch would fail on that strictly better bound."""
-        huge = "X" * 100000
+    def test_findings_is_unknown_but_raw_marker_preserves_it(self):
+        # Mutation: restore findings to _MARKER_ECHO_KEYS; the sanitized output
+        # must then violate both assertions about the unknown key.
         marker = {
             "version": "3.0",
             "findings_count": 1,
             "sha": FULL_SHA,
-            "findings": huge,
+            "findings": [{"id": 1}],
         }
         out = detect_prior_review.sanitize_marker(marker)
-        dumped = json.dumps(out)
-        self.assertNotIn(huge, dumped)
-        self.assertLessEqual(len(dumped), detect_prior_review._MARKER_ECHO_MAX_CHARS)
-        self.assertEqual(out["sha"], FULL_SHA)
-        self.assertEqual(out["version"], "3.0")
-        self.assertEqual(out["findings_count"], 1)
+        self.assertNotIn("findings", out)
+        self.assertEqual(out["unknown_keys"], ["findings"])
+
+        payload = json.dumps(marker, separators=(",", ":"))
+        text = f"<!-- {review_marker.MARKER_TOKEN}: {payload} -->"
+        raw = review_marker.find_marker(text)
+        self.assertEqual(raw["findings"], [{"id": 1}])
 
     def test_allowlisted_key_values_are_bounded_individually(self):
         """An allow-listed key is still attacker-controlled — `version` passing
@@ -1500,22 +1513,34 @@ class TestSanitizeMarker(unittest.TestCase):
         self.assertLess(len(str(out["version"])), 1000)
         self.assertEqual(out["sha"], FULL_SHA)
 
-    def test_whole_payload_cap_still_fires_for_many_bounded_values(self):
-        """The `truncated` fallback stays reachable: many individually-bounded
-        values can still exceed the total cap."""
+    def test_whole_payload_cap_returns_exact_fallback_shape(self):
+        # Mutation: delete the whole-payload `if len(encoded) > _MARKER_ECHO_MAX_CHARS`
+        # branch; this assertion must go red when the fallback disappears.
         marker = {
-            "version": "v" * 400,
+            "version": "v" * 513,
+            "findings_count": 1,
+            "sha": "s" * 513,
+            "_token": "t" * 513,
+            "_legacy": "l" * 513,
+        }
+        marker.update({f"u{index:02d}" + "x" * 61: True for index in range(32)})
+        out = detect_prior_review.sanitize_marker(marker)
+        self.assertIs(out["truncated"], True)
+        self.assertEqual(
+            set(out),
+            {"version", "findings_count", "sha", "_token", "_legacy", "truncated"},
+        )
+
+    def test_single_value_uses_truncated_suffix(self):
+        # Mutation: delete _bounded's string clip; this exact suffix assertion
+        # must go red when the 100,000-character version is returned untrimmed.
+        marker = {
+            "version": "v" * 100000,
             "findings_count": 1,
             "sha": FULL_SHA,
-            "findings": ["f" * 400] * 40,
-            "_token": "code-gauntlet-findings",
-            "_legacy": False,
         }
         out = detect_prior_review.sanitize_marker(marker)
-        self.assertLessEqual(
-            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS
-        )
-        self.assertEqual(out["sha"], FULL_SHA)
+        self.assertEqual(out["version"], "v" * 512 + "...[truncated]")
 
     def test_non_dict_marker_returns_none(self):
         self.assertIsNone(detect_prior_review.sanitize_marker(None))

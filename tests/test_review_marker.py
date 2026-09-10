@@ -25,8 +25,8 @@ Covers:
     keyed on what detect_signal itself would accept (not "any parseable
     fragment"), including the sha-less-marker-plus-bare-prose case that used
     to suppress both halves and leave no signal at all.
-  - TestBuildMarkerFindingsSlot — the #36 extension point: findings=None is
-    byte-absent from the payload; a supplied list round-trips.
+  - TestRemovedFindingsSlot — the removed writer parameter is rejected by both
+    builders.
   - TestFindingMarker         — issue #132's per-finding delivery marker: build ->
     parse round-trip, last-wins, malformed payloads rejected without raising, and
     non-collision with the summary marker in both directions.
@@ -488,34 +488,20 @@ class TestIdempotence(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestBuildMarkerFindingsSlot — #36 extension point.
+# TestRemovedFindingsSlot — the writer has no reserved findings slot.
 # ---------------------------------------------------------------------------
 
 
-class TestBuildMarkerFindingsSlot(unittest.TestCase):
-    @staticmethod
-    def _payload_from(marker_text):
-        m = re.search(r":\s*({.*})\s*-->", marker_text)
-        return json.loads(m.group(1))
+class TestRemovedFindingsSlot(unittest.TestCase):
+    def test_build_marker_rejects_findings_keyword(self):
+        # Mutation: restore build_marker's findings parameter; this test must go red.
+        with self.assertRaises(TypeError):
+            build_marker(SHA_40, 2, findings=[{"id": 1}])
 
-    def test_findings_none_omits_the_key_entirely(self):
-        marker_text = build_marker(SHA_40, 2, findings=None)
-        payload = self._payload_from(marker_text)
-        self.assertNotIn("findings", payload)
-        self.assertEqual(list(payload.keys()), ["version", "findings_count", "sha"])
-
-    def test_supplied_findings_appear_last_and_survive_round_trip(self):
-        findings = [{"id": 1, "title": "x"}, {"id": 2, "title": "y"}]
-        marker_text = build_marker(SHA_40, 2, findings=findings)
-        payload = self._payload_from(marker_text)
-        self.assertEqual(
-            list(payload.keys()), ["version", "findings_count", "sha", "findings"]
-        )
-        self.assertEqual(payload["findings"], findings)
-
-        signal = detect_signal(marker_text)
-        self.assertIsNotNone(signal)
-        self.assertEqual(signal["marker"]["findings"], findings)
+    def test_build_footer_rejects_findings_keyword(self):
+        # Mutation: restore build_footer's findings parameter; this test must go red.
+        with self.assertRaises(TypeError):
+            build_footer(2, SHA_40, body="", findings=[{"id": 1}])
 
 
 # ---------------------------------------------------------------------------

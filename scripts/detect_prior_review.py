@@ -557,7 +557,6 @@ _MARKER_ECHO_KEYS = (
     "version",
     "findings_count",
     "sha",
-    "findings",
     "_token",
     "_legacy",
 )

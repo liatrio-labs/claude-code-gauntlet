@@ -122,7 +122,7 @@ It always exits 0 and prints exactly one JSON object on stdout (detection degrad
 }
 ```
 
-`marker` is not a verbatim echo of the parsed payload — `sanitize_marker` allow-lists which keys it returns (`version`, `findings_count`, `sha`, `findings`, `_token`, `_legacy`), bounds every value, and reports any other key by NAME only under `unknown_keys` (values never echoed). The parsed marker is attacker-controllable — anyone with read access can post a comment carrying one — and the orchestrator is told to consume `marker` directly, so an unbounded verbatim echo would pipe arbitrary text into a model's context.
+`marker` is not a verbatim echo of the parsed payload — `sanitize_marker` allow-lists which keys it returns (`version`, `findings_count`, `sha`, `_token`, `_legacy`), bounds every value, and reports any other key by NAME only under `unknown_keys` (values never echoed). The parsed marker is attacker-controllable — anyone with read access can post a comment carrying one — and the orchestrator is told to consume `marker` directly, so an unbounded verbatim echo would pipe arbitrary text into a model's context.
 
 When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`marker`/`last_reviewed_sha` `null` and `incremental_safe` `false`.
 
