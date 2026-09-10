@@ -835,7 +835,7 @@ def _derived_waist_body(identity):
     if waist_rows:
         lines.extend(
             [
-                "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.",
+                "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.",
                 "",
             ]
         )

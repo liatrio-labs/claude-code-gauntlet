@@ -336,7 +336,7 @@ Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentMode
 
 Copy `configResult.waist.configEcho` verbatim.
 <!-- generated-from-registry-identity:derived_waist_fields — do not edit; run scripts/generate_contract_requirements.py -->
-The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.
+The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.
 
 - `limits.deliveryCap` (headless and interactive runs): from `configEcho.pr_comment_cap`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `deliveryCap` out of it.
 - `delivery.tier` (headless and interactive runs): from `configEcho.delivery_tier`. Leave `tier` out of any stamped `delivery`.
@@ -518,10 +518,10 @@ Invoke the workflow in **one** `Workflow` tool call. This single call runs the e
 
 No pre-dispatch scope check is needed here: `deriveAgentFlags` (`workflows/src/args.js` /
 `workflows/src/stages.js`) computes the dimension flags from `riskTable`/`changedLines`/
-`scopeAnswer` inside the workflow itself, and `validateArgs` refuses an incoherent waist (a
-`scopeAnswer: "light"` the riskTable doesn't support, or a light-eligible waist with no
-`scopeAnswer`) before any agent is dispatched — there is no longer a second, prompt-level
-place the decision could silently drop.
+`scopeAnswer` inside the workflow itself, and `validateArgs` refuses a `scopeAnswer` on a
+riskTable/changedLines that is not light-eligible, a light-eligible waist with no
+`scopeAnswer`, or any derived waist field that disagrees with its receipt before any agent is
+dispatched — there is no longer a second, prompt-level place the decision could silently drop.
 
 ```
 Workflow(

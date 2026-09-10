@@ -701,7 +701,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "skills/code-gauntlet/SKILL.md",
             "derived_waist_fields",
         ): (
-            "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.\n"
+            "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.\n"
             "\n"
             "- `optional.beta` (headless runs): from `configEcho.beta`. Leave `beta` out of any stamped `optional`.\n"
             "- `nested.gamma` (headless and interactive runs, when the gamma condition holds): from `configEcho.gamma`; `raw` derives as `mapped`. Stamp `nested` and leave `gamma` out of it.\n"
@@ -717,7 +717,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "skills/code-gauntlet/references/phase2-triage.md",
             "derived_waist_fields",
         ): (
-            "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.\n"
+            "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.\n"
             "\n"
             "- `optional.beta` (headless runs): from `configEcho.beta`. Leave `beta` out of any stamped `optional`.\n"
             "- `nested.gamma` (headless and interactive runs, when the gamma condition holds): from `configEcho.gamma`; `raw` derives as `mapped`. Stamp `nested` and leave `gamma` out of it.\n"
@@ -733,7 +733,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "skills/code-gauntlet/references/phase1-preflight.md",
             "derived_waist_fields",
         ): (
-            "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; the receipt is its only source.\n"
+            "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.\n"
             "\n"
             "- `optional.beta` (headless runs): from `configEcho.beta`. Leave `beta` out of any stamped `optional`.\n"
             "- `nested.gamma` (headless and interactive runs, when the gamma condition holds): from `configEcho.gamma`; `raw` derives as `mapped`. Stamp `nested` and leave `gamma` out of it.\n"

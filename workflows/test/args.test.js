@@ -684,14 +684,349 @@ test('T4: unknown deriveWhen names fail closed without throwing', () => {
   const originalLength = KNOB_REGISTRY.length;
   try {
     KNOB_REGISTRY.push(...descriptors);
+    const unstampedInput = headlessArgs();
+    for (const descriptor of descriptors) {
+      unstampedInput.configEcho[descriptor.key] = { value: 'value', source: 'default' };
+    }
+    let unstampedReport;
+    assert.doesNotThrow(() => {
+      unstampedReport = normalizeArgsReport(unstampedInput);
+    });
+    // Mutation: bypass the unknown-name guard in deriveConfigWaist only. Neither
+    // unknown deriveWhen name may derive its waist path from a receipt.
+    for (const descriptor of descriptors) {
+      const root = descriptor.waistPath.split('.')[0];
+      assert.equal(unstampedReport.args[root], undefined, descriptor.deriveWhen);
+      assert.equal(unstampedReport.derivedPaths.includes(descriptor.waistPath), false, descriptor.deriveWhen);
+    }
+    for (const descriptor of descriptors) {
+      input[descriptor.waistPath.split('.')[0]] = { field: 'value' };
+    }
     const normalized = normalizeArgsReport(input).args;
     for (const descriptor of descriptors) {
-      assert.equal(normalized[descriptor.key], undefined, descriptor.deriveWhen);
-      assert.equal(normalized[descriptor.waistPath.split('.')[0]], undefined, descriptor.deriveWhen);
+      assert.deepEqual(normalized[descriptor.waistPath.split('.')[0]], { field: 'value' }, descriptor.deriveWhen);
+    }
+    // Mutation: remove the Object.hasOwn() half of deriveWhenHolds. Both an unknown
+    // own name and inherited Object.prototype.toString must still be accepted here.
+    assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
+  } finally {
+    KNOB_REGISTRY.length = originalLength;
+  }
+});
+
+test('T315-ARGS: a newly registered waist row is validated against its mapped receipt', () => {
+  const originalLength = KNOB_REGISTRY.length;
+  try {
+    KNOB_REGISTRY.push({
+      key: 'lockstep_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
+      rule: { kind: 'enum', values: ['raw'] }, env: null, reviewMdKey: null,
+      defaults: { headless: ['raw', 'default'] }, type: 'string', waistPath: 'probeWaist.field',
+      waistMap: { raw: 'mapped' }, derivedFrom: null, deriveWhen: null, nullReceipt: [],
+      resolvedKey: false,
+    });
+    const base = headlessArgs();
+    base.configEcho.lockstep_probe = { value: 'raw', source: 'default' };
+    assert.deepEqual(
+      validateArgs({ ...base, probeWaist: { field: 'raw' } }).errors,
+      ['probeWaist.field does not match configEcho.lockstep_probe'],
+    );
+    // Mutation: delete the generic pass, or compare entry.value without applying waistMap.
+    assert.deepEqual(validateArgs({ ...base, probeWaist: { field: 'mapped' } }), { ok: true, errors: [] });
+  } finally {
+    KNOB_REGISTRY.length = originalLength;
+  }
+});
+
+test('T315-ARGS: every real waist row and mode has one exact lockstep oracle pair', () => {
+  const cases = {
+    'headless:limits.deliveryCap': {
+      path: 'limits.deliveryCap', key: 'pr_comment_cap', receipt: '6',
+      agree: headlessArgs(),
+      disagree: { ...headlessArgs(), limits: { ...headlessArgs().limits, deliveryCap: 7 } },
+    },
+    'headless:delivery.tier': {
+      path: 'delivery.tier', key: 'delivery_tier', receipt: 'all',
+      agree: { ...headlessArgs(), delivery: { tier: 'all' } },
+      disagree: { ...headlessArgs(), delivery: { tier: 'main_only' } },
+    },
+    'headless:reviewScope.requested': {
+      path: 'reviewScope.requested', key: 'reviewed_policy', receipt: 'full',
+      agree: headlessArgs('full'),
+      disagree: headlessArgs('full', { requested: 'incremental' }),
+    },
+    'headless:scopeAnswer': {
+      path: 'scopeAnswer', key: 'trivial_scope', receipt: 'light',
+      agree: {
+        ...headlessArgs(), riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 1,
+        scopeAnswer: 'light',
+        configEcho: { ...headlessArgs().configEcho, trivial_scope: { value: 'light', source: 'default' } },
+      },
+      disagree: {
+        ...headlessArgs(), riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 1,
+        scopeAnswer: 'full',
+        configEcho: { ...headlessArgs().configEcho, trivial_scope: { value: 'light', source: 'default' } },
+      },
+    },
+    'interactive:limits.deliveryCap': {
+      path: 'limits.deliveryCap', key: 'pr_comment_cap', receipt: 'null',
+      agree: { ...good, limits: { ...good.limits, deliveryCap: null } },
+      disagree: { ...good, limits: { ...good.limits, deliveryCap: 1 } },
+    },
+    'interactive:delivery.tier': {
+      path: 'delivery.tier', key: 'delivery_tier', receipt: 'all',
+      agree: { ...good, delivery: { tier: 'all' } },
+      disagree: { ...good, delivery: { tier: 'main_only' } },
+    },
+  };
+  const registryPairs = KNOB_REGISTRY
+    .filter(({ waistPath }) => waistPath !== null)
+    .flatMap((descriptor) => descriptor.modes.map((mode) => `${mode}:${descriptor.waistPath}`));
+  assert.deepEqual(Object.keys(cases).sort(), registryPairs.sort());
+  for (const [pair, fixture] of Object.entries(cases)) {
+    assert.equal(fixture.agree.configEcho[fixture.key].value, fixture.receipt, pair);
+    assert.equal(fixture.disagree.configEcho[fixture.key].value, fixture.receipt, pair);
+    assert.deepEqual(validateArgs(fixture.agree).errors, [], `${pair} agreeing value`);
+    // Mutation: filter any registry row out of the pass, or retain an old equality arm.
+    assert.deepEqual(validateArgs(fixture.disagree).errors, [
+      `${fixture.path} does not match configEcho.${fixture.key}`,
+    ], `${pair} disagreeing value`);
+  }
+});
+
+test('T315-ARGS: derivedFrom rows reject a receipt that disagrees with their source', () => {
+  const originalLength = KNOB_REGISTRY.length;
+  try {
+    KNOB_REGISTRY.push({
+      key: 'derived_probe', modes: ['interactive'],
+      allowedSources: { interactive: ['discovery'] },
+      rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null,
+      defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null,
+      waistMap: null, derivedFrom: 'reviewConfigPath', deriveWhen: null, nullReceipt: [],
+      resolvedKey: false,
+    });
+    const args = {
+      ...good,
+      configEcho: { ...good.configEcho, derived_probe: { value: 'present', source: 'discovery' } },
+    };
+    // Mutation: delete the generic derivedFrom loop.
+    assert.deepEqual(validateArgs(args).errors, ['configEcho.derived_probe does not match reviewConfigPath']);
+  } finally {
+    KNOB_REGISTRY.length = originalLength;
+  }
+});
+
+test('T315-ARGS: an unhandled registry type is accepted without a false lockstep violation', () => {
+  const originalLength = KNOB_REGISTRY.length;
+  try {
+    KNOB_REGISTRY.push({
+      key: 'bool_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
+      rule: { kind: 'enum', values: ['true'] }, env: null, reviewMdKey: null,
+      defaults: { headless: ['true', 'default'] }, type: 'bool', waistPath: 'boolProbe.value',
+      waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: false,
+    });
+    const args = headlessArgs();
+    args.configEcho.bool_probe = { value: 'true', source: 'default' };
+    args.boolProbe = { value: false };
+    // Mutation: remove the expected === undefined guard.
+    assert.deepEqual(validateArgs(args), { ok: true, errors: [] });
+  } finally {
+    KNOB_REGISTRY.length = originalLength;
+  }
+});
+
+test('T315-ARGS: csv_list lockstep equality is ordered and element-wise', () => {
+  const originalLength = KNOB_REGISTRY.length;
+  try {
+    KNOB_REGISTRY.push({
+      key: 'csv_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
+      rule: { kind: 'csv_subset', values: ['a', 'b'] }, env: null, reviewMdKey: null,
+      defaults: { headless: ['a,b', 'default'] }, type: 'csv_list', waistPath: 'csvProbe.items',
+      waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: false,
+    });
+    const base = headlessArgs();
+    base.configEcho.csv_probe = { value: 'a,b', source: 'default' };
+    for (const [value, expected] of [[['a', 'b'], true], [['b', 'a'], false], [['a'], false]]) {
+      const result = validateArgs({ ...base, csvProbe: { items: value } });
+      // Mutation: replace element-wise comparison with === or an always-true branch.
+      assert.equal(result.ok, expected, JSON.stringify(value));
+      if (!expected) assert.deepEqual(result.errors, ['csvProbe.items does not match configEcho.csv_probe']);
     }
   } finally {
     KNOB_REGISTRY.length = originalLength;
   }
+});
+
+test('T315-ARGS: a stamped null is data and is compared by the generic pass', () => {
+  const originalLength = KNOB_REGISTRY.length;
+  try {
+    KNOB_REGISTRY.push({
+      key: 'null_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
+      rule: { kind: 'enum', values: ['value'] }, env: null, reviewMdKey: null,
+      defaults: { headless: ['value', 'default'] }, type: 'string', waistPath: 'nullProbe.value',
+      waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: false,
+    });
+    const args = headlessArgs();
+    args.configEcho.null_probe = { value: 'value', source: 'default' };
+    args.nullProbe = { value: null };
+    // Mutation: change the undefined skip to a nullish skip.
+    assert.deepEqual(validateArgs(args).errors, ['nullProbe.value does not match configEcho.null_probe']);
+  } finally {
+    KNOB_REGISTRY.length = originalLength;
+  }
+});
+
+test('T315-ARGS: malformed receipts produce focused errors without lockstep cascades', () => {
+  const cap = headlessArgs();
+  cap.configEcho.pr_comment_cap = { value: '007', source: 'default' };
+  cap.limits = { ...cap.limits, deliveryCap: 1 };
+  assert.deepEqual(validateArgs(cap).errors, ['configEcho.pr_comment_cap.value is invalid for headless']);
+
+  const tier = headlessArgs();
+  tier.configEcho.delivery_tier = { value: 'all', source: 'fixed' };
+  tier.delivery = { tier: 'main_only' };
+  // Mutation: read configEchoValue directly instead of receiptEntryFor in the pass.
+  assert.deepEqual(validateArgs(tier).errors, ['configEcho.delivery_tier.source is invalid for headless']);
+});
+
+test('T315-ARGS: special cap arms report one fault and suppress the generic template', () => {
+  const headless = headlessArgs();
+  headless.limits = { ...headless.limits, deliveryCap: '1' };
+  const headlessResult = validateArgs(headless);
+  // Mutation: restore the every-non-number presence arm; a present string must keep its shape
+  // error rather than being rewritten as a receipt-presence error.
+  assert.deepEqual(headlessResult.errors, [
+    'limits.deliveryCap must be null, absent, or a non-negative safe integer when present',
+  ]);
+
+  const interactive = { ...good, limits: { ...good.limits, deliveryCap: null }, configEcho: {
+    ...good.configEcho, pr_comment_cap: { value: '5', source: 'default' },
+  } };
+  const interactiveResult = validateArgs(interactive);
+  // Mutation: remove the interactive absence arm or let it fall through to equality.
+  assert.deepEqual(interactiveResult.errors, ['configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null']);
+});
+
+test('T315-ARGS: a mode twin is not lockstep-validated outside its declared modes', () => {
+  const originalLength = KNOB_REGISTRY.length;
+  try {
+    KNOB_REGISTRY.push({
+      key: 'mode_twin_probe', modes: ['headless'],
+      allowedSources: { headless: ['default'], interactive: ['default'] },
+      rule: { kind: 'enum', values: ['value'] }, env: null, reviewMdKey: null,
+      defaults: { headless: ['value', 'default'], interactive: ['value', 'default'] },
+      type: 'string', waistPath: 'modeTwinProbe.value', waistMap: null, derivedFrom: null,
+      deriveWhen: null, nullReceipt: [], resolvedKey: false,
+    });
+    const args = { ...good, configEcho: { ...good.configEcho, mode_twin_probe: { value: 'value', source: 'default' } }, modeTwinProbe: { value: 'wrong' } };
+    const result = validateArgs(args);
+    // Mutation: removing descriptor.modes.includes(args.mode) from the lockstep pass turns it red.
+    assert.equal(result.errors.some((error) => error.includes('configEcho has unexpected key(s): mode_twin_probe')), true);
+    assert.equal(result.errors.some((error) => /does not match configEcho/.test(error)), false);
+  } finally {
+    KNOB_REGISTRY.length = originalLength;
+  }
+});
+
+test('T315-ARGS: missing or null configEcho stays a focused validation refusal', () => {
+  for (const configEcho of [undefined, null]) {
+    const args = { ...good };
+    if (configEcho === undefined) delete args.configEcho;
+    else args.configEcho = configEcho;
+    // Mutation: remove the isPlainObject(args.configEcho) guard around the pass.
+    assert.doesNotThrow(() => validateArgs(args));
+    assert.equal(validateArgs(args).errors.some((error) => error.includes('configEcho')), true);
+  }
+});
+
+test('T316-ARGS: any present scopeAnswer is refused when the light gate was ineligible', () => {
+  // Mutation: revert the biconditional to the old light-only and missing-only checks.
+  const interactive = validateArgs({ ...good, scopeAnswer: 'full' });
+  assert.equal(interactive.errors.filter((error) => /scopeAnswer/.test(error)).length, 1);
+  assert.match(interactive.errors[interactive.errors.length - 1], /the orchestrator answered a light\/full question the gate never asked/);
+  assert.match(interactive.errors[interactive.errors.length - 1], /omit scopeAnswer/);
+
+  const headless = headlessArgs();
+  headless.scopeAnswer = 'full';
+  const result = validateArgs(headless);
+  assert.equal(result.errors.filter((error) => /scopeAnswer/.test(error)).length, 1);
+  assert.match(result.errors.find((error) => /scopeAnswer is/.test(error)), /the orchestrator answered a light\/full question the gate never asked/);
+});
+
+test('T316-ARGS: eligible scope accepts both values and a headless receipt derives either value', () => {
+  for (const scopeAnswer of ['light', 'full']) {
+    // Mutation: implement the biconditional as scopeAnswer === "light" iff eligible.
+    assert.deepEqual(validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 10, scopeAnswer }), { ok: true, errors: [] });
+  }
+  const derived = normalizeArgs({
+    ...headlessArgs(), riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 10,
+    configEcho: { ...headlessArgs().configEcho, trivial_scope: { value: 'full', source: 'default' } },
+  });
+  assert.deepEqual(validateArgs(derived), { ok: true, errors: [] });
+  assert.equal(derived.scopeAnswer, 'full');
+});
+
+test('T316-ARGS: a headless caller-stamped scopeAnswer equal to the derived receipt stays accepted', () => {
+  const args = headlessArgs();
+  args.riskTable = [{ path: 'a.js', risk: 'low' }];
+  args.changedLines = 10;
+  args.scopeAnswer = 'light';
+  args.configEcho.trivial_scope = { value: 'light', source: 'default' };
+  // Mutation: add caller-provenance rejection even when the stamped value equals the receipt.
+  // Decision pin: caller provenance is intentionally not rejected when the value is correct.
+  assert.deepEqual(validateArgs(normalizeArgs(args)), { ok: true, errors: [] });
+});
+
+test('T316-ARGS: ineligible light receipt plus a present scopeAnswer uses the two dedicated refusals', () => {
+  const args = headlessArgs();
+  args.riskTable = [{ path: 'a.js', risk: 'medium' }];
+  args.scopeAnswer = 'full';
+  args.configEcho.trivial_scope = { value: 'light', source: 'default' };
+  const result = validateArgs(args);
+  assert.ok(result.errors.some((error) => error.startsWith('scopeAnswer is "full"')));
+  const receiptError = result.errors.find((error) => error.startsWith('configEcho.trivial_scope is "light"'));
+  assert.ok(receiptError);
+  // Mutation: append the scopeAnswer fix to the receipt arm, which has no waist operand.
+  assert.doesNotMatch(receiptError, /omit scopeAnswer/);
+  // Mutation: retain the deleted scopeAnswer equality arm; no generic equality is valid here.
+  assert.equal(result.errors.some((error) => error.includes('scopeAnswer does not match configEcho')), false);
+});
+
+test('T316-ARGS: derived null scopeAnswer is disclosed as no gap after normalization', () => {
+  const input = headlessArgs();
+  input.riskTable = [{ path: 'a.js', risk: 'low' }];
+  input.changedLines = 10;
+  input.scopeAnswer = null;
+  input.configEcho.trivial_scope = { value: 'light', source: 'default' };
+  const report = normalizeArgsReport(input);
+  assert.equal(report.args.scopeAnswer, 'light');
+  assert.deepEqual(report.derivedPaths.sort(), ['delivery.tier', 'scopeAnswer']);
+  // Mutation: omit derivedPaths from nullToleranceRejectedKeys so the re-derived null is disclosed.
+  assert.deepEqual(nullToleranceRejectedKeys(report.args, report.dropped, report.derivedPaths), []);
+});
+
+test('T315-ARGS: direct special-arm fixtures isolate absence rules from generic equality', () => {
+  const interactiveCap = {
+    ...good,
+    limits: { ...good.limits },
+    configEcho: { ...good.configEcho, pr_comment_cap: { value: '5', source: 'default' } },
+  };
+  assert.deepEqual(validateArgs(interactiveCap).errors, [
+    'configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null',
+  ]);
+
+  for (const delivery of [undefined, {}]) {
+    const args = { ...good, configEcho: { ...good.configEcho, delivery_tier: { value: 'main_only', source: 'default' } } };
+    if (delivery === undefined) delete args.delivery;
+    else args.delivery = delivery;
+    assert.deepEqual(validateArgs(args).errors, ['configEcho.delivery_tier does not match delivery.tier']);
+  }
+
+  const headlessCap = headlessArgs();
+  delete headlessCap.limits.deliveryCap;
+  // Mutation: delete the named presence arms; the generic pass skips undefined and misses these.
+  assert.deepEqual(validateArgs(headlessCap).errors, [
+    'headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap',
+  ]);
 });
 
 test('T309-ARGS: local and branch scopes stay stamped while detector-backed lockstep is gated', () => {
@@ -1030,7 +1365,12 @@ test('T182-ARGS: headless deliveryCap must be numeric for the receipt', () => {
     if (label !== 'absent') limits.deliveryCap = deliveryCap;
     const result = validateArgs({ ...base, limits });
     assert.equal(result.ok, false, label);
-    assert.ok(result.errors.some((error) => error.includes('headless limits.deliveryCap must be a number')), `${label}: ${result.errors.join('; ')}`);
+    // Mutation: restore the every-non-number presence arm; the string case must retain only
+    // its focused shape error.
+    const expected = label === 'non-number'
+      ? 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present'
+      : 'headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap';
+    assert.deepEqual(result.errors, [expected], label);
   }
 });
 
