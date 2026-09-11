@@ -5554,6 +5554,12 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             "65536-byte GitHub body limit.",
             out,
         )
+        # Mutation: render composed.omitted (or a constant) as the shown count; this turns red.
+        self.assertIn(
+            "  1 of 3 finding(s) skipped inline (lines not in diff) — "
+            "appended to review body.",
+            out,
+        )
 
     def test_gitlab_bounded_piece_neutralizes_forged_finding_markers(self):
         # Mutation: remove neutralization from _skipped_piece; the marker scan turns red.

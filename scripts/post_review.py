@@ -1817,11 +1817,14 @@ def _fold_review_body(text, allowance, platform):
     """Fold *text* into *allowance* bytes while preserving lines and code points."""
     limits = _body_limit(platform)
     total = _utf8_len(text)
-    reserved_fold_line = (
-        f"_[folded: {total} more bytes; this {limits['surface']} reached the "
-        f"{limits['bytes']}-byte {limits['label']} body limit]_"
-    )
-    reserve = _utf8_len(f"\n\n{reserved_fold_line}") + 4
+
+    def fold_line_for(byte_count):
+        return (
+            f"_[folded: {byte_count} more bytes; this {limits['surface']} reached the "
+            f"{limits['bytes']}-byte {limits['label']} body limit]_"
+        )
+
+    reserve = _utf8_len(f"\n\n{fold_line_for(total)}") + 4
     if allowance < reserve:
         prefix = ""
     else:
@@ -1852,11 +1855,7 @@ def _fold_review_body(text, allowance, platform):
     if prefix.count("```") % 2:
         prefix += "" if prefix.endswith("\n") else "\n"
         prefix += "```"
-    fold_line = (
-        f"_[folded: {dropped_bytes} more bytes; this {limits['surface']} reached the "
-        f"{limits['bytes']}-byte {limits['label']} body limit]_"
-    )
-    return f"{prefix}\n\n{fold_line}", dropped_bytes
+    return f"{prefix}\n\n{fold_line_for(dropped_bytes)}", dropped_bytes
 
 
 def _bounded_section(n, shown_entries, inline_count, platform):
