@@ -787,16 +787,12 @@ def pr_identity_fields_body(identity):
     for field in identity["prIdentityFields"]:
         requirement = "required" if field["required"] else "optional"
         lines.append(f"- `{field['name']}` ({requirement}): {field['describe']}.")
-    lines.extend(
-        [
-            "",
-            "Producer command:",
-            "",
-            "`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform "
-            "github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> "
-            "[--title <text>]`",
-        ]
+    producer_command = (
+        "`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform "
+        + "github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> "
+        + "[--title <text>]`"
     )
+    lines.extend(["", "Producer command:", "", producer_command])
     return lines
 
 
