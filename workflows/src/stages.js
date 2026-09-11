@@ -22,7 +22,7 @@ import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValid
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible } from './args.js';
-import { renderReport, coerceReportFindings } from './renderReport.js';
+import { renderReport, renderSummaryBody, coerceReportFindings } from './renderReport.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
@@ -2788,11 +2788,11 @@ export function writerPayload(inp) {
     // artifact IS the post_review.py input wrapper — Phase 8 posts it without hand-
     // assembling { owner, repo, pr_number, ... } around a bare array (the wrap was
     // documented but got reverse-engineered anyway, ~8 turns in the PR-310 run).
-    // review_body is intentionally '' in this pipeline. sha pins the reviewed commit,
-    // and platform carries the already-resolved target instead of guessing from a remote.
+    // review_body is the renderer-owned Summary body. sha pins the reviewed commit, and
+    // platform carries the already-resolved target instead of guessing from a remote.
     // The findings SET is byte-identical either way; only the envelope changes.
     postReview: id
-      ? { ...postReviewWrapper(id), findings: postReviewSet }
+      ? { ...postReviewWrapper(id, inp.reviewBody), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -3026,7 +3026,7 @@ export function persistPlan(inp, paths) {
       ids: (inp.postReview || []).map((f) => f && f.id),
       // Same envelope decision and helper as writerPayload: with a PR identity the
       // artifact is the post_review.py input wrapper; otherwise it is a bare array.
-      wrapper: id ? postReviewWrapper(id) : null,
+      wrapper: id ? postReviewWrapper(id, inp.reviewBody) : null,
     },
     checkpoint: {
       path: paths.checkpoints,
@@ -4328,6 +4328,7 @@ export async function runWith(ctx, rawArgs) {
       deliveryCap: limits.deliveryCap ?? null,
       gapCount: gaps.length,
     };
+    const reviewBody = renderSummaryBody(reportInput);
     // Phase 8's report is a PURE FUNCTION of the pipeline's own output (issue #36) — no
     // agent, no prompt, no schema, no segmentation, no fallback. Four measured failure
     // modes died with the dispatch: a title that was never twice the same (0 of 115
@@ -4355,6 +4356,7 @@ export async function runWith(ctx, rawArgs) {
       findings: challengeOut.findings,
       postReview,
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
+      reviewBody,
       report: reportOut.report,
       // Persist a SLIM checkpoint: only the resume-consumed phase (challenge) carries full
       // output; every other phase is reduced to a count, so the single artifact-writer

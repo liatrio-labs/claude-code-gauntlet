@@ -84,8 +84,12 @@ Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment
 **Usage:**
 
 ```bash
-python3 {plugin_root}/scripts/post_review.py <findings_json_path>
+python3 {plugin_root}/scripts/post_review.py <findings_json_path> [--report PATH]
 ```
+
+For a legacy bare findings array, pass `--report PATH` together with `--owner`, `--repo`,
+`--pr-number`, `--platform`, and `--sha`. The script derives `review_body` from the report Summary
+and forms the wrapper in code. Wrapper inputs already carrying `review_body` use that body as is.
 
 **Findings JSON schema:**
 
@@ -103,7 +107,7 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
 
 ```json
 {
-    "review_body": "Executive summary comment with finding counts (post_review.py appends the footer)",
+    "review_body": "The report's Summary section body: folded summary prose plus the short code-owned counts sentence",
     "findings": [
         {
             "file": "src/foo.py",
@@ -129,8 +133,10 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
 
 **Fields:**
 
-- `review_body` — executive summary comment (counts, no spoilers); prose only — the brand
-  header is prepended by the script
+- `review_body` — exactly the pipeline-rendered Summary section body: summary prose folded at
+  `REPORT_FOLD_LIMITS.summaryChars`, followed by the short code-owned counts sentence. The script
+  assembles the complete posted comment in header, body, skipped-finding section, footer order;
+  the skipped-finding section is uncapped.
 - `findings` — array of inline comments
   - `file` — relative path in repository
   - `line` — line number in diff (new version)
@@ -157,28 +163,24 @@ Bash(
   description="Posting {N} review comments to PR #{pr_number}",
   command="""python3 -c "
 import json, sys
-findings = {
-    'review_body': 'Found 3 issues: 1 critical, 2 medium.',
-    'findings': [
-        {
-            'file': 'app.js',
-            'line': 42,
-            'severity': 'critical',
-            'title': 'SQL injection in query builder',
-            'body': 'User input concatenated into SQL without parameterization.',
-            'suggested_fix_code': 'const query = db.prepare(\'SELECT * FROM users WHERE id = ?\').get(id);'
-        }
-    ],
-    'owner': 'myorg',
-    'repo': 'myapp',
-    'pr_number': 42,
-    'sha': 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3'
-}
+findings = [
+    {
+        'file': 'app.js',
+        'line': 42,
+        'severity': 'critical',
+        'title': 'SQL injection in query builder',
+        'body': 'User input concatenated into SQL without parameterization.',
+        'suggested_fix_code': 'const query = db.prepare(\'SELECT * FROM users WHERE id = ?\').get(id);'
+    }
+]
 with open(sys.argv[1], 'w') as f:
     json.dump(findings, f, ensure_ascii=False, indent=2)
 " "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json"
 
-python3 {plugin_root}/scripts/post_review.py "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json"
+python3 {plugin_root}/scripts/post_review.py \
+  "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json" \
+  --report "{output_dir}/code-gauntlet-report-{head_sha_short}.md" \
+  --owner "myorg" --repo "myapp" --pr-number 42 --platform github --sha "FULL_HEAD_SHA"
 """)
 ```
 

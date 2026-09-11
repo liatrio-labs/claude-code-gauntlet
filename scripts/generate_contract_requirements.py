@@ -268,6 +268,7 @@ def load_registry(repo_root=REPO_ROOT):
         "  severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK,"
         "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
         "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
+        "  codeOwnedHeadings: m.CODE_OWNED_HEADINGS,"
         "  agents: m.AGENTS,"
         "  prIdentityFields: m.PR_IDENTITY_FIELDS.map(f => ({ name: f.name, required: f.required, describe: f.describe })),"
         "  permalinkTemplates: m.PERMALINK_TEMPLATES,"
@@ -1010,6 +1011,12 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
             "}",
             f'RULE_SOURCE_LABEL_FALLBACK = "{identity["ruleSourceLabelFallback"]}"',
         ]
+        if rel_path == "scripts/post_review.py":
+            lines += [
+                "CODE_OWNED_HEADINGS = [",
+                *[f'    "{heading}",' for heading in identity["codeOwnedHeadings"]],
+                "]",
+            ]
         return lines
     if symbol == "detail_fields":
         citation_fields = {

@@ -3,7 +3,7 @@
 // line-based bundle stripper cannot remove safely.
 import { SEVERITY_ORDER } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
-import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, resolvePolicy, conditionalSchemaActive } from './registry.js';
+import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, CODE_OWNED_HEADINGS, resolvePolicy, conditionalSchemaActive } from './registry.js';
 import { KNOB_REGISTRY } from './args.js';
 
 // Fields the report renderer never emits. suggested_fix_code itself (no apply-check oracle
@@ -377,11 +377,29 @@ function inline(value) {
   return foldInline(oneLine(value));
 }
 
-// Finding prose is deliberately multiline, but a model-controlled line must not become a
+// Model prose is deliberately multiline, but a model-controlled line must not become a
 // second code-owned section heading. Evidence is excluded because it is placed in a fenced
 // block and must remain byte-for-byte verbatim.
 function safeProse(value) {
-  return reportAsText(value).replace(/^## Review Methodology[ \t]*$/gm, '## Review Methodology (finding text)');
+  const parts = reportAsText(value).split(/(\r\n|\r|\n)/);
+  let output = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index];
+    const boundary = parts[index + 1] || '';
+    // The split keeps a terminal CR in the boundary, but strip one here as a
+    // belt-and-braces comparison rule for any line supplied by a future splitter.
+    const withoutTerminalCR = line.endsWith('\r') ? line.slice(0, -1) : line;
+    const comparable = withoutTerminalCR.replace(/[ \t]+$/, '');
+    if (CODE_OWNED_HEADINGS.includes(comparable)) {
+      // Preserve original CR bytes on untouched prose. A renamed heading drops
+      // only its CR and keeps an LF boundary, so the next model line stays separate.
+      const renamedBoundary = boundary === '\r\n' || boundary === '\r' ? '\n' : boundary;
+      output += `${comparable} (finding text)${renamedBoundary}`;
+    } else {
+      output += line + boundary;
+    }
+  }
+  return output;
 }
 
 function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
@@ -654,6 +672,26 @@ function countsSentence(findings, rawCount, unverified, view) {
   return sentence;
 }
 
+export function summaryBlock(builder, input) {
+  const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const rawFindings = normalizeFindings(inp.findings);
+  const rawUnverified = normalizeFindings(inp.unverified);
+  const findings = consolidateForReport(rawFindings);
+  const unverified = consolidateForReport(rawUnverified);
+  const findingsView = severityView(findings);
+  if (isPresent(inp.summary)) {
+    builder.add(foldedProse(inp.summary, REPORT_FOLD_LIMITS.summaryChars));
+    builder.add();
+  }
+  builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
+}
+
+export function renderSummaryBody(input) {
+  const builder = reportBuilder();
+  summaryBlock(builder, input);
+  return builder.finish();
+}
+
 function receiptSafe(value, fallback = 'unknown') {
   if (value === undefined || value === null) return fallback;
   const cleaned = oneLine(value).replaceAll('`', '');
@@ -839,11 +877,7 @@ export function renderReport(input) {
   builder.add();
   builder.add('## Summary');
   builder.add();
-  if (isPresent(inp.summary)) {
-    builder.add(foldedProse(inp.summary, REPORT_FOLD_LIMITS.summaryChars));
-    builder.add();
-  }
-  builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
+  summaryBlock(builder, { ...inp, findings: rawFindings, unverified: rawUnverified });
 
   if (findings.length) {
     builder.add();

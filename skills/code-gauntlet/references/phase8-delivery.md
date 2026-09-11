@@ -121,51 +121,20 @@ the completion summary above: skip this whole posting step, run nothing, and go 
 headless run reaches this step only when `configResult.resolved.delivery` includes `"pr_comments"`, and its posting
 follows `configResult.resolved.post_mode`.)
 
-**When `delivery.prIdentity` was set in the args waist, the persisted `artifactPaths.postReview` file
-already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, platform, review_body, findings }`) —
-consume it directly: optionally set `review_body` to the composed summary (it persists as `""`), keep its
-`sha` field (it pins the marker to the commit the review ran against), and pass the file to
-`post_review.py` unchanged. Only when the artifact is the legacy bare findings array (no `prIdentity` —
-e.g. a local-diff review that later gains a PR target) do you hand-wrap: the findings are the
-`artifactPaths.postReview` entries **verbatim** — do not drop, reorder, or cap them; only add
-`review_body`, `owner`, `repo`, `pr_number`, `sha`, and `platform` (the full head SHA the review ran against, from
-Phase 2 — omitting it leaves `post_review.py` to fall back to `git rev-parse HEAD`, which may not be the
-commit reviewed).
+When `delivery.prIdentity` is set in the args waist, the persisted `artifactPaths.postReview` file
+already is the post_review-ready wrapper (`{ owner, repo, pr_number, sha, platform, review_body, findings }`).
+Pass that file to `post_review.py` unchanged. Its `review_body` is exactly the report's rendered Summary
+section body, posted as is. `post_review.py` assembles the complete comment in header, body,
+skipped-finding section, footer order; the skipped-finding section is uncapped. Keep its `sha` field
+because it pins the marker to the commit the review ran against.
 
-Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures. Pass `suggestion`, `claude_md_rule`/`spec_text`, and `rule_source` straight through from the finding when present: `post_review.py` renders the suggestion block and chooses the cited heading from `rule_source` only when `claude_md_rule` is the rendered citation. A `spec_text` fallback uses **Cited rule**, and the raw `rule_source` value is never rendered. A finding that carries these fields loses the reviewer-facing half of itself if the hand-built wrapper drops them. `claude_md_rule` and `spec_text` are alternatives for the cited-rule section (`claude_md_rule` is preferred when both *survive sanitize* — a comment-only rule falls through to `spec_text`) — a finding typically carries one, not both. Pass `suggested_fix_code` straight through too when the finding carries it: `post_review.py` runs it through a deterministic apply-check before ever rendering it as a committable `suggestion` fence, downgrading silently to the prose `suggestion` on any failure, so passing it through is always safe — never hand-construct or edit its value yourself.
+When the artifact is the legacy bare findings array, invoke `post_review.py` with `--report` and the
+identity flags. The script derives the Summary body from the report and forms the wrapper in code:
 
 ```bash
-Bash(
-  description="Posting {N} review comments to PR #{pr_number}",
-  command="""python3 -c "
-import json, sys
-findings = {
-    'review_body': '''REVIEW_BODY_HERE''',
-    'findings': [
-        {
-            'file': 'src/foo.py',
-            'line': 42,
-            'end_line': 45,
-            'severity': 'high',
-            'title': '...',
-            'body': '...',
-            'suggestion': '...',
-            'claude_md_rule': '...',
-            'spec_text': '...',
-            'suggested_fix_code': '...'
-        }
-    ],
-    'owner': 'OWNER',
-    'repo': 'REPO',
-    'pr_number': PR_NUMBER,
-    'sha': 'FULL_HEAD_SHA'
-}
-with open(sys.argv[1], 'w') as f:
-    json.dump(findings, f, ensure_ascii=False, indent=2)
-" "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json"
-
-python3 {plugin_root}/scripts/post_review.py "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json"
-""")
+python3 {plugin_root}/scripts/post_review.py "{artifactPaths.postReview}" \
+  --report "{artifactPaths.report}" --owner "{owner}" --repo "{repo}" \
+  --pr-number "{pr_number}" --platform "{platform}" --sha "{full_head_sha}"
 ```
 
 > Headless carve-out (`configResult.resolved.post_mode == "dry-run"`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting. `post_review.py` self-enforces this regardless — it reads `CODE_GAUNTLET_POST_MODE` directly and treats `dry-run` as `--dry-run` even when the flag is omitted (belt-and-braces) — but pass the flag explicitly so the dry-run intent is visible in the command.

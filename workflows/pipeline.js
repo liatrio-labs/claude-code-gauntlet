@@ -1598,6 +1598,13 @@ const PR_IDENTITY_FIELDS = [
   { name: 'web_origin', required: true, check: validWebOrigin, describe: 'an http(s) origin: scheme, host and optional port only' },
   { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0, describe: 'a non-empty string when present' },
 ];
+const CODE_OWNED_HEADINGS = [
+  '## Summary',
+  '## Findings',
+  '## Unverified / pipeline-degraded findings',
+  '## Review Dimensions Summary',
+  '## Review Methodology',
+];
 const FINDING_PROP_TYPES = {
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
@@ -1947,7 +1954,21 @@ function inline(value) {
   return foldInline(oneLine(value));
 }
 function safeProse(value) {
-  return reportAsText(value).replace(/^## Review Methodology[ \t]*$/gm, '## Review Methodology (finding text)');
+  const parts = reportAsText(value).split(/(\r\n|\r|\n)/);
+  let output = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index];
+    const boundary = parts[index + 1] || '';
+    const withoutTerminalCR = line.endsWith('\r') ? line.slice(0, -1) : line;
+    const comparable = withoutTerminalCR.replace(/[ \t]+$/, '');
+    if (CODE_OWNED_HEADINGS.includes(comparable)) {
+      const renamedBoundary = boundary === '\r\n' || boundary === '\r' ? '\n' : boundary;
+      output += `${comparable} (finding text)${renamedBoundary}`;
+    } else {
+      output += line + boundary;
+    }
+  }
+  return output;
 }
 function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
   return safeProse(foldProse(value, limit));
@@ -2186,6 +2207,24 @@ function countsSentence(findings, rawCount, unverified, view) {
   if (unverified.length) sentence += ` ${unverified.length} unverified / pipeline-degraded.`;
   return sentence;
 }
+function summaryBlock(builder, input) {
+  const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const rawFindings = normalizeFindings(inp.findings);
+  const rawUnverified = normalizeFindings(inp.unverified);
+  const findings = consolidateForReport(rawFindings);
+  const unverified = consolidateForReport(rawUnverified);
+  const findingsView = severityView(findings);
+  if (isPresent(inp.summary)) {
+    builder.add(foldedProse(inp.summary, REPORT_FOLD_LIMITS.summaryChars));
+    builder.add();
+  }
+  builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
+}
+function renderSummaryBody(input) {
+  const builder = reportBuilder();
+  summaryBlock(builder, input);
+  return builder.finish();
+}
 function receiptSafe(value, fallback = 'unknown') {
   if (value === undefined || value === null) return fallback;
   const cleaned = oneLine(value).replaceAll('`', '');
@@ -2350,11 +2389,7 @@ function renderReport(input) {
   builder.add();
   builder.add('## Summary');
   builder.add();
-  if (isPresent(inp.summary)) {
-    builder.add(foldedProse(inp.summary, REPORT_FOLD_LIMITS.summaryChars));
-    builder.add();
-  }
-  builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
+  summaryBlock(builder, { ...inp, findings: rawFindings, unverified: rawUnverified });
   if (findings.length) {
     builder.add();
     builder.add('## Findings');
@@ -4680,7 +4715,7 @@ function writerPayload(inp) {
   return {
     findings: (inp.findings || []).map(toV2Aliased),
     postReview: id
-      ? { ...postReviewWrapper(id), findings: postReviewSet }
+      ? { ...postReviewWrapper(id, inp.reviewBody), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -4759,7 +4794,7 @@ function persistPlan(inp, paths) {
       path: paths.postReview,
       source: paths.findings,
       ids: (inp.postReview || []).map((f) => f && f.id),
-      wrapper: id ? postReviewWrapper(id) : null,
+      wrapper: id ? postReviewWrapper(id, inp.reviewBody) : null,
     },
     checkpoint: {
       path: paths.checkpoints,
@@ -5347,6 +5382,7 @@ async function runWith(ctx, rawArgs) {
       deliveryCap: limits.deliveryCap ?? null,
       gapCount: gaps.length,
     };
+    const reviewBody = renderSummaryBody(reportInput);
     let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
     const reportGaps = reportOut.gaps || [];
     gaps.push(...reportGaps);
@@ -5356,6 +5392,7 @@ async function runWith(ctx, rawArgs) {
       findings: challengeOut.findings,
       postReview,
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
+      reviewBody,
       report: reportOut.report,
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
       outputDir: A.outputDir,
