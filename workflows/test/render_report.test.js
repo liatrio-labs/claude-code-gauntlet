@@ -121,6 +121,8 @@ test('T-SUMMARY-BODY: the standalone Summary body is the report Summary body', (
 });
 
 test('T-SAFE-PROSE-CR: CRLF and lone-CR prose cannot forge Findings', () => {
+  // Mutation: compare LF-split lines without removing the trailing CR (or drop the
+  // lone-CR boundary) in safeProse; the CRLF and lone-CR arms below go red.
   const cases = [
     {
       name: 'summary CRLF',
