@@ -494,17 +494,16 @@ class TestIdempotence(unittest.TestCase):
 
 
 class TestRemovedFindingsSlot(unittest.TestCase):
-    def test_build_marker_rejects_findings_keyword(self):
+    # Signature pins, not calls: a restored build_footer parameter that forwards
+    # to build_marker still raises TypeError from the nested call, so a keyword
+    # call cannot tell the two apart. The signature can.
+    def test_build_marker_has_no_findings_parameter(self):
         # Mutation: restore build_marker's findings parameter, forwarding or not.
         self.assertNotIn("findings", inspect.signature(build_marker).parameters)
-        with self.assertRaises(TypeError):
-            build_marker(SHA_40, 2, findings=[{"id": 1}])
 
-    def test_build_footer_rejects_findings_keyword(self):
+    def test_build_footer_has_no_findings_parameter(self):
         # Mutation: restore build_footer's findings parameter, forwarding or not.
         self.assertNotIn("findings", inspect.signature(build_footer).parameters)
-        with self.assertRaises(TypeError):
-            build_footer(2, SHA_40, body="", findings=[{"id": 1}])
 
 
 # ---------------------------------------------------------------------------
