@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.40.0 (2026-09-11)
+
+### Features
+
+- **delivery**: Bound the composed summary comment with a per-platform byte budget (#324)
+  ([#325](https://github.com/liatrio-labs/claude-code-gauntlet/pull/325),
+  [`f4fbd91`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f4fbd91764a6ce26bbfbf254fc9fd24b4c51652c))
+
+
 ## v3.39.0 (2026-09-11)
 
 ### Bug Fixes
