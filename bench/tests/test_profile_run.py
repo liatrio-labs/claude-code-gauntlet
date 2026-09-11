@@ -9,9 +9,8 @@ data, which lives outside this repo.
 
 Covers:
   - run discovery (explicit run_id, and default-to-most-recent-completed)
-  - stage grouping (summarize / discover / verify-input-writer / verify-slice /
-    validate-batch / challenge / report-writer / artifact-writer) + the merge/filter
-    transform-gap placeholders
+  - stage grouping across legacy and current labels, including historical buckets and
+    the merge/filter transform-gap placeholders
   - concurrency accounting (avg + max overlap) for a 2-wide fan-out stage
   - parallel-capacity accounting (slowest x slots vs used vs idle)
   - critical-path hop selection (slowest member of each fan-out stage)
@@ -33,6 +32,8 @@ from tempfile import TemporaryDirectory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import profile_run as pr
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def iso(ms):
@@ -60,14 +61,23 @@ class SyntheticRunBuilder:
       T0 + 7000  report-writer starts, duration  400 -> ends T0+7400
       T0 + 7500  artifact-writer starts, duration  700 -> ends T0+8200
       workflow durationMs = 8300 (a little slack after artifact-writer, like the real run)
+
+    ``era="legacy"`` uses this historical writer layout. ``era="current"`` replaces
+    the single summarize call with two buckets plus a merge and adds the
+    ``assemble-artifacts`` executor after the artifact writer.
     """
 
     T0: int = 1_800_000_000_000
 
-    def __init__(self, root: Path, run_id="wf_test0001-1", task_id="ttest0001"):
+    def __init__(
+        self, root: Path, run_id="wf_test0001-1", task_id="ttest0001", era="legacy"
+    ):
+        if era not in ("legacy", "current"):
+            raise ValueError("era must be 'legacy' or 'current'")
         self.root = root
         self.run_id = run_id
         self.task_id = task_id
+        self.era = era
         self.project_dir = root / "-fake-project"
         self.session_id = f"sess-{run_id}"
         self.session_dir = self.project_dir / self.session_id
@@ -76,7 +86,7 @@ class SyntheticRunBuilder:
         self.workflows_dir.mkdir(parents=True)
         self.subagents_dir.mkdir(parents=True)
 
-        self.agents_spec = [
+        legacy_specs = [
             ("summarize", "code-gauntlet:change-summarizer", 100, 1000, "a-summarize"),
             (
                 "code-gauntlet:bug-detector",
@@ -112,6 +122,62 @@ class SyntheticRunBuilder:
                 "a-artifact",
             ),
         ]
+        current_specs = [
+            (
+                "summarize-bucket-0",
+                "code-gauntlet:change-summarizer",
+                100,
+                1000,
+                "a-summarize-b0",
+            ),
+            (
+                "summarize-bucket-1",
+                "code-gauntlet:change-summarizer",
+                100,
+                1000,
+                "a-summarize-b1",
+            ),
+            (
+                "summarize-merge",
+                "code-gauntlet:change-summarizer",
+                1100,
+                500,
+                "a-summarize-merge",
+            ),
+            (
+                "code-gauntlet:bug-detector",
+                "code-gauntlet:bug-detector",
+                1200,
+                3000,
+                "a-discover-a",
+            ),
+            (
+                "code-gauntlet:security-reviewer",
+                "code-gauntlet:security-reviewer",
+                1200,
+                1000,
+                "a-discover-b",
+            ),
+            ("verify-slice-0", "code-gauntlet:executor", 4900, 400, "a-vslice"),
+            ("validate-batch-0", "code-gauntlet:validator", 5400, 600, "a-vbatch"),
+            ("challenge-0", "code-gauntlet:challenger", 6100, 800, "a-chal0"),
+            ("challenge-1", "code-gauntlet:challenger", 6100, 300, "a-chal1"),
+            (
+                "artifact-writer",
+                "code-gauntlet:artifact-writer",
+                7500,
+                700,
+                "a-artifact",
+            ),
+            (
+                "assemble-artifacts",
+                "code-gauntlet:executor",
+                8200,
+                100,
+                "a-assemble",
+            ),
+        ]
+        self.agents_spec = legacy_specs if era == "legacy" else current_specs
         self.workflow_duration_ms = 8300
 
     def _write_json(self, path, obj):
@@ -562,6 +628,12 @@ class ProfileRunTestCase(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
+    def _profile_for(self, builder):
+        record, record_path, session_dir = pr.find_run_record(self.root, builder.run_id)
+        return pr.build_profile(
+            record, record_path, session_dir, builder.run_id, self.root
+        )
+
     # -- discovery -----------------------------------------------------------
 
     def test_find_run_record_explicit_id(self):
@@ -584,6 +656,211 @@ class ProfileRunTestCase(unittest.TestCase):
     def test_missing_run_id_raises(self):
         with self.assertRaises(FileNotFoundError):
             pr.find_run_record(self.root, "wf_does-not-exist-1")
+
+    def test_stage_rules_classify_live_labels(self):
+        # Mutation: replace the data-driven predicates with exact-only summarize matching;
+        # the bucket and merge probes must then go red.
+        probes = [
+            ("summarize", "", "summarize"),
+            ("summarize-bucket-0", "", "summarize"),
+            ("summarize-merge", "", "summarize"),
+            ("verify-slice-3", "", "verify-slice"),
+            ("verify-slice-3-retry", "", "verify-slice"),
+            ("validate-batch-1", "", "validate-batch"),
+            ("challenge-2", "", "challenge"),
+            ("artifact-writer", "", "artifact-writer"),
+            ("assemble-artifacts", "", "assemble-artifacts"),
+            (
+                "code-gauntlet:bug-detector",
+                "code-gauntlet:bug-detector",
+                "discover",
+            ),
+        ]
+        for label, agent_type, expected in probes:
+            self.assertEqual(
+                pr.classify_stage(label, agent_type),
+                expected,
+                f"STAGE_RULES must classify {label!r} as {expected}; edit the rule table",
+            )
+        self.assertTrue(
+            all(
+                pr.classify_stage(label, agent_type) != "other"
+                for label, agent_type, _ in probes
+            ),
+            "STAGE_RULES live probes must not classify to other; edit the rule table",
+        )
+
+    def test_stage_rules_pin_live_and_historical_labels_to_source(self):
+        # Mutation: add either historical label to workflows/src; the source pin must go red.
+        source = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (REPO_ROOT / "workflows" / "src").glob("*.js")
+        )
+        stages_source = (REPO_ROOT / "workflows" / "src" / "stages.js").read_text(
+            encoding="utf-8"
+        )
+        for rule in pr.STAGE_RULES:
+            label = rule.get("label")
+            if rule["name"] in pr.HISTORICAL_STAGES:
+                self.assertNotIn(
+                    rule["name"],
+                    source,
+                    f"STAGE_RULES historical stage {rule['name']!r} must stay absent from workflows/src; edit the rule table",
+                )
+                if label:
+                    self.assertNotIn(
+                        label,
+                        source,
+                        f"STAGE_RULES historical label {label!r} must stay absent from workflows/src; edit the rule table",
+                    )
+                continue
+            if not label:
+                continue
+            if rule["match"] == "exact" or label == "summarize":
+                needle = "label: '" + label + "'"
+            else:
+                needle = "`" + label + "${"
+            self.assertIn(
+                needle,
+                stages_source,
+                f"STAGE_RULES label {label!r} is not pinned by workflows/src; edit the rule table or live label",
+            )
+
+    def test_current_era_uses_live_stage_labels(self):
+        # Mutation: drift one timing value in the current fixture (3000 -> 3001); this
+        # field-for-field parity assertion must go red.
+        current = SyntheticRunBuilder(
+            self.root,
+            run_id="wf_current0001-1",
+            task_id="tcurrent0001",
+            era="current",
+        )
+        record = current.build()
+        profile = pr.build_profile(
+            record,
+            current.workflows_dir / f"{current.run_id}.json",
+            current.session_dir,
+            current.run_id,
+            self.root,
+        )
+        by_stage = {stage["stage"]: stage for stage in profile["stage_profile"]}
+        self.assertNotIn("report-writer", by_stage)
+        self.assertNotIn("verify-input-writer", by_stage)
+        self.assertEqual(by_stage["summarize"]["agent_count"], 3)
+        self.assertIn("assemble-artifacts", by_stage)
+        self.assertIn("span_wall_s", by_stage["merge (transform, no agent)"])
+
+        legacy = {
+            stage["stage"]: stage
+            for stage in self._profile_for(self.builder)["stage_profile"]
+        }
+        # Summarize is intentionally different, assemble-artifacts exists only in the
+        # current era, historical rows are omitted there, and the merge transform is
+        # gap-derived from those different layouts.
+        intentionally_different = {
+            "summarize",
+            "assemble-artifacts",
+            "merge (transform, no agent)",
+        }
+        current_live = {
+            name
+            for name, stage in by_stage.items()
+            if not stage.get("historical") and name not in intentionally_different
+        }
+        legacy_live = {
+            name
+            for name, stage in legacy.items()
+            if not stage.get("historical") and name not in intentionally_different
+        }
+        self.assertEqual(current_live, legacy_live)
+        for name in sorted(current_live):
+            self.assertEqual(
+                by_stage[name],
+                legacy[name],
+                f"STAGE_RULES current stage {name!r} drifted from the legacy fixture; edit the rule table",
+            )
+
+        md = pr.render_markdown(profile)
+        self.assertNotIn("report-writer", md)
+        self.assertNotIn("verify-input-writer", md)
+
+    def test_legacy_stages_are_marked_historical(self):
+        # Mutation: empty HISTORICAL_STAGES or drop the markdown suffix; this legacy assertion must go red.
+        profile = self._profile_for(self.builder)
+        by_stage = {stage["stage"]: stage for stage in profile["stage_profile"]}
+        self.assertTrue(by_stage["report-writer"]["historical"])
+        self.assertEqual(
+            by_stage["report-writer"]["historical_note"],
+            "the report is rendered in code; no writer agent is dispatched",
+        )
+        self.assertTrue(by_stage["verify-input-writer"]["historical"])
+        self.assertEqual(
+            by_stage["verify-input-writer"]["historical_note"],
+            "slice input is passed inline; no writer agent is dispatched",
+        )
+        md = pr.render_markdown(profile)
+        self.assertIn("report-writer (historical)", md)
+        self.assertIn("verify-input-writer (historical)", md)
+
+    def test_live_zero_agent_stage_keeps_unavailable_row(self):
+        # Mutation: omit every empty stage row; the live artifact-writer row must go red.
+        current = SyntheticRunBuilder(
+            self.root,
+            run_id="wf_current0002-1",
+            task_id="tcurrent0002",
+            era="current",
+        )
+        current.agents_spec = [
+            spec for spec in current.agents_spec if spec[0] != "artifact-writer"
+        ]
+        record = current.build()
+        profile = pr.build_profile(
+            record,
+            current.workflows_dir / f"{current.run_id}.json",
+            current.session_dir,
+            current.run_id,
+            self.root,
+        )
+        artifact = next(
+            stage
+            for stage in profile["stage_profile"]
+            if stage["stage"] == "artifact-writer"
+        )
+        self.assertEqual(artifact["agent_count"], 0)
+        self.assertEqual(
+            artifact["note"],
+            "UNAVAILABLE: no agents dispatched under this label in this run",
+        )
+
+    def test_transform_gap_uses_nearest_span_bearing_rows(self):
+        # Mutation: use positional transform neighbours; the spanless row would prevent this from resolving.
+        stages = [
+            {
+                "stage": "discover",
+                "agent_count": 1,
+                "span_start_offset_s": 1.0,
+                "span_end_offset_s": 2.0,
+                "span_wall_s": 1.0,
+            },
+            {"stage": "merge (transform, no agent)", "agent_count": 0},
+            {
+                "stage": "verify-slice",
+                "agent_count": 1,
+                "note": "UNAVAILABLE: missing timing fields",
+            },
+            {
+                "stage": "validate-batch",
+                "agent_count": 1,
+                "span_start_offset_s": 4.0,
+                "span_end_offset_s": 5.0,
+                "span_wall_s": 1.0,
+            },
+        ]
+        pr._fill_transform_gaps(stages)
+        merge = stages[1]
+        self.assertEqual(merge["span_start_offset_s"], 2.0)
+        self.assertEqual(merge["span_end_offset_s"], 4.0)
+        self.assertEqual(merge["span_wall_s"], 2.0)
 
     # -- stage grouping / concurrency -----------------------------------------
 

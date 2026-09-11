@@ -50,8 +50,8 @@ UNAVAILABLE = "UNAVAILABLE"
 DEFAULT_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 # Discovery agentTypes that make up the "discover" stage (CLAUDE.md's 7-agent list,
-# minus change-summarizer/artifact-writer/executor/validator/challenger/report-writer
-# which have their own stages).
+# minus change-summarizer/artifact-writer/executor/validator/challenger, which have
+# their own stages).
 DISCOVER_AGENT_TYPES = {
     "code-gauntlet:bug-detector",
     "code-gauntlet:security-reviewer",
@@ -63,22 +63,67 @@ DISCOVER_AGENT_TYPES = {
 }
 
 
-# Ordered stage-grouping rules: (stage_name, predicate(label, agentType)). Order matters
-# for the pipeline-order stage list; first match wins.
+# Ordered stage-grouping rules. The table is the source for stage order, predicates,
+# and historical metadata; first matching entry wins.
+STAGE_RULES = (
+    {"name": "summarize", "match": "prefix", "label": "summarize"},
+    {
+        "name": "discover",
+        "match": "agent_type",
+        "agent_types": DISCOVER_AGENT_TYPES,
+    },
+    {
+        "name": "verify-input-writer",
+        "match": "prefix",
+        "label": "verify-input-writer-",
+        "historical_note": "slice input is passed inline; no writer agent is dispatched",
+    },
+    {"name": "verify-slice", "match": "prefix", "label": "verify-slice-"},
+    {
+        "name": "validate-batch",
+        "match": "prefix",
+        "label": "validate-batch-",
+    },
+    {"name": "challenge", "match": "prefix", "label": "challenge-"},
+    {
+        "name": "report-writer",
+        "match": "exact",
+        "label": "report-writer",
+        "historical_note": "the report is rendered in code; no writer agent is dispatched",
+    },
+    {"name": "artifact-writer", "match": "exact", "label": "artifact-writer"},
+    {
+        "name": "assemble-artifacts",
+        "match": "exact",
+        "label": "assemble-artifacts",
+    },
+)
+
+
+def _stage_predicate(rule):
+    if rule["match"] == "agent_type":
+        agent_types = rule["agent_types"]
+
+        def predicate(_label, agent_type):
+            return agent_type in agent_types
+
+    elif rule["match"] == "prefix":
+        prefix = rule["label"]
+
+        def predicate(label, _agent_type):
+            return label.startswith(prefix)
+
+    else:
+        expected_label = rule["label"]
+
+        def predicate(label, _agent_type):
+            return label == expected_label
+
+    return predicate
+
+
 def _stage_rules():
-    return [
-        ("summarize", lambda label, _atype: label == "summarize"),
-        ("discover", lambda _label, atype: atype in DISCOVER_AGENT_TYPES),
-        (
-            "verify-input-writer",
-            lambda label, _atype: label.startswith("verify-input-writer-"),
-        ),
-        ("verify-slice", lambda label, _atype: label.startswith("verify-slice-")),
-        ("validate-batch", lambda label, _atype: label.startswith("validate-batch-")),
-        ("challenge", lambda label, _atype: label.startswith("challenge-")),
-        ("report-writer", lambda label, _atype: label == "report-writer"),
-        ("artifact-writer", lambda label, _atype: label == "artifact-writer"),
-    ]
+    return [(rule["name"], _stage_predicate(rule)) for rule in STAGE_RULES]
 
 
 # Non-agent transform phases that sit between agent stages in the pipeline (workflows/src/stages.js
@@ -90,7 +135,12 @@ TRANSFORM_STAGE_AFTER = {
     "validate-batch": "filter",
 }
 
-STAGE_ORDER = [name for name, _ in _stage_rules()]
+STAGE_ORDER = [rule["name"] for rule in STAGE_RULES]
+HISTORICAL_STAGES = {
+    rule["name"]: rule["historical_note"]
+    for rule in STAGE_RULES
+    if rule.get("historical_note")
+}
 
 
 # --------------------------------------------------------------------------- helpers
@@ -332,6 +382,15 @@ def _group_by_stage(agents):
     return by_stage
 
 
+def _stage_row(name, **values):
+    row = {"stage": name, **values}
+    historical_note = HISTORICAL_STAGES.get(name)
+    if historical_note is not None:
+        row["historical"] = True
+        row["historical_note"] = historical_note
+    return row
+
+
 def build_stage_profile(agents, workflow_start_ms, workflow_duration_ms):
     by_stage = _group_by_stage(agents)
 
@@ -339,6 +398,8 @@ def build_stage_profile(agents, workflow_start_ms, workflow_duration_ms):
     for name in STAGE_ORDER:
         members = by_stage.get(name, [])
         if not members:
+            if name in HISTORICAL_STAGES:
+                continue
             stages_out.append(
                 {
                     "stage": name,
@@ -348,6 +409,7 @@ def build_stage_profile(agents, workflow_start_ms, workflow_duration_ms):
                 }
             )
             continue
+
         starts = [m["started_at"] for m in members if m["started_at"] is not None]
         ends = [
             m["started_at"] + m["duration_ms"]
@@ -356,11 +418,11 @@ def build_stage_profile(agents, workflow_start_ms, workflow_duration_ms):
         ]
         if not starts or not ends:
             stages_out.append(
-                {
-                    "stage": name,
-                    "agent_count": len(members),
-                    "note": UNAVAILABLE + ": missing timing fields",
-                }
+                _stage_row(
+                    name,
+                    agent_count=len(members),
+                    note=UNAVAILABLE + ": missing timing fields",
+                )
             )
             continue
         span_start, span_end = min(starts), max(ends)
@@ -375,19 +437,19 @@ def build_stage_profile(agents, workflow_start_ms, workflow_duration_ms):
             ]
         )
         stages_out.append(
-            {
-                "stage": name,
-                "agent_count": len(members),
-                "span_start_offset_s": (span_start - workflow_start_ms) / 1000.0,
-                "span_end_offset_s": (span_end - workflow_start_ms) / 1000.0,
-                "span_wall_s": span_ms / 1000.0,
-                "share_of_workflow_wall": (span_ms / workflow_duration_ms)
+            _stage_row(
+                name,
+                agent_count=len(members),
+                span_start_offset_s=(span_start - workflow_start_ms) / 1000.0,
+                span_end_offset_s=(span_end - workflow_start_ms) / 1000.0,
+                span_wall_s=span_ms / 1000.0,
+                share_of_workflow_wall=(span_ms / workflow_duration_ms)
                 if workflow_duration_ms
                 else None,
-                "agent_seconds_used": busy_ms / 1000.0,
-                "avg_concurrency": avg_concurrency,
-                "max_concurrency": max_concurrency,
-            }
+                agent_seconds_used=busy_ms / 1000.0,
+                avg_concurrency=avg_concurrency,
+                max_concurrency=max_concurrency,
+            )
         )
         transform_after = TRANSFORM_STAGE_AFTER.get(name)
         if transform_after:
@@ -429,20 +491,34 @@ def _max_overlap(intervals):
 
 
 def _fill_transform_gaps(stages_out):
-    """Resolve the gap-derived transform stages' actual span now that all stage spans exist."""
+    """Resolve transform spans from the nearest earlier/later span-bearing rows."""
     stage_span = {}
     for s in stages_out:
-        if "span_start_offset_s" in s:
+        if (
+            s.get("span_start_offset_s") is not None
+            and s.get("span_end_offset_s") is not None
+        ):
             stage_span[s["stage"]] = (s["span_start_offset_s"], s["span_end_offset_s"])
 
-    order = [s["stage"] for s in stages_out]
     for idx, s in enumerate(stages_out):
         if "(transform, no agent)" not in s["stage"]:
             continue
-        prev_stage = order[idx - 1] if idx > 0 else None
-        next_stage = order[idx + 1] if idx + 1 < len(order) else None
-        prev_end = stage_span.get(prev_stage, (None, None))[1]
-        next_start = stage_span.get(next_stage, (None, None))[0]
+        prev_end = next(
+            (
+                stage_span[stages_out[prev_idx]["stage"]][1]
+                for prev_idx in range(idx - 1, -1, -1)
+                if stages_out[prev_idx]["stage"] in stage_span
+            ),
+            None,
+        )
+        next_start = next(
+            (
+                stage_span[stages_out[next_idx]["stage"]][0]
+                for next_idx in range(idx + 1, len(stages_out))
+                if stages_out[next_idx]["stage"] in stage_span
+            ),
+            None,
+        )
         if prev_end is not None and next_start is not None:
             s["span_start_offset_s"] = prev_end
             s["span_end_offset_s"] = next_start
@@ -928,14 +1004,15 @@ def render_markdown(profile):
     )
     lines.append("|---|---|---|---|---|---|---|---|")
     for s in p["stage_profile"]:
+        stage_name = s["stage"] + (" (historical)" if s.get("historical") else "")
         if "note" in s and "span_wall_s" not in s:
             lines.append(
-                f"| {s['stage']} | {s['agent_count']} | {s['note']} | | | | | |"
+                f"| {stage_name} | {s['agent_count']} | {s['note']} | | | | | |"
             )
             continue
         lines.append(
             "| {stage} | {n} | {span} | {sstart} | {send} | {share} | {avgc} | {maxc} |".format(
-                stage=s["stage"],
+                stage=stage_name,
                 n=s["agent_count"],
                 span=_fmt(s.get("span_wall_s"), "s"),
                 sstart=_fmt(s.get("span_start_offset_s"), "s"),
@@ -1081,9 +1158,7 @@ def render_markdown(profile):
     lines.append("")
 
     # Output-byte accounting for write-shaped agents
-    lines.append(
-        "## Output-byte accounting (Write-shaped agents: artifact-writer, verify-input-writer)"
-    )
+    lines.append("## Output-byte accounting (Write-shaped agents)")
     lines.append("")
     write_rows = []
     for a in p["agents"]:
@@ -1094,7 +1169,7 @@ def render_markdown(profile):
             write_rows.append((a["label"], w))
     if not write_rows:
         lines.append(
-            f"_{UNAVAILABLE}: no Write tool calls found on artifact-writer/verify-input-writer transcripts_"
+            f"_{UNAVAILABLE}: no Write tool calls found on Write-shaped agent transcripts_"
         )
     else:
         lines.append("| label | file | content bytes | seconds spent |")

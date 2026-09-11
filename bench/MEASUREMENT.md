@@ -74,18 +74,13 @@ python3 bench/run.py --check <RUN_ID>
 2. Payload parse + adapter-required fields + union-schema findings check
    (requires ≥1 `code-gauntlet-findings-*.json` per PR)
 3. Zero `origin=unknown` findings; no writer no-write-proof / partial-artifacts
-   degrade. Carriers that own a `gaps` array — `workflows/wf_*.json` (the
-   compact Workflow return) and `code-gauntlet-checkpoint-all-*.json` — are
-   judged from that parsed array alone; their raw bytes are never scanned,
-   because a wf record echoes the whole `workflows/pipeline.js` bundle into its
-   `script` field and the bundle's own source contains those sentinels as
-   ordinary substrings.
-   When such a
-   carrier will not parse, or carries no `gaps`
-   at all, it falls back to a raw-text scan with that `script` field blanked
-   first. Carriers with no `gaps` structure to parse — `raw.json` (a result
-   envelope whose `.result` is prose) and `code-gauntlet-report-*.md` — are
-   raw-text scanned as-is; they never embed the bundle.
+   degrade. The report is not a carrier: it is rendered before persistence from data
+   that carries only a gap count, so code-owned report text cannot hold the signal,
+   although model prose can. G3 scans only the direct `workflows/wf_*.json`, `raw.json`,
+   and `code-gauntlet-checkpoint-all-*.json` carriers. `raw.json` is scanned as text.
+   The other carriers are judged from parsed `gaps` arrays and their string items alone;
+   an empty array is clean. If a structured carrier cannot parse or has no `gaps` array,
+   G3 falls back to a raw scan after blanking its `script` field.
 4. Plugin identity — when the Headless config echo carries `pipeline_version` and
    `plugin_root`, those receipts are validated against the repo's
    `workflows/pipeline.js` version and plugin root (primary). A complete valid

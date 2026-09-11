@@ -332,9 +332,15 @@ class CheckRunTest(unittest.TestCase):
         _build_ok_run(self.run_dir)
         pr = self.run_dir / "pr-example-repo-1"
         (pr / "code-gauntlet-checkpoint-all-deadbeef.json").unlink()
-        (pr / "code-gauntlet-report-deadbeef.md").write_text(
-            "# Report\n\nwriter no write proof (partial-artifacts)\n",
-            encoding="utf-8",
+        # Mutation: move this sentinel back into the report; the report must no longer be a G3 carrier.
+        _write_json(
+            pr / "raw.json",
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "gaps: writeArtifacts: no write proof (partial-artifacts)",
+            },
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
@@ -344,7 +350,9 @@ class CheckRunTest(unittest.TestCase):
                 for f in result["failures"]
             )
         )
-        self.assertTrue(any("writer degrade" in f for f in result["failures"]))
+        self.assertTrue(
+            any("raw.json" in f and "writer degrade" in f for f in result["failures"])
+        )
 
     def test_unparseable_post_review_artifact_fails_g6(self):
         _build_ok_run(self.run_dir)
@@ -511,16 +519,26 @@ class CheckRunTest(unittest.TestCase):
             )
         )
 
-    def test_report_degrade_fails_g3(self):
+    def test_report_degrade_text_does_not_fail_g3(self):
         _build_ok_run(self.run_dir)
         report = self.run_dir / "pr-example-repo-1" / "code-gauntlet-report-deadbeef.md"
         report.write_text(
-            "# Report\n\ngaps: writeArtifacts: no write proof — partial-artifacts\n",
+            "# Report\n\nFinding prose: no write proof and partial-artifacts are not\n"
+            "writer status in this reviewed code.\n",
             encoding="utf-8",
         )
+        # Mutation: restore the report policy entry; this clean-carrier case must go red.
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
-        self.assertFalse(result["ok"])
-        self.assertTrue(any("code-gauntlet-report" in f for f in result["failures"]))
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertFalse(any("writer degrade" in f for f in result["failures"]))
+        self.assertEqual(
+            check._DEGRADE_CARRIER_POLICY,
+            {
+                "workflows/wf_*.json": "structured",
+                "raw.json": "text",
+                "code-gauntlet-checkpoint-all-*.json": "structured",
+            },
+        )
 
     def test_g3_ignores_benign_spaced_partial_artifacts_prose(self):
         """#57: ordinary English ``partial artifacts`` must not trip G3.
@@ -531,10 +549,18 @@ class CheckRunTest(unittest.TestCase):
         """
         _build_ok_run(self.run_dir)
         pr = self.run_dir / "pr-example-repo-1"
-        (pr / "code-gauntlet-report-deadbeef.md").write_text(
-            "# Report\n\nThe build produces partial artifacts in the build dir.\n"
-            "Also noted: partialXartifacts naming and the partial/artifacts path.\n",
-            encoding="utf-8",
+        # Mutation: put the sentinel prose back in the report; the raw carrier must remain the only text scan.
+        _write_json(
+            pr / "raw.json",
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": (
+                    "The build produces partial artifacts in the build dir.\n"
+                    "Also noted: partialXartifacts naming and the partial/artifacts path.\n"
+                ),
+            },
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertTrue(result["ok"], result["failures"])
@@ -543,10 +569,10 @@ class CheckRunTest(unittest.TestCase):
         )
 
     def test_workflow_return_partial_artifacts_gap_fails_g3(self):
-        """writeArtifacts gaps land on the compact return, not report/checkpoint."""
+        """Legacy writer no-write-proof gaps land in the structured Workflow return."""
         _build_ok_run(self.run_dir)
         pr = self.run_dir / "pr-example-repo-1"
-        # Clean secondary carriers so only the compact-return path can fire.
+        # Mutation: restore the report policy entry while retaining this gap in the structured Workflow record; only the structured carrier may fire G3.
         (pr / "code-gauntlet-report-deadbeef.md").write_text(
             "# Report\n", encoding="utf-8"
         )
@@ -574,6 +600,79 @@ class CheckRunTest(unittest.TestCase):
                 },
             },
         )
+        report_text = (pr / "code-gauntlet-report-deadbeef.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("no write proof", report_text)
+        self.assertNotIn("partial-artifacts", report_text)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "workflows/wf_" in f and "partial-artifacts" in f
+                for f in result["failures"]
+            )
+        )
+
+    def test_derived_writer_partial_artifacts_gap_fails_g3(self):
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        self._clean_secondary_carriers(pr)
+        # Mutation: delete the structured carrier policy entry; this derived-writer path must go green.
+        _write_json(
+            pr / "workflows" / "wf_test-0001.json",
+            {
+                "runId": "wf_test-0001",
+                "scriptPath": PIPELINE,
+                "status": "completed",
+                "result": {
+                    "ok": True,
+                    "partial": True,
+                    "gaps": [
+                        "writeArtifacts: writer returned null — artifacts not persisted (partial-artifacts)"
+                    ],
+                },
+            },
+        )
+        report_text = (pr / "code-gauntlet-report-deadbeef.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("no write proof", report_text)
+        self.assertNotIn("partial-artifacts", report_text)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "workflows/wf_" in f and "partial-artifacts" in f
+                for f in result["failures"]
+            )
+        )
+
+    def test_return_oversize_failed_fallback_gap_fails_g3(self):
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        self._clean_secondary_carriers(pr)
+        # Mutation: remove the fallback's structured gap; this RETURN oversize path must go green.
+        _write_json(
+            pr / "workflows" / "wf_test-0001.json",
+            {
+                "runId": "wf_test-0001",
+                "scriptPath": PIPELINE,
+                "status": "completed",
+                "result": {
+                    "ok": True,
+                    "partial": True,
+                    "gaps": [
+                        "writeArtifacts: the persisted primaries serialize to 120001 chars, over the 120000-char return budget — artifacts not persisted (partial-artifacts)"
+                    ],
+                },
+            },
+        )
+        report_text = (pr / "code-gauntlet-report-deadbeef.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("no write proof", report_text)
+        self.assertNotIn("partial-artifacts", report_text)
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(
@@ -613,10 +712,7 @@ class CheckRunTest(unittest.TestCase):
         )
 
     def _clean_secondary_carriers(self, pr):
-        """Blank the report/checkpoint carriers so only the wf record can fire."""
-        (pr / "code-gauntlet-report-deadbeef.md").write_text(
-            "# Report\n", encoding="utf-8"
-        )
+        """Blank the checkpoint carrier so only the wf record can fire."""
         _write_json(pr / "code-gauntlet-checkpoint-all-deadbeef.json", {"phases": {}})
 
     def test_wf_script_field_bundle_literals_do_not_fail_g3(self):
@@ -855,8 +951,8 @@ class CheckRunTest(unittest.TestCase):
     def test_patches_artifact_is_never_a_g3_degrade_carrier(self):
         """``code-gauntlet-patches-*.md`` (issue #226's read-only apply-check
         artifact) must never be added to ``_DEGRADE_CARRIER_POLICY``: unlike
-        ``code-gauntlet-report-*.md``, it renders the REVIEWED REPO's own
-        source text verbatim inside fenced code blocks — a repo could
+        ``raw.json``, whose result prose is a TEXT carrier, it renders the
+        REVIEWED REPO's own source text verbatim inside fenced code blocks — a repo could
         legitimately contain either G3 sentinel phrase ("no write proof",
         "partial-artifacts") in a comment, string literal, or docstring having
         nothing to do with this harness's own degrade signal, so scanning it
