@@ -727,7 +727,8 @@ class ProfileRunTestCase(unittest.TestCase):
             )
 
     def test_current_era_uses_live_stage_labels(self):
-        # Mutation: remove the assemble-artifacts rule; this current-era assertion must go red.
+        # Mutation: drift one timing value in the current fixture (3000 -> 3001); this
+        # field-for-field parity assertion must go red.
         current = SyntheticRunBuilder(
             self.root,
             run_id="wf_current0001-1",
@@ -753,16 +754,29 @@ class ProfileRunTestCase(unittest.TestCase):
             stage["stage"]: stage
             for stage in self._profile_for(self.builder)["stage_profile"]
         }
-        for name in (
-            "discover",
-            "verify-slice",
-            "validate-batch",
-            "challenge",
-            "artifact-writer",
-        ):
+        # Summarize is intentionally different, assemble-artifacts exists only in the
+        # current era, historical rows are omitted there, and the merge transform is
+        # gap-derived from those different layouts.
+        intentionally_different = {
+            "summarize",
+            "assemble-artifacts",
+            "merge (transform, no agent)",
+        }
+        current_live = {
+            name
+            for name, stage in by_stage.items()
+            if not stage.get("historical") and name not in intentionally_different
+        }
+        legacy_live = {
+            name
+            for name, stage in legacy.items()
+            if not stage.get("historical") and name not in intentionally_different
+        }
+        self.assertEqual(current_live, legacy_live)
+        for name in sorted(current_live):
             self.assertEqual(
-                by_stage[name]["agent_count"],
-                legacy[name]["agent_count"],
+                by_stage[name],
+                legacy[name],
                 f"STAGE_RULES current stage {name!r} drifted from the legacy fixture; edit the rule table",
             )
 

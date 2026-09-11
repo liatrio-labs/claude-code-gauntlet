@@ -572,7 +572,7 @@ class CheckRunTest(unittest.TestCase):
         """Legacy writer no-write-proof gaps land in the structured Workflow return."""
         _build_ok_run(self.run_dir)
         pr = self.run_dir / "pr-example-repo-1"
-        # Mutation: restore the report policy entry and put this gap in the report; only the structured carrier may fire G3.
+        # Mutation: restore the report policy entry while retaining this gap in the structured Workflow record; only the structured carrier may fire G3.
         (pr / "code-gauntlet-report-deadbeef.md").write_text(
             "# Report\n", encoding="utf-8"
         )
