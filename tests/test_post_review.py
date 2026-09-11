@@ -5477,31 +5477,36 @@ class TestSummaryBodyBudget(_DryRunTestBase):
 
     def test_first_fit_keeps_later_groups_after_a_misfit(self):
         # Mutation: stop at the first misfit, use smallest-first, use largest-first,
-        # or use best-fit; each policy below must turn this first-fit oracle red.
+        # use best-fit, or reverse the group order; each policy below must turn this
+        # first-fit oracle red.
         groups = [
-            [("g1.py", 1, {"title": "G1", "body": "a" * 9960, "severity": "high"})],
-            [("g2.py", 2, {"title": "G2", "body": "b" * 39960, "severity": "high"})],
+            [("g1.py", 1, {"title": "G1", "body": "a" * 1960, "severity": "high"})],
+            [("g2.py", 2, {"title": "G2", "body": "b" * 62960, "severity": "high"})],
             [
                 (
                     "g3.py",
                     3,
-                    {"title": "G3", "body": "c" * 29960, "severity": "high"},
+                    {"title": "G3", "body": "c" * 33960, "severity": "high"},
                 )
             ],
             [
                 (
                     "g4.py",
                     4,
-                    {"title": "G4", "body": "d" * 23960, "severity": "high"},
+                    {"title": "G4", "body": "d" * 29960, "severity": "high"},
                 )
             ],
         ]
         # Hand arithmetic: 24 + 2 + 367 + 2 + 99 + 211 = 705 reserved bytes, so
-        # 64831 bytes remain. The pieces are 9998, 39998, 29998, and 23998 bytes.
-        # First-fit takes G1 + G2 = 49996, then neither G3 nor G4 fits in 14835.
-        # Best-fit takes G2 + G4 = 63996, larger than G1 + G3 + G4 = 63994, omitting (G1, G3).
-        # Largest-first omits (G3, G1); smallest-first takes G1 + G4 + G3 and omits G2.
-        # Thus the expected first-fit omitted entries are (G3, G4), shown in G1, G2 order.
+        # 64831 bytes remain. The pieces are 1998, 62998, 33998, and 29998 bytes.
+        # First-fit takes G1 = 1998, G2 = 62998 misfits with 62833 left, G3 = 33998
+        # fits with 28835 left, and G4 = 29998 misfits. It omits (G2, G4).
+        # Stop-at-first-misfit takes G1, then omits (G2, G3, G4) after G2 misfits.
+        # Smallest-first order is G1, G4, G3, G2: G1 + G4 = 31996, so it omits (G2, G3).
+        # Largest-first takes G2 = 62998 with 1833 left, so it omits (G1, G3, G4).
+        # Best-fit takes G3 + G4 = 63996, the unique maximum, so it omits (G1, G2).
+        # Reversing order takes G4 + G3 = 63996 and omits (G1, G2), but changes shown order.
+        # Thus first-fit must show G1 and later G3, with omitted entries (G2, G4).
         composed = post_review.compose_review_body(
             "",
             groups,
@@ -5513,12 +5518,12 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertEqual((composed.shown, composed.omitted), (2, 2))
         self.assertEqual(
             composed.omitted_entries,
-            (("g3.py:3", "G3"), ("g4.py:4", "G4")),
+            (("g2.py:2", "G2"), ("g4.py:4", "G4")),
         )
-        self.assertLess(composed.body.index("G1"), composed.body.index("G2"))
+        self.assertLess(composed.body.index("G1"), composed.body.index("G3"))
         self.assertIn("G1", composed.body)
-        self.assertIn("G2", composed.body)
-        self.assertNotIn("G3", composed.body)
+        self.assertIn("G3", composed.body)
+        self.assertNotIn("G2", composed.body)
         self.assertNotIn("G4", composed.body)
 
     def test_consolidation_group_is_the_fitting_unit_through_main(self):
