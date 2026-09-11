@@ -1755,7 +1755,14 @@ def _skipped_frame(n, shown, inline_count):
 
 
 def _skipped_piece(filepath, line, finding):
-    """Render and neutralize one whole skipped entry, including its heading."""
+    """Render and neutralize one whole skipped entry, including its heading.
+
+    The finding's file, line, title, and body reach the wire raw; nothing mechanical
+    follows a skipped entry, so a forged finding-key or summary marker would parse as
+    a real signal on the next run. Neutralizing the whole piece, heading included,
+    closes every present or future field by construction. The frame is code-owned and
+    contains no ``<``.
+    """
     location = _skipped_location(filepath, line)
     piece = f"\n\n#### `{location}`\n\n{_finding_sections(finding)}"
     return piece.replace("<!--", "&lt;!--")
@@ -1775,9 +1782,13 @@ def build_skipped_section(skipped, inline_count=None):
     *skipped* is a list of ``(filepath, line, finding)`` tuples. A member is not always
     here for its own reason: a consolidation group whose primary could not be anchored
     degrades as a whole, so corroborators are listed here too. *inline_count*, when
-    given, is how many comments landed. Entries are unbranded and use the shared frame
-    and piece renderers. Each piece neutralizes its own ``<!--`` markers before
-    fitting. Returns ``""`` for an empty *skipped* list (issue #192).
+    given, is how many comments landed. GitLab passes no inline count because its
+    summary note posts before the per-finding loop, so the landed count is not yet
+    known. Entries are unbranded and use the shared frame and piece renderers. Each
+    piece neutralizes its own ``<!--`` markers before fitting; that neutralization
+    lives in ``_skipped_piece``. ``scripts/report_patches.py`` and
+    ``scripts/review_marker.py`` cite ``build_skipped_section`` as the precedent.
+    Returns ``""`` for an empty *skipped* list (issue #192).
     """
     if not skipped:
         return ""
@@ -1877,7 +1888,12 @@ def compose_review_body(
     The fast path preserves today's bytes. The bounded path reserves the header, the
     skipped-section frame and closing line, and builds the canonical footer before
     folding the supplied prose or fitting whole skipped groups in list order. No output
-    is printed.
+    is printed. This is deliberately not idempotent by regex: a hand-typed heading in
+    ``review_body`` yields two headings once and self-heals, whereas a phrase-sniffing
+    stripper would make identity depend on counting prose. The composer owns the
+    footer: the fast path deduplicates against the original ``review_body`` only; the
+    bounded path always appends the full canonical footer, and skipped-finding text
+    never reaches the dedup.
     """
     limits = _body_limit(platform)
     skipped = [entry for group in skipped_groups for entry in group]
@@ -2181,9 +2197,10 @@ def post_github(data, valid_lines, line_texts):
 
         comments.append(comment)
 
-    # The partition (comments vs skipped groups) is complete above. The composer owns
-    # the section, footer, and byte budget; its footer sees the ORIGINAL body so raw
-    # skipped text cannot suppress the real signal.
+    # The partition (comments vs skipped groups) is complete above. The fast path
+    # deduplicates the footer against the original review_body only; the bounded path
+    # always appends the full canonical footer, and skipped-finding text never reaches
+    # the dedup.
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
     composed = compose_review_body(
@@ -2444,9 +2461,10 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
 
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    # The pre-partition above is complete before the summary note. The composer owns
-    # the skipped section, footer, and byte budget; its footer sees the original body
-    # so raw skipped text cannot suppress the real signal.
+    # The pre-partition above is complete before the summary note. The fast path
+    # deduplicates the footer against the original review_body only; the bounded path
+    # always appends the full canonical footer, and skipped-finding text never reaches
+    # the dedup.
     composed = compose_review_body(
         review_body,
         skipped_groups,
@@ -2479,12 +2497,12 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     else:
         _refuse_over_limit(composed.body, "gitlab")
         post_json(cmd_prefix, summary_payload)
-        _report_summary_budget(composed, "gitlab")
         print(
             "MR summary note captured (dry-run)."
             if DRY_RUN
             else "MR summary note posted."
         )
+        _report_summary_budget(composed, "gitlab")
 
     # Post each finding as an inline discussion. Every finding lands in exactly one of
     # the five counters below, so the outcome reported at the end is a partition of

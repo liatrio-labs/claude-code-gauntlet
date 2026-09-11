@@ -16,7 +16,8 @@ no such injection — every GL_FINDINGS entry is fully anchorable, so its
 groups: a modified file's ``old_path`` is always its resolved ``new_path``,
 and a skipped primary's corroborators are never fanned into the skipped
 section the way the real posters do (#22 D2) — every finding here is its own
-single-member group. ``TestFixtureFidelity`` re-derives each payload from
+single-member group. Budget selection is covered by ``TestSummaryBodyBudget``;
+these mirrors only pin the poster wiring. ``TestFixtureFidelity`` re-derives each payload from
 these builders and asserts equality with the committed fixture, guarding
 against drift in the post_review payload shape it covers.
 ``TestRealPosterMatchesPayloadMirror`` goes one step further: it drives the

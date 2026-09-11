@@ -138,7 +138,7 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
   bounds the complete posted comment with a per-platform UTF-8 byte budget. The header and footer
   are reserved first; the summary folds only when it cannot fit beside the skipped-section frame
   and footer. Skipped groups appear whole or not at all in list order, followed by one closing count
-  line; the footer stays last.
+  line when any group is omitted; the footer stays last.
 - `findings` — array of inline comments
   - `file` — relative path in repository
   - `line` — line number in diff (new version)
