@@ -2,6 +2,37 @@
 
 <!-- version list -->
 
+## v3.37.1 (2026-09-11)
+
+### Bug Fixes
+
+- **bench**: Drop the report G3 carrier and make profiler stage rules data (#280, #282)
+  ([#321](https://github.com/liatrio-labs/claude-code-gauntlet/pull/321),
+  [`a3d44ba`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a3d44ba3d0ac4c03b2bef2d1cdc6c89ad1bf4313))
+
+- **marker**: Remove the reserved findings slot from the review marker
+  ([#320](https://github.com/liatrio-labs/claude-code-gauntlet/pull/320),
+  [`a405128`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a405128941128529d54e3bad06e4e901d9414d99))
+
+- **marker**: Remove the reserved findings slot from the review marker (#277)
+  ([#320](https://github.com/liatrio-labs/claude-code-gauntlet/pull/320),
+  [`a405128`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a405128941128529d54e3bad06e4e901d9414d99))
+
+### Testing
+
+- **bench**: Compare current-era profiler rows field-for-field; carrier docs as rules
+  ([#321](https://github.com/liatrio-labs/claude-code-gauntlet/pull/321),
+  [`a3d44ba`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a3d44ba3d0ac4c03b2bef2d1cdc6c89ad1bf4313))
+
+- **marker**: Pin the removed findings parameter by signature
+  ([#320](https://github.com/liatrio-labs/claude-code-gauntlet/pull/320),
+  [`a405128`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a405128941128529d54e3bad06e4e901d9414d99))
+
+- **marker**: Pin the removed parameter by signature only
+  ([#320](https://github.com/liatrio-labs/claude-code-gauntlet/pull/320),
+  [`a405128`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a405128941128529d54e3bad06e4e901d9414d99))
+
+
 ## v3.37.0 (2026-09-10)
 
 ### Bug Fixes
