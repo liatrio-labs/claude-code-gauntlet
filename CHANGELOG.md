@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v3.38.0 (2026-09-11)
+
+### Bug Fixes
+
+- **report**: Fence order oracle, seven-key wrapper prose, original repo error string
+  ([#322](https://github.com/liatrio-labs/claude-code-gauntlet/pull/322),
+  [`ac7f412`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ac7f41292b1e84d5a130e4ee5f1f4687b4f937ee))
+
+### Chores
+
+- **generator**: Explicit concatenation for the producer command line
+  ([#322](https://github.com/liatrio-labs/claude-code-gauntlet/pull/322),
+  [`ac7f412`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ac7f41292b1e84d5a130e4ee5f1f4687b4f937ee))
+
+### Features
+
+- **report**: Platform permalinks through the args waist and per-field display folds (#278, #281)
+  ([#322](https://github.com/liatrio-labs/claude-code-gauntlet/pull/322),
+  [`ac7f412`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ac7f41292b1e84d5a130e4ee5f1f4687b4f937ee))
+
+
 ## v3.37.1 (2026-09-11)
 
 ### Bug Fixes
