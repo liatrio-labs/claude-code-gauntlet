@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.39.0 (2026-09-11)
+
+### Bug Fixes
+
+- **report**: Normalize CR before the code-owned heading rename; state the summary bound
+  ([#323](https://github.com/liatrio-labs/claude-code-gauntlet/pull/323),
+  [`8a5df92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8a5df92977dd84a1f3e006553efde3011d02831f))
+
+### Features
+
+- **delivery**: Derive the summary comment body from the report Summary
+  ([#323](https://github.com/liatrio-labs/claude-code-gauntlet/pull/323),
+  [`8a5df92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8a5df92977dd84a1f3e006553efde3011d02831f))
+
+- **delivery**: Derive the summary comment body from the report Summary (#279)
+  ([#323](https://github.com/liatrio-labs/claude-code-gauntlet/pull/323),
+  [`8a5df92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8a5df92977dd84a1f3e006553efde3011d02831f))
+
+### Testing
+
+- **report**: Name the mutation for the CR normalization pin
+  ([#323](https://github.com/liatrio-labs/claude-code-gauntlet/pull/323),
+  [`8a5df92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8a5df92977dd84a1f3e006553efde3011d02831f))
+
+
 ## v3.38.0 (2026-09-11)
 
 ### Bug Fixes
