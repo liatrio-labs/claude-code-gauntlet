@@ -25,8 +25,8 @@ Covers:
     keyed on what detect_signal itself would accept (not "any parseable
     fragment"), including the sha-less-marker-plus-bare-prose case that used
     to suppress both halves and leave no signal at all.
-  - TestBuildMarkerFindingsSlot — the #36 extension point: findings=None is
-    byte-absent from the payload; a supplied list round-trips.
+  - TestRemovedFindingsSlot — the removed writer parameter is rejected by both
+    builders.
   - TestFindingMarker         — issue #132's per-finding delivery marker: build ->
     parse round-trip, last-wins, malformed payloads rejected without raising, and
     non-collision with the summary marker in both directions.
@@ -37,6 +37,7 @@ Covers:
     detect_signal, and post_review.py has no second build_footer definition.
 """
 
+import inspect
 import json
 import os
 import re
@@ -488,34 +489,21 @@ class TestIdempotence(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestBuildMarkerFindingsSlot — #36 extension point.
+# TestRemovedFindingsSlot — the writer has no reserved findings slot.
 # ---------------------------------------------------------------------------
 
 
-class TestBuildMarkerFindingsSlot(unittest.TestCase):
-    @staticmethod
-    def _payload_from(marker_text):
-        m = re.search(r":\s*({.*})\s*-->", marker_text)
-        return json.loads(m.group(1))
+class TestRemovedFindingsSlot(unittest.TestCase):
+    # Signature pins, not calls: a restored build_footer parameter that forwards
+    # to build_marker still raises TypeError from the nested call, so a keyword
+    # call cannot tell the two apart. The signature can.
+    def test_build_marker_has_no_findings_parameter(self):
+        # Mutation: restore build_marker's findings parameter, forwarding or not.
+        self.assertNotIn("findings", inspect.signature(build_marker).parameters)
 
-    def test_findings_none_omits_the_key_entirely(self):
-        marker_text = build_marker(SHA_40, 2, findings=None)
-        payload = self._payload_from(marker_text)
-        self.assertNotIn("findings", payload)
-        self.assertEqual(list(payload.keys()), ["version", "findings_count", "sha"])
-
-    def test_supplied_findings_appear_last_and_survive_round_trip(self):
-        findings = [{"id": 1, "title": "x"}, {"id": 2, "title": "y"}]
-        marker_text = build_marker(SHA_40, 2, findings=findings)
-        payload = self._payload_from(marker_text)
-        self.assertEqual(
-            list(payload.keys()), ["version", "findings_count", "sha", "findings"]
-        )
-        self.assertEqual(payload["findings"], findings)
-
-        signal = detect_signal(marker_text)
-        self.assertIsNotNone(signal)
-        self.assertEqual(signal["marker"]["findings"], findings)
+    def test_build_footer_has_no_findings_parameter(self):
+        # Mutation: restore build_footer's findings parameter, forwarding or not.
+        self.assertNotIn("findings", inspect.signature(build_footer).parameters)
 
 
 # ---------------------------------------------------------------------------
