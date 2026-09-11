@@ -5356,15 +5356,14 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         payload = self._payload() if os.path.exists(payload_path) else None
         return payload, stdout.getvalue(), stderr.getvalue(), exit_code
 
-    def _exact_review_body(self, platform, finding, limit):
-        inline_count = 0 if platform == "github" else None
-        section = build_skipped_section(
-            [(finding["file"], finding["line"], finding)], inline_count
-        )
-        footer = build_footer(1, self.SHA, body="")
-        fixed = f"{post_review.BRAND_SUMMARY_HEADER}\n\n{section}{footer}"
-        # The hand arithmetic is limit - fixed bytes - the two separators around prose.
-        return "x" * (limit - len(fixed.encode("utf-8")) - 2)
+    def _exact_review_body(self, platform, limit):
+        # Hand arithmetic only: header 24 + two 2-byte separators + frame (367 for
+        # GitHub, 356 for GitLab) + piece 46 + footer 211.
+        fixed_bytes = {
+            "github": 24 + 2 + 2 + 367 + 46 + 211,
+            "gitlab": 24 + 2 + 2 + 356 + 46 + 211,
+        }[platform]
+        return "x" * (limit - fixed_bytes)
 
     def test_platform_limits_are_the_hand_typed_contract(self):
         # Mutation: change a table value or label; this equality must turn red.
@@ -5383,7 +5382,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
     def test_github_exact_fit_is_posted_whole(self):
         # Mutation: use < instead of <= in the fast path; exact-fit output turns red.
         finding = self._invalid_finding()
-        review_body = self._exact_review_body("github", finding, 65536)
+        review_body = self._exact_review_body("github", 65536)
         payload, _, _, exit_code = self._run_poster("github", review_body, [finding])
         body = payload["payload"]["body"]
         self.assertFalse(exit_code)
@@ -5395,7 +5394,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
     def test_github_plus_one_omits_one_group(self):
         # Mutation: raise the GitHub limit or remove the bounded path; the omission turns red.
         finding = self._invalid_finding()
-        review_body = self._exact_review_body("github", finding, 65536) + "x"
+        review_body = self._exact_review_body("github", 65536) + "x"
         payload, _, _, exit_code = self._run_poster("github", review_body, [finding])
         body = payload["payload"]["body"]
         self.assertFalse(exit_code)
@@ -5411,12 +5410,12 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         )
         marker = review_marker.find_marker(body)
         self.assertEqual(marker["sha"], self.SHA)
-        self.assertEqual(marker["findings_count"], len([finding]))
+        self.assertEqual(marker["findings_count"], 1)
 
     def test_gitlab_exact_fit_is_posted_whole(self):
         # Mutation: use < instead of <= in the fast path; exact-fit output turns red.
         finding = self._invalid_finding()
-        review_body = self._exact_review_body("gitlab", finding, 1000000)
+        review_body = self._exact_review_body("gitlab", 1000000)
         payload, _, _, exit_code = self._run_poster("gitlab", review_body, [finding])
         body = payload["summary"]["body"]
         self.assertFalse(exit_code)
@@ -5427,7 +5426,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
     def test_gitlab_plus_one_omits_one_group(self):
         # Mutation: raise the GitLab limit or remove the bounded path; the omission turns red.
         finding = self._invalid_finding()
-        review_body = self._exact_review_body("gitlab", finding, 1000000) + "x"
+        review_body = self._exact_review_body("gitlab", 1000000) + "x"
         payload, _, _, exit_code = self._run_poster("gitlab", review_body, [finding])
         body = payload["summary"]["body"]
         self.assertFalse(exit_code)
@@ -5440,7 +5439,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertTrue(body.endswith(self.CANONICAL_FOOTER.format(findings_count=1)))
         marker = review_marker.find_marker(body)
         self.assertEqual(marker["sha"], self.SHA)
-        self.assertEqual(marker["findings_count"], len([finding]))
+        self.assertEqual(marker["findings_count"], 1)
 
     def test_cjk_entries_use_utf8_bytes_and_pin_the_tradeoff(self):
         # Mutation: replace UTF-8 length with code-point length; these shown/omitted counts turn red.
@@ -5477,36 +5476,50 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                 )
 
     def test_first_fit_keeps_later_groups_after_a_misfit(self):
-        # Mutation: stop at the first misfit, sort by size, or use best-fit; the
-        # hand-sized shown set and its input order turn red.
+        # Mutation: stop at the first misfit, use smallest-first, use largest-first,
+        # or use best-fit; each policy below must turn this first-fit oracle red.
         groups = [
-            [("one.py", 1, {"title": "One", "body": "a" * 38960, "severity": "high"})],
-            [("two.py", 2, {"title": "Two", "body": "b" * 32960, "severity": "high"})],
+            [("g1.py", 1, {"title": "G1", "body": "a" * 9960, "severity": "high"})],
+            [("g2.py", 2, {"title": "G2", "body": "b" * 39960, "severity": "high"})],
             [
                 (
-                    "three.py",
+                    "g3.py",
                     3,
-                    {"title": "Three", "body": "c" * 18956, "severity": "high"},
+                    {"title": "G3", "body": "c" * 29960, "severity": "high"},
+                )
+            ],
+            [
+                (
+                    "g4.py",
+                    4,
+                    {"title": "G4", "body": "d" * 23960, "severity": "high"},
                 )
             ],
         ]
-        # The three pieces are 39000, 33000, and 19000 bytes, against a 64831-byte
-        # remaining allowance: list-order first-fit shows 1 and 3, while smallest-first
-        # shows 3 and 2.
+        # Hand arithmetic: 24 + 2 + 367 + 2 + 99 + 211 = 705 reserved bytes, so
+        # 64831 bytes remain. The pieces are 9998, 39998, 29998, and 23998 bytes.
+        # First-fit takes G1 + G2 = 49996, then neither G3 nor G4 fits in 14835.
+        # Best-fit takes G2 + G4 = 63996, larger than G1 + G3 + G4 = 63994, omitting (G1, G3).
+        # Largest-first omits (G3, G1); smallest-first takes G1 + G4 + G3 and omits G2.
+        # Thus the expected first-fit omitted entries are (G3, G4), shown in G1, G2 order.
         composed = post_review.compose_review_body(
             "",
             groups,
             platform="github",
-            findings_count=3,
+            findings_count=4,
             sha=self.SHA,
             inline_count=0,
         )
-        self.assertEqual((composed.shown, composed.omitted), (2, 1))
-        self.assertEqual(composed.omitted_entries, (("two.py:2", "Two"),))
-        self.assertLess(composed.body.index("One"), composed.body.index("Three"))
-        self.assertIn("One", composed.body)
-        self.assertNotIn("Two", composed.body)
-        self.assertIn("Three", composed.body)
+        self.assertEqual((composed.shown, composed.omitted), (2, 2))
+        self.assertEqual(
+            composed.omitted_entries,
+            (("g3.py:3", "G3"), ("g4.py:4", "G4")),
+        )
+        self.assertLess(composed.body.index("G1"), composed.body.index("G2"))
+        self.assertIn("G1", composed.body)
+        self.assertIn("G2", composed.body)
+        self.assertNotIn("G3", composed.body)
+        self.assertNotIn("G4", composed.body)
 
     def test_consolidation_group_is_the_fitting_unit_through_main(self):
         # Mutation: fit entries individually; the oversized corroborator group would turn red.
@@ -5587,9 +5600,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         body = payload["payload"]["body"]
         self.assertFalse(exit_code)
         self.assertTrue(body.endswith(self.CANONICAL_FOOTER.format(findings_count=2)))
-        self.assertEqual(
-            review_marker.find_marker(body)["findings_count"], len([forged, omitted])
-        )
+        self.assertEqual(review_marker.find_marker(body)["findings_count"], 2)
 
     def test_fold_only_ascii_reports_hand_typed_dropped_bytes(self):
         # Mutation: remove folding; the exact fold line and bound turn red.
@@ -5685,6 +5696,48 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         )
         self.assertNotIn("<!-- b", body[:fold_index])
 
+    def test_fold_overlapping_html_opener_uses_the_first_closer(self):
+        # Mutation: advance the scan from closer + 3 to opener + 4; the kept prefix turns red.
+        # Prefix allowance is 65536 - (24 + 2 + 211 + 93) = 65206. Total is
+        # 65166 + 14 + 300 = 65480; the kept prefix is 65166 + 14 + 26, so 274 bytes drop.
+        review_body = "a" * 65166 + "<!-- a <!--> b" + "z" * 300
+        payload, _, _, exit_code = self._run_poster("github", review_body, [])
+        body = payload["payload"]["body"]
+        before_fold = body[: body.index("_[folded:")]
+        self.assertFalse(exit_code)
+        self.assertEqual(
+            before_fold,
+            "### ⚔️ Code Gauntlet\n\n"
+            + "a" * 65166
+            + "<!-- a <!--> b"
+            + "z" * 26
+            + "\n\n",
+        )
+        self.assertIn(
+            "_[folded: 274 more bytes; this review body reached the 65536-byte "
+            "GitHub body limit]_",
+            body,
+        )
+
+    def test_fold_leading_html_opener_does_not_close_inside_itself(self):
+        # Mutation: search for a closer from opener instead of opener + 4; the kept prefix turns red.
+        # Prefix allowance is 65536 - (24 + 2 + 211 + 93) = 65206. Total is
+        # 65166 + 5 + 302 = 65473; the opener is cut at 65166, so 307 bytes drop.
+        review_body = "a" * 65166 + "<!-->" + "z" * 302
+        payload, _, _, exit_code = self._run_poster("github", review_body, [])
+        body = payload["payload"]["body"]
+        before_fold = body[: body.index("_[folded:")]
+        self.assertFalse(exit_code)
+        self.assertEqual(
+            before_fold,
+            "### ⚔️ Code Gauntlet\n\n" + "a" * 65166 + "\n\n",
+        )
+        self.assertIn(
+            "_[folded: 307 more bytes; this review body reached the 65536-byte "
+            "GitHub body limit]_",
+            body,
+        )
+
     def test_fold_has_priority_over_skipped_groups(self):
         # Mutation: fill groups before folding; the skipped count and fold marker turn red.
         findings = [self._invalid_finding("One"), self._invalid_finding("Two")]
@@ -5698,7 +5751,13 @@ class TestSummaryBodyBudget(_DryRunTestBase):
 
     def test_folded_body_uses_the_final_footer_marker(self):
         # Mutation: build the footer against folded prose; the final marker count turns red.
-        review_body = build_footer(999, self.SHA, body="") + "x" * 70000
+        review_body = (
+            "\n\n---\n"
+            "Generated by code-gauntlet | Reviewed up to: "
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n"
+            '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":999,'
+            '"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->' + "x" * 70000
+        )
         payload, _, _, exit_code = self._run_poster("github", review_body, [])
         body = payload["payload"]["body"]
         self.assertFalse(exit_code)
@@ -5781,7 +5840,9 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                     inline_count=inline_count,
                 )
                 self.assertEqual((composed.shown, composed.omitted), (1, 1))
+                # Exact count holds here because this twin does not fold and the closing line keeps the reserved digit width.
                 self.assertEqual(len(composed.body.encode("utf-8")), exact_bytes)
+                self.assertLessEqual(len(composed.body.encode("utf-8")), limit)
                 self.assertIn("Admitted", composed.body)
                 self.assertNotIn("Omitted", composed.body)
 
@@ -5796,6 +5857,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                 )
                 self.assertEqual((twin_composed.shown, twin_composed.omitted), (0, 2))
                 self.assertEqual(len(twin_composed.body.encode("utf-8")), twin_bytes)
+                self.assertLessEqual(len(twin_composed.body.encode("utf-8")), limit)
                 self.assertNotIn("Admitted", twin_composed.body)
                 self.assertIn(closing_line, twin_composed.body)
 
@@ -5890,14 +5952,17 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         )
 
     def test_bounded_frame_reserves_two_digit_skipped_counts(self):
-        # Mutation: clamp bounded frame counts to one digit; the hand-sized first
-        # group is incorrectly admitted and the body exceeds the limit.
+        # Mutations: clamp the heading n, intro k, closing m, or closing n to one
+        # digit; each single-term mutation admits First and must turn this red.
+        # Hand arithmetic: the first piece is 64783 + 44 = 64827 bytes, while its
+        # full two-digit reservation is 65536 - (24 + 212 + 2 + 369 + 2 + 101) = 64826.
+        # The all-omitted body is 24 + 2 + 368 + 2 + 101 + 212 = 709 bytes.
         first = {
             "file": "shown.py",
             "line": 1,
             "severity": "high",
             "title": "First",
-            "body": "a" * 64786,
+            "body": "a" * 64783,
         }
         groups = [[("shown.py", 1, first)]]
         groups.extend(
@@ -5925,6 +5990,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             inline_count=0,
         )
         self.assertEqual((composed.shown, composed.omitted), (0, 10))
+        self.assertEqual(len(composed.body.encode("utf-8")), 709)
         self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
         self.assertIn("### ⚠️ 10 finding(s) could not be anchored inline", composed.body)
         self.assertIn(
@@ -6032,8 +6098,8 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                 )
 
     def test_refusal_measures_multibyte_text_as_utf8_bytes(self):
-        # Mutation: measure code points instead of UTF-8 bytes; the exact refusal
-        # for 21846 CJK characters would stay green.
+        # Mutation: measure code points instead of UTF-8 bytes; this 65538-byte body
+        # is 21846 code points, so no refusal fires and this test turns red.
         body = "界" * 21846
         self.assertEqual(len(body), 21846)
         self.assertEqual(len(body.encode("utf-8")), 65538)
@@ -6049,9 +6115,11 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             "GitHub body limit; nothing was posted.\n",
         )
 
-    def test_guard_stops_both_posters_before_post_json(self):
-        # Mutation: delete either poster guard or move it after post_json; the mock POST turns red.
-        oversized_github = post_review.ComposedBody("x" * 65537, 0, 0, 0, ())
+    def test_github_guard_stops_before_post_json(self):
+        # Mutations: delete the GitHub guard, move it after post_json, or make
+        # _utf8_len return len; this multi-byte body then passes and turns red.
+        # GitHub: 21846 code points are 65538 UTF-8 bytes, over 65536.
+        oversized_github = post_review.ComposedBody("界" * 21846, 0, 0, 0, ())
         with (
             patch("scripts.post_review.check_tool"),
             patch(
@@ -6068,7 +6136,11 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertEqual(github_exit.exception.code, 1)
         github_post.assert_not_called()
 
-        oversized_gitlab = post_review.ComposedBody("x" * 1000001, 0, 0, 0, ())
+    def test_gitlab_guard_stops_before_post_json(self):
+        # Mutations: delete the GitLab guard, move it after post_json, or make
+        # _utf8_len return len; this multi-byte body then passes and turns red.
+        # GitLab: 333334 code points are 1000002 UTF-8 bytes, over 1000000.
+        oversized_gitlab = post_review.ComposedBody("界" * 333334, 0, 0, 0, ())
         with (
             patch("scripts.post_review.check_tool"),
             patch(
