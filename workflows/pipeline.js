@@ -1591,7 +1591,7 @@ const validWebOrigin = (value) => {
 };
 const PR_IDENTITY_FIELDS = [
   { name: 'owner', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string' },
-  { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0 && !value.includes('/'), describe: 'a non-empty string with no "/"' },
+  { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string', extraChecks: [{ check: (value) => !value.includes('/'), message: 'must not contain "/"' }] },
   { name: 'pr_number', required: true, check: (value) => Number.isSafeInteger(value) && value > 0, describe: 'a positive safe integer' },
   { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value), describe: 'a 40-character lowercase hex commit id' },
   { name: 'platform', required: true, check: (value) => Object.hasOwn(PERMALINK_TEMPLATES, value), describe: 'one of github, gitlab' },
@@ -3052,8 +3052,14 @@ function validateArgs(args) {
         } else {
           for (const field of PR_IDENTITY_FIELDS) {
             const value = id[field.name];
-            if ((value === undefined && field.required) || (value !== undefined && !field.check(value))) {
+            const valid = value !== undefined && field.check(value);
+            if ((value === undefined && field.required) || (value !== undefined && !valid)) {
               errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
+            }
+            if (valid) {
+              for (const extra of field.extraChecks || []) {
+                if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
+              }
             }
           }
         }

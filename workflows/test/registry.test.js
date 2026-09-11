@@ -45,7 +45,7 @@ test('PR identity registry owns the complete ordered field contract', () => {
     PR_IDENTITY_FIELDS.map(({ name, required, describe }) => ({ name, required, describe })),
     [
       { name: 'owner', required: true, describe: 'a non-empty string' },
-      { name: 'repo', required: true, describe: 'a non-empty string with no "/"' },
+      { name: 'repo', required: true, describe: 'a non-empty string' },
       { name: 'pr_number', required: true, describe: 'a positive safe integer' },
       { name: 'sha_full', required: true, describe: 'a 40-character lowercase hex commit id' },
       { name: 'platform', required: true, describe: 'one of github, gitlab' },

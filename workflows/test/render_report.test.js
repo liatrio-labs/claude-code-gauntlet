@@ -217,6 +217,20 @@ test('T-FOLDS-FENCE: folding closes prose fences and evidence folds inside its f
   assert.ok(report.includes('... [folded: 12000 more characters]\n```'));
 });
 
+test('T-FOLDS-FENCE-ORDER: evidence fence matches the folded evidence', () => {
+  // Mutation: compute fenceFor over raw evidence before folding; the folded-away run must not choose the fence.
+  const evidence = [
+    '`',
+    '``',
+    '```',
+    ...Array.from({ length: 37 }, (_, index) => `kept ${index + 4}`),
+    '```` folded-away',
+  ].join('\n');
+  const report = rendered({ findings: [finding('FENCE-ORDER', { evidence })] });
+  assert.ok(report.includes('\n````\n`\n``\n```'));
+  assert.ok(report.includes('... [folded: 1 more lines]\n````\n'));
+});
+
 test('T-FOLDS-EVIDENCE-NEWLINES: CRLF and lone CR count as physical lines', () => {
   // Mutation: split evidence only on LF; the lone-CR fixture no longer folds at 41 lines.
   const crlf = Array.from({ length: 41 }, (_, index) => `c${index + 1}`).join('\r\n');

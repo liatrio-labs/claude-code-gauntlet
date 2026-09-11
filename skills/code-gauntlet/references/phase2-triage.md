@@ -348,7 +348,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 `delivery.prIdentity` fields:
 
 - `owner` (required): a non-empty string.
-- `repo` (required): a non-empty string with no "/".
+- `repo` (required): a non-empty string.
 - `pr_number` (required): a positive safe integer.
 - `sha_full` (required): a 40-character lowercase hex commit id.
 - `platform` (required): one of github, gitlab.

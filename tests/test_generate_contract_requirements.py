@@ -370,7 +370,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             {
                 "name": "repo",
                 "required": True,
-                "describe": 'a non-empty string with no "/"',
+                "describe": "a non-empty string",
             },
             {
                 "name": "pr_number",
@@ -772,7 +772,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "`delivery.prIdentity` fields:\n"
             "\n"
             "- `owner` (required): a non-empty string.\n"
-            '- `repo` (required): a non-empty string with no "/".\n'
+            "- `repo` (required): a non-empty string.\n"
             "- `pr_number` (required): a positive safe integer.\n"
             "- `sha_full` (required): a 40-character lowercase hex commit id.\n"
             "- `platform` (required): one of github, gitlab.\n"
@@ -806,7 +806,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "`delivery.prIdentity` fields:\n"
             "\n"
             "- `owner` (required): a non-empty string.\n"
-            '- `repo` (required): a non-empty string with no "/".\n'
+            "- `repo` (required): a non-empty string.\n"
             "- `pr_number` (required): a positive safe integer.\n"
             "- `sha_full` (required): a 40-character lowercase hex commit id.\n"
             "- `platform` (required): one of github, gitlab.\n"

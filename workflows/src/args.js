@@ -1112,7 +1112,7 @@ export function validateArgs(args) {
         errors.push(`invalid delivery.tier: ${args.delivery.tier} (expected one of ${DELIVERY_TIERS.join(', ')})`);
       }
       // Optional PR identity (live-run L3): when present, the artifact-writer persists the
-      // post_review-ready wrapper { owner, repo, pr_number, sha, review_body, findings }
+      // post_review-ready wrapper { owner, repo, pr_number, sha, platform, review_body, findings }
       // instead of the bare findings array — Phase 8 consumes it without hand-assembly.
       // ABSENT for local-diff reviews (the waist stays target-agnostic).
       const id = args.delivery.prIdentity;
@@ -1124,8 +1124,14 @@ export function validateArgs(args) {
         } else {
           for (const field of PR_IDENTITY_FIELDS) {
             const value = id[field.name];
-            if ((value === undefined && field.required) || (value !== undefined && !field.check(value))) {
+            const valid = value !== undefined && field.check(value);
+            if ((value === undefined && field.required) || (value !== undefined && !valid)) {
               errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
+            }
+            if (valid) {
+              for (const extra of field.extraChecks || []) {
+                if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
+              }
             }
           }
         }

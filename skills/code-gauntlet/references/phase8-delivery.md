@@ -122,13 +122,13 @@ headless run reaches this step only when `configResult.resolved.delivery` includ
 follows `configResult.resolved.post_mode`.)
 
 **When `delivery.prIdentity` was set in the args waist, the persisted `artifactPaths.postReview` file
-already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, review_body, findings }`) —
+already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, platform, review_body, findings }`) —
 consume it directly: optionally set `review_body` to the composed summary (it persists as `""`), keep its
 `sha` field (it pins the marker to the commit the review ran against), and pass the file to
 `post_review.py` unchanged. Only when the artifact is the legacy bare findings array (no `prIdentity` —
 e.g. a local-diff review that later gains a PR target) do you hand-wrap: the findings are the
 `artifactPaths.postReview` entries **verbatim** — do not drop, reorder, or cap them; only add
-`review_body`, `owner`, `repo`, `pr_number`, and `sha` (the full head SHA the review ran against, from
+`review_body`, `owner`, `repo`, `pr_number`, `sha`, and `platform` (the full head SHA the review ran against, from
 Phase 2 — omitting it leaves `post_review.py` to fall back to `git rev-parse HEAD`, which may not be the
 commit reviewed).
 

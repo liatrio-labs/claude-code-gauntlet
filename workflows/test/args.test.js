@@ -1504,10 +1504,12 @@ test('validateArgs rejects a malformed delivery.prIdentity (shape-checked when p
     [{ ...valid, pr_number: -1 }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
     [{ ...valid, pr_number: 1.5 }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
     [{ ...valid, pr_number: '7' }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
-    [{ ...valid, repo: 'a/b' }, 'delivery.prIdentity.repo must be a non-empty string with no "/"'],
+    // Mutation: delete repo.extraChecks; this slash case must go red while empty keeps the primary error.
+    [{ ...valid, repo: 'a/b' }, ['delivery.prIdentity.repo must not contain "/"']],
+    [{ ...valid, repo: '' }, ['delivery.prIdentity.repo must be a non-empty string']],
   ];
   for (const [prIdentity, expected] of cases) {
-    assert.deepEqual(validateArgs({ ...good, delivery: { prIdentity } }).errors, [expected]);
+    assert.deepEqual(validateArgs({ ...good, delivery: { prIdentity } }).errors, Array.isArray(expected) ? expected : [expected]);
   }
   const r2 = validateArgs({ ...good, delivery: { prIdentity: 'org/repo#310' } });
   assert.equal(r2.ok, false);
