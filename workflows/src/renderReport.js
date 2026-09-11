@@ -381,12 +381,25 @@ function inline(value) {
 // second code-owned section heading. Evidence is excluded because it is placed in a fenced
 // block and must remain byte-for-byte verbatim.
 function safeProse(value) {
-  return reportAsText(value).split('\n').map((line) => {
-    const withoutTrailingSpace = line.replace(/[ \t]+$/, '');
-    return CODE_OWNED_HEADINGS.includes(withoutTrailingSpace)
-      ? `${withoutTrailingSpace} (finding text)`
-      : line;
-  }).join('\n');
+  const parts = reportAsText(value).split(/(\r\n|\r|\n)/);
+  let output = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index];
+    const boundary = parts[index + 1] || '';
+    // The split keeps a terminal CR in the boundary, but strip one here as a
+    // belt-and-braces comparison rule for any line supplied by a future splitter.
+    const withoutTerminalCR = line.endsWith('\r') ? line.slice(0, -1) : line;
+    const comparable = withoutTerminalCR.replace(/[ \t]+$/, '');
+    if (CODE_OWNED_HEADINGS.includes(comparable)) {
+      // Preserve original CR bytes on untouched prose. A renamed heading drops
+      // only its CR and keeps an LF boundary, so the next model line stays separate.
+      const renamedBoundary = boundary === '\r\n' || boundary === '\r' ? '\n' : boundary;
+      output += `${comparable} (finding text)${renamedBoundary}`;
+    } else {
+      output += line + boundary;
+    }
+  }
+  return output;
 }
 
 function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {

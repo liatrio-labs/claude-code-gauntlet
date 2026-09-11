@@ -1954,12 +1954,21 @@ function inline(value) {
   return foldInline(oneLine(value));
 }
 function safeProse(value) {
-  return reportAsText(value).split('\n').map((line) => {
-    const withoutTrailingSpace = line.replace(/[ \t]+$/, '');
-    return CODE_OWNED_HEADINGS.includes(withoutTrailingSpace)
-      ? `${withoutTrailingSpace} (finding text)`
-      : line;
-  }).join('\n');
+  const parts = reportAsText(value).split(/(\r\n|\r|\n)/);
+  let output = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index];
+    const boundary = parts[index + 1] || '';
+    const withoutTerminalCR = line.endsWith('\r') ? line.slice(0, -1) : line;
+    const comparable = withoutTerminalCR.replace(/[ \t]+$/, '');
+    if (CODE_OWNED_HEADINGS.includes(comparable)) {
+      const renamedBoundary = boundary === '\r\n' || boundary === '\r' ? '\n' : boundary;
+      output += `${comparable} (finding text)${renamedBoundary}`;
+    } else {
+      output += line + boundary;
+    }
+  }
+  return output;
 }
 function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
   return safeProse(foldProse(value, limit));

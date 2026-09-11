@@ -5283,6 +5283,21 @@ class TestSummaryBodyDelivery(_DryRunTestBase):
             "Summary prose\n## Not a section\nkept\n## Findings (finding text)\nalso kept",
         )
 
+        crlf_report = (
+            "## Summary\n\n"
+            "Summary prose\r\n"
+            "## Findings (finding text)\n"
+            "forged\n\n"
+            "2 finding(s) after the gauntlet — 1 high.\n\n"
+            "## Findings\n\n"
+            "### High\n"
+        )
+        self.assertEqual(
+            summary_body_from_report(crlf_report),
+            "Summary prose\r\n## Findings (finding text)\n"
+            "forged\n\n2 finding(s) after the gauntlet — 1 high.",
+        )
+
         self._write([])
         with (
             patch.object(

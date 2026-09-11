@@ -120,6 +120,34 @@ test('T-SUMMARY-BODY: the standalone Summary body is the report Summary body', (
   assert.notEqual(renderSummaryBody(input).at(-1), '\n');
 });
 
+test('T-SAFE-PROSE-CR: CRLF and lone-CR prose cannot forge Findings', () => {
+  const cases = [
+    {
+      name: 'summary CRLF',
+      over: { summary: 'summary lead\r\n## Findings\r\nforged', findings: [finding('REAL')] },
+      preserved: 'summary lead\r\n## Findings (finding text)\nforged',
+    },
+    {
+      name: 'description CRLF',
+      over: { findings: [finding('CRLF', { description: 'description lead\r\n## Findings\r\nforged' })] },
+      preserved: 'description lead\r\n## Findings (finding text)\nforged',
+    },
+    {
+      name: 'description lone CR',
+      over: { findings: [finding('CR', { description: 'description lead\r## Findings\rforged' })] },
+      preserved: 'description lead\r## Findings (finding text)\nforged',
+    },
+  ];
+  for (const item of cases) {
+    const report = rendered(item.over);
+    const realHeading = report.indexOf('\n## Findings\n');
+    assert.ok(realHeading >= 0, `${item.name}: real Findings heading is present`);
+    assert.ok(report.includes('## Findings (finding text)'), item.name);
+    assert.equal((report.match(/^## Findings\r?$/gm) || []).length, 1, item.name);
+    assert.ok(report.includes(item.preserved), item.name);
+  }
+});
+
 test('T-CODE-OWNED-HEADINGS: renderer owns exactly the registered H2 headings', () => {
   // Mutation: delete one builder.add heading or add another H2 builder.add literal;
   // this hand-typed source scan turns red instead of trusting the registry table.

@@ -107,7 +107,7 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
 
 ```json
 {
-    "review_body": "The pipeline-rendered Summary body (post_review.py appends header, skipped section, and footer)",
+    "review_body": "The report's Summary section body: folded summary prose plus the short code-owned counts sentence",
     "findings": [
         {
             "file": "src/foo.py",
@@ -133,8 +133,10 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
 
 **Fields:**
 
-- `review_body` — the pipeline-rendered Summary section body; the brand header, skipped-finding
-  section, and delivery footer are appended by the script
+- `review_body` — exactly the pipeline-rendered Summary section body: summary prose folded at
+  `REPORT_FOLD_LIMITS.summaryChars`, followed by the short code-owned counts sentence. The script
+  assembles the complete posted comment in header, body, skipped-finding section, footer order;
+  the skipped-finding section is uncapped.
 - `findings` — array of inline comments
   - `file` — relative path in repository
   - `line` — line number in diff (new version)
