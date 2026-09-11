@@ -1,7 +1,7 @@
 // registry.test.js — DIMENSIONS registry + resolvePolicy (S5) unit tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_REQUIRED, STAGE_DEFAULTS, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, resolvePolicy, conditionalSchemaActive } from '../src/registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_REQUIRED, STAGE_DEFAULTS, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, SHA_FULL_RE, WEB_ORIGIN_RE, resolvePolicy, conditionalSchemaActive } from '../src/registry.js';
 import { intersectRequiredExtra, agentSpecs } from '../src/stages.js';
 
 test('7 unique discovery agents', () => { assert.equal(AGENTS.length, 7); });
@@ -38,6 +38,47 @@ test('STAGE_DEFAULTS pins the complete dispatch inventory', () => {
   });
 });
 test('STAGE_DEFAULTS has no deleted report-writer policy row', () => { assert.ok(!('report-writer' in STAGE_DEFAULTS)); });
+
+test('PR identity registry owns the complete ordered field contract', () => {
+  // Mutation: delete PR_IDENTITY_FIELDS or any row; this hand-typed shape must fail.
+  assert.deepEqual(
+    PR_IDENTITY_FIELDS.map(({ name, required, describe }) => ({ name, required, describe })),
+    [
+      { name: 'owner', required: true, describe: 'a non-empty string' },
+      { name: 'repo', required: true, describe: 'a non-empty string with no "/"' },
+      { name: 'pr_number', required: true, describe: 'a positive safe integer' },
+      { name: 'sha_full', required: true, describe: 'a 40-character lowercase hex commit id' },
+      { name: 'platform', required: true, describe: 'one of github, gitlab' },
+      { name: 'web_origin', required: true, describe: 'an http(s) origin: scheme, host and optional port only' },
+      { name: 'title', required: false, describe: 'a non-empty string when present' },
+    ],
+  );
+  assert.ok(PR_IDENTITY_FIELDS.every((field) => typeof field.check === 'function'));
+});
+
+test('PR identity registry pins platform permalink templates and scalar patterns', () => {
+  // Mutation: replace PERMALINK_TEMPLATES, SHA_FULL_RE, or WEB_ORIGIN_RE; these literals turn red.
+  assert.deepEqual(PERMALINK_TEMPLATES, {
+    github: {
+      blob: '{origin}/{owner}/{repo}/blob/{sha}/{path}',
+      line: '#L{start}',
+      range: '#L{start}-L{end}',
+      ref: '#{number}',
+      refUrl: '{origin}/{owner}/{repo}/pull/{number}',
+    },
+    gitlab: {
+      blob: '{origin}/{owner}/{repo}/-/blob/{sha}/{path}',
+      line: '#L{start}',
+      range: '#L{start}-{end}',
+      ref: '!{number}',
+      refUrl: '{origin}/{owner}/{repo}/-/merge_requests/{number}',
+    },
+  });
+  assert.equal(SHA_FULL_RE.source, '^[0-9a-f]{40}$');
+  assert.equal(WEB_ORIGIN_RE.test('http://[::1]:8443'), true);
+  assert.equal(WEB_ORIGIN_RE.test('https://git.example:65535'), true);
+  assert.equal(WEB_ORIGIN_RE.test('https://git.example:65536'), false);
+});
 
 // V3.1 orchestrator-model waist: resolvePolicy pins explicit FULL model IDs so no agent
 // pin can cascade the orchestrator session's model variant (measured on bench: a child

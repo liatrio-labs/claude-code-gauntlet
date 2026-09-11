@@ -64,6 +64,22 @@ test('happy path: full pipeline returns ok:true, phaseReached=report, artifact p
   assert.ok(ctx.calls.some((t) => t.label === 'artifact-writer'));
 });
 
+test('identity-bearing runWith persists the real platform-carrying wrapper in key order', async () => {
+  // Mutation: drop platform from postReviewWrapper; the real onPersist envelope turns red.
+  const args = validArgs({ delivery: { tier: 'all', prIdentity: {
+    owner: 'o', repo: 'r', pr_number: 278,
+    sha_full: '0123456789abcdef0123456789abcdef01234567',
+    platform: 'github', web_origin: 'https://github.com',
+  } } });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(
+    Object.keys(persisted.postReview),
+    ['owner', 'repo', 'pr_number', 'sha', 'platform', 'review_body', 'findings'],
+  );
+});
+
 test('test_runWith_dispatches_exactly_this_agentType_inventory', async () => {
   const args = validArgs();
   const ctx = makeCtx(args);

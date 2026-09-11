@@ -344,6 +344,22 @@ If the file came out **empty**, omit both fields — test `not content`, not `li
 
 Assemble the args waist the workflow consumes. It is a single JSON object passed as the `Workflow` tool's `args` parameter (Phase 3) — not written to disk. The workflow validates it up front (`validateArgs`) and rejects a malformed waist before any dispatch.
 
+<!-- generated-from-registry-identity:pr_identity_fields — do not edit; run scripts/generate_contract_requirements.py -->
+`delivery.prIdentity` fields:
+
+- `owner` (required): a non-empty string.
+- `repo` (required): a non-empty string with no "/".
+- `pr_number` (required): a positive safe integer.
+- `sha_full` (required): a 40-character lowercase hex commit id.
+- `platform` (required): one of github, gitlab.
+- `web_origin` (required): an http(s) origin: scheme, host and optional port only.
+- `title` (optional): a non-empty string when present.
+
+Producer command:
+
+`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> [--title <text>]`
+<!-- /generated-from-registry-identity:pr_identity_fields -->
+
 **Omit optional fields you have no value for; never stamp an explicit `null`.**
 The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`.
 Keep `reviewConfigPath: null` when REVIEW.md is absent; it records provenance.
@@ -368,7 +384,7 @@ Keep `reviewConfigPath: null` when REVIEW.md is absent; it records provenance.
 | `reviewScope` | Headless PR/MR targets omit `requested` (see the derived waist fields under "Args Preparation"). Interactive PR/MR targets stamp the gate answer, or `full` when no prior review exists. Local and branch targets stamp `full`. Copy detector facts verbatim for PR/MR targets. Use `kind=incremental` only for an incremental request with `detector.incremental_safe=true`. Set `since` to the detector's safe `last_reviewed_sha` only for incremental kind. Set `since` to `null` otherwise. Retain detector facts when an incremental request becomes full. The renderer computes the fallback reason from retained detector facts. |
 | `policy` | `{ tier, subagentModel, provider, gateway }` — see below |
 | `limits` | Stamp `{}` unless a genuine REVIEW.md-set override exists. |
-| `delivery` | For PR/MR targets, stamp only `{ prIdentity: { owner, repo, pr_number, sha_full, title? } }`. Omit it for local targets. |
+| `delivery` | For PR/MR targets, stamp only `{ prIdentity }` using the generated field contract above. Omit it for local targets. |
 
 <!-- generated-from-registry-identity:derived_waist_fields — do not edit; run scripts/generate_contract_requirements.py -->
 The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.

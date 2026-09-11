@@ -3,7 +3,7 @@
 // line-based bundle stripper cannot remove safely.
 import { SEVERITY_ORDER } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
-import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, resolvePolicy, conditionalSchemaActive } from './registry.js';
+import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, resolvePolicy, conditionalSchemaActive } from './registry.js';
 import { KNOB_REGISTRY } from './args.js';
 
 // Fields the report renderer never emits. suggested_fix_code itself (no apply-check oracle
@@ -17,6 +17,16 @@ export const REPORT_EXCLUDED_FIELDS = [
   'suggested_fix_code_removed_by',
   'suggested_fix_code_removal_reason',
 ];
+
+// Per-field display folds only. They are not a whole-report bound or a return-budget
+// mechanism: findings.json keeps unfolded confirmed values, and cardinality is unbounded.
+export const REPORT_FOLD_LIMITS = {
+  proseChars: 4000,
+  summaryChars: 12000,
+  evidenceLines: 40,
+  evidenceChars: 8000,
+  inlineChars: 512,
+};
 
 // dimensionsSummaryTable({ dispatched, degraded, findings, unverified }) -> markdown string
 //
@@ -212,6 +222,66 @@ function reportAsConfidence(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function codePointLength(value) {
+  return Array.from(reportAsText(value)).length;
+}
+
+function codePointPrefix(value, limit) {
+  return Array.from(reportAsText(value)).slice(0, limit).join('');
+}
+
+export function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
+  const value = reportAsText(text);
+  const length = codePointLength(value);
+  if (length <= limit) return value;
+  return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
+}
+
+export function foldProse(text, limit) {
+  const value = reportAsText(text);
+  const length = codePointLength(value);
+  if (length <= limit) return value;
+
+  let prefix = '';
+  const lines = value.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const next = `${index ? '\n' : ''}${lines[index]}`;
+    const remaining = limit - codePointLength(prefix);
+    if (codePointLength(next) <= remaining) {
+      prefix += next;
+      continue;
+    }
+    if (codePointLength(lines[index]) > limit) prefix += codePointPrefix(next, remaining);
+    break;
+  }
+  const omitted = length - codePointLength(prefix);
+  const tripleFenceCount = [...prefix.matchAll(/```/g)].length;
+  if (tripleFenceCount % 2 === 1) prefix += `${prefix.endsWith('\n') ? '' : '\n'}\`\`\``;
+  return `${prefix}\n\n_[folded: ${omitted} more characters]_`;
+}
+
+export function foldEvidence(text) {
+  const value = reportAsText(text);
+  const length = codePointLength(value);
+  const separators = [...value.matchAll(/\r\n|\r|\n/g)];
+  const lineCount = separators.length + 1;
+  const lineFolded = lineCount > REPORT_FOLD_LIMITS.evidenceLines;
+  const linePrefix = lineFolded
+    ? value.slice(0, separators[REPORT_FOLD_LIMITS.evidenceLines - 1].index)
+    : value;
+  const linePrefixLength = codePointLength(linePrefix);
+  const charFolded = length > REPORT_FOLD_LIMITS.evidenceChars;
+
+  if (charFolded && (!lineFolded || REPORT_FOLD_LIMITS.evidenceChars <= linePrefixLength)) {
+    const prefix = codePointPrefix(value, REPORT_FOLD_LIMITS.evidenceChars);
+    return `${prefix}\n... [folded: ${length - REPORT_FOLD_LIMITS.evidenceChars} more characters]`;
+  }
+  if (lineFolded) {
+    return `${linePrefix}\n... [folded: ${lineCount - REPORT_FOLD_LIMITS.evidenceLines} more lines]`;
+  }
+  return value;
+}
+
 function reportRiskLevel(value) {
   if (value === undefined || value === null) return undefined;
   if (typeof value === 'number' || typeof value === 'string') return value;
@@ -303,11 +373,19 @@ function oneLine(value) {
   return reportAsText(value).replace(/[\r\n]+/g, ' ').replace(/ +/g, ' ').trim();
 }
 
+function inline(value) {
+  return foldInline(oneLine(value));
+}
+
 // Finding prose is deliberately multiline, but a model-controlled line must not become a
 // second code-owned section heading. Evidence is excluded because it is placed in a fenced
 // block and must remain byte-for-byte verbatim.
 function safeProse(value) {
   return reportAsText(value).replace(/^## Review Methodology[ \t]*$/gm, '## Review Methodology (finding text)');
+}
+
+function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
+  return safeProse(foldProse(value, limit));
 }
 
 // Table cells are a separate primitive from receipt lines: methodology details are prose
@@ -341,10 +419,11 @@ function reportBuilder() {
     text += reportAsText(line);
   };
   const addEvidence = (evidence) => {
-    const fence = fenceFor(evidence);
+    const folded = foldEvidence(evidence);
+    const fence = fenceFor(folded);
     const start = text.length + (text.length ? 1 : 0);
     add(fence);
-    add(reportAsText(evidence));
+    add(folded);
     add(fence);
     evidenceRanges.push([start, text.length]);
   };
@@ -366,13 +445,73 @@ function reportBuilder() {
 
 function location(finding) {
   if (!isPresent(finding.file)) return '';
-  const file = oneLine(finding.file);
+  const file = inline(finding.file);
   if (!isPresent(finding.line_start)) return file;
   const start = oneLine(finding.line_start);
   if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
     return `${file}:${start}`;
   }
   return `${file}:${start}-${oneLine(finding.line_end)}`;
+}
+
+export function encodeUrlSegment(segment) {
+  const repaired = reportAsText(segment)
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '\uFFFD')
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+  return encodeURIComponent(repaired).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function templateValue(template, values) {
+  let output = template;
+  for (const [name, value] of Object.entries(values)) output = output.replaceAll(`{${name}}`, value);
+  return output;
+}
+
+function identityCheck(identity, name) {
+  const field = PR_IDENTITY_FIELDS.find((entry) => entry.name === name);
+  return Boolean(field && field.check(identity[name]));
+}
+
+function permalinkContext(identity) {
+  if (!identity) return { repositoryBase: null, blobBase: null, template: null };
+  const repositoryReady = ['platform', 'web_origin', 'owner', 'repo']
+    .every((name) => identityCheck(identity, name));
+  if (!repositoryReady) return { repositoryBase: null, blobBase: null, template: null };
+  const template = PERMALINK_TEMPLATES[identity.platform];
+  const owner = reportAsText(identity.owner).split('/').map(encodeUrlSegment).join('/');
+  const repo = reportAsText(identity.repo).split('/').map(encodeUrlSegment).join('/');
+  const values = { origin: identity.web_origin, owner, repo };
+  const repositoryBase = `${identity.web_origin}/${owner}/${repo}`;
+  const blobBase = identityCheck(identity, 'sha_full')
+    ? templateValue(template.blob, { ...values, sha: identity.sha_full, path: '' })
+    : null;
+  return { repositoryBase, blobBase, template, values };
+}
+
+function positiveLine(value) {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? value : null;
+  if (typeof value !== 'string' || !/^[0-9]+$/.test(value)) return null;
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+
+function locationUrl(finding, permalinks) {
+  if (!permalinks.blobBase || !isPresent(finding.file)) return null;
+  const rawFile = reportAsText(finding.file);
+  if (oneLine(rawFile) !== rawFile) return null;
+  const segments = rawFile.split('/');
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
+  const path = segments.map(encodeUrlSegment).join('/');
+  let anchor = '';
+  const start = positiveLine(finding.line_start);
+  const endPresent = isPresent(finding.line_end);
+  const end = positiveLine(finding.line_end);
+  if (start !== null && (!endPresent || end === start)) {
+    anchor = templateValue(permalinks.template.line, { start: String(start) });
+  } else if (start !== null && end !== null && end > start) {
+    anchor = templateValue(permalinks.template.range, { start: String(start), end: String(end) });
+  }
+  return `${permalinks.blobBase}${path}${anchor}`;
 }
 
 function unverifiedReason(finding) {
@@ -386,16 +525,17 @@ function unverifiedReason(finding) {
   return reasons.length ? reasons.join('; ') : 'a pipeline stage was skipped or failed';
 }
 
-function renderFinding(builder, finding, unverified) {
+function renderFinding(builder, finding, unverified, permalinks) {
   const blocks = [];
-  blocks.push(() => builder.add(`#### ${oneLine(finding.title)}`));
+  blocks.push(() => builder.add(`#### ${inline(finding.title)}`));
 
   const bullets = [];
   const where = location(finding);
-  if (where) bullets.push(`- **Location:** \`${where}\``);
+  const url = locationUrl(finding, permalinks);
+  if (where) bullets.push(url ? `- **Location:** [\`${where}\`](${url})` : `- **Location:** \`${where}\``);
   const classification = [];
-  if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${oneLine(finding.dimension)}`);
-  if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${oneLine(finding.confidence)}%`);
+  if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
+  if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);
   if (classification.length) bullets.push(`- ${classification.join(' · ')}`);
   if (finding.origin === 'surfaced') {
     bullets.push('- **Origin:** surfaced — pre-existing, surfaced by this change');
@@ -412,7 +552,7 @@ function renderFinding(builder, finding, unverified) {
   }
   if (bullets.length) blocks.push(() => bullets.forEach(builder.add));
 
-  if (isPresent(finding.description)) blocks.push(() => builder.add(safeProse(finding.description)));
+  if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
   if (isPresent(finding.evidence)) {
     blocks.push(() => {
       builder.add('**Evidence:**');
@@ -423,14 +563,14 @@ function renderFinding(builder, finding, unverified) {
 
   const extras = reportExtraFields()
     .filter((key) => isPresent(finding[key]))
-    .map((key) => `- **${fieldLabel(key)}:** ${oneLine(finding[key])}`);
+    .map((key) => `- **${fieldLabel(key)}:** ${foldedProse(finding[key])}`);
   if (extras.length) blocks.push(() => extras.forEach(builder.add));
 
   if (isPresent(finding.suggestion)) {
     blocks.push(() => {
       builder.add('**Suggested fix:**');
       builder.add();
-      builder.add(safeProse(finding.suggestion));
+      builder.add(foldedProse(finding.suggestion));
     });
   }
 
@@ -444,24 +584,24 @@ function renderFinding(builder, finding, unverified) {
     blocks.push(() => {
       builder.add(`**${ruleLabel}:**`);
       builder.add();
-      builder.add(reportAsText(citedRule).split(/\r?\n/).map((line) => `> ${line}`).join('\n'));
+      builder.add(foldedProse(citedRule).split(/\r?\n/).map((line) => `> ${line}`).join('\n'));
     });
   }
 
   if (isPresent(finding.cross_file_refs)) {
-    blocks.push(() => builder.add(`- **Cross-file refs:** ${oneLine(finding.cross_file_refs)}`));
+    blocks.push(() => builder.add(`- **Cross-file refs:** ${foldedProse(finding.cross_file_refs)}`));
   }
 
   if (Array.isArray(finding.corroborations) && finding.corroborations.length) {
     blocks.push(() => {
       for (const corroboration of finding.corroborations) {
-        const agent = oneLine(corroboration.agent);
-        const dimension = oneLine(corroboration.dimension);
-        const confidence = oneLine(corroboration.confidence);
-        const title = oneLine(corroboration.title);
+        const agent = inline(corroboration.agent);
+        const dimension = inline(corroboration.dimension);
+        const confidence = inline(corroboration.confidence);
+        const title = inline(corroboration.title);
         builder.add(`- **Corroborated by** \`${agent}\` (\`${dimension}\`, confidence ${confidence}) — ${title}`);
         if (isPresent(corroboration.description)) {
-          builder.add(safeProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
+          builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
       }
     });
@@ -490,13 +630,13 @@ function severityView(findings) {
   return { buckets, order: [...known, ...rest] };
 }
 
-function renderSeverityBuckets(builder, view, unverified) {
+function renderSeverityBuckets(builder, view, unverified, permalinks) {
   for (const severity of view.order) {
     builder.add();
     builder.add(`### ${severityMark(severity)} ${fieldLabel(severity)}`);
     for (const finding of view.buckets.get(severity)) {
       builder.add();
-      renderFinding(builder, finding, unverified);
+      renderFinding(builder, finding, unverified, permalinks);
     }
   }
 }
@@ -665,22 +805,31 @@ export function renderReport(input) {
   const identity = inp.prIdentity && typeof inp.prIdentity === 'object' && !Array.isArray(inp.prIdentity)
     ? inp.prIdentity
     : null;
+  const permalinks = permalinkContext(identity);
+
+  const reference = identity && isPresent(identity.owner) && isPresent(identity.repo) && isPresent(identity.pr_number)
+    ? `${oneLine(identity.owner)}/${oneLine(identity.repo)}${identityCheck(identity, 'platform')
+      ? templateValue(PERMALINK_TEMPLATES[identity.platform].ref, { number: oneLine(identity.pr_number) })
+      : `#${oneLine(identity.pr_number)}`}`
+    : null;
 
   let subject = 'local changes';
   if (identity && typeof identity.title === 'string' && identity.title.trim()) {
-    subject = oneLine(identity.title);
-  } else if (
-    identity
-    && isPresent(identity.owner)
-    && isPresent(identity.repo)
-    && isPresent(identity.pr_number)
-  ) {
-    subject = `\`${oneLine(identity.owner)}/${oneLine(identity.repo)}#${oneLine(identity.pr_number)}\``;
+    subject = inline(identity.title);
+  } else if (reference) {
+    subject = `\`${reference}\``;
   }
 
   const identityParts = ['Reviewed'];
   if (isPresent(inp.headShaShort)) identityParts.push(`head \`${oneLine(inp.headShaShort)}\``);
   if (isPresent(inp.generatedAt)) identityParts.push(`at ${oneLine(inp.generatedAt)}`);
+  if (permalinks.repositoryBase && identityCheck(identity, 'pr_number')) {
+    const refUrl = templateValue(permalinks.template.refUrl, {
+      ...permalinks.values,
+      number: String(identity.pr_number),
+    });
+    identityParts.push(`for [\`${reference}\`](${refUrl})`);
+  }
   identityParts.push(`by ${BRAND_NAME}.`);
 
   const builder = reportBuilder();
@@ -691,7 +840,7 @@ export function renderReport(input) {
   builder.add('## Summary');
   builder.add();
   if (isPresent(inp.summary)) {
-    builder.add(safeProse(inp.summary));
+    builder.add(foldedProse(inp.summary, REPORT_FOLD_LIMITS.summaryChars));
     builder.add();
   }
   builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
@@ -699,7 +848,7 @@ export function renderReport(input) {
   if (findings.length) {
     builder.add();
     builder.add('## Findings');
-    renderSeverityBuckets(builder, findingsView, false);
+    renderSeverityBuckets(builder, findingsView, false, permalinks);
   }
 
   if (unverified.length) {
@@ -707,7 +856,7 @@ export function renderReport(input) {
     builder.add('## Unverified / pipeline-degraded findings');
     builder.add();
     builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. They are not confirmed findings.');
-    renderSeverityBuckets(builder, unverifiedView, true);
+    renderSeverityBuckets(builder, unverifiedView, true, permalinks);
   }
 
   const dimensionsTable = dimensionsSummaryTable({

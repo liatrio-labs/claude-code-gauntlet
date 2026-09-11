@@ -132,7 +132,7 @@ test('T182-ARGS: every registry receipt value rule and source rule is focused', 
   const headless = {
     ...good,
     mode: 'headless',
-    delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 's' } },
+    delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', platform: 'github', web_origin: 'https://github.com' } },
     configEcho: {
       model_tier: { value: 'optimized', source: 'env' },
       delivery: { value: 'chat,pr_comments,markdown', source: 'review_md' },
@@ -269,7 +269,7 @@ test('registry rule metadata has the complete projected row shape', () => {
         ? {
           ...good,
           mode,
-          delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 's' } },
+          delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', platform: 'github', web_origin: 'https://github.com' } },
           configEcho: {
             model_tier: { value: 'optimized', source: 'default' },
             delivery: { value: 'markdown', source: 'default' },
@@ -433,7 +433,7 @@ test('T305-ARGS: registry rule interpreter is exact, canonical, and fail-closed'
       ? {
         ...good,
         mode,
-        delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 's' } },
+        delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', platform: 'github', web_origin: 'https://github.com' } },
         configEcho: {
           model_tier: { value: 'optimized', source: 'default' },
           delivery: { value: 'markdown', source: 'default' },
@@ -1476,21 +1476,47 @@ test('validateArgs rejects a non-object delivery field', () => {
 });
 // delivery.prIdentity (live-run L3): optional PR identity for the post_review-ready wrapper.
 test('validateArgs accepts a well-formed delivery.prIdentity and its absence (local-diff reviews)', () => {
-  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'deadbeefcafe' };
+  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
+  // Mutation: remove bracketed IPv6 origins from WEB_ORIGIN_RE; the accepted twin turns red.
   assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'all', prIdentity: id } }), { ok: true, errors: [] });
   assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'all' } }), { ok: true, errors: [] });
+  assert.deepEqual(
+    validateArgs({ ...good, delivery: { tier: 'all', prIdentity: { ...id, platform: 'gitlab', web_origin: 'http://[::1]:8443' } } }),
+    { ok: true, errors: [] },
+  );
 });
 test('validateArgs rejects a malformed delivery.prIdentity (shape-checked when present)', () => {
-  const r = validateArgs({ ...good, delivery: { prIdentity: { owner: 'o', repo: 'r', pr_number: '310', sha_full: '' } } });
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('pr_number')));
-  assert.ok(r.errors.some((e) => e.includes('sha_full')));
+  // Mutation: delete the PR_IDENTITY_FIELDS validation loop; every negative row turns red.
+  const valid = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
+  const cases = [
+    [{ ...valid, platform: undefined }, 'delivery.prIdentity.platform must be one of github, gitlab'],
+    [{ ...valid, platform: 'bitbucket' }, 'delivery.prIdentity.platform must be one of github, gitlab'],
+    [{ ...valid, web_origin: 'github.com' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: 'https://github.com/x' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: 'https://user@github.com' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: 'https://git.example:0' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: 'https://git.example:65536' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: `https://${'a'.repeat(64)}.example` }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, sha_full: 'd'.repeat(39) }, 'delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id'],
+    [{ ...valid, sha_full: 'D'.repeat(40) }, 'delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id'],
+    [{ ...valid, sha_full: 'not-hex' }, 'delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id'],
+    [{ ...valid, pr_number: 0 }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
+    [{ ...valid, pr_number: -1 }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
+    [{ ...valid, pr_number: 1.5 }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
+    [{ ...valid, pr_number: '7' }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
+    [{ ...valid, repo: 'a/b' }, 'delivery.prIdentity.repo must be a non-empty string with no "/"'],
+  ];
+  for (const [prIdentity, expected] of cases) {
+    assert.deepEqual(validateArgs({ ...good, delivery: { prIdentity } }).errors, [expected]);
+  }
   const r2 = validateArgs({ ...good, delivery: { prIdentity: 'org/repo#310' } });
   assert.equal(r2.ok, false);
-  assert.match(r2.errors.join(' '), /prIdentity must be an object/);
+  assert.deepEqual(r2.errors, [
+    'delivery.prIdentity must be an object { owner, repo, pr_number, sha_full, platform, web_origin[, title] } when present',
+  ]);
 });
 test('T-ARGS: prIdentity.title is optional, shape-checked, and null-stripped without caller mutation', () => {
-  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'deadbeefcafe' };
+  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
   assert.deepEqual(
     validateArgs({ ...good, delivery: { prIdentity: { ...id, title: 'A useful title' } } }),
     { ok: true, errors: [] },

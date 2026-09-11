@@ -1565,6 +1565,39 @@ function applyChallenges(findings, challenges) {
 const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs reaching http/request/fetch clients without allowlist validation); frame and embedding policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); postMessage handlers that do not validate event.origin or check it with weak substring matching; and string-matching bypass patterns where a security decision uses containment checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains "trusted.com").';
 const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in user-facing strings, messages, and log output; case-sensitivity mistakes in string comparisons (comparing mixed-case values without normalizing case); and copy-paste plural/singular or off-by-one naming mismatches (a field, key, or variable named for one thing but holding another).';
 const DEEP = 'deep';
+const SHA_FULL_RE = /^[0-9a-f]{40}$/;
+const WEB_ORIGIN_RE = /^https?:\/\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\[[0-9A-Fa-f:.]{2,45}\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$/;
+const PERMALINK_TEMPLATES = {
+  github: {
+    blob: '{origin}/{owner}/{repo}/blob/{sha}/{path}',
+    line: '#L{start}',
+    range: '#L{start}-L{end}',
+    ref: '#{number}',
+    refUrl: '{origin}/{owner}/{repo}/pull/{number}',
+  },
+  gitlab: {
+    blob: '{origin}/{owner}/{repo}/-/blob/{sha}/{path}',
+    line: '#L{start}',
+    range: '#L{start}-{end}',
+    ref: '!{number}',
+    refUrl: '{origin}/{owner}/{repo}/-/merge_requests/{number}',
+  },
+};
+const validWebOrigin = (value) => {
+  if (typeof value !== 'string') return false;
+  const match = WEB_ORIGIN_RE.exec(value);
+  if (!match) return false;
+  return match[1].startsWith('[') || match[1].length <= 253;
+};
+const PR_IDENTITY_FIELDS = [
+  { name: 'owner', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string' },
+  { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0 && !value.includes('/'), describe: 'a non-empty string with no "/"' },
+  { name: 'pr_number', required: true, check: (value) => Number.isSafeInteger(value) && value > 0, describe: 'a positive safe integer' },
+  { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value), describe: 'a 40-character lowercase hex commit id' },
+  { name: 'platform', required: true, check: (value) => Object.hasOwn(PERMALINK_TEMPLATES, value), describe: 'one of github, gitlab' },
+  { name: 'web_origin', required: true, check: validWebOrigin, describe: 'an http(s) origin: scheme, host and optional port only' },
+  { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0, describe: 'a non-empty string when present' },
+];
 const FINDING_PROP_TYPES = {
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
@@ -1639,6 +1672,13 @@ const REPORT_EXCLUDED_FIELDS = [
   'suggested_fix_code_removed_by',
   'suggested_fix_code_removal_reason',
 ];
+const REPORT_FOLD_LIMITS = {
+  proseChars: 4000,
+  summaryChars: 12000,
+  evidenceLines: 40,
+  evidenceChars: 8000,
+  inlineChars: 512,
+};
 function dimensionOwnerMap() {
   const owner = {};
   for (const d of DIMENSIONS) owner[d.dimension] = d.agentType;
@@ -1771,6 +1811,59 @@ function reportOptionalText(value) {
 function reportAsConfidence(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
+function codePointLength(value) {
+  return Array.from(reportAsText(value)).length;
+}
+function codePointPrefix(value, limit) {
+  return Array.from(reportAsText(value)).slice(0, limit).join('');
+}
+function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
+  const value = reportAsText(text);
+  const length = codePointLength(value);
+  if (length <= limit) return value;
+  return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
+}
+function foldProse(text, limit) {
+  const value = reportAsText(text);
+  const length = codePointLength(value);
+  if (length <= limit) return value;
+  let prefix = '';
+  const lines = value.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const next = `${index ? '\n' : ''}${lines[index]}`;
+    const remaining = limit - codePointLength(prefix);
+    if (codePointLength(next) <= remaining) {
+      prefix += next;
+      continue;
+    }
+    if (codePointLength(lines[index]) > limit) prefix += codePointPrefix(next, remaining);
+    break;
+  }
+  const omitted = length - codePointLength(prefix);
+  const tripleFenceCount = [...prefix.matchAll(/```/g)].length;
+  if (tripleFenceCount % 2 === 1) prefix += `${prefix.endsWith('\n') ? '' : '\n'}\`\`\``;
+  return `${prefix}\n\n_[folded: ${omitted} more characters]_`;
+}
+function foldEvidence(text) {
+  const value = reportAsText(text);
+  const length = codePointLength(value);
+  const separators = [...value.matchAll(/\r\n|\r|\n/g)];
+  const lineCount = separators.length + 1;
+  const lineFolded = lineCount > REPORT_FOLD_LIMITS.evidenceLines;
+  const linePrefix = lineFolded
+    ? value.slice(0, separators[REPORT_FOLD_LIMITS.evidenceLines - 1].index)
+    : value;
+  const linePrefixLength = codePointLength(linePrefix);
+  const charFolded = length > REPORT_FOLD_LIMITS.evidenceChars;
+  if (charFolded && (!lineFolded || REPORT_FOLD_LIMITS.evidenceChars <= linePrefixLength)) {
+    const prefix = codePointPrefix(value, REPORT_FOLD_LIMITS.evidenceChars);
+    return `${prefix}\n... [folded: ${length - REPORT_FOLD_LIMITS.evidenceChars} more characters]`;
+  }
+  if (lineFolded) {
+    return `${linePrefix}\n... [folded: ${lineCount - REPORT_FOLD_LIMITS.evidenceLines} more lines]`;
+  }
+  return value;
+}
 function reportRiskLevel(value) {
   if (value === undefined || value === null) return undefined;
   if (typeof value === 'number' || typeof value === 'string') return value;
@@ -1850,8 +1943,14 @@ function fenceFor(text) {
 function oneLine(value) {
   return reportAsText(value).replace(/[\r\n]+/g, ' ').replace(/ +/g, ' ').trim();
 }
+function inline(value) {
+  return foldInline(oneLine(value));
+}
 function safeProse(value) {
   return reportAsText(value).replace(/^## Review Methodology[ \t]*$/gm, '## Review Methodology (finding text)');
+}
+function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
+  return safeProse(foldProse(value, limit));
 }
 function tableCell(value) {
   return oneLine(value).replaceAll('|', '\\|');
@@ -1874,10 +1973,11 @@ function reportBuilder() {
     text += reportAsText(line);
   };
   const addEvidence = (evidence) => {
-    const fence = fenceFor(evidence);
+    const folded = foldEvidence(evidence);
+    const fence = fenceFor(folded);
     const start = text.length + (text.length ? 1 : 0);
     add(fence);
-    add(reportAsText(evidence));
+    add(folded);
     add(fence);
     evidenceRanges.push([start, text.length]);
   };
@@ -1898,13 +1998,67 @@ function reportBuilder() {
 }
 function location(finding) {
   if (!isPresent(finding.file)) return '';
-  const file = oneLine(finding.file);
+  const file = inline(finding.file);
   if (!isPresent(finding.line_start)) return file;
   const start = oneLine(finding.line_start);
   if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
     return `${file}:${start}`;
   }
   return `${file}:${start}-${oneLine(finding.line_end)}`;
+}
+function encodeUrlSegment(segment) {
+  const repaired = reportAsText(segment)
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '\uFFFD')
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+  return encodeURIComponent(repaired).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+function templateValue(template, values) {
+  let output = template;
+  for (const [name, value] of Object.entries(values)) output = output.replaceAll(`{${name}}`, value);
+  return output;
+}
+function identityCheck(identity, name) {
+  const field = PR_IDENTITY_FIELDS.find((entry) => entry.name === name);
+  return Boolean(field && field.check(identity[name]));
+}
+function permalinkContext(identity) {
+  if (!identity) return { repositoryBase: null, blobBase: null, template: null };
+  const repositoryReady = ['platform', 'web_origin', 'owner', 'repo']
+    .every((name) => identityCheck(identity, name));
+  if (!repositoryReady) return { repositoryBase: null, blobBase: null, template: null };
+  const template = PERMALINK_TEMPLATES[identity.platform];
+  const owner = reportAsText(identity.owner).split('/').map(encodeUrlSegment).join('/');
+  const repo = reportAsText(identity.repo).split('/').map(encodeUrlSegment).join('/');
+  const values = { origin: identity.web_origin, owner, repo };
+  const repositoryBase = `${identity.web_origin}/${owner}/${repo}`;
+  const blobBase = identityCheck(identity, 'sha_full')
+    ? templateValue(template.blob, { ...values, sha: identity.sha_full, path: '' })
+    : null;
+  return { repositoryBase, blobBase, template, values };
+}
+function positiveLine(value) {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? value : null;
+  if (typeof value !== 'string' || !/^[0-9]+$/.test(value)) return null;
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+function locationUrl(finding, permalinks) {
+  if (!permalinks.blobBase || !isPresent(finding.file)) return null;
+  const rawFile = reportAsText(finding.file);
+  if (oneLine(rawFile) !== rawFile) return null;
+  const segments = rawFile.split('/');
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
+  const path = segments.map(encodeUrlSegment).join('/');
+  let anchor = '';
+  const start = positiveLine(finding.line_start);
+  const endPresent = isPresent(finding.line_end);
+  const end = positiveLine(finding.line_end);
+  if (start !== null && (!endPresent || end === start)) {
+    anchor = templateValue(permalinks.template.line, { start: String(start) });
+  } else if (start !== null && end !== null && end > start) {
+    anchor = templateValue(permalinks.template.range, { start: String(start), end: String(end) });
+  }
+  return `${permalinks.blobBase}${path}${anchor}`;
 }
 function unverifiedReason(finding) {
   const reasons = [];
@@ -1916,15 +2070,16 @@ function unverifiedReason(finding) {
   }
   return reasons.length ? reasons.join('; ') : 'a pipeline stage was skipped or failed';
 }
-function renderFinding(builder, finding, unverified) {
+function renderFinding(builder, finding, unverified, permalinks) {
   const blocks = [];
-  blocks.push(() => builder.add(`#### ${oneLine(finding.title)}`));
+  blocks.push(() => builder.add(`#### ${inline(finding.title)}`));
   const bullets = [];
   const where = location(finding);
-  if (where) bullets.push(`- **Location:** \`${where}\``);
+  const url = locationUrl(finding, permalinks);
+  if (where) bullets.push(url ? `- **Location:** [\`${where}\`](${url})` : `- **Location:** \`${where}\``);
   const classification = [];
-  if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${oneLine(finding.dimension)}`);
-  if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${oneLine(finding.confidence)}%`);
+  if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
+  if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);
   if (classification.length) bullets.push(`- ${classification.join(' · ')}`);
   if (finding.origin === 'surfaced') {
     bullets.push('- **Origin:** surfaced — pre-existing, surfaced by this change');
@@ -1940,7 +2095,7 @@ function renderFinding(builder, finding, unverified) {
     bullets.push('- **Contested:** the challenger could not confirm the cited location');
   }
   if (bullets.length) blocks.push(() => bullets.forEach(builder.add));
-  if (isPresent(finding.description)) blocks.push(() => builder.add(safeProse(finding.description)));
+  if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
   if (isPresent(finding.evidence)) {
     blocks.push(() => {
       builder.add('**Evidence:**');
@@ -1950,13 +2105,13 @@ function renderFinding(builder, finding, unverified) {
   }
   const extras = reportExtraFields()
     .filter((key) => isPresent(finding[key]))
-    .map((key) => `- **${fieldLabel(key)}:** ${oneLine(finding[key])}`);
+    .map((key) => `- **${fieldLabel(key)}:** ${foldedProse(finding[key])}`);
   if (extras.length) blocks.push(() => extras.forEach(builder.add));
   if (isPresent(finding.suggestion)) {
     blocks.push(() => {
       builder.add('**Suggested fix:**');
       builder.add();
-      builder.add(safeProse(finding.suggestion));
+      builder.add(foldedProse(finding.suggestion));
     });
   }
   const hasClaudeMdRule = isPresent(finding.claude_md_rule);
@@ -1969,22 +2124,22 @@ function renderFinding(builder, finding, unverified) {
     blocks.push(() => {
       builder.add(`**${ruleLabel}:**`);
       builder.add();
-      builder.add(reportAsText(citedRule).split(/\r?\n/).map((line) => `> ${line}`).join('\n'));
+      builder.add(foldedProse(citedRule).split(/\r?\n/).map((line) => `> ${line}`).join('\n'));
     });
   }
   if (isPresent(finding.cross_file_refs)) {
-    blocks.push(() => builder.add(`- **Cross-file refs:** ${oneLine(finding.cross_file_refs)}`));
+    blocks.push(() => builder.add(`- **Cross-file refs:** ${foldedProse(finding.cross_file_refs)}`));
   }
   if (Array.isArray(finding.corroborations) && finding.corroborations.length) {
     blocks.push(() => {
       for (const corroboration of finding.corroborations) {
-        const agent = oneLine(corroboration.agent);
-        const dimension = oneLine(corroboration.dimension);
-        const confidence = oneLine(corroboration.confidence);
-        const title = oneLine(corroboration.title);
+        const agent = inline(corroboration.agent);
+        const dimension = inline(corroboration.dimension);
+        const confidence = inline(corroboration.confidence);
+        const title = inline(corroboration.title);
         builder.add(`- **Corroborated by** \`${agent}\` (\`${dimension}\`, confidence ${confidence}) — ${title}`);
         if (isPresent(corroboration.description)) {
-          builder.add(safeProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
+          builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
       }
     });
@@ -2009,13 +2164,13 @@ function severityView(findings) {
   const rest = [...buckets.keys()].filter((severity) => !SEVERITY_ORDER.includes(severity));
   return { buckets, order: [...known, ...rest] };
 }
-function renderSeverityBuckets(builder, view, unverified) {
+function renderSeverityBuckets(builder, view, unverified, permalinks) {
   for (const severity of view.order) {
     builder.add();
     builder.add(`### ${severityMark(severity)} ${fieldLabel(severity)}`);
     for (const finding of view.buckets.get(severity)) {
       builder.add();
-      renderFinding(builder, finding, unverified);
+      renderFinding(builder, finding, unverified, permalinks);
     }
   }
 }
@@ -2165,20 +2320,28 @@ function renderReport(input) {
   const identity = inp.prIdentity && typeof inp.prIdentity === 'object' && !Array.isArray(inp.prIdentity)
     ? inp.prIdentity
     : null;
+  const permalinks = permalinkContext(identity);
+  const reference = identity && isPresent(identity.owner) && isPresent(identity.repo) && isPresent(identity.pr_number)
+    ? `${oneLine(identity.owner)}/${oneLine(identity.repo)}${identityCheck(identity, 'platform')
+      ? templateValue(PERMALINK_TEMPLATES[identity.platform].ref, { number: oneLine(identity.pr_number) })
+      : `#${oneLine(identity.pr_number)}`}`
+    : null;
   let subject = 'local changes';
   if (identity && typeof identity.title === 'string' && identity.title.trim()) {
-    subject = oneLine(identity.title);
-  } else if (
-    identity
-    && isPresent(identity.owner)
-    && isPresent(identity.repo)
-    && isPresent(identity.pr_number)
-  ) {
-    subject = `\`${oneLine(identity.owner)}/${oneLine(identity.repo)}#${oneLine(identity.pr_number)}\``;
+    subject = inline(identity.title);
+  } else if (reference) {
+    subject = `\`${reference}\``;
   }
   const identityParts = ['Reviewed'];
   if (isPresent(inp.headShaShort)) identityParts.push(`head \`${oneLine(inp.headShaShort)}\``);
   if (isPresent(inp.generatedAt)) identityParts.push(`at ${oneLine(inp.generatedAt)}`);
+  if (permalinks.repositoryBase && identityCheck(identity, 'pr_number')) {
+    const refUrl = templateValue(permalinks.template.refUrl, {
+      ...permalinks.values,
+      number: String(identity.pr_number),
+    });
+    identityParts.push(`for [\`${reference}\`](${refUrl})`);
+  }
   identityParts.push(`by ${BRAND_NAME}.`);
   const builder = reportBuilder();
   builder.add(`# ${BRAND_MARK} ${BRAND_NAME}: ${subject}`);
@@ -2188,21 +2351,21 @@ function renderReport(input) {
   builder.add('## Summary');
   builder.add();
   if (isPresent(inp.summary)) {
-    builder.add(safeProse(inp.summary));
+    builder.add(foldedProse(inp.summary, REPORT_FOLD_LIMITS.summaryChars));
     builder.add();
   }
   builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
   if (findings.length) {
     builder.add();
     builder.add('## Findings');
-    renderSeverityBuckets(builder, findingsView, false);
+    renderSeverityBuckets(builder, findingsView, false, permalinks);
   }
   if (unverified.length) {
     builder.add();
     builder.add('## Unverified / pipeline-degraded findings');
     builder.add();
     builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. They are not confirmed findings.');
-    renderSeverityBuckets(builder, unverifiedView, true);
+    renderSeverityBuckets(builder, unverifiedView, true, permalinks);
   }
   const dimensionsTable = dimensionsSummaryTable({
     ...(inp.dimensions && typeof inp.dimensions === 'object' ? inp.dimensions : {}),
@@ -2883,14 +3046,15 @@ function validateArgs(args) {
       const id = args.delivery.prIdentity;
       if (id !== undefined) {
         if (id === null || typeof id !== 'object' || Array.isArray(id)) {
-          errors.push('delivery.prIdentity must be an object { owner, repo, pr_number, sha_full[, title] } when present');
+          const requiredNames = PR_IDENTITY_FIELDS.filter((field) => field.required).map((field) => field.name);
+          const optionalNames = PR_IDENTITY_FIELDS.filter((field) => !field.required).map((field) => field.name);
+          errors.push(`delivery.prIdentity must be an object { ${requiredNames.join(', ')}[, ${optionalNames.join(', ')}] } when present`);
         } else {
-          if (typeof id.owner !== 'string' || !id.owner) errors.push('delivery.prIdentity.owner must be a non-empty string');
-          if (typeof id.repo !== 'string' || !id.repo) errors.push('delivery.prIdentity.repo must be a non-empty string');
-          if (typeof id.pr_number !== 'number') errors.push('delivery.prIdentity.pr_number must be a number');
-          if (typeof id.sha_full !== 'string' || !id.sha_full) errors.push('delivery.prIdentity.sha_full must be a non-empty string');
-          if (id.title !== undefined && (typeof id.title !== 'string' || !id.title.trim())) {
-            errors.push('delivery.prIdentity.title must be a non-empty string when present');
+          for (const field of PR_IDENTITY_FIELDS) {
+            const value = id[field.name];
+            if ((value === undefined && field.required) || (value !== undefined && !field.check(value))) {
+              errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
+            }
           }
         }
       }
@@ -4494,13 +4658,23 @@ function toV2Aliased(f) {
   if (out.body === undefined && out.description !== undefined) out.body = out.description;
   return out;
 }
+function postReviewWrapper(id, reviewBody) {
+  return {
+    owner: id.owner,
+    repo: id.repo,
+    pr_number: id.pr_number,
+    sha: id.sha_full,
+    platform: id.platform,
+    review_body: typeof reviewBody === 'string' ? reviewBody : '',
+  };
+}
 function writerPayload(inp) {
   const postReviewSet = (inp.postReview || []).map(toV2Aliased);
   const id = inp.prIdentity;
   return {
     findings: (inp.findings || []).map(toV2Aliased),
     postReview: id
-      ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: '', findings: postReviewSet }
+      ? { ...postReviewWrapper(id), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -4579,9 +4753,7 @@ function persistPlan(inp, paths) {
       path: paths.postReview,
       source: paths.findings,
       ids: (inp.postReview || []).map((f) => f && f.id),
-      wrapper: id
-        ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: '' }
-        : null,
+      wrapper: id ? postReviewWrapper(id) : null,
     },
     checkpoint: {
       path: paths.checkpoints,

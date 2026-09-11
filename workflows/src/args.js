@@ -1,4 +1,5 @@
 import { loadExclusions, buildReviewConfig, REVIEW_SETTING_KEYS } from './filterFindings.js';
+import { PR_IDENTITY_FIELDS } from './registry.js';
 
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
@@ -1117,14 +1118,15 @@ export function validateArgs(args) {
       const id = args.delivery.prIdentity;
       if (id !== undefined) {
         if (id === null || typeof id !== 'object' || Array.isArray(id)) {
-          errors.push('delivery.prIdentity must be an object { owner, repo, pr_number, sha_full[, title] } when present');
+          const requiredNames = PR_IDENTITY_FIELDS.filter((field) => field.required).map((field) => field.name);
+          const optionalNames = PR_IDENTITY_FIELDS.filter((field) => !field.required).map((field) => field.name);
+          errors.push(`delivery.prIdentity must be an object { ${requiredNames.join(', ')}[, ${optionalNames.join(', ')}] } when present`);
         } else {
-          if (typeof id.owner !== 'string' || !id.owner) errors.push('delivery.prIdentity.owner must be a non-empty string');
-          if (typeof id.repo !== 'string' || !id.repo) errors.push('delivery.prIdentity.repo must be a non-empty string');
-          if (typeof id.pr_number !== 'number') errors.push('delivery.prIdentity.pr_number must be a number');
-          if (typeof id.sha_full !== 'string' || !id.sha_full) errors.push('delivery.prIdentity.sha_full must be a non-empty string');
-          if (id.title !== undefined && (typeof id.title !== 'string' || !id.title.trim())) {
-            errors.push('delivery.prIdentity.title must be a non-empty string when present');
+          for (const field of PR_IDENTITY_FIELDS) {
+            const value = id[field.name];
+            if ((value === undefined && field.required) || (value !== undefined && !field.check(value))) {
+              errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
+            }
           }
         }
       }

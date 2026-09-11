@@ -66,8 +66,9 @@ IDENTITY_FENCES = {
     "scripts/resolve_config.py": ["knob_registry"],
     REPORT_FORMAT_REL: [
         "severity_legend",
+        "permalink_formats",
+        "permalink_sample",
         "inline_legend",
-        "summary_header",
         "inline_sample",
         "full_report_template",
     ],
@@ -84,10 +85,15 @@ IDENTITY_FENCES = {
         "chat_identity",
         "config_receipt",
         "derived_waist_fields",
+        "pr_identity_fields",
     ],
-    "skills/code-gauntlet/references/phase2-triage.md": ["derived_waist_fields"],
+    "skills/code-gauntlet/references/phase2-triage.md": [
+        "pr_identity_fields",
+        "derived_waist_fields",
+    ],
     "skills/code-gauntlet/references/phase1-preflight.md": ["derived_waist_fields"],
     "skills/code-gauntlet/references/headless-mode.md": ["headless_env_table"],
+    "skills/code-gauntlet/references/phase8-delivery.md": ["permalink_formats"],
 }
 
 # English phrasing for fields that carry a dimension-conditional requirement. Not derivable
@@ -263,6 +269,10 @@ def load_registry(repo_root=REPO_ROOT):
         "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
         "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
         "  agents: m.AGENTS,"
+        "  prIdentityFields: m.PR_IDENTITY_FIELDS.map(f => ({ name: f.name, required: f.required, describe: f.describe })),"
+        "  permalinkTemplates: m.PERMALINK_TEMPLATES,"
+        "  shaFullRe: m.SHA_FULL_RE.source,"
+        "  webOriginRe: m.WEB_ORIGIN_RE.source,"
         "  knobs: a.KNOB_REGISTRY.map(d => ({ ...d })),"
         "  knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d)),"
         "  deriveWhen: Object.fromEntries(Object.entries(a.DERIVE_WHEN).map(([name, d]) => [name, d.describe])),"
@@ -697,6 +707,8 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
         "repo": "{repo}",
         "pr_number": "{n}",
         "sha_full": "{full_sha}",
+        "platform": "github",
+        "web_origin": "https://github.com",
         "title": "{pr_title}",
     },
 }
@@ -712,6 +724,80 @@ def render_template_block(repo_root, identity):
     )
     out = _run_node(node_src, repo_root)
     return "````markdown\n" + out.stdout + "\n````"
+
+
+def render_permalink_sample(repo_root):
+    """Render identity and Location sample lines through the real renderer."""
+    fixture = json.loads(json.dumps(_TEMPLATE_FIXTURE))
+    fixture["findings"] = [fixture["findings"][0]]
+    fixture["unverified"] = []
+    fixture["prIdentity"].update(
+        {
+            "pr_number": 7,
+            "sha_full": "0123456789abcdef0123456789abcdef01234567",
+            "title": "{pr_title}",
+        }
+    )
+    sections = []
+    identities = [
+        ("GitHub", "github", "https://github.com", "{owner}"),
+        ("GitLab", "gitlab", "https://gitlab.com", "group/sub"),
+    ]
+    for label, platform, origin, owner in identities:
+        rendered = json.loads(json.dumps(fixture))
+        rendered["prIdentity"].update(
+            {"platform": platform, "web_origin": origin, "owner": owner}
+        )
+        node_src = (
+            "import('./workflows/src/renderReport.js').then(m => "
+            "process.stdout.write(m.renderReport(" + json.dumps(rendered) + ")))"
+        )
+        report = _run_node(node_src, repo_root).stdout.splitlines()
+        identity_line = next(line for line in report if line.startswith("Reviewed"))
+        location_line = next(
+            line for line in report if line.startswith("- **Location:**")
+        )
+        sections.extend([f"**{label}:**", "", identity_line, "", location_line])
+        if label != identities[-1][0]:
+            sections.append("")
+    return sections
+
+
+def permalink_formats_body(identity):
+    """Render the registry's platform templates and segment-encoding rules."""
+    lines = []
+    for platform, templates in identity["permalinkTemplates"].items():
+        lines.append(
+            f"- `{platform}`: blob `{templates['blob']}`; line `{templates['line']}`; "
+            f"range `{templates['range']}`; ref `{templates['ref']}`; ref URL "
+            f"`{templates['refUrl']}`."
+        )
+    lines.append(
+        "- Encode owner, repo, and file paths one segment at a time with "
+        "`encodeURIComponent` semantics; also percent-encode `!`, `'`, `(`, `)`, and "
+        "`*`, while preserving `/` separators. A file path containing an empty, `.`, "
+        "or `..` segment renders as a plain code span."
+    )
+    return lines
+
+
+def pr_identity_fields_body(identity):
+    """Render the ordered identity field list and its sole producer command."""
+    lines = ["`delivery.prIdentity` fields:", ""]
+    for field in identity["prIdentityFields"]:
+        requirement = "required" if field["required"] else "optional"
+        lines.append(f"- `{field['name']}` ({requirement}): {field['describe']}.")
+    lines.extend(
+        [
+            "",
+            "Producer command:",
+            "",
+            "`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform "
+            "github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> "
+            "[--title <text>]`",
+        ]
+    )
+    return lines
 
 
 _INLINE_SAMPLE_FINDING = {
@@ -907,6 +993,12 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
     key = (rel_path, symbol)
     if key == (REPORT_FORMAT_REL, "full_report_template"):
         return render_template_block(repo_root, identity).split("\n")
+    if key == (REPORT_FORMAT_REL, "permalink_sample"):
+        return render_permalink_sample(repo_root)
+    if symbol == "permalink_formats":
+        return permalink_formats_body(identity)
+    if symbol == "pr_identity_fields":
+        return pr_identity_fields_body(identity)
     if symbol == "constants":
         lines = [
             f'BRAND_MARK = "{mark}"',

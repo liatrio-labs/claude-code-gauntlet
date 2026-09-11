@@ -2758,6 +2758,17 @@ function toV2Aliased(f) {
   return out;
 }
 
+export function postReviewWrapper(id, reviewBody) {
+  return {
+    owner: id.owner,
+    repo: id.repo,
+    pr_number: id.pr_number,
+    sha: id.sha_full,
+    platform: id.platform,
+    review_body: typeof reviewBody === 'string' ? reviewBody : '',
+  };
+}
+
 // The by-value payload the writer agent persists. findings/postReview are aliased to the
 // union schema so the persisted JSON is consumable by BOTH boundary scripts unchanged.
 // `postReview` is the deterministic delivery set (selectDelivery output): every
@@ -2777,13 +2788,11 @@ export function writerPayload(inp) {
     // artifact IS the post_review.py input wrapper — Phase 8 posts it without hand-
     // assembling { owner, repo, pr_number, ... } around a bare array (the wrap was
     // documented but got reverse-engineered anyway, ~8 turns in the PR-310 run).
-    // review_body is intentionally '' — Phase 8 composes the summary narrative and may
-    // fill it before posting; post_review.py treats '' as a valid empty summary. sha is
-    // provenance (post_review.py resolves its own HEAD); platform stays absent so
-    // post_review.py auto-detects. The findings SET is byte-identical either way —
-    // the wrapper only changes the envelope, never the scored content (D16).
+    // review_body is intentionally '' in this pipeline. sha pins the reviewed commit,
+    // and platform carries the already-resolved target instead of guessing from a remote.
+    // The findings SET is byte-identical either way; only the envelope changes.
     postReview: id
-      ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: '', findings: postReviewSet }
+      ? { ...postReviewWrapper(id), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -3015,12 +3024,9 @@ export function persistPlan(inp, paths) {
       path: paths.postReview,
       source: paths.findings,
       ids: (inp.postReview || []).map((f) => f && f.id),
-      // Same envelope decision writerPayload makes (live-run L3, D16): with a PR
-      // identity the artifact IS the post_review.py input wrapper; without one it is a
-      // bare array. Key order is the wire contract — findings are appended last.
-      wrapper: id
-        ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: '' }
-        : null,
+      // Same envelope decision and helper as writerPayload: with a PR identity the
+      // artifact is the post_review.py input wrapper; otherwise it is a bare array.
+      wrapper: id ? postReviewWrapper(id) : null,
     },
     checkpoint: {
       path: paths.checkpoints,

@@ -46,6 +46,7 @@ from bench.runner import invoke  # noqa: E402
 from scripts import generate_contract_requirements, resolve_config  # noqa: E402
 
 RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
+IDENTITY_SCRIPT = REPO / "scripts" / "resolve_pr_identity.py"
 
 # The canonical fields the brief pins as the pipeline schema surface (Task 13 Step 4).
 CANONICAL_FIELDS = [
@@ -81,9 +82,8 @@ ISSUE_47_FIELDS = [
 ]
 
 
-def load_pipeline_findings():
-    """Run the wired pipeline (via the node recorder) and return its REAL persisted
-    high-confidence findings — v2-aliased at the writeArtifacts boundary."""
+def load_pipeline_payload():
+    """Run the wired pipeline and return its real persisted payload."""
     tmp = tempfile.mkdtemp()
     try:
         out = os.path.join(tmp, "persisted.json")
@@ -97,13 +97,14 @@ def load_pipeline_findings():
         if proc.returncode != 0:
             raise RuntimeError(f"recorder failed: {proc.stderr}")
         with open(out) as fh:
-            return json.load(fh)["findings"]
+            return json.load(fh)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
 # Recorded once for the module — the pipeline persist output is deterministic.
-PERSISTED_FINDINGS = load_pipeline_findings()
+PERSISTED_PAYLOAD = load_pipeline_payload()
+PERSISTED_FINDINGS = PERSISTED_PAYLOAD["findings"]
 
 
 def build_gh_diff(findings):
@@ -168,6 +169,21 @@ class TestSchemaCarriesBoundaryFields(unittest.TestCase):
                 f,
                 f"persisted schema must carry v2 alias '{field}' for post_review.py",
             )
+
+    def test_real_emitted_wrapper_carries_platform_in_wire_order(self):
+        # Mutation: drop platform from postReviewWrapper; the recorder's actual wrapper turns red.
+        self.assertEqual(
+            list(PERSISTED_PAYLOAD["postReview"]),
+            [
+                "owner",
+                "repo",
+                "pr_number",
+                "sha",
+                "platform",
+                "review_body",
+                "findings",
+            ],
+        )
 
     def test_aliases_mirror_canonical_values(self):
         f = PERSISTED_FINDINGS[0]
@@ -1165,6 +1181,61 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
             for case in cases
         ]
         self.assertEqual(js_verdicts, python_verdicts)
+
+
+class TestPrIdentityProducerParity(unittest.TestCase):
+    def test_github_and_nested_gitlab_outputs_cross_the_args_waist(self):
+        # Mutation: omit platform or web_origin from the producer object; its output no
+        # longer crosses the registry-owned args waist.
+        cases = [
+            (
+                "github",
+                "https://github.com/openai/codex/pull/278",
+            ),
+            (
+                "gitlab",
+                "http://gitlab.example:8080/group/sub/repo/-/merge_requests/281",
+            ),
+        ]
+        for platform, url in cases:
+            with self.subTest(platform=platform):
+                produced = subprocess.run(
+                    [
+                        sys.executable,
+                        str(IDENTITY_SCRIPT),
+                        "--platform",
+                        platform,
+                        "--url",
+                        url,
+                        "--sha",
+                        "0123456789abcdef0123456789abcdef01234567",
+                    ],
+                    cwd=REPO,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(produced.returncode, 0, produced.stderr)
+                identity = json.loads(produced.stdout)
+                node = (
+                    "import { validateArgs } from './workflows/src/args.js';"
+                    "import { validArgs } from './workflows/test/helpers/pipelineMock.js';"
+                    "const identity = "
+                    + json.dumps(identity)
+                    + "; const args = validArgs({delivery:{tier:'all',prIdentity:identity}});"
+                    "process.stdout.write(JSON.stringify(validateArgs(args)));"
+                )
+                accepted = subprocess.run(
+                    ["node", "--input-type=module", "-e", node],
+                    cwd=REPO,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(accepted.returncode, 0, accepted.stderr)
+                self.assertEqual(
+                    json.loads(accepted.stdout), {"ok": True, "errors": []}
+                )
 
 
 if __name__ == "__main__":

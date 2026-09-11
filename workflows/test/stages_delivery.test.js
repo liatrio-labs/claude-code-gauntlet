@@ -12,7 +12,7 @@
 //    challenge-skipped findings stay excluded exactly as before.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectDelivery, writerPayload, runWith, normalizeForChecksum, fnv1a32 } from '../src/stages.js';
+import { selectDelivery, writerPayload, postReviewWrapper, runWith, normalizeForChecksum, fnv1a32 } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 
@@ -155,16 +155,27 @@ test('writerPayload postReview defaults to an empty array', () => {
 
 test('writerPayload with prIdentity emits the post_review-ready wrapper; without, the bare array', () => {
   const pr = [{ id: 'D1', line_start: 7, line_end: 9, description: 'body text', report_tag: 'main' }];
-  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'deadbeefcafe' };
+  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
   const wrapped = writerPayload({ findings: [], postReview: pr, prIdentity: id });
-  assert.deepEqual(Object.keys(wrapped.postReview), ['owner', 'repo', 'pr_number', 'sha', 'review_body', 'findings']);
+  // Mutation: drop platform from postReviewWrapper; this real wrapper key pin turns red.
+  assert.deepEqual(Object.keys(wrapped.postReview), ['owner', 'repo', 'pr_number', 'sha', 'platform', 'review_body', 'findings']);
   assert.equal(wrapped.postReview.owner, 'o');
   assert.equal(wrapped.postReview.repo, 'r');
   assert.equal(wrapped.postReview.pr_number, 310);
-  assert.equal(wrapped.postReview.sha, 'deadbeefcafe');
+  assert.equal(wrapped.postReview.sha, 'dddddddddddddddddddddddddddddddddddddddd');
+  assert.equal(wrapped.postReview.platform, 'github');
   assert.equal(wrapped.postReview.review_body, '');
   const bare = writerPayload({ findings: [], postReview: pr });
   assert.ok(Array.isArray(bare.postReview));
+});
+
+test('postReviewWrapper owns key order and normalizes only a non-string review body', () => {
+  // Mutation: inline either caller's wrapper or pass reviewBody through without checking; this turns red.
+  const id = { owner: 'o', repo: 'r', pr_number: 7, sha_full: '0123456789abcdef0123456789abcdef01234567', platform: 'gitlab' };
+  assert.deepEqual(postReviewWrapper(id, 'body'), {
+    owner: 'o', repo: 'r', pr_number: 7, sha: '0123456789abcdef0123456789abcdef01234567', platform: 'gitlab', review_body: 'body',
+  });
+  assert.equal(postReviewWrapper(id, null).review_body, '');
 });
 
 test('writerPayload wrapper is scoring-inert: findings byte-identical to the bare form (D16)', () => {
@@ -172,7 +183,7 @@ test('writerPayload wrapper is scoring-inert: findings byte-identical to the bar
     { id: 'D1', line_start: 7, line_end: 9, description: 'body', confidence: 88, report_tag: 'main' },
     { id: 'D2', line_start: 3, description: 'other', confidence: 71, report_tag: 'suggestion' },
   ];
-  const id = { owner: 'o', repo: 'r', pr_number: 5, sha_full: 'abc' };
+  const id = { owner: 'o', repo: 'r', pr_number: 5, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', platform: 'github', web_origin: 'https://github.com' };
   const wrapped = writerPayload({ findings: [], postReview: pr, prIdentity: id });
   const bare = writerPayload({ findings: [], postReview: pr });
   // The wrapper only changes the envelope — the findings SET is byte-identical.
