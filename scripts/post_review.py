@@ -80,8 +80,8 @@ Line validation:
     cannot be anchored inline (line not in the diff, or no line at all) is not
     dropped: it degrades into a trailing "could not be anchored inline" section on
     the review body / summary note (see build_skipped_section), so every finding
-    still reaches the PR/MR even when it cannot land as an inline comment. A
-    warning is still emitted per skipped finding.
+    still reaches the PR/MR unless the complete composed body exceeds its platform
+    byte budget. A warning is still emitted per skipped finding.
 
 No external Python dependencies — stdlib only.
 """
@@ -94,6 +94,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from typing import NamedTuple
 
 # The prior-review signal (prose footer + marker) is owned end-to-end by
 # review_marker.py — this script is only its writer. The explicit path insert
@@ -1532,6 +1533,26 @@ CODE_OWNED_HEADINGS = [
 # skipped-findings entries inside it are rendered unbranded.
 BRAND_TRAILER = f"{BRAND_MARK} *{BRAND_NAME}*"
 BRAND_SUMMARY_HEADER = f"### {BRAND_MARK} {BRAND_NAME}"
+PLATFORM_BODY_LIMITS = {
+    "github": {"label": "GitHub", "surface": "review body", "bytes": 65536},
+    "gitlab": {"label": "GitLab", "surface": "summary note", "bytes": 1000000},
+}
+
+
+class ComposedBody(NamedTuple):
+    body: str
+    shown: int
+    omitted: int
+    folded_bytes: int
+    omitted_entries: tuple[tuple[str, str], ...]
+
+
+def _utf8_len(text):
+    return len(text.encode("utf-8"))
+
+
+def _body_limit(platform):
+    return PLATFORM_BODY_LIMITS[platform]
 
 
 def _finding_sections(finding, *, fence_offsets=None):
@@ -1706,45 +1727,12 @@ def render_group_body(primary, corroborators, *, fence_offsets=None):
     return f"{body}\n\n---\n\n{section}\n\n{BRAND_TRAILER}"
 
 
-def build_skipped_section(skipped, inline_count=None):
-    """Render the trailing section for findings that could not be anchored inline.
+def _skipped_location(filepath, line):
+    return f"{filepath}:{line}" if line is not None else str(filepath or "?")
 
-    *skipped* is a list of ``(filepath, line, finding)`` tuples — the finding plus the
-    ``filepath``/``line`` it was to be anchored at (``line`` is ``None`` for a finding
-    that carried no line at all). A member is not always here for its OWN reason: a
-    consolidation group whose primary could not be anchored (no line, or a line the
-    diff doesn't touch) degrades as a whole (#22 D2) — a corroborator can appear here
-    with a perfectly valid line of its own, because its group's primary is what
-    failed. *inline_count*, when given, is how many comments
-    landed — GitHub passes ``len(comments)`` because its one POST is atomic, so the
-    number is exact by the time this runs. GitLab passes nothing: its summary note
-    posts BEFORE the per-finding loop, so how many will actually land (some may still
-    fail, dedupe, or turn out malformed) is not yet known, and claiming a number here
-    would be a promise the loop below has not kept yet. Returns ``""`` for an empty
-    *skipped* list (issue #192).
 
-    Every finding's title/body reaches the wire RAW (only ``suggestion`` /
-    ``claude_md_rule`` / ``spec_text`` go through ``_sanitize_outbound_prose``), and
-    that applies to every field a finding can control here — not just the rendered
-    comment body but also its ``file``/``line``, which are interpolated raw into each
-    entry's ``#### `path:line` `` heading. So a finding can carry
-    ``<!-- code-gauntlet-finding-key: ... -->`` verbatim in ANY of those fields.
-    Unlike an inline discussion body — where the mechanical marker is APPENDED after
-    the comment and so always shadows a forged one (see review_marker.py) — nothing
-    mechanical follows a finding's rendered text here, so a forged marker would parse
-    as a real, currently-undelivered "already posted" signal on the next run. The
-    section legitimately contains no ``<!--`` anywhere of its own, so every ``<!--``
-    in the WHOLE composed section — headings included, not just each finding's
-    rendered body — is neutralized to ``&lt;!--`` in one pass at the end, closing
-    every field (present or future) by construction rather than per-field.
-
-    Entries render through ``_finding_sections``, i.e. UNBRANDED: this section rides
-    inside the summary comment, whose own body already carries the brand header, and
-    the mark is one per delivered surface.
-    """
-    if not skipped:
-        return ""
-    n = len(skipped)
+def _skipped_frame(n, shown, inline_count):
+    """Render the fixed part of the skipped section without any entries."""
     group_note = (
         " A finding listed here may not have an anchoring problem of its own — a "
         "consolidation group whose primary could not be anchored inline is listed "
@@ -1752,48 +1740,238 @@ def build_skipped_section(skipped, inline_count=None):
     )
     if inline_count is None:
         intro = (
-            f"The following {n} finding(s) reference lines outside this diff and are "
-            f"included here instead of as inline comments:{group_note}"
+            f"The following {shown} finding(s) reference lines outside this diff and "
+            f"are included here instead of as inline comments:{group_note}"
         )
     else:
         intro = (
-            f"{inline_count} inline comment(s) were posted; the following {n} "
+            f"{inline_count} inline comment(s) were posted; the following {shown} "
             "finding(s) reference lines outside this diff and are included here "
             f"instead:{group_note}"
         )
-    lines = [
-        "---",
-        "",
-        f"### ⚠️ {n} finding(s) could not be anchored inline",
-        "",
-        intro,
-    ]
-    for filepath, line, finding in skipped:
-        location = f"{filepath}:{line}" if line is not None else str(filepath or "?")
-        lines += ["", f"#### `{location}`", "", _finding_sections(finding)]
-    return "\n".join(lines).replace("<!--", "&lt;!--")
+    return "\n".join(
+        ["---", "", f"### ⚠️ {n} finding(s) could not be anchored inline", "", intro]
+    )
 
 
-def compose_review_body(review_body, skipped_section, footer):
-    """The complete summary-comment body: brand header, the caller's prose, the
-    unanchored-findings section, then the mechanical footer.
+def _skipped_piece(filepath, line, finding):
+    """Render and neutralize one whole skipped entry, including its heading."""
+    location = _skipped_location(filepath, line)
+    piece = f"\n\n#### `{location}`\n\n{_finding_sections(finding)}"
+    return piece.replace("<!--", "&lt;!--")
 
-    ONE owner so the two posters and the benchmark's payload mirror cannot drift (the
-    same extraction precedent as ``_gated_finding`` / ``_github_apply_range``). The
-    *footer* is computed by the CALLER against the ORIGINAL *review_body* — the forgery
-    defence documented at ``post_github``'s partition comment — and passed in here
-    already built.
 
-    Deliberately NOT idempotent-by-regex: a hand-typed heading in *review_body* from a
-    stale orchestrator yields two headings once and self-heals on the next run, whereas
-    a phrase-sniffing stripper would make the identity depend on counting prose.
+def _closing_line(m, n, platform):
+    limits = _body_limit(platform)
+    return (
+        f"_{m} of these {n} finding(s) are not shown: this {limits['surface']} "
+        f"reached the {limits['bytes']}-byte {limits['label']} body limit._"
+    )
+
+
+def build_skipped_section(skipped, inline_count=None):
+    """Render the trailing section for findings that could not be anchored inline.
+
+    *skipped* is a list of ``(filepath, line, finding)`` tuples. A member is not always
+    here for its own reason: a consolidation group whose primary could not be anchored
+    degrades as a whole, so corroborators are listed here too. *inline_count*, when
+    given, is how many comments landed. Entries are unbranded and use the shared frame
+    and piece renderers. Each piece neutralizes its own ``<!--`` markers before
+    fitting. Returns ``""`` for an empty *skipped* list (issue #192).
     """
+    if not skipped:
+        return ""
+    n = len(skipped)
+    return _skipped_frame(n, n, inline_count) + "".join(
+        _skipped_piece(filepath, line, finding) for filepath, line, finding in skipped
+    )
+
+
+def _codepoint_prefix(text, allowance):
+    """Return the longest prefix whose UTF-8 encoding fits *allowance*."""
+    if allowance <= 0:
+        return ""
+    pieces = []
+    used = 0
+    for character in text:
+        size = _utf8_len(character)
+        if used + size > allowance:
+            break
+        pieces.append(character)
+        used += size
+    return "".join(pieces)
+
+
+def _fold_review_body(text, allowance, platform):
+    """Fold *text* into *allowance* bytes while preserving lines and code points."""
+    limits = _body_limit(platform)
+    total = _utf8_len(text)
+    reserved_fold_line = (
+        f"_[folded: {total} more bytes; this {limits['surface']} reached the "
+        f"{limits['bytes']}-byte {limits['label']} body limit]_"
+    )
+    reserve = _utf8_len(f"\n\n{reserved_fold_line}") + 4
+    if allowance < reserve:
+        prefix = ""
+    else:
+        prefix_allowance = allowance - reserve
+        prefix = ""
+        for index, line in enumerate(text.split("\n")):
+            next_part = line if index == 0 else f"\n{line}"
+            remaining = prefix_allowance - _utf8_len(prefix)
+            if _utf8_len(next_part) <= remaining:
+                prefix += next_part
+                continue
+            if _utf8_len(line) > prefix_allowance:
+                prefix += _codepoint_prefix(next_part, remaining)
+            break
+
+    position = 0
+    while True:
+        opener = prefix.find("<!--", position)
+        if opener < 0:
+            break
+        closer = prefix.find("-->", opener + 4)
+        if closer < 0:
+            prefix = prefix[:opener]
+            break
+        position = closer + 3
+
+    dropped_bytes = total - _utf8_len(prefix)
+    if prefix.count("```") % 2:
+        prefix += "" if prefix.endswith("\n") else "\n"
+        prefix += "```"
+    fold_line = (
+        f"_[folded: {dropped_bytes} more bytes; this {limits['surface']} reached the "
+        f"{limits['bytes']}-byte {limits['label']} body limit]_"
+    )
+    return f"{prefix}\n\n{fold_line}", dropped_bytes
+
+
+def _bounded_section(n, shown_entries, inline_count, platform):
+    section = _skipped_frame(n, len(shown_entries), inline_count)
+    section += "".join(
+        _skipped_piece(filepath, line, finding)
+        for filepath, line, finding in shown_entries
+    )
+    omitted = n - len(shown_entries)
+    if omitted:
+        section += f"\n\n{_closing_line(omitted, n, platform)}"
+    return section
+
+
+def _compose_fragments(review_body, section, footer):
     fragments = [BRAND_SUMMARY_HEADER]
     if review_body:
         fragments.append(review_body)
-    if skipped_section:
-        fragments.append(skipped_section)
-    return "\n\n".join(fragments) + (footer or "")
+    if section:
+        fragments.append(section)
+    return "\n\n".join(fragments) + footer
+
+
+def compose_review_body(
+    review_body, skipped_groups, *, platform, findings_count, sha, inline_count=None
+):
+    """Compose and budget the complete summary comment for one platform.
+
+    The fast path preserves today's bytes. The bounded path reserves the header, the
+    skipped-section frame and closing line, and builds the canonical footer before
+    folding the supplied prose or fitting whole skipped groups in list order. No output
+    is printed.
+    """
+    limits = _body_limit(platform)
+    skipped = [entry for group in skipped_groups for entry in group]
+    n = len(skipped)
+    section = build_skipped_section(skipped, inline_count)
+    footer = build_footer(findings_count, sha, body=review_body)
+    body = _compose_fragments(review_body, section, footer)
+    if _utf8_len(body) <= limits["bytes"]:
+        return ComposedBody(body, n, 0, 0, ())
+
+    footer = build_footer(findings_count, sha, body="")
+    frame = _skipped_frame(n, n, inline_count) if n else ""
+    fixed = _utf8_len(BRAND_SUMMARY_HEADER) + _utf8_len(footer)
+    if review_body:
+        fixed += _utf8_len("\n\n")
+    if n:
+        fixed += _utf8_len("\n\n") + _utf8_len(frame)
+        fixed += _utf8_len("\n\n") + _utf8_len(_closing_line(n, n, platform))
+    allowance = limits["bytes"] - fixed
+
+    if review_body and _utf8_len(review_body) > allowance:
+        effective_body, folded_bytes = _fold_review_body(
+            review_body, allowance, platform
+        )
+        section = _bounded_section(n, [], inline_count, platform) if n else ""
+        body = _compose_fragments(effective_body, section, footer)
+        return ComposedBody(
+            body,
+            0,
+            n,
+            folded_bytes,
+            tuple(
+                (_skipped_location(filepath, line), finding.get("title", "Finding"))
+                for filepath, line, finding in skipped
+            ),
+        )
+
+    remaining = allowance - (_utf8_len(review_body) if review_body else 0)
+    shown_entries = []
+    omitted_entries = []
+    for group in skipped_groups:
+        pieces = [_skipped_piece(*entry) for entry in group]
+        group_size = sum(_utf8_len(piece) for piece in pieces)
+        if group_size <= remaining:
+            shown_entries.extend(group)
+            remaining -= group_size
+        else:
+            omitted_entries.extend(group)
+    section = _bounded_section(n, shown_entries, inline_count, platform) if n else ""
+    body = _compose_fragments(review_body, section, footer)
+    return ComposedBody(
+        body,
+        len(shown_entries),
+        len(omitted_entries),
+        0,
+        tuple(
+            (_skipped_location(filepath, line), finding.get("title", "Finding"))
+            for filepath, line, finding in omitted_entries
+        ),
+    )
+
+
+def _refuse_over_limit(body, platform):
+    """Refuse a summary body that still exceeds its platform limit."""
+    limits = _body_limit(platform)
+    actual = _utf8_len(body)
+    if actual > limits["bytes"]:
+        die(
+            f"The composed {limits['surface']} is {actual} bytes, over the "
+            f"{limits['bytes']}-byte {limits['label']} body limit; nothing was posted."
+        )
+
+
+def _report_summary_budget(composed, platform):
+    """Report omitted entries and prose folding without changing dry-run capture."""
+    limits = _body_limit(platform)
+    if composed.omitted:
+        print(
+            f"  {composed.omitted} skipped finding(s) not shown: the "
+            f"{limits['surface']} reached the {limits['bytes']}-byte "
+            f"{limits['label']} body limit."
+        )
+        for location, title in composed.omitted_entries:
+            warn(
+                f"Skipped finding '{title}' at {location} not shown: the "
+                f"{limits['surface']} reached the {limits['bytes']}-byte "
+                f"{limits['label']} body limit."
+            )
+    if composed.folded_bytes:
+        print(
+            f"  review_body folded by {composed.folded_bytes} bytes: the "
+            f"{limits['surface']} reached the {limits['bytes']}-byte "
+            f"{limits['label']} body limit."
+        )
 
 
 def summary_body_from_report(report):
@@ -1909,7 +2087,7 @@ def post_github(data, valid_lines, line_texts):
     losers = _overlap_losers(overlap_records)
 
     comments = []
-    skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
+    skipped_groups = []  # one list of (filepath, line, finding) per degraded group
     # One posted comment per consolidation group (#22 D2): findings without a stamp
     # are each their own single-member group, so this loop is unchanged for them.
     for index, group in enumerate(groups):
@@ -1920,16 +2098,18 @@ def post_github(data, valid_lines, line_texts):
             warn_skip(
                 f"Finding '{primary.get('title', '?')}' has no line number — skipping."
             )
-            skipped_entries.append(
-                _degraded_entry(
-                    primary.get("file", "?"), None, primary, valid_lines, line_texts
-                )
+            skipped_groups.append(
+                [
+                    _degraded_entry(
+                        primary.get("file", "?"), None, primary, valid_lines, line_texts
+                    )
+                ]
             )
             # The primary can't anchor, so the whole group degrades into the
             # skipped section as individual entries — the corroborators never
             # merged into a comment that itself never gets posted.
             for c in corroborators:
-                skipped_entries.append(
+                skipped_groups[-1].append(
                     _degraded_entry(
                         c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
                     )
@@ -1950,11 +2130,11 @@ def post_github(data, valid_lines, line_texts):
                 f"Skipping finding '{primary.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
-            skipped_entries.append(
-                _degraded_entry(filepath, line, primary, valid_lines, line_texts)
+            skipped_groups.append(
+                [_degraded_entry(filepath, line, primary, valid_lines, line_texts)]
             )
             for c in corroborators:
-                skipped_entries.append(
+                skipped_groups[-1].append(
                     _degraded_entry(
                         c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
                     )
@@ -2001,21 +2181,22 @@ def post_github(data, valid_lines, line_texts):
 
         comments.append(comment)
 
-    # The partition (comments vs skipped) is complete above — compose the section
-    # BEFORE the footer, which must stay last (it is the machine-parsed marker). The
-    # footer is computed against the ORIGINAL body, not the body plus the section: a
-    # skipped finding's raw title/body can plant text that looks like the mechanical
-    # prose footer or the summary marker (only suggestion/claude_md_rule/spec_text are
-    # sanitized), and build_footer's own-signal dedup would read that forgery as
-    # already-present and omit the real one.
-    skipped_section = build_skipped_section(skipped_entries, len(comments))
+    # The partition (comments vs skipped groups) is complete above. The composer owns
+    # the section, footer, and byte budget; its footer sees the ORIGINAL body so raw
+    # skipped text cannot suppress the real signal.
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    footer = build_footer(len(findings), sha, body=review_body)
-    review_body = compose_review_body(review_body, skipped_section, footer)
+    composed = compose_review_body(
+        review_body,
+        skipped_groups,
+        platform="github",
+        findings_count=len(findings),
+        sha=sha,
+        inline_count=len(comments),
+    )
 
     payload = {
-        "body": review_body,
+        "body": composed.body,
         "event": "COMMENT",
         "comments": comments,
     }
@@ -2030,6 +2211,7 @@ def post_github(data, valid_lines, line_texts):
         f"repos/{owner}/{repo}/pulls/{pr_number}/reviews",
     ]
 
+    _refuse_over_limit(composed.body, "github")
     resp = post_json(cmd_prefix, payload)
     if DRY_RUN:
         print("Review captured (dry-run).")
@@ -2038,11 +2220,20 @@ def post_github(data, valid_lines, line_texts):
         url = resp.get("html_url", resp.get("id", "posted"))
         print(f"Review posted: {url}")
         print(f"  {len(comments)} inline comment(s) posted.")
-    if skipped_entries:
-        print(
-            f"  {len(skipped_entries)} finding(s) skipped inline (lines not in diff) — "
-            "appended to review body."
-        )
+    flat_skipped = [entry for group in skipped_groups for entry in group]
+    if flat_skipped:
+        if composed.omitted:
+            skipped_line = (
+                f"  {composed.shown} of {len(flat_skipped)} finding(s) skipped inline "
+                "(lines not in diff) — appended to review body."
+            )
+        else:
+            skipped_line = (
+                f"  {len(flat_skipped)} finding(s) skipped inline (lines not in diff) — "
+                "appended to review body."
+            )
+        print(skipped_line)
+    _report_summary_budget(composed, "github")
     _print_fix_summary()
     return 0
 
@@ -2178,13 +2369,13 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     # exactly the decision the inline loop below would make; it is just made early for
     # the findings that will never reach that loop. `remaining` carries each finding's
     # resolved filepath through to the loop so it is not re-derived.
-    skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
+    skipped_groups = []  # one list of (filepath, line, finding) per degraded group
     remaining = []  # (filepath, group) — groups that reach the inline loop
-    skipped = 0
+    groups = consolidate_delivery(findings)
     # One posted discussion per consolidation group (#22 D2): findings without a
     # stamp are each their own single-member group, so this loop is unchanged
     # for them.
-    for group in consolidate_delivery(findings):
+    for group in groups:
         primary = group["primary"]
         corroborators = group["corroborators"]
         line = primary.get("line")
@@ -2192,21 +2383,21 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             warn_skip(
                 f"Finding '{primary.get('title', '?')}' has no line number — skipping."
             )
-            skipped_entries.append(
-                _degraded_entry(
-                    primary.get("file", "?"), None, primary, valid_lines, line_texts
-                )
+            skipped_groups.append(
+                [
+                    _degraded_entry(
+                        primary.get("file", "?"), None, primary, valid_lines, line_texts
+                    )
+                ]
             )
-            skipped += 1
             # The primary can't anchor, so the whole group degrades into the
             # skipped section as individual entries.
             for c in corroborators:
-                skipped_entries.append(
+                skipped_groups[-1].append(
                     _degraded_entry(
                         c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
                     )
                 )
-                skipped += 1
             continue
 
         # Same spelling resolution the loop below applies — see its comment.
@@ -2220,17 +2411,15 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
                 f"Skipping finding '{primary.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
-            skipped_entries.append(
-                _degraded_entry(filepath, line, primary, valid_lines, line_texts)
+            skipped_groups.append(
+                [_degraded_entry(filepath, line, primary, valid_lines, line_texts)]
             )
-            skipped += 1
             for c in corroborators:
-                skipped_entries.append(
+                skipped_groups[-1].append(
                     _degraded_entry(
                         c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
                     )
                 )
-                skipped += 1
             continue
 
         remaining.append((filepath, group))
@@ -2255,14 +2444,19 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
 
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    # Footer computed against the ORIGINAL body — see the matching comment in
-    # post_github for why a skipped finding's raw text must not be able to suppress it.
-    footer = build_footer(len(findings), sha, body=review_body)
-    skipped_section = build_skipped_section(skipped_entries)
-    review_body = compose_review_body(review_body, skipped_section, footer)
+    # The pre-partition above is complete before the summary note. The composer owns
+    # the skipped section, footer, and byte budget; its footer sees the original body
+    # so raw skipped text cannot suppress the real signal.
+    composed = compose_review_body(
+        review_body,
+        skipped_groups,
+        platform="gitlab",
+        findings_count=len(findings),
+        sha=sha,
+    )
 
     # Post the review summary as a top-level MR note first
-    summary_payload = {"body": review_body}
+    summary_payload = {"body": composed.body}
     cmd_prefix = [
         "glab",
         "api",
@@ -2283,7 +2477,9 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     if summary_posted:
         print(f"MR summary note for {sha} already on the MR — skipping.")
     else:
+        _refuse_over_limit(composed.body, "gitlab")
         post_json(cmd_prefix, summary_payload)
+        _report_summary_budget(composed, "gitlab")
         print(
             "MR summary note captured (dry-run)."
             if DRY_RUN
@@ -2292,11 +2488,9 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
 
     # Post each finding as an inline discussion. Every finding lands in exactly one of
     # the five counters below, so the outcome reported at the end is a partition of
-    # `findings` — a run cannot both under-report and claim success. `skipped` was
-    # already counted in the pre-partition above (its decisions are identical to what
-    # this loop would make, made early so the skipped section can precede the note);
-    # `remaining` carries only what that pre-partition let through, filepath already
-    # resolved.
+    # `findings` — a run cannot both under-report and claim success. The flattened
+    # skipped groups above are reported after the summary-note decision; `remaining`
+    # carries only what that pre-partition let through, filepath already resolved.
     def member_key(m, filepath, line):
         """Return the delivery key for ONE finding, independent of what posts it.
 
@@ -2643,8 +2837,9 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         print(f"  {posted} inline discussion(s) captured.")
     else:
         print(f"  {posted} inline discussion(s) posted.")
-    if skipped:
-        print(f"  {skipped} finding(s) skipped.")
+    flat_skipped = [entry for group in skipped_groups for entry in group]
+    if flat_skipped:
+        print(f"  {len(flat_skipped)} finding(s) skipped.")
     if already_present:
         print(
             f"  {already_present} inline discussion(s) already on the MR from an "

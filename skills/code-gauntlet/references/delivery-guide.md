@@ -134,9 +134,11 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
 **Fields:**
 
 - `review_body` — exactly the pipeline-rendered Summary section body: summary prose folded at
-  `REPORT_FOLD_LIMITS.summaryChars`, followed by the short code-owned counts sentence. The script
-  assembles the complete posted comment in header, body, skipped-finding section, footer order;
-  the skipped-finding section is uncapped.
+  `REPORT_FOLD_LIMITS.summaryChars`, followed by the short code-owned counts sentence. `post_review.py`
+  bounds the complete posted comment with a per-platform UTF-8 byte budget. The header and footer
+  are reserved first; the summary folds only when it cannot fit beside the skipped-section frame
+  and footer. Skipped groups appear whole or not at all in list order, followed by one closing count
+  line; the footer stays last.
 - `findings` — array of inline comments
   - `file` — relative path in repository
   - `line` — line number in diff (new version)

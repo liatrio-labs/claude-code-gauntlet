@@ -123,10 +123,12 @@ follows `configResult.resolved.post_mode`.)
 
 When `delivery.prIdentity` is set in the args waist, the persisted `artifactPaths.postReview` file
 already is the post_review-ready wrapper (`{ owner, repo, pr_number, sha, platform, review_body, findings }`).
-Pass that file to `post_review.py` unchanged. Its `review_body` is exactly the report's rendered Summary
-section body, posted as is. `post_review.py` assembles the complete comment in header, body,
-skipped-finding section, footer order; the skipped-finding section is uncapped. Keep its `sha` field
-because it pins the marker to the commit the review ran against.
+Pass that file to `post_review.py` unchanged. Its `review_body` supplies the report's rendered Summary
+section prose. `post_review.py` bounds the complete posted comment with a per-platform UTF-8 byte
+budget: the header and footer are reserved first; the summary folds only when it cannot fit beside
+the skipped-section frame and footer; skipped groups appear whole or not at all in list order,
+followed by one closing count line; the footer stays last. Keep its `sha` field because it pins the
+marker to the commit the review ran against.
 
 When the artifact is the legacy bare findings array, invoke `post_review.py` with `--report` and the
 identity flags. The script derives the Summary body from the report and forms the wrapper in code:

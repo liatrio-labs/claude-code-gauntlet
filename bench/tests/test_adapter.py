@@ -4,9 +4,9 @@ No network, no keys. The reference payload builders here drive the *real*
 ``scripts/post_review.py`` capture path (``post_json`` in DRY_RUN mode ->
 ``build_dry_run_payload``), so the committed fixtures under
 ``fixtures/adapter/`` are byte-identical to what ``post_review.py --dry-run``
-emits for the call shapes each one covers. The builders compose the skipped
-section through the real functions (``_degraded_entry``,
-``build_skipped_section``) exactly as ``post_github``/``post_gitlab`` do — the
+emits for the call shapes each one covers. The builders compose the complete
+summary through ``compose_review_body`` and pass singleton skipped groups,
+matching ``post_github``/``post_gitlab`` — the
 one remaining exception is the legacy ``github_4_comments_2_skipped``
 fixture, whose ``skip_warnings`` are pre-formed strings with no backing
 finding to derive from, so they are still injected straight into the
@@ -335,11 +335,11 @@ def build_reference_github_payload(
     post_review.DRY_RUN = True
     losers = _github_overlap_losers(findings, valid_lines, line_texts)
     comments = []
-    skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
+    skipped_groups = []  # singleton groups; this mirror models no consolidation
     for index, f in enumerate(findings):
         entry = _skip_entry(f, valid_lines, line_texts)
         if entry is not None:
-            skipped_entries.append(entry)
+            skipped_groups.append([entry])
             continue
         comments.append(
             _github_comment(
@@ -352,9 +352,14 @@ def build_reference_github_payload(
             )
         )
     total = len(findings) + len(skip_warnings)
-    skipped_section = post_review.build_skipped_section(skipped_entries, len(comments))
-    footer = post_review.build_footer(total, _GH_SHA, body=review_body)
-    body = post_review.compose_review_body(review_body, skipped_section, footer)
+    body = post_review.compose_review_body(
+        review_body,
+        skipped_groups,
+        platform="github",
+        findings_count=total,
+        sha=_GH_SHA,
+        inline_count=len(comments),
+    ).body
     payload = {"body": body, "event": "COMMENT", "comments": comments}
     cmd_prefix = [
         "gh",
@@ -472,19 +477,23 @@ def build_reference_gitlab_payload(
     """
     _reset_post_review()
     post_review.DRY_RUN = True
-    skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
+    skipped_groups = []  # singleton groups; this mirror models no consolidation
     remaining = []  # findings that reach the inline discussion loop
     for f in findings:
         entry = _skip_entry(f, valid_lines, line_texts)
         if entry is not None:
-            skipped_entries.append(entry)
+            skipped_groups.append([entry])
             continue
         remaining.append(f)
 
     total = len(findings)
-    skipped_section = post_review.build_skipped_section(skipped_entries)
-    footer = post_review.build_footer(total, _GH_SHA, body=review_body)
-    body = post_review.compose_review_body(review_body, skipped_section, footer)
+    body = post_review.compose_review_body(
+        review_body,
+        skipped_groups,
+        platform="gitlab",
+        findings_count=total,
+        sha=_GH_SHA,
+    ).body
     notes_cmd = [
         "glab",
         "api",
@@ -1160,6 +1169,45 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         self.assertIn("&lt;!--", body)
         self.assertEqual(body.count("<!--"), 1)
 
+    def test_github_summary_budget_omission_matches_mirror(self):
+        # The budget oracle is TestSummaryBodyBudget; this is only a poster/mirror
+        # wiring check for a skipped group omitted after summary folding.
+        finding = {
+            "file": "src/edited.py",
+            "line": 99,
+            "severity": "high",
+            "title": "Oversized skipped finding",
+            "body": "The line is outside the diff.",
+        }
+        review_body = "X" * 70000
+        findings_data = {
+            "platform": "github",
+            "owner": "acme",
+            "repo": "widgets",
+            "pr_number": 324,
+            "review_body": review_body,
+            "sha": _GH_SHA,
+            "findings": [finding],
+        }
+        real = self._run_main(findings_data, GH_DIFF_PREFIXED_PATH)
+        valid_lines, _, _, line_texts = post_review.parse_diff_text(
+            "github", GH_DIFF_PREFIXED_PATH
+        )
+        mirror = build_reference_github_payload(
+            [finding],
+            [],
+            owner="acme",
+            repo="widgets",
+            pr_number=324,
+            review_body=review_body,
+            valid_lines=valid_lines,
+            line_texts=line_texts,
+        )
+        self.assertEqual(real, mirror)
+        self.assertIn(
+            "_1 of these 1 finding(s) are not shown:", real["payload"]["body"]
+        )
+
     def test_gitlab_fenced_suggestion_and_skipped_summary(self):
         owner, repo = GL_FENCED_PROJECT.split("/")
         findings_data = {
@@ -1236,6 +1284,54 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         self.assertIn("#### `src/edited.py:99`", summary_body)
         # The no-line finding has no file key — the poster's own "?" fallback.
         self.assertIn("#### `?`", summary_body)
+
+    def test_gitlab_summary_budget_omission_matches_mirror(self):
+        # The budget oracle is TestSummaryBodyBudget; this is only a poster/mirror
+        # wiring check for a skipped group omitted after summary folding.
+        finding = {
+            "file": "src/edited.py",
+            "line": 99,
+            "severity": "high",
+            "title": "Oversized skipped finding",
+            "body": "The line is outside the diff.",
+        }
+        review_body = "X" * 1100000
+        findings_data = {
+            "platform": "gitlab",
+            "owner": "acme",
+            "repo": "widgets",
+            "pr_number": 324,
+            "review_body": review_body,
+            "sha": _GH_SHA,
+            "findings": [finding],
+        }
+        real = self._run_main(
+            findings_data,
+            GL_DIFF_PREFIXED_PATH,
+            versions=[
+                {
+                    "base_commit_sha": _GL_BASE,
+                    "head_commit_sha": _GL_HEAD,
+                    "start_commit_sha": _GL_START,
+                }
+            ],
+        )
+        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
+            "gitlab", GL_DIFF_PREFIXED_PATH
+        )
+        mirror = build_reference_gitlab_payload(
+            [finding],
+            project="acme/widgets",
+            mr_iid=324,
+            review_body=review_body,
+            valid_lines=valid_lines,
+            line_texts=line_texts,
+            new_files=new_files,
+        )
+        self.assertEqual(real, mirror)
+        self.assertIn(
+            "_1 of these 1 finding(s) are not shown:", real["summary"]["body"]
+        )
 
     def test_github_overlap_demotion(self):
         """#223: two findings whose stated ranges overlap in the same file.
