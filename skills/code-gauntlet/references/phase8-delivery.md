@@ -62,12 +62,11 @@ content.
 
 ### Permalinks
 
-Use platform-appropriate full-SHA permalink format:
-
-- **GitHub:** `https://github.com/{owner}/{repo}/blob/{full_sha}/{path}#L{start}-L{end}`
-- **GitLab:** `https://gitlab.com/{group}/{project}/-/blob/{full_sha}/{path}#L{start}-L{end}`
-
-Always use the full 40-character SHA from `git rev-parse HEAD`.
+<!-- generated-from-registry-identity:permalink_formats — do not edit; run scripts/generate_contract_requirements.py -->
+- `github`: blob `{origin}/{owner}/{repo}/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-L{end}`; ref `#{number}`; ref URL `{origin}/{owner}/{repo}/pull/{number}`.
+- `gitlab`: blob `{origin}/{owner}/{repo}/-/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-{end}`; ref `!{number}`; ref URL `{origin}/{owner}/{repo}/-/merge_requests/{number}`.
+- Encode owner, repo, and file paths one segment at a time with `encodeURIComponent` semantics; also percent-encode `!`, `'`, `(`, `)`, and `*`, while preserving `/` separators. A file path containing an empty, `.`, or `..` segment renders as a plain code span.
+<!-- /generated-from-registry-identity:permalink_formats -->
 
 ---
 
@@ -123,13 +122,13 @@ headless run reaches this step only when `configResult.resolved.delivery` includ
 follows `configResult.resolved.post_mode`.)
 
 **When `delivery.prIdentity` was set in the args waist, the persisted `artifactPaths.postReview` file
-already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, review_body, findings }`) —
+already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, platform, review_body, findings }`) —
 consume it directly: optionally set `review_body` to the composed summary (it persists as `""`), keep its
 `sha` field (it pins the marker to the commit the review ran against), and pass the file to
 `post_review.py` unchanged. Only when the artifact is the legacy bare findings array (no `prIdentity` —
 e.g. a local-diff review that later gains a PR target) do you hand-wrap: the findings are the
 `artifactPaths.postReview` entries **verbatim** — do not drop, reorder, or cap them; only add
-`review_body`, `owner`, `repo`, `pr_number`, and `sha` (the full head SHA the review ran against, from
+`review_body`, `owner`, `repo`, `pr_number`, `sha`, and `platform` (the full head SHA the review ran against, from
 Phase 2 — omitting it leaves `post_review.py` to fall back to `git rev-parse HEAD`, which may not be the
 commit reviewed).
 

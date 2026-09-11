@@ -25,6 +25,46 @@ const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and na
 // Finer scopes later = introduce additional flag tokens here; no agentActive change needed.
 const DEEP = 'deep';
 
+// --- Pull-request identity and permalink contract --------------------------
+// One ordered contract owns validation, rendering, producer documentation, and
+// generated reference fences. Consumers must use each field's check predicate.
+export const SHA_FULL_RE = /^[0-9a-f]{40}$/;
+export const WEB_ORIGIN_RE = /^https?:\/\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\[[0-9A-Fa-f:.]{2,45}\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$/;
+
+export const PERMALINK_TEMPLATES = {
+  github: {
+    blob: '{origin}/{owner}/{repo}/blob/{sha}/{path}',
+    line: '#L{start}',
+    range: '#L{start}-L{end}',
+    ref: '#{number}',
+    refUrl: '{origin}/{owner}/{repo}/pull/{number}',
+  },
+  gitlab: {
+    blob: '{origin}/{owner}/{repo}/-/blob/{sha}/{path}',
+    line: '#L{start}',
+    range: '#L{start}-{end}',
+    ref: '!{number}',
+    refUrl: '{origin}/{owner}/{repo}/-/merge_requests/{number}',
+  },
+};
+
+const validWebOrigin = (value) => {
+  if (typeof value !== 'string') return false;
+  const match = WEB_ORIGIN_RE.exec(value);
+  if (!match) return false;
+  return match[1].startsWith('[') || match[1].length <= 253;
+};
+
+export const PR_IDENTITY_FIELDS = [
+  { name: 'owner', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string' },
+  { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string', extraChecks: [{ check: (value) => !value.includes('/'), message: 'must not contain "/"' }] },
+  { name: 'pr_number', required: true, check: (value) => Number.isSafeInteger(value) && value > 0, describe: 'a positive safe integer' },
+  { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value), describe: 'a 40-character lowercase hex commit id' },
+  { name: 'platform', required: true, check: (value) => Object.hasOwn(PERMALINK_TEMPLATES, value), describe: 'one of github, gitlab' },
+  { name: 'web_origin', required: true, check: validWebOrigin, describe: 'an http(s) origin: scheme, host and optional port only' },
+  { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0, describe: 'a non-empty string when present' },
+];
+
 // --- The canonical finding schema ------------------------------------------
 //
 // FINDING_PROP_TYPES + FINDING_REQUIRED + each DIMENSIONS row's `schemaExtra` are, together,

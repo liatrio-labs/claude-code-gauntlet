@@ -365,6 +365,57 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "dimension",
         ],
         "waistRequired": ["nested", "limits"],
+        "prIdentityFields": [
+            {"name": "owner", "required": True, "describe": "a non-empty string"},
+            {
+                "name": "repo",
+                "required": True,
+                "describe": "a non-empty string",
+            },
+            {
+                "name": "pr_number",
+                "required": True,
+                "describe": "a positive safe integer",
+            },
+            {
+                "name": "sha_full",
+                "required": True,
+                "describe": "a 40-character lowercase hex commit id",
+            },
+            {
+                "name": "platform",
+                "required": True,
+                "describe": "one of github, gitlab",
+            },
+            {
+                "name": "web_origin",
+                "required": True,
+                "describe": "an http(s) origin: scheme, host and optional port only",
+            },
+            {
+                "name": "title",
+                "required": False,
+                "describe": "a non-empty string when present",
+            },
+        ],
+        "permalinkTemplates": {
+            "github": {
+                "blob": "{origin}/{owner}/{repo}/blob/{sha}/{path}",
+                "line": "#L{start}",
+                "range": "#L{start}-L{end}",
+                "ref": "#{number}",
+                "refUrl": "{origin}/{owner}/{repo}/pull/{number}",
+            },
+            "gitlab": {
+                "blob": "{origin}/{owner}/{repo}/-/blob/{sha}/{path}",
+                "line": "#L{start}",
+                "range": "#L{start}-{end}",
+                "ref": "!{number}",
+                "refUrl": "{origin}/{owner}/{repo}/-/merge_requests/{number}",
+            },
+        },
+        "shaFullRe": "^[0-9a-f]{40}$",
+        "webOriginRe": "web-origin-pattern",
         "knobs": [
             {
                 "key": "alpha",
@@ -555,10 +606,14 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "(`:red_circle:`) — shortcodes do\n"
             "not render in terminal/chat output."
         ),
+        (gen.REPORT_FORMAT_REL, "permalink_formats"): (
+            "- `github`: blob `{origin}/{owner}/{repo}/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-L{end}`; ref `#{number}`; ref URL `{origin}/{owner}/{repo}/pull/{number}`.\n"
+            "- `gitlab`: blob `{origin}/{owner}/{repo}/-/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-{end}`; ref `!{number}`; ref URL `{origin}/{owner}/{repo}/-/merge_requests/{number}`.\n"
+            "- Encode owner, repo, and file paths one segment at a time with `encodeURIComponent` semantics; also percent-encode `!`, `'`, `(`, `)`, and `*`, while preserving `/` separators. A file path containing an empty, `.`, or `..` segment renders as a plain code span."
+        ),
         (gen.REPORT_FORMAT_REL, "inline_legend"): (
             "`{emoji}` is C critical / L low, `{SEVERITY}` is the severity uppercased."
         ),
-        (gen.REPORT_FORMAT_REL, "summary_header"): "### MARK NAME",
         (gen.REPORT_FORMAT_REL, "inline_sample"): (
             "````markdown\n"
             "**{emoji} [SEVERITY] {finding.title}**\n"
@@ -713,6 +768,21 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "\n"
             "- `configEcho.delta` (interactive runs): the delta source is present."
         ),
+        ("skills/code-gauntlet/SKILL.md", "pr_identity_fields"): (
+            "`delivery.prIdentity` fields:\n"
+            "\n"
+            "- `owner` (required): a non-empty string.\n"
+            "- `repo` (required): a non-empty string.\n"
+            "- `pr_number` (required): a positive safe integer.\n"
+            "- `sha_full` (required): a 40-character lowercase hex commit id.\n"
+            "- `platform` (required): one of github, gitlab.\n"
+            "- `web_origin` (required): an http(s) origin: scheme, host and optional port only.\n"
+            "- `title` (optional): a non-empty string when present.\n"
+            "\n"
+            "Producer command:\n"
+            "\n"
+            "`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> [--title <text>]`"
+        ),
         (
             "skills/code-gauntlet/references/phase2-triage.md",
             "derived_waist_fields",
@@ -728,6 +798,24 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "The workflow fills these receipt entries itself; never stamp them.\n"
             "\n"
             "- `configEcho.delta` (interactive runs): the delta source is present."
+        ),
+        (
+            "skills/code-gauntlet/references/phase2-triage.md",
+            "pr_identity_fields",
+        ): (
+            "`delivery.prIdentity` fields:\n"
+            "\n"
+            "- `owner` (required): a non-empty string.\n"
+            "- `repo` (required): a non-empty string.\n"
+            "- `pr_number` (required): a positive safe integer.\n"
+            "- `sha_full` (required): a 40-character lowercase hex commit id.\n"
+            "- `platform` (required): one of github, gitlab.\n"
+            "- `web_origin` (required): an http(s) origin: scheme, host and optional port only.\n"
+            "- `title` (optional): a non-empty string when present.\n"
+            "\n"
+            "Producer command:\n"
+            "\n"
+            "`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> [--title <text>]`"
         ),
         (
             "skills/code-gauntlet/references/phase1-preflight.md",
@@ -1005,6 +1093,11 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "| `CODE_GAUNTLET_ALPHA` | `h-alpha` | `h-alpha` |\n"
             "| `CODE_GAUNTLET_BETA` | `h-beta` | `h-beta` |"
         ),
+        ("skills/code-gauntlet/references/phase8-delivery.md", "permalink_formats"): (
+            "- `github`: blob `{origin}/{owner}/{repo}/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-L{end}`; ref `#{number}`; ref URL `{origin}/{owner}/{repo}/pull/{number}`.\n"
+            "- `gitlab`: blob `{origin}/{owner}/{repo}/-/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-{end}`; ref `!{number}`; ref URL `{origin}/{owner}/{repo}/-/merge_requests/{number}`.\n"
+            "- Encode owner, repo, and file paths one segment at a time with `encodeURIComponent` semantics; also percent-encode `!`, `'`, `(`, `)`, and `*`, while preserving `/` separators. A file path containing an empty, `.`, or `..` segment renders as a plain code span."
+        ),
     }
 
     def test_every_declared_body_matches_its_hand_typed_literal(self):
@@ -1020,7 +1113,10 @@ class TestIdentityFenceGuards(unittest.TestCase):
             for rel_path, symbols in gen.IDENTITY_FENCES.items()
             for symbol in symbols
         }
-        renderer_owned = {(gen.REPORT_FORMAT_REL, "full_report_template")}
+        renderer_owned = {
+            (gen.REPORT_FORMAT_REL, "full_report_template"),
+            (gen.REPORT_FORMAT_REL, "permalink_sample"),
+        }
         self.assertEqual(set(self.EXPECTED_BODIES) | renderer_owned, declared)
         for (rel_path, symbol), expected in self.EXPECTED_BODIES.items():
             with self.subTest(path=rel_path, symbol=symbol):
@@ -1224,6 +1320,43 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
                 "pluginRoot",
                 "reviewScope",
             ],
+        )
+        # Mutation: omit any identity projection from load_registry; this literal contract turns red.
+        self.assertEqual(
+            [field["name"] for field in identity["prIdentityFields"]],
+            [
+                "owner",
+                "repo",
+                "pr_number",
+                "sha_full",
+                "platform",
+                "web_origin",
+                "title",
+            ],
+        )
+        self.assertEqual(
+            identity["permalinkTemplates"],
+            {
+                "github": {
+                    "blob": "{origin}/{owner}/{repo}/blob/{sha}/{path}",
+                    "line": "#L{start}",
+                    "range": "#L{start}-L{end}",
+                    "ref": "#{number}",
+                    "refUrl": "{origin}/{owner}/{repo}/pull/{number}",
+                },
+                "gitlab": {
+                    "blob": "{origin}/{owner}/{repo}/-/blob/{sha}/{path}",
+                    "line": "#L{start}",
+                    "range": "#L{start}-{end}",
+                    "ref": "!{number}",
+                    "refUrl": "{origin}/{owner}/{repo}/-/merge_requests/{number}",
+                },
+            },
+        )
+        self.assertEqual(identity["shaFullRe"], "^[0-9a-f]{40}$")
+        self.assertEqual(
+            identity["webOriginRe"],
+            r"^https?:\/\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\[[0-9A-Fa-f:.]{2,45}\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$",
         )
 
     @unittest.skipUnless(

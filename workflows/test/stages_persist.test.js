@@ -79,7 +79,9 @@ test('test_prIdentity_title_never_reaches_the_post_review_wrapper', () => {
       owner: 'acme',
       repo: 'widget',
       pr_number: 36,
-      sha_full: 'deadbeefcafe',
+      sha_full: 'dddddddddddddddddddddddddddddddddddddddd',
+      platform: 'github',
+      web_origin: 'https://github.com',
       title: 'Must not leak',
     },
   });
@@ -87,7 +89,8 @@ test('test_prIdentity_title_never_reaches_the_post_review_wrapper', () => {
     owner: 'acme',
     repo: 'widget',
     pr_number: 36,
-    sha: 'deadbeefcafe',
+    sha: 'dddddddddddddddddddddddddddddddddddddddd',
+    platform: 'github',
     review_body: '',
     findings: [
       {
@@ -240,13 +243,14 @@ test('persistPlan emits wrapper:null without a PR identity and the envelope with
   const bare = persistPlan(persistInput(), PATHS);
   assert.equal(bare.postReview.wrapper, null);
 
-  const id = { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'deadbeefcafe' };
+  const id = { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
   const wrapped = persistPlan(persistInput({ prIdentity: id }), PATHS);
   assert.deepEqual(wrapped.postReview.wrapper, {
-    owner: 'o', repo: 'r', pr_number: 7, sha: 'deadbeefcafe', review_body: '',
+    owner: 'o', repo: 'r', pr_number: 7, sha: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', review_body: '',
   });
   // Key ORDER is the wire contract: post_review.py's envelope, findings appended last.
-  assert.deepEqual(Object.keys(wrapped.postReview.wrapper), ['owner', 'repo', 'pr_number', 'sha', 'review_body']);
+  // Mutation: drop platform from postReviewWrapper; this plan-wrapper pin turns red.
+  assert.deepEqual(Object.keys(wrapped.postReview.wrapper), ['owner', 'repo', 'pr_number', 'sha', 'platform', 'review_body']);
 });
 
 test('persistPlan skeleton is the checkpoint MINUS the challenge findings, key order intact', () => {
@@ -343,7 +347,7 @@ test('the derived expectation matches what an INDEPENDENT derivation produces', 
   // deriveFromPlan mirrors scripts/assemble_artifacts.py. If the plan's own expectation did
   // not agree with it, every honest run would degrade — this is the guard against a proof
   // that is precise but wrong.
-  const inp = persistInput({ prIdentity: { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'deadbeefcafe' } });
+  const inp = persistInput({ prIdentity: { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' } });
   const plan = persistPlan(inp, PATHS);
   const { findingsJson } = persistPrimaries(inp);
   const derived = deriveFromPlan(plan, findingsJson);
@@ -439,7 +443,7 @@ test('in-run byte identity: the derived artifacts EQUAL the strings the pipeline
 });
 
 test('in-run byte identity holds with the PR-identity wrapper too', () => {
-  const inp = persistInput({ prIdentity: { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'deadbeefcafe' } });
+  const inp = persistInput({ prIdentity: { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' } });
   const { findingsJson } = persistPrimaries(inp);
   const derived = deriveFromPlan(persistPlan(inp, PATHS), findingsJson);
   const held = writerPayload(inp);
@@ -541,7 +545,7 @@ test('persistDerivable also scans the checkpoint skeleton and the PR identity', 
   inp.checkpoints.phases.challenge.stats.rate = 0.5;
   assert.match(persistDerivable(inp).reason, /checkpoints\.phases\.challenge\.stats\.rate/);
 
-  const inp2 = persistInput({ prIdentity: { owner: 'o', repo: 'r', pr_number: 7.5, sha_full: 'd' } });
+  const inp2 = persistInput({ prIdentity: { owner: 'o', repo: 'r', pr_number: 7.5, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' } });
   assert.match(persistDerivable(inp2).reason, /prIdentity\.pr_number/);
 });
 

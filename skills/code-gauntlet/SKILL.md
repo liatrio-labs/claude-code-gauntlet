@@ -332,7 +332,23 @@ Stamp both values verbatim. Never estimate them, never carry them over from an e
 
 ### Assemble the args object and record environment overrides
 
-Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). Resolve `policy.provider` from the environment in the same Bash call — first match wins, and a flag counts as SET only when its value is truthy the way Claude Code itself parses it (`1`/`true`/`yes`/`on`, case-insensitive — `0`/`false`/empty leave the session first-party): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` alone does NOT change the provider: an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin (a gateway with non-standard names uses the `CLAUDE_CODE_SUBAGENT_MODEL` escape hatch). It DOES set `policy.gateway`, though: stamp `true` iff `ANTHROPIC_BASE_URL` is set, after trimming whitespace, to a non-blank value (it is a URL — any non-blank value counts, no truthy-flag parsing like the provider flags above), else `false`. `policy.gateway` turns off the pipeline's conditional per-dimension schema construct on the conventions-and-intent dispatch (a gateway forwards `input_schema` verbatim to whatever backend it fronts, which could be an unmeasured third-party surface even though the session itself reads as firstParty) while leaving the first-party model-ID pin untouched. The workflow cannot read `process.env`, so this capture is the only path — on `firstParty` the pipeline pins full first-party model IDs (immune to session-variant cascade); on every other provider it dispatches bare aliases (`sonnet`/`opus`), the only spelling the provider's deployment mapping resolves (first-party IDs pass through unchecked on Bedrock/Vertex/Foundry and fail as invalid model identifiers). **If `CLAUDE_CODE_SUBAGENT_MODEL` is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). For a PR/MR target, also stamp `delivery.prIdentity = { owner, repo, pr_number, sha_full, title }` — `owner`/`repo`/`pr_number` from the resolved PR, `sha_full` from `git rev-parse HEAD`, and `title` from the `gh pr view {pr_number} --json state,isDraft,title,url` this phase already runs (`SKILL.md:59`; GitLab: `glab mr view {pr_number} --output json | jq -r '.title'`). `title` is **optional** — omit it when the fetch produced nothing; the report title then falls back to `owner/repo#N`. Omit `prIdentity` entirely for local-diff reviews.
+Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). Resolve `policy.provider` from the environment in the same Bash call — first match wins, and a flag counts as SET only when its value is truthy the way Claude Code itself parses it (`1`/`true`/`yes`/`on`, case-insensitive — `0`/`false`/empty leave the session first-party): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` alone does NOT change the provider: an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin (a gateway with non-standard names uses the `CLAUDE_CODE_SUBAGENT_MODEL` escape hatch). It DOES set `policy.gateway`, though: stamp `true` iff `ANTHROPIC_BASE_URL` is set, after trimming whitespace, to a non-blank value (it is a URL — any non-blank value counts, no truthy-flag parsing like the provider flags above), else `false`. `policy.gateway` turns off the pipeline's conditional per-dimension schema construct on the conventions-and-intent dispatch (a gateway forwards `input_schema` verbatim to whatever backend it fronts, which could be an unmeasured third-party surface even though the session itself reads as firstParty) while leaving the first-party model-ID pin untouched. The workflow cannot read `process.env`, so this capture is the only path — on `firstParty` the pipeline pins full first-party model IDs (immune to session-variant cascade); on every other provider it dispatches bare aliases (`sonnet`/`opus`), the only spelling the provider's deployment mapping resolves (first-party IDs pass through unchecked on Bedrock/Vertex/Foundry and fail as invalid model identifiers). **If `CLAUDE_CODE_SUBAGENT_MODEL` is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). For a PR/MR target, run `resolve_pr_identity.py` with the platform the target was resolved with (`github` for `gh`, `gitlab` for `glab`), the PR/MR web URL this phase already fetched (`gh pr view --json url`; `glab mr view --output json` field `.web_url`), `git rev-parse HEAD`, and the title. Stamp its output verbatim as `delivery.prIdentity`; omit `prIdentity` for local reviews.
+
+<!-- generated-from-registry-identity:pr_identity_fields — do not edit; run scripts/generate_contract_requirements.py -->
+`delivery.prIdentity` fields:
+
+- `owner` (required): a non-empty string.
+- `repo` (required): a non-empty string.
+- `pr_number` (required): a positive safe integer.
+- `sha_full` (required): a 40-character lowercase hex commit id.
+- `platform` (required): one of github, gitlab.
+- `web_origin` (required): an http(s) origin: scheme, host and optional port only.
+- `title` (optional): a non-empty string when present.
+
+Producer command:
+
+`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> [--title <text>]`
+<!-- /generated-from-registry-identity:pr_identity_fields -->
 
 Copy `configResult.waist.configEcho` verbatim.
 <!-- generated-from-registry-identity:derived_waist_fields — do not edit; run scripts/generate_contract_requirements.py -->
@@ -375,9 +391,9 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
                  commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,
                  head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED
   limits: {},  // stamp {} unless a genuine REVIEW.md override exists
-  delivery: { prIdentity: { owner, repo, pr_number, sha_full, title } },  // PR/MR targets only
+  delivery: { prIdentity },  // PR/MR targets only; use the generated field contract above
                                              // the artifact-writer then persists postReview as the post_review-ready
-                                             // wrapper { owner, repo, pr_number, sha, review_body, findings } so
+                                             // wrapper { owner, repo, pr_number, sha, platform, review_body, findings } so
                                              // Phase 8 posts it without hand-assembly
 
   // by-value inputs the in-memory stages need (the workflow has no disk):
@@ -656,7 +672,7 @@ survivors the pipeline already selected per `args.delivery.tier` (`all` by defau
 including suggestions; `main_only` → main-tagged only), ranked and capped at `limits.deliveryCap`. Feed it
 to `post_review.py` **verbatim** — when `delivery.prIdentity` was stamped, the persisted file already IS
 the post_review-ready wrapper (optionally fill its `review_body`, then pass the file unchanged); only a
-legacy bare-array artifact still needs the hand-wrap with `review_body`/`owner`/`repo`/`pr_number`/`sha`
+legacy bare-array artifact still needs the hand-wrap with `review_body`/`owner`/`repo`/`pr_number`/`sha`/`platform`
 (always set it). Never re-filter by tag, re-rank, or re-apply the cap yourself. Every finding in that
 payload is posted as a PR comment — suggestions are not a separate delivery destination. The `report_tag`
 is rendered as a Routing bullet; reachability-demoted findings are low-severity suggestions and are withheld by `main_only` but included by `all`. Report findings remain grouped by severity

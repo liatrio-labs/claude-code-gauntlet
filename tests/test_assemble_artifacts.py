@@ -475,6 +475,8 @@ class TestProjection(unittest.TestCase):
             self.assertEqual([f["id"] for f in post], ["C", "A"])
 
     def test_wrapper_emits_the_post_review_envelope(self):
+        # Mutation: omit the wrapper copy before appending findings; this ordered
+        # seven-key artifact pin turns red.
         with _Workspace() as ws:
             plan = ws.plan()
             plan["postReview"]["wrapper"] = {
@@ -482,6 +484,7 @@ class TestProjection(unittest.TestCase):
                 "repo": "r",
                 "pr_number": 7,
                 "sha": "deadbeef",
+                "platform": "github",
                 "review_body": "",
             }
             receipt = json.loads(run_script(ws.write_plan(plan)).stdout)
@@ -489,7 +492,15 @@ class TestProjection(unittest.TestCase):
             post = json.loads(ws.read(ws.post_path))
             self.assertEqual(
                 list(post.keys()),
-                ["owner", "repo", "pr_number", "sha", "review_body", "findings"],
+                [
+                    "owner",
+                    "repo",
+                    "pr_number",
+                    "sha",
+                    "platform",
+                    "review_body",
+                    "findings",
+                ],
             )
             self.assertEqual(post["findings"], ws.findings)
 

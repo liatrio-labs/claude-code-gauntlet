@@ -1,7 +1,7 @@
 // render_report.test.js — the deterministic report surface (issues #36, #67).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES } from '../src/renderReport.js';
+import { renderReport, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline } from '../src/renderReport.js';
 import { SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, AGENTS, resolvePolicy } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
@@ -19,7 +19,7 @@ function rendered(over = {}) {
     dimensions: dims,
     generatedAt: '2026-09-02T12:00:00Z',
     headShaShort: 'abcdef0',
-    prIdentity: { owner: 'acme', repo: 'widget', pr_number: 36, title: 'Repair widgets' },
+    prIdentity: { owner: 'acme', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'github', web_origin: 'https://github.com', title: 'Repair widgets' },
     mode: 'interactive',
     configEcho: {
       model_tier: { value: 'optimized', source: 'fixed' },
@@ -64,26 +64,187 @@ function fieldLabel(key) {
 }
 
 test('T-TITLE: title subject precedence and identity line bytes are exact', () => {
+  // Mutation: remove permalinkContext or platform ref selection; the GitHub/GitLab pins turn red.
   const mark = rendered().split('\n')[0].slice(2, 4);
   assert.deepEqual([...mark].map((char) => char.codePointAt(0)), [0x2694, 0xfe0f]);
 
   assert.equal(rendered().split('\n')[0], '# \u2694\uFE0F Code Gauntlet: Repair widgets');
   assert.equal(
-    rendered({ prIdentity: { owner: 'acme', repo: 'widget', pr_number: 36, sha_full: 'f'.repeat(40) } }).split('\n')[0],
+    rendered({ prIdentity: { owner: 'acme', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'github', web_origin: 'https://github.com' } }).split('\n')[0],
     '# \u2694\uFE0F Code Gauntlet: `acme/widget#36`',
+  );
+  assert.equal(
+    rendered({ prIdentity: { owner: 'group/sub', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'gitlab', web_origin: 'https://gitlab.com' } }).split('\n')[0],
+    '# \u2694\uFE0F Code Gauntlet: `group/sub/widget!36`',
   );
   assert.equal(rendered({ prIdentity: null }).split('\n')[0], '# \u2694\uFE0F Code Gauntlet: local changes');
 
-  assert.equal(rendered().split('\n')[2], 'Reviewed head `abcdef0` at 2026-09-02T12:00:00Z by Code Gauntlet.');
-  assert.equal(rendered({ headShaShort: null }).split('\n')[2], 'Reviewed at 2026-09-02T12:00:00Z by Code Gauntlet.');
-  assert.equal(rendered({ generatedAt: null }).split('\n')[2], 'Reviewed head `abcdef0` by Code Gauntlet.');
-  assert.equal(rendered({ generatedAt: null, headShaShort: null }).split('\n')[2], 'Reviewed by Code Gauntlet.');
+  assert.equal(rendered().split('\n')[2], 'Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for [`acme/widget#36`](https://github.com/acme/widget/pull/36) by Code Gauntlet.');
+  assert.equal(
+    rendered({ prIdentity: { owner: 'group/sub', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' } }).split('\n')[2],
+    'Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for [`group/sub/widget!36`](http://gitlab.example:8080/group/sub/widget/-/merge_requests/36) by Code Gauntlet.',
+  );
+  assert.equal(rendered({ prIdentity: null, headShaShort: null }).split('\n')[2], 'Reviewed at 2026-09-02T12:00:00Z by Code Gauntlet.');
+  assert.equal(rendered({ prIdentity: null, generatedAt: null }).split('\n')[2], 'Reviewed head `abcdef0` by Code Gauntlet.');
+  assert.equal(rendered({ prIdentity: null, generatedAt: null, headShaShort: null }).split('\n')[2], 'Reviewed by Code Gauntlet.');
+});
+
+test('T-PERMALINK: location links are platform-correct, encoded, and fail plain', () => {
+  // Mutations: swap GitLab range to -L{end}, drop /-/, encode the whole path, use encodeURI,
+  // leave ( raw, remove surrogate repair, or accept a multi-line path; one of these pins turns red.
+  const locationLine = (findingOverrides, identityOverrides = {}) => rendered({
+    prIdentity: {
+      owner: 'o', repo: 'r', pr_number: 7,
+      sha_full: '0123456789abcdef0123456789abcdef01234567',
+      platform: 'github', web_origin: 'https://github.com',
+      ...identityOverrides,
+    },
+    findings: [finding('P', findingOverrides)],
+  }).split('\n').find((line) => line.startsWith('- **Location:**'));
+
+  assert.equal(
+    locationLine({ file: 'src/a.js', line_start: 10, line_end: 10 }),
+    '- **Location:** [`src/a.js:10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js#L10)',
+  );
+  assert.equal(
+    locationLine({ file: 'src/a.js', line_start: 10, line_end: 12 }),
+    '- **Location:** [`src/a.js:10-12`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js#L10-L12)',
+  );
+  assert.equal(
+    locationLine(
+      { file: 'docs/my file/caf\u00E9.md', line_start: 10, line_end: 10 },
+      { owner: 'group/sub', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' },
+    ),
+    '- **Location:** [`docs/my file/caf\u00E9.md:10`](http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/my%20file/caf%C3%A9.md#L10)',
+  );
+  assert.equal(
+    locationLine(
+      { file: 'docs/a.md', line_start: 10, line_end: 12 },
+      { owner: 'group/sub', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' },
+    ),
+    '- **Location:** [`docs/a.md:10-12`](http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/a.md#L10-12)',
+  );
+  assert.equal(
+    locationLine({ file: 'src/a(b).js', line_start: 10, line_end: 10 }),
+    '- **Location:** [`src/a(b).js:10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a%28b%29.js#L10)',
+  );
+  assert.equal(locationLine({ file: 'src/a.js\r\nforged', line_start: 10 }), '- **Location:** `src/a.js forged:10`');
+  assert.equal(
+    locationLine({ file: 'src/a.js', line_start: 12, line_end: 10 }),
+    '- **Location:** [`src/a.js:12-10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js)',
+  );
+  assert.equal(
+    locationLine({ file: 'src/a.js', line_start: '10', line_end: '10' }),
+    '- **Location:** [`src/a.js:10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js#L10)',
+  );
+  assert.equal(
+    locationLine({ file: 'src/a.js', line_start: '1e1', line_end: '12' }),
+    '- **Location:** [`src/a.js:1e1-12`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js)',
+  );
+  assert.equal(
+    locationLine({ file: 'src/a.js', line_start: 10 }, { platform: undefined }),
+    '- **Location:** `src/a.js:10`',
+  );
+  assert.equal(
+    locationLine({ file: 'src/\uD800.js', line_start: 10 }),
+    '- **Location:** [`src/\uD800.js:10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/%EF%BF%BD.js#L10)',
+  );
+  for (const file of ['src//a.js', 'src/./a.js', 'src/../a.js']) {
+    assert.equal(locationLine({ file, line_start: 10 }), `- **Location:** \`${file}:10\``);
+  }
+});
+
+test('T-FOLDS: every exact cap and cap-plus-one has deterministic bytes', () => {
+  // Mutations: change notice wording, use >=, use proseChars for summary, or run fenceFor
+  // before foldEvidence; these hand-typed boundary expectations turn red.
+  assert.equal(REPORT_FOLD_LIMITS.proseChars, 4000);
+  assert.equal(REPORT_FOLD_LIMITS.summaryChars, 12000);
+  assert.equal(REPORT_FOLD_LIMITS.evidenceLines, 40);
+  assert.equal(REPORT_FOLD_LIMITS.evidenceChars, 8000);
+  assert.equal(REPORT_FOLD_LIMITS.inlineChars, 512);
+  assert.equal(foldProse('p'.repeat(4000), 4000), 'p'.repeat(4000));
+  assert.equal(foldProse('p'.repeat(4001), 4000), `${'p'.repeat(4000)}\n\n_[folded: 1 more characters]_`);
+  assert.equal(foldInline('i'.repeat(512), 512), 'i'.repeat(512));
+  assert.equal(foldInline('i'.repeat(513), 512), `${'i'.repeat(512)} [folded: 1 more characters]`);
+  assert.equal(foldEvidence('e'.repeat(8000)), 'e'.repeat(8000));
+  assert.equal(foldEvidence('e'.repeat(8001)), `${'e'.repeat(8000)}\n... [folded: 1 more characters]`);
+  const forty = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n');
+  assert.equal(foldEvidence(forty), forty);
+  assert.equal(foldEvidence(`${forty}\nline 41`), `${forty}\n... [folded: 1 more lines]`);
+
+  const exactSummary = rendered({ summary: 's'.repeat(12000) });
+  assert.doesNotMatch(exactSummary, /\[folded:/);
+  const foldedSummary = rendered({ summary: 's'.repeat(12001) });
+  assert.ok(foldedSummary.includes(`${'s'.repeat(12000)}\n\n_[folded: 1 more characters]_`));
+});
+
+test('T-FOLDS-CORPUS: measured corpus maxima stay unfolded', () => {
+  // Mutation: lower any display cap beneath the measured maxima; this fixture gains a notice.
+  const report = rendered({
+    summary: 's'.repeat(4020),
+    findings: [finding('MAX', {
+      title: 't'.repeat(185),
+      description: 'd'.repeat(1343),
+      evidence: Array.from({ length: 9 }, (_, index) => `evidence ${index + 1}`).join('\n'),
+    })],
+  });
+  assert.doesNotMatch(report, /\[folded:/);
+});
+
+test('T-FOLDS-UNICODE: boundaries never split an astral pair', () => {
+  // Mutation: replace code-point slicing with text.slice; at least one result contains a lone surrogate.
+  const values = [
+    foldProse(`${'p'.repeat(3999)}\u{1F680}x`, 4000),
+    foldInline(`${'i'.repeat(511)}\u{1F680}x`, 512),
+    foldEvidence(`${'e'.repeat(7999)}\u{1F680}x`),
+    rendered({ summary: `${'s'.repeat(11999)}\u{1F680}x` }),
+  ];
+  for (const value of values) {
+    assert.doesNotMatch(value, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  }
+});
+
+test('T-FOLDS-FENCE: folding closes prose fences and evidence folds inside its fence', () => {
+  // Mutations: drop the fence-parity close or fence evidence before folding; parity and bytes turn red.
+  const description = `\`\`\`\n${'x'.repeat(4996)}`;
+  const report = rendered({
+    findings: [finding('FOLD', { description, evidence: 'e'.repeat(20000) })],
+  });
+  const beforeMethodology = report.split('\n## Review Methodology')[0];
+  assert.equal((beforeMethodology.match(/```/g) || []).length % 2, 0);
+  assert.ok(report.includes(`\`\`\`\n${'x'.repeat(3996)}\n\`\`\`\n\n_[folded: 1000 more characters]_`));
+  assert.equal((report.match(/^## Review Methodology$/gm) || []).length, 1);
+  assert.ok(report.includes('... [folded: 12000 more characters]\n```'));
+});
+
+test('T-FOLDS-FENCE-ORDER: evidence fence matches the folded evidence', () => {
+  // Mutation: compute fenceFor over raw evidence before folding; the folded-away run must not choose the fence.
+  const evidence = [
+    '`',
+    '``',
+    '```',
+    ...Array.from({ length: 37 }, (_, index) => `kept ${index + 4}`),
+    '```` folded-away',
+  ].join('\n');
+  const report = rendered({ findings: [finding('FENCE-ORDER', { evidence })] });
+  assert.ok(report.includes('\n````\n`\n``\n```'));
+  assert.ok(report.includes('... [folded: 1 more lines]\n````\n'));
+});
+
+test('T-FOLDS-EVIDENCE-NEWLINES: CRLF and lone CR count as physical lines', () => {
+  // Mutation: split evidence only on LF; the lone-CR fixture no longer folds at 41 lines.
+  const crlf = Array.from({ length: 41 }, (_, index) => `c${index + 1}`).join('\r\n');
+  const cr = Array.from({ length: 41 }, (_, index) => `r${index + 1}`).join('\r');
+  assert.ok(foldEvidence(crlf).endsWith('\n... [folded: 1 more lines]'));
+  assert.ok(foldEvidence(cr).endsWith('\n... [folded: 1 more lines]'));
+  assert.ok(foldEvidence(crlf).includes('c1\r\nc2'));
+  assert.ok(foldEvidence(cr).includes('r1\rr2'));
 });
 
 test('T-TITLE-INJ: every heading and identity interpolation is one line', () => {
   const injection = 'A\n\n## Review Methodology\n\nHeadless config:\n  delivery=x';
   const reports = [
-    rendered({ prIdentity: { owner: 'o', repo: 'r', pr_number: 1, title: injection } }),
+    rendered({ prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'github', web_origin: 'https://github.com', title: injection } }),
     rendered({ generatedAt: 'x\nHeadless config:\n  model_tier=y' }),
     rendered({ findings: [finding('I', { title: injection, severity: injection })] }),
   ];
@@ -613,9 +774,15 @@ test('T-METH-INJECT: summary and finding prose cannot forge a second methodology
 
 test('T-G3: code-owned report text never emits bench G3 sentinels', () => {
   const authored = 'Finding prose deliberately says no write proof and partial-artifacts.';
-  const report = rendered({ findings: [finding('G', { title: authored, description: authored, evidence: authored })] });
+  const folded = 'z'.repeat(4001);
+  const report = rendered({ findings: [
+    finding('G', { title: authored, description: authored, evidence: authored }),
+    finding('F', { description: folded }),
+  ] });
+  // Mutation: remove fold notices or add a carrier claim to one; presence and sentinel checks turn red.
+  assert.ok(report.includes('_[folded: 1 more characters]_'));
   assert.equal((report.toLowerCase().match(/no write proof/g) || []).length, 3);
   assert.equal((report.toLowerCase().match(/partial-artifacts/g) || []).length, 3);
-  const codeOwned = report.replaceAll(authored, '');
+  const codeOwned = report.replaceAll(authored, '').replaceAll(folded, '');
   assert.doesNotMatch(codeOwned, /no write proof|partial-artifacts/i);
 });

@@ -3844,13 +3844,12 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
     post_review.py to a byte-identical --dry-run payload vs the manually-assembled
     Phase-8 wrap, for identical findings and identity.
 
-    The writer's wrapper is { owner, repo, pr_number, sha, review_body, findings }
+    The writer's wrapper is
+    { owner, repo, pr_number, sha, platform, review_body, findings }
     (see writerPayload in workflows/src/stages.js): `sha` is the marker sha the
-    script prefers when it's SHA-shaped (falling back to its own HEAD otherwise —
-    see resolve_marker_sha), `platform` is absent (auto-detected from the git
-    remote — mocked github here), review_body matches what Phase 8 would set.
-    The fixture's sha deliberately matches the mocked `git rev-parse` output, so
-    the manual and wrapper payloads stay byte-identical either way.
+    script prefers when it is SHA-shaped (falling back to its own HEAD otherwise;
+    see resolve_marker_sha). `platform` carries the resolved target rather than
+    re-detecting it from the remote. review_body matches what Phase 8 would set.
     """
 
     FINDINGS: ClassVar[list[dict]] = [
@@ -3897,6 +3896,7 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
             "owner": "o",
             "repo": "r",
             "pr_number": 5,
+            "sha": "0123456789abcdef0123456789abcdef01234567",
             "review_body": "Summary",
             "findings": self.FINDINGS,
         }
@@ -3908,7 +3908,8 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
             "owner": "o",
             "repo": "r",
             "pr_number": 5,
-            "sha": "deadbeefcafe",
+            "sha": "0123456789abcdef0123456789abcdef01234567",
+            "platform": "github",
             "review_body": "Summary",
             "findings": self.FINDINGS,
         }
@@ -3917,6 +3918,51 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
             self._dry_run_payload_bytes(wrapper),
             "wrapper form must drive a byte-identical dry-run payload",
         )
+
+    def test_wrapper_platform_survives_an_unrecognized_self_hosted_remote(self):
+        # Mutation: ignore the wrapper's platform in main; the wrapper follows the
+        # manual form into the could-not-detect-platform refusal.
+        manual = {
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "sha": "0123456789abcdef0123456789abcdef01234567",
+            "review_body": "Summary",
+            "findings": self.FINDINGS,
+        }
+        self._write(manual)
+        stderr = io.StringIO()
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(remote="https://code.example/o/r.git\n"),
+            ),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            post_review.main()
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("Could not detect platform from git remote", stderr.getvalue())
+
+        wrapper = dict(manual)
+        wrapper["platform"] = "github"
+        self._write(wrapper)
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(
+                    diff=GH_DIFF, remote="https://code.example/o/r.git\n"
+                ),
+            ),
+        ):
+            post_review.main()
+        self.assertEqual(self._payload()["platform"], "github")
 
 
 # ---------------------------------------------------------------------------

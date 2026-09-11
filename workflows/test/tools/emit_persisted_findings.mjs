@@ -30,7 +30,11 @@ if (!outPath) {
 // tests/test_boundary_parity.py::TestSchemaCarriesBoundaryFields::
 // test_issue_47_fields_survive_the_whole_pipeline_to_persist (the field vanishes) and
 // ::test_issue_47_field_values_are_not_hollowed_out (every surviving value is empty).
-const args = validArgs();
+const args = validArgs({ delivery: { tier: 'all', prIdentity: {
+  owner: 'o', repo: 'r', pr_number: 278,
+  sha_full: '0123456789abcdef0123456789abcdef01234567',
+  platform: 'github', web_origin: 'https://github.com',
+} } });
 let persisted = null;
 const ctx = makeCtx(args, {
   findings: [
@@ -56,4 +60,5 @@ if (!result.ok || !persisted) {
 
 writeFileSync(outPath, JSON.stringify({
   findings: persisted.findings,
+  postReview: persisted.postReview,
 }, null, 2));

@@ -105,8 +105,12 @@ class TestIdentitySurface(unittest.TestCase):
     IDENTITY_OWNING_SECTIONS: ClassVar[dict[tuple[str, str], tuple[str, str]]] = {
         (
             "skills/code-gauntlet/references/report-format.md",
-            "summary_header",
-        ): ("## PR Comment Format (abbreviated)", "## Inline PR Comment Format"),
+            "permalink_formats",
+        ): ("## Permalink Format", "## Finding Fields Reference"),
+        (
+            "skills/code-gauntlet/references/report-format.md",
+            "permalink_sample",
+        ): ("## Permalink Format", "## Finding Fields Reference"),
         (
             "skills/code-gauntlet/references/report-format.md",
             "inline_sample",
@@ -142,8 +146,22 @@ class TestIdentitySurface(unittest.TestCase):
             "### Wait protocol — MANDATORY",
         ),
         (
+            "skills/code-gauntlet/SKILL.md",
+            "pr_identity_fields",
+        ): (
+            "### Assemble the args object and record environment overrides",
+            "### Wait protocol — MANDATORY",
+        ),
+        (
             "skills/code-gauntlet/references/phase2-triage.md",
             "derived_waist_fields",
+        ): (
+            "## Args Preparation",
+            "**`policy` (model policy the workflow runs under):**",
+        ),
+        (
+            "skills/code-gauntlet/references/phase2-triage.md",
+            "pr_identity_fields",
         ): (
             "## Args Preparation",
             "**`policy` (model policy the workflow runs under):**",
@@ -158,7 +176,7 @@ class TestIdentitySurface(unittest.TestCase):
         (
             "skills/code-gauntlet/references/report-format.md",
             "severity_legend",
-        ): ("# Code Gauntlet Report Format", "## GitHub Permalink Format"),
+        ): ("# Code Gauntlet Report Format", "## Permalink Format"),
         (
             "skills/code-gauntlet/references/report-format.md",
             "full_report_template",
@@ -175,6 +193,10 @@ class TestIdentitySurface(unittest.TestCase):
             "skills/code-gauntlet/references/headless-mode.md",
             "headless_env_table",
         ): ("## Env contract", "## Precedence"),
+        (
+            "skills/code-gauntlet/references/phase8-delivery.md",
+            "permalink_formats",
+        ): ("### Permalinks", "## Stage 1: Deliver the Report"),
     }
 
     @classmethod
