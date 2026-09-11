@@ -670,10 +670,11 @@ saved report's path and move to Stage 2. **PR-comment
 selection is the pipeline's job, not yours:** the delivery set is `artifactPaths.postReview` — the
 survivors the pipeline already selected per `args.delivery.tier` (`all` by default → every survivor
 including suggestions; `main_only` → main-tagged only), ranked and capped at `limits.deliveryCap`. Feed it
-to `post_review.py` **verbatim** — when `delivery.prIdentity` was stamped, the persisted file already IS
-the post_review-ready wrapper (optionally fill its `review_body`, then pass the file unchanged); only a
-legacy bare-array artifact still needs the hand-wrap with `review_body`/`owner`/`repo`/`pr_number`/`sha`/`platform`
-(always set it). Never re-filter by tag, re-rank, or re-apply the cap yourself. Every finding in that
+   to `post_review.py` **verbatim** — when `delivery.prIdentity` was stamped, the persisted file already IS
+   the post_review-ready wrapper and its `review_body` is the rendered Summary body; pass the file unchanged.
+   A legacy bare-array artifact uses `post_review.py --report` with `--owner`, `--repo`, `--pr-number`,
+   `--platform`, and `--sha` so the script forms the wrapper. Never re-filter by tag, re-rank, or re-apply
+   the cap yourself. Every finding in that
 payload is posted as a PR comment — suggestions are not a separate delivery destination. The `report_tag`
 is rendered as a Routing bullet; reachability-demoted findings are low-severity suggestions and are withheld by `main_only` but included by `all`. Report findings remain grouped by severity
 and, under `main_only`, whether the pipeline already withheld them from the payload. Read

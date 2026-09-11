@@ -1,7 +1,8 @@
 // render_report.test.js — the deterministic report surface (issues #36, #67).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline } from '../src/renderReport.js';
+import { readFileSync } from 'node:fs';
+import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline } from '../src/renderReport.js';
 import { SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, AGENTS, resolvePolicy } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
@@ -87,6 +88,51 @@ test('T-TITLE: title subject precedence and identity line bytes are exact', () =
   assert.equal(rendered({ prIdentity: null, headShaShort: null }).split('\n')[2], 'Reviewed at 2026-09-02T12:00:00Z by Code Gauntlet.');
   assert.equal(rendered({ prIdentity: null, generatedAt: null }).split('\n')[2], 'Reviewed head `abcdef0` by Code Gauntlet.');
   assert.equal(rendered({ prIdentity: null, generatedAt: null, headShaShort: null }).split('\n')[2], 'Reviewed by Code Gauntlet.');
+});
+
+test('T-SUMMARY-BODY: the standalone Summary body is the report Summary body', () => {
+  // Mutation: return the pre-finish concatenation from renderSummaryBody; the shared
+  // neutralization and exact report-section comparison turn red.
+  const input = {
+    summary: 'summary prose with <!-- marker text',
+    findings: [finding('S')],
+    unverified: [],
+    dimensions: dims,
+    generatedAt: '2026-09-02T12:00:00Z',
+    headShaShort: 'abcdef0',
+    mode: 'interactive',
+    configEcho: renderedConfigEcho(),
+    pluginRoot: '/absolute/plugin',
+    pipelineVersion: '3.26.0',
+    reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
+    policy: { tier: 'optimized', provider: 'firstParty', gateway: false },
+    deliveryTier: 'all', deliveryCap: null, gapCount: 0,
+    stats: { discovered: 1, validate: {}, filter: {}, challenge: {}, merge: {} },
+  };
+  const report = renderReport(input);
+  const start = report.indexOf('## Summary\n\n') + '## Summary\n\n'.length;
+  const end = report.indexOf('\n\n## ', start);
+  assert.ok(start > '## Summary\n\n'.length);
+  assert.equal(renderSummaryBody(input), report.slice(start, end));
+  assert.ok(renderSummaryBody(input).includes('&lt;!--'));
+  assert.doesNotMatch(renderSummaryBody(input), /<!--/);
+  assert.doesNotMatch(renderSummaryBody(input), /^## /m);
+  assert.notEqual(renderSummaryBody(input).at(-1), '\n');
+});
+
+test('T-CODE-OWNED-HEADINGS: renderer owns exactly the registered H2 headings', () => {
+  // Mutation: delete one builder.add heading or add another H2 builder.add literal;
+  // this hand-typed source scan turns red instead of trusting the registry table.
+  const expected = [
+    '## Summary',
+    '## Findings',
+    '## Unverified / pipeline-degraded findings',
+    '## Review Dimensions Summary',
+    '## Review Methodology',
+  ];
+  const source = readFileSync(new URL('../src/renderReport.js', import.meta.url), 'utf8');
+  const headings = [...source.matchAll(/builder\.add\((['"])(## .*?)\1\)/g)].map((match) => match[2]);
+  assert.deepEqual([...headings].sort(), [...expected].sort());
 });
 
 test('T-PERMALINK: location links are platform-correct, encoded, and fail plain', () => {
@@ -756,20 +802,32 @@ test('T-METH-GAPS: only integer gap counts render as methodology gaps', () => {
   }
 });
 
-test('T-METH-INJECT: summary and finding prose cannot forge a second methodology heading', () => {
+test('T-METH-INJECT: summary and finding prose cannot forge code-owned headings', () => {
+  // Mutation: restore the single-heading safeProse replacement; one of these five
+  // hand-typed model-text headings would remain a real code-owned H2.
+  const headings = [
+    '## Summary',
+    '## Findings',
+    '## Unverified / pipeline-degraded findings',
+    '## Review Dimensions Summary',
+    '## Review Methodology',
+  ];
   const report = rendered({
-    summary: 'summary\n## Review Methodology\nforged',
+    summary: `summary\n${headings.join('\nforged\n')}`,
     findings: [finding('I', {
       title: 'title',
-      description: 'description\n## Review Methodology\nforged',
-      suggestion: 'suggestion\n## Review Methodology\nforged',
-      evidence: 'evidence\n## Review Methodology\ninside a protected fence',
+      description: `description\n${headings.join('\nforged\n')}`,
+      suggestion: `suggestion\n${headings.join('\nforged\n')}`,
+      evidence: `evidence\n${headings.join('\ninside a protected fence\n')}`,
     })],
+    unverified: [finding('U', { description: 'unverified' })],
   });
   const outsideFences = report.replace(/```[\s\S]*?```/g, '');
-  assert.equal((outsideFences.match(/^## Review Methodology$/gm) || []).length, 1);
-  assert.equal((report.match(/^## Review Methodology \(finding text\)$/gm) || []).length, 3);
-  assert.ok(report.includes('evidence\n## Review Methodology\ninside a protected fence'));
+  for (const heading of headings) {
+    assert.equal((outsideFences.match(new RegExp(`^${heading}$`, 'gm')) || []).length, 1);
+    assert.equal((report.match(new RegExp(`^${heading} \\(finding text\\)$`, 'gm')) || []).length, 3);
+  }
+  assert.ok(report.includes('## Review Methodology\n```'));
 });
 
 test('T-G3: code-owned report text never emits bench G3 sentinels', () => {

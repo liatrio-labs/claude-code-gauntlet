@@ -65,6 +65,14 @@ export const PR_IDENTITY_FIELDS = [
   { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0, describe: 'a non-empty string when present' },
 ];
 
+export const CODE_OWNED_HEADINGS = [
+  '## Summary',
+  '## Findings',
+  '## Unverified / pipeline-degraded findings',
+  '## Review Dimensions Summary',
+  '## Review Methodology',
+];
+
 // --- The canonical finding schema ------------------------------------------
 //
 // FINDING_PROP_TYPES + FINDING_REQUIRED + each DIMENSIONS row's `schemaExtra` are, together,

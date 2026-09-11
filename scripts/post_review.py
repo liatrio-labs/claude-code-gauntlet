@@ -3,7 +3,7 @@
 post_review.py — Deterministic PR/MR comment delivery for code-gauntlet.
 
 Usage:
-    python3 post_review.py <findings_json_path> [--dry-run]
+    python3 post_review.py <findings_json_path> [--dry-run] [--report PATH]
 
     --dry-run captures the would-be GitHub/GitLab API payloads to
     post-review-payload.json (written next to the findings file) instead of
@@ -11,6 +11,10 @@ Usage:
     One capture is deliberately NOT the live bytes: a GitLab discussion body is
     captured as the rendered comment alone, without the per-finding delivery
     marker the live post appends (see the marker note in post_gitlab).
+    --report reads the rendered Summary body when the input wrapper does not
+    already carry review_body. The owner/repo/pr-number/platform/sha flags fill
+    or override the corresponding wrapper fields, including for a bare findings
+    array.
 
 Input JSON schema:
     {
@@ -1515,6 +1519,13 @@ RULE_SOURCE_LABELS = {
     "self_inconsistency": "Inconsistency",
 }
 RULE_SOURCE_LABEL_FALLBACK = "Cited rule"
+CODE_OWNED_HEADINGS = [
+    "## Summary",
+    "## Findings",
+    "## Unverified / pipeline-degraded findings",
+    "## Review Dimensions Summary",
+    "## Review Methodology",
+]
 # /generated-from-registry-identity:constants
 # One mark per delivered SURFACE, never per element: an inline comment/discussion body
 # carries the trailer once at the end; the summary body carries the header instead, and the
@@ -1751,7 +1762,6 @@ def build_skipped_section(skipped, inline_count=None):
             f"instead:{group_note}"
         )
     lines = [
-        "",
         "---",
         "",
         f"### ⚠️ {n} finding(s) could not be anchored inline",
@@ -1778,7 +1788,37 @@ def compose_review_body(review_body, skipped_section, footer):
     stale orchestrator yields two headings once and self-heals on the next run, whereas
     a phrase-sniffing stripper would make the identity depend on counting prose.
     """
-    return f"{BRAND_SUMMARY_HEADER}\n\n{review_body}{skipped_section}{footer}"
+    fragments = [BRAND_SUMMARY_HEADER]
+    if review_body:
+        fragments.append(review_body)
+    if skipped_section:
+        fragments.append(skipped_section)
+    return "\n\n".join(fragments) + (footer or "")
+
+
+def summary_body_from_report(report):
+    """Return the body between the rendered Summary and next code-owned heading."""
+    marker = "## Summary\n\n"
+    start = report.find(marker)
+    if start < 0:
+        die("Report does not contain a rendered Summary section.")
+    body_start = start + len(marker)
+    cursor = body_start
+    while cursor <= len(report):
+        end = report.find("\n", cursor)
+        if end < 0:
+            line = report[cursor:]
+            next_cursor = len(report) + 1
+        else:
+            line = report[cursor:end]
+            next_cursor = end + 1
+        if line.endswith("\r"):
+            line = line[:-1]
+        if line in CODE_OWNED_HEADINGS:
+            body = report[body_start:cursor]
+            return body[:-2] if body.endswith("\n\n") else body
+        cursor = next_cursor
+    die("Report does not contain a following code-owned heading after Summary.")
 
 
 def finding_key(filepath, line, title, body):
@@ -2738,6 +2778,18 @@ def main():
         "and read-only fetches still run. A captured GitLab discussion body "
         "omits the per-finding delivery marker the live post appends.",
     )
+    parser.add_argument(
+        "--report",
+        metavar="PATH",
+        help="Read the rendered report Summary section as review_body when absent.",
+    )
+    parser.add_argument("--owner", help="Override the wrapper owner field.")
+    parser.add_argument("--repo", help="Override the wrapper repo field.")
+    parser.add_argument(
+        "--pr-number", type=int, help="Override the wrapper PR/MR number."
+    )
+    parser.add_argument("--platform", help="Override the wrapper platform field.")
+    parser.add_argument("--sha", help="Override the wrapper reviewed commit SHA.")
     args = parser.parse_args()
 
     # Defense-in-depth: CODE_GAUNTLET_POST_MODE=dry-run self-enforces dry-run so a
@@ -2749,11 +2801,46 @@ def main():
     # Load input
     try:
         with open(args.findings_json) as fh:
-            data = json.load(fh)
+            loaded = json.load(fh)
     except FileNotFoundError:
         die(f"Findings file not found: {args.findings_json}")
     except json.JSONDecodeError as e:
         die(f"Invalid JSON in findings file: {e}")
+
+    if isinstance(loaded, list):
+        data = {}
+        for name, value in (
+            ("owner", args.owner),
+            ("repo", args.repo),
+            ("pr_number", args.pr_number),
+            ("sha", args.sha),
+            ("platform", args.platform),
+        ):
+            if value is not None:
+                data[name] = value
+        data["review_body"] = ""
+        data["findings"] = loaded
+    elif isinstance(loaded, dict):
+        data = loaded
+    else:
+        die("Findings JSON must be an object or an array.")
+
+    for name, value in (
+        ("owner", args.owner),
+        ("repo", args.repo),
+        ("pr_number", args.pr_number),
+        ("platform", args.platform),
+        ("sha", args.sha),
+    ):
+        if value is not None:
+            data[name] = value
+
+    if args.report and not data.get("review_body"):
+        try:
+            with open(args.report, encoding="utf-8") as fh:
+                data["review_body"] = summary_body_from_report(fh.read())
+        except FileNotFoundError:
+            die(f"Report file not found: {args.report}")
 
     # Validate required fields
     for field in ("owner", "repo", "pr_number"):

@@ -352,6 +352,13 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "self_inconsistency": "SI",
         },
         "ruleSourceLabelFallback": "RF",
+        "codeOwnedHeadings": [
+            "## Summary",
+            "## Findings",
+            "## Unverified / pipeline-degraded findings",
+            "## Review Dimensions Summary",
+            "## Review Methodology",
+        ],
         "deriveWhen": {"gamma": "the gamma condition holds"},
         "derivedFrom": {"delta": "the delta source is present"},
         "required": [
@@ -569,7 +576,14 @@ class TestIdentityFenceGuards(unittest.TestCase):
             '    "repo_precedent": "RP",\n'
             '    "self_inconsistency": "SI",\n'
             "}\n"
-            'RULE_SOURCE_LABEL_FALLBACK = "RF"'
+            'RULE_SOURCE_LABEL_FALLBACK = "RF"\n'
+            "CODE_OWNED_HEADINGS = [\n"
+            '    "## Summary",\n'
+            '    "## Findings",\n'
+            '    "## Unverified / pipeline-degraded findings",\n'
+            '    "## Review Dimensions Summary",\n'
+            '    "## Review Methodology",\n'
+            "]"
         ),
         ("scripts/render_fix_tasks.py", "constants"): (
             'BRAND_MARK = "MARK"\n'
@@ -1354,6 +1368,16 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             },
         )
         self.assertEqual(identity["shaFullRe"], "^[0-9a-f]{40}$")
+        self.assertEqual(
+            identity["codeOwnedHeadings"],
+            [
+                "## Summary",
+                "## Findings",
+                "## Unverified / pipeline-degraded findings",
+                "## Review Dimensions Summary",
+                "## Review Methodology",
+            ],
+        )
         self.assertEqual(
             identity["webOriginRe"],
             r"^https?:\/\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\[[0-9A-Fa-f:.]{2,45}\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$",
