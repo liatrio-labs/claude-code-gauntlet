@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.40.1 (2026-09-12)
+
+### Bug Fixes
+
+- **verify**: Prove the slice-input token itself, decline sorted keys
+  ([#331](https://github.com/liatrio-labs/claude-code-gauntlet/pull/331),
+  [`6d07dbf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6d07dbf1832f4a933991ac933e98dc7fcf464006))
+
+- **verify**: Prove the slice-input token itself, decline sorted keys (#172)
+  ([#331](https://github.com/liatrio-labs/claude-code-gauntlet/pull/331),
+  [`6d07dbf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6d07dbf1832f4a933991ac933e98dc7fcf464006))
+
+### Chores
+
+- **ci**: Ratchet bench and JS branch floors, name the probe's skip
+  ([#331](https://github.com/liatrio-labs/claude-code-gauntlet/pull/331),
+  [`6d07dbf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6d07dbf1832f4a933991ac933e98dc7fcf464006))
+
+### Documentation
+
+- **verify**: Carry inline_checksum into the three receipt shape summaries
+  ([#331](https://github.com/liatrio-labs/claude-code-gauntlet/pull/331),
+  [`6d07dbf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6d07dbf1832f4a933991ac933e98dc7fcf464006))
+
+
 ## v3.40.0 (2026-09-11)
 
 ### Features
