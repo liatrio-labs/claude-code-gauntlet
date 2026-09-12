@@ -56,7 +56,8 @@ envelope the workflow's verify stage consumes, and adds the DELTA ECHO (issue #2
       "status": "ok",
       "receipt": {"sha": ..., "n_in": N, "nonce": ...,
                   "deltas_checksum": "fnv1a32:0x...",
-                  "input_checksum": "fnv1a32:0x..."},
+                  "inline_checksum": "fnv1a32:0x...",
+                  "input_checksum": "fnv1a32:0x..."},   <- omitted when unprovable
       "result": {
         "deltas": [ {"id", "verified", "origin", "severity", "confidence",
                      "elimination_reason"?}, ... ],   <- FIRST key, see below
@@ -1592,7 +1593,9 @@ def _run_receipt(args):
     the discriminated-union envelope the JS verify stage trusts.
 
     On success:  ``{status:'ok', receipt:{sha, n_in, nonce, deltas_checksum,
-    input_checksum}, result:{deltas, verified, eliminated, batches, stats}}``.
+    inline_checksum, input_checksum?}, result:{deltas, verified, eliminated,
+    batches, stats}}`` — ``inline_checksum`` is unconditional; ``input_checksum``
+    is omitted when the document holds no cross-runtime number spelling.
     On an uncaught exception during the body: ``{status:'failed', exitCode:1,
     stderr:str(e)}`` — written with exit 0 because an honest failure is
     schema-valid; the workflow routes it to the UNVERIFIED path rather than

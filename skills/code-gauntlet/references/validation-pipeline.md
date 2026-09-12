@@ -24,7 +24,7 @@ and returns the script's discriminated-union envelope — but no longer by value
 
 ```
 { status: 'ok',
-  receipt: { sha, n_in, nonce, deltas_checksum, input_checksum? },
+  receipt: { sha, n_in, nonce, deltas_checksum, inline_checksum, input_checksum? },
   result: {
     deltas: [ { id, verified, origin?, severity?, confidence?, elimination_reason? }, ... ],
     verified, eliminated, batches, stats   // unchanged on disk; NEVER echoed by the executor
