@@ -893,6 +893,9 @@ const VERIFY_SCHEMA = {
         // compared in trustSlice against the checksum this stage computed over the
         // content it dispatched. Optional in the SCHEMA, mandatory in trustSlice.
         input_checksum: { type: 'string' },
+        // The token proof: fnv1a32 over the --input-inline token the script received,
+        // before it decoded anything. Optional in the SCHEMA, mandatory in trustSlice.
+        inline_checksum: { type: 'string' },
       },
     },
     result: {
@@ -1074,9 +1077,10 @@ export async function verifyStage(ctx, input) {
     const slice = unit.slice;
     const content = { findings: slice.map(projectVerifySliceFinding), base_branch: baseBranch };
     const expectedInputChecksum = firstUnsafeNumber(content, `slice${i}`) === null
-      ? fnv1a32(JSON.stringify(content, null, 2))
+      ? sliceInputChecksum(content)
       : null;
     const payload = encodeSliceInline(content);
+    const expectedInlineChecksum = sliceTokenChecksum(payload);
     const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
     if (payload.length !== predictedPayloadLength || predictedPayloadLength > VERIFY_INLINE_CHAR_BUDGET) {
       throw new Error(`verify inline planner produced an oversized slice ${i} (${payload.length} > ${VERIFY_INLINE_CHAR_BUDGET})`);
@@ -1100,7 +1104,7 @@ export async function verifyStage(ctx, input) {
       continue;
     }
 
-    const attempt = await verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids: ids.ids, expectedInputChecksum, inlinePayload: payload });
+    const attempt = await verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids: ids.ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload: payload });
     if (!attempt.ok) {
       if (attempt.inputFault === 'mismatch') inputProof.mismatched += 1;
       else if (attempt.inputFault === 'missing') inputProof.missing += 1;
@@ -1184,9 +1188,9 @@ function verifyDegradeGap(detail, k, n) {
 // The nonce is now COMPUTED ONCE and threaded into verifyPrompt/verifyCommand. It used
 // to be derived independently at both sites, which silently required the two formulas to
 // stay identical; an attempt-varying nonce makes that a live bug rather than a latent one.
-async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids, expectedInputChecksum, inlinePayload }) {
+async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload }) {
   const attempt = (sliceNonce, label) =>
-    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum, inlinePayload });
+    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload });
 
   const first = await attempt(`${nonce}.${i}`, `verify-slice-${i}`);
   if (first.ok) return { ok: true, verified: first.verified, gap: null, retried: false };
@@ -1207,13 +1211,17 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaSho
   return {
     ok: false,
     reason: `${second.reason} — retried once after the first attempt failed (${first.reason})`,
-    inputFault: second.inputFault,
+    // The FIRST attempt's fault when the second failed some other way. Without the
+    // fallback a slice whose first attempt failed its input proof and whose second died
+    // of a dropped receipt, a bad nonce or a throw incremented neither `mismatched` nor
+    // `retriedMismatch` — the ledger degraded the slice while attributing it to nothing.
+    inputFault: second.inputFault ?? first.inputFault,
   };
 }
 
 // One executor dispatch for one slice. Never throws: a thrown agent() becomes an
 // untrusted result carrying the message, exactly as the pre-retry loop recorded it.
-async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum, inlinePayload }) {
+async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload }) {
   let env;
   try {
     // agent(promptString, opts); the pinned command is embedded in the prompt
@@ -1227,7 +1235,7 @@ async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, slic
   } catch (e) {
     return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };
   }
-  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length, ids, expectedInputChecksum });
+  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length, ids, expectedInputChecksum, expectedInlineChecksum });
   if (!trust.ok) {
     return { ok: false, reason: trust.reason, inputFault: trust.inputFault };
   }
@@ -1384,6 +1392,34 @@ export function projectVerifySliceFinding(finding) {
   return pinNumericFields(projected);
 }
 
+// sliceInputChecksum(content) -> the VALUE proof over the dispatched slice document.
+// The ONE site that spells this canonical form; verify_findings.py's `_input_checksum` is
+// its Python twin. Deliberately unsorted: the document is built in VERIFY_SLICE_FIELDS
+// order by projectVerifySliceFinding, the script reads it back in that order, and a
+// document that comes back in a different shape is a regenerated token rather than a
+// copied one. Issue #172 asked whether to sort keys here and the answer was no, on the
+// record: sorting would forgive exactly that regeneration while leaving the proof's
+// array-order, extra-field and number-spelling sensitivities untouched. It is a named
+// function rather than an inline expression so the regression that pins the decision can
+// call the production code instead of re-deriving both sides of it.
+export function sliceInputChecksum(content) {
+  return fnv1a32(JSON.stringify(content, null, 2));
+}
+
+// sliceTokenChecksum(payload) -> the BYTE proof over the inline token itself.
+// The stronger half of guard (4): it covers the exact characters the executor was asked to
+// reproduce, so it catches every alteration the value proof can miss — key transposition,
+// a findings-array or cross_file_refs permutation, an invented field, a re-spelled number,
+// and an astral character rewritten as an escaped surrogate pair (the decoder accepts that
+// spelling, and both decode to documents the value proof serialises identically). The
+// token is printable ASCII by construction (encodeSliceInline's postcondition), so this
+// proof needs no collation, escaping or number-spelling contract in either runtime — the
+// property that made it unavailable when PR #171 weighed it, and that PR #287's inline
+// channel created.
+export function sliceTokenChecksum(payload) {
+  return fnv1a32(String(payload));
+}
+
 // The inline encoder above is the sole verify-input transport; the executor receives it
 // directly in its command and the Python script writes the destination path.
 // canonicalDeltas(ids, deltas) -> the deltas in a form both runtimes spell identically.
@@ -1468,7 +1504,7 @@ export function deltaContentProof(ids, deltas) {
 // Byzantine one. The nonce is argv-visible and the checksum travels in the same envelope
 // as the data it covers, so a malicious executor could recompute both; an LLM transcribing
 // a document cannot, which is exactly the failure class this boundary keeps hitting.
-function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum }) {
+function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, expectedInlineChecksum }) {
   if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
   if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
   const r = env.receipt || {};
@@ -1521,6 +1557,26 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum })
   //     equal the checksum this stage computed over the content it DISPATCHED. Guards
   //     (1)-(3) all grade the executor's answer; this one grades the QUESTION, which
   //     nothing before it could see. The inline token is decoded by the script.
+  // (4a) TOKEN PROOF — over the exact characters the executor was handed. Checked FIRST
+  //      because it is the strictly stronger half: every mutation the value proof catches
+  //      moves the token too, and the token also covers what the value proof cannot see
+  //      (a re-spelled number, an astral character rewritten as an escaped surrogate
+  //      pair). It is also always computable, where the value proof goes null on a number
+  //      the two runtimes spell differently.
+  if (expectedInlineChecksum != null) {
+    const tokenProof = typeof r.inline_checksum === 'string' ? r.inline_checksum.trim() : '';
+    if (!tokenProof) {
+      return { ok: false, reason: 'inline token proof missing from receipt', inputFault: 'missing' };
+    }
+    if (tokenProof !== expectedInlineChecksum) {
+      return {
+        ok: false,
+        reason: `slice-input token proof mismatch (receipt ${tokenProof}, dispatched ${expectedInlineChecksum}) — the token the script decoded is not the token this stage dispatched`,
+        inputFault: 'mismatch',
+      };
+    }
+  }
+
   if (expectedInputChecksum != null) {
     const inputProof = typeof r.input_checksum === 'string' ? r.input_checksum.trim() : '';
     if (!inputProof) {
@@ -1595,7 +1651,7 @@ function verifyCommand(inp, i, sliceNonce, inlinePayload) {
 // names. The large verified/eliminated arrays that follow are for bench and v2 consumers;
 // naming them here as explicitly-not-wanted is cheaper than letting the agent decide.
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
-  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
+  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, inline_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
 }
 
 // --- Agent-count coarsening -------------------------------------------------

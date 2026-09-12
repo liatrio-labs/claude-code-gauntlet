@@ -138,7 +138,7 @@ jobs:
             --test-coverage-include='workflows/src/*.js' \
             --test-coverage-include='workflows/build.js' \
             --test-coverage-lines=98.2 \
-            --test-coverage-branches=89.6 \
+            --test-coverage-branches=90.0 \
             --test-coverage-functions=97.6 \
             --test-reporter=spec --test-reporter-destination=stdout \
             --test-reporter=lcov --test-reporter-destination="$LCOV" \
@@ -188,4 +188,4 @@ jobs:
         if: matrix.python-version == '3.12'
         run: |
           COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
-            --cov=bench --cov-fail-under=88.2
+            --cov=bench --cov-fail-under=88.5

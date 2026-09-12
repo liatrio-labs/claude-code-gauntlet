@@ -56,7 +56,8 @@ envelope the workflow's verify stage consumes, and adds the DELTA ECHO (issue #2
       "status": "ok",
       "receipt": {"sha": ..., "n_in": N, "nonce": ...,
                   "deltas_checksum": "fnv1a32:0x...",
-                  "input_checksum": "fnv1a32:0x..."},
+                  "inline_checksum": "fnv1a32:0x...",
+                  "input_checksum": "fnv1a32:0x..."},   <- omitted when unprovable
       "result": {
         "deltas": [ {"id", "verified", "origin", "severity", "confidence",
                      "elimination_reason"?}, ... ],   <- FIRST key, see below
@@ -1086,11 +1087,18 @@ def _input_checksum(doc):
     the decoded document is the one this run asked for. The receipt path writes that
     decoded value to the destination before verification.
 
-    It is a VALUE proof, not a byte proof, and deliberately so: the writer persists
-    compact JSON, so a byte comparison against the pretty form would fail every real
-    run. Both sides therefore hash a canonical re-serialisation of the same value —
-    the identical pair the persist path uses, pinned across runtimes by
+    It is a VALUE proof, not a byte proof, because it must serve two paths whose on-disk
+    spelling differs. On the LEGACY positional path an external writer chose that
+    spelling, so only the value can be compared. On the INLINE path the byte comparison
+    is available and is made separately, over the received token, by the caller below --
+    ``_run_receipt`` writes ``--input`` itself in the pretty form, so this proof and the
+    file agree there by construction. Both sides hash a canonical re-serialisation of the
+    same value: the identical pair the persist path uses, pinned across runtimes by
     tests/test_assemble_artifacts.py and by tests/fixtures/parity/slice_input_proof/.
+
+    Keys are NOT sorted, on the record (issue #172): the document arrives in
+    ``_SLICE_INPUT_FIELDS`` order and a document that comes back in another shape is a
+    regenerated token, not a copied one.
 
     Returns None rather than raising when the document holds a value the two runtimes
     spell differently: an absent proof lets the workflow decide honestly, where an
@@ -1203,13 +1211,18 @@ def _decode_inline_string(value, path):
     return "".join(out)
 
 
-def _decode_inline_node(node, path="$", seen_keys=None):
+def _decode_inline_node(node, path="$"):
     if isinstance(node, _InlineObject):
+        # No decoded-duplicate check here: the accepted spelling alphabet is injective, so
+        # two distinct raw keys can never decode to one string. A safe byte is spelled only
+        # as itself (a %XX escape of one is rejected as non-canonical), every other byte
+        # only as canonical uppercase %XX, and a surrogate only as %uXXXX. Raw duplicates
+        # are rejected earlier, by _inline_pairs. tests/test_verify_findings.py pins the
+        # injectivity property; the branch that used to sit here was unreachable and its
+        # test passed on the non-canonical-escape guard instead.
         decoded = {}
         for raw_key, raw_value in node:
             key = _decode_inline_string(raw_key, f"{path}.<key>")
-            if key in decoded:
-                _inline_reject(f"duplicate decoded object key {key!r} at {path}")
             decoded[key] = _decode_inline_node(raw_value, f"{path}.{key}")
         return decoded
     if isinstance(node, list):
@@ -1580,7 +1593,9 @@ def _run_receipt(args):
     the discriminated-union envelope the JS verify stage trusts.
 
     On success:  ``{status:'ok', receipt:{sha, n_in, nonce, deltas_checksum,
-    input_checksum}, result:{deltas, verified, eliminated, batches, stats}}``.
+    inline_checksum, input_checksum?}, result:{deltas, verified, eliminated,
+    batches, stats}}`` — ``inline_checksum`` is unconditional; ``input_checksum``
+    is omitted when the document holds no cross-runtime number spelling.
     On an uncaught exception during the body: ``{status:'failed', exitCode:1,
     stderr:str(e)}`` — written with exit 0 because an honest failure is
     schema-valid; the workflow routes it to the UNVERIFIED path rather than
@@ -1594,6 +1609,12 @@ def _run_receipt(args):
     """
     sha = args.head_sha or _resolve_head_sha() or ""
     try:
+        # BEFORE the decode, over the bytes as received: the token proof covers what the
+        # executor was asked to reproduce, so it survives every normalisation the decode
+        # would erase (a re-spelled number, an astral character re-spelled as an escaped
+        # surrogate pair). Always computable -- the token is printable ASCII -- where
+        # _input_checksum goes None on a number the two runtimes spell differently.
+        inline_checksum = fnv1a32(args.input_inline)
         data = decode_inline_slice(args.input_inline)
         _validate_input_shape(data, inline=True)
         input_checksum = _input_checksum(data)
@@ -1613,6 +1634,7 @@ def _run_receipt(args):
             "n_in": len(findings),
             "nonce": args.nonce,
             "deltas_checksum": deltas_checksum(deltas),
+            "inline_checksum": inline_checksum,
         }
         # OMITTED when no cross-runtime spelling exists -- never emitted as null. The
         # executor's echo schema types this as a string, so a null would be an

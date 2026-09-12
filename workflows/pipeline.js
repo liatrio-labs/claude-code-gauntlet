@@ -3732,6 +3732,7 @@ const VERIFY_SCHEMA = {
         nonce: { type: 'string' },
         deltas_checksum: { type: 'string' },
         input_checksum: { type: 'string' },
+        inline_checksum: { type: 'string' },
       },
     },
     result: {
@@ -3825,9 +3826,10 @@ async function verifyStage(ctx, input) {
     const slice = unit.slice;
     const content = { findings: slice.map(projectVerifySliceFinding), base_branch: baseBranch };
     const expectedInputChecksum = firstUnsafeNumber(content, `slice${i}`) === null
-      ? fnv1a32(JSON.stringify(content, null, 2))
+      ? sliceInputChecksum(content)
       : null;
     const payload = encodeSliceInline(content);
+    const expectedInlineChecksum = sliceTokenChecksum(payload);
     const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
     if (payload.length !== predictedPayloadLength || predictedPayloadLength > VERIFY_INLINE_CHAR_BUDGET) {
       throw new Error(`verify inline planner produced an oversized slice ${i} (${payload.length} > ${VERIFY_INLINE_CHAR_BUDGET})`);
@@ -3842,7 +3844,7 @@ async function verifyStage(ctx, input) {
       degrade(`slice ${i}: ${ids.reason} — the delta echo is keyed by id, so this slice cannot be verified`);
       continue;
     }
-    const attempt = await verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids: ids.ids, expectedInputChecksum, inlinePayload: payload });
+    const attempt = await verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids: ids.ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload: payload });
     if (!attempt.ok) {
       if (attempt.inputFault === 'mismatch') inputProof.mismatched += 1;
       else if (attempt.inputFault === 'missing') inputProof.missing += 1;
@@ -3871,9 +3873,9 @@ const emptyInputProof = () => ({
 function verifyDegradeGap(detail, k, n) {
   return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped`;
 }
-async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids, expectedInputChecksum, inlinePayload }) {
+async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload }) {
   const attempt = (sliceNonce, label) =>
-    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum, inlinePayload });
+    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload });
   const first = await attempt(`${nonce}.${i}`, `verify-slice-${i}`);
   if (first.ok) return { ok: true, verified: first.verified, gap: null, retried: false };
   const second = await attempt(`${nonce}.${i}.r1`, `verify-slice-${i}-retry`);
@@ -3889,10 +3891,10 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaSho
   return {
     ok: false,
     reason: `${second.reason} — retried once after the first attempt failed (${first.reason})`,
-    inputFault: second.inputFault,
+    inputFault: second.inputFault ?? first.inputFault,
   };
 }
-async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum, inlinePayload }) {
+async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload }) {
   let env;
   try {
     env = await c.agent(verifyPrompt(inp, i, sliceNonce, inlinePayload), {
@@ -3904,7 +3906,7 @@ async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, slic
   } catch (e) {
     return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };
   }
-  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length, ids, expectedInputChecksum });
+  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length, ids, expectedInputChecksum, expectedInlineChecksum });
   if (!trust.ok) {
     return { ok: false, reason: trust.reason, inputFault: trust.inputFault };
   }
@@ -3963,6 +3965,12 @@ function projectVerifySliceFinding(finding) {
   }
   return pinNumericFields(projected);
 }
+function sliceInputChecksum(content) {
+  return fnv1a32(JSON.stringify(content, null, 2));
+}
+function sliceTokenChecksum(payload) {
+  return fnv1a32(String(payload));
+}
 function canonicalDeltas(ids, byId) {
   return ids.map((id) => {
     const src = byId.get(id) || {};
@@ -3978,7 +3986,7 @@ function deltaContentProof(ids, deltas) {
   }
   return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], byId), null, 2));
 }
-function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum }) {
+function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, expectedInlineChecksum }) {
   if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
   if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
   const r = env.receipt || {};
@@ -4021,6 +4029,19 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum })
   if (proof !== recomputed) {
     return { ok: false, reason: `delta content proof mismatch (receipt ${proof}, recomputed ${recomputed}) — the echoed values are not the ones the script wrote` };
   }
+  if (expectedInlineChecksum != null) {
+    const tokenProof = typeof r.inline_checksum === 'string' ? r.inline_checksum.trim() : '';
+    if (!tokenProof) {
+      return { ok: false, reason: 'inline token proof missing from receipt', inputFault: 'missing' };
+    }
+    if (tokenProof !== expectedInlineChecksum) {
+      return {
+        ok: false,
+        reason: `slice-input token proof mismatch (receipt ${tokenProof}, dispatched ${expectedInlineChecksum}) — the token the script decoded is not the token this stage dispatched`,
+        inputFault: 'mismatch',
+      };
+    }
+  }
   if (expectedInputChecksum != null) {
     const inputProof = typeof r.input_checksum === 'string' ? r.input_checksum.trim() : '';
     if (!inputProof) {
@@ -4060,7 +4081,7 @@ function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   return parts.map(shellWord).join(' ');
 }
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
-  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
+  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, inline_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
 }
 const AGENT_COUNT_GUARD = 900;   // stay strictly under the platform fan-out ceiling
 const SUMMARIZE_TERM_BOUND = 300; // widen the summarize bucket once its term alone exceeds this

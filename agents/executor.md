@@ -36,8 +36,9 @@ summarize, fix, or re-run.
    - **`verify_findings.py`** — the `--output` file holds a `status`, a `receipt`, and a
      `result` that in turn holds a short `deltas` array
      FOLLOWED BY large `verified` and `eliminated` finding arrays. Return only: `status`;
-     every field `receipt` contains (`sha`, `n_in`, `nonce`, `deltas_checksum`, and
-     `input_checksum` when present — never invent an absent one), copied exactly;
+     every field `receipt` contains (`sha`, `n_in`, `nonce`, `deltas_checksum`,
+     `inline_checksum`, and `input_checksum` when present — never invent an absent one),
+     copied exactly;
      and every entry of `result.deltas`, copied exactly. Do NOT return `result.verified`, `result.eliminated`,
      `result.batches`, or `result.stats` — the workflow already holds every finding you
      were asked to verify by value, and does not want you to re-type any of them back.

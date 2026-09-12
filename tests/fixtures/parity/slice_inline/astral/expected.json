@@ -1,4 +1,5 @@
 {
   "checksum": "fnv1a32:0xa89b5201",
-  "encoded": "{\"findings\":[{\"id\":\"astral\",\"evidence\":\"before %F0%9F%98%80 after\"}],\"base_branch\":\"main\"}"
+  "encoded": "{\"findings\":[{\"id\":\"astral\",\"evidence\":\"before %F0%9F%98%80 after\"}],\"base_branch\":\"main\"}",
+  "token_checksum": "fnv1a32:0x6a2de354"
 }

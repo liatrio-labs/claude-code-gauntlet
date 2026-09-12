@@ -253,6 +253,7 @@ def _slice_input_proof(inp):
 
 def _slice_inline(inp):
     """Record the exact JS inline token and its receipt checksum."""
+    from assemble_artifacts import fnv1a32
     from verify_findings import _input_checksum
 
     source = (
@@ -268,7 +269,13 @@ def _slice_inline(inp):
         cwd=REPO,
         check=True,
     ).stdout
-    return {"encoded": encoded, "checksum": _input_checksum(inp["doc"])}
+    return {
+        "encoded": encoded,
+        "checksum": _input_checksum(inp["doc"]),
+        # The token proof: fnv1a32 over the encoded token itself, recorded so both
+        # runtimes are pinned against the same bytes the executor is asked to copy.
+        "token_checksum": fnv1a32(encoded),
+    }
 
 
 # Registered per-script recorders. Later tasks append entries here.

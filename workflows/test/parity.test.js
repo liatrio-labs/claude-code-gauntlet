@@ -30,6 +30,7 @@ import {
   deltaContentProof,
   fnv1a32,
   encodeSliceInline,
+  sliceTokenChecksum,
 } from '../src/stages.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -427,5 +428,7 @@ for (const c of loadCases('slice_inline')) {
   test(`slice_inline parity: ${c.name}`, () => {
     assert.equal(encodeSliceInline(c.input.doc), c.expected.encoded);
     assert.equal(fnv1a32(JSON.stringify(c.input.doc, null, 2)), c.expected.checksum);
+    // The token proof, over the same bytes Python hashes in _run_receipt.
+    assert.equal(sliceTokenChecksum(c.expected.encoded), c.expected.token_checksum);
   });
 }

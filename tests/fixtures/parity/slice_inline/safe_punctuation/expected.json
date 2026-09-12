@@ -1,4 +1,5 @@
 {
   "checksum": "fnv1a32:0xc2ecb484",
-  "encoded": "{\"findings\":[{\"id\":\"safe-1\",\"title\":\"Alpha .,:/_-\",\"description\":\"a b C9\",\"evidence\":\"safe\"}],\"base_branch\":\"main\"}"
+  "encoded": "{\"findings\":[{\"id\":\"safe-1\",\"title\":\"Alpha .,:/_-\",\"description\":\"a b C9\",\"evidence\":\"safe\"}],\"base_branch\":\"main\"}",
+  "token_checksum": "fnv1a32:0x37ce370e"
 }
