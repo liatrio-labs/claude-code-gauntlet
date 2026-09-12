@@ -114,23 +114,37 @@ export function sliceInputRecorder() {
     if (index < 0) return null;
     return decodeInlineValue(JSON.parse(argv[index + 1]));
   };
+  const tokenByPath = new Map();
   const checksumFor = (i) => {
     for (const [p, content] of byPath) {
       if (p.endsWith('.slice' + i + '.json')) return fnv1a32(JSON.stringify(content, null, 2));
     }
     return null;
   };
+  // The token proof the script computes over the bytes it received, mirrored here so a
+  // happy-path mock answers guard (4a) without re-deriving the stage's planner.
+  const tokenChecksumFor = (i) => {
+    for (const [p, token] of tokenByPath) {
+      if (p.endsWith('.slice' + i + '.json')) return fnv1a32(token);
+    }
+    return null;
+  };
   return {
     checksumFor,
+    tokenChecksumFor,
     stamp(env, i, prompt) {
       const content = contentFromPrompt(prompt);
       if (content) {
         const argv = shellSplit(prompt.split('\n').pop());
         const inputPath = argv[argv.indexOf('--input') + 1];
         byPath.set(inputPath, content);
+        tokenByPath.set(inputPath, argv[argv.indexOf('--input-inline') + 1]);
       }
       if (env && env.status === 'ok' && env.receipt && !Object.hasOwn(env.receipt, 'input_checksum')) {
         env.receipt.input_checksum = checksumFor(i);
+      }
+      if (env && env.status === 'ok' && env.receipt && !Object.hasOwn(env.receipt, 'inline_checksum')) {
+        env.receipt.inline_checksum = tokenChecksumFor(i);
       }
       return env;
     },

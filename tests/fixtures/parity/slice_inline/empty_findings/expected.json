@@ -1,4 +1,5 @@
 {
   "checksum": "fnv1a32:0x2eb50aa0",
-  "encoded": "{\"findings\":[],\"base_branch\":\"main\"}"
+  "encoded": "{\"findings\":[],\"base_branch\":\"main\"}",
+  "token_checksum": "fnv1a32:0x8c59538c"
 }

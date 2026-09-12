@@ -9,6 +9,8 @@ import {
   planVerifySlices,
   predictVerifySliceInlineLength,
   projectVerifySliceFinding,
+  sliceInputChecksum,
+  sliceTokenChecksum,
   verifyStage,
   VERIFY_ATTEMPTS_PER_SLICE,
   VERIFY_INLINE_SAFE,
@@ -285,6 +287,90 @@ test('two input checksum mismatches degrade after exactly the fresh retry', asyn
   assert.equal(ctx.execCallsFor(0).length, 2);
   assert.equal(out.inputProof.mismatched, 1);
   assert.ok(out.findings.every((finding) => finding.origin === 'unknown'));
+});
+
+// --- Guard (4a): the token proof, and the #172 ruling it rests on ------------------
+
+test('a token proof mismatch degrades the slice after the fresh retry', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_call, i, { attempt }) => {
+    const env = okEnvelope(input.findings, { nonce: attempt === 2 ? `n-1.${i}.r1` : `n-1.${i}` });
+    env.receipt.inline_checksum = 'fnv1a32:0xdeadbeef';
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.equal(ctx.execCallsFor(0).length, 2);
+  assert.equal(out.inputProof.mismatched, 1);
+  assert.ok(out.findings.every((finding) => finding.origin === 'unknown'));
+});
+
+test('a missing token proof is retryable, not terminal', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_call, i, { attempt }) => {
+    const env = okEnvelope(input.findings, { nonce: `n-1.${i}${attempt === 2 ? '.r1' : ''}` });
+    if (attempt === 1) env.receipt.inline_checksum = null;
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.equal(out.inputProof.retried, 1);
+  assert.equal(out.inputProof.retriedMissing, 1);
+});
+
+test('the token proof covers the exact dispatched token', async () => {
+  const input = baseInput();
+  let token = null;
+  const ctx = verifyCtx((call, i) => {
+    token = inlineOf(call);
+    return okEnvelope(input.findings, { nonce: `n-1.${i}` });
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.equal(out.inputProof.proven, 1);
+  assert.equal(ctx.execCallsFor(0)[0].prompt.includes(token), true);
+  assert.match(sliceTokenChecksum(token), /^fnv1a32:0x[0-9a-f]{8}$/);
+});
+
+// Issue #172, ruled 2026-09-11: the slice-input value proof does NOT sort keys, so a
+// value-equal document whose keys arrive in another order is untrusted. That is the
+// intended reading — the token is copied, not regenerated — and this test is what a
+// future sorted-key canonicalization would have to delete on purpose. It drives the real
+// verifyStage through the production `sliceInputChecksum`, so canonicalizing that one
+// function makes the assertion below fail rather than leaving it quietly green.
+test('a value-equal document with transposed keys is not trusted (#172)', async () => {
+  const input = baseInput();
+  const transposed = {
+    base_branch: input.verify.baseBranch,
+    findings: input.findings.map(projectVerifySliceFinding),
+  };
+  const ctx = verifyCtx((_call, i, { attempt }) => {
+    const env = okEnvelope(input.findings, { nonce: attempt === 2 ? `n-1.${i}.r1` : `n-1.${i}` });
+    env.receipt.input_checksum = sliceInputChecksum(transposed);
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false, 'a transposed-key document must not satisfy the input proof');
+  assert.equal(out.inputProof.mismatched, 1);
+  assert.ok(out.findings.every((finding) => finding.origin === 'unknown'));
+});
+
+// The ledger must attribute every slice it degrades. The first attempt's input fault used
+// to be dropped whenever the retry failed some OTHER way, so a degraded slice incremented
+// neither `mismatched` nor `retriedMismatch` — the counter #172's revisit trigger reads.
+test('a first-attempt input fault is attributed when the retry fails another way', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_call, i, { attempt }) => {
+    if (attempt === 1) {
+      const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
+      env.receipt.inline_checksum = 'fnv1a32:0xdeadbeef';
+      return env;
+    }
+    return { status: 'failed', exitCode: 1, stderr: 'boom' };
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.equal(out.inputProof.mismatched, 1, "the first attempt's input fault must survive a differently-failing retry");
 });
 
 test('oversize inline finding is degraded alone, disclosed, and never dispatched', async () => {

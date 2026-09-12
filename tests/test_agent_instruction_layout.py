@@ -204,7 +204,11 @@ CODEX_CAP_BYTES = 32_768
 # one exempt lockfile exactly, matching the guard test; a broader phrase misstated the rule.
 # Raised 22_349 -> 22_377 (2026-09-06, #265): the per-dimension extras bullet names rule_source
 # Raised 22_377 -> 22_633 (2026-09-06): the language-agnostic pointer for render_fix_tasks.py.
-AGENTS_SET_BUDGET_BYTES = 22_633
+# Raised 22_633 -> 22_911 (2026-09-11, #172): the verify-boundary section now
+# names the two halves of the input proof and the twin checksum functions a future
+# canonicalization would have to change together. The ruling lives in code comments; an
+# author editing either side needs to know the pair exists before the edit, not after.
+AGENTS_SET_BUDGET_BYTES = 22_911
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

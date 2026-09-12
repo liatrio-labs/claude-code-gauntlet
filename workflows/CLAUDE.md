@@ -105,6 +105,9 @@ decodes it and writes the destination path before verification.
   `id`/`verified`) are one list in two runtimes, walked in the same order.
 - `result.deltas` must stay the **first** key of `result` — the reading executor's `Read` is
   length-capped with no truncation notice, so what it echoes must be a prefix.
+- The input proof has **two halves**, both mandatory in `trustSlice`: `inline_checksum` over the
+  token as received, and `input_checksum` over the decoded document. Neither sorts keys (#172);
+  `sliceInputChecksum` (JS) and `_input_checksum` (Python) are the twins to change together.
 - The slice input is a projection, not a full finding copy: `VERIFY_SLICE_FIELDS` (JS) and
   `_SLICE_INPUT_FIELDS` (Python) are one list in two runtimes, walked in the same order. Every
   field the script consults on dispatched slices must be listed there — a lockstep test pins the

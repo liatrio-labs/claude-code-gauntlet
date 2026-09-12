@@ -1845,7 +1845,14 @@ class TestReceipt(unittest.TestCase):
             self.assertEqual(envelope["status"], "ok")
             self.assertEqual(
                 set(envelope["receipt"].keys()),
-                {"sha", "n_in", "nonce", "deltas_checksum", "input_checksum"},
+                {
+                    "sha",
+                    "n_in",
+                    "nonce",
+                    "deltas_checksum",
+                    "inline_checksum",
+                    "input_checksum",
+                },
             )
             self.assertEqual(envelope["receipt"]["sha"], "deadbeef")
             self.assertEqual(envelope["receipt"]["n_in"], len(findings))
@@ -2958,6 +2965,39 @@ class TestSliceInputRecovery(unittest.TestCase):
         # Inline receipt mode has no recovery disclosure at all.
         self.assertNotIn("input_recovery", envelope)
 
+    def test_receipt_carries_the_token_proof_over_the_bytes_as_received(self):
+        from scripts.assemble_artifacts import fnv1a32
+
+        doc = {"findings": self._receipt_findings(), "base_branch": "main"}
+        token = js_encode_inline(doc)
+        envelope = self._run_receipt_over(doc)
+        # Over the TOKEN, not the decoded document: this is the half that survives every
+        # normalisation the decode erases.
+        self.assertEqual(envelope["receipt"]["inline_checksum"], fnv1a32(token))
+
+    def test_the_token_proof_separates_documents_the_value_proof_cannot(self):
+        """An astral character re-spelled as an escaped surrogate pair.
+
+        The decoder accepts both spellings and they decode to different Python strings,
+        but js_stringify_pretty serialises them identically, so the value proof reports
+        one checksum for both. The token proof tells them apart.
+        """
+        from scripts.assemble_artifacts import fnv1a32
+
+        astral = (
+            '{"findings":[{"id":"a","file":"%F0%9F%98%80.js"}],"base_branch":"main"}'
+        )
+        escaped = (
+            '{"findings":[{"id":"a","file":"%uD83D%uDE00.js"}],"base_branch":"main"}'
+        )
+        decoded_astral = decode_inline_slice(astral)
+        decoded_escaped = decode_inline_slice(escaped)
+        self.assertNotEqual(decoded_astral, decoded_escaped)
+        self.assertEqual(
+            _input_checksum(decoded_astral), _input_checksum(decoded_escaped)
+        )
+        self.assertNotEqual(fnv1a32(astral), fnv1a32(escaped))
+
     def test_receipt_writes_the_decoded_inline_document_before_coercion(self):
         from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
 
@@ -3242,8 +3282,54 @@ class TestInlineSliceDecoder(unittest.TestCase):
     def test_rejects_unsafe_object_key(self):
         self._assert_rejected('{"findings":[{"`":"ok"}]}')
 
-    def test_rejects_duplicate_decoded_object_keys(self):
-        self._assert_rejected('{"findings":[{"id":"a","%69d":"b"}]}')
+    def test_rejects_non_canonical_percent_escape_in_key(self):
+        # Named for the guard it actually reaches. This payload used to be filed as the
+        # duplicate-decoded-key case, but %69 is the safe ASCII 'i', so it dies on the
+        # canonical-escape guard long before any duplicate check -- and the branch it was
+        # credited with covering was unreachable (see the injectivity test below).
+        with self.assertRaises(InputError) as ctx:
+            decode_inline_slice('{"findings":[{"id":"a","%69d":"b"}]}')
+        self.assertIn("non-canonical percent escape %69", str(ctx.exception))
+        self.assertIn("byte is SAFE ASCII", str(ctx.exception))
+
+    def test_the_accepted_spelling_alphabet_is_injective(self):
+        """Two distinct raw keys can never decode to the same string.
+
+        This is the property that makes a decoded-duplicate check unnecessary: raw
+        duplicates are rejected by _inline_pairs, and no code point has two accepted
+        spellings, so distinct raw keys stay distinct after decoding.
+        """
+        from scripts.verify_findings import _decode_inline_string
+
+        def accepted_spellings(cp):
+            ch = chr(cp)
+            encoded = ch.encode("utf-8", "surrogatepass")
+            candidates = (
+                ch,
+                "".join(f"%{b:02X}" for b in encoded),
+                "".join(f"%{b:02x}" for b in encoded),
+                f"%u{cp:04X}",
+                f"%u{cp:04x}",
+            )
+            out = set()
+            for candidate in candidates:
+                try:
+                    if _decode_inline_string(candidate, "$") == ch:
+                        out.add(candidate)
+                except InputError:
+                    pass
+            return out
+
+        probes = [*range(0x20, 0x300), 0x2028, 0xD800, 0xDFFF, 0x1F600]
+        for cp in probes:
+            with self.subTest(code_point=hex(cp)):
+                self.assertLessEqual(
+                    len(accepted_spellings(cp)),
+                    1,
+                    f"U+{cp:04X} has more than one accepted spelling, so two distinct "
+                    "raw keys could decode equal and the decoder needs a "
+                    "duplicate-decoded-key check again",
+                )
 
     def test_rejects_raw_duplicate_object_keys(self):
         with self.assertRaises(InputError) as ctx:
