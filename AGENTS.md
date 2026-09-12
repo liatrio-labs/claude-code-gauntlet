@@ -61,13 +61,13 @@ COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
   --cov=scripts --cov=.github --cov-fail-under=93.8
 
 COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
-  --cov=bench --cov-fail-under=88.2
+  --cov=bench --cov-fail-under=88.5
 
 LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage \
   --test-coverage-include='workflows/src/*.js' \
   --test-coverage-include='workflows/build.js' \
   --test-coverage-lines=98.2 \
-  --test-coverage-branches=89.6 \
+  --test-coverage-branches=90.0 \
   --test-coverage-functions=97.6 \
   --test-reporter=spec --test-reporter-destination=stdout \
   --test-reporter=lcov --test-reporter-destination="$LCOV" \
@@ -75,8 +75,8 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
   && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
 ```
 
-Floors: Python 93.8 / 88.2, JS 98.2 / 89.6 / 97.6. Each floor is pinned from a PR's CI
-measurement, most recently 2026-09-06 from #300 (bench 89.19; JS branches 90.56); scripts
+Floors: Python 93.8 / 88.5, JS 98.2 / 90.0 / 97.6. Each floor is pinned from a PR's CI
+measurement, most recently 2026-09-12 from #331 (bench 89.45; JS branches 90.93); scripts
 from #288 (94.74), JS lines from #271 (99.11), JS functions from #251 (98.51). The ratchet
 history is in git. Policy: a floor sits no more than 1.0 pp below the CI
 measurement for that gate; lower a floor only in the PR that causes the drop, with

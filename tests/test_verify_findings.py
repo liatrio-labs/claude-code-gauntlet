@@ -3317,7 +3317,10 @@ class TestInlineSliceDecoder(unittest.TestCase):
                     if _decode_inline_string(candidate, "$") == ch:
                         out.add(candidate)
                 except InputError:
-                    pass
+                    # A rejected spelling is not an accepted one, and only accepted
+                    # spellings count toward the bound below. Probing a rejection is the
+                    # point, so the rejection itself carries no information to record.
+                    continue
             return out
 
         probes = [*range(0x20, 0x300), 0x2028, 0xD800, 0xDFFF, 0x1F600]
