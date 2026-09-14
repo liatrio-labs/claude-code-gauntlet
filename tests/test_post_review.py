@@ -5507,7 +5507,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
             discussion_rcs=[1],
         )
         self.assertEqual(run.exit_code, 1)
-        self.assertIn("attempted this run were rejected", run.err)
+        self.assertIn("attempted this run were not delivered", run.err)
         self.assertIn("2 from an earlier run remain on the MR", run.err)
         self.assertNotIn("nothing was posted inline", run.err)
 
@@ -5529,6 +5529,21 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         self.assertIn("had a malformed position", run.err)
         self.assertIn("2 from an earlier run remain on the MR", run.err)
         self.assertNotIn("nothing was posted inline", run.err)
+
+    def test_malformed_position_emits_no_fold_notice(self):
+        # Mutation: report the fold before the malformed-position return; the
+        # notice then describes a discussion this run never put on the wire.
+        run = self._run_main(
+            findings=[
+                GL_CONTRACT_FINDINGS[0],
+                GL_CONTRACT_FINDINGS[1],
+                dict(GL_CONTRACT_FINDINGS[2], line=1.0, body="x" * 1000001),
+            ],
+            prior=(True, {self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY}, None),
+        )
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        self.assertIn("had a malformed position", run.err)
+        self.assertNotIn("Inline body folded by", run.err)
 
     def test_fetch_failure_delivers_every_finding(self):
         """Availability over dedup: a failed read must never be taken for "already
@@ -5870,26 +5885,26 @@ class TestProseFenceBudget(unittest.TestCase):
         self.assertLessEqual(len(folded.encode("utf-8")), 493)
 
     def test_crlf_text_retreats_whole_lines_and_closes_on_its_own_line(self):
-        # Mutation: drop one byte of a CRLF in _drop_last_line, or treat "\r" as text
-        # rather than a line ending when placing the closer.
-        text = "````\r\nkeep\r\nmore\r\n" + "DROP\r\n" * 300
-        for allowance, kept in (
-            (103, "````\r\nkeep\r"),
-            (109, "````\r\nkeep\r\nmore\r"),
-        ):
-            with self.subTest(allowance=allowance):
-                folded, dropped = _fold_review_body(text, allowance, "github")
-                self.assertEqual(folded, kept + "````\n\n" + self._fold_line(dropped))
-                self.assertEqual(
-                    dropped, len(text.encode("utf-8")) - len(kept.encode("utf-8"))
-                )
-                self.assertLessEqual(len(folded.encode("utf-8")), allowance)
+        # Mutation: keep one byte of a CRLF when _drop_last_line retreats; the 200-byte
+        # closer forces the retreat over CRLF lines, and at this allowance the split
+        # prefix ("more\\r") fits, so the kept text changes.
+        opener = "`" * 200
+        text = opener + "\r\nkeep\r\nmore\r\n" + "DROP\r\n" * 300
+        folded, dropped = _fold_review_body(text, 501, "github")
+        kept = opener + "\r\nkeep\r\n"
+        self.assertEqual(folded, kept + opener + "\n\n" + self._fold_line(dropped))
+        self.assertEqual(dropped, len(text.encode("utf-8")) - len(kept.encode("utf-8")))
+        self.assertLessEqual(len(folded.encode("utf-8")), 501)
 
     def test_lone_cr_text_retreats_to_a_cr_boundary(self):
-        text = "````\rkeep\rmore\r" + "DROP\r" * 300
-        folded, dropped = _fold_review_body(text, 102, "github")
-        self.assertEqual(folded, "````\rkeep\r````\n\n" + self._fold_line(dropped))
-        self.assertLessEqual(len(folded.encode("utf-8")), 102)
+        # Mutation: split on LF only in _drop_last_line; lone-CR text then has no line
+        # to retreat to and the fold collapses to the closer alone.
+        opener = "`" * 200
+        text = opener + "\rkeep\rmore\r" + "DROP\r" * 300
+        folded, dropped = _fold_review_body(text, 495, "github")
+        kept = opener + "\rkeep\r"
+        self.assertEqual(folded, kept + opener + "\n\n" + self._fold_line(dropped))
+        self.assertLessEqual(len(folded.encode("utf-8")), 495)
 
     def test_drop_last_line_accepts_every_line_ending(self):
         # Mutation: split on LF only, or keep one byte of a CRLF.

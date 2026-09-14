@@ -122,6 +122,7 @@ test('S-TABLE: severity breakdown uses closed labels and skips empty or absent v
     makeFinding('S8', { dimension: 'security', severity: 0 }),
     makeFinding('S9', { dimension: 'security', severity: false }),
     Object.defineProperty(makeFinding('S10', { dimension: 'security' }), 'severity', { get() { throw new Error('boom'); } }),
+    Object.defineProperty(makeFinding('S11', { severity: 'high' }), 'dimension', { get() { throw new Error('boom'); } }),
   ];
   const md = dimensionsSummaryTable({ dispatched: AGENTS, degraded: [], findings, unverified: [] });
   const row = tableRows(md)[rowIndex('code-gauntlet:security-reviewer')];

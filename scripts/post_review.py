@@ -2834,7 +2834,6 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             # failure. A PARTIAL match never reaches here: post_gitlab splits such a
             # group into its missing members before calling.
             return "already_present"
-        _report_inline_budget(composed, "gitlab", "discussion", filepath, line)
 
         position = {
             "position_type": "text",
@@ -2876,6 +2875,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
                 f"— malformed GitLab position: {'; '.join(problems)}."
             )
             return "invalid"
+        _report_inline_budget(composed, "gitlab", "discussion", filepath, line)
 
         payload = {
             "body": composed.body if DRY_RUN else composed.body + marker_suffix,
@@ -3166,8 +3166,8 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             # already placed are neither successes of this one nor part of the total,
             # and a malformed position never reached the wire to be "attempted".
             die(
-                f"all {failed} finding(s) attempted this run were rejected by "
-                f"GitLab — nothing new was posted inline.{standing} The MR summary note "
+                f"all {failed} finding(s) attempted this run were not delivered "
+                f"— nothing new was posted inline.{standing} The MR summary note "
                 f"is on the MR; rerunning retries the inline comments without "
                 f"duplicating what is already there."
             )

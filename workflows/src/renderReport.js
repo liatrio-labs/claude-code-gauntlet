@@ -92,11 +92,23 @@ export function dimensionsSummaryTable(input) {
   const byAgent = new Map(AGENTS.map((a) => [a, []]));
   const unverifiedByAgent = new Map(AGENTS.map((a) => [a, []]));
   for (const f of (inp.findings || [])) {
-    const agentType = owner[f && f.dimension];
+    let dimension;
+    try {
+      dimension = f ? f.dimension : undefined;
+    } catch {
+      dimension = undefined;
+    }
+    const agentType = owner[dimension];
     if (agentType && byAgent.has(agentType)) byAgent.get(agentType).push(f);
   }
   for (const f of (inp.unverified || [])) {
-    const agentType = owner[f && f.dimension];
+    let dimension;
+    try {
+      dimension = f ? f.dimension : undefined;
+    } catch {
+      dimension = undefined;
+    }
+    const agentType = owner[dimension];
     if (agentType && unverifiedByAgent.has(agentType)) unverifiedByAgent.get(agentType).push(f);
   }
 
