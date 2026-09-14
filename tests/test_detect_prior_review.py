@@ -538,7 +538,10 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
 
     def test_finding_keys_for_sha_collects_large_group_body(self):
         """A large consolidation group keeps every marker in one discussion body."""
-        n = review_marker._MAX_MARKER_SCANS + 8
+        # More members than the summary reader's 32-candidate cap ever allowed. The
+        # finding reader has no cap, so this size is a literal, not derived from
+        # review_marker._MAX_MARKER_SCANS (which now governs find_marker alone).
+        n = 40
         sha = "a" * 40
         keys = [f"{i:016x}" for i in range(n)]
         body = "Body\n\n" + "\n".join(

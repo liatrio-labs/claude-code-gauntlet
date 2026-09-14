@@ -553,7 +553,10 @@ class TestFindingMarker(unittest.TestCase):
 
     def test_more_than_scan_limit_finding_markers_are_all_returned(self):
         """The finding reader must preserve every member key in a large group body."""
-        n = review_marker._MAX_MARKER_SCANS + 8
+        # More members than the summary reader's 32-candidate cap ever allowed. The
+        # finding reader has no cap, so this size is a literal, not derived from
+        # review_marker._MAX_MARKER_SCANS (which now governs find_marker alone).
+        n = 40
         sha = "a" * 40
         keys = [f"{i:016x}" for i in range(n)]
         body = "Body\n\n" + "\n".join(build_finding_marker(sha, key) for key in keys)
@@ -570,9 +573,8 @@ class TestFindingMarker(unittest.TestCase):
         """Malformed finding candidates must not hide a complete valid marker tail."""
         child = "\n".join(
             [
-                "from scripts import review_marker",
                 "from scripts.review_marker import build_finding_marker, find_finding_marker, find_finding_markers",
-                "n = review_marker._MAX_MARKER_SCANS + 8",
+                "n = 40  # a literal: the finding reader has no scan cap to derive from",
                 "sha = 'a' * 40",
                 "keys = [f'{i:016x}' for i in range(n)]",
                 "invalid_json = '<!-- code-gauntlet-finding-key: {not json} -->\\n' * 5000",

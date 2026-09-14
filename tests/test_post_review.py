@@ -5159,6 +5159,8 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         """The live writer and reader must round-trip every member of a large group."""
         primary = _gl_primary()
         corrs = [_gl_corroborator(str(i), 61) for i in range(39)]
+        # One member has no anchor of its own, so the group body is the only place
+        # its content and key can land; the assertions below prove they did.
         corrs[0]["line"] = None
         members = [primary, *corrs]
         expected_keys = {_member_key(member) for member in members}
@@ -5171,6 +5173,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         discussion_body = next(
             payload["body"] for payload in payloads if "position" in payload
         )
+        self.assertIn(corrs[0]["body"], discussion_body)
         discussion_markers = review_marker.find_finding_markers(discussion_body)
         self.assertEqual(len(discussion_markers), 40)
         self.assertEqual(
