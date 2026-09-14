@@ -68,7 +68,7 @@ function dimensionOwnerMap() {
 function severityBreakdown(rowFindings) {
   const counts = new Map();
   for (const f of rowFindings) {
-    if (!f || !f.severity) continue;
+    if (!f || f.severity === undefined || f.severity === null || f.severity === '') continue;
     const severity = normalizeReportSeverity(f.severity);
     counts.set(severity, (counts.get(severity) || 0) + 1);
   }
