@@ -553,9 +553,9 @@ class TestFindingMarker(unittest.TestCase):
 
     def test_more_than_scan_limit_finding_markers_are_all_returned(self):
         """The finding reader must preserve every member key in a large group body."""
-        # More members than the summary reader's 32-candidate cap ever allowed. The
-        # finding reader has no cap, so this size is a literal, not derived from
-        # review_marker._MAX_MARKER_SCANS (which now governs find_marker alone).
+        # 40 members: more than the 32-candidate window the old slice scanned. The
+        # finding reader has no cap now, so the size is a literal on purpose, not
+        # derived from review_marker._MAX_MARKER_SCANS (which governs find_marker alone).
         n = 40
         sha = "a" * 40
         keys = [f"{i:016x}" for i in range(n)]
