@@ -20,15 +20,19 @@ Covers:
 """
 
 import contextlib
+import copy
+import hashlib
 import inspect
 import io
 import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import patch
@@ -70,6 +74,40 @@ from scripts.post_review import (
     valid_lines_for_file,
     validate_position,
 )
+
+REPO = Path(__file__).resolve().parents[1]
+_MISSING_SEVERITY = object()
+
+
+def _severity_matrix():
+    """Return fixed public-seam oracles for closed, total severity rendering."""
+    low = "\U0001f4a1"
+    high = "\U0001f7e0"
+    return [
+        ("oversized", "s" * 70000, "LOW", low),
+        ("int", 3, "LOW", low),
+        ("list", ["high"], "LOW", low),
+        ("dict", {"severity": "high"}, "LOW", low),
+        ("none", None, "LOW", low),
+        ("padded", " high ", "HIGH", high),
+        ("tabbed-case", "\tHiGh\r\n", "HIGH", high),
+        ("uppercase", "HIGH", "HIGH", high),
+        ("title-case", "High", "HIGH", high),
+        ("lowercase", "high", "HIGH", high),
+        ("unknown", "unknown", "LOW", low),
+        ("embedded-newline", "high\nfoo", "LOW", low),
+        ("missing", _MISSING_SEVERITY, "LOW", low),
+        ("empty", "", "LOW", low),
+        ("whitespace-only", " \t\r\n ", "LOW", low),
+        ("critical", "critical", "CRITICAL", "\U0001f534"),
+        ("medium", "medium", "MEDIUM", "\U0001f7e1"),
+        ("low", "low", "LOW", low),
+        ("bom-padded", "\ufeffhigh\ufeff", "HIGH", high),
+        ("line-separator-padded", "\u2028high\u2029", "HIGH", high),
+        ("next-line-padded", "\x85high\x85", "LOW", low),
+        ("file-separator-padded", "\x1chigh\x1c", "LOW", low),
+    ]
+
 
 # ---------------------------------------------------------------------------
 # detect_platform
@@ -953,7 +991,11 @@ class TestRenderCommentBody(unittest.TestCase):
         finding = {"severity": "unknown", "title": "Thing", "body": "desc"}
         body = render_comment_body(finding)
         self.assertIn("\U0001f4a1", body)  # 💡 fallback
-        self.assertIn("[UNKNOWN]", body)
+        self.assertEqual(
+            body,
+            "**\U0001f4a1 [LOW] Thing**\n\ndesc\n\n" + post_review.BRAND_TRAILER,
+        )
+        self.assertNotIn("[UNKNOWN]", body)
 
     def test_the_rendered_emoji_is_read_from_the_generated_constants(self):
         """The delivered byte comes THROUGH SEVERITY_EMOJI, not from a local literal.
@@ -976,10 +1018,84 @@ class TestRenderCommentBody(unittest.TestCase):
                 sentinel,
                 render_comment_body({"severity": "medium", "title": "t", "body": "b"}),
             )
-        with patch.object(post_review, "SEVERITY_EMOJI_FALLBACK", sentinel):
-            self.assertIn(
-                sentinel,
+        with patch.dict(post_review.SEVERITY_EMOJI, {"low": sentinel}):
+            self.assertEqual(
                 render_comment_body({"severity": "nope", "title": "t", "body": "b"}),
+                "**\u26a1 [LOW] t**\n\nb\n\n" + post_review.BRAND_TRAILER,
+            )
+
+    def test_severity_labels_are_closed_and_total(self):
+        """Public rendering normalizes malformed, padded, and missing severities."""
+        for case_id, raw, label, glyph in _severity_matrix():
+            with self.subTest(case=case_id):
+                finding = {"title": "Thing", "body": "desc"}
+                if raw is not _MISSING_SEVERITY:
+                    finding["severity"] = raw
+                before = copy.deepcopy(finding)
+                expected = f"**{glyph} [{label}] Thing**\n\ndesc"
+                body = render_comment_body(finding)
+                if case_id == "oversized":
+                    self.assertLess(len(body.encode("utf-8")), 256)
+                    self.assertNotIn("s" * 1000, body)
+                self.assertEqual(body, expected + f"\n\n{post_review.BRAND_TRAILER}")
+                self.assertEqual(finding, before)
+
+    def test_severity_fallback_and_labels_match_js_twin(self):
+        """The poster matches the live report normalizer and its generated map seam."""
+        matrix = _severity_matrix()
+        node_inputs = []
+        for _case_id, raw, _label, _glyph in matrix:
+            row = {"missing": raw is _MISSING_SEVERITY}
+            if raw is not _MISSING_SEVERITY:
+                row["value"] = raw
+            node_inputs.append(row)
+        node_script = """
+import { normalizeReportSeverity } from './workflows/src/renderReport.js';
+
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+const rows = JSON.parse(source);
+const results = rows.map((row) => normalizeReportSeverity(
+  row.missing ? undefined : row.value,
+));
+process.stdout.write(JSON.stringify(results));
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", node_script],
+            cwd=REPO,
+            input=json.dumps(node_inputs, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        expected_labels = [label.lower() for _case, _raw, label, _glyph in matrix]
+        self.assertEqual(json.loads(result.stdout), expected_labels)
+
+        for case_id, raw, label, glyph in matrix:
+            with self.subTest(case=case_id):
+                finding = {"title": "Thing", "body": "desc"}
+                if raw is not _MISSING_SEVERITY:
+                    finding["severity"] = raw
+                before = copy.deepcopy(finding)
+                expected = f"**{glyph} [{label}] Thing**\n\ndesc"
+                if case_id == "oversized":
+                    rendered = render_comment_body(finding)
+                    self.assertLess(len(rendered.encode("utf-8")), 256)
+                    self.assertNotIn("s" * 1000, rendered)
+                self.assertEqual(
+                    render_comment_body(finding),
+                    expected + f"\n\n{post_review.BRAND_TRAILER}",
+                )
+                self.assertEqual(post_review.key_material_body(finding), expected)
+                self.assertEqual(finding, before)
+
+        with patch.dict(post_review.SEVERITY_EMOJI, {"severity": "{emoji}"}):
+            self.assertEqual(
+                render_comment_body(
+                    {"severity": "severity", "title": "Thing", "body": "desc"}
+                ),
+                "**{emoji} [SEVERITY] Thing**\n\ndesc\n\n" + post_review.BRAND_TRAILER,
             )
 
     def test_empty_suggested_fix_code_treated_as_absent(self):
@@ -3554,14 +3670,15 @@ class TestRenderGroupBody(unittest.TestCase):
 
 
 class TestDeliveryKeyStability(unittest.TestCase):
-    """The product's identity must not move a delivery key.
+    """Canonical severity identity must not move a delivery key.
 
     ``EXPECTED_KEYS`` was computed at ``f33ffd5`` — the commit BEFORE the brand
     trailer existed — and is hard-coded here on purpose: a key derived by calling the
     code under test proves nothing (the same reasoning
     ``TestGitlabInlineDiscussionIdempotency`` states for its own literals). If these
-    literals have to change, every finding already delivered on every open PR/MR
-    re-keys and is reposted — a repost wave, not a cosmetic change.
+    canonical-severity literals have to change, the corresponding findings re-key and
+    may be reposted. The #335 regression below separately records the deliberate
+    normalization re-key for padded severity labels.
     """
 
     KEY_FINDINGS: ClassVar[list[dict]] = [
@@ -3651,6 +3768,60 @@ class TestDeliveryKeyStability(unittest.TestCase):
             post_review.key_material_body(grounded),
         )
         self.assertIn("**Cited rule:**", post_review.key_material_body(grounded))
+
+    def test_key_material_severity_labels_are_closed_and_total(self):
+        """Key material uses the same fixed normalized sections as the public body."""
+        for case_id, raw, label, glyph in _severity_matrix():
+            with self.subTest(case=case_id):
+                finding = {
+                    "title": "Thing",
+                    "body": "desc",
+                    "suggested_fix_code": "patch",
+                    "rule_source": "repo_precedent",
+                }
+                if raw is not _MISSING_SEVERITY:
+                    finding["severity"] = raw
+                before = copy.deepcopy(finding)
+                expected = f"**{glyph} [{label}] Thing**\n\ndesc"
+                material = post_review.key_material_body(finding)
+                if case_id == "oversized":
+                    self.assertLess(len(material.encode("utf-8")), 256)
+                    self.assertNotIn("s" * 1000, material)
+                self.assertEqual(material, expected)
+                self.assertEqual(finding, before)
+
+    def test_case_stays_stable_and_padded_severity_intentionally_rekeys(self):
+        """Canonical case variants keep their pins while #335 re-keys padded labels."""
+        expected_body = (
+            "**\U0001f7e0 [HIGH] Unchecked index**\n\nThe loop reads one past the end."
+        )
+        OLD_LITERAL = (
+            "**\U0001f4a1 [ HIGH ] Unchecked index**\n\n"
+            "The loop reads one past the end."
+        )
+        old_padded_key = hashlib.sha256(
+            "\x00".join(
+                (
+                    "src/alpha.py",
+                    "10",
+                    "Unchecked index",
+                    OLD_LITERAL,
+                )
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+        for severity in ("high", "HIGH", "High", " high "):
+            with self.subTest(severity=severity):
+                finding = dict(self.KEY_FINDINGS[0], severity=severity)
+                self.assertEqual(post_review.key_material_body(finding), expected_body)
+                key = post_review.finding_key(
+                    finding["file"],
+                    finding["line"],
+                    finding["title"],
+                    post_review.key_material_body(finding),
+                )
+                self.assertEqual(key, self.EXPECTED_KEYS[0])
+                if severity == " high ":
+                    self.assertNotEqual(key, old_padded_key)
 
 
 class TestGitHubDeliveryConsolidation(_DryRunTestBase):
@@ -6257,6 +6428,7 @@ class TestInlineBodyBudget(unittest.TestCase):
         self.assertLessEqual(len(folded.encode("utf-8")), 493)
 
     def test_legacy_finding_with_oversized_severity_is_bounded(self):
+        """Severity normalization bounds the legacy body before inline budgeting."""
         finding = {
             "severity": "s" * 70000,
             "title": "Legacy finding",
@@ -6267,7 +6439,11 @@ class TestInlineBodyBudget(unittest.TestCase):
             platform="github",
             surface="inline",
         )
-        self.assertGreater(composed.folded_bytes, 0)
+        self.assertEqual(composed.folded_bytes, 0)
+        self.assertIn("**\U0001f4a1 [LOW] Legacy finding**", composed.body)
+        self.assertTrue(
+            composed.body.endswith("\n\nbody\n\n" + post_review.BRAND_TRAILER)
+        )
         self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
 
     def test_inline_disclosure_uses_stderr_and_raw_unanchored_location(self):

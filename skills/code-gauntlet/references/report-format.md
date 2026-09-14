@@ -346,7 +346,7 @@ The identity trailer is the one section that is NOT conditional: every rendered 
 ends with it, once — one mark per delivered surface. Never hand-type it.
 
 <!-- generated-from-registry-identity:inline_legend — do not edit; run scripts/generate_contract_requirements.py -->
-`{emoji}` is 🔴 critical / 🟠 high / 🟡 medium / 💡 low, `{SEVERITY}` is the severity uppercased.
+`{emoji}` is 🔴 critical / 🟠 high / 🟡 medium / 💡 low, `{SEVERITY}` is the normalized severity uppercased.
 <!-- /generated-from-registry-identity:inline_legend -->
 
 `{body}` is the v2 alias of `description` applied at the persist boundary. The renderer emits

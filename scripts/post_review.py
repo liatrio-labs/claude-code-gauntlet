@@ -1324,8 +1324,10 @@ def _key_material_finding(finding):
 
     ``suggested_fix_code`` and ``rule_source`` come off UNCONDITIONALLY — not gated —
     so a key does not depend on either field at all: it is the same whether the finding ships
-    grouped or individually, the same whichever way the apply-check went, and
-    byte-equal to the key a pre-#63 run computed for the same finding.
+    grouped or individually, and the same whichever way the apply-check went. This preserves
+    the fence/rule-source exclusion guarantee and is byte-equal to the key a pre-#63 run
+    computed for the same finding, subject to deliberate rendered-content normalization such
+    as #335.
     Prior-delivery dedup (#132/#208) is retry-safe only while keys are stable
     across runs and across delivery shapes; making the GATE deterministic would
     not be enough, because the gate's inputs (the diff, the render site) are not.
@@ -1576,10 +1578,33 @@ def _body_limit(platform, surface="summary"):
     return {"label": limits["label"], **row}
 
 
+def _normalize_report_severity(raw):
+    """Normalize agent severity like ``renderReport.js::normalizeReportSeverity``.
+
+    The literal ``"low"`` fallback is the report renderer's closed-set fallback and is
+    deliberately kept beside this Python twin. Non-strings return it without stringifying.
+    String edges use the explicit JS ``trim()`` alphabet, then the normalized label must be
+    a key in the generated ``SEVERITY_EMOJI`` map; this keeps the placeholder map used by
+    contract samples working as well as the live four-severity map.
+    """
+    # Keep this hand-written JS trim alphabet in sync with normalizeReportSeverity and
+    # scripts/resolve_config.py::_JS_TRIM_RE; neither copy is generated.
+    fallback = "low"
+    if not isinstance(raw, str):
+        return fallback
+    normalized = raw.strip(
+        "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005"
+        "\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+    ).lower()
+    return normalized if normalized in SEVERITY_EMOJI else fallback
+
+
 def _finding_sections(finding, *, fence_offsets=None):
-    """The finding's rendered sections — byte-identical to what ``render_comment_body``
-    returned before the brand trailer existed. This is the KEY MATERIAL: a delivery key
-    must not move when the product's identity does (see :func:`key_material_body`).
+    """The finding's rendered sections — historically byte-identical to what
+    ``render_comment_body`` returned before the brand trailer existed for existing canonical
+    labels and plain case variants. This is the KEY MATERIAL: a delivery key must not move
+    when the product's identity does (see :func:`key_material_body`). Severity normalization
+    supplies both the emoji and the heading label.
 
     *fence_offsets* is passed through to the suggestion fence and is meaningful
     only where a platform reads one (GitLab, #219). It is a parameter rather
@@ -1587,7 +1612,7 @@ def _finding_sections(finding, *, fence_offsets=None):
     be posted at, which only the caller knows — and because a finding's own JSON
     is caller-supplied.
     """
-    severity = finding.get("severity", "medium").lower()
+    severity = _normalize_report_severity(finding.get("severity"))
     emoji = SEVERITY_EMOJI.get(severity, SEVERITY_EMOJI_FALLBACK)
 
     title = finding.get("title", "Finding")
@@ -1658,9 +1683,12 @@ def key_material_body(finding):
     """The bytes ``finding_key`` hashes: sections only, no trailer, ``suggested_fix_code``
     stripped (:func:`_key_material_finding`).
 
-    Byte-equal to every key already on a live PR/MR — changing this function re-keys
-    every delivered finding on every open PR/MR, which is a repost wave, not a cosmetic
-    change.
+    Hashes the normalized rendered sections; there is no alternate raw-severity key path.
+    This intentionally re-keys surrounding-whitespace labels, off-enum labels including
+    empty strings, missing labels that previously defaulted to medium, and non-strings that
+    previously raised and produced no delivered finding key. Canonical severities and plain
+    case variants keep their bytes and keys. Affected already-delivered findings may post
+    again once on the same SHA; the new normalized keys then support reruns normally.
     """
     return _finding_sections(_key_material_finding(finding))
 
