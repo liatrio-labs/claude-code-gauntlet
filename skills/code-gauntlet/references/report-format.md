@@ -242,7 +242,10 @@ This section covers the pipeline up to the report stage; persistence, delivery, 
 ````
 <!-- /generated-from-registry-identity:full_report_template -->
 
-The display folds are per field, not a whole-report bound and not a return-budget mechanism.
+The display folds are per field, not a whole-report bound and not a return-budget mechanism. A
+fold that cuts inside a code fence closes it with a fence of the same character and length before
+the fold line. The display fold counts Unicode code points; the posted summary budget counts UTF-8
+bytes.
 Description, suggestion, cited text, cross-file references, extra fields, and corroboration
 descriptions fold after 4,000 Unicode code points. The summary comment body is the report's
 Summary section body: summary prose folds at `REPORT_FOLD_LIMITS.summaryChars`, followed by the

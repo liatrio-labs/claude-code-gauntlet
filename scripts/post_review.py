@@ -1813,6 +1813,102 @@ def _codepoint_prefix(text, allowance):
     return "".join(pieces)
 
 
+# Twin of ``foldProse`` in ``workflows/src/renderReport.js``.
+def _open_fence(text):
+    """Return the final open prose fence as ``(char, length, offset)``."""
+
+    state = None
+    line_start = 0
+    index = 0
+
+    def line_run(line):
+        indent = 0
+        while indent < 3 and indent < len(line) and line[indent] == " ":
+            indent += 1
+        if indent >= len(line) or line[indent] not in "`~":
+            return None
+        char = line[indent]
+        end = indent
+        while end < len(line) and line[end] == char:
+            end += 1
+        return char, end - indent, end, indent
+
+    def visit(line, offset):
+        nonlocal state
+        run = line_run(line)
+        if state is not None:
+            if (
+                run is not None
+                and run[0] == state[0]
+                and run[1] >= state[1]
+                and all(character in " \t" for character in line[run[2] :])
+            ):
+                state = None
+            return
+        if (
+            run is not None
+            and run[1] >= 3
+            and not (run[0] == "`" and "`" in line[run[2] :])
+        ):
+            state = (run[0], run[1], offset + run[3])
+
+    while index < len(text):
+        if text[index] in "\r\n":
+            visit(text[line_start:index], line_start)
+            if (
+                text[index] == "\r"
+                and index + 1 < len(text)
+                and text[index + 1] == "\n"
+            ):
+                index += 2
+            else:
+                index += 1
+            line_start = index
+        else:
+            index += 1
+    visit(text[line_start:], line_start)
+    return state
+
+
+def _fence_closer(prefix):
+    state = _open_fence(prefix)
+    return "" if state is None else state[0] * state[1]
+
+
+def _cut_unclosed_comment(prefix):
+    """Remove the first unclosed HTML comment and everything after it."""
+
+    position = 0
+    while True:
+        opener = prefix.find("<!--", position)
+        if opener < 0:
+            return prefix
+        closer = prefix.find("-->", opener + 4)
+        if closer < 0:
+            return prefix[:opener]
+        position = closer + 3
+
+
+def _drop_last_line(prefix):
+    """Drop the final logical line, accepting LF, CRLF, and lone CR."""
+
+    ended_with_line_ending = prefix.endswith(("\r", "\n"))
+    end = len(prefix)
+    if prefix.endswith("\r\n"):
+        end -= 2
+    elif prefix.endswith(("\r", "\n")):
+        end -= 1
+    separators = [prefix.rfind("\n", 0, end), prefix.rfind("\r", 0, end)]
+    line_start = max(separators)
+    if line_start < 0:
+        return ""
+    if ended_with_line_ending:
+        return prefix[: line_start + 1]
+    if prefix[line_start] == "\n" and line_start and prefix[line_start - 1] == "\r":
+        line_start -= 1
+    return prefix[:line_start]
+
+
 def _fold_review_body(text, allowance, platform):
     """Fold *text* into *allowance* bytes while preserving lines and code points."""
     limits = _body_limit(platform)
@@ -1824,12 +1920,16 @@ def _fold_review_body(text, allowance, platform):
             f"{limits['bytes']}-byte {limits['label']} body limit]_"
         )
 
-    reserve = _utf8_len(f"\n\n{fold_line_for(total)}") + 4
+    # This is only the shortest provisional fence reserve. The final assembly
+    # below measures the actual opener character and length.
+    reserve = _utf8_len(f"\n\n{fold_line_for(total)}\n{_fence_closer('```')}")
     if allowance < reserve:
         prefix = ""
+        cut_inside_line = False
     else:
         prefix_allowance = allowance - reserve
         prefix = ""
+        cut_inside_line = False
         for index, line in enumerate(text.split("\n")):
             next_part = line if index == 0 else f"\n{line}"
             remaining = prefix_allowance - _utf8_len(prefix)
@@ -1837,25 +1937,26 @@ def _fold_review_body(text, allowance, platform):
                 prefix += next_part
                 continue
             if _utf8_len(line) > prefix_allowance:
-                prefix += _codepoint_prefix(next_part, remaining)
+                partial = _codepoint_prefix(next_part, remaining)
+                prefix += partial
+                cut_inside_line = bool(partial) and not partial.endswith(("\n", "\r"))
             break
 
-    position = 0
+    prefix = _cut_unclosed_comment(prefix)
+
     while True:
-        opener = prefix.find("<!--", position)
-        if opener < 0:
-            break
-        closer = prefix.find("-->", opener + 4)
-        if closer < 0:
-            prefix = prefix[:opener]
-            break
-        position = closer + 3
-
-    dropped_bytes = total - _utf8_len(prefix)
-    if prefix.count("```") % 2:
-        prefix += "" if prefix.endswith("\n") else "\n"
-        prefix += "```"
-    return f"{prefix}\n\n{fold_line_for(dropped_bytes)}", dropped_bytes
+        closer = _fence_closer(prefix)
+        dropped_bytes = total - _utf8_len(prefix)
+        fold_line = fold_line_for(dropped_bytes)
+        separator = "" if not closer or prefix.endswith(("\n", "\r")) else "\n"
+        folded = f"{prefix}{separator}{closer}\n\n{fold_line}"
+        if _utf8_len(folded) <= allowance or not prefix:
+            return folded, dropped_bytes
+        if cut_inside_line and not prefix.endswith(("\n", "\r")):
+            prefix = _cut_unclosed_comment(prefix[:-1])
+            continue
+        prefix = _drop_last_line(prefix)
+        cut_inside_line = False
 
 
 def _bounded_section(n, shown_entries, inline_count, platform):

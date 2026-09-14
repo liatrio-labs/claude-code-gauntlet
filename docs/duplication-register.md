@@ -40,7 +40,7 @@ reconcile to 116 pairs plus the ten tool-invisible relationships.
 
 ## Individually classified rows
 
-Forty-nine rows: 38 `intentional-and-documented`, 11 `intentional-but-undocumented`.
+Fifty rows: 39 `intentional-and-documented`, 11 `intentional-but-undocumented`.
 
 | Pair | Classification | Reason | Doc ref |
 | --- | --- | --- | --- |
@@ -62,6 +62,7 @@ Forty-nine rows: 38 `intentional-and-documented`, 11 `intentional-but-undocument
 | `stages.js` `VERIFY_SLICE_FIELDS` ↔ `verify_findings.py` `_SLICE_INPUT_FIELDS` | intentional-and-documented | Cross-language crossing: the verify slice input is projected to the fields the script consults, in the same list order in both runtimes. `tests/test_verify_findings.py` pins the pair in lockstep. | `workflows/AGENTS.md` (The verify boundary) |
 | `workflows/src/args.js` `matchesRule` ↔ `scripts/resolve_config.py` `matches_rule` | intentional-and-documented | Cross-runtime rule interpreters use the same registry vocabulary and fail-closed lure set. | `tests/test_resolve_config.py` |
 | `workflows/src/renderReport.js` `receiptLines`/`receiptSafe`/`oneLine` ↔ `scripts/resolve_config.py` `render_block`/`receipt_safe`/`one_line` | intentional-and-documented | The resolver's Phase 1 receipt is pinned to the report renderer's valid-waist receipt, including order and sanitization. | `tests/test_boundary_parity.py` |
+| `scripts/post_review.py::_fold_review_body` ↔ `workflows/src/renderReport.js::foldProse` | intentional-and-documented | Cross-language fence trackers carry twin comments naming each other and are pinned by the shared `tests/fixtures/prose_fence_cases.json`. `scripts/collect_project_rules.py::_FENCE_RE` is deliberately separate: it strips code from rules text with a broader indent class and is not a fold. | `tests/test_post_review.py`; `workflows/test/render_report.test.js` |
 | `workflows/src/pipeline_entry.js` `PIPELINE_VERSION` regex ↔ `bench/runner/invoke.py`, `tests/test_bundle_fresh.py`, `scripts/resolve_config.py` | intentional-and-documented | Each consumer independently reads the bundle identity because the workflow and retained scripts have different runtime boundaries. | `tests/test_resolve_config.py` |
 | `workflows/test/args.test.js:8-16` ↔ `workflows/test/entry_guard.test.js:23-31` | intentional-and-documented | The copy carries its own written justification at the copy site: a shared fixture module lets one bad edit silently rebaseline both suites. | `workflows/test/entry_guard.test.js:19-21` |
 | `merge_findings` fixtures: `dropped_no_id_both_channels` ↔ `unterminated_brace` | intentional-and-documented | Byte-diffed: differ only in what each case name exercises. Machine-generated goldens; consolidating breaks the byte-compare freshness assertion. | `tests/fixtures/parity/README.md` |

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline } from '../src/renderReport.js';
+import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline, openProseFence, proseFenceCloser } from '../src/renderReport.js';
 import { SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, AGENTS, resolvePolicy } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
@@ -63,6 +63,8 @@ function fieldLabel(key) {
   const words = key.replaceAll('_', ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+const proseFenceCases = JSON.parse(readFileSync('tests/fixtures/prose_fence_cases.json', 'utf8'));
 
 test('T-TITLE: title subject precedence and identity line bytes are exact', () => {
   // Mutation: remove permalinkContext or platform ref selection; the GitHub/GitLab pins turn red.
@@ -254,6 +256,57 @@ test('T-FOLDS: every exact cap and cap-plus-one has deterministic bytes', () => 
   assert.ok(foldedSummary.includes(`${'s'.repeat(12000)}\n\n_[folded: 1 more characters]_`));
 });
 
+test('T-FOLDS-FENCE-CORPUS: Python and JavaScript share fence cases', () => {
+  for (const row of proseFenceCases.folds) {
+    const source = row.id === 'PARTIAL'
+      ? `${'``````info'}\n${'DROP'.repeat(300)}`
+      : `${row.kept}\n${'DROP'.repeat(300)}`;
+    const omitted = Array.from(source).length - Array.from(row.kept).length;
+    const expected = `${row.kept}${row.closer}\n\n_[folded: ${omitted} more characters]_`;
+    assert.equal(foldProse(source, row.js_limit), expected, row.id);
+  }
+  for (const row of proseFenceCases.closers) {
+    assert.equal(proseFenceCloser(row.prefix), row.closer.replace(/^\n/, ''), row.id);
+  }
+});
+
+test('T-FOLDS-FENCE-SHAPE: open fences expose the shared state tuple', () => {
+  assert.deepEqual(openProseFence('   ````x'), ['`', 4, 3]);
+  assert.deepEqual(openProseFence('prose\r````\rx'), ['`', 4, 6]);
+  assert.equal(openProseFence('````\n````\nprose'), null);
+});
+
+test('T-FOLDS-FENCE-SURFACES: every prose surface closes F4 before its notice', () => {
+  const f4 = '````py\nkeep';
+  const summary = `${f4}${'\nDROP'.repeat(3000)}`;
+  const fieldValue = `${f4}${'\nDROP'.repeat(1000)}`;
+  const input = rendered({
+    summary,
+    findings: [finding('SURFACE', {
+      description: fieldValue,
+      suggestion: fieldValue,
+      claude_md_rule: fieldValue,
+      corroborations: [{ agent: 'a', dimension: 'security', confidence: 80, title: 'x', description: fieldValue }],
+    })],
+  });
+  const foldedSummary = foldProse(summary, REPORT_FOLD_LIMITS.summaryChars);
+  const foldedField = foldProse(fieldValue, REPORT_FOLD_LIMITS.proseChars);
+  const quoted = foldedField.split(/\r?\n/).map((line) => `> ${line}`).join('\n');
+  const corroborated = foldedField.split(/\r?\n/).map((line) => `  ${line}`).join('\n');
+  assert.ok(input.includes(foldedSummary));
+  assert.ok(input.includes(foldedField));
+  assert.ok(input.includes(quoted));
+  assert.ok(input.includes(corroborated));
+  for (const [surface, value, closingLine] of [
+    ['summary/field', foldedSummary, '````\n'],
+    ['quoted', quoted, '> ````\n'],
+    ['corroborated', corroborated, '  ````\n'],
+  ]) {
+    assert.ok(value.includes(closingLine), surface);
+    assert.ok(value.lastIndexOf('````') < value.indexOf('_[folded:'), surface);
+  }
+});
+
 test('T-FOLDS-CORPUS: measured corpus maxima stay unfolded', () => {
   // Mutation: lower any display cap beneath the measured maxima; this fixture gains a notice.
   const report = rendered({
@@ -287,7 +340,7 @@ test('T-FOLDS-FENCE: folding closes prose fences and evidence folds inside its f
     findings: [finding('FOLD', { description, evidence: 'e'.repeat(20000) })],
   });
   const beforeMethodology = report.split('\n## Review Methodology')[0];
-  assert.equal((beforeMethodology.match(/```/g) || []).length % 2, 0);
+  assert.equal(openProseFence(beforeMethodology), null);
   assert.ok(report.includes(`\`\`\`\n${'x'.repeat(3996)}\n\`\`\`\n\n_[folded: 1000 more characters]_`));
   assert.equal((report.match(/^## Review Methodology$/gm) || []).length, 1);
   assert.ok(report.includes('... [folded: 12000 more characters]\n```'));

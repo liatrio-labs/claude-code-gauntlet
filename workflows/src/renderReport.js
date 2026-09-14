@@ -237,6 +237,53 @@ export function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
   return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
 }
 
+// Twin of `_fold_review_body` in `scripts/post_review.py`.
+export function openProseFence(text) {
+  const value = reportAsText(text);
+  let state = null;
+  let lineStart = 0;
+
+  function lineRun(line) {
+    let indent = 0;
+    while (indent < 3 && indent < line.length && line[indent] === ' ') indent += 1;
+    if (indent >= line.length || !['`', '~'].includes(line[indent])) return null;
+    const char = line[indent];
+    let end = indent;
+    while (end < line.length && line[end] === char) end += 1;
+    return { char, length: end - indent, end, indent };
+  }
+
+  function visit(line, offset) {
+    const run = lineRun(line);
+    if (state !== null) {
+      if (run !== null && run.char === state[0] && run.length >= state[1]
+        && /^[ \t]*$/.test(line.slice(run.end))) state = null;
+      return;
+    }
+    if (run !== null && run.length >= 3
+      && !(run.char === '`' && line.slice(run.end).includes('`'))) {
+      state = [run.char, run.length, offset + run.indent];
+    }
+  }
+
+  let index = 0;
+  while (index < value.length) {
+    if (value[index] === '\n' || value[index] === '\r') {
+      visit(value.slice(lineStart, index), lineStart);
+      if (value[index] === '\r' && value[index + 1] === '\n') index += 2;
+      else index += 1;
+      lineStart = index;
+    } else index += 1;
+  }
+  visit(value.slice(lineStart), lineStart);
+  return state;
+}
+
+export function proseFenceCloser(prefix) {
+  const state = openProseFence(prefix);
+  return state === null ? '' : state[0].repeat(state[1]);
+}
+
 export function foldProse(text, limit) {
   const value = reportAsText(text);
   const length = codePointLength(value);
@@ -255,8 +302,8 @@ export function foldProse(text, limit) {
     break;
   }
   const omitted = length - codePointLength(prefix);
-  const tripleFenceCount = [...prefix.matchAll(/```/g)].length;
-  if (tripleFenceCount % 2 === 1) prefix += `${prefix.endsWith('\n') ? '' : '\n'}\`\`\``;
+  const closer = proseFenceCloser(prefix);
+  if (closer) prefix += `${prefix.endsWith('\n') || prefix.endsWith('\r') ? '' : '\n'}${closer}`;
   return `${prefix}\n\n_[folded: ${omitted} more characters]_`;
 }
 

@@ -40,6 +40,9 @@ import scripts.review_marker as review_marker
 from scripts.post_review import (
     _blockquote,
     _cap_rule_text,
+    _fence_closer,
+    _fold_review_body,
+    _open_fence,
     _redact_secrets,
     _sanitize_outbound_prose,
     _suggestion_fence,
@@ -2393,6 +2396,15 @@ GL_DIFF = (
 
 
 _GLAB_FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "glab_diff")
+
+_PROSE_FENCE_CASES = os.path.join(
+    os.path.dirname(__file__), "fixtures", "prose_fence_cases.json"
+)
+
+
+def _prose_fence_cases():
+    with open(_PROSE_FENCE_CASES, encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def _glab_fixture(name):
@@ -5284,6 +5296,86 @@ class TestBuildSkippedSection(unittest.TestCase):
         self.assertNotIn("prose\n\n\n---", body)
 
 
+class TestProseFenceHelpers(unittest.TestCase):
+    """The Python fold scanner is pinned to the shared hand-typed corpus."""
+
+    def test_fold_cases_match_the_shared_fixture(self):
+        limits = post_review._body_limit("github")
+        for row in _prose_fence_cases()["folds"]:
+            with self.subTest(row=row["id"]):
+                if row["id"] == "PARTIAL":
+                    text = "``````info" + "\nDROP" * 300
+                else:
+                    text = row["kept"] + "\nDROP" * 300
+                folded, dropped = _fold_review_body(text, row["py_allowance"], "github")
+                fold_line = (
+                    f"_[folded: {dropped} more bytes; this {limits['surface']} reached the "
+                    f"{limits['bytes']}-byte {limits['label']} body limit]_"
+                )
+                expected = row["kept"] + row["closer"] + "\n\n" + fold_line
+                self.assertEqual(folded, expected)
+                self.assertEqual(
+                    dropped,
+                    len(text.encode("utf-8")) - len(row["kept"].encode("utf-8")),
+                )
+                self.assertLessEqual(len(folded.encode("utf-8")), row["py_allowance"])
+
+    def test_closer_cases_match_the_shared_fixture(self):
+        for row in _prose_fence_cases()["closers"]:
+            with self.subTest(row=row["id"]):
+                self.assertEqual(
+                    _fence_closer(row["prefix"]), row["closer"].lstrip("\n")
+                )
+
+    def test_open_fence_reports_the_opener_shape(self):
+        self.assertEqual(_open_fence("   ````x"), ("`", 4, 3))
+        self.assertEqual(_open_fence("prose\r````\rx"), ("`", 4, 6))
+        self.assertIsNone(_open_fence("````\n````\nprose"))
+
+
+class TestProseFenceBudget(unittest.TestCase):
+    def _fold_line(self, dropped):
+        limits = post_review._body_limit("github")
+        return (
+            f"_[folded: {dropped} more bytes; this {limits['surface']} reached the "
+            f"{limits['bytes']}-byte {limits['label']} body limit]_"
+        )
+
+    def test_long_closer_forces_a_line_retreat(self):
+        # Mutation: restore the fixed 4-byte reserve; the 200-byte closer is then
+        # not accounted for before the kept prefix is selected.
+        text = "keep\n" + "`" * 200 + "\n" + "x" * 1000
+        folded, dropped = _fold_review_body(text, 493, "github")
+        self.assertEqual(folded, "keep\n\n\n" + self._fold_line(dropped))
+        self.assertEqual(dropped, 1201)
+        self.assertLessEqual(len(folded.encode("utf-8")), 493)
+
+    def test_comment_cutback_removes_a_fence_opener(self):
+        # Mutation: compute the fence state before the HTML comment cut-back; the
+        # opener inside the unclosed comment would gain a synthetic closer.
+        text = "keep\n<!--\n````\n" + "x" * 1000
+        folded, dropped = _fold_review_body(text, 107, "github")
+        self.assertEqual(folded, "keep\n\n\n" + self._fold_line(dropped))
+        self.assertEqual(dropped, 1010)
+        self.assertLessEqual(len(folded.encode("utf-8")), 107)
+
+    def test_multibyte_prefix_stays_on_a_codepoint_boundary(self):
+        # Mutation: count characters as bytes; the four-byte character would be
+        # admitted or split at the hand-typed 103-byte allowance.
+        text = "a" * 10 + "😀" + "b" * 10
+        folded, dropped = _fold_review_body(text, 103, "github")
+        self.assertEqual(folded, "a" * 10 + "\n\n" + self._fold_line(dropped))
+        self.assertEqual(dropped, 14)
+        self.assertLessEqual(len(folded.encode("utf-8")), 103)
+
+    def test_allowance_below_the_provisional_reserve_keeps_only_the_fold(self):
+        text = "x" * 99
+        folded, dropped = _fold_review_body(text, 86, "github")
+        self.assertEqual(folded, "\n\n" + self._fold_line(dropped))
+        self.assertEqual(dropped, 99)
+        self.assertLessEqual(len(folded.encode("utf-8")), 86)
+
+
 class TestSummaryBodyBudget(_DryRunTestBase):
     """Oracle tests for the complete per-platform summary-body budget."""
 
@@ -5654,7 +5746,8 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         body = payload["payload"]["body"]
         before_fold = body[: body.index("_[folded:")]
         self.assertFalse(exit_code)
-        self.assertEqual(before_fold.count("```") % 2, 0)
+        self.assertEqual(_fence_closer(before_fold), "")
+        self.assertIn("\n```\n\n", before_fold)
         self.assertIn(
             "_[folded: 4804 more bytes; this review body reached the 65536-byte "
             "GitHub body limit]_",
@@ -6331,6 +6424,52 @@ class TestSummaryBodyDelivery(_DryRunTestBase):
         self.assertEqual(data["platform"], "github")
         self.assertEqual(data["review_body"], "")
         self.assertEqual(data["findings"], [])
+
+    def test_report_summary_fold_closes_four_backtick_fence_before_footer(self):
+        # Mutation: bypass _fold_review_body in compose_review_body; the footer and
+        # hidden marker would then land inside the four-backtick Summary fence.
+        report_path = os.path.join(self.tmp, "report.md")
+        with open(report_path, "w", encoding="utf-8") as fh:
+            fh.write(
+                "## Summary\n\n" + "````python\n" + "x" * 70000 + "\n\n## Findings\n"
+            )
+        self._write([])
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "post_review.py",
+                    self.findings_path,
+                    "--dry-run",
+                    "--report",
+                    report_path,
+                    "--owner",
+                    "o",
+                    "--repo",
+                    "r",
+                    "--pr-number",
+                    "5",
+                    "--platform",
+                    "github",
+                    "--sha",
+                    "a" * 40,
+                ],
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()
+        body = self._payload()["payload"]["body"]
+        closer = "\n````\n\n"
+        fold = "_[folded:"
+        marker = "<!-- code-gauntlet-findings:"
+        self.assertIn(closer, body)
+        self.assertLess(body.index(closer), body.index(fold))
+        self.assertLess(body.index(fold), body.index(marker))
+        self.assertTrue(body.endswith(post_review.build_footer(0, "a" * 40, body="")))
 
     @patch("scripts.post_review.check_tool")
     @patch(
