@@ -5559,11 +5559,16 @@ class TestProseFenceBudget(unittest.TestCase):
         # Mutation: drop one byte of a CRLF in _drop_last_line, or treat "\r" as text
         # rather than a line ending when placing the closer.
         text = "````\r\nkeep\r\nmore\r\n" + "DROP\r\n" * 300
-        for allowance, kept in ((103, "````\r\nkeep\r"), (109, "````\r\nkeep\r\nmore\r")):
+        for allowance, kept in (
+            (103, "````\r\nkeep\r"),
+            (109, "````\r\nkeep\r\nmore\r"),
+        ):
             with self.subTest(allowance=allowance):
                 folded, dropped = _fold_review_body(text, allowance, "github")
                 self.assertEqual(folded, kept + "````\n\n" + self._fold_line(dropped))
-                self.assertEqual(dropped, len(text.encode("utf-8")) - len(kept.encode("utf-8")))
+                self.assertEqual(
+                    dropped, len(text.encode("utf-8")) - len(kept.encode("utf-8"))
+                )
                 self.assertLessEqual(len(folded.encode("utf-8")), allowance)
 
     def test_lone_cr_text_retreats_to_a_cr_boundary(self):
