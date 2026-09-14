@@ -5547,13 +5547,45 @@ class TestProseFenceBudget(unittest.TestCase):
         )
 
     def test_long_closer_forces_a_line_retreat(self):
-        # Mutation: restore the fixed 4-byte reserve; the 200-byte closer is then
-        # not accounted for before the kept prefix is selected.
+        # Mutation: return the first assembled fold without the retreat loop; the
+        # 200-byte closer then pushes the result over the allowance.
         text = "keep\n" + "`" * 200 + "\n" + "x" * 1000
         folded, dropped = _fold_review_body(text, 493, "github")
         self.assertEqual(folded, "keep\n\n\n" + self._fold_line(dropped))
         self.assertEqual(dropped, 1201)
         self.assertLessEqual(len(folded.encode("utf-8")), 493)
+
+    def test_crlf_text_retreats_whole_lines_and_closes_on_its_own_line(self):
+        # Mutation: drop one byte of a CRLF in _drop_last_line, or treat "\r" as text
+        # rather than a line ending when placing the closer.
+        text = "````\r\nkeep\r\nmore\r\n" + "DROP\r\n" * 300
+        for allowance, kept in ((103, "````\r\nkeep\r"), (109, "````\r\nkeep\r\nmore\r")):
+            with self.subTest(allowance=allowance):
+                folded, dropped = _fold_review_body(text, allowance, "github")
+                self.assertEqual(folded, kept + "````\n\n" + self._fold_line(dropped))
+                self.assertEqual(dropped, len(text.encode("utf-8")) - len(kept.encode("utf-8")))
+                self.assertLessEqual(len(folded.encode("utf-8")), allowance)
+
+    def test_lone_cr_text_retreats_to_a_cr_boundary(self):
+        text = "````\rkeep\rmore\r" + "DROP\r" * 300
+        folded, dropped = _fold_review_body(text, 102, "github")
+        self.assertEqual(folded, "````\rkeep\r````\n\n" + self._fold_line(dropped))
+        self.assertLessEqual(len(folded.encode("utf-8")), 102)
+
+    def test_drop_last_line_accepts_every_line_ending(self):
+        # Mutation: split on LF only, or keep one byte of a CRLF.
+        cases = {
+            "a\r\nb\r\n": "a\r\n",
+            "a\r\nb": "a",
+            "a\rb\r": "a\r",
+            "a\rb": "a",
+            "a\nb\n": "a\n",
+            "a\r\n": "",
+            "abc": "",
+        }
+        for prefix, expected in cases.items():
+            with self.subTest(prefix=prefix):
+                self.assertEqual(post_review._drop_last_line(prefix), expected)
 
     def test_comment_cutback_removes_a_fence_opener(self):
         # Mutation: compute the fence state before the HTML comment cut-back; the

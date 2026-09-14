@@ -259,8 +259,8 @@ test('T-FOLDS: every exact cap and cap-plus-one has deterministic bytes', () => 
 test('T-FOLDS-FENCE-CORPUS: Python and JavaScript share fence cases', () => {
   for (const row of proseFenceCases.folds) {
     const source = row.id === 'PARTIAL'
-      ? `${'``````info'}\n${'DROP'.repeat(300)}`
-      : `${row.kept}\n${'DROP'.repeat(300)}`;
+      ? `${'``````info'}${'\nDROP'.repeat(300)}`
+      : `${row.kept}${'\nDROP'.repeat(300)}`;
     const omitted = Array.from(source).length - Array.from(row.kept).length;
     const expected = `${row.kept}${row.closer}\n\n_[folded: ${omitted} more characters]_`;
     assert.equal(foldProse(source, row.js_limit), expected, row.id);
