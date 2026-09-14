@@ -250,11 +250,16 @@ def _github_comment(
     gated = post_review._gated_finding(
         f, apply_range, valid_lines, line_texts, demote_reason=demote_reason
     )
+    composed = post_review.compose_inline_body(
+        post_review._render_group_sections(gated, []),
+        platform="github",
+        surface="inline",
+    )
     comment = {
         "path": filepath,
         "line": line,
         "side": "RIGHT",
-        "body": post_review.render_comment_body(gated),
+        "body": composed.body,
     }
     if multiline:
         comment["start_line"] = line
@@ -386,6 +391,7 @@ def _gitlab_discussion(
     line_texts=_GL_LINE_TEXTS,
     *,
     demote_reason=None,
+    sha=None,
 ):
     """Mirror post_gitlab's per-finding discussion payload — resolved path and
     OLD-side line number included, matching what the real poster sends.
@@ -424,8 +430,21 @@ def _gitlab_discussion(
     # it exactly as the real poster omits it, via the same is_new_file call.
     if not post_review.is_new_file(new_files, filepath):
         position["old_path"] = filepath
+    key = post_review.finding_key(
+        filepath,
+        line,
+        f.get("title", ""),
+        post_review.key_material_body(f),
+    )
+    marker_suffix = post_review._delivery_marker_suffix(sha, [key])
+    composed = post_review.compose_inline_body(
+        post_review._render_group_sections(gated, [], fence_offsets=offsets),
+        platform="gitlab",
+        surface="discussion",
+        marker_suffix=marker_suffix,
+    )
     return {
-        "body": post_review.render_comment_body(gated, fence_offsets=offsets),
+        "body": composed.body,
         "position": position,
     }
 
@@ -459,6 +478,7 @@ def build_reference_gitlab_payload(
     valid_lines=_GL_VALID_LINES,
     line_texts=_GL_LINE_TEXTS,
     new_files=None,
+    sha=None,
 ):
     """Build a GitLab dry-run payload via post_review's real capture path.
 
@@ -519,6 +539,7 @@ def build_reference_gitlab_payload(
                 new_files=new_files,
                 valid_lines=valid_lines,
                 line_texts=line_texts,
+                sha=sha,
                 demote_reason=(
                     post_review._FIX_OVERLAPS_KEPT_FENCE if index in losers else None
                 ),
@@ -1089,6 +1110,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             valid_lines=valid_lines,
             line_texts=line_texts,
             new_files=new_files,
+            sha=_GH_SHA,
         )
 
         self.assertEqual(real, mirror)
@@ -1209,6 +1231,95 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             "_1 of these 1 finding(s) are not shown:", real["payload"]["body"]
         )
 
+    def test_github_inline_budget_composition_matches_mirror(self):
+        finding = {
+            "file": "b/src/edited.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Near-limit inline finding",
+            "body": "x" * 70000,
+        }
+        findings_data = {
+            "platform": "github",
+            "owner": "acme",
+            "repo": "widgets",
+            "pr_number": 325,
+            "review_body": "Automated review summary.",
+            "sha": _GH_SHA,
+            "findings": [finding],
+        }
+        real = self._run_main(findings_data, GH_DIFF_PREFIXED_PATH)
+        valid_lines, _, _, line_texts = post_review.parse_diff_text(
+            "github", GH_DIFF_PREFIXED_PATH
+        )
+        mirror = build_reference_github_payload(
+            [finding],
+            [],
+            owner="acme",
+            repo="widgets",
+            pr_number=325,
+            valid_lines=valid_lines,
+            line_texts=line_texts,
+        )
+        self.assertEqual(real, mirror)
+        self.assertEqual(len(real["payload"]["comments"]), 1)
+        self.assertIn(
+            "_[folded:",
+            real["payload"]["comments"][0]["body"],
+        )
+        self.assertIn(
+            "65536-byte GitHub body limit]_",
+            real["payload"]["comments"][0]["body"],
+        )
+
+    def test_gitlab_inline_budget_composition_matches_mirror(self):
+        finding = {
+            "file": "b/src/edited.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Near-limit discussion finding",
+            "body": "x" * 1050000,
+        }
+        findings_data = {
+            "platform": "gitlab",
+            "owner": "acme",
+            "repo": "widgets",
+            "pr_number": 326,
+            "review_body": "Automated review summary.",
+            "sha": _GH_SHA,
+            "findings": [finding],
+        }
+        real = self._run_main(
+            findings_data,
+            GL_DIFF_PREFIXED_PATH,
+            versions=[
+                {
+                    "base_commit_sha": _GL_BASE,
+                    "head_commit_sha": _GL_HEAD,
+                    "start_commit_sha": _GL_START,
+                }
+            ],
+        )
+        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
+            "gitlab", GL_DIFF_PREFIXED_PATH
+        )
+        mirror = build_reference_gitlab_payload(
+            [finding],
+            project="acme/widgets",
+            mr_iid=326,
+            valid_lines=valid_lines,
+            line_texts=line_texts,
+            new_files=new_files,
+            sha=_GH_SHA,
+        )
+        self.assertEqual(real, mirror)
+        self.assertEqual(len(real["discussions"]), 1)
+        self.assertIn("_[folded:", real["discussions"][0]["body"])
+        self.assertIn(
+            "1000000-byte GitLab body limit]_",
+            real["discussions"][0]["body"],
+        )
+
     def test_gitlab_fenced_suggestion_and_skipped_summary(self):
         owner, repo = GL_FENCED_PROJECT.split("/")
         findings_data = {
@@ -1242,6 +1353,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             valid_lines=valid_lines,
             line_texts=line_texts,
             new_files=new_files,
+            sha=_GH_SHA,
         )
 
         self.assertEqual(real, mirror)
@@ -1328,6 +1440,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             valid_lines=valid_lines,
             line_texts=line_texts,
             new_files=new_files,
+            sha=_GH_SHA,
         )
         self.assertEqual(real, mirror)
         self.assertIn(
@@ -1445,6 +1558,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             valid_lines=valid_lines,
             line_texts=line_texts,
             new_files=new_files,
+            sha=_GH_SHA,
         )
 
         self.assertEqual(real, mirror)

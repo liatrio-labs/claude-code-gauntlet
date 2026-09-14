@@ -108,16 +108,26 @@ test('rule 5: N findings + M unverified -> Findings "N (+M unverified)"', () => 
   assert.equal(row.notes, '1 high');
 });
 
-test('rule 5: a severity outside SEVERITY_ORDER trails the known ones in first-seen order, never dropped', () => {
+test('S-TABLE: severity breakdown uses closed labels and skips empty or absent values', () => {
+  // Mutation: restore the raw severityBreakdown; off-enum values would reappear as
+  // extra buckets instead of folding into Low.
   const findings = [
-    makeFinding('S1', { dimension: 'security', severity: 'exotic' }),
-    makeFinding('S2', { dimension: 'security', severity: 'low' }),
-    makeFinding('S3', { dimension: 'security', severity: 'weird' }),
+    makeFinding('S1', { dimension: 'security', severity: 'Critical' }),
+    makeFinding('S2', { dimension: 'security', severity: ' medium ' }),
+    makeFinding('S3', { dimension: 'security', severity: 'bogus' }),
+    makeFinding('S4', { dimension: 'security', severity: ['high'] }),
+    makeFinding('S5', { dimension: 'security', severity: 'high\nx' }),
+    makeFinding('S6', { dimension: 'security', severity: '' }),
+    makeFinding('S7', { dimension: 'security', severity: undefined }),
+    makeFinding('S8', { dimension: 'security', severity: 0 }),
+    makeFinding('S9', { dimension: 'security', severity: false }),
+    Object.defineProperty(makeFinding('S10', { dimension: 'security' }), 'severity', { get() { throw new Error('boom'); } }),
+    Object.defineProperty(makeFinding('S11', { severity: 'high' }), 'dimension', { get() { throw new Error('boom'); } }),
   ];
   const md = dimensionsSummaryTable({ dispatched: AGENTS, degraded: [], findings, unverified: [] });
   const row = tableRows(md)[rowIndex('code-gauntlet:security-reviewer')];
-  assert.equal(row.findings, '3');
-  assert.equal(row.notes, '1 low, 1 exotic, 1 weird');
+  assert.equal(row.findings, '10');
+  assert.equal(row.notes, '1 critical, 1 medium, 5 low');
 });
 
 test('rule 5: no finding in the row carries a severity value -> empty Notes', () => {

@@ -3,7 +3,7 @@
 // line-based bundle stripper cannot remove safely.
 import { SEVERITY_ORDER } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
-import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, CODE_OWNED_HEADINGS, resolvePolicy, conditionalSchemaActive } from './registry.js';
+import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, CODE_OWNED_HEADINGS, resolvePolicy, conditionalSchemaActive } from './registry.js';
 import { KNOB_REGISTRY } from './args.js';
 
 // Fields the report renderer never emits. suggested_fix_code itself (no apply-check oracle
@@ -61,23 +61,26 @@ function dimensionOwnerMap() {
   return owner;
 }
 
-// "2 high, 1 low" — counted over the agent's HIGH-CONFIDENCE findings only, in a fixed
-// severity order (critical, high, medium, low first; any other value the schema does not
-// forbid — `severity` is declared `string`, not an enum — trails in first-seen order so
-// no finding is silently dropped from the count). Empty string when no finding in the row
-// carries a severity value at all. Severity is normalized with the same one-line rule as
-// its report heading, so a row cannot be injected into this table.
+// "2 high, 1 low" — counted over the agent's HIGH-CONFIDENCE findings only, in the closed
+// severity order. The schema keeps severity as a string by the recorded fail-open decision,
+// so the renderer maps any value outside the four labels to low. Empty string when no
+// finding in the row carries a severity value at all.
 function severityBreakdown(rowFindings) {
   const counts = new Map();
   for (const f of rowFindings) {
-    if (!f || !f.severity) continue;
-    const severity = oneLine(f.severity).toLowerCase();
+    let raw;
+    try {
+      raw = f ? f.severity : undefined;
+    } catch {
+      continue;
+    }
+    if (raw === undefined || raw === null || raw === '') continue;
+    const severity = normalizeReportSeverity(raw);
     counts.set(severity, (counts.get(severity) || 0) + 1);
   }
   if (counts.size === 0) return '';
   const known = SEVERITY_ORDER.filter((s) => counts.has(s));
-  const rest = [...counts.keys()].filter((s) => !SEVERITY_ORDER.includes(s));
-  return [...known, ...rest].map((s) => `${counts.get(s)} ${s}`).join(', ');
+  return known.map((s) => `${counts.get(s)} ${s}`).join(', ');
 }
 
 export function dimensionsSummaryTable(input) {
@@ -89,11 +92,23 @@ export function dimensionsSummaryTable(input) {
   const byAgent = new Map(AGENTS.map((a) => [a, []]));
   const unverifiedByAgent = new Map(AGENTS.map((a) => [a, []]));
   for (const f of (inp.findings || [])) {
-    const agentType = owner[f && f.dimension];
+    let dimension;
+    try {
+      dimension = f ? f.dimension : undefined;
+    } catch {
+      dimension = undefined;
+    }
+    const agentType = owner[dimension];
     if (agentType && byAgent.has(agentType)) byAgent.get(agentType).push(f);
   }
   for (const f of (inp.unverified || [])) {
-    const agentType = owner[f && f.dimension];
+    let dimension;
+    try {
+      dimension = f ? f.dimension : undefined;
+    } catch {
+      dimension = undefined;
+    }
+    const agentType = owner[dimension];
     if (agentType && unverifiedByAgent.has(agentType)) unverifiedByAgent.get(agentType).push(f);
   }
 
@@ -237,6 +252,53 @@ export function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
   return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
 }
 
+// Twin of `_fold_review_body` in `scripts/post_review.py`.
+export function openProseFence(text) {
+  const value = reportAsText(text);
+  let state = null;
+  let lineStart = 0;
+
+  function lineRun(line) {
+    let indent = 0;
+    while (indent < 3 && indent < line.length && line[indent] === ' ') indent += 1;
+    if (indent >= line.length || !['`', '~'].includes(line[indent])) return null;
+    const char = line[indent];
+    let end = indent;
+    while (end < line.length && line[end] === char) end += 1;
+    return { char, length: end - indent, end, indent };
+  }
+
+  function visit(line, offset) {
+    const run = lineRun(line);
+    if (state !== null) {
+      if (run !== null && run.char === state[0] && run.length >= state[1]
+        && /^[ \t]*$/.test(line.slice(run.end))) state = null;
+      return;
+    }
+    if (run !== null && run.length >= 3
+      && !(run.char === '`' && line.slice(run.end).includes('`'))) {
+      state = [run.char, run.length, offset + run.indent];
+    }
+  }
+
+  let index = 0;
+  while (index < value.length) {
+    if (value[index] === '\n' || value[index] === '\r') {
+      visit(value.slice(lineStart, index), lineStart);
+      if (value[index] === '\r' && value[index + 1] === '\n') index += 2;
+      else index += 1;
+      lineStart = index;
+    } else index += 1;
+  }
+  visit(value.slice(lineStart), lineStart);
+  return state;
+}
+
+export function proseFenceCloser(prefix) {
+  const state = openProseFence(prefix);
+  return state === null ? '' : state[0].repeat(state[1]);
+}
+
 export function foldProse(text, limit) {
   const value = reportAsText(text);
   const length = codePointLength(value);
@@ -255,8 +317,8 @@ export function foldProse(text, limit) {
     break;
   }
   const omitted = length - codePointLength(prefix);
-  const tripleFenceCount = [...prefix.matchAll(/```/g)].length;
-  if (tripleFenceCount % 2 === 1) prefix += `${prefix.endsWith('\n') ? '' : '\n'}\`\`\``;
+  const closer = proseFenceCloser(prefix);
+  if (closer) prefix += `${prefix.endsWith('\n') || prefix.endsWith('\r') ? '' : '\n'}${closer}`;
   return `${prefix}\n\n_[folded: ${omitted} more characters]_`;
 }
 
@@ -328,7 +390,9 @@ function coerceReportFinding(finding) {
       continue;
     }
     let value;
-    if (key === 'confidence') {
+    if (key === 'severity') {
+      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw);
+    } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
@@ -353,6 +417,12 @@ export function coerceReportFindings(value) {
       ? coerceReportFinding(finding)
       : {}
   ));
+}
+
+export function normalizeReportSeverity(raw) {
+  if (typeof raw !== 'string') return 'low';
+  const normalized = raw.trim().toLowerCase();
+  return SEVERITY_ORDER.includes(normalized) ? normalized : 'low';
 }
 
 // 'failure_scenario' -> 'Failure scenario'
@@ -421,7 +491,7 @@ function isPresent(value) {
   return true;
 }
 
-const severityMark = (severity) => SEVERITY_EMOJI[reportAsText(severity).toLowerCase()] || SEVERITY_EMOJI_FALLBACK;
+const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)];
 
 function normalizeFindings(value) {
   return coerceReportFindings(value);
@@ -632,7 +702,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
 }
 
 function severityKey(finding) {
-  return (oneLine(finding.severity) || 'unknown').toLowerCase();
+  return normalizeReportSeverity(finding.severity);
 }
 
 function severityView(findings) {
@@ -644,8 +714,7 @@ function severityView(findings) {
     buckets.get(key).push(finding);
   }
   const known = SEVERITY_ORDER.filter((severity) => buckets.has(severity));
-  const rest = [...buckets.keys()].filter((severity) => !SEVERITY_ORDER.includes(severity));
-  return { buckets, order: [...known, ...rest] };
+  return { buckets, order: known };
 }
 
 function renderSeverityBuckets(builder, view, unverified, permalinks) {

@@ -135,10 +135,13 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
 
 - `review_body` — exactly the pipeline-rendered Summary section body: summary prose folded at
   `REPORT_FOLD_LIMITS.summaryChars`, followed by the short code-owned counts sentence. `post_review.py`
-  bounds the complete posted comment with a per-platform UTF-8 byte budget. The header and footer
-  are reserved first; the summary folds only when it cannot fit beside the skipped-section frame
-  and footer. Skipped groups appear whole or not at all in list order, followed by one closing count
-  line when any group is omitted; the footer stays last.
+  bounds the summary comment, and every inline comment, discussion and note, with a per-platform
+  UTF-8 byte budget. Each includes its trailer; GitLab discussions and notes also include a live
+  marker when one is appended. Inline folds happen in place at a line boundary with a fold line
+  and may keep or drop a whole committable suggestion; summary folds do not apply that suggestion
+  rule. Every fold emits a stderr notice. The header and footer are reserved first; the summary
+  folds only when it cannot fit beside the skipped-section frame and footer. Skipped groups appear whole or not at all in list order,
+  followed by one closing count line when any group is omitted; the footer stays last.
 - `findings` — array of inline comments
   - `file` — relative path in repository
   - `line` — line number in diff (new version)
@@ -148,7 +151,7 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
   - `body` — explanation and context (delivery alias of canonical `description`; see boundary note above)
   - `suggestion` — optional prose fix advice, rendered under a **Suggested fix:** heading. Carried on every finding the pipeline produces (canonical schema), so the delivery JSON should pass it straight through.
   - `claude_md_rule` / `spec_text` — optional; whichever survives sanitize renders under a heading as a blockquote (`claude_md_rule` preferred when both survive). When `claude_md_rule` is rendered, `rule_source` selects **Cited rule**, **Cited comment**, **Repo precedent**, or **Inconsistency**. Unknown or absent values use **Cited rule**. A `spec_text` fallback uses **Cited rule**. The raw `rule_source` value is never rendered.
-  - `suggested_fix_code` — optional code block, rendered as a committable GitHub/GitLab suggestion IF it passes `post_review.py`'s deterministic apply-check at the render site; otherwise stripped and the finding falls back to the prose `suggestion`. Emitted by discovery agents when the fix is a byte-exact drop-in replacement, or supplied directly by a caller's own post-review JSON — same gate either way.
+  - `suggested_fix_code` — optional code block, rendered as a committable GitHub/GitLab suggestion IF it passes `post_review.py`'s deterministic apply-check at the render site; otherwise stripped and the finding falls back to the prose `suggestion`. A body-budget cut also omits a suggestion block whole. Emitted by discovery agents when the fix is a byte-exact drop-in replacement, or supplied directly by a caller's own post-review JSON — same gate either way.
   - Every optional field above treats `null`, `""` and whitespace-only identically to absent: no heading is emitted at all.
 - `owner` — repository owner (GitHub org/user or GitLab group)
 - `repo` — repository name

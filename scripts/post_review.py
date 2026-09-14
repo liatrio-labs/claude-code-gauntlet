@@ -1162,9 +1162,10 @@ def _gated_finding(
     """Return the finding to RENDER at one site, gating its ``suggested_fix_code``.
 
     A failure strips the field from a SHALLOW COPY — the copy is what gets
-    rendered, so ``render_comment_body`` itself is untouched (the benchmark calls
-    it directly and pins its bytes) and the prose ``suggestion`` carries the fix
-    instead. Each downgrade is recorded through ``warn_skip``, which both prints
+    rendered, so ``render_comment_body`` itself is untouched. Benchmark mirrors
+    call ``compose_inline_body`` over ``_render_group_sections(...)`` to construct
+    the body they score, and the prose ``suggestion`` carries the fix instead.
+    Each downgrade is recorded through ``warn_skip``, which both prints
     and lands in the dry-run payload's existing ``skipped`` list, and counted for
     the run's patch-acceptance readout (``_FIX_COUNTS``) and per-reason tally
     (``_FIX_REASON_COUNTS``).
@@ -1534,8 +1535,21 @@ CODE_OWNED_HEADINGS = [
 BRAND_TRAILER = f"{BRAND_MARK} *{BRAND_NAME}*"
 BRAND_SUMMARY_HEADER = f"### {BRAND_MARK} {BRAND_NAME}"
 PLATFORM_BODY_LIMITS = {
-    "github": {"label": "GitHub", "surface": "review body", "bytes": 65536},
-    "gitlab": {"label": "GitLab", "surface": "summary note", "bytes": 1000000},
+    "github": {
+        "label": "GitHub",
+        "surfaces": {
+            "summary": {"surface": "review body", "bytes": 65536},
+            "inline": {"surface": "inline review comment", "bytes": 65536},
+        },
+    },
+    "gitlab": {
+        "label": "GitLab",
+        "surfaces": {
+            "summary": {"surface": "summary note", "bytes": 1000000},
+            "discussion": {"surface": "inline discussion", "bytes": 1000000},
+            "note": {"surface": "corroborator note", "bytes": 1000000},
+        },
+    },
 }
 
 
@@ -1547,12 +1561,19 @@ class ComposedBody(NamedTuple):
     omitted_entries: tuple[tuple[str, str], ...]
 
 
+class InlineBody(NamedTuple):
+    body: str
+    folded_bytes: int
+
+
 def _utf8_len(text):
     return len(text.encode("utf-8"))
 
 
-def _body_limit(platform):
-    return PLATFORM_BODY_LIMITS[platform]
+def _body_limit(platform, surface="summary"):
+    limits = PLATFORM_BODY_LIMITS[platform]
+    row = limits["surfaces"][surface]
+    return {"label": limits["label"], **row}
 
 
 def _finding_sections(finding, *, fence_offsets=None):
@@ -1621,9 +1642,15 @@ def _finding_sections(finding, *, fence_offsets=None):
 
 
 def render_comment_body(finding, *, fence_offsets=None):
-    """The sections plus the identity trailer — what actually goes on the wire."""
+    """Return the unfolded, marker-free rendering used by tests and delivery-key logic.
+
+    It is byte-identical to a posted body only when no fold and no live marker
+    applies; delivery composes the sections with ``compose_inline_body`` and
+    appends live markers separately.
+    """
     return (
-        _finding_sections(finding, fence_offsets=fence_offsets) + f"\n\n{BRAND_TRAILER}"
+        _render_group_sections(finding, [], fence_offsets=fence_offsets)
+        + f"\n\n{BRAND_TRAILER}"
     )
 
 
@@ -1703,13 +1730,15 @@ def _render_corroboration(finding):
 
 
 def render_group_body(primary, corroborators, *, fence_offsets=None):
-    """Build the markdown comment body for one consolidation group.
+    """Build the unfolded, marker-free markdown body for one consolidation group.
 
-    Renders *primary* through ``_finding_sections`` and appends the identity
-    trailer ONCE, after the corroborations — one mark per delivered SURFACE, never
-    one per element. With no *corroborators* the result is byte-identical to
-    ``render_comment_body``, which is what keeps unstamped findings (older
-    artifacts, degraded pipelines) unaffected.
+    This is the marker-free rendering used by tests and delivery-key logic. It is
+    byte-identical to a posted body only when no fold and no live marker applies.
+    Delivery composes the sections with ``compose_inline_body`` and appends live
+    markers separately. The identity trailer is appended ONCE, after the
+    corroborations — one mark per delivered SURFACE, never one per element. With
+    no *corroborators* the result is byte-identical to ``render_comment_body``,
+    which keeps unstamped findings and degraded pipelines unaffected.
     *fence_offsets* reaches the primary's fence only: a corroborator never
     renders one (see :func:`_render_corroboration`), so a group body carries at
     most the one header, measured from the anchor the group is posted at.
@@ -1719,12 +1748,19 @@ def render_group_body(primary, corroborators, *, fence_offsets=None):
     render is deliberately left alone, matching its existing raw-on-the-wire
     behavior.
     """
+    return _render_group_sections(
+        primary, corroborators, fence_offsets=fence_offsets
+    ) + (f"\n\n{BRAND_TRAILER}")
+
+
+def _render_group_sections(primary, corroborators, *, fence_offsets=None):
+    """Render one group's sections without the identity trailer."""
     body = _finding_sections(primary, fence_offsets=fence_offsets)
     if not corroborators:
-        return f"{body}\n\n{BRAND_TRAILER}"
+        return body
     section = "\n\n".join(_render_corroboration(c) for c in corroborators)
     section = section.replace("<!--", "&lt;!--")
-    return f"{body}\n\n---\n\n{section}\n\n{BRAND_TRAILER}"
+    return f"{body}\n\n---\n\n{section}"
 
 
 def _skipped_location(filepath, line):
@@ -1813,6 +1849,115 @@ def _codepoint_prefix(text, allowance):
     return "".join(pieces)
 
 
+# Twin of ``foldProse`` in ``workflows/src/renderReport.js``.
+def _open_fence(text):
+    """Return the final open prose fence as ``(char, length, offset)``."""
+
+    state = None
+    line_start = 0
+    index = 0
+
+    def line_run(line):
+        indent = 0
+        while indent < 3 and indent < len(line) and line[indent] == " ":
+            indent += 1
+        if indent >= len(line) or line[indent] not in "`~":
+            return None
+        char = line[indent]
+        end = indent
+        while end < len(line) and line[end] == char:
+            end += 1
+        return char, end - indent, end, indent
+
+    def visit(line, offset):
+        nonlocal state
+        run = line_run(line)
+        if state is not None:
+            if (
+                run is not None
+                and run[0] == state[0]
+                and run[1] >= state[1]
+                and all(character in " \t" for character in line[run[2] :])
+            ):
+                state = None
+            return
+        if (
+            run is not None
+            and run[1] >= 3
+            and not (run[0] == "`" and "`" in line[run[2] :])
+        ):
+            state = (run[0], run[1], offset + run[3])
+
+    while index < len(text):
+        if text[index] in "\r\n":
+            visit(text[line_start:index], line_start)
+            if (
+                text[index] == "\r"
+                and index + 1 < len(text)
+                and text[index + 1] == "\n"
+            ):
+                index += 2
+            else:
+                index += 1
+            line_start = index
+        else:
+            index += 1
+    visit(text[line_start:], line_start)
+    return state
+
+
+def _fence_closer(prefix):
+    state = _open_fence(prefix)
+    return "" if state is None else state[0] * state[1]
+
+
+def _cut_unclosed_comment(prefix):
+    """Remove the first unclosed HTML comment and everything after it."""
+
+    position = 0
+    while True:
+        opener = prefix.find("<!--", position)
+        if opener < 0:
+            return prefix
+        closer = prefix.find("-->", opener + 4)
+        if closer < 0:
+            return prefix[:opener]
+        position = closer + 3
+
+
+def _drop_last_line(prefix):
+    """Drop the final logical line, accepting LF, CRLF, and lone CR."""
+
+    ended_with_line_ending = prefix.endswith(("\r", "\n"))
+    end = len(prefix)
+    if prefix.endswith("\r\n"):
+        end -= 2
+    elif prefix.endswith(("\r", "\n")):
+        end -= 1
+    separators = [prefix.rfind("\n", 0, end), prefix.rfind("\r", 0, end)]
+    line_start = max(separators)
+    if line_start < 0:
+        return ""
+    if ended_with_line_ending:
+        return prefix[: line_start + 1]
+    if prefix[line_start] == "\n" and line_start and prefix[line_start - 1] == "\r":
+        line_start -= 1
+    return prefix[:line_start]
+
+
+def _retreat_fold_prefix(prefix, *, cut_inside_line, suggestion_start=None):
+    """Retreat a fold prefix and re-cut any HTML comment it exposes."""
+    if suggestion_start is not None:
+        prefix = prefix[:suggestion_start]
+        cut_inside_line = False
+    elif cut_inside_line and not prefix.endswith(("\n", "\r")):
+        prefix = prefix[:-1]
+    else:
+        prefix = _drop_last_line(prefix)
+        cut_inside_line = False
+    return _cut_unclosed_comment(prefix), cut_inside_line
+
+
 def _fold_review_body(text, allowance, platform):
     """Fold *text* into *allowance* bytes while preserving lines and code points."""
     limits = _body_limit(platform)
@@ -1824,12 +1969,16 @@ def _fold_review_body(text, allowance, platform):
             f"{limits['bytes']}-byte {limits['label']} body limit]_"
         )
 
-    reserve = _utf8_len(f"\n\n{fold_line_for(total)}") + 4
+    # This is only the shortest provisional fence reserve. The final assembly
+    # below measures the actual opener character and length.
+    reserve = _utf8_len(f"\n\n{fold_line_for(total)}\n{_fence_closer('```')}")
     if allowance < reserve:
         prefix = ""
+        cut_inside_line = False
     else:
         prefix_allowance = allowance - reserve
         prefix = ""
+        cut_inside_line = False
         for index, line in enumerate(text.split("\n")):
             next_part = line if index == 0 else f"\n{line}"
             remaining = prefix_allowance - _utf8_len(prefix)
@@ -1837,25 +1986,155 @@ def _fold_review_body(text, allowance, platform):
                 prefix += next_part
                 continue
             if _utf8_len(line) > prefix_allowance:
-                prefix += _codepoint_prefix(next_part, remaining)
+                partial = _codepoint_prefix(next_part, remaining)
+                prefix += partial
+                cut_inside_line = bool(partial) and not partial.endswith(("\n", "\r"))
             break
 
-    position = 0
+    prefix = _cut_unclosed_comment(prefix)
+
     while True:
-        opener = prefix.find("<!--", position)
-        if opener < 0:
-            break
-        closer = prefix.find("-->", opener + 4)
-        if closer < 0:
-            prefix = prefix[:opener]
-            break
-        position = closer + 3
+        closer = _fence_closer(prefix)
+        dropped_bytes = total - _utf8_len(prefix)
+        fold_line = fold_line_for(dropped_bytes)
+        separator = "" if not closer or prefix.endswith(("\n", "\r")) else "\n"
+        folded = f"{prefix}{separator}{closer}\n\n{fold_line}"
+        if _utf8_len(folded) <= allowance or not prefix:
+            return folded, dropped_bytes
+        # After the overlong-line cut the prefix ends mid-line, so retreat one code
+        # point at a time: dropping the line would discard the partial that a cut
+        # inside an opener run keeps (the PARTIAL fixture row).
+        prefix, cut_inside_line = _retreat_fold_prefix(
+            prefix, cut_inside_line=cut_inside_line
+        )
 
-    dropped_bytes = total - _utf8_len(prefix)
-    if prefix.count("```") % 2:
-        prefix += "" if prefix.endswith("\n") else "\n"
-        prefix += "```"
-    return f"{prefix}\n\n{fold_line_for(dropped_bytes)}", dropped_bytes
+
+def _open_suggestion_line(prefix, state):
+    """Return the opener line start when *state* is a committable suggestion."""
+    if state is None:
+        return None
+    _char, length, offset = state
+    line_start = max(prefix.rfind("\n", 0, offset), prefix.rfind("\r", 0, offset)) + 1
+    line_end = len(prefix)
+    for separator in ("\n", "\r"):
+        candidate = prefix.find(separator, offset)
+        if candidate >= 0:
+            line_end = min(line_end, candidate)
+    line = prefix[line_start:line_end]
+    delimiter = offset - line_start
+    if line[delimiter + length :].startswith("suggestion"):
+        return line_start
+    return None
+
+
+def _fold_inline_body(sections, allowance, platform, surface):
+    """Fold inline *sections* into *allowance* bytes without breaking markdown."""
+    limits = _body_limit(platform, surface)
+    total = _utf8_len(sections)
+
+    def fold_line_for(byte_count):
+        return (
+            f"_[folded: {byte_count} more bytes; this {limits['surface']} reached the "
+            f"{limits['bytes']}-byte {limits['label']} body limit]_"
+        )
+
+    # Reserve the fold line at the maximum digit count and the shortest possible
+    # synthetic closer. The final assembly measures the actual fence and retreats
+    # whole lines when the closer is longer.
+    reserve = _utf8_len(f"\n\n{fold_line_for(total)}\n{_fence_closer('```')}")
+    if allowance < reserve:
+        prefix = ""
+        cut_inside_line = False
+    else:
+        prefix_allowance = allowance - reserve
+        prefix = ""
+        cut_inside_line = False
+        for index, line in enumerate(sections.split("\n")):
+            next_part = line if index == 0 else f"\n{line}"
+            remaining = prefix_allowance - _utf8_len(prefix)
+            if _utf8_len(next_part) <= remaining:
+                prefix += next_part
+                continue
+            if _utf8_len(line) > prefix_allowance:
+                partial = _codepoint_prefix(next_part, remaining)
+                prefix += partial
+                cut_inside_line = bool(partial) and not partial.endswith(("\n", "\r"))
+            break
+
+    prefix = _cut_unclosed_comment(prefix)
+
+    while True:
+        state = _open_fence(prefix)
+        suggestion_start = _open_suggestion_line(prefix, state)
+        if suggestion_start is not None:
+            # A partial committable suggestion is worse than omitting its patch:
+            # closing it would turn an incomplete patch into a valid wrong patch.
+            prefix, cut_inside_line = _retreat_fold_prefix(
+                prefix,
+                cut_inside_line=cut_inside_line,
+                suggestion_start=suggestion_start,
+            )
+            continue
+
+        closer = "" if state is None else state[0] * state[1]
+        dropped_bytes = total - _utf8_len(prefix)
+        fold_line = fold_line_for(dropped_bytes)
+        separator = "" if not closer or prefix.endswith(("\n", "\r")) else "\n"
+        folded = f"{prefix}{separator}{closer}\n\n{fold_line}"
+        if _utf8_len(folded) <= allowance or not prefix:
+            return folded, dropped_bytes
+        # After an overlong-line cut the prefix ends mid-line, so retreat one code
+        # point at a time. This preserves the shared summary fold's opener behavior.
+        prefix, cut_inside_line = _retreat_fold_prefix(
+            prefix, cut_inside_line=cut_inside_line
+        )
+
+
+def _delivery_marker_suffix(sha, keys):
+    """Return the live-only suffix for the findings carried by one delivery."""
+    if not is_sha_shaped(sha) or not keys:
+        return ""
+    return "\n\n" + "\n".join(build_finding_marker(sha, key) for key in keys)
+
+
+def compose_inline_body(sections, *, platform, surface, marker_suffix=""):
+    """Compose and budget one complete inline body, reserving its live markers."""
+    limits = _body_limit(platform, surface)
+    trailer = f"\n\n{BRAND_TRAILER}"
+    allowance = limits["bytes"] - _utf8_len(trailer) - _utf8_len(marker_suffix)
+    if _utf8_len(sections) <= allowance:
+        return InlineBody(sections + trailer, 0)
+    folded, folded_bytes = _fold_inline_body(sections, allowance, platform, surface)
+    return InlineBody(folded + trailer, folded_bytes)
+
+
+def _inline_body_over_limit(composed, marker_suffix, platform, surface):
+    """Handle an inline envelope too small even for its synthetic fold."""
+    limits = _body_limit(platform, surface)
+    actual = _utf8_len(composed.body + marker_suffix)
+    if actual <= limits["bytes"]:
+        return False
+    message = (
+        f"The composed {limits['surface']} is {actual} bytes, over the "
+        f"{limits['bytes']}-byte {limits['label']} body limit"
+    )
+    if platform == "github":
+        die(message + "; nothing was posted.")
+    warn(message + "; skipping this delivery.")
+    return True
+
+
+def _report_inline_budget(composed, platform, surface, filepath, line):
+    """Report an inline fold without changing stdout or dry-run capture."""
+    if not composed.folded_bytes:
+        return
+    limits = _body_limit(platform, surface)
+    path = filepath or "?"
+    warn(
+        f"Inline body folded by {composed.folded_bytes} bytes at {path}:{line}: "
+        f"this {limits['surface']} reached the {limits['bytes']}-byte "
+        f"{limits['label']} body limit."
+    )
 
 
 def _bounded_section(n, shown_entries, inline_count, platform):
@@ -2172,22 +2451,25 @@ def post_github(data, valid_lines, line_texts):
         multiline, apply_range = _github_apply_range(
             valid_lines, filepath, line, end_line
         )
+        gated = _gated_finding(
+            primary,
+            apply_range,
+            valid_lines,
+            line_texts,
+            demote_reason=(_FIX_OVERLAPS_KEPT_FENCE if index in losers else None),
+        )
+        composed = compose_inline_body(
+            _render_group_sections(gated, corroborators),
+            platform="github",
+            surface="inline",
+        )
+        _inline_body_over_limit(composed, "", "github", "inline")
+        _report_inline_budget(composed, "github", "inline", filepath, line)
         comment = {
             "path": filepath,
             "line": line,
             "side": "RIGHT",
-            "body": render_group_body(
-                _gated_finding(
-                    primary,
-                    apply_range,
-                    valid_lines,
-                    line_texts,
-                    demote_reason=(
-                        _FIX_OVERLAPS_KEPT_FENCE if index in losers else None
-                    ),
-                ),
-                corroborators,
-            ),
+            "body": composed.body,
         }
         if multiline:
             comment["start_line"] = line
@@ -2374,7 +2656,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             gated, offsets = _gitlab_anchored(
                 finding, anchor, valid_lines, line_texts, demote_reason=demote_reason
             )
-            return render_group_body(gated, corroborators, fence_offsets=offsets)
+            return _render_group_sections(gated, corroborators, fence_offsets=offsets)
 
         return make_body
 
@@ -2490,7 +2772,6 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     # from a non-SHA-shaped sha (get_head_sha's "unknown" fallback) is one
     # find_finding_marker is guaranteed to reject, so appending it would leave an
     # unreadable comment on every discussion and dedup nothing.
-    sha_is_markable = is_sha_shaped(sha)
     if summary_posted:
         print(f"MR summary note for {sha} already on the MR — skipping.")
     else:
@@ -2542,10 +2823,19 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         ``position.new_line`` below, so a fence's offsets cannot be measured
         from an anchor the discussion is not posted at (#219).
         """
-        # Rendered before the dedup check, not after: the apply-check runs at
-        # render sites, so a rerun that posts nothing still gates — and still
-        # counts — every fence it would have posted.
-        comment_body = make_body(line)
+        # Render before the dedup check: the apply-check runs at render sites, so
+        # the body is still gated even when a rerun posts nothing. The fold notice
+        # belongs after dedup because it describes a delivery that was attempted.
+        sections = make_body(line)
+        marker_suffix = _delivery_marker_suffix(sha, keys)
+        composed = compose_inline_body(
+            sections,
+            platform="gitlab",
+            surface="discussion",
+            marker_suffix=marker_suffix,
+        )
+        if _inline_body_over_limit(composed, marker_suffix, "gitlab", "discussion"):
+            return "failed"
         if keys and all(k in delivered_keys for k in keys):
             # An earlier run already delivered every finding in this discussion for
             # this sha. Reposting it is the duplication issue #132 reports, not a
@@ -2593,18 +2883,10 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
                 f"— malformed GitLab position: {'; '.join(problems)}."
             )
             return "invalid"
+        _report_inline_budget(composed, "gitlab", "discussion", filepath, line)
 
-        # The delivery marker goes on the LIVE wire only. The benchmark harness pins
-        # dry-run and scores the captured bodies as candidate text, so a marker in a
-        # capture would change what is scored; the live path is the only place a rerun
-        # has to recognize what it already posted.
-        # ONE marker per finding carried, so a rerun's key scan registers every
-        # member of a group as delivered — not just the finding that anchored it.
-        markers = "\n".join(build_finding_marker(sha, k) for k in keys)
         payload = {
-            "body": comment_body
-            if DRY_RUN or not sha_is_markable
-            else f"{comment_body}\n\n{markers}",
+            "body": composed.body if DRY_RUN else composed.body + marker_suffix,
             "position": position,
         }
 
@@ -2660,12 +2942,18 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         A position-less note has no anchor at all, so no fence it carried could
         ever be applied — the gate below strips one unconditionally here.
         """
-        body = render_comment_body(_gated_finding(c, None, valid_lines, line_texts))
-        payload = {
-            "body": body
-            if DRY_RUN or not sha_is_markable
-            else f"{body}\n\n{build_finding_marker(sha, key)}"
-        }
+        gated = _gated_finding(c, None, valid_lines, line_texts)
+        marker_suffix = _delivery_marker_suffix(sha, [key])
+        composed = compose_inline_body(
+            _finding_sections(gated),
+            platform="gitlab",
+            surface="note",
+            marker_suffix=marker_suffix,
+        )
+        if _inline_body_over_limit(composed, marker_suffix, "gitlab", "note"):
+            return "failed"
+        _report_inline_budget(composed, "gitlab", "note", c.get("file"), c.get("line"))
+        payload = {"body": composed.body if DRY_RUN else composed.body + marker_suffix}
         cmd_prefix = [
             "glab",
             "api",
@@ -2877,9 +3165,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     )
 
     if failed:
-        print(
-            f"  {failed} inline discussion(s) rejected by GitLab (see warnings above)."
-        )
+        print(f"  {failed} inline discussion(s) not delivered (see warnings above).")
         if posted == 0:
             # Every attempt was made first — this exit reports the outcome, it does not
             # abandon the batch. A partial delivery is a success with warnings, but a
@@ -2888,8 +3174,8 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             # already placed are neither successes of this one nor part of the total,
             # and a malformed position never reached the wire to be "attempted".
             die(
-                f"all {failed} finding(s) attempted this run were rejected by "
-                f"GitLab — nothing new was posted inline.{standing} The MR summary note "
+                f"all {failed} finding(s) attempted this run were not delivered "
+                f"— nothing new was posted inline.{standing} The MR summary note "
                 f"is on the MR; rerunning retries the inline comments without "
                 f"duplicating what is already there."
             )

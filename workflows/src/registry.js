@@ -268,9 +268,8 @@ export const BRAND_NAME = 'Code Gauntlet';
 export const SEVERITY_EMOJI = {
   critical: '\u{1F534}', high: '\u{1F7E0}', medium: '\u{1F7E1}', low: '\u{1F4A1}',
 };
-// The mark rendered for a severity the schema does not forbid (`severity` is declared
-// `string`, not an enum) — a constant, not a repeated literal. Pinned by
-// tests/test_post_review.py::test_unknown_severity_falls_back_to_bulb.
+// Severity stays `string` in the schema by the recorded fail-open decision. The renderer
+// maps any value outside the four labels to `low`.
 export const SEVERITY_EMOJI_FALLBACK = SEVERITY_EMOJI.low;
 
 export const RULE_SOURCE_LABELS = {

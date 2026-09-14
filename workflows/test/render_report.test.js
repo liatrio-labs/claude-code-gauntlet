@@ -2,8 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline } from '../src/renderReport.js';
-import { SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, AGENTS, resolvePolicy } from '../src/registry.js';
+import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline, openProseFence, proseFenceCloser, normalizeReportSeverity } from '../src/renderReport.js';
+import { SEVERITY_EMOJI, AGENTS, resolvePolicy } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
 const dims = { dispatched: AGENTS, degraded: [] };
@@ -63,6 +63,8 @@ function fieldLabel(key) {
   const words = key.replaceAll('_', ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+const proseFenceCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/prose_fence_cases.json', import.meta.url), 'utf8'));
 
 test('T-TITLE: title subject precedence and identity line bytes are exact', () => {
   // Mutation: remove permalinkContext or platform ref selection; the GitHub/GitLab pins turn red.
@@ -254,6 +256,57 @@ test('T-FOLDS: every exact cap and cap-plus-one has deterministic bytes', () => 
   assert.ok(foldedSummary.includes(`${'s'.repeat(12000)}\n\n_[folded: 1 more characters]_`));
 });
 
+test('T-FOLDS-FENCE-CORPUS: Python and JavaScript share fence cases', () => {
+  for (const row of proseFenceCases.folds) {
+    const source = row.id === 'PARTIAL'
+      ? `${'``````info'}${'\nDROP'.repeat(300)}`
+      : `${row.kept}${'\nDROP'.repeat(300)}`;
+    const omitted = Array.from(source).length - Array.from(row.kept).length;
+    const expected = `${row.kept}${row.closer}\n\n_[folded: ${omitted} more characters]_`;
+    assert.equal(foldProse(source, row.js_limit), expected, row.id);
+  }
+  for (const row of proseFenceCases.closers) {
+    assert.equal(proseFenceCloser(row.prefix), row.closer.replace(/^\n/, ''), row.id);
+  }
+});
+
+test('T-FOLDS-FENCE-SHAPE: open fences expose the shared state tuple', () => {
+  assert.deepEqual(openProseFence('   ````x'), ['`', 4, 3]);
+  assert.deepEqual(openProseFence('prose\r````\rx'), ['`', 4, 6]);
+  assert.equal(openProseFence('````\n````\nprose'), null);
+});
+
+test('T-FOLDS-FENCE-SURFACES: every prose surface closes F4 before its notice', () => {
+  const f4 = '````py\nkeep';
+  const summary = `${f4}${'\nDROP'.repeat(3000)}`;
+  const fieldValue = `${f4}${'\nDROP'.repeat(1000)}`;
+  const input = rendered({
+    summary,
+    findings: [finding('SURFACE', {
+      description: fieldValue,
+      suggestion: fieldValue,
+      claude_md_rule: fieldValue,
+      corroborations: [{ agent: 'a', dimension: 'security', confidence: 80, title: 'x', description: fieldValue }],
+    })],
+  });
+  const foldedSummary = foldProse(summary, REPORT_FOLD_LIMITS.summaryChars);
+  const foldedField = foldProse(fieldValue, REPORT_FOLD_LIMITS.proseChars);
+  const quoted = foldedField.split(/\r?\n/).map((line) => `> ${line}`).join('\n');
+  const corroborated = foldedField.split(/\r?\n/).map((line) => `  ${line}`).join('\n');
+  assert.ok(input.includes(foldedSummary));
+  assert.ok(input.includes(foldedField));
+  assert.ok(input.includes(quoted));
+  assert.ok(input.includes(corroborated));
+  for (const [surface, value, closingLine] of [
+    ['summary/field', foldedSummary, '````\n'],
+    ['quoted', quoted, '> ````\n'],
+    ['corroborated', corroborated, '  ````\n'],
+  ]) {
+    assert.ok(value.includes(closingLine), surface);
+    assert.ok(value.lastIndexOf('````') < value.indexOf('_[folded:'), surface);
+  }
+});
+
 test('T-FOLDS-CORPUS: measured corpus maxima stay unfolded', () => {
   // Mutation: lower any display cap beneath the measured maxima; this fixture gains a notice.
   const report = rendered({
@@ -287,7 +340,7 @@ test('T-FOLDS-FENCE: folding closes prose fences and evidence folds inside its f
     findings: [finding('FOLD', { description, evidence: 'e'.repeat(20000) })],
   });
   const beforeMethodology = report.split('\n## Review Methodology')[0];
-  assert.equal((beforeMethodology.match(/```/g) || []).length % 2, 0);
+  assert.equal(openProseFence(beforeMethodology), null);
   assert.ok(report.includes(`\`\`\`\n${'x'.repeat(3996)}\n\`\`\`\n\n_[folded: 1000 more characters]_`));
   assert.equal((report.match(/^## Review Methodology$/gm) || []).length, 1);
   assert.ok(report.includes('... [folded: 12000 more characters]\n```'));
@@ -332,7 +385,7 @@ test('T-TITLE-INJ: every heading and identity interpolation is one line', () => 
   }
 });
 
-test('T-SEV: registry severity headings are sparse and unknown severities trail without dropping', () => {
+test('T-SEV: report severity headings use the closed set and fold unknown values into Low', () => {
   const findings = [
     finding('C', { severity: 'critical' }),
     finding('H', { severity: 'high' }),
@@ -351,14 +404,80 @@ test('T-SEV: registry severity headings are sparse and unknown severities trail 
       `### ${SEVERITY_EMOJI.high} High`,
       `### ${SEVERITY_EMOJI.medium} Medium`,
       `### ${SEVERITY_EMOJI.low} Low`,
-      `### ${SEVERITY_EMOJI_FALLBACK} Strange`,
-      `### ${SEVERITY_EMOJI_FALLBACK} Exotic`,
     ],
   );
-  assert.equal(countSentence(report), '6 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 1 low, 1 strange, 1 exotic.');
+  assert.equal(countSentence(report), '6 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 3 low.');
   const sparse = rendered({ findings: [finding('L', { severity: 'low' })] });
   assert.ok(sparse.includes(`### ${SEVERITY_EMOJI.low} Low`));
   assert.ok(!sparse.includes(`### ${SEVERITY_EMOJI.high} High`));
+});
+
+test('S-LABELS: report severity normalization is closed, total, and non-mutating', () => {
+  // Mutation: restore the raw severityKey/severityView path, including its open-ended
+  // buckets; the hostile values and closed-label assertions must go red.
+  const longSeverity = 'x'.repeat(70000);
+  const group = { consolidation_key: 'severity-group' };
+  const confirmed = [
+    finding('LONG', { severity: longSeverity }),
+    finding('TRIMMED', { severity: 'HIGH ' }),
+    finding('NEWLINE', { severity: 'high\nfoo' }),
+    finding('PRIMARY', { ...group, consolidation_primary: true, severity: 3 }),
+    finding('CORROBORATOR', { ...group, consolidation_primary: false, severity: 'medium' }),
+  ];
+  const unverified = [finding('ARRAY', { severity: ['high'] })];
+  const input = { findings: confirmed, unverified, dimensions: dims };
+  const before = JSON.stringify(input);
+
+  assert.deepEqual(
+    [normalizeReportSeverity(longSeverity), normalizeReportSeverity('HIGH '), normalizeReportSeverity('high\nfoo'), normalizeReportSeverity(['high']), normalizeReportSeverity(3)],
+    ['low', 'high', 'low', 'low', 'low'],
+  );
+
+  const report = rendered(input);
+  const summaryBody = renderSummaryBody(input);
+  for (const output of [report, summaryBody]) {
+    assert.ok(!output.includes(longSeverity), 'the long raw severity is never rendered');
+    assert.ok(!output.includes('foo'), 'the newline suffix is never rendered');
+    assert.match(output, /1 high/);
+    assert.match(output, /3 low/);
+    assert.doesNotMatch(output, /(?:critical|high|medium|low|\d+)\s+(?:exotic|strange|bogus|foo)/);
+  }
+  assert.match(report, /^### 🟠 High$/m);
+  assert.match(report, /^### 💡 Low$/m);
+  assert.equal(countSentence(report), '4 reported issue(s) from 5 finding(s) after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
+  assert.equal(summaryBody, '4 reported issue(s) from 5 finding(s) after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
+  assert.equal(JSON.stringify(input), before, 'rendering does not mutate confirmed, unverified, or corroborated inputs');
+});
+
+test('S-EDGES: a label with only edge whitespace or line endings keeps its severity', () => {
+  // Mutation: reject any string containing a line terminator before trimming; the CRLF
+  // and LF-prefixed labels then fold into Low.
+  assert.deepEqual(
+    ['critical\r\n', 'critical\r', 'critical\n', '\ncritical', '\u2028high\u2029'].map(normalizeReportSeverity),
+    ['critical', 'critical', 'critical', 'critical', 'high'],
+  );
+  const report = rendered({ findings: [finding('CRLF', { severity: 'critical\r\n' })], dimensions: dims });
+  assert.match(report, /^### 🔴 Critical$/m);
+  assert.doesNotMatch(report, /^### 💡 Low$/m);
+});
+
+test('S-OMIT: findings with no severity value leave the dimensions Notes cell empty', () => {
+  // Mutation: normalize an absent, null or empty severity to low in coerceReportFinding;
+  // the security-reviewer row then reads "3 low".
+  const absent = finding('ABSENT', { dimension: 'security' });
+  delete absent.severity;
+  const report = rendered({
+    findings: [absent, finding('NULL', { dimension: 'security', severity: null }), finding('EMPTY', { dimension: 'security', severity: '' })],
+    dimensions: dims,
+  });
+  const lines = report.split('\n');
+  const header = lines.findIndex((line) => line.startsWith('| Dimension | Agent | Findings | Notes |'));
+  assert.ok(header >= 0, 'the report carries the dimensions table');
+  const row = lines.slice(header + 2).find((line) => line.includes('| security-reviewer |'));
+  assert.ok(row, 'the security-reviewer row is present');
+  const cells = row.split('|').slice(1, -1).map((c) => c.trim());
+  assert.equal(cells[2], '3');
+  assert.equal(cells[3], '');
 });
 
 test('T-EVID: evidence renders uniformly in main, suggestion, and unverified buckets', () => {
@@ -567,7 +686,7 @@ test('T-COUNTS: the computed sentence follows rendered blocks and preserves pre-
   );
   assert.equal(
     countSentence(rendered({ findings: [finding('X', { severity: 'exotic' }), finding('Y', { severity: 'strange' })] })),
-    '2 finding(s) after the gauntlet — 1 exotic, 1 strange.',
+    '2 finding(s) after the gauntlet — 2 low.',
   );
   assert.equal(
     countSentence(rendered({ findings: ['critical', 'high', 'medium', 'low'].map((severity) => finding(severity, { severity })) })),

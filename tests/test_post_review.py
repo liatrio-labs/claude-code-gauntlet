@@ -40,11 +40,20 @@ import scripts.review_marker as review_marker
 from scripts.post_review import (
     _blockquote,
     _cap_rule_text,
+    _delivery_marker_suffix,
+    _fence_closer,
+    _fold_inline_body,
+    _fold_review_body,
+    _inline_body_over_limit,
+    _open_fence,
     _redact_secrets,
+    _render_group_sections,
+    _report_inline_budget,
     _sanitize_outbound_prose,
     _suggestion_fence,
     build_footer,
     build_skipped_section,
+    compose_inline_body,
     compose_review_body,
     consolidate_delivery,
     detect_platform,
@@ -2394,6 +2403,15 @@ GL_DIFF = (
 
 _GLAB_FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "glab_diff")
 
+_PROSE_FENCE_CASES = os.path.join(
+    os.path.dirname(__file__), "fixtures", "prose_fence_cases.json"
+)
+
+
+def _prose_fence_cases():
+    with open(_PROSE_FENCE_CASES, encoding="utf-8") as fh:
+        return json.load(fh)
+
 
 def _glab_fixture(name):
     """Read one `glab mr diff` fixture verbatim.
@@ -2892,6 +2910,328 @@ class TestDryRunGitLab(_DryRunTestBase):
         self.assertEqual(disc["body"], render_comment_body(finding_x))
         self.assertEqual(disc["position"]["new_path"], "bar.py")
         self.assertEqual(disc["position"]["new_line"], 2)
+
+
+class TestInlinePosterBoundaries(_DryRunTestBase):
+    """The real dry-run posters reserve their live inline envelopes."""
+
+    SHA = "a" * 40
+
+    def _fit_finding(self, platform, limit, finding, seed):
+        trailer_bytes = len(("\n\n" + post_review.BRAND_TRAILER).encode("utf-8"))
+        marker_bytes = 0
+        if platform == "gitlab":
+            key = finding_key_for_test(finding)
+            marker_bytes = len(_delivery_marker_suffix(self.SHA, [key]).encode("utf-8"))
+        target = limit - trailer_bytes - marker_bytes
+        finding["body"] = seed
+        fixed = len(_render_group_sections(finding, []).encode("utf-8"))
+        finding["body"] += "x" * (target - fixed)
+        self.assertEqual(
+            len(_render_group_sections(finding, []).encode("utf-8")), target
+        )
+
+    def _run_boundary(self, platform, limit, delta, seed):
+        path = "foo.py" if platform == "github" else "bar.py"
+        finding = {
+            "file": path,
+            "line": 1,
+            "severity": "high",
+            "title": "Boundary finding",
+            "body": "placeholder",
+        }
+        self._fit_finding(platform, limit, finding, seed)
+        sibling = {
+            "file": path,
+            "line": 2,
+            "severity": "low",
+            "title": "Healthy sibling",
+            "body": "short body",
+        }
+        if delta:
+            finding["body"] += "x"
+        data = {
+            "platform": platform,
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "sha": self.SHA,
+            "review_body": "Summary",
+            "findings": [finding, sibling],
+        }
+        diff = GH_DIFF if platform == "github" else GL_DIFF
+        versions = (
+            [
+                {
+                    "base_commit_sha": "base1",
+                    "head_commit_sha": "head1",
+                    "start_commit_sha": "start1",
+                }
+            ]
+            if platform == "gitlab"
+            else None
+        )
+        self._write(data)
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=diff, versions=versions),
+            ),
+        ):
+            post_review.main()
+        return self._payload(), finding
+
+    def test_github_exact_and_plus_one_inline_bodies_keep_the_same_comments(self):
+        for delta in (0, 1):
+            with self.subTest(delta=delta):
+                payload, finding = self._run_boundary(
+                    "github", 65536, delta, "ascii seed"
+                )
+                comments = payload["payload"]["comments"]
+                self.assertEqual(len(comments), 2)
+                self.assertEqual([c["line"] for c in comments], [1, 2])
+                body = comments[0]["body"]
+                self.assertIn("Boundary finding", body)
+                self.assertEqual(body.count(post_review.BRAND_TRAILER), 1)
+                if not delta:
+                    self.assertEqual(body, render_comment_body(finding))
+                else:
+                    self.assertIn("_[folded:", body)
+                self.assertLessEqual(len(body.encode("utf-8")), 65536)
+                self.assertEqual(
+                    comments[1]["body"],
+                    render_comment_body(
+                        {
+                            "file": "foo.py",
+                            "line": 2,
+                            "severity": "low",
+                            "title": "Healthy sibling",
+                            "body": "short body",
+                        }
+                    ),
+                )
+                self.assertEqual(payload["skipped"], [])
+                self.assertIn("Generated by code-gauntlet", payload["payload"]["body"])
+                self.assertEqual(
+                    set(payload),
+                    {"platform", "endpoint", "method", "payload", "skipped"},
+                )
+                self.assertEqual({"path", "line", "side", "body"}, set(comments[0]))
+
+    def test_github_multibyte_exact_and_plus_one_inline_bodies_are_bounded(self):
+        for delta in (0, 1):
+            with self.subTest(delta=delta):
+                payload, finding = self._run_boundary("github", 65536, delta, "😀 seed")
+                body = payload["payload"]["comments"][0]["body"]
+                self.assertLessEqual(len(body.encode("utf-8")), 65536)
+                if not delta:
+                    self.assertEqual(len(body.encode("utf-8")), 65536)
+                    self.assertEqual(body, render_comment_body(finding))
+                else:
+                    self.assertIn("Boundary finding", body)
+                    self.assertIn("_[folded:", body)
+                self.assertEqual(payload["skipped"], [])
+
+    def test_gitlab_exact_and_plus_one_multibyte_discussions_preserve_payload_shape(
+        self,
+    ):
+        for delta in (0, 1):
+            with self.subTest(delta=delta):
+                payload, finding = self._run_boundary(
+                    "gitlab", 1000000, delta, "界 seed"
+                )
+                discussions = payload["discussions"]
+                body = discussions[0]["body"]
+                suffix = _delivery_marker_suffix(
+                    self.SHA, [finding_key_for_test(finding)]
+                )
+                self.assertLessEqual(len((body + suffix).encode("utf-8")), 1000000)
+                if not delta:
+                    self.assertEqual(len((body + suffix).encode("utf-8")), 1000000)
+                    self.assertEqual(body, render_comment_body(finding))
+                else:
+                    self.assertIn("Boundary finding", body)
+                    self.assertIn("_[folded:", body)
+                self.assertEqual(body.count(post_review.BRAND_TRAILER), 1)
+                self.assertEqual(
+                    discussions[1]["body"],
+                    render_comment_body(
+                        {
+                            "file": "bar.py",
+                            "line": 2,
+                            "severity": "low",
+                            "title": "Healthy sibling",
+                            "body": "short body",
+                        }
+                    ),
+                )
+                self.assertEqual(payload["skipped"], [])
+                self.assertEqual(
+                    set(payload), {"platform", "summary", "discussions", "skipped"}
+                )
+                self.assertEqual(set(discussions[0]), {"body", "position"})
+
+    def test_gitlab_exact_and_plus_one_discussions_reserve_the_live_marker(self):
+        for delta in (0, 1):
+            with self.subTest(delta=delta):
+                payload, finding = self._run_boundary(
+                    "gitlab", 1000000, delta, "ascii seed"
+                )
+                discussions = payload["discussions"]
+                self.assertEqual(len(discussions), 2)
+                self.assertEqual(
+                    [d["position"]["new_line"] for d in discussions], [1, 2]
+                )
+                body = discussions[0]["body"]
+                key = finding_key_for_test(finding)
+                suffix = _delivery_marker_suffix(self.SHA, [key])
+                self.assertEqual(len(suffix.encode("utf-8")), 113)
+                self.assertEqual(body.count(post_review.BRAND_TRAILER), 1)
+                self.assertLessEqual(len((body + suffix).encode("utf-8")), 1000000)
+                if not delta:
+                    self.assertEqual(len((body + suffix).encode("utf-8")), 1000000)
+                else:
+                    self.assertIn("_[folded:", body)
+                self.assertEqual(payload["skipped"], [])
+                self.assertIn("Generated by code-gauntlet", payload["summary"]["body"])
+
+    def test_gitlab_multibyte_discussions_are_bounded_with_the_live_marker(self):
+        payload, finding = self._run_boundary("gitlab", 1000000, 1, "😀 seed")
+        body = payload["discussions"][0]["body"]
+        suffix = _delivery_marker_suffix(self.SHA, [finding_key_for_test(finding)])
+        self.assertLessEqual(len((body + suffix).encode("utf-8")), 1000000)
+        self.assertIn("_[folded:", body)
+
+    def _run_note_boundary(self, limit, delta):
+        primary = _gl_primary()
+        note = _gl_corroborator("Note", None)
+        self._fit_finding("gitlab", limit, note, "界 seed")
+        if delta:
+            note["body"] += "x"
+        sibling = dict(GL_CONTRACT_FINDINGS[1])
+        data = {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "sha": self.SHA,
+            "review_body": "Summary",
+            "findings": [primary, note, sibling],
+        }
+        self._write(data)
+        prior = (False, {finding_key_for_test(primary)}, frozenset())
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.gitlab_prior_delivery",
+                return_value=prior,
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(
+                    diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
+                ),
+            ),
+        ):
+            post_review.main()
+        return self._payload(), note
+
+    def test_gitlab_exact_and_plus_one_multibyte_unanchored_notes_preserve_sibling(
+        self,
+    ):
+        for delta in (0, 1):
+            with self.subTest(delta=delta):
+                payload, finding = self._run_note_boundary(1000000, delta)
+                notes = [d for d in payload["discussions"] if "position" not in d]
+                sibling = [d for d in payload["discussions"] if "position" in d]
+                self.assertEqual(len(notes), 1)
+                self.assertEqual(len(sibling), 1)
+                body = notes[0]["body"]
+                suffix = _delivery_marker_suffix(
+                    self.SHA, [finding_key_for_test(finding)]
+                )
+                self.assertLessEqual(len((body + suffix).encode("utf-8")), 1000000)
+                if not delta:
+                    self.assertEqual(len((body + suffix).encode("utf-8")), 1000000)
+                    self.assertEqual(body, render_comment_body(finding))
+                else:
+                    self.assertIn("Corroborator Note", body)
+                    self.assertIn("_[folded:", body)
+                self.assertEqual(body.count(post_review.BRAND_TRAILER), 1)
+                self.assertEqual(
+                    sibling[0]["body"], render_comment_body(GL_CONTRACT_FINDINGS[1])
+                )
+                self.assertEqual(payload["skipped"], [])
+                self.assertEqual(
+                    set(payload), {"platform", "summary", "discussions", "skipped"}
+                )
+                self.assertEqual(set(notes[0]), {"body"})
+
+    def test_github_impossible_inline_envelope_dies_before_any_post(self):
+        # Mutation: bypass the final UTF-8 body-plus-marker check; post_json would
+        # then be called with the oversized review batch.
+        data = {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "sha": self.SHA,
+            "review_body": "Summary",
+            "findings": [
+                {
+                    "file": "foo.py",
+                    "line": 1,
+                    "severity": "high",
+                    "title": "Too large",
+                    "body": "body",
+                },
+                {
+                    "file": "foo.py",
+                    "line": 2,
+                    "severity": "low",
+                    "title": "Healthy sibling",
+                    "body": "short body",
+                },
+            ],
+        }
+        self._write(data)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
+            patch.dict(
+                post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
+                {"bytes": 20},
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+            patch("scripts.post_review.post_json") as post,
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            post_review.main()
+        self.assertEqual(raised.exception.code, 1)
+        post.assert_not_called()
+        self.assertIn("inline review comment", stderr.getvalue())
+        self.assertIn("20-byte GitHub body limit", stderr.getvalue())
+        self.assertIn("nothing was posted", stderr.getvalue())
+
+
+def finding_key_for_test(finding):
+    """Compute the mirror's singleton key without depending on a captured marker."""
+    return post_review.finding_key(
+        finding["file"],
+        finding["line"],
+        finding["title"],
+        post_review.key_material_body(finding),
+    )
 
 
 class TestSummaryBodyBrandHeader(_DryRunTestBase):
@@ -4576,7 +4916,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         )
         self.assertIsNone(run.exit_code)
         self.assertIn("  2 inline discussion(s) posted.", run.out)
-        self.assertIn("  1 inline discussion(s) rejected by GitLab", run.out)
+        self.assertIn("  1 inline discussion(s) not delivered", run.out)
         posts = _discussion_posts(run.mock_run)
         self.assertEqual(
             len(posts), 3, "one rejected group attempt + one POST per corroborator"
@@ -4605,7 +4945,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         self.assertEqual(run.exit_code, 1)
         self.assertIn("  0 inline discussion(s) posted.", run.out)
         self.assertIn("  2 finding(s) had a malformed position", run.out)
-        self.assertIn("  1 inline discussion(s) rejected by GitLab", run.out)
+        self.assertIn("  1 inline discussion(s) not delivered", run.out)
 
     def test_group_success_counts_every_member_as_posted(self):
         """One discussion carries the whole group, so the posted counter reports the
@@ -4685,6 +5025,24 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                 f"missing marker for {member['title']}",
             )
 
+    def test_folded_body_marker_uses_the_unfolded_key_material_and_reruns_cleanly(self):
+        # Mutation: derive the marker key from the folded body; the reader must still
+        # recognize the delivery key computed from the original finding sections.
+        finding = dict(GL_CONTRACT_FINDINGS[0], body="x" * 999900)
+        expected_key = _member_key(finding)
+        payloads = []
+        run = self._run_main(findings=[finding], payloads=payloads)
+        self.assertIsNone(run.exit_code)
+        discussion = next(p for p in payloads if "position" in p)
+        self.assertIn("_[folded:", discussion["body"])
+        self.assertEqual(
+            review_marker.find_finding_marker(discussion["body"]),
+            {"sha": "a" * 40, "key": expected_key},
+        )
+        rerun = self._run_main(findings=[finding], prior=(True, {expected_key}, None))
+        self.assertIsNone(rerun.exit_code)
+        self.assertEqual(_discussion_posts(rerun.mock_run), [])
+
     def test_group_body_carries_a_marker_for_unanchorable_corroborator_too(self):
         """A corroborator with no line of its own can only ever be delivered inside
         the group body — its marker must be there too, or a rerun can never
@@ -4751,6 +5109,103 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         )
         self.assertIn("  1 inline discussion(s) already on the MR", run.out)
         self.assertIn("  1 inline discussion(s) posted.", run.out)
+
+    def test_unanchored_note_boundary_reserves_its_live_marker(self):
+        # Mutation: omit the marker reserve at the unanchored-note render site; the
+        # plus-one body then incorrectly takes the fast path and remains unbounded.
+        for delta in (0, 1):
+            with self.subTest(delta=delta):
+                primary = _gl_primary()
+                unanchored = _gl_corroborator("A", None)
+                target = 1000000 - 24 - 113
+                fixed_finding = dict(unanchored, body="")
+                fixed = len(
+                    post_review._finding_sections(fixed_finding).encode("utf-8")
+                )
+                unanchored["body"] = "x" * (target - fixed + delta)
+                payloads = []
+                run = self._run_main(
+                    findings=[primary, unanchored, GL_CONTRACT_FINDINGS[1]],
+                    prior=(True, {_member_key(primary)}, None),
+                    payloads=payloads,
+                )
+                self.assertIsNone(run.exit_code)
+                note = next(
+                    p["body"]
+                    for p in payloads
+                    if "position" not in p and "Corroborator A" in p["body"]
+                )
+                key = _member_key(unanchored)
+                suffix = _delivery_marker_suffix("a" * 40, [key])
+                self.assertEqual(len(suffix.encode("utf-8")), 113)
+                self.assertLessEqual(len(note.encode("utf-8")), 1000000)
+                if not delta:
+                    self.assertEqual(len(note.encode("utf-8")), 1000000)
+                else:
+                    self.assertIn("_[folded:", note)
+                self.assertEqual(note.count(post_review.BRAND_TRAILER), 1)
+                if delta:
+                    self.assertIn("Inline body folded by", run.err)
+                else:
+                    self.assertNotIn("Inline body folded by", run.err)
+
+    def test_unanchored_note_over_limit_is_not_posted_and_does_not_strand_siblings(
+        self,
+    ):
+        """An over-limit fallback note is failed through the live delivery loop.
+
+        The note-only run must die after the summary note, while a healthy
+        sibling still posts and keeps the batch successful. The note limit is
+        below the live marker reserve, so even its folded envelope cannot fit.
+
+        Mutation: remove the ``_inline_body_over_limit`` call from
+        ``deliver_unanchored`` — RED because the over-limit note is then posted.
+        """
+        primary = _gl_primary()
+        unanchored = _gl_corroborator("A", None)
+        primary_key = _member_key(primary)
+
+        cases = [
+            ("note only", [primary, unanchored], True),
+            (
+                "healthy sibling",
+                [primary, unanchored, dict(GL_CONTRACT_FINDINGS[1], title="Healthy")],
+                False,
+            ),
+        ]
+        for label, findings, expect_failure in cases:
+            with self.subTest(label=label):
+                payloads = []
+                with patch.dict(
+                    post_review.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"]["note"],
+                    {"bytes": 100},
+                ):
+                    run = self._run_main(
+                        findings=findings,
+                        prior=(True, {primary_key}, None),
+                        payloads=payloads,
+                    )
+
+                note_bodies = [p["body"] for p in payloads if "position" not in p]
+                self.assertFalse(
+                    any("Corroborator A" in body for body in note_bodies),
+                    "the over-limit corroborator note must not reach the POST",
+                )
+                self.assertIn("corroborator note", run.err)
+                self.assertIn("100-byte GitLab body limit", run.err)
+                self.assertIn("1 inline discussion(s) not delivered", run.out)
+                if expect_failure:
+                    self.assertEqual(run.exit_code, 1)
+                    self.assertIn("0 inline discussion(s) posted", run.out)
+                else:
+                    self.assertIsNone(run.exit_code)
+                    healthy_posts = [
+                        p
+                        for p in payloads
+                        if "position" in p and "Healthy" in p["body"]
+                    ]
+                    self.assertEqual(len(healthy_posts), 1)
+                    self.assertIn("1 inline discussion(s) posted", run.out)
 
     def test_legacy_group_body_rerun_posts_nothing_and_counts_the_whole_group(self):
         """A pre-#208 group body already carries the unanchorable corroborator's
@@ -4834,7 +5289,7 @@ class TestGitlabFaultTolerance(_GitlabLiveRunBase):
         )
         self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
         self.assertIn("  2 inline discussion(s) posted.", run.out)
-        self.assertIn("  1 inline discussion(s) rejected by GitLab", run.out)
+        self.assertIn("  1 inline discussion(s) not delivered", run.out)
 
     def test_rejection_warning_names_the_finding_and_the_api_error(self):
         run = self._run_main(discussion_rcs=[1, 0, 0])
@@ -4848,7 +5303,7 @@ class TestGitlabFaultTolerance(_GitlabLiveRunBase):
         # The exit is a REPORT, not an abort: every finding was attempted first.
         self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
         self.assertIn("  0 inline discussion(s) posted.", run.out)
-        self.assertIn("  3 inline discussion(s) rejected", run.out)
+        self.assertIn("  3 inline discussion(s) not delivered", run.out)
 
     def test_zero_posted_with_no_rejections_exits_zero(self):
         off_diff = [dict(f, line=999) for f in GL_CONTRACT_FINDINGS]
@@ -4866,6 +5321,29 @@ class TestGitlabFaultTolerance(_GitlabLiveRunBase):
             [],
             "auth/MR failure dooms every inline post behind it — do not attempt them",
         )
+
+    def test_impossible_discussion_is_failed_without_stranding_healthy_sibling(self):
+        # Mutation: bypass the final UTF-8 body-plus-marker check; the oversized
+        # discussion would then reach try_post_json and the wire.
+        oversized = dict(GL_CONTRACT_FINDINGS[0], title="Too large", body="x" * 1000)
+        healthy = dict(GL_CONTRACT_FINDINGS[1], title="Healthy sibling")
+        payloads = []
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"]["discussion"],
+            {"bytes": 200},
+        ):
+            run = self._run_main(
+                findings=[oversized, healthy],
+                payloads=payloads,
+            )
+        self.assertIsNone(run.exit_code)
+        discussions = [p for p in payloads if "position" in p]
+        self.assertEqual(len(discussions), 1)
+        self.assertIn("Healthy sibling", discussions[0]["body"])
+        self.assertNotIn("Too large", discussions[0]["body"])
+        self.assertIn("  1 inline discussion(s) posted.", run.out)
+        self.assertIn("  1 inline discussion(s) not delivered", run.out)
+        self.assertIn("200-byte GitLab body limit", run.err)
 
     def test_dry_run_never_reports_rejections(self):
         run = self._run_main(dry_run=True, discussion_rcs=[1, 1, 1])
@@ -5066,6 +5544,17 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         self.assertIn("  0 inline discussion(s) posted.", run.out)
         self.assertIn("3 inline discussion(s) already on the MR", run.out)
 
+    def test_already_present_fold_does_not_emit_a_fold_notice(self):
+        finding = dict(GL_CONTRACT_FINDINGS[0], body="x" * 1000001)
+        key = finding_key_for_test(finding)
+        run = self._run_main(
+            findings=[finding],
+            prior=(True, {key}, None),
+        )
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        self.assertNotIn("Inline body folded by", run.err)
+
     def test_already_present_plus_one_rejection_fails_honestly(self):
         """The bare ``posted == 0`` die used to call this "all 1 inline discussion(s)
         were rejected — nothing was posted inline", which was wrong twice: one
@@ -5076,7 +5565,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
             discussion_rcs=[1],
         )
         self.assertEqual(run.exit_code, 1)
-        self.assertIn("attempted this run were rejected", run.err)
+        self.assertIn("attempted this run were not delivered", run.err)
         self.assertIn("2 from an earlier run remain on the MR", run.err)
         self.assertNotIn("nothing was posted inline", run.err)
 
@@ -5098,6 +5587,21 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         self.assertIn("had a malformed position", run.err)
         self.assertIn("2 from an earlier run remain on the MR", run.err)
         self.assertNotIn("nothing was posted inline", run.err)
+
+    def test_malformed_position_emits_no_fold_notice(self):
+        # Mutation: report the fold before the malformed-position return; the
+        # notice then describes a discussion this run never put on the wire.
+        run = self._run_main(
+            findings=[
+                GL_CONTRACT_FINDINGS[0],
+                GL_CONTRACT_FINDINGS[1],
+                dict(GL_CONTRACT_FINDINGS[2], line=1.0, body="x" * 1000001),
+            ],
+            prior=(True, {self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY}, None),
+        )
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        self.assertIn("had a malformed position", run.err)
+        self.assertNotIn("Inline body folded by", run.err)
 
     def test_fetch_failure_delivers_every_finding(self):
         """Availability over dedup: a failed read must never be taken for "already
@@ -5162,6 +5666,106 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         self.assertEqual(len(bodies), 3)
         for body, finding in zip(bodies, GL_CONTRACT_FINDINGS, strict=True):
             self.assertEqual(body, render_comment_body(finding))
+
+    def test_real_dry_and_live_gitlab_bodies_differ_only_by_all_markers(self):
+        # Mutations: reserve markers only outside DRY_RUN, reserve only the first
+        # key, or omit the note-path reserve; each live/dry comparison turns red.
+        limit = 500
+
+        def pad_finding(finding, target):
+            fixed = len(post_review._finding_sections(finding).encode("utf-8"))
+            finding["body"] += "x" * (target - fixed)
+
+        singleton = dict(GL_CONTRACT_FINDINGS[0], body="界 seed")
+        pad_finding(singleton, limit - 24 - 113 + 1)
+
+        primary = _gl_primary()
+        corroborator = _gl_corroborator("A", 61)
+        group_fixed = len(
+            _render_group_sections(primary, [corroborator]).encode("utf-8")
+        )
+        primary["body"] += "x" * (limit - 24 - 225 + 1 - group_fixed)
+
+        note_primary = _gl_primary()
+        note = _gl_corroborator("Note", None)
+        pad_finding(note, limit - 24 - 113 + 1)
+        cases = [
+            ([singleton], [finding_key_for_test(singleton)], None),
+            (
+                [primary, corroborator],
+                [finding_key_for_test(primary), _member_key(corroborator)],
+                None,
+            ),
+            (
+                [note_primary, note],
+                [_member_key(note)],
+                _member_key(note_primary),
+            ),
+        ]
+        for findings, keys, prior_key in cases:
+            with self.subTest(keys=keys):
+                dry_prior = (
+                    (False, {prior_key}, frozenset())
+                    if prior_key
+                    else (False, set(), frozenset())
+                )
+                with (
+                    patch(
+                        "scripts.post_review.gitlab_prior_delivery",
+                        return_value=dry_prior,
+                    ),
+                    patch.dict(
+                        post_review.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"][
+                            "discussion"
+                        ],
+                        {"bytes": limit},
+                    ),
+                    patch.dict(
+                        post_review.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"]["note"],
+                        {"bytes": limit},
+                    ),
+                ):
+                    self._run_main(dry_run=True, findings=findings)
+                dry_discussions = self._payload()["discussions"]
+                dry = next(
+                    d
+                    for d in dry_discussions
+                    if ("position" in d) == (prior_key is None)
+                )
+
+                live_payloads = []
+                live_prior = (False, {prior_key}, None) if prior_key else None
+                with (
+                    patch.dict(
+                        post_review.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"][
+                            "discussion"
+                        ],
+                        {"bytes": limit},
+                    ),
+                    patch.dict(
+                        post_review.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"]["note"],
+                        {"bytes": limit},
+                    ),
+                ):
+                    run = self._run_main(
+                        findings=findings,
+                        prior=live_prior,
+                        payloads=live_payloads,
+                    )
+                self.assertIsNone(run.exit_code)
+                live_discussions = [
+                    p
+                    for p in live_payloads
+                    if "position" in p or p["body"].find("Corroborator Note") >= 0
+                ]
+                self.assertEqual(len(live_discussions), 1)
+                live = live_discussions[0]
+                suffix = _delivery_marker_suffix("a" * 40, keys)
+                self.assertEqual(
+                    len(suffix.encode("utf-8")), 113 if len(keys) == 1 else 225
+                )
+                self.assertEqual(live["body"], dry["body"] + suffix)
+                self.assertLessEqual(len(live["body"].encode("utf-8")), limit)
 
     def test_dry_run_fetches_nothing_captures_everything_and_stays_marker_free(self):
         """bench pins dry-run and scores the captured bodies as candidate text, so a
@@ -5284,6 +5888,374 @@ class TestBuildSkippedSection(unittest.TestCase):
         self.assertNotIn("prose\n\n\n---", body)
 
 
+class TestProseFenceHelpers(unittest.TestCase):
+    """The Python fold scanner is pinned to the shared hand-typed corpus."""
+
+    def test_fold_cases_match_the_shared_fixture(self):
+        limits = post_review._body_limit("github")
+        for row in _prose_fence_cases()["folds"]:
+            with self.subTest(row=row["id"]):
+                if row["id"] == "PARTIAL":
+                    text = "``````info" + "\nDROP" * 300
+                else:
+                    text = row["kept"] + "\nDROP" * 300
+                folded, dropped = _fold_review_body(text, row["py_allowance"], "github")
+                fold_line = (
+                    f"_[folded: {dropped} more bytes; this {limits['surface']} reached the "
+                    f"{limits['bytes']}-byte {limits['label']} body limit]_"
+                )
+                expected = row["kept"] + row["closer"] + "\n\n" + fold_line
+                self.assertEqual(folded, expected)
+                self.assertEqual(
+                    dropped,
+                    len(text.encode("utf-8")) - len(row["kept"].encode("utf-8")),
+                )
+                self.assertLessEqual(len(folded.encode("utf-8")), row["py_allowance"])
+
+    def test_closer_cases_match_the_shared_fixture(self):
+        for row in _prose_fence_cases()["closers"]:
+            with self.subTest(row=row["id"]):
+                self.assertEqual(
+                    _fence_closer(row["prefix"]), row["closer"].lstrip("\n")
+                )
+
+    def test_open_fence_reports_the_opener_shape(self):
+        self.assertEqual(_open_fence("   ````x"), ("`", 4, 3))
+        self.assertEqual(_open_fence("prose\r````\rx"), ("`", 4, 6))
+        self.assertIsNone(_open_fence("````\n````\nprose"))
+
+
+class TestProseFenceBudget(unittest.TestCase):
+    def _fold_line(self, dropped):
+        limits = post_review._body_limit("github")
+        return (
+            f"_[folded: {dropped} more bytes; this {limits['surface']} reached the "
+            f"{limits['bytes']}-byte {limits['label']} body limit]_"
+        )
+
+    def test_long_closer_forces_a_line_retreat(self):
+        # Mutation: return the first assembled fold without the retreat loop; the
+        # 200-byte closer then pushes the result over the allowance.
+        text = "keep\n" + "`" * 200 + "\n" + "x" * 1000
+        folded, dropped = _fold_review_body(text, 493, "github")
+        self.assertEqual(folded, "keep\n\n\n" + self._fold_line(dropped))
+        self.assertEqual(dropped, 1201)
+        self.assertLessEqual(len(folded.encode("utf-8")), 493)
+
+    def test_crlf_text_retreats_whole_lines_and_closes_on_its_own_line(self):
+        # Mutation: keep one byte of a CRLF when _drop_last_line retreats; the 200-byte
+        # closer forces the retreat over CRLF lines, and at this allowance the split
+        # prefix ("more\\r") fits, so the kept text changes.
+        opener = "`" * 200
+        text = opener + "\r\nkeep\r\nmore\r\n" + "DROP\r\n" * 300
+        folded, dropped = _fold_review_body(text, 501, "github")
+        kept = opener + "\r\nkeep\r\n"
+        self.assertEqual(folded, kept + opener + "\n\n" + self._fold_line(dropped))
+        self.assertEqual(dropped, len(text.encode("utf-8")) - len(kept.encode("utf-8")))
+        self.assertLessEqual(len(folded.encode("utf-8")), 501)
+
+    def test_lone_cr_text_retreats_to_a_cr_boundary(self):
+        # Mutation: split on LF only in _drop_last_line; lone-CR text then has no line
+        # to retreat to and the fold collapses to the closer alone.
+        opener = "`" * 200
+        text = opener + "\rkeep\rmore\r" + "DROP\r" * 300
+        folded, dropped = _fold_review_body(text, 495, "github")
+        kept = opener + "\rkeep\r"
+        self.assertEqual(folded, kept + opener + "\n\n" + self._fold_line(dropped))
+        self.assertLessEqual(len(folded.encode("utf-8")), 495)
+
+    def test_drop_last_line_accepts_every_line_ending(self):
+        # Mutation: split on LF only, or keep one byte of a CRLF.
+        cases = {
+            "a\r\nb\r\n": "a\r\n",
+            "a\r\nb": "a",
+            "a\rb\r": "a\r",
+            "a\rb": "a",
+            "a\nb\n": "a\n",
+            "a\r\n": "",
+            "abc": "",
+        }
+        for prefix, expected in cases.items():
+            with self.subTest(prefix=prefix):
+                self.assertEqual(post_review._drop_last_line(prefix), expected)
+
+    def test_comment_cutback_removes_a_fence_opener(self):
+        # Mutation: compute the fence state before the HTML comment cut-back; the
+        # opener inside the unclosed comment would gain a synthetic closer.
+        text = "keep\n<!--\n````\n" + "x" * 1000
+        folded, dropped = _fold_review_body(text, 107, "github")
+        self.assertEqual(folded, "keep\n\n\n" + self._fold_line(dropped))
+        self.assertEqual(dropped, 1010)
+        self.assertLessEqual(len(folded.encode("utf-8")), 107)
+
+    def test_multibyte_prefix_stays_on_a_codepoint_boundary(self):
+        # Mutation: count characters as bytes; the four-byte character would be
+        # admitted or split at the hand-typed 103-byte allowance.
+        text = "a" * 10 + "😀" + "b" * 10
+        folded, dropped = _fold_review_body(text, 103, "github")
+        self.assertEqual(folded, "a" * 10 + "\n\n" + self._fold_line(dropped))
+        self.assertEqual(dropped, 14)
+        self.assertLessEqual(len(folded.encode("utf-8")), 103)
+
+    def test_allowance_below_the_provisional_reserve_keeps_only_the_fold(self):
+        text = "x" * 99
+        folded, dropped = _fold_review_body(text, 86, "github")
+        self.assertEqual(folded, "\n\n" + self._fold_line(dropped))
+        self.assertEqual(dropped, 99)
+        self.assertLessEqual(len(folded.encode("utf-8")), 86)
+
+
+class TestInlineBodyBudget(unittest.TestCase):
+    SHA = "a" * 40
+    KEY_A = "b" * 16
+    KEY_B = "c" * 16
+
+    def test_marker_suffix_has_literal_wire_sizes_and_unmarkable_sha_is_empty(self):
+        singleton = _delivery_marker_suffix(self.SHA, [self.KEY_A])
+        pair = _delivery_marker_suffix(self.SHA, [self.KEY_A, self.KEY_B])
+        self.assertEqual(len(singleton.encode("utf-8")), 113)
+        self.assertEqual(len(pair.encode("utf-8")), 225)
+        self.assertEqual(
+            singleton,
+            "\n\n" + post_review.build_finding_marker(self.SHA, self.KEY_A),
+        )
+        self.assertEqual(_delivery_marker_suffix("unknown", [self.KEY_A]), "")
+        self.assertEqual(_delivery_marker_suffix(self.SHA, []), "")
+
+    def test_dry_capture_is_live_body_without_singleton_pair_or_note_markers(self):
+        cases = [
+            ("**finding**\n\nbody", [self.KEY_A], "discussion"),
+            ("**finding**\n\nbody", [self.KEY_A, self.KEY_B], "discussion"),
+            (
+                post_review._finding_sections(
+                    {"file": "?", "title": "note", "body": "body"}
+                ),
+                [self.KEY_A],
+                "note",
+            ),
+        ]
+        for sections, keys, surface in cases:
+            with self.subTest(keys=keys):
+                suffix = _delivery_marker_suffix(self.SHA, keys)
+                captured = compose_inline_body(
+                    sections,
+                    platform="gitlab",
+                    surface=surface,
+                    marker_suffix=suffix,
+                ).body
+                live = captured + suffix
+                self.assertEqual(live[len(captured) :], suffix)
+                self.assertEqual(live[: len(captured)], captured)
+        unmarkable_suffix = _delivery_marker_suffix("unknown", [self.KEY_A])
+        self.assertEqual(unmarkable_suffix, "")
+        unmarkable = compose_inline_body(
+            "**finding**\n\nbody",
+            platform="gitlab",
+            surface="discussion",
+            marker_suffix=unmarkable_suffix,
+        ).body
+        self.assertEqual(unmarkable + unmarkable_suffix, unmarkable)
+
+    def test_fast_path_reserves_marker_bytes_in_both_modes(self):
+        # Mutation: reserve zero marker bytes; the over case would incorrectly take
+        # the fast path while the under case remains byte-identical.
+        suffix = _delivery_marker_suffix(self.SHA, [self.KEY_A])
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
+            {"bytes": 350},
+        ):
+            over = compose_inline_body(
+                "x" * 214,
+                platform="github",
+                surface="inline",
+                marker_suffix=suffix,
+            )
+            under = compose_inline_body(
+                "x" * 212,
+                platform="github",
+                surface="inline",
+                marker_suffix=suffix,
+            )
+        self.assertGreater(over.folded_bytes, 0)
+        self.assertLessEqual(len((over.body + suffix).encode("utf-8")), 350)
+        self.assertEqual(under.folded_bytes, 0)
+        self.assertEqual(len((under.body + suffix).encode("utf-8")), 349)
+
+    def test_multibyte_fast_path_uses_utf8_bytes(self):
+        # Mutation: count Unicode characters instead of UTF-8 bytes; this exact
+        # envelope would admit one character too many or miss the boundary.
+        sections = "a" * 133 + "😀"
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
+            {"bytes": 160},
+        ):
+            composed = compose_inline_body(
+                sections, platform="github", surface="inline"
+            )
+        self.assertGreater(composed.folded_bytes, 0)
+        self.assertLessEqual(len(composed.body.encode("utf-8")), 160)
+
+    def test_inline_fold_retires_partial_suggestion_and_preserves_heading(self):
+        # Mutation: close the partial suggestion; a truncated committable patch is
+        # valid markdown but is an invalid one-click patch.
+        fence = "`" * 4
+        sections = (
+            "**heading**\n"
+            + "keep\n" * 2
+            + fence
+            + "suggestion\n"
+            + "bad\n" * 60
+            + fence
+            + "\ntail\n" * 30
+        )
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
+            {"bytes": 285},
+        ):
+            composed = compose_inline_body(
+                sections, platform="github", surface="inline"
+            )
+        self.assertGreater(composed.folded_bytes, 0)
+        self.assertLessEqual(len(composed.body.encode("utf-8")), 285)
+        self.assertIn("**heading**", composed.body)
+        self.assertNotIn("suggestion", composed.body)
+        self.assertNotIn(fence, composed.body)
+
+    def test_inline_fold_cuts_comments_and_overlong_lines_at_safe_boundaries(self):
+        # Mutation: skip the comment cut-back; the finding-controlled opener would
+        # become a live marker-bearing HTML comment.
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
+            {"bytes": 140},
+        ):
+            folded, dropped = _fold_inline_body(
+                "**heading**\n<!--\n" + "x" * 300,
+                116,
+                "github",
+                "inline",
+            )
+        self.assertGreater(dropped, 0)
+        self.assertNotIn("<!--", folded)
+        self.assertLessEqual(len(folded.encode("utf-8")), 116)
+
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
+            {"bytes": 220},
+        ):
+            folded, dropped = _fold_inline_body(
+                "a" * 10 + "😀" + "b" * 200,
+                140,
+                "github",
+                "inline",
+            )
+        self.assertGreater(dropped, 0)
+        self.assertTrue(folded.startswith("a" * 10 + "😀"))
+        self.assertLessEqual(len(folded.encode("utf-8")), 140)
+
+    def test_inline_retreat_rechecks_comments_after_suggestion_drop(self):
+        # Mutation: skip the cut-back after a suggestion retreat; the inline fold
+        # would then expose a comment that swallows the fold line.
+        sections = (
+            "**heading**\n"
+            "<!-- finding-controlled opener\n"
+            "```suggestion\n"
+            "patched --> line\n"
+            "```\n" + "tail\n" * 300
+        )
+        marker = _delivery_marker_suffix(self.SHA, [self.KEY_A])
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"]["discussion"],
+            {"bytes": 307},
+        ):
+            inline = compose_inline_body(
+                sections,
+                platform="gitlab",
+                surface="discussion",
+                marker_suffix=marker,
+            )
+        self.assertIn("**heading**", inline.body)
+        self.assertNotIn("<!--", inline.body)
+        self.assertEqual(inline.body.count(post_review.BRAND_TRAILER), 1)
+        self.assertLessEqual(len((inline.body + marker).encode("utf-8")), 307)
+
+    def test_summary_retreat_rechecks_comments_after_line_drop(self):
+        # Mutation: skip the cut-back after a line retreat; the summary fold would
+        # then expose the comment whose dropped line carried its closer.
+        summary = ("`" * 50) + "\n<!-- opener\nclosed -->\n" + "x" * 1000
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["summary"],
+            {"bytes": 201},
+        ):
+            folded, dropped = _fold_review_body(summary, 201, "github")
+        self.assertGreater(dropped, 0)
+        self.assertNotIn("<!--", folded)
+        self.assertLessEqual(len(folded.encode("utf-8")), 201)
+
+    def test_inline_fold_reserves_actual_long_closer(self):
+        # Mutation: return the first assembled fold without the fit check or retreat;
+        # the 200-byte closer then pushes the result over the allowance.
+        sections = "keep\n" + "`" * 200 + "\n" + "x" * 1000
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
+            {"bytes": 500},
+        ):
+            folded, dropped = _fold_inline_body(sections, 493, "github", "inline")
+        self.assertEqual(
+            folded,
+            "keep\n\n\n_[folded: 1201 more bytes; this inline review comment "
+            "reached the 500-byte GitHub body limit]_",
+        )
+        self.assertEqual(dropped, 1201)
+        self.assertLessEqual(len(folded.encode("utf-8")), 493)
+
+    def test_legacy_finding_with_oversized_severity_is_bounded(self):
+        finding = {
+            "severity": "s" * 70000,
+            "title": "Legacy finding",
+            "body": "body",
+        }
+        composed = compose_inline_body(
+            _render_group_sections(finding, []),
+            platform="github",
+            surface="inline",
+        )
+        self.assertGreater(composed.folded_bytes, 0)
+        self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
+
+    def test_inline_disclosure_uses_stderr_and_raw_unanchored_location(self):
+        composed = post_review.InlineBody("body", 7)
+        post_review._SKIP_WARNINGS.clear()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            _report_inline_budget(composed, "gitlab", "note", None, None)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(post_review._SKIP_WARNINGS, [])
+        self.assertEqual(
+            stderr.getvalue(),
+            "WARNING: Inline body folded by 7 bytes at ?:None: this corroborator "
+            "note reached the 1000000-byte GitLab body limit.\n",
+        )
+
+    def test_impossible_inline_envelope_is_platform_specific(self):
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
+            {"bytes": 20},
+        ):
+            composed = compose_inline_body("x", platform="github", surface="inline")
+            with self.assertRaises(SystemExit):
+                _inline_body_over_limit(composed, "", "github", "inline")
+
+        with patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"]["note"],
+            {"bytes": 20},
+        ):
+            composed = compose_inline_body("x", platform="gitlab", surface="note")
+            with patch("scripts.post_review.warn") as mock_warn:
+                self.assertTrue(_inline_body_over_limit(composed, "", "gitlab", "note"))
+            mock_warn.assert_called_once()
+
+
 class TestSummaryBodyBudget(_DryRunTestBase):
     """Oracle tests for the complete per-platform summary-body budget."""
 
@@ -5370,11 +6342,29 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertEqual(
             post_review.PLATFORM_BODY_LIMITS,
             {
-                "github": {"label": "GitHub", "surface": "review body", "bytes": 65536},
+                "github": {
+                    "label": "GitHub",
+                    "surfaces": {
+                        "summary": {"surface": "review body", "bytes": 65536},
+                        "inline": {
+                            "surface": "inline review comment",
+                            "bytes": 65536,
+                        },
+                    },
+                },
                 "gitlab": {
                     "label": "GitLab",
-                    "surface": "summary note",
-                    "bytes": 1000000,
+                    "surfaces": {
+                        "summary": {"surface": "summary note", "bytes": 1000000},
+                        "discussion": {
+                            "surface": "inline discussion",
+                            "bytes": 1000000,
+                        },
+                        "note": {
+                            "surface": "corroborator note",
+                            "bytes": 1000000,
+                        },
+                    },
                 },
             },
         )
@@ -5654,7 +6644,8 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         body = payload["payload"]["body"]
         before_fold = body[: body.index("_[folded:")]
         self.assertFalse(exit_code)
-        self.assertEqual(before_fold.count("```") % 2, 0)
+        self.assertEqual(_fence_closer(before_fold), "")
+        self.assertIn("\n```\n\n", before_fold)
         self.assertIn(
             "_[folded: 4804 more bytes; this review body reached the 65536-byte "
             "GitHub body limit]_",
@@ -6331,6 +7322,52 @@ class TestSummaryBodyDelivery(_DryRunTestBase):
         self.assertEqual(data["platform"], "github")
         self.assertEqual(data["review_body"], "")
         self.assertEqual(data["findings"], [])
+
+    def test_report_summary_fold_closes_four_backtick_fence_before_footer(self):
+        # Mutation: bypass _fold_review_body in compose_review_body; the footer and
+        # hidden marker would then land inside the four-backtick Summary fence.
+        report_path = os.path.join(self.tmp, "report.md")
+        with open(report_path, "w", encoding="utf-8") as fh:
+            fh.write(
+                "## Summary\n\n" + "````python\n" + "x" * 70000 + "\n\n## Findings\n"
+            )
+        self._write([])
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "post_review.py",
+                    self.findings_path,
+                    "--dry-run",
+                    "--report",
+                    report_path,
+                    "--owner",
+                    "o",
+                    "--repo",
+                    "r",
+                    "--pr-number",
+                    "5",
+                    "--platform",
+                    "github",
+                    "--sha",
+                    "a" * 40,
+                ],
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()
+        body = self._payload()["payload"]["body"]
+        closer = "\n````\n\n"
+        fold = "_[folded:"
+        marker = "<!-- code-gauntlet-findings:"
+        self.assertIn(closer, body)
+        self.assertLess(body.index(closer), body.index(fold))
+        self.assertLess(body.index(fold), body.index(marker))
+        self.assertTrue(body.endswith(post_review.build_footer(0, "a" * 40, body="")))
 
     @patch("scripts.post_review.check_tool")
     @patch(

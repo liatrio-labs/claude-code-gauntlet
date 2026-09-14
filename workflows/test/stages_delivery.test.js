@@ -38,6 +38,17 @@ test('selectDelivery ranks by severity then confidence (reuses rankFindings)', (
   assert.deepEqual(out.map((f) => f.id), ['CRIT', 'HIGH_B', 'HIGH_A', 'LOW']);
 });
 
+test('S-RANK: an off-enum finding ranks inside Low through a coerced projection and returns the original', () => {
+  // Mutation: rank the raw pool instead of the coerced projection; the off-enum
+  // high-confidence finding must fall behind the real low finding.
+  const offEnum = dFinding('OFF_ENUM', { severity: 'bogus', confidence: 95 });
+  const low = dFinding('LOW', { severity: 'low', confidence: 80 });
+  const out = selectDelivery([offEnum, low], 1);
+  assert.equal(out.length, 1);
+  assert.strictEqual(out[0], offEnum, 'delivery maps the ranked projection back to the original object');
+  assert.equal(out[0].severity, 'bogus', 'delivery preserves the raw severity for persistence');
+});
+
 // --- selectDelivery: cap binding --------------------------------------------
 
 test('selectDelivery caps to the top-cap by rank when cap < count', () => {
@@ -208,6 +219,38 @@ function challengeCheckpoint() {
     generated_at: '2026-07-18T00:00:00Z',
   };
 }
+
+function legacyOffEnumChallengeCheckpoint() {
+  return {
+    findings: [makeFinding('LEGACY', { severity: 'x'.repeat(70000), confidence: 95 })],
+    unverified: [],
+    eliminated: [],
+    gaps: [],
+    stats: { total_input: 1, dispatched: 1, completed: 1, skipped: 0, final_count: 1 },
+    generated_at: '2026-07-18T00:00:00Z',
+  };
+}
+
+test('S-REPLAY: legacy off-enum severity is accepted, report is regenerated, and persistence keeps the raw value', async () => {
+  // Mutations: skip report regeneration on replay, or reject the off-enum value at
+  // the checkpoint shape gate; either change must make this replay contract fail.
+  const args = validArgs({
+    checkpoints: {
+      challenge: legacyOffEnumChallengeCheckpoint(),
+      report: { report: 'STALE REPORT CHECKPOINT', gaps: ['legacy report gap'] },
+    },
+  });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+
+  assert.equal(out.ok, true);
+  assert.ok(persisted, 'writer received regenerated artifacts');
+  assert.ok(persisted.report.includes('1 finding(s) after the gauntlet — 1 low.'), 'Summary uses the normalized low label');
+  assert.ok(persisted.report.includes('### 💡 Low'), 'severity heading uses the normalized low label');
+  assert.ok(!persisted.report.includes('STALE REPORT CHECKPOINT'));
+  assert.ok(!persisted.report.includes('x'.repeat(70000)), 'raw long severity is not rendered');
+  assert.equal(persisted.findings[0].severity, 'x'.repeat(70000), 'persisted findings retain the legacy raw severity');
+});
 
 test('runWith persists postReview built from every challenge-survivor, ranked and capped', async () => {
   const args = validArgs({

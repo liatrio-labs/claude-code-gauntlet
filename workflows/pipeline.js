@@ -1694,14 +1694,19 @@ function dimensionOwnerMap() {
 function severityBreakdown(rowFindings) {
   const counts = new Map();
   for (const f of rowFindings) {
-    if (!f || !f.severity) continue;
-    const severity = oneLine(f.severity).toLowerCase();
+    let raw;
+    try {
+      raw = f ? f.severity : undefined;
+    } catch {
+      continue;
+    }
+    if (raw === undefined || raw === null || raw === '') continue;
+    const severity = normalizeReportSeverity(raw);
     counts.set(severity, (counts.get(severity) || 0) + 1);
   }
   if (counts.size === 0) return '';
   const known = SEVERITY_ORDER.filter((s) => counts.has(s));
-  const rest = [...counts.keys()].filter((s) => !SEVERITY_ORDER.includes(s));
-  return [...known, ...rest].map((s) => `${counts.get(s)} ${s}`).join(', ');
+  return known.map((s) => `${counts.get(s)} ${s}`).join(', ');
 }
 function dimensionsSummaryTable(input) {
   const inp = input || {};
@@ -1711,11 +1716,23 @@ function dimensionsSummaryTable(input) {
   const byAgent = new Map(AGENTS.map((a) => [a, []]));
   const unverifiedByAgent = new Map(AGENTS.map((a) => [a, []]));
   for (const f of (inp.findings || [])) {
-    const agentType = owner[f && f.dimension];
+    let dimension;
+    try {
+      dimension = f ? f.dimension : undefined;
+    } catch {
+      dimension = undefined;
+    }
+    const agentType = owner[dimension];
     if (agentType && byAgent.has(agentType)) byAgent.get(agentType).push(f);
   }
   for (const f of (inp.unverified || [])) {
-    const agentType = owner[f && f.dimension];
+    let dimension;
+    try {
+      dimension = f ? f.dimension : undefined;
+    } catch {
+      dimension = undefined;
+    }
+    const agentType = owner[dimension];
     if (agentType && unverifiedByAgent.has(agentType)) unverifiedByAgent.get(agentType).push(f);
   }
   const rows = AGENTS.map((agentType) => {
@@ -1830,6 +1847,47 @@ function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
   if (length <= limit) return value;
   return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
 }
+function openProseFence(text) {
+  const value = reportAsText(text);
+  let state = null;
+  let lineStart = 0;
+  function lineRun(line) {
+    let indent = 0;
+    while (indent < 3 && indent < line.length && line[indent] === ' ') indent += 1;
+    if (indent >= line.length || !['`', '~'].includes(line[indent])) return null;
+    const char = line[indent];
+    let end = indent;
+    while (end < line.length && line[end] === char) end += 1;
+    return { char, length: end - indent, end, indent };
+  }
+  function visit(line, offset) {
+    const run = lineRun(line);
+    if (state !== null) {
+      if (run !== null && run.char === state[0] && run.length >= state[1]
+        && /^[ \t]*$/.test(line.slice(run.end))) state = null;
+      return;
+    }
+    if (run !== null && run.length >= 3
+      && !(run.char === '`' && line.slice(run.end).includes('`'))) {
+      state = [run.char, run.length, offset + run.indent];
+    }
+  }
+  let index = 0;
+  while (index < value.length) {
+    if (value[index] === '\n' || value[index] === '\r') {
+      visit(value.slice(lineStart, index), lineStart);
+      if (value[index] === '\r' && value[index + 1] === '\n') index += 2;
+      else index += 1;
+      lineStart = index;
+    } else index += 1;
+  }
+  visit(value.slice(lineStart), lineStart);
+  return state;
+}
+function proseFenceCloser(prefix) {
+  const state = openProseFence(prefix);
+  return state === null ? '' : state[0].repeat(state[1]);
+}
 function foldProse(text, limit) {
   const value = reportAsText(text);
   const length = codePointLength(value);
@@ -1847,8 +1905,8 @@ function foldProse(text, limit) {
     break;
   }
   const omitted = length - codePointLength(prefix);
-  const tripleFenceCount = [...prefix.matchAll(/```/g)].length;
-  if (tripleFenceCount % 2 === 1) prefix += `${prefix.endsWith('\n') ? '' : '\n'}\`\`\``;
+  const closer = proseFenceCloser(prefix);
+  if (closer) prefix += `${prefix.endsWith('\n') || prefix.endsWith('\r') ? '' : '\n'}${closer}`;
   return `${prefix}\n\n_[folded: ${omitted} more characters]_`;
 }
 function foldEvidence(text) {
@@ -1915,7 +1973,9 @@ function coerceReportFinding(finding) {
       continue;
     }
     let value;
-    if (key === 'confidence') {
+    if (key === 'severity') {
+      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw);
+    } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
@@ -1937,6 +1997,11 @@ function coerceReportFindings(value) {
       ? coerceReportFinding(finding)
       : {}
   ));
+}
+function normalizeReportSeverity(raw) {
+  if (typeof raw !== 'string') return 'low';
+  const normalized = raw.trim().toLowerCase();
+  return SEVERITY_ORDER.includes(normalized) ? normalized : 'low';
 }
 function fieldLabel(key) {
   const words = String(key).replaceAll('_', ' ');
@@ -1982,7 +2047,7 @@ function isPresent(value) {
   if (typeof value === 'string') return value.trim() !== '';
   return true;
 }
-const severityMark = (severity) => SEVERITY_EMOJI[reportAsText(severity).toLowerCase()] || SEVERITY_EMOJI_FALLBACK;
+const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)];
 function normalizeFindings(value) {
   return coerceReportFindings(value);
 }
@@ -2171,7 +2236,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   });
 }
 function severityKey(finding) {
-  return (oneLine(finding.severity) || 'unknown').toLowerCase();
+  return normalizeReportSeverity(finding.severity);
 }
 function severityView(findings) {
   const ranked = rankFindings(findings);
@@ -2182,8 +2247,7 @@ function severityView(findings) {
     buckets.get(key).push(finding);
   }
   const known = SEVERITY_ORDER.filter((severity) => buckets.has(severity));
-  const rest = [...buckets.keys()].filter((severity) => !SEVERITY_ORDER.includes(severity));
-  return { buckets, order: [...known, ...rest] };
+  return { buckets, order: known };
 }
 function renderSeverityBuckets(builder, view, unverified, permalinks) {
   for (const severity of view.order) {
