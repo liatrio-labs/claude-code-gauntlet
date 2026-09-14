@@ -61,23 +61,20 @@ function dimensionOwnerMap() {
   return owner;
 }
 
-// "2 high, 1 low" — counted over the agent's HIGH-CONFIDENCE findings only, in a fixed
-// severity order (critical, high, medium, low first; any other value the schema does not
-// forbid — `severity` is declared `string`, not an enum — trails in first-seen order so
-// no finding is silently dropped from the count). Empty string when no finding in the row
-// carries a severity value at all. Severity is normalized with the same one-line rule as
-// its report heading, so a row cannot be injected into this table.
+// "2 high, 1 low" — counted over the agent's HIGH-CONFIDENCE findings only, in the closed
+// severity order. The schema keeps severity as a string by the recorded fail-open decision,
+// so the renderer maps any value outside the four labels to low. Empty string when no
+// finding in the row carries a severity value at all.
 function severityBreakdown(rowFindings) {
   const counts = new Map();
   for (const f of rowFindings) {
     if (!f || !f.severity) continue;
-    const severity = oneLine(f.severity).toLowerCase();
+    const severity = normalizeReportSeverity(f.severity);
     counts.set(severity, (counts.get(severity) || 0) + 1);
   }
   if (counts.size === 0) return '';
   const known = SEVERITY_ORDER.filter((s) => counts.has(s));
-  const rest = [...counts.keys()].filter((s) => !SEVERITY_ORDER.includes(s));
-  return [...known, ...rest].map((s) => `${counts.get(s)} ${s}`).join(', ');
+  return known.map((s) => `${counts.get(s)} ${s}`).join(', ');
 }
 
 export function dimensionsSummaryTable(input) {
@@ -375,7 +372,9 @@ function coerceReportFinding(finding) {
       continue;
     }
     let value;
-    if (key === 'confidence') {
+    if (key === 'severity') {
+      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw);
+    } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
@@ -400,6 +399,12 @@ export function coerceReportFindings(value) {
       ? coerceReportFinding(finding)
       : {}
   ));
+}
+
+export function normalizeReportSeverity(raw) {
+  if (typeof raw !== 'string' || /[\r\n\u2028\u2029]/.test(raw)) return 'low';
+  const normalized = raw.trim().toLowerCase();
+  return SEVERITY_ORDER.includes(normalized) ? normalized : 'low';
 }
 
 // 'failure_scenario' -> 'Failure scenario'
@@ -468,7 +473,7 @@ function isPresent(value) {
   return true;
 }
 
-const severityMark = (severity) => SEVERITY_EMOJI[reportAsText(severity).toLowerCase()] || SEVERITY_EMOJI_FALLBACK;
+const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)] || SEVERITY_EMOJI_FALLBACK;
 
 function normalizeFindings(value) {
   return coerceReportFindings(value);
@@ -679,7 +684,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
 }
 
 function severityKey(finding) {
-  return (oneLine(finding.severity) || 'unknown').toLowerCase();
+  return normalizeReportSeverity(finding.severity);
 }
 
 function severityView(findings) {
@@ -691,8 +696,7 @@ function severityView(findings) {
     buckets.get(key).push(finding);
   }
   const known = SEVERITY_ORDER.filter((severity) => buckets.has(severity));
-  const rest = [...buckets.keys()].filter((severity) => !SEVERITY_ORDER.includes(severity));
-  return { buckets, order: [...known, ...rest] };
+  return { buckets, order: known };
 }
 
 function renderSeverityBuckets(builder, view, unverified, permalinks) {

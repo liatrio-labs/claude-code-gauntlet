@@ -2,8 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline, openProseFence, proseFenceCloser } from '../src/renderReport.js';
-import { SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, AGENTS, resolvePolicy } from '../src/registry.js';
+import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline, openProseFence, proseFenceCloser, normalizeReportSeverity } from '../src/renderReport.js';
+import { SEVERITY_EMOJI, AGENTS, resolvePolicy } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
 const dims = { dispatched: AGENTS, degraded: [] };
@@ -385,7 +385,7 @@ test('T-TITLE-INJ: every heading and identity interpolation is one line', () => 
   }
 });
 
-test('T-SEV: registry severity headings are sparse and unknown severities trail without dropping', () => {
+test('T-SEV: report severity headings use the closed set and fold unknown values into Low', () => {
   const findings = [
     finding('C', { severity: 'critical' }),
     finding('H', { severity: 'high' }),
@@ -404,14 +404,49 @@ test('T-SEV: registry severity headings are sparse and unknown severities trail 
       `### ${SEVERITY_EMOJI.high} High`,
       `### ${SEVERITY_EMOJI.medium} Medium`,
       `### ${SEVERITY_EMOJI.low} Low`,
-      `### ${SEVERITY_EMOJI_FALLBACK} Strange`,
-      `### ${SEVERITY_EMOJI_FALLBACK} Exotic`,
     ],
   );
-  assert.equal(countSentence(report), '6 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 1 low, 1 strange, 1 exotic.');
+  assert.equal(countSentence(report), '6 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 3 low.');
   const sparse = rendered({ findings: [finding('L', { severity: 'low' })] });
   assert.ok(sparse.includes(`### ${SEVERITY_EMOJI.low} Low`));
   assert.ok(!sparse.includes(`### ${SEVERITY_EMOJI.high} High`));
+});
+
+test('S-LABELS: report severity normalization is closed, total, and non-mutating', () => {
+  // Mutation: restore the raw severityKey/severityView path, including its open-ended
+  // buckets; the hostile values and closed-label assertions must go red.
+  const longSeverity = 'x'.repeat(70000);
+  const group = { consolidation_key: 'severity-group' };
+  const confirmed = [
+    finding('LONG', { severity: longSeverity }),
+    finding('TRIMMED', { severity: 'HIGH ' }),
+    finding('NEWLINE', { severity: 'high\nfoo' }),
+    finding('PRIMARY', { ...group, consolidation_primary: true, severity: 3 }),
+    finding('CORROBORATOR', { ...group, consolidation_primary: false, severity: 'medium' }),
+  ];
+  const unverified = [finding('ARRAY', { severity: ['high'] })];
+  const input = { findings: confirmed, unverified, dimensions: dims };
+  const before = JSON.stringify(input);
+
+  assert.deepEqual(
+    [normalizeReportSeverity(longSeverity), normalizeReportSeverity('HIGH '), normalizeReportSeverity('high\nfoo'), normalizeReportSeverity(['high']), normalizeReportSeverity(3)],
+    ['low', 'high', 'low', 'low', 'low'],
+  );
+
+  const report = rendered(input);
+  const summaryBody = renderSummaryBody(input);
+  for (const output of [report, summaryBody]) {
+    assert.ok(!output.includes(longSeverity), 'the long raw severity is never rendered');
+    assert.ok(!output.includes('foo'), 'the newline suffix is never rendered');
+    assert.match(output, /1 high/);
+    assert.match(output, /3 low/);
+    assert.doesNotMatch(output, /(?:critical|high|medium|low|\d+)\s+(?:exotic|strange|bogus|foo)/);
+  }
+  assert.match(report, /^### 🟠 High$/m);
+  assert.match(report, /^### 💡 Low$/m);
+  assert.equal(countSentence(report), '4 reported issue(s) from 5 finding(s) after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
+  assert.equal(summaryBody, '4 reported issue(s) from 5 finding(s) after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
+  assert.equal(JSON.stringify(input), before, 'rendering does not mutate confirmed, unverified, or corroborated inputs');
 });
 
 test('T-EVID: evidence renders uniformly in main, suggestion, and unverified buckets', () => {
@@ -620,7 +655,7 @@ test('T-COUNTS: the computed sentence follows rendered blocks and preserves pre-
   );
   assert.equal(
     countSentence(rendered({ findings: [finding('X', { severity: 'exotic' }), finding('Y', { severity: 'strange' })] })),
-    '2 finding(s) after the gauntlet — 1 exotic, 1 strange.',
+    '2 finding(s) after the gauntlet — 2 low.',
   );
   assert.equal(
     countSentence(rendered({ findings: ['critical', 'high', 'medium', 'low'].map((severity) => finding(severity, { severity })) })),
