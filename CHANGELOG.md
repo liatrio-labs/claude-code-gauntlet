@@ -2,6 +2,63 @@
 
 <!-- version list -->
 
+## v3.40.2 (2026-09-14)
+
+### Bug Fixes
+
+- Bound review comments, normalize severities, and close folded fences (#326, #327, #328)
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+- **delivery**: Enforce per-comment body limits in the review posters
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+- **delivery**: Re-cut comment openers after every fold retreat and pin the poster contracts
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+- **delivery**: Report a fold only for a discussion that reaches the wire (#326, #327, #328)
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+- **report**: Close code fences by CommonMark rules when folding prose
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+- **report**: Count falsy non-string severities as low in the dimensions table
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+- **report**: Normalize finding severity to a closed set before rendering
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+- **report**: Trim edge line endings before the severity lookup and make the table total
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+### Code Style
+
+- **tests**: Reflow the fold retreat tests to the formatter's width
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+### Testing
+
+- **delivery**: Drive the unanchored note over-limit path end to end and refresh two docstrings
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+- **report**: Pin the fence character rule and resolve the fixture from the module
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+- **report**: Pin the fold retreat loop and every line ending
+  ([#333](https://github.com/liatrio-labs/claude-code-gauntlet/pull/333),
+  [`f9c73f3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f9c73f3d4d6f681f9f7589ee97db30459351d6e3))
+
+
 ## v3.40.1 (2026-09-12)
 
 ### Bug Fixes
