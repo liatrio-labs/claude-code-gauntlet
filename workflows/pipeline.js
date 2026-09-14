@@ -1694,8 +1694,14 @@ function dimensionOwnerMap() {
 function severityBreakdown(rowFindings) {
   const counts = new Map();
   for (const f of rowFindings) {
-    if (!f || f.severity === undefined || f.severity === null || f.severity === '') continue;
-    const severity = normalizeReportSeverity(f.severity);
+    let raw;
+    try {
+      raw = f ? f.severity : undefined;
+    } catch {
+      continue;
+    }
+    if (raw === undefined || raw === null || raw === '') continue;
+    const severity = normalizeReportSeverity(raw);
     counts.set(severity, (counts.get(severity) || 0) + 1);
   }
   if (counts.size === 0) return '';
@@ -1981,7 +1987,7 @@ function coerceReportFindings(value) {
   ));
 }
 function normalizeReportSeverity(raw) {
-  if (typeof raw !== 'string' || /[\r\n\u2028\u2029]/.test(raw)) return 'low';
+  if (typeof raw !== 'string') return 'low';
   const normalized = raw.trim().toLowerCase();
   return SEVERITY_ORDER.includes(normalized) ? normalized : 'low';
 }
@@ -2029,7 +2035,7 @@ function isPresent(value) {
   if (typeof value === 'string') return value.trim() !== '';
   return true;
 }
-const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)] || SEVERITY_EMOJI_FALLBACK;
+const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)];
 function normalizeFindings(value) {
   return coerceReportFindings(value);
 }

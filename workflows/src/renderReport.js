@@ -3,7 +3,7 @@
 // line-based bundle stripper cannot remove safely.
 import { SEVERITY_ORDER } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
-import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, CODE_OWNED_HEADINGS, resolvePolicy, conditionalSchemaActive } from './registry.js';
+import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, CODE_OWNED_HEADINGS, resolvePolicy, conditionalSchemaActive } from './registry.js';
 import { KNOB_REGISTRY } from './args.js';
 
 // Fields the report renderer never emits. suggested_fix_code itself (no apply-check oracle
@@ -68,8 +68,14 @@ function dimensionOwnerMap() {
 function severityBreakdown(rowFindings) {
   const counts = new Map();
   for (const f of rowFindings) {
-    if (!f || f.severity === undefined || f.severity === null || f.severity === '') continue;
-    const severity = normalizeReportSeverity(f.severity);
+    let raw;
+    try {
+      raw = f ? f.severity : undefined;
+    } catch {
+      continue;
+    }
+    if (raw === undefined || raw === null || raw === '') continue;
+    const severity = normalizeReportSeverity(raw);
     counts.set(severity, (counts.get(severity) || 0) + 1);
   }
   if (counts.size === 0) return '';
@@ -402,7 +408,7 @@ export function coerceReportFindings(value) {
 }
 
 export function normalizeReportSeverity(raw) {
-  if (typeof raw !== 'string' || /[\r\n\u2028\u2029]/.test(raw)) return 'low';
+  if (typeof raw !== 'string') return 'low';
   const normalized = raw.trim().toLowerCase();
   return SEVERITY_ORDER.includes(normalized) ? normalized : 'low';
 }
@@ -473,7 +479,7 @@ function isPresent(value) {
   return true;
 }
 
-const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)] || SEVERITY_EMOJI_FALLBACK;
+const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)];
 
 function normalizeFindings(value) {
   return coerceReportFindings(value);

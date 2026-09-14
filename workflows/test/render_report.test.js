@@ -449,6 +449,37 @@ test('S-LABELS: report severity normalization is closed, total, and non-mutating
   assert.equal(JSON.stringify(input), before, 'rendering does not mutate confirmed, unverified, or corroborated inputs');
 });
 
+test('S-EDGES: a label with only edge whitespace or line endings keeps its severity', () => {
+  // Mutation: reject any string containing a line terminator before trimming; the CRLF
+  // and LF-prefixed labels then fold into Low.
+  assert.deepEqual(
+    ['critical\r\n', 'critical\r', 'critical\n', '\ncritical', '\u2028high\u2029'].map(normalizeReportSeverity),
+    ['critical', 'critical', 'critical', 'critical', 'high'],
+  );
+  const report = rendered({ findings: [finding('CRLF', { severity: 'critical\r\n' })], dimensions: dims });
+  assert.match(report, /^### 🔴 Critical$/m);
+  assert.doesNotMatch(report, /^### 💡 Low$/m);
+});
+
+test('S-OMIT: findings with no severity value leave the dimensions Notes cell empty', () => {
+  // Mutation: normalize an absent, null or empty severity to low in coerceReportFinding;
+  // the security-reviewer row then reads "3 low".
+  const absent = finding('ABSENT', { dimension: 'security' });
+  delete absent.severity;
+  const report = rendered({
+    findings: [absent, finding('NULL', { dimension: 'security', severity: null }), finding('EMPTY', { dimension: 'security', severity: '' })],
+    dimensions: dims,
+  });
+  const lines = report.split('\n');
+  const header = lines.findIndex((line) => line.startsWith('| Dimension | Agent | Findings | Notes |'));
+  assert.ok(header >= 0, 'the report carries the dimensions table');
+  const row = lines.slice(header + 2).find((line) => line.includes('| security-reviewer |'));
+  assert.ok(row, 'the security-reviewer row is present');
+  const cells = row.split('|').slice(1, -1).map((c) => c.trim());
+  assert.equal(cells[2], '3');
+  assert.equal(cells[3], '');
+});
+
 test('T-EVID: evidence renders uniformly in main, suggestion, and unverified buckets', () => {
   const report = rendered({
     findings: [
