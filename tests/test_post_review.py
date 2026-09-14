@@ -1023,6 +1023,19 @@ class TestRenderCommentBody(unittest.TestCase):
                 render_comment_body({"severity": "nope", "title": "t", "body": "b"}),
                 "**\u26a1 [LOW] t**\n\nb\n\n" + post_review.BRAND_TRAILER,
             )
+        # A map with no `low` key is the generator's placeholder shape. The poster
+        # stays total there: the fallback glyph comes from SEVERITY_EMOJI_FALLBACK.
+        placeholder_map = patch.dict(
+            post_review.SEVERITY_EMOJI, {"severity": "{emoji}"}, clear=True
+        )
+        with (
+            placeholder_map,
+            patch.object(post_review, "SEVERITY_EMOJI_FALLBACK", sentinel),
+        ):
+            self.assertEqual(
+                render_comment_body({"severity": "nope", "title": "t", "body": "b"}),
+                "**\u26a1 [LOW] t**\n\nb\n\n" + post_review.BRAND_TRAILER,
+            )
 
     def test_severity_labels_are_closed_and_total(self):
         """Public rendering normalizes malformed, padded, and missing severities."""
@@ -1079,13 +1092,12 @@ process.stdout.write(JSON.stringify(results));
                     finding["severity"] = raw
                 before = copy.deepcopy(finding)
                 expected = f"**{glyph} [{label}] Thing**\n\ndesc"
+                rendered = render_comment_body(finding)
                 if case_id == "oversized":
-                    rendered = render_comment_body(finding)
                     self.assertLess(len(rendered.encode("utf-8")), 256)
                     self.assertNotIn("s" * 1000, rendered)
                 self.assertEqual(
-                    render_comment_body(finding),
-                    expected + f"\n\n{post_review.BRAND_TRAILER}",
+                    rendered, expected + f"\n\n{post_review.BRAND_TRAILER}"
                 )
                 self.assertEqual(post_review.key_material_body(finding), expected)
                 self.assertEqual(finding, before)
