@@ -3,7 +3,7 @@
     {"id": "F4", "kept": "````py\nkeep", "js_limit": 11, "py_allowance": 104, "closer": "\n````"},
     {"id": "F6", "kept": "``````\nkeep", "js_limit": 11, "py_allowance": 106, "closer": "\n``````"},
     {"id": "FT", "kept": "~~~txt\nkeep", "js_limit": 11, "py_allowance": 103, "closer": "\n~~~"},
-    {"id": "FM", "kept": "````\n~~~\nkeep", "js_limit": 13, "py_allowance": 106, "closer": "\n````"},
+    {"id": "FM", "kept": "```\n~~~~\nkeep", "js_limit": 13, "py_allowance": 105, "closer": "\n```"},
     {"id": "FC", "kept": "````\nx\n````\nprose", "js_limit": 17, "py_allowance": 109, "closer": ""},
     {"id": "FO", "kept": "````python", "js_limit": 10, "py_allowance": 103, "closer": "\n````"},
     {"id": "PARTIAL", "kept": "````", "js_limit": 4, "py_allowance": 97, "closer": "\n````"}

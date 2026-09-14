@@ -64,7 +64,7 @@ function fieldLabel(key) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-const proseFenceCases = JSON.parse(readFileSync('tests/fixtures/prose_fence_cases.json', 'utf8'));
+const proseFenceCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/prose_fence_cases.json', import.meta.url), 'utf8'));
 
 test('T-TITLE: title subject precedence and identity line bytes are exact', () => {
   // Mutation: remove permalinkContext or platform ref selection; the GitHub/GitLab pins turn red.

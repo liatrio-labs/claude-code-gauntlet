@@ -1952,6 +1952,9 @@ def _fold_review_body(text, allowance, platform):
         folded = f"{prefix}{separator}{closer}\n\n{fold_line}"
         if _utf8_len(folded) <= allowance or not prefix:
             return folded, dropped_bytes
+        # After the overlong-line cut the prefix ends mid-line, so retreat one code
+        # point at a time: dropping the line would discard the partial that a cut
+        # inside an opener run keeps (the PARTIAL fixture row).
         if cut_inside_line and not prefix.endswith(("\n", "\r")):
             prefix = _cut_unclosed_comment(prefix[:-1])
             continue
