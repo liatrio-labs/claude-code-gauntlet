@@ -35,6 +35,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import scripts.detect_prior_review as detect_prior_review
 import scripts.post_review as post_review
 import scripts.review_marker as review_marker
 from scripts.post_review import (
@@ -4981,6 +4982,53 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         self.assertEqual(len(_discussion_posts(run.mock_run)), 0)
         self.assertIn(
             "  3 inline discussion(s) already on the MR from an earlier run", run.out
+        )
+
+    def test_large_group_rerun_after_full_delivery_posts_nothing(self):
+        """The live writer and reader must round-trip every member of a large group."""
+        primary = _gl_primary()
+        corrs = [_gl_corroborator(str(i), 61) for i in range(39)]
+        corrs[0]["line"] = None
+        members = [primary, *corrs]
+        expected_keys = {_member_key(member) for member in members}
+        payloads = []
+
+        first = self._run_main(findings=members, payloads=payloads)
+        self.assertIsNone(first.exit_code)
+        self.assertEqual(len(_note_posts(first.mock_run)), 1)
+        self.assertEqual(len(_discussion_posts(first.mock_run)), 1)
+        discussion_body = next(
+            payload["body"] for payload in payloads if "position" in payload
+        )
+        discussion_markers = review_marker.find_finding_markers(discussion_body)
+        self.assertEqual(len(discussion_markers), 40)
+        self.assertEqual(
+            {marker["key"] for marker in discussion_markers}, expected_keys
+        )
+
+        entries = [{"body": payload["body"]} for payload in payloads]
+        with patch(
+            "scripts.detect_prior_review.fetch_entries_gitlab",
+            return_value=(entries, []),
+        ):
+            state = detect_prior_review.gitlab_prior_delivery_state(
+                "o", "r", 5, "a" * 40
+            )
+        summary_posted, delivered_keys, legacy_group_keys, error = state
+        self.assertTrue(summary_posted)
+        self.assertEqual(delivered_keys, expected_keys)
+        self.assertEqual(len(delivered_keys), 40)
+        self.assertEqual(legacy_group_keys, set())
+        self.assertIsNone(error)
+
+        rerun = self._run_main(findings=members, prior=state)
+        self.assertIsNone(rerun.exit_code)
+        self.assertEqual(_discussion_posts(rerun.mock_run), [])
+        self.assertEqual(_note_posts(rerun.mock_run), [])
+        self.assertIn("  0 inline discussion(s) posted.", rerun.out)
+        self.assertIn(
+            "  40 inline discussion(s) already on the MR from an earlier run",
+            rerun.out,
         )
 
     def test_group_partial_prior_delivery_posts_only_missing_members(self):
