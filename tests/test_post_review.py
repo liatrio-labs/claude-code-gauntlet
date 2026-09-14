@@ -5149,6 +5149,64 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                 else:
                     self.assertNotIn("Inline body folded by", run.err)
 
+    def test_unanchored_note_over_limit_is_not_posted_and_does_not_strand_siblings(
+        self,
+    ):
+        """An over-limit fallback note is failed through the live delivery loop.
+
+        The note-only run must die after the summary note, while a healthy
+        sibling still posts and keeps the batch successful. The note limit is
+        below the live marker reserve, so even its folded envelope cannot fit.
+
+        Mutation: remove the ``_inline_body_over_limit`` call from
+        ``deliver_unanchored`` — RED because the over-limit note is then posted.
+        """
+        primary = _gl_primary()
+        unanchored = _gl_corroborator("A", None)
+        primary_key = _member_key(primary)
+
+        cases = [
+            ("note only", [primary, unanchored], True),
+            (
+                "healthy sibling",
+                [primary, unanchored, dict(GL_CONTRACT_FINDINGS[1], title="Healthy")],
+                False,
+            ),
+        ]
+        for label, findings, expect_failure in cases:
+            with self.subTest(label=label):
+                payloads = []
+                with patch.dict(
+                    post_review.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"]["note"],
+                    {"bytes": 100},
+                ):
+                    run = self._run_main(
+                        findings=findings,
+                        prior=(True, {primary_key}, None),
+                        payloads=payloads,
+                    )
+
+                note_bodies = [p["body"] for p in payloads if "position" not in p]
+                self.assertFalse(
+                    any("Corroborator A" in body for body in note_bodies),
+                    "the over-limit corroborator note must not reach the POST",
+                )
+                self.assertIn("corroborator note", run.err)
+                self.assertIn("100-byte GitLab body limit", run.err)
+                self.assertIn("1 inline discussion(s) not delivered", run.out)
+                if expect_failure:
+                    self.assertEqual(run.exit_code, 1)
+                    self.assertIn("0 inline discussion(s) posted", run.out)
+                else:
+                    self.assertIsNone(run.exit_code)
+                    healthy_posts = [
+                        p
+                        for p in payloads
+                        if "position" in p and "Healthy" in p["body"]
+                    ]
+                    self.assertEqual(len(healthy_posts), 1)
+                    self.assertIn("1 inline discussion(s) posted", run.out)
+
     def test_legacy_group_body_rerun_posts_nothing_and_counts_the_whole_group(self):
         """A pre-#208 group body already carries the unanchorable corroborator's
         CONTENT (rendered into its corroboration section) even though it never

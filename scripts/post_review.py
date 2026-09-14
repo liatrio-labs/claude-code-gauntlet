@@ -1162,9 +1162,10 @@ def _gated_finding(
     """Return the finding to RENDER at one site, gating its ``suggested_fix_code``.
 
     A failure strips the field from a SHALLOW COPY — the copy is what gets
-    rendered, so ``render_comment_body`` itself is untouched (the benchmark calls
-    it directly and pins its bytes) and the prose ``suggestion`` carries the fix
-    instead. Each downgrade is recorded through ``warn_skip``, which both prints
+    rendered, so ``render_comment_body`` itself is untouched. Benchmark mirrors
+    call ``compose_inline_body`` over ``_render_group_sections(...)`` to construct
+    the body they score, and the prose ``suggestion`` carries the fix instead.
+    Each downgrade is recorded through ``warn_skip``, which both prints
     and lands in the dry-run payload's existing ``skipped`` list, and counted for
     the run's patch-acceptance readout (``_FIX_COUNTS``) and per-reason tally
     (``_FIX_REASON_COUNTS``).
@@ -1641,7 +1642,12 @@ def _finding_sections(finding, *, fence_offsets=None):
 
 
 def render_comment_body(finding, *, fence_offsets=None):
-    """The sections plus the identity trailer — what actually goes on the wire."""
+    """Return the unfolded, marker-free rendering used by tests and delivery-key logic.
+
+    It is byte-identical to a posted body only when no fold and no live marker
+    applies; delivery composes the sections with ``compose_inline_body`` and
+    appends live markers separately.
+    """
     return (
         _render_group_sections(finding, [], fence_offsets=fence_offsets)
         + f"\n\n{BRAND_TRAILER}"
@@ -1724,13 +1730,15 @@ def _render_corroboration(finding):
 
 
 def render_group_body(primary, corroborators, *, fence_offsets=None):
-    """Build the markdown comment body for one consolidation group.
+    """Build the unfolded, marker-free markdown body for one consolidation group.
 
-    Renders *primary* through ``_finding_sections`` and appends the identity
-    trailer ONCE, after the corroborations — one mark per delivered SURFACE, never
-    one per element. With no *corroborators* the result is byte-identical to
-    ``render_comment_body``, which is what keeps unstamped findings (older
-    artifacts, degraded pipelines) unaffected.
+    This is the marker-free rendering used by tests and delivery-key logic. It is
+    byte-identical to a posted body only when no fold and no live marker applies.
+    Delivery composes the sections with ``compose_inline_body`` and appends live
+    markers separately. The identity trailer is appended ONCE, after the
+    corroborations — one mark per delivered SURFACE, never one per element. With
+    no *corroborators* the result is byte-identical to ``render_comment_body``,
+    which keeps unstamped findings and degraded pipelines unaffected.
     *fence_offsets* reaches the primary's fence only: a corroborator never
     renders one (see :func:`_render_corroboration`), so a group body carries at
     most the one header, measured from the anchor the group is posted at.
