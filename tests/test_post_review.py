@@ -83,7 +83,7 @@ def _severity_matrix():
     """Return fixed public-seam oracles for closed, total severity rendering."""
     low = "\U0001f4a1"
     high = "\U0001f7e0"
-    return [
+    matrix = [
         ("oversized", "s" * 70000, "LOW", low),
         ("int", 3, "LOW", low),
         ("list", ["high"], "LOW", low),
@@ -107,6 +107,43 @@ def _severity_matrix():
         ("next-line-padded", "\x85high\x85", "LOW", low),
         ("file-separator-padded", "\x1chigh\x1c", "LOW", low),
     ]
+    js_trim_chars = (
+        "\t",
+        "\n",
+        "\v",
+        "\f",
+        "\r",
+        " ",
+        "\u00a0",
+        "\u1680",
+        "\u2000",
+        "\u2001",
+        "\u2002",
+        "\u2003",
+        "\u2004",
+        "\u2005",
+        "\u2006",
+        "\u2007",
+        "\u2008",
+        "\u2009",
+        "\u200a",
+        "\u2028",
+        "\u2029",
+        "\u202f",
+        "\u205f",
+        "\u3000",
+        "\ufeff",
+    )
+    python_only_chars = ("\x1c", "\x1d", "\x1e", "\x1f", "\x85")
+    matrix.extend(
+        (f"trim-U+{ord(char):04X}", f"{char}high{char}", "HIGH", high)
+        for char in js_trim_chars
+    )
+    matrix.extend(
+        (f"python-only-U+{ord(char):04X}", f"{char}high{char}", "LOW", low)
+        for char in python_only_chars
+    )
+    return matrix
 
 
 # ---------------------------------------------------------------------------
@@ -1082,16 +1119,20 @@ process.stdout.write(JSON.stringify(results));
             check=True,
             timeout=10,
         )
-        expected_labels = [label.lower() for _case, _raw, label, _glyph in matrix]
-        self.assertEqual(json.loads(result.stdout), expected_labels)
+        node_labels = json.loads(result.stdout)
+        self.assertEqual(len(node_labels), len(matrix))
 
-        for case_id, raw, label, glyph in matrix:
+        for (case_id, raw, label, glyph), node_label in zip(
+            matrix, node_labels, strict=True
+        ):
             with self.subTest(case=case_id):
+                self.assertEqual(node_label, label.lower())
                 finding = {"title": "Thing", "body": "desc"}
                 if raw is not _MISSING_SEVERITY:
                     finding["severity"] = raw
                 before = copy.deepcopy(finding)
-                expected = f"**{glyph} [{label}] Thing**\n\ndesc"
+                expected_label = node_label.upper()
+                expected = f"**{glyph} [{expected_label}] Thing**\n\ndesc"
                 rendered = render_comment_body(finding)
                 if case_id == "oversized":
                     self.assertLess(len(rendered.encode("utf-8")), 256)

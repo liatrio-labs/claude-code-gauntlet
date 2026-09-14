@@ -1683,12 +1683,11 @@ def key_material_body(finding):
     """The bytes ``finding_key`` hashes: sections only, no trailer, ``suggested_fix_code``
     stripped (:func:`_key_material_finding`).
 
-    Byte-equal to the key already on a live PR/MR for every finding whose rendered
-    sections are unchanged: changing what this function renders re-keys the delivered
-    findings it touches on every open PR/MR, which is a repost wave, not a cosmetic
-    change. It hashes the normalized rendered sections; there is no alternate raw-severity
-    key path. #335 intentionally re-keyed surrounding-whitespace labels, off-enum labels including
-    empty strings, missing labels that previously defaulted to medium, and non-strings that
+    Changing what this function renders re-keys every delivered finding it touches on every open
+    PR/MR, which is a repost wave, not a cosmetic change. It hashes the normalized rendered
+    sections; there is no alternate raw-severity key path. #335 intentionally re-keyed
+    surrounding-whitespace labels, off-enum labels including empty strings, missing labels that
+    previously defaulted to medium, and non-strings that
     previously raised and produced no delivered finding key. Canonical severities and plain
     case variants keep their bytes and keys. Affected already-delivered findings may post
     again once on the same SHA; the new normalized keys then support reruns normally.
