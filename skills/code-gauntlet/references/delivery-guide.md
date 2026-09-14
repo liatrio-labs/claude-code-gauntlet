@@ -136,10 +136,11 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
 - `review_body` — exactly the pipeline-rendered Summary section body: summary prose folded at
   `REPORT_FOLD_LIMITS.summaryChars`, followed by the short code-owned counts sentence. `post_review.py`
   bounds the summary comment, and every inline comment, discussion and note, with a per-platform
-  UTF-8 byte budget. Each includes its trailer and live marker, folds in place at a line boundary
-  with a fold line, keeps or drops a whole committable suggestion, and emits a stderr notice. The
-  header and footer are reserved first; the summary folds only when it cannot fit beside the
-  skipped-section frame and footer. Skipped groups appear whole or not at all in list order,
+  UTF-8 byte budget. Each includes its trailer; GitLab discussions and notes also include a live
+  marker when one is appended. Inline folds happen in place at a line boundary with a fold line
+  and may keep or drop a whole committable suggestion; summary folds do not apply that suggestion
+  rule. Every fold emits a stderr notice. The header and footer are reserved first; the summary
+  folds only when it cannot fit beside the skipped-section frame and footer. Skipped groups appear whole or not at all in list order,
   followed by one closing count line when any group is omitted; the footer stays last.
 - `findings` — array of inline comments
   - `file` — relative path in repository

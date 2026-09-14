@@ -1937,6 +1937,19 @@ def _drop_last_line(prefix):
     return prefix[:line_start]
 
 
+def _retreat_fold_prefix(prefix, *, cut_inside_line, suggestion_start=None):
+    """Retreat a fold prefix and re-cut any HTML comment it exposes."""
+    if suggestion_start is not None:
+        prefix = prefix[:suggestion_start]
+        cut_inside_line = False
+    elif cut_inside_line and not prefix.endswith(("\n", "\r")):
+        prefix = prefix[:-1]
+    else:
+        prefix = _drop_last_line(prefix)
+        cut_inside_line = False
+    return _cut_unclosed_comment(prefix), cut_inside_line
+
+
 def _fold_review_body(text, allowance, platform):
     """Fold *text* into *allowance* bytes while preserving lines and code points."""
     limits = _body_limit(platform)
@@ -1983,11 +1996,9 @@ def _fold_review_body(text, allowance, platform):
         # After the overlong-line cut the prefix ends mid-line, so retreat one code
         # point at a time: dropping the line would discard the partial that a cut
         # inside an opener run keeps (the PARTIAL fixture row).
-        if cut_inside_line and not prefix.endswith(("\n", "\r")):
-            prefix = _cut_unclosed_comment(prefix[:-1])
-            continue
-        prefix = _drop_last_line(prefix)
-        cut_inside_line = False
+        prefix, cut_inside_line = _retreat_fold_prefix(
+            prefix, cut_inside_line=cut_inside_line
+        )
 
 
 def _open_suggestion_line(prefix, state):
@@ -2050,8 +2061,11 @@ def _fold_inline_body(sections, allowance, platform, surface):
         if suggestion_start is not None:
             # A partial committable suggestion is worse than omitting its patch:
             # closing it would turn an incomplete patch into a valid wrong patch.
-            prefix = prefix[:suggestion_start]
-            cut_inside_line = False
+            prefix, cut_inside_line = _retreat_fold_prefix(
+                prefix,
+                cut_inside_line=cut_inside_line,
+                suggestion_start=suggestion_start,
+            )
             continue
 
         closer = "" if state is None else state[0] * state[1]
@@ -2063,11 +2077,9 @@ def _fold_inline_body(sections, allowance, platform, surface):
             return folded, dropped_bytes
         # After an overlong-line cut the prefix ends mid-line, so retreat one code
         # point at a time. This preserves the shared summary fold's opener behavior.
-        if cut_inside_line and not prefix.endswith(("\n", "\r")):
-            prefix = _cut_unclosed_comment(prefix[:-1])
-            continue
-        prefix = _drop_last_line(prefix)
-        cut_inside_line = False
+        prefix, cut_inside_line = _retreat_fold_prefix(
+            prefix, cut_inside_line=cut_inside_line
+        )
 
 
 def _delivery_marker_suffix(sha, keys):
@@ -2803,9 +2815,9 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         ``position.new_line`` below, so a fence's offsets cannot be measured
         from an anchor the discussion is not posted at (#219).
         """
-        # Rendered before the dedup check, not after: the apply-check runs at
-        # render sites, so a rerun that posts nothing still gates — and still
-        # counts — every fence it would have posted.
+        # Render before the dedup check: the apply-check runs at render sites, so
+        # the body is still gated even when a rerun posts nothing. The fold notice
+        # belongs after dedup because it describes a delivery that was attempted.
         sections = make_body(line)
         marker_suffix = _delivery_marker_suffix(sha, keys)
         composed = compose_inline_body(
@@ -2816,13 +2828,13 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         )
         if _inline_body_over_limit(composed, marker_suffix, "gitlab", "discussion"):
             return "failed"
-        _report_inline_budget(composed, "gitlab", "discussion", filepath, line)
         if keys and all(k in delivered_keys for k in keys):
             # An earlier run already delivered every finding in this discussion for
             # this sha. Reposting it is the duplication issue #132 reports, not a
             # failure. A PARTIAL match never reaches here: post_gitlab splits such a
             # group into its missing members before calling.
             return "already_present"
+        _report_inline_budget(composed, "gitlab", "discussion", filepath, line)
 
         position = {
             "position_type": "text",
@@ -3145,9 +3157,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     )
 
     if failed:
-        print(
-            f"  {failed} inline discussion(s) rejected by GitLab (see warnings above)."
-        )
+        print(f"  {failed} inline discussion(s) not delivered (see warnings above).")
         if posted == 0:
             # Every attempt was made first — this exit reports the outcome, it does not
             # abandon the batch. A partial delivery is a success with warnings, but a
