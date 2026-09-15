@@ -1244,15 +1244,10 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
-        for rel in [
-            *gen.compute_targets(str(REPO)).keys(),
-            "workflows/src/registry.js",
-            "workflows/src/args.js",
-            "workflows/src/renderReport.js",
-            "workflows/src/filterFindings.js",
-            "workflows/src/applyChallenges.js",
-            "workflows/src/applyValidations.js",
-        ]:
+        for rel in sorted(
+            set(gen.compute_targets(str(REPO)).keys())
+            | set(gen.declared_inputs(str(REPO)))
+        ):
             src = REPO / rel
             dst = root / rel
             dst.parent.mkdir(parents=True, exist_ok=True)

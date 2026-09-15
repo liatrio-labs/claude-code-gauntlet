@@ -139,6 +139,17 @@ class TestDefaultDeliveryParser(unittest.TestCase):
 
 
 class TestResolvePureFunctions(unittest.TestCase):
+    def test_one_line_uses_shared_js_trim_chars_at_call_time(self):
+        import report_severity
+
+        self.assertIs(resolver.JS_TRIM_CHARS, report_severity.JS_TRIM_CHARS)
+        with mock.patch.object(resolver, "JS_TRIM_CHARS", "!@"):
+            self.assertEqual(resolver.one_line("!@left!right@!"), "left!right")
+            self.assertEqual(
+                resolver.one_line("\u3000left!right\u3000"),
+                "\u3000left!right\u3000",
+            )
+
     def test_empty_environment_defaults_have_one_wire_copy(self):
         interactive = resolver.resolve("interactive", {}, None, "pr")
         self.assertEqual(
