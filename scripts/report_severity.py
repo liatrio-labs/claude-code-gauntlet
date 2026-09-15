@@ -2,7 +2,7 @@
 
 This stdlib-only library mirrors renderReport.js::normalizeReportSeverity.
 JS_TRIM_CHARS is the single shipped Python twin of JS String.prototype.trim,
-used by normalize_report_severity and scripts.resolve_config.one_line.
+used by normalize_report_severity and scripts/resolve_config.py::one_line.
 It has no CLI and emits no receipt.
 """
 
