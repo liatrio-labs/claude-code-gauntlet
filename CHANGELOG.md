@@ -2,6 +2,49 @@
 
 <!-- version list -->
 
+## v3.40.3 (2026-09-15)
+
+### Bug Fixes
+
+- Preserve finding markers and normalize severity labels (#334, #335)
+  ([#337](https://github.com/liatrio-labs/claude-code-gauntlet/pull/337),
+  [`4028d2d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4028d2d9fcd3a54b2a35a23ef0460e7b91e7c02b))
+
+- **marker**: Scan every finding marker so large groups survive rerun
+  ([#337](https://github.com/liatrio-labs/claude-code-gauntlet/pull/337),
+  [`4028d2d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4028d2d9fcd3a54b2a35a23ef0460e7b91e7c02b))
+
+- **post**: Normalize the inline heading severity to the renderer's closed set
+  ([#337](https://github.com/liatrio-labs/claude-code-gauntlet/pull/337),
+  [`4028d2d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4028d2d9fcd3a54b2a35a23ef0460e7b91e7c02b))
+
+### Continuous Integration
+
+- Ratchet the JS function coverage floor to 97.7 (#337 measured 98.62)
+  ([#337](https://github.com/liatrio-labs/claude-code-gauntlet/pull/337),
+  [`4028d2d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4028d2d9fcd3a54b2a35a23ef0460e7b91e7c02b))
+
+### Documentation
+
+- **post**: Qualify the key-material byte-equality claim (review)
+  ([#337](https://github.com/liatrio-labs/claude-code-gauntlet/pull/337),
+  [`4028d2d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4028d2d9fcd3a54b2a35a23ef0460e7b91e7c02b))
+
+### Testing
+
+- **marker**: Size large-group fixtures by literal and pin the unanchored member (review)
+  ([#337](https://github.com/liatrio-labs/claude-code-gauntlet/pull/337),
+  [`4028d2d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4028d2d9fcd3a54b2a35a23ef0460e7b91e7c02b))
+
+- **post**: Pin the emoji fallback seam and render the oversized case once (review)
+  ([#337](https://github.com/liatrio-labs/claude-code-gauntlet/pull/337),
+  [`4028d2d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4028d2d9fcd3a54b2a35a23ef0460e7b91e7c02b))
+
+- **post**: Pin the whole JS-trim alphabet against live Node (review)
+  ([#337](https://github.com/liatrio-labs/claude-code-gauntlet/pull/337),
+  [`4028d2d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4028d2d9fcd3a54b2a35a23ef0460e7b91e7c02b))
+
+
 ## v3.40.2 (2026-09-14)
 
 ### Bug Fixes
