@@ -640,7 +640,8 @@ class RenderFixTasksTest(unittest.TestCase):
 
     def test_renderer_reads_the_generated_severity_map(self):
         finding = self.finding(severity="blocker")
-        with patch.dict(renderer.SEVERITY_EMOJI, {"blocker": "X"}):
+        widened = {**renderer.SEVERITY_EMOJI, "blocker": "X"}
+        with patch.object(renderer, "SEVERITY_EMOJI", widened):
             tasks, _ = renderer.build_tasks([finding], os.path.realpath(self.root), [])
             task = tasks[0]
             self.assertEqual(task["metadata"]["severity"], "blocker")
