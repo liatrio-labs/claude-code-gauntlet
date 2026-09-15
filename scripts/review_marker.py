@@ -325,18 +325,12 @@ def find_finding_markers(text):
     collects keys into a set, and an unhashable one would abort a delivery mid-loop.
     Only those two fields come back: nothing downstream echoes this payload, so it
     carries no forward-compatibility slot to preserve. Never raises.
-
-    Capped at ``_MAX_MARKER_SCANS`` candidates counting back from the end, the same
-    bound and reason as :func:`find_marker`: a body carrying dozens is hostile input,
-    and the appended real markers are the ones at the end.
     """
     if not isinstance(text, str) or not text:
         return []
     found = []
     try:
-        for candidate in reversed(
-            _FINDING_MARKER_RE.findall(text)[-_MAX_MARKER_SCANS:]
-        ):
+        for candidate in reversed(_FINDING_MARKER_RE.findall(text)):
             try:
                 payload = json.loads(candidate)
             except (ValueError, RecursionError):

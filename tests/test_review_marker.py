@@ -41,6 +41,7 @@ import inspect
 import json
 import os
 import re
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -549,6 +550,65 @@ class TestFindingMarker(unittest.TestCase):
         self.assertEqual(
             {m["key"] for m in find_finding_markers(text)}, {KEY_16, OTHER_KEY_16}
         )
+
+    def test_more_than_scan_limit_finding_markers_are_all_returned(self):
+        """The finding reader must preserve every member key in a large group body."""
+        # 40 members: more than the 32-candidate window the old slice scanned. The
+        # finding reader has no cap now, so the size is a literal on purpose, not
+        # derived from review_marker._MAX_MARKER_SCANS (which governs find_marker alone).
+        n = 40
+        sha = "a" * 40
+        keys = [f"{i:016x}" for i in range(n)]
+        body = "Body\n\n" + "\n".join(build_finding_marker(sha, key) for key in keys)
+        expected = [{"sha": sha, "key": key} for key in reversed(keys)]
+
+        markers = find_finding_markers(body)
+        self.assertEqual(len(markers), n)
+        self.assertEqual(markers, expected)
+        self.assertEqual(find_finding_marker(body), expected[0])
+        self.assertEqual(find_finding_marker(body)["key"], keys[-1])
+        self.assertNotEqual(find_finding_marker(body)["key"], keys[0])
+
+    def test_many_malformed_finding_candidates_finish_and_preserve_valid_tail(self):
+        """Malformed finding candidates must not hide a complete valid marker tail."""
+        child = "\n".join(
+            [
+                "from scripts.review_marker import build_finding_marker, find_finding_marker, find_finding_markers",
+                "n = 40  # a literal: the finding reader has no scan cap to derive from",
+                "sha = 'a' * 40",
+                "keys = [f'{i:016x}' for i in range(n)]",
+                "invalid_json = '<!-- code-gauntlet-finding-key: {not json} -->\\n' * 5000",
+                'invalid_key = (\'<!-- code-gauntlet-finding-key: {\\"sha\\":\\"\' + sha + \'\\",\\"key\\":[]} -->\\n\') * 5000',
+                "unclosed = '<!-- code-gauntlet-finding-key: {' * 5000",
+                "malformed = invalid_json + invalid_key + unclosed",
+                "if find_finding_markers(malformed) != [] or find_finding_marker(malformed) is not None:",
+                "    raise AssertionError('malformed-only body produced a marker')",
+                "valid = '\\n'.join(build_finding_marker(sha, key) for key in keys)",
+                "expected = [{'sha': sha, 'key': key} for key in reversed(keys)]",
+                "combined = malformed + '\\n' + valid",
+                "if find_finding_markers(combined) != expected:",
+                "    raise AssertionError('valid marker tail was truncated or reordered')",
+                "if find_finding_marker(combined) != expected[0]:",
+                "    raise AssertionError('singular reader did not return the valid tail')",
+                "print('STAGE_A_MALFORMED_OK')",
+            ]
+        )
+        env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-c", child],
+                cwd=str(REPO),
+                env=env,
+                capture_output=True,
+                check=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.CalledProcessError as exc:
+            details = (exc.stderr or "").strip().splitlines()
+            self.fail(details[-1] if details else "malformed-input child failed")
+        self.assertEqual(completed.stdout.strip(), "STAGE_A_MALFORMED_OK")
 
     def test_malformed_payloads_are_ignored_and_never_raise(self):
         """An unhashable key would abort post_review's delivery loop mid-flight, so a

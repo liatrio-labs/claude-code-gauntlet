@@ -68,16 +68,16 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
   --test-coverage-include='workflows/build.js' \
   --test-coverage-lines=98.2 \
   --test-coverage-branches=90.0 \
-  --test-coverage-functions=97.6 \
+  --test-coverage-functions=97.7 \
   --test-reporter=spec --test-reporter-destination=stdout \
   --test-reporter=lcov --test-reporter-destination="$LCOV" \
   workflows/test/*.test.js \
   && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
 ```
 
-Floors: Python 93.8 / 88.5, JS 98.2 / 90.0 / 97.6. Each floor is pinned from a PR's CI
-measurement, most recently 2026-09-12 from #331 (bench 89.45; JS branches 90.93); scripts
-from #288 (94.74), JS lines from #271 (99.11), JS functions from #251 (98.51). The ratchet
+Floors: Python 93.8 / 88.5, JS 98.2 / 90.0 / 97.7. Each floor is pinned from a PR's CI
+measurement, latest 2026-09-14 from #337 (JS functions 98.62); bench and JS branches from #331
+(89.45; 90.93), scripts from #288 (94.74), JS lines from #271 (99.11). The ratchet
 history is in git. Policy: a floor sits no more than 1.0 pp below the CI
 measurement for that gate; lower a floor only in the PR that causes the drop, with
 the reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden

@@ -536,6 +536,29 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
             {FINDING_KEY, other},
         )
 
+    def test_finding_keys_for_sha_collects_large_group_body(self):
+        """A large consolidation group keeps every marker in one discussion body."""
+        # 40 members: more than the 32-candidate window the old slice scanned. The
+        # finding reader has no cap now, so the size is a literal on purpose, not
+        # derived from review_marker._MAX_MARKER_SCANS (which governs find_marker alone).
+        n = 40
+        sha = "a" * 40
+        keys = [f"{i:016x}" for i in range(n)]
+        body = "Body\n\n" + "\n".join(
+            review_marker.build_finding_marker(sha, key) for key in keys
+        )
+        entry = {"body": body}
+
+        collected = detect_prior_review.finding_keys_for_sha([entry], sha)
+        self.assertEqual(collected, set(keys))
+        self.assertEqual(len(collected), n)
+        self.assertEqual(
+            detect_prior_review.finding_keys_for_sha([entry], "b" * 40), set()
+        )
+        self.assertEqual(
+            detect_prior_review.finding_keys_for_sha([entry], sha[:7]), set()
+        )
+
     def test_finding_keys_for_sha_ignores_non_dict_and_body_less_entries(self):
         entries = [
             None,

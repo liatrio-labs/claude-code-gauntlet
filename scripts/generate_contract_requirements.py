@@ -1137,7 +1137,7 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
         return _derived_waist_body(identity)
     if symbol == "inline_legend":
         return [
-            f"`{{emoji}}` is {slashes}, `{{SEVERITY}}` is the severity uppercased.",
+            f"`{{emoji}}` is {slashes}, `{{SEVERITY}}` is the normalized severity uppercased.",
         ]
     if key == (REPORT_FORMAT_REL, "severity_legend"):
         return [

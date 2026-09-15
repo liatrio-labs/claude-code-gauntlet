@@ -25,12 +25,12 @@ from scripts import generate_contract_requirements as contract_generator
 REPO = Path(__file__).resolve().parents[1]
 
 # Spelled-out number words for the duplication register's row-count sentence
-# ("Forty rows: ..."). The table has never held fewer than thirty rows or as
-# many as fifty; extend the range here if it ever does.
+# ("Fifty-one rows: ..."). The table has never held fewer than thirty rows or
+# more than sixty; extend the range here if it ever does.
 _ONES = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
-_TENS = {30: "thirty", 40: "forty", 50: "fifty"}
-_NUMBER_WORDS = {50: _TENS[50]}
-for _tens in (30, 40):
+_TENS = {30: "thirty", 40: "forty", 50: "fifty", 60: "sixty"}
+_NUMBER_WORDS = {60: _TENS[60]}
+for _tens in (30, 40, 50):
     _NUMBER_WORDS[_tens] = _TENS[_tens]
     for _i in range(1, 10):
         _NUMBER_WORDS[_tens + _i] = f"{_TENS[_tens]}-{_ONES[_i]}"
@@ -269,7 +269,7 @@ class TestDocsRegistry(unittest.TestCase):
         self.assertIn(
             word,
             _WORD_TO_NUMBER,
-            f"{word!r} is not a recognized spelled-out number 30-50: {sentence!r}",
+            f"{word!r} is not a recognized spelled-out number 30-60: {sentence!r}",
         )
         sentence_total = _WORD_TO_NUMBER[word]
 

@@ -626,7 +626,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "- Encode owner, repo, and file paths one segment at a time with `encodeURIComponent` semantics; also percent-encode `!`, `'`, `(`, `)`, and `*`, while preserving `/` separators. A file path containing an empty, `.`, or `..` segment renders as a plain code span."
         ),
         (gen.REPORT_FORMAT_REL, "inline_legend"): (
-            "`{emoji}` is C critical / L low, `{SEVERITY}` is the severity uppercased."
+            "`{emoji}` is C critical / L low, `{SEVERITY}` is the normalized severity uppercased."
         ),
         (gen.REPORT_FORMAT_REL, "inline_sample"): (
             "````markdown\n"
