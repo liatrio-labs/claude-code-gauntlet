@@ -109,6 +109,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # signals it writes.
 from detect_prior_review import gitlab_prior_delivery_state
 from diff_lines import walk_diff
+from report_severity import normalize_report_severity
 from review_marker import SHA_RE, build_finding_marker, build_footer, is_sha_shaped
 
 # ---------------------------------------------------------------------------
@@ -1579,24 +1580,8 @@ def _body_limit(platform, surface="summary"):
 
 
 def _normalize_report_severity(raw):
-    """Normalize agent severity like ``renderReport.js::normalizeReportSeverity``.
-
-    The literal ``"low"`` fallback is the report renderer's closed-set fallback and is
-    deliberately kept beside this Python twin. Non-strings return it without stringifying.
-    String edges use the explicit JS ``trim()`` alphabet, then the normalized label must be
-    a key in the generated ``SEVERITY_EMOJI`` map; this keeps the placeholder map used by
-    contract samples working as well as the live four-severity map.
-    """
-    # Keep this hand-written JS trim alphabet in sync with normalizeReportSeverity and
-    # scripts/resolve_config.py::_JS_TRIM_RE; neither copy is generated.
-    fallback = "low"
-    if not isinstance(raw, str):
-        return fallback
-    normalized = raw.strip(
-        "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005"
-        "\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
-    ).lower()
-    return normalized if normalized in SEVERITY_EMOJI else fallback
+    """Normalize severity with the current generated or contract-sample label map."""
+    return normalize_report_severity(raw, SEVERITY_EMOJI)
 
 
 def _finding_sections(finding, *, fence_offsets=None):

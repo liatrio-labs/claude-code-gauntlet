@@ -527,22 +527,130 @@ class RenderFixTasksTest(unittest.TestCase):
             },
         )
 
-    def test_complexity_model_and_unknown_severity_mapping(self):
-        severities = ["critical", "high", "medium", "low", "unknown"]
+    def test_normalized_severity_controls_category_complexity_and_model(self):
+        cases = [
+            (
+                "critical",
+                "critical",
+                "standard",
+                "sonnet",
+                b"## Category\ncritical | bug",
+            ),
+            ("high", "high", "standard", "sonnet", b"## Category\nhigh | bug"),
+            (
+                "medium",
+                "medium",
+                "trivial",
+                "haiku",
+                b"## Category\nmedium | bug",
+            ),
+            ("low", "low", "trivial", "haiku", b"## Category\nlow | bug"),
+            ("unknown", "low", "trivial", "haiku", b"## Category\nlow | bug"),
+        ]
         self.write_artifact(
             [
-                self.finding(id=severity, severity=severity, file=f"{severity}.py")
-                for severity in severities
+                self.finding(id=f"case-{index}", severity=raw, file=f"{index}.py")
+                for index, (raw, _label, _complexity, _model, _category) in enumerate(
+                    cases
+                )
             ]
         )
         tasks = self.output(self.run_renderer())
-        for severity, task in zip(severities, tasks, strict=True):
-            expected = "trivial" if severity in ("medium", "low") else "standard"
-            self.assertEqual(task["metadata"]["complexity"], expected)
-            self.assertEqual(
-                task["metadata"]["model"],
-                "haiku" if expected == "trivial" else "sonnet",
-            )
+        self.assertEqual(len(tasks), len(cases))
+        for (raw, label, complexity, model, category_bytes), task in zip(
+            cases, tasks, strict=True
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(task["metadata"]["severity"], label)
+                self.assertEqual(task["metadata"]["complexity"], complexity)
+                self.assertEqual(task["metadata"]["model"], model)
+                categories = [
+                    section
+                    for section in task["description"].split("\n\n")
+                    if section.startswith("## Category\n")
+                ]
+                self.assertEqual(len(categories), 1)
+                self.assertEqual(categories[0].encode("utf-8"), category_bytes)
+
+    def test_oversized_severity_is_bounded_in_description_and_metadata(self):
+        self.write_artifact([self.finding(severity="s" * 70000)])
+        tasks = self.output(self.run_renderer())
+        self.assertEqual(len(tasks), 1)
+        task = tasks[0]
+        categories = [
+            section
+            for section in task["description"].split("\n\n")
+            if section.startswith("## Category\n")
+        ]
+        self.assertEqual(len(categories), 1)
+        self.assertEqual(categories[0].encode("utf-8"), b"## Category\nlow | bug")
+        self.assertEqual(task["metadata"]["severity"], "low")
+        self.assertEqual(task["metadata"]["complexity"], "trivial")
+        self.assertEqual(task["metadata"]["model"], "haiku")
+        self.assertLess(len(task["description"].encode("utf-8")), 512)
+        metadata_json = json.dumps(task["metadata"], ensure_ascii=False)
+        self.assertNotIn("s" * 1000, task["description"])
+        self.assertNotIn("s" * 1000, metadata_json)
+
+    def test_non_string_severities_normalize_to_low(self):
+        for raw in (3, ["high"], {"severity": "high"}, None):
+            with self.subTest(raw=repr(raw)):
+                self.write_artifact([self.finding(severity=raw)])
+                tasks = self.output(self.run_renderer())
+                self.assertEqual(len(tasks), 1)
+                task = tasks[0]
+                categories = [
+                    section
+                    for section in task["description"].split("\n\n")
+                    if section.startswith("## Category\n")
+                ]
+                self.assertEqual(len(categories), 1)
+                self.assertEqual(
+                    categories[0].encode("utf-8"), b"## Category\nlow | bug"
+                )
+                self.assertEqual(task["metadata"]["severity"], "low")
+                self.assertEqual(task["metadata"]["complexity"], "trivial")
+                self.assertEqual(task["metadata"]["model"], "haiku")
+
+    def test_padded_high_severity_normalizes_both_sites(self):
+        for raw in (" High ", "High", "HIGH", "\u3000High\u3000"):
+            with self.subTest(raw=repr(raw)):
+                self.write_artifact([self.finding(severity=raw)])
+                tasks = self.output(self.run_renderer())
+                self.assertEqual(len(tasks), 1)
+                task = tasks[0]
+                categories = [
+                    section
+                    for section in task["description"].split("\n\n")
+                    if section.startswith("## Category\n")
+                ]
+                self.assertEqual(len(categories), 1)
+                self.assertEqual(
+                    categories[0].encode("utf-8"), b"## Category\nhigh | bug"
+                )
+                self.assertEqual(task["metadata"]["severity"], "high")
+                self.assertEqual(task["metadata"]["complexity"], "standard")
+                self.assertEqual(task["metadata"]["model"], "sonnet")
+
+    def test_empty_and_whitespace_only_severity_normalizes_to_low(self):
+        for raw in ("", " \t\r\n "):
+            with self.subTest(raw=repr(raw)):
+                self.write_artifact([self.finding(severity=raw)])
+                tasks = self.output(self.run_renderer())
+                self.assertEqual(len(tasks), 1)
+                task = tasks[0]
+                categories = [
+                    section
+                    for section in task["description"].split("\n\n")
+                    if section.startswith("## Category\n")
+                ]
+                self.assertEqual(len(categories), 1)
+                self.assertEqual(
+                    categories[0].encode("utf-8"), b"## Category\nlow | bug"
+                )
+                self.assertEqual(task["metadata"]["severity"], "low")
+                self.assertEqual(task["metadata"]["complexity"], "trivial")
+                self.assertEqual(task["metadata"]["model"], "haiku")
 
     def test_test_coverage_scope_uses_confined_refs_and_production_file_proof(self):
         self.git_repo()
@@ -844,9 +952,9 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertIn("Rendered 1 FIX task", result.stderr)
         self.assertIn("(1 path rejected)", result.stderr)
 
-    def test_renderer_imports_only_stdlib_and_local_script_io(self):
+    def test_renderer_uses_report_severity_and_only_stdlib_or_local_helpers(self):
         tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
-        allowed = set(sys.stdlib_module_names) | {"script_io"}
+        allowed = set(sys.stdlib_module_names) | {"script_io", "report_severity"}
         imports = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
