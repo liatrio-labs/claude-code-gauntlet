@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v3.40.4 (2026-09-15)
+
+### Bug Fixes
+
+- Bound severity labels in rendered fix tasks
+  ([#338](https://github.com/liatrio-labs/claude-code-gauntlet/pull/338),
+  [`cfc2658`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cfc2658b89f7c6037d7166620f537511d60753fc))
+
+- Bound severity labels in rendered fix tasks (#336)
+  ([#338](https://github.com/liatrio-labs/claude-code-gauntlet/pull/338),
+  [`cfc2658`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cfc2658b89f7c6037d7166620f537511d60753fc))
+
+### Chores
+
+- **deps**: Bump the actions group with 2 updates
+  ([#332](https://github.com/liatrio-labs/claude-code-gauntlet/pull/332),
+  [`49c42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/49c42b424bbb089df86999820cffefa8194acf95))
+
+### Testing
+
+- **fix-tasks**: Pin the generated map read, narrow a test name, dedupe
+  ([#338](https://github.com/liatrio-labs/claude-code-gauntlet/pull/338),
+  [`cfc2658`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cfc2658b89f7c6037d7166620f537511d60753fc))
+
+- **fix-tasks**: Rebind the generated map in the renderer pin; cite the seam
+  ([#338](https://github.com/liatrio-labs/claude-code-gauntlet/pull/338),
+  [`cfc2658`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cfc2658b89f7c6037d7166620f537511d60753fc))
+
+
 ## v3.40.3 (2026-09-15)
 
 ### Bug Fixes
