@@ -236,9 +236,9 @@ proof artifacts, verification commands, commit template, and review context. Pas
 Use the renderer command and stop on parse, count, or call failure. Never compose the object by hand.
 
 Category renders the normalized severity followed by the dimension, separated by ` | `.
-Metadata uses the same severity: critical, high, medium, or low. Case and JavaScript-trim
-padding are normalized; other values become low. Medium and low select trivial complexity
-and haiku; high and critical select standard complexity and sonnet.
+Metadata carries the same normalized severity, one of the labels in the severity legend above;
+case and JavaScript-trim padding are normalized, and any other value becomes low. Medium and low
+select trivial complexity and haiku; the other labels select standard complexity and sonnet.
 
 After creating: "Created N tasks from review findings."
 
