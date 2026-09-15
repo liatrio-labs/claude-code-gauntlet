@@ -70,6 +70,7 @@ module = [
   "merge_findings",
   "post_review",
   "profile_run",
+  "report_severity",
   "review_marker",
   "runner.*",
   "script_io",

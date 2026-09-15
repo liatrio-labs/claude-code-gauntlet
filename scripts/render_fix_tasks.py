@@ -42,6 +42,7 @@ from contextlib import suppress
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from report_severity import normalize_report_severity
 from script_io import write_result
 
 # generated-from-registry-identity:constants — do not edit; run scripts/generate_contract_requirements.py
@@ -439,7 +440,7 @@ def _details(finding):
     return lines
 
 
-def _render_description(finding, file_path, rejected, toolchain):
+def _render_description(finding, file_path, rejected, toolchain, severity):
     sections = [f"## Issue\n{_safe_prose(finding['description'])}"]
     if rejected:
         sections.append("## Location\n(path rejected: outside repo root)")
@@ -458,10 +459,7 @@ def _render_description(finding, file_path, rejected, toolchain):
     suggestion = finding.get("suggestion")
     if _present(suggestion):
         sections.append(f"## Suggested Fix\n{_safe_prose(suggestion)}")
-    sections.append(
-        "## Category\n"
-        f"{_one_line(finding['severity'])} | {_one_line(finding['dimension'])}"
-    )
+    sections.append(f"## Category\n{severity} | {_one_line(finding['dimension'])}")
     detail_lines = _details(finding)
     if detail_lines:
         details = "\n".join(detail_lines)
@@ -497,9 +495,9 @@ def _task(finding, root, toolchain, sibling_index, delivered, rejected_count):
 
     finding_id = _one_line(finding["id"])
     title = _one_line(finding["title"])
-    severity = _one_line(finding["severity"])
+    severity = normalize_report_severity(finding["severity"], SEVERITY_EMOJI)
     dimension = _one_line(finding["dimension"])
-    complexity = "trivial" if severity.lower() in ("medium", "low") else "standard"
+    complexity = "trivial" if severity in ("medium", "low") else "standard"
     metadata = {
         "task_type": "review-fix",
         "task_id": f"FIX-{finding_id}",
@@ -548,7 +546,9 @@ def _task(finding, root, toolchain, sibling_index, delivered, rejected_count):
         metadata["verification"]["post"] = [toolchain["test"]]
     return {
         "subject": f"FIX: {title}",
-        "description": _render_description(finding, file_path, rejected, toolchain),
+        "description": _render_description(
+            finding, file_path, rejected, toolchain, severity
+        ),
         "metadata": metadata,
     }, rejected_count
 
