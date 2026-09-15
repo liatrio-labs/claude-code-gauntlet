@@ -27,6 +27,10 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import Any, NoReturn, cast
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from report_severity import JS_TRIM_CHARS
+
 MAX_SAFE_INTEGER = 9007199254740991
 _SCRIPT_ROOT = os.path.realpath(os.path.dirname(os.path.dirname(__file__)))
 _CONTROL_RE = re.compile(r"[\u0000-\u001f\u007f]")
@@ -657,18 +661,12 @@ def _receipt_as_text(value: Any) -> str:
     return str(value)
 
 
-_JS_TRIM_RE = re.compile(
-    r"^[\t-\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+"
-    r"|[\t-\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$"
-)
-
-
 def one_line(value: Any) -> str:
     """Apply the report renderer's one-line whitespace rule."""
     text = _receipt_as_text(value)
     text = re.sub(r"[\r\n]+", " ", text)
     text = re.sub(r" +", " ", text)
-    return _JS_TRIM_RE.sub("", text)
+    return text.strip(JS_TRIM_CHARS)
 
 
 def receipt_safe(value: Any) -> str:
