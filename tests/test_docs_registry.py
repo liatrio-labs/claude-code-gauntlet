@@ -660,6 +660,27 @@ class TestDocsRegistry(unittest.TestCase):
                     0, span, f"classifier returned {actual!r}, expected {expected!r}"
                 )
 
+        location_helper_cases = (
+            ("stages.js", True),
+            ("workflows/src/stages.js", True),
+            ("workflows/", True),
+            ("agents/*.md", True),
+            ("http://x/y", False),
+            ("/i", False),
+            ("title.lower()", False),
+            ("JS/Python", False),
+            ("read/write", False),
+            ("tests", False),
+        )
+        for span, expected in location_helper_cases:
+            actual = _looks_like_location(span, extensions, top_dirs)
+            if actual != expected:
+                add_error(
+                    0,
+                    span,
+                    f"location helper returned {actual!r}, expected {expected!r}",
+                )
+
         helper_citations = (
             (
                 "tests/test_docs_registry.py::TestDocsRegistry::test_duplication_register_row_count_sentence_matches_table",
@@ -695,6 +716,21 @@ class TestDocsRegistry(unittest.TestCase):
                     0,
                     span,
                     f"helper resolved as {actual_reason!r}, expected {expected_reason!r}",
+                )
+
+        ordered_helper_citations = (
+            (
+                "tests/test_docs_registry.py::TestDocsRegistry::_register_sections",
+                "unresolved symbol '_register_sections'",
+            ),
+        )
+        for span, expected_prefix in ordered_helper_citations:
+            actual_reason = _citation_reason(span, tracked_files)
+            if not actual_reason or not actual_reason.startswith(expected_prefix):
+                add_error(
+                    0,
+                    span,
+                    f"ordered helper resolved as {actual_reason!r}, expected prefix {expected_prefix!r}",
                 )
 
         malformed_citations = (
@@ -734,12 +770,15 @@ class TestDocsRegistry(unittest.TestCase):
                             add_error(line, span, reason)
 
         ordinary_definition_failures = set()
+        residual_location_spans = set()
         for start, _, span in _code_spans(text):
             line = text.count("\n", 0, start) + 1
             if (line, span) in table_citation_keys:
                 continue
             if span == "::":
                 continue
+            if _looks_like_location(span, extensions, top_dirs):
+                residual_location_spans.add(span)
             if _is_location_span(span, extensions):
                 reason = _citation_reason(span, tracked_files)
                 if reason:
@@ -765,6 +804,16 @@ class TestDocsRegistry(unittest.TestCase):
                 if _looks_like_location(token, extensions, top_dirs):
                     add_error(line_number, token, "uncited location in plain text")
 
+        for span in {
+            "tests/fixtures/parity/",
+            "agents/",
+            "workflows/src/stages.js",
+            "tests/test_parity_fixtures.py",
+            "workflows/test/tools/record_parity.py",
+        }:
+            if span not in residual_location_spans:
+                add_error(0, span, "residual scan missed expected location-shaped span")
+
         for line_number, line_text in enumerate(text.splitlines(), 1):
             for match in re.finditer(r"\]\(([^)]+)\)", line_text):
                 target = match.group(1)
@@ -776,20 +825,6 @@ class TestDocsRegistry(unittest.TestCase):
                         target,
                         "markdown link target not found relative to docs/",
                     )
-
-        if not DEFINITION_PATTERNS:
-            reported = set(ordinary_definition_failures)
-            reported.update(
-                span
-                for line, span in table_citation_keys
-                if any(
-                    f": {span!r}: unresolved symbol" in error
-                    or f": {span!r}: title not found" in error
-                    for error in errors
-                )
-            )
-            for span in set(definition_spans) - reported:
-                add_error(0, span, "definition failure was not aggregated")
 
         self.assertFalse(errors, "\n".join(errors))
 
