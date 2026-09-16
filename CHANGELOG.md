@@ -2,6 +2,51 @@
 
 <!-- version list -->
 
+## v3.41.0 (2026-09-16)
+
+### Bug Fixes
+
+- Derive review_md from REVIEW.md discovery (#289, #290)
+  ([#341](https://github.com/liatrio-labs/claude-code-gauntlet/pull/341),
+  [`7361fe5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7361fe5a6553e54795090b00e281d579a418410b))
+
+### Documentation
+
+- Use path::symbol reference in report_severity docstring
+  ([#340](https://github.com/liatrio-labs/claude-code-gauntlet/pull/340),
+  [`2ceda32`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2ceda329a523fc4e02d04223c244c0e4fd426175))
+
+### Features
+
+- Tag REVIEW.md prose and derive the review_md receipt (#289, #290, #291)
+  ([#341](https://github.com/liatrio-labs/claude-code-gauntlet/pull/341),
+  [`7361fe5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7361fe5a6553e54795090b00e281d579a418410b))
+
+- Tag REVIEW.md prose with its source path
+  ([#341](https://github.com/liatrio-labs/claude-code-gauntlet/pull/341),
+  [`7361fe5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7361fe5a6553e54795090b00e281d579a418410b))
+
+### Refactoring
+
+- Share resolver JS trim alphabet
+  ([#340](https://github.com/liatrio-labs/claude-code-gauntlet/pull/340),
+  [`2ceda32`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2ceda329a523fc4e02d04223c244c0e4fd426175))
+
+- Share resolver JS trim alphabet (#339)
+  ([#340](https://github.com/liatrio-labs/claude-code-gauntlet/pull/340),
+  [`2ceda32`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2ceda329a523fc4e02d04223c244c0e4fd426175))
+
+- Use isPlainObject and drop nested ternary
+  ([#341](https://github.com/liatrio-labs/claude-code-gauntlet/pull/341),
+  [`7361fe5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7361fe5a6553e54795090b00e281d579a418410b))
+
+### Testing
+
+- Address CodeQL notes on the collector tests
+  ([#341](https://github.com/liatrio-labs/claude-code-gauntlet/pull/341),
+  [`7361fe5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7361fe5a6553e54795090b00e281d579a418410b))
+
+
 ## v3.40.4 (2026-09-15)
 
 ### Bug Fixes
