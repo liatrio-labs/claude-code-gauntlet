@@ -294,9 +294,10 @@ Never use `grep` or `find` from Bash for AI detection.
 
 ## 2l. Determine Review Dimensions
 
-All on by default unless REVIEW.md disables them. All agents use Sonnet except security-reviewer (always Opus) — the single benchmarked model policy.
-
-Skip conditions: test-analyzer (no test files in repo), type-design-analyzer (no new types).
+The workflow computes the dispatched dimensions with `deriveAgentFlags(riskTable, changedLines, scopeAnswer)` in `workflows/src/stages.js`.
+A `light` answer on a light-eligible diff (every changed file low-risk and fewer than 50 changed lines) yields `{ deep: false }` and dispatches only bug-detector and security-reviewer.
+Every other valid run dispatches all seven discovery agents.
+The default discovery model policy uses Sonnet except security-reviewer, which uses Opus; a `policy.subagentModel` override applies to every stage.
 
 ---
 
@@ -396,7 +397,7 @@ The workflow derives these waist fields from the copied `configEcho` receipt. Do
 
 The workflow fills these receipt entries itself; never stamp them.
 
-- `configEcho.review_md` (interactive runs): `present` when `reviewConfigPath` is set, else `absent`.
+- `configEcho.review_md` (interactive runs): `present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`.
 <!-- /generated-from-registry-identity:derived_waist_fields -->
 
 The Challenge stage applies the receipt-backed tier and cap before Phase 8 posts `artifactPaths.postReview` verbatim.

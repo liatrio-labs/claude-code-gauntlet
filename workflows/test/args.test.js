@@ -239,7 +239,7 @@ test('T182-ARGS: every registry receipt value rule and source rule is focused', 
   assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, pr_comment_cap: { value: 'null', source: 'env' } } }).ok, false);
   assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, pr_comment_cap: { value: '1', source: 'default' } } }).ok, false);
   assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, model_tier: { value: 'optimized', source: 'env' } } }).ok, false);
-  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, review_md: { value: 'present', source: 'discovery' } } }).ok, false);
+  assert.equal(validateArgs({ ...interactive, reviewMd: [], reviewConfigPath: null, configEcho: { ...interactive.configEcho, review_md: { value: 'present', source: 'discovery' } } }).ok, false);
   const interactiveInvalid = validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, review_md: { value: 'other', source: 'discovery' } } });
   assert.ok(interactiveInvalid.errors.some((error) => error.includes('configEcho.review_md.value')));
 });
@@ -801,7 +801,7 @@ test('T315-ARGS: derivedFrom rows reject a receipt that disagrees with their sou
       allowedSources: { interactive: ['discovery'] },
       rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null,
       defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null,
-      waistMap: null, derivedFrom: 'reviewConfigPath', deriveWhen: null, nullReceipt: [],
+      waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [],
       resolvedKey: false,
     });
     const args = {
@@ -809,7 +809,7 @@ test('T315-ARGS: derivedFrom rows reject a receipt that disagrees with their sou
       configEcho: { ...good.configEcho, derived_probe: { value: 'present', source: 'discovery' } },
     };
     // Mutation: delete the generic derivedFrom loop.
-    assert.deepEqual(validateArgs(args).errors, ['configEcho.derived_probe does not match reviewConfigPath']);
+    assert.deepEqual(validateArgs(args).errors, ['configEcho.derived_probe does not match reviewMd']);
   } finally {
     KNOB_REGISTRY.length = originalLength;
   }
@@ -2300,7 +2300,7 @@ test('validateArgs rejects a zero/negative/non-integer discoveryCap when present
 // --- reviewMd / exclusionsText (issue #24 PR2) -------------------------------
 
 test('validateArgs accepts a well-formed reviewMd array', () => {
-  const r = validateArgs({ ...good, reviewMd: [{ path: 'REVIEW.md', text: '' }, { path: 'src/REVIEW.md', text: 'ignore:\n  - foo' }] });
+  const r = validateArgs({ ...good, reviewConfigPath: '/r/REVIEW.md', reviewMd: [{ path: 'REVIEW.md', text: '' }, { path: 'src/REVIEW.md', text: 'ignore:\n  - foo' }], configEcho: { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } } });
   assert.deepEqual(r, { ok: true, errors: [] });
 });
 test('validateArgs accepts an empty reviewMd array (authoritative "found nothing")', () => {
@@ -2317,8 +2317,119 @@ test('validateArgs rejects a reviewMd entry with an extra key', () => {
   assert.match(r.errors.join(' '), /unexpected key/);
 });
 test('validateArgs rejects a reviewMd entry missing path or text', () => {
-  assert.equal(validateArgs({ ...good, reviewMd: [{ text: 'x' }] }).ok, false);
-  assert.equal(validateArgs({ ...good, reviewMd: [{ path: 'x' }] }).ok, false);
+  const base = { ...good, reviewConfigPath: '/r/REVIEW.md', configEcho: { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } } };
+  const missingPath = validateArgs({ ...base, reviewMd: [{ text: 'x' }] });
+  assert.ok(missingPath.errors.includes('reviewMd[0].path must be a non-empty string'));
+  const missingText = validateArgs({ ...base, reviewMd: [{ path: 'REVIEW.md' }] });
+  assert.ok(missingText.errors.includes('reviewMd[0].text must be a string'));
+});
+
+test('validateArgs enforces reviewMd root and reviewConfigPath coherence', () => {
+  const presentEcho = { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } };
+  const coherenceError = 'reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd contains an entry with path exactly REVIEW.md';
+
+  assert.deepEqual(validateArgs({
+    ...good, reviewMd: [{ path: 'REVIEW.md', text: '' }], reviewConfigPath: '/r/REVIEW.md', configEcho: presentEcho,
+  }), { ok: true, errors: [] });
+  assert.ok(validateArgs({
+    ...good, reviewMd: [{ path: 'REVIEW.md', text: '' }], reviewConfigPath: null, configEcho: presentEcho,
+  }).errors.includes(coherenceError));
+  assert.deepEqual(validateArgs({
+    ...good, reviewMd: [{ path: 'api/REVIEW.md', text: '' }], reviewConfigPath: null, configEcho: presentEcho,
+  }), { ok: true, errors: [] });
+  assert.ok(validateArgs({
+    ...good, reviewMd: [{ path: 'api/REVIEW.md', text: '' }], reviewConfigPath: '/r/REVIEW.md', configEcho: presentEcho,
+  }).errors.includes(coherenceError));
+});
+
+test('T290: subdirectory discovery fills present and rejects absent', () => {
+  const args = {
+    ...good,
+    reviewMd: [{ path: 'api/REVIEW.md', text: 'subtree' }],
+    reviewConfigPath: null,
+    configEcho: { ...good.configEcho },
+  };
+  delete args.configEcho.review_md;
+  const normalized = normalizeArgs(args);
+  assert.deepEqual(normalized.configEcho.review_md, { value: 'present', source: 'discovery' });
+  assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs({
+    ...args,
+    configEcho: { ...args.configEcho, review_md: { value: 'present', source: 'discovery' } },
+  }), { ok: true, errors: [] });
+  const absent = validateArgs({
+    ...args,
+    configEcho: { ...args.configEcho, review_md: { value: 'absent', source: 'discovery' } },
+  });
+  assert.ok(absent.errors.includes('configEcho.review_md does not match reviewMd'));
+});
+
+test('T290: root discovery accepts present', () => {
+  const args = {
+    ...good,
+    reviewMd: [{ path: 'REVIEW.md', text: 'root' }],
+    reviewConfigPath: '/r/REVIEW.md',
+    configEcho: { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } },
+  };
+  assert.deepEqual(validateArgs(args), { ok: true, errors: [] });
+  const missingEcho = { ...args, configEcho: { ...args.configEcho } };
+  delete missingEcho.configEcho.review_md;
+  assert.deepEqual(normalizeArgs(missingEcho).configEcho.review_md, { value: 'present', source: 'discovery' });
+});
+
+test('T290: empty discovery derives absent', () => {
+  const args = {
+    ...good,
+    reviewMd: [],
+    reviewConfigPath: null,
+    configEcho: { ...good.configEcho },
+  };
+  delete args.configEcho.review_md;
+  assert.deepEqual(normalizeArgs(args).configEcho.review_md, { value: 'absent', source: 'discovery' });
+  assert.deepEqual(validateArgs({
+    ...args,
+    configEcho: { ...args.configEcho, review_md: { value: 'absent', source: 'discovery' } },
+  }), { ok: true, errors: [] });
+  const present = validateArgs({
+    ...args,
+    configEcho: { ...args.configEcho, review_md: { value: 'present', source: 'discovery' } },
+  });
+  assert.ok(present.errors.includes('configEcho.review_md does not match reviewMd'));
+});
+
+test('T290: legacy path preserves present', () => {
+  const args = {
+    ...good,
+    reviewConfig: { ignore: [] },
+    reviewConfigPath: '/r/REVIEW.md',
+    configEcho: { ...good.configEcho },
+  };
+  delete args.configEcho.review_md;
+  assert.deepEqual(normalizeArgs(args).configEcho.review_md, { value: 'present', source: 'discovery' });
+  assert.deepEqual(validateArgs({
+    ...args,
+    configEcho: { ...args.configEcho, review_md: { value: 'present', source: 'discovery' } },
+  }), { ok: true, errors: [] });
+});
+
+test('T290: legacy null path refuses present', () => {
+  const args = {
+    ...good,
+    reviewConfig: { ignore: [] },
+    reviewConfigPath: null,
+    configEcho: { ...good.configEcho },
+  };
+  delete args.configEcho.review_md;
+  assert.deepEqual(normalizeArgs(args).configEcho.review_md, { value: 'absent', source: 'discovery' });
+  assert.deepEqual(validateArgs({
+    ...args,
+    configEcho: { ...args.configEcho, review_md: { value: 'absent', source: 'discovery' } },
+  }), { ok: true, errors: [] });
+  const present = validateArgs({
+    ...args,
+    configEcho: { ...args.configEcho, review_md: { value: 'present', source: 'discovery' } },
+  });
+  assert.ok(present.errors.includes('configEcho.review_md does not match reviewMd'));
 });
 test('validateArgs rejects an absolute reviewMd path', () => {
   const r = validateArgs({ ...good, reviewMd: [{ path: '/foo/REVIEW.md', text: '' }] });

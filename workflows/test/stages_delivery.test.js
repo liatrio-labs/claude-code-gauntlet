@@ -318,6 +318,7 @@ test('runWith threads a single-entry args.reviewMd through resolveReviewConfig i
   const reviewMdText = '```yaml code-gauntlet\nconfidence_threshold: 90\n```';
   const args = validArgs({
     reviewMd: [{ path: 'REVIEW.md', text: reviewMdText }],
+    reviewConfigPath: '/repo/REVIEW.md',
     checkpoints: {
       validate: {
         findings: [
@@ -349,6 +350,7 @@ test('runWith scopes raw child REVIEW.md settings through filter and persisted d
       { path: 'REVIEW.md', text: '```yaml code-gauntlet\n```' },
       { path: 'api/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
     ],
+    reviewConfigPath: '/repo/REVIEW.md',
     checkpoints: {
       validate: {
         findings: [
@@ -399,6 +401,7 @@ test('runWith fresh pipeline scopes raw REVIEW.md settings before challenge and 
       { path: 'REVIEW.md', text: '```yaml code-gauntlet\n```' },
       { path: 'api/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
     ],
+    reviewConfigPath: '/repo/REVIEW.md',
   });
   let persisted = null;
   const ctx = makeCtx(args, {
@@ -426,6 +429,7 @@ test('runWith echoes unmatched REVIEW.md scopes as zero-match dirs without a roo
       { path: 'API/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
       { path: 'api/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
     ],
+    reviewConfigPath: '/repo/REVIEW.md',
     checkpoints: {
       validate: {
         findings: [

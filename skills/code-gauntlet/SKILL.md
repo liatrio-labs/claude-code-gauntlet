@@ -361,7 +361,7 @@ The workflow derives these waist fields from the copied `configEcho` receipt. Do
 
 The workflow fills these receipt entries itself; never stamp them.
 
-- `configEcho.review_md` (interactive runs): `present` when `reviewConfigPath` is set, else `absent`.
+- `configEcho.review_md` (interactive runs): `present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`.
 <!-- /generated-from-registry-identity:derived_waist_fields -->
 
 Stamp `limits: {}` unless a genuine REVIEW.md-set override exists.

@@ -2497,7 +2497,7 @@ const KNOB_REGISTRY = [
   { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['incremental', 'full', 'skip'] }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' }, derivedFrom: null, deriveWhen: 'priorReviewDetector', nullReceipt: [], resolvedKey: true },
   { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['local', 'error'] }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
   { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'scopeAnswer', waistMap: null, derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [], resolvedKey: false },
-  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: 'reviewConfigPath', deriveWhen: null, nullReceipt: [], resolvedKey: false },
+  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [], resolvedKey: false },
 ];
 function matchesRule(rule, value, mode) {
   if (typeof value !== 'string' || rule === null || typeof rule !== 'object' || Array.isArray(rule)) return false;
@@ -2703,10 +2703,12 @@ const DERIVE_WHEN = {
   },
 };
 const DERIVED_FROM = {
-  reviewConfigPath: {
-    fill: (args) => (args.reviewConfigPath != null ? 'present' : 'absent'),
+  reviewMd: {
+    fill: (args) => (Array.isArray(args.reviewMd)
+      ? (args.reviewMd.length > 0 ? 'present' : 'absent')
+      : (args.reviewConfigPath != null ? 'present' : 'absent')),
     source: 'discovery',
-    describe: '`present` when `reviewConfigPath` is set, else `absent`',
+    describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`',
   },
 };
 function deriveWhenHolds(descriptor, args) {
@@ -3123,6 +3125,13 @@ function validateArgs(args) {
         if (typeof entry.text !== 'string') {
           errors.push(`reviewMd[${i}].text must be a string`);
         }
+      }
+      const hasRootReviewMd = args.reviewMd.some((entry) => (
+        entry && typeof entry === 'object' && !Array.isArray(entry) && entry.path === 'REVIEW.md'
+      ));
+      const hasReviewConfigPath = args.reviewConfigPath != null;
+      if (hasRootReviewMd !== hasReviewConfigPath) {
+        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd contains an entry with path exactly REVIEW.md');
       }
     }
   }
