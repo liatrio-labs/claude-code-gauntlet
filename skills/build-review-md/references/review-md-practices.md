@@ -5,7 +5,7 @@ rollout sequencing, ongoing maintenance, and example templates for common stacks
 
 Source: Research Artifact #19 — "Writing REVIEW.md files that actually improve code quality"
 
-Subdirectory REVIEW.md rules are advisory prose shared with every context-reading agent (summarize, discovery, validate; the file location is provenance); only thresholds and ignore patterns are enforced for that subtree.
+Every context-reading agent (summarize, discovery, validate) receives every REVIEW.md block tagged with its source path in the shared context; subdirectory prose is advisory for that directory's subtree, while the pipeline enforces thresholds and ignore patterns per subtree.
 
 ---
 
