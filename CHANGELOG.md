@@ -2,6 +2,47 @@
 
 <!-- version list -->
 
+## v3.41.1 (2026-09-16)
+
+### Bug Fixes
+
+- Reject escaped surrogate pairs and cite register symbols a test resolves (#329, #330)
+  ([#345](https://github.com/liatrio-labs/claude-code-gauntlet/pull/345),
+  [`72ae060`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72ae060b4b938aeb30aa03524a5958b72bf7429f))
+
+- **verify**: Reject an escaped surrogate pair the encoder never emits
+  ([#345](https://github.com/liatrio-labs/claude-code-gauntlet/pull/345),
+  [`72ae060`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72ae060b4b938aeb30aa03524a5958b72bf7429f))
+
+### Documentation
+
+- **register**: Cite a test method through its class; drop dead resolver bookkeeping
+  ([#345](https://github.com/liatrio-labs/claude-code-gauntlet/pull/345),
+  [`72ae060`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72ae060b4b938aeb30aa03524a5958b72bf7429f))
+
+- **register**: Cite each location once and restore base prose wording
+  ([#345](https://github.com/liatrio-labs/claude-code-gauntlet/pull/345),
+  [`72ae060`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72ae060b4b938aeb30aa03524a5958b72bf7429f))
+
+- **register**: Cite every symbol beside a file, pin the scan and cursor rules
+  ([#345](https://github.com/liatrio-labs/claude-code-gauntlet/pull/345),
+  [`72ae060`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72ae060b4b938aeb30aa03524a5958b72bf7429f))
+
+- **register**: Cite symbols a test resolves instead of line numbers
+  ([#345](https://github.com/liatrio-labs/claude-code-gauntlet/pull/345),
+  [`72ae060`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72ae060b4b938aeb30aa03524a5958b72bf7429f))
+
+- **register**: Distinguish same-symbol pair sides and narrow the plain-text scan
+  ([#345](https://github.com/liatrio-labs/claude-code-gauntlet/pull/345),
+  [`72ae060`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72ae060b4b938aeb30aa03524a5958b72bf7429f))
+
+### Testing
+
+- **register**: Assert every citation rejection branch and drop a dead parameter
+  ([#345](https://github.com/liatrio-labs/claude-code-gauntlet/pull/345),
+  [`72ae060`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72ae060b4b938aeb30aa03524a5958b72bf7429f))
+
+
 ## v3.41.0 (2026-09-16)
 
 ### Bug Fixes
