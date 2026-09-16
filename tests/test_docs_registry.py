@@ -420,12 +420,17 @@ def _citation_reason(span, tracked_files):
     )
 
 
-def _looks_like_location(span, extensions):
+def _looks_like_location(span, extensions, top_dirs):
+    """A path-shaped token that could only be a repository location: it ends in an
+    extension some tracked file has, or its first segment is a tracked top-level
+    directory. A slash-joined word pair in prose ("JS/Python", "read/write") is
+    neither and stays prose."""
     if span.startswith(("http://", "https://", "/")):
         return False
     atom = re.split(r"::|#|\s", span, maxsplit=1)[0]
     return bool(_LOCATION_ATOM.match(atom)) and (
-        "/" in atom or Path(atom).suffix in extensions
+        Path(atom).suffix in extensions
+        or ("/" in atom and atom.split("/", 1)[0] in top_dirs)
     )
 
 
@@ -612,6 +617,7 @@ class TestDocsRegistry(unittest.TestCase):
         text = (REPO / register_path).read_text()
         tracked_files = _tracked_files()
         extensions = {Path(path).suffix for path in tracked_files if Path(path).suffix}
+        top_dirs = {path.split("/", 1)[0] for path in tracked_files if "/" in path}
         sections = _register_sections(text)
         section_map = {name: (sentence, rows) for name, sentence, rows in sections}
         errors = []
@@ -742,7 +748,7 @@ class TestDocsRegistry(unittest.TestCase):
                     "unresolved symbol" in reason or reason == "title not found"
                 ):
                     ordinary_definition_failures.add(span)
-            elif _looks_like_location(span, extensions):
+            elif _looks_like_location(span, extensions, top_dirs):
                 add_error(line, span, "location-shaped span not classified")
 
         fenced = False
@@ -756,7 +762,7 @@ class TestDocsRegistry(unittest.TestCase):
             without_links = re.sub(r"\[[^\]]*\]\([^)]*\)", "", without_code)
             for token in re.findall(r"(?<!\w)\S+", without_links):
                 token = token.strip(".,;:()[]{}<>\"'")
-                if _looks_like_location(token, extensions):
+                if _looks_like_location(token, extensions, top_dirs):
                     add_error(line_number, token, "uncited location in plain text")
 
         for line_number, line_text in enumerate(text.splitlines(), 1):
