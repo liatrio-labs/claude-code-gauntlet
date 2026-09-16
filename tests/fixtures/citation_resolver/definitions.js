@@ -16,7 +16,7 @@ const OBJECT = { key_ok: 1, "double_key": 2, 'single_key': 3 };
 x ? key_inline : 0;
 key_call();
 const KEYS = { key_long: 1 };
-PY_ONLY = 1;
+FOREIGN_PYTHON_CONSTANT = 1;
 const SAME = { same_key: 1 };
 const $cash = 1;
 const EQUALITY == 1;
@@ -39,3 +39,5 @@ exportXclass ExportPunct {}
 defaultXclass DefaultPunct {}
 exportXconst EXPORT_PUNCT = 1;
 start_key: 1;
+def foreign_python(): pass
+- id: foreign_yaml

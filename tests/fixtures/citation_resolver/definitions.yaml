@@ -7,10 +7,12 @@ items:
   - name: wrong_key
 mapping:
   id: no_dash
-yaml_key: 1
+foreign_js: 1
 extra:
   -  id: wide_dash
 near_misses: |
   x: - id: inline_id
   -id: joined_dash
   -Xid: punct_dash
+def foreign_python(): pass
+FOREIGN_PYTHON_CONSTANT: x = 1

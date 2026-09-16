@@ -15,7 +15,7 @@ lower = 1
 Mixed = 1
 def scope():
     INDENTED = 1
-python_key: 1
+foreign_js: 1
 def early(): pass
 class Parent:
     def child(self): pass
@@ -25,3 +25,4 @@ classJoined:
 asyncdef async_joined(): pass
 EMPTY:=1
 asyncXdef async_punct(): pass
+- id: foreign_yaml

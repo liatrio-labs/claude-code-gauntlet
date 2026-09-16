@@ -207,6 +207,8 @@ def _is_location_span(span, extensions):
     return "/" in body or Path(body).suffix in extensions
 
 
+TITLE_KIND = "node_title"
+
 DEFINITION_PATTERNS = (
     ("python", r"^[ \t]*(?:async[ \t]+)?def[ \t]+{S}[ \t]*\("),
     ("python", r"^[ \t]*class[ \t]+{S}(?=[ \t]*[(:])"),
@@ -219,7 +221,7 @@ DEFINITION_PATTERNS = (
     ("js", r"^[ \t]*(?:export[ \t]+)?(?:const|let|var)[ \t]+{S}[ \t]*=(?!=)"),
     ("js", r"""(?:^|[{,])[ \t]*(?:{S}|"{S}"|'{S}')[ \t]*:"""),
     ("yaml", r"""^[ \t]*-[ \t]+id:[ \t]*(?:{S}|"{S}"|'{S}')[ \t]*(?:#.*)?$"""),
-    ("node_title", r"^[ \t]*(?:test|describe|it)[ \t]*\([ \t]*{Q}{T}{Q}[ \t]*,"),
+    (TITLE_KIND, r"^[ \t]*(?:test|describe|it)[ \t]*\([ \t]*{Q}{T}{Q}[ \t]*,"),
 )
 HEADING_PATTERN = r"^#{1,6}\s+{H}\s*$"
 HEADING_SUFFIX = ".md"
@@ -326,8 +328,8 @@ def _definition_reason(path, symbols, tracked_files, *, witness=None):
             for pattern_index, (kind, pattern) in enumerate(DEFINITION_PATTERNS):
                 if kind not in kinds:
                     continue
-                if kind == "python_constant" and (
-                    not re.fullmatch(r"[A-Z_][A-Z0-9_]*", segment)
+                if kind == "python_constant" and not re.fullmatch(
+                    r"[A-Z_][A-Z0-9_]*", segment
                 ):
                     continue
                 regex = re.compile(pattern.replace("{S}", S))
@@ -357,7 +359,7 @@ def _title_reason(path, title, tracked_files, *, witness=None):
         (
             (index, pattern)
             for index, (kind, pattern) in enumerate(DEFINITION_PATTERNS)
-            if kind == "node_title"
+            if kind == TITLE_KIND
         ),
         None,
     )
@@ -376,7 +378,7 @@ def _title_reason(path, title, tracked_files, *, witness=None):
         for line_number, line in enumerate(text):
             if regex.search(line):
                 if witness is not None:
-                    witness.append(("node_title", pattern_index, line_number))
+                    witness.append((TITLE_KIND, pattern_index, line_number))
                 return None
     return "title not found"
 
@@ -852,7 +854,14 @@ class TestDocsRegistry(unittest.TestCase):
         z = base + "definitions.yml"
         t = base + "titles.js"
         h = base + "headings.md"
+        fixture_paths = sorted(path for path in tracked_files if path.startswith(base))
+        definition_paths = [
+            path
+            for path in fixture_paths
+            if Path(path).suffix in DEFINITION_KINDS_BY_SUFFIX
+        ]
         # These tracked files are resolver input, never executed as source.
+        # Rows for the suffix map's values are derived from the map itself.
         # Each near-miss row flips when the clause it names is removed.
         # Witness assertions tie every pattern and suffix to a positive row.
         # Near misses isolate constraints; positives pin accepted forms.
@@ -930,7 +939,7 @@ class TestDocsRegistry(unittest.TestCase):
             (
                 p + "::EMPTY",
                 "unresolved symbol 'EMPTY' after line 0",
-            ),  # constant: requires nonempty token separation
+            ),  # constant: annotation body must be nonempty
             (j + "::js_ok", None),  # function: accepts a definition
             (
                 j + "::js_star",
@@ -1146,24 +1155,12 @@ class TestDocsRegistry(unittest.TestCase):
                 "titles require a JS test source",
             ),  # kind: titles require a JS source
             (
-                p + "::python_key",
-                "unresolved symbol 'python_key' after line 0",
-            ),  # kind: Python does not use JS patterns
-            (
-                y + "::yaml_key",
-                "unresolved symbol 'yaml_key' after line 0",
-            ),  # kind: YAML does not use JS patterns
-            (
-                j + "::PY_ONLY",
-                "unresolved symbol 'PY_ONLY' after line 0",
-            ),  # kind: JS does not use Python patterns
-            (
                 h + "::MD_SYMBOL",
                 "no definition patterns for .md",
             ),  # kind: unknown suffix has no symbol patterns
             (p + "::Parent::child", None),  # cursor: selects the first parent match
             (j + "::SAME::same_key", None),  # cursor: includes the parent line
-            (j + "::$cash", None),  # cursor: escapes symbol regex syntax
+            (j + "::$cash", None),  # escape: escapes symbol regex syntax
             (
                 p + "::Parent::early",
                 "unresolved symbol 'early' after line 19",
@@ -1197,7 +1194,7 @@ class TestDocsRegistry(unittest.TestCase):
         )
         errors = []
         witnessed = []
-        positive_suffixes = set()
+        positive_paths = set()
 
         def add_error(span, reason):
             errors.append(f"{span!r}: {reason}")
@@ -1211,8 +1208,46 @@ class TestDocsRegistry(unittest.TestCase):
                     f"resolver returned {actual_reason!r}, expected {expected_reason!r}",
                 )
             if expected_reason is None:
+                expected_count = max(1, len(_parse_citation(span)[2]))
+                if len(witness) != expected_count:
+                    add_error(
+                        span,
+                        f"{len(witness)} witnesses recorded, expected {expected_count}",
+                    )
                 witnessed.extend(witness)
-                positive_suffixes.add(Path(_parse_citation(span)[1]).suffix)
+                positive_paths.add(_parse_citation(span)[1])
+        foreign_symbols = {
+            "python": "foreign_python",
+            "python_constant": "FOREIGN_PYTHON_CONSTANT",
+            "js": "foreign_js",
+            "yaml": "foreign_yaml",
+        }
+        definition_kinds = {kind for kind, _ in DEFINITION_PATTERNS} - {TITLE_KIND}
+        self.assertEqual(
+            set(foreign_symbols),
+            definition_kinds,
+            "foreign_symbols must name every definition kind",
+        )
+        for path in definition_paths:
+            text = (REPO / path).read_text()
+            granted = DEFINITION_KINDS_BY_SUFFIX.get(Path(path).suffix, set())
+            for kind in sorted(definition_kinds):
+                symbol = foreign_symbols[kind]
+                span = f"{path}::{symbol}"
+                if symbol not in text:
+                    if kind not in granted:
+                        add_error(
+                            span,
+                            f"fixture has no foreign {kind} line naming {symbol!r}",
+                        )
+                    continue
+                actual_reason = _citation_reason(span, tracked_files)
+                expected_reason = f"unresolved symbol {symbol!r} after line 0"
+                if actual_reason != expected_reason:
+                    add_error(
+                        span,
+                        f"resolver returned {actual_reason!r}, expected {expected_reason!r}",
+                    )
         self.assertFalse(errors, "\n".join(errors))
         indices = {index for _, index, _ in witnessed if index is not None}
         expected_indices = set(range(len(DEFINITION_PATTERNS)))
@@ -1221,23 +1256,29 @@ class TestDocsRegistry(unittest.TestCase):
             expected_indices,
             f"missing pattern witnesses: {sorted(expected_indices - indices)}; unexpected: {sorted(indices - expected_indices)}",
         )
+        kinds = {kind for kind, _, _ in witnessed}
+        expected_kinds = set().union(*DEFINITION_KINDS_BY_SUFFIX.values()) | {
+            TITLE_KIND,
+            "heading",
+        }
+        self.assertEqual(
+            kinds,
+            expected_kinds,
+            f"missing kind witnesses: {sorted(expected_kinds - kinds)}; unexpected: {sorted(kinds - expected_kinds)}",
+        )
         self.assertIn(
             "heading", {kind for kind, _, _ in witnessed}, "missing heading witness"
         )
-        suffixes = {
-            Path(path).suffix
-            for path in tracked_files
-            if path.startswith(base) and Path(path).suffix != HEADING_SUFFIX
-        }
+        suffixes = {Path(path).suffix for path in definition_paths}
         self.assertEqual(
             set(DEFINITION_KINDS_BY_SUFFIX),
             suffixes,
             f"missing fixture suffixes: {sorted(set(DEFINITION_KINDS_BY_SUFFIX) - suffixes)}; unmapped: {sorted(suffixes - set(DEFINITION_KINDS_BY_SUFFIX))}",
         )
         self.assertEqual(
-            positive_suffixes - {HEADING_SUFFIX},
-            suffixes,
-            f"missing positive suffix witnesses: {sorted(suffixes - positive_suffixes)}",
+            positive_paths,
+            set(fixture_paths),
+            f"fixture files with no positive row: {sorted(set(fixture_paths) - positive_paths)}; rows citing untracked files: {sorted(positive_paths - set(fixture_paths))}",
         )
 
 
