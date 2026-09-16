@@ -1,4 +1,4 @@
-# YAML resolver matching fixtures; data only.
+# YAML resolver matching fixtures; data only. kinds: yaml
 items:
   - id: yaml_ok
   - id: "double_id"

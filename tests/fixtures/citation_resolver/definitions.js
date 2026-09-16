@@ -1,4 +1,4 @@
-// JavaScript resolver matching fixtures; data only.
+// JavaScript resolver matching fixtures; data only. kinds: js
 function js_ok() {}
 // function js_inline() {}
 function js_prefix_long() {}
@@ -41,3 +41,4 @@ exportXconst EXPORT_PUNCT = 1;
 start_key: 1;
 def foreign_python(): pass
 - id: foreign_yaml
+class JsBrace{}

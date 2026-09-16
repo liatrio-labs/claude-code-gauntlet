@@ -1,4 +1,4 @@
-// Node title resolver matching fixtures; data only.
+// Node title resolver matching fixtures; data only. kinds: js
 test('single title', () => {});
 describe("double title", () => {});
 it(`plain template`, () => {});

@@ -862,6 +862,7 @@ class TestDocsRegistry(unittest.TestCase):
         ]
         # These tracked files are resolver input, never executed as source.
         # Rows for the suffix map's values are derived from the map itself.
+        # Each definition fixture declares the kinds its suffix grants on line one.
         # Each near-miss row flips when the clause it names is removed.
         # Witness assertions tie every pattern and suffix to a positive row.
         # Near misses isolate constraints; positives pin accepted forms.
@@ -902,6 +903,7 @@ class TestDocsRegistry(unittest.TestCase):
                 p + "::PyPrefix",
                 "unresolved symbol 'PyPrefix' after line 0",
             ),  # class: requires a name boundary
+            (p + "::WithBase", None),  # class: accepts a base-class parenthesis
             (
                 p + "::Joined",
                 "unresolved symbol 'Joined' after line 0",
@@ -999,6 +1001,10 @@ class TestDocsRegistry(unittest.TestCase):
                 j + "::JsPrefix",
                 "unresolved symbol 'JsPrefix' after line 0",
             ),  # JS class: requires a name boundary
+            (
+                j + "::JsBrace",
+                None,
+            ),  # JS class: accepts a brace directly after the name
             (
                 j + "::JoinedClass",
                 "unresolved symbol 'JoinedClass' after line 0",
@@ -1168,6 +1174,7 @@ class TestDocsRegistry(unittest.TestCase):
             (h + "#Heading One", None),  # heading: accepts one hash
             (h + "#Heading Six", None),  # heading: accepts six hashes
             (h + "#Trailing Space", None),  # heading: accepts trailing whitespace
+            (h + "#Tabbed Heading", None),  # heading: accepts a tab after the hashes
             (h + "#Literal (dot.)", None),  # heading: treats regex syntax literally
             (h + "#Longer", "heading not found"),  # heading: requires the complete text
             (
@@ -1208,7 +1215,10 @@ class TestDocsRegistry(unittest.TestCase):
                     f"resolver returned {actual_reason!r}, expected {expected_reason!r}",
                 )
             if expected_reason is None:
-                expected_count = max(1, len(_parse_citation(span)[2]))
+                citation_kind, _, symbols, _ = _parse_citation(span)
+                expected_count = {"file": 0, "symbol": len(symbols)}.get(
+                    citation_kind, 1
+                )
                 if len(witness) != expected_count:
                     add_error(
                         span,
@@ -1231,6 +1241,13 @@ class TestDocsRegistry(unittest.TestCase):
         for path in definition_paths:
             text = (REPO / path).read_text()
             granted = DEFINITION_KINDS_BY_SUFFIX.get(Path(path).suffix, set())
+            declaration = re.search(r"kinds: ([\w, ]+)$", text.splitlines()[0])
+            declared = set(declaration.group(1).split(", ")) if declaration else set()
+            if declared != granted:
+                add_error(
+                    path,
+                    f"declares kinds {sorted(declared)}, the map grants {sorted(granted)}",
+                )
             for kind in sorted(definition_kinds):
                 symbol = foreign_symbols[kind]
                 span = f"{path}::{symbol}"
@@ -1265,9 +1282,6 @@ class TestDocsRegistry(unittest.TestCase):
             kinds,
             expected_kinds,
             f"missing kind witnesses: {sorted(expected_kinds - kinds)}; unexpected: {sorted(kinds - expected_kinds)}",
-        )
-        self.assertIn(
-            "heading", {kind for kind, _, _ in witnessed}, "missing heading witness"
         )
         suffixes = {Path(path).suffix for path in definition_paths}
         self.assertEqual(

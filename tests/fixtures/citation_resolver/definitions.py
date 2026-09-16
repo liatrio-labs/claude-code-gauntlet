@@ -1,4 +1,4 @@
-# Python resolver matching fixtures; data only.
+# Python resolver matching fixtures; data only. kinds: python, python_constant
 def py_ok(): pass
 # def py_inline(): pass
 def py_prefix_long(): pass
@@ -26,3 +26,4 @@ asyncdef async_joined(): pass
 EMPTY:=1
 asyncXdef async_punct(): pass
 - id: foreign_yaml
+class WithBase(Base): pass

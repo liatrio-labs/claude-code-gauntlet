@@ -1,4 +1,4 @@
-# Short-extension YAML resolver matching fixtures; data only.
+# Short-extension YAML resolver matching fixtures; data only. kinds: yaml
 items:
   - id: yml_ok
 foreign_js: 1
