@@ -754,7 +754,6 @@ class TestDocsRegistry(unittest.TestCase):
                 )
 
         table_citation_keys = set()
-        definition_spans = []
         for _, _, rows in sections:
             for line, cells in rows:
                 for cell in cells:
@@ -762,14 +761,10 @@ class TestDocsRegistry(unittest.TestCase):
                         if not _is_location_span(span, extensions):
                             continue
                         table_citation_keys.add((line, span))
-                        kind, _, _, _ = _parse_citation(span)
-                        if kind in {"symbol", "title"}:
-                            definition_spans.append(span)
                         reason = _citation_reason(span, tracked_files)
                         if reason:
                             add_error(line, span, reason)
 
-        ordinary_definition_failures = set()
         residual_location_spans = set()
         for start, _, span in _code_spans(text):
             line = text.count("\n", 0, start) + 1
@@ -783,10 +778,6 @@ class TestDocsRegistry(unittest.TestCase):
                 reason = _citation_reason(span, tracked_files)
                 if reason:
                     add_error(line, span, reason)
-                if reason and (
-                    "unresolved symbol" in reason or reason == "title not found"
-                ):
-                    ordinary_definition_failures.add(span)
             elif _looks_like_location(span, extensions, top_dirs):
                 add_error(line, span, "location-shaped span not classified")
 
