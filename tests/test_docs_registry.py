@@ -262,7 +262,7 @@ def _parse_citation(span):
     return "file", span, (), None
 
 
-def _path_reason(path, tracked_files, extensions):
+def _path_reason(path, tracked_files):
     if not path:
         return "same-file shorthand forbidden"
     if path.startswith("/"):
@@ -293,9 +293,7 @@ def _path_reason(path, tracked_files, extensions):
 
 
 def _definition_reason(path, symbols, tracked_files):
-    path_reason = _path_reason(
-        path, tracked_files, {Path(p).suffix for p in tracked_files if Path(p).suffix}
-    )
+    path_reason = _path_reason(path, tracked_files)
     if path_reason:
         return path_reason
     if path not in tracked_files:
@@ -344,9 +342,7 @@ def _definition_reason(path, symbols, tracked_files):
 
 
 def _title_reason(path, title, tracked_files):
-    path_reason = _path_reason(
-        path, tracked_files, {Path(p).suffix for p in tracked_files if Path(p).suffix}
-    )
+    path_reason = _path_reason(path, tracked_files)
     if path_reason:
         return path_reason
     if path not in tracked_files:
@@ -392,11 +388,7 @@ def _citation_reason(span, tracked_files):
     if kind == "heading" and not anchor:
         return "empty heading forbidden"
     if kind == "heading":
-        path_reason = _path_reason(
-            path,
-            tracked_files,
-            {Path(p).suffix for p in tracked_files if Path(p).suffix},
-        )
+        path_reason = _path_reason(path, tracked_files)
         if path_reason:
             return path_reason
         if path not in tracked_files:
@@ -415,9 +407,7 @@ def _citation_reason(span, tracked_files):
         if any(char.isspace() for segment in symbols for char in segment):
             return "whitespace in location"
         return _definition_reason(path, symbols, tracked_files)
-    return _path_reason(
-        path, tracked_files, {Path(p).suffix for p in tracked_files if Path(p).suffix}
-    )
+    return _path_reason(path, tracked_files)
 
 
 def _looks_like_location(span, extensions, top_dirs):
@@ -743,6 +733,27 @@ class TestDocsRegistry(unittest.TestCase):
             ("scripts/a spaced file.py", "whitespace in location"),
             ("filter_findings.py", "untracked path"),
             ("UNRESOLVED:foo.py", "UNRESOLVED requires orchestrator ruling"),
+            ("scripts/./verify_findings.py", "dot path component forbidden"),
+            ("scripts//verify_findings.py", "empty path component forbidden"),
+            ("scripts/*.nothing", "glob matches no tracked files"),
+            ("nope/", "untracked path"),
+            ("scripts/*.py::x", "symbols require an exact tracked file"),
+            ("scripts/verify_findings.py::bad.symbol", "invalid symbol chain"),
+            ("scripts/verify_findings.py::bad symbol", "whitespace in location"),
+            ("README.md::Foo", "no definition patterns for .md"),
+            (
+                "scripts/verify_findings.py::no_such_definition",
+                "unresolved symbol 'no_such_definition' after line 0",
+            ),
+            ('workflows/test/*.test.js::"x"', "titles require an exact tracked file"),
+            ('scripts/verify_findings.py::"x"', "titles require a JS test source"),
+            ('workflows/test/parity.test.js::"no such title"', "title not found"),
+            ('scripts/verify_findings.py::"unterminated', "invalid citation syntax"),
+            ("a::b#c", "invalid citation syntax"),
+            ("CLAUDE.md#", "empty heading forbidden"),
+            ("docs/*.md#X", "heading requires an exact tracked file"),
+            ("scripts/verify_findings.py#X", "heading requires a Markdown file"),
+            ("CLAUDE.md#Nonexistent Heading", "heading not found"),
         )
         for span, expected_reason in malformed_citations:
             actual_reason = _citation_reason(span, tracked_files)
