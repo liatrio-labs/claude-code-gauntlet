@@ -2704,9 +2704,12 @@ const DERIVE_WHEN = {
 };
 const DERIVED_FROM = {
   reviewMd: {
-    fill: (args) => (Array.isArray(args.reviewMd)
-      ? (args.reviewMd.length > 0 ? 'present' : 'absent')
-      : (args.reviewConfigPath != null ? 'present' : 'absent')),
+    fill: (args) => {
+      if (Array.isArray(args.reviewMd)) {
+        return args.reviewMd.length > 0 ? 'present' : 'absent';
+      }
+      return args.reviewConfigPath != null ? 'present' : 'absent';
+    },
     source: 'discovery',
     describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`',
   },
@@ -3127,7 +3130,7 @@ function validateArgs(args) {
         }
       }
       const hasRootReviewMd = args.reviewMd.some((entry) => (
-        entry && typeof entry === 'object' && !Array.isArray(entry) && entry.path === 'REVIEW.md'
+        isPlainObject(entry) && entry.path === 'REVIEW.md'
       ));
       const hasReviewConfigPath = args.reviewConfigPath != null;
       if (hasRootReviewMd !== hasReviewConfigPath) {
