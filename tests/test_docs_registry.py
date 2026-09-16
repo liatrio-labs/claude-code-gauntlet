@@ -336,7 +336,7 @@ def _definition_reason(path, symbols, tracked_files, *, witness=None):
                 if regex.search(lines[line_number]):
                     found = line_number
                     if witness is not None:
-                        witness.append((kind, pattern_index, line_number))
+                        witness.append((kind, pattern_index))
                     break
             if found is not None:
                 break
@@ -375,10 +375,10 @@ def _title_reason(path, title, tracked_files, *, witness=None):
         )
         if delimiter == "`" and "${" in title:
             continue
-        for line_number, line in enumerate(text):
+        for line in text:
             if regex.search(line):
                 if witness is not None:
-                    witness.append((TITLE_KIND, pattern_index, line_number))
+                    witness.append((TITLE_KIND, pattern_index))
                 return None
     return "title not found"
 
@@ -409,10 +409,10 @@ def _citation_reason(span, tracked_files, *, witness=None):
         if Path(path).suffix != HEADING_SUFFIX:
             return "heading requires a Markdown file"
         heading_regex = re.compile(HEADING_PATTERN.replace("{H}", re.escape(anchor)))
-        for line_number, line in enumerate((REPO / path).read_text().splitlines()):
+        for line in (REPO / path).read_text().splitlines():
             if heading_regex.search(line):
                 if witness is not None:
-                    witness.append(("heading", None, line_number))
+                    witness.append(("heading", None))
                 return None
         return "heading not found"
     if kind == "title":
@@ -904,6 +904,9 @@ class TestDocsRegistry(unittest.TestCase):
                 "unresolved symbol 'PyPrefix' after line 0",
             ),  # class: requires a name boundary
             (p + "::WithBase", None),  # class: accepts a base-class parenthesis
+            (p + "::tab_def", None),  # def: accepts tabs in every gap
+            (p + "::TabClass", None),  # class: accepts tabs in every gap
+            (p + "::TAB_CONST", None),  # constant: accepts tabs in every gap
             (
                 p + "::Joined",
                 "unresolved symbol 'Joined' after line 0",
@@ -1005,6 +1008,10 @@ class TestDocsRegistry(unittest.TestCase):
                 j + "::JsBrace",
                 None,
             ),  # JS class: accepts a brace directly after the name
+            (j + "::tab_fn", None),  # function: accepts tabs in every gap
+            (j + "::TabClassJs", None),  # JS class: accepts tabs in every gap
+            (j + "::TAB_VAR", None),  # variable: accepts tabs in every gap
+            (j + "::tab_key", None),  # key: accepts tabs in every gap
             (
                 j + "::JoinedClass",
                 "unresolved symbol 'JoinedClass' after line 0",
@@ -1102,6 +1109,11 @@ class TestDocsRegistry(unittest.TestCase):
                 "unresolved symbol 'wrong_key' after line 0",
             ),  # YAML: requires the id key
             (
+                y + "::spaced_colon",
+                "unresolved symbol 'spaced_colon' after line 0",
+            ),  # YAML: requires the colon directly after id
+            (y + "::tab_id", None),  # YAML: accepts tabs in every gap
+            (
                 y + "::inline_id",
                 "unresolved symbol 'inline_id' after line 0",
             ),  # YAML: anchored at line start
@@ -1147,6 +1159,11 @@ class TestDocsRegistry(unittest.TestCase):
             (t + '::"say \\"yes\\""', None),  # title: escapes double quotes
             (t + '::"tick `value`"', None),  # title: escapes backticks
             (
+                t + '::"mismatch"',
+                "title not found",
+            ),  # title: requires matching delimiters
+            (t + '::"tab title"', None),  # title: accepts tabs in every gap
+            (
                 t + '::"literal ${name}"',
                 None,
             ),  # title: accepts interpolation text in quotes
@@ -1155,7 +1172,9 @@ class TestDocsRegistry(unittest.TestCase):
                 "title not found",
             ),  # title: rejects dynamic templates
             (m + "::module_ok", None),  # kind: recognizes the mjs extension
+            (m + '::"module title"', None),  # kind: titles accept the mjs extension
             (z + "::yml_ok", None),  # kind: recognizes the yml extension
+            (m, None),  # path: a tracked fixture file resolves as a path
             (
                 h + '::"Heading One"',
                 "titles require a JS test source",
@@ -1179,6 +1198,7 @@ class TestDocsRegistry(unittest.TestCase):
             (h + "#Heading One", None),  # heading: accepts one hash
             (h + "#Heading Six", None),  # heading: accepts six hashes
             (h + "#Trailing Space", None),  # heading: accepts trailing whitespace
+            (h + "#Trailing Tab", None),  # heading: accepts a trailing tab
             (h + "#Tabbed Heading", None),  # heading: accepts a tab after the hashes
             (h + "#Literal (dot.)", None),  # heading: treats regex syntax literally
             (h + "#Longer", "heading not found"),  # heading: requires the complete text
@@ -1271,14 +1291,18 @@ class TestDocsRegistry(unittest.TestCase):
                         f"resolver returned {actual_reason!r}, expected {expected_reason!r}",
                     )
         self.assertFalse(errors, "\n".join(errors))
-        indices = {index for _, index, _ in witnessed if index is not None}
+        indices = {index for _, index in witnessed if index is not None}
         expected_indices = set(range(len(DEFINITION_PATTERNS)))
         self.assertEqual(
             indices,
             expected_indices,
             f"missing pattern witnesses: {sorted(expected_indices - indices)}; unexpected: {sorted(indices - expected_indices)}",
         )
-        kinds = {kind for kind, _, _ in witnessed}
+        heading_indices = {index for kind, index in witnessed if kind == "heading"}
+        self.assertEqual(
+            heading_indices, {None}, "heading witnesses must carry no pattern index"
+        )
+        kinds = {kind for kind, _ in witnessed}
         expected_kinds = set().union(*DEFINITION_KINDS_BY_SUFFIX.values()) | {
             TITLE_KIND,
             "heading",

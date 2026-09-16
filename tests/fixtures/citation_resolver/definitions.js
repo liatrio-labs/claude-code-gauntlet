@@ -42,3 +42,7 @@ start_key: 1;
 def foreign_python(): pass
 - id: foreign_yaml
 class JsBrace{}
+	export	default	async	function	*	tab_fn	() {}
+	export	default	class	TabClassJs	{}
+	export	const	TAB_VAR	= 1;
+const TABS = {	tab_key	: 1 };

@@ -16,3 +16,7 @@ near_misses: |
   -Xid: punct_dash
 def foreign_python(): pass
 FOREIGN_PYTHON_CONSTANT: x = 1
+spaced:
+  - id : spaced_colon
+tab_forms: |
+  	-	id:	tab_id

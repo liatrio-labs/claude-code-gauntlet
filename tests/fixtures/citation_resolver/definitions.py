@@ -27,3 +27,6 @@ EMPTY:=1
 asyncXdef async_punct(): pass
 - id: foreign_yaml
 class WithBase(Base): pass
+	async	def	tab_def	(): pass
+	class	TabClass	:
+TAB_CONST	=	1

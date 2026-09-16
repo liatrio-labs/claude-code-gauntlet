@@ -18,3 +18,5 @@ test(X'argument gap', () => {});
 def foreign_python(): pass
 FOREIGN_PYTHON_CONSTANT = 1;
 - id: foreign_yaml
+test('mismatch", () => {});
+	test	(	'tab title'	,	() => {});
