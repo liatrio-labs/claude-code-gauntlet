@@ -31,7 +31,7 @@ omit = [
 
 [tool.ruff]
 target-version = "py310"
-extend-exclude = ["bench/vendor", "bench/workspace"]
+extend-exclude = ["bench/vendor", "bench/workspace", "tests/fixtures/citation_resolver"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "BLE", "RUF"]
@@ -51,7 +51,7 @@ warn_redundant_casts = true
 warn_return_any = true
 no_implicit_optional = true
 explicit_package_bases = true
-exclude = "(?x)(^(bench/vendor|bench/workspace)/)"
+exclude = "(?x)(^(bench/vendor|bench/workspace|tests/fixtures/citation_resolver)/)"
 
 [[tool.mypy.overrides]]
 module = [

@@ -30,9 +30,11 @@ repos:
       # What reports a loss is tests/test_post_review.py::TestGlabFixtureBytes for the
       # diffs and TestSliceInputRecovery for the JSON captures.
       - id: end-of-file-fixer
-        exclude: "^tests/fixtures/(glab_diff/.*\\.diff|verify_slice_recovery/.*\\.json)$"
+        # tests/fixtures/citation_resolver/ preserves resolver matching bytes.
+        exclude: "^tests/fixtures/(glab_diff/.*\\.diff|verify_slice_recovery/.*\\.json|citation_resolver/.*)$"
       - id: trailing-whitespace
-        exclude: "^tests/fixtures/(glab_diff/.*\\.diff|verify_slice_recovery/.*\\.json)$"
+        # tests/fixtures/citation_resolver/ preserves resolver matching bytes.
+        exclude: "^tests/fixtures/(glab_diff/.*\\.diff|verify_slice_recovery/.*\\.json|citation_resolver/.*)$"
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.45.0
@@ -44,7 +46,8 @@ repos:
         # blank before the previous version heading, and every subsequent PR's merge-with-
         # main lint run then fails on that generated nit. Exclude the generated file rather
         # than keep re-fixing it on unrelated PRs.
-        exclude: "LICENSE|^bench/golden/|^CHANGELOG\\.md$"
+        # tests/fixtures/citation_resolver/ preserves resolver matching bytes.
+        exclude: "LICENSE|^bench/golden/|^CHANGELOG\\.md$|^tests/fixtures/citation_resolver/"
 
   - repo: https://github.com/streetsidesoftware/cspell-cli
     rev: v9.7.0

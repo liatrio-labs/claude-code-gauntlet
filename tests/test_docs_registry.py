@@ -222,6 +222,15 @@ DEFINITION_PATTERNS = (
     ("node_title", r"^[ \t]*(?:test|describe|it)[ \t]*\([ \t]*{Q}{T}{Q}[ \t]*,"),
 )
 HEADING_PATTERN = r"^#{1,6}\s+{H}\s*$"
+HEADING_SUFFIX = ".md"
+
+DEFINITION_KINDS_BY_SUFFIX = {
+    ".py": {"python", "python_constant"},
+    ".js": {"js"},
+    ".mjs": {"js"},
+    ".yaml": {"yaml"},
+    ".yml": {"yaml"},
+}
 
 
 def _tracked_files():
@@ -292,7 +301,7 @@ def _path_reason(path, tracked_files):
     return "untracked path"
 
 
-def _definition_reason(path, symbols, tracked_files):
+def _definition_reason(path, symbols, tracked_files, *, witness=None):
     path_reason = _path_reason(path, tracked_files)
     if path_reason:
         return path_reason
@@ -305,14 +314,7 @@ def _definition_reason(path, symbols, tracked_files):
     ):
         return "invalid symbol chain"
     suffix = Path(path).suffix
-    applicable = {
-        ".py": {"python", "python_constant"},
-        ".js": {"js"},
-        ".mjs": {"js"},
-        ".yaml": {"yaml"},
-        ".yml": {"yaml"},
-    }
-    kinds = applicable.get(suffix, set())
+    kinds = DEFINITION_KINDS_BY_SUFFIX.get(suffix, set())
     if not kinds:
         return f"no definition patterns for {suffix or 'this file type'}"
     lines = (REPO / path).read_text().splitlines()
@@ -321,17 +323,18 @@ def _definition_reason(path, symbols, tracked_files):
         S = re.escape(segment)
         found = None
         for line_number in range(cursor, len(lines)):
-            for kind, pattern in DEFINITION_PATTERNS:
+            for pattern_index, (kind, pattern) in enumerate(DEFINITION_PATTERNS):
                 if kind not in kinds:
                     continue
                 if kind == "python_constant" and (
                     not re.fullmatch(r"[A-Z_][A-Z0-9_]*", segment)
-                    or not lines[line_number].startswith(segment)
                 ):
                     continue
                 regex = re.compile(pattern.replace("{S}", S))
                 if regex.search(lines[line_number]):
                     found = line_number
+                    if witness is not None:
+                        witness.append((kind, pattern_index, line_number))
                     break
             if found is not None:
                 break
@@ -341,7 +344,7 @@ def _definition_reason(path, symbols, tracked_files):
     return None
 
 
-def _title_reason(path, title, tracked_files):
+def _title_reason(path, title, tracked_files, *, witness=None):
     path_reason = _path_reason(path, tracked_files)
     if path_reason:
         return path_reason
@@ -350,12 +353,17 @@ def _title_reason(path, title, tracked_files):
     if Path(path).suffix not in {".js", ".mjs"}:
         return "titles require a JS test source"
     text = (REPO / path).read_text().splitlines()
-    title_pattern = next(
-        (pattern for kind, pattern in DEFINITION_PATTERNS if kind == "node_title"),
+    title_entry = next(
+        (
+            (index, pattern)
+            for index, (kind, pattern) in enumerate(DEFINITION_PATTERNS)
+            if kind == "node_title"
+        ),
         None,
     )
-    if title_pattern is None:
+    if title_entry is None:
         return "title not found"
+    pattern_index, title_pattern = title_entry
     for delimiter in ("'", '"', "`"):
         escaped_title = title.replace("\\", "\\\\").replace(delimiter, "\\" + delimiter)
         regex = re.compile(
@@ -365,12 +373,15 @@ def _title_reason(path, title, tracked_files):
         )
         if delimiter == "`" and "${" in title:
             continue
-        if any(regex.search(line) for line in text):
-            return None
+        for line_number, line in enumerate(text):
+            if regex.search(line):
+                if witness is not None:
+                    witness.append(("node_title", pattern_index, line_number))
+                return None
     return "title not found"
 
 
-def _citation_reason(span, tracked_files):
+def _citation_reason(span, tracked_files, *, witness=None):
     if span.startswith("UNRESOLVED:"):
         return "UNRESOLVED requires orchestrator ruling"
     kind, path, symbols, anchor = _parse_citation(span)
@@ -393,20 +404,21 @@ def _citation_reason(span, tracked_files):
             return path_reason
         if path not in tracked_files:
             return "heading requires an exact tracked file"
-        if Path(path).suffix != ".md":
+        if Path(path).suffix != HEADING_SUFFIX:
             return "heading requires a Markdown file"
         heading_regex = re.compile(HEADING_PATTERN.replace("{H}", re.escape(anchor)))
-        if not any(
-            heading_regex.match(line) for line in (REPO / path).read_text().splitlines()
-        ):
-            return "heading not found"
-        return None
+        for line_number, line in enumerate((REPO / path).read_text().splitlines()):
+            if heading_regex.search(line):
+                if witness is not None:
+                    witness.append(("heading", None, line_number))
+                return None
+        return "heading not found"
     if kind == "title":
-        return _title_reason(path, anchor, tracked_files)
+        return _title_reason(path, anchor, tracked_files, witness=witness)
     if kind == "symbol":
         if any(char.isspace() for segment in symbols for char in segment):
             return "whitespace in location"
-        return _definition_reason(path, symbols, tracked_files)
+        return _definition_reason(path, symbols, tracked_files, witness=witness)
     return _path_reason(path, tracked_files)
 
 
@@ -829,6 +841,404 @@ class TestDocsRegistry(unittest.TestCase):
                     )
 
         self.assertFalse(errors, "\n".join(errors))
+
+    def test_duplication_resolver_matching_clauses(self):
+        tracked_files = _tracked_files()
+        base = "tests/fixtures/citation_resolver/"
+        p = base + "definitions.py"
+        j = base + "definitions.js"
+        m = base + "definitions.mjs"
+        y = base + "definitions.yaml"
+        z = base + "definitions.yml"
+        t = base + "titles.js"
+        h = base + "headings.md"
+        # These tracked files are resolver input, never executed as source.
+        # Each near-miss row flips when the clause it names is removed.
+        # Witness assertions tie every pattern and suffix to a positive row.
+        # Near misses isolate constraints; positives pin accepted forms.
+        # Cursor diagnostics use exact offsets in this fixed fixture tree.
+        citations = (
+            (p + "::py_ok", None),  # def: accepts a definition
+            (p + "::py_async", None),  # def: accepts async
+            (
+                p + "::py_inline",
+                "unresolved symbol 'py_inline' after line 0",
+            ),  # def: anchored at line start
+            (
+                p + "::py_prefix",
+                "unresolved symbol 'py_prefix' after line 0",
+            ),  # def: requires the opening parenthesis
+            (
+                p + "::joined",
+                "unresolved symbol 'joined' after line 0",
+            ),  # def: requires whitespace before the name
+            (
+                p + "::async_joined",
+                "unresolved symbol 'async_joined' after line 0",
+            ),  # def: requires nonempty token separation
+            (
+                p + "::async_punct",
+                "unresolved symbol 'async_punct' after line 0",
+            ),  # def: accepts only whitespace at gap 2
+            (
+                p + "::y_ok",
+                "unresolved symbol 'y_ok' after line 0",
+            ),  # def: whitespace class at gap 3
+            (p + "::PyOk", None),  # class: accepts a definition
+            (
+                p + "::PyInline",
+                "unresolved symbol 'PyInline' after line 0",
+            ),  # class: anchored at line start
+            (
+                p + "::PyPrefix",
+                "unresolved symbol 'PyPrefix' after line 0",
+            ),  # class: requires a name boundary
+            (
+                p + "::Joined",
+                "unresolved symbol 'Joined' after line 0",
+            ),  # class: requires whitespace before the name
+            (
+                p + "::yOk",
+                "unresolved symbol 'yOk' after line 0",
+            ),  # class: whitespace class at gap 2
+            (p + "::UPPER_OK", None),  # constant: accepts uppercase assignment
+            (p + "::ANNOTATED_OK", None),  # constant: accepts annotated assignment
+            (
+                p + "::UPPER",
+                "unresolved symbol 'UPPER' after line 0",
+            ),  # constant: requires a name boundary
+            (
+                p + "::ANNOTATION",
+                "unresolved symbol 'ANNOTATION' after line 0",
+            ),  # constant: annotation cannot consume equals
+            (
+                p + "::COMPARE",
+                "unresolved symbol 'COMPARE' after line 0",
+            ),  # constant: rejects equality comparisons
+            (
+                p + "::lower",
+                "unresolved symbol 'lower' after line 0",
+            ),  # constant: requires uppercase names
+            (
+                p + "::Mixed",
+                "unresolved symbol 'Mixed' after line 0",
+            ),  # constant: checks the whole name
+            (
+                p + "::INDENTED",
+                "unresolved symbol 'INDENTED' after line 0",
+            ),  # constant: requires column zero
+            (
+                p + "::EMPTY",
+                "unresolved symbol 'EMPTY' after line 0",
+            ),  # constant: requires nonempty token separation
+            (j + "::js_ok", None),  # function: accepts a definition
+            (
+                j + "::js_star",
+                None,
+            ),  # function: accepts export default async and generator
+            (
+                j + "::js_inline",
+                "unresolved symbol 'js_inline' after line 0",
+            ),  # function: anchored at line start
+            (
+                j + "::js_prefix",
+                "unresolved symbol 'js_prefix' after line 0",
+            ),  # function: requires the opening parenthesis
+            (
+                j + "::Joined",
+                "unresolved symbol 'Joined' after line 0",
+            ),  # function: requires whitespace before the name
+            (
+                j + "::export_joined",
+                "unresolved symbol 'export_joined' after line 0",
+            ),  # function: requires nonempty token separation
+            (
+                j + "::default_joined",
+                "unresolved symbol 'default_joined' after line 0",
+            ),  # function: requires nonempty token separation
+            (
+                j + "::async_joined",
+                "unresolved symbol 'async_joined' after line 0",
+            ),  # function: requires nonempty token separation
+            (
+                j + "::export_punct",
+                "unresolved symbol 'export_punct' after line 0",
+            ),  # function: accepts only whitespace at gap 2
+            (
+                j + "::default_punct",
+                "unresolved symbol 'default_punct' after line 0",
+            ),  # function: accepts only whitespace at gap 3
+            (
+                j + "::async_punct",
+                "unresolved symbol 'async_punct' after line 0",
+            ),  # function: accepts only whitespace at gap 4
+            (
+                j + "::fn_punct",
+                "unresolved symbol 'fn_punct' after line 0",
+            ),  # function: accepts only whitespace at gap 5
+            (
+                j + "::s_ok",
+                "unresolved symbol 's_ok' after line 0",
+            ),  # function: whitespace class at gap 6
+            (j + "::JsOk", None),  # JS class: accepts a definition
+            (j + "::JsExport", None),  # JS class: accepts export and default
+            (
+                j + "::JsInline",
+                "unresolved symbol 'JsInline' after line 0",
+            ),  # JS class: anchored at line start
+            (
+                j + "::JsPrefix",
+                "unresolved symbol 'JsPrefix' after line 0",
+            ),  # JS class: requires a name boundary
+            (
+                j + "::JoinedClass",
+                "unresolved symbol 'JoinedClass' after line 0",
+            ),  # JS class: requires whitespace before the name
+            (
+                j + "::ExportJoined",
+                "unresolved symbol 'ExportJoined' after line 0",
+            ),  # JS class: requires nonempty token separation
+            (
+                j + "::DefaultJoined",
+                "unresolved symbol 'DefaultJoined' after line 0",
+            ),  # JS class: requires nonempty token separation
+            (
+                j + "::ExportPunct",
+                "unresolved symbol 'ExportPunct' after line 0",
+            ),  # JS class: accepts only whitespace at gap 2
+            (
+                j + "::DefaultPunct",
+                "unresolved symbol 'DefaultPunct' after line 0",
+            ),  # JS class: accepts only whitespace at gap 3
+            (
+                j + "::sOk",
+                "unresolved symbol 'sOk' after line 0",
+            ),  # JS class: whitespace class at gap 4
+            (j + "::VAR_OK", None),  # variable: accepts const
+            (j + "::LET_OK", None),  # variable: accepts let
+            (j + "::OLD_OK", None),  # variable: accepts var
+            (j + "::EXP_OK", None),  # variable: accepts export
+            (
+                j + "::VAR_INLINE",
+                "unresolved symbol 'VAR_INLINE' after line 0",
+            ),  # variable: anchored at line start
+            (
+                j + "::VAR",
+                "unresolved symbol 'VAR' after line 0",
+            ),  # variable: requires a name boundary
+            (
+                j + "::var_fake",
+                "unresolved symbol 'var_fake' after line 0",
+            ),  # variable: requires a declaration keyword
+            (
+                j + "::EQUALITY",
+                "unresolved symbol 'EQUALITY' after line 0",
+            ),  # variable: rejects equality comparisons
+            (
+                j + "::JoinedVar",
+                "unresolved symbol 'JoinedVar' after line 0",
+            ),  # variable: requires whitespace before the name
+            (
+                j + "::EXPORT_JOINED",
+                "unresolved symbol 'EXPORT_JOINED' after line 0",
+            ),  # variable: requires nonempty token separation
+            (
+                j + "::EXPORT_PUNCT",
+                "unresolved symbol 'EXPORT_PUNCT' after line 0",
+            ),  # variable: accepts only whitespace at gap 2
+            (
+                j + "::AR_OK",
+                "unresolved symbol 'AR_OK' after line 0",
+            ),  # variable: whitespace class at gap 3
+            (j + "::key_ok", None),  # key: accepts an unquoted key
+            (j + "::double_key", None),  # key: accepts double quotes
+            (j + "::single_key", None),  # key: accepts single quotes
+            (j + "::start_key", None),  # key: accepts start of line
+            (
+                j + "::key_inline",
+                "unresolved symbol 'key_inline' after line 0",
+            ),  # key: requires line start or a delimiter
+            (
+                j + "::key_call",
+                "unresolved symbol 'key_call' after line 0",
+            ),  # key: requires a colon
+            (
+                j + "::key",
+                "unresolved symbol 'key' after line 0",
+            ),  # key: requires a name boundary
+            (
+                j + "::ey_ok",
+                "unresolved symbol 'ey_ok' after line 0",
+            ),  # key: whitespace class at gap 1
+            (y + "::yaml_ok", None),  # YAML: accepts a list id
+            (y + "::double_id", None),  # YAML: accepts double quotes
+            (y + "::single_id", None),  # YAML: accepts single quotes and a comment
+            (y + "::wide_dash", None),  # YAML: accepts multiple spaces after dash
+            (
+                y + "::no_dash",
+                "unresolved symbol 'no_dash' after line 0",
+            ),  # YAML: requires a list dash
+            (
+                y + "::yaml_prefix",
+                "unresolved symbol 'yaml_prefix' after line 0",
+            ),  # YAML: requires a complete id
+            (
+                y + "::wrong_key",
+                "unresolved symbol 'wrong_key' after line 0",
+            ),  # YAML: requires the id key
+            (
+                y + "::inline_id",
+                "unresolved symbol 'inline_id' after line 0",
+            ),  # YAML: anchored at line start
+            (
+                y + "::joined_dash",
+                "unresolved symbol 'joined_dash' after line 0",
+            ),  # YAML: requires nonempty token separation
+            (
+                y + "::punct_dash",
+                "unresolved symbol 'punct_dash' after line 0",
+            ),  # YAML: accepts only whitespace at gap 2
+            (
+                y + "::aml_ok",
+                "unresolved symbol 'aml_ok' after line 0",
+            ),  # YAML: whitespace class at gap 3
+            (t + '::"single title"', None),  # title call: accepts test
+            (
+                t + '::"wrong callee"',
+                "title not found",
+            ),  # title call: requires a supported callee
+            (
+                t + '::"long title"',
+                "title not found",
+            ),  # title call: requires the closing quote
+            (t + '::"joined title"', "title not found"),  # title call: requires a comma
+            (
+                t + '::"inline title"',
+                "title not found",
+            ),  # title call: anchored at line start
+            (
+                t + '::"callee gap"',
+                "title not found",
+            ),  # title call: accepts only whitespace at gap 2
+            (
+                t + '::"argument gap"',
+                "title not found",
+            ),  # title call: accepts only whitespace at gap 3
+            (t + '::"double title"', None),  # title: accepts double quotes and describe
+            (t + '::"plain template"', None),  # title: accepts plain backticks and it
+            (t + '::"it\'s escaped"', None),  # title: escapes the delimiter
+            (t + '::"path\\\\part"', None),  # title: escapes backslashes
+            (t + '::"literal (dot.)"', None),  # title: escapes regex syntax
+            (t + '::"say \\"yes\\""', None),  # title: escapes double quotes
+            (t + '::"tick `value`"', None),  # title: escapes backticks
+            (
+                t + '::"literal ${name}"',
+                None,
+            ),  # title: accepts interpolation text in quotes
+            (
+                t + '::"dynamic ${name}"',
+                "title not found",
+            ),  # title: rejects dynamic templates
+            (m + "::module_ok", None),  # kind: recognizes the mjs extension
+            (z + "::yml_ok", None),  # kind: recognizes the yml extension
+            (
+                h + '::"Heading One"',
+                "titles require a JS test source",
+            ),  # kind: titles require a JS source
+            (
+                p + "::python_key",
+                "unresolved symbol 'python_key' after line 0",
+            ),  # kind: Python does not use JS patterns
+            (
+                y + "::yaml_key",
+                "unresolved symbol 'yaml_key' after line 0",
+            ),  # kind: YAML does not use JS patterns
+            (
+                j + "::PY_ONLY",
+                "unresolved symbol 'PY_ONLY' after line 0",
+            ),  # kind: JS does not use Python patterns
+            (
+                h + "::MD_SYMBOL",
+                "no definition patterns for .md",
+            ),  # kind: unknown suffix has no symbol patterns
+            (p + "::Parent::child", None),  # cursor: selects the first parent match
+            (j + "::SAME::same_key", None),  # cursor: includes the parent line
+            (j + "::$cash", None),  # cursor: escapes symbol regex syntax
+            (
+                p + "::Parent::early",
+                "unresolved symbol 'early' after line 19",
+            ),  # cursor: updates and never searches backwards
+            (h + "#Heading One", None),  # heading: accepts one hash
+            (h + "#Heading Six", None),  # heading: accepts six hashes
+            (h + "#Trailing Space", None),  # heading: accepts trailing whitespace
+            (h + "#Literal (dot.)", None),  # heading: treats regex syntax literally
+            (h + "#Longer", "heading not found"),  # heading: requires the complete text
+            (
+                h + "#NoSpace",
+                "heading not found",
+            ),  # heading: requires whitespace after hashes
+            (
+                h + "#Indented prose",
+                "heading not found",
+            ),  # heading: requires at least one hash
+            (
+                h + "#Too Deep",
+                "heading not found",
+            ),  # heading: at most six hashes, anchored at line start
+            (
+                h + "#Embedded Heading",
+                "heading not found",
+            ),  # heading: rejects prose containing the text
+            (
+                h + "#Missing",
+                "heading not found",
+            ),  # heading: requires the requested text
+            (h + "#Literal.*", "heading not found"),  # heading: rejects regex wildcards
+        )
+        errors = []
+        witnessed = []
+        positive_suffixes = set()
+
+        def add_error(span, reason):
+            errors.append(f"{span!r}: {reason}")
+
+        for span, expected_reason in citations:
+            witness = []
+            actual_reason = _citation_reason(span, tracked_files, witness=witness)
+            if actual_reason != expected_reason:
+                add_error(
+                    span,
+                    f"resolver returned {actual_reason!r}, expected {expected_reason!r}",
+                )
+            if expected_reason is None:
+                witnessed.extend(witness)
+                positive_suffixes.add(Path(_parse_citation(span)[1]).suffix)
+        self.assertFalse(errors, "\n".join(errors))
+        indices = {index for _, index, _ in witnessed if index is not None}
+        expected_indices = set(range(len(DEFINITION_PATTERNS)))
+        self.assertEqual(
+            indices,
+            expected_indices,
+            f"missing pattern witnesses: {sorted(expected_indices - indices)}; unexpected: {sorted(indices - expected_indices)}",
+        )
+        self.assertIn(
+            "heading", {kind for kind, _, _ in witnessed}, "missing heading witness"
+        )
+        suffixes = {
+            Path(path).suffix
+            for path in tracked_files
+            if path.startswith(base) and Path(path).suffix != HEADING_SUFFIX
+        }
+        self.assertEqual(
+            set(DEFINITION_KINDS_BY_SUFFIX),
+            suffixes,
+            f"missing fixture suffixes: {sorted(set(DEFINITION_KINDS_BY_SUFFIX) - suffixes)}; unmapped: {sorted(suffixes - set(DEFINITION_KINDS_BY_SUFFIX))}",
+        )
+        self.assertEqual(
+            positive_suffixes - {HEADING_SUFFIX},
+            suffixes,
+            f"missing positive suffix witnesses: {sorted(suffixes - positive_suffixes)}",
+        )
 
 
 if __name__ == "__main__":

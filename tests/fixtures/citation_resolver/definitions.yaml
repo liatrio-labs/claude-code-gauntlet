@@ -1,0 +1,16 @@
+# YAML resolver matching fixtures; data only.
+items:
+  - id: yaml_ok
+  - id: "double_id"
+  - id: 'single_id' # accepted comment
+  - id: yaml_prefix_long
+  - name: wrong_key
+mapping:
+  id: no_dash
+yaml_key: 1
+extra:
+  -  id: wide_dash
+near_misses: |
+  x: - id: inline_id
+  -id: joined_dash
+  -Xid: punct_dash
