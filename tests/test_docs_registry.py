@@ -14,6 +14,7 @@ Scope: git-tracked files only (``git ls-files``), so gitignored local artifacts
 never fail the suite.
 """
 
+import fnmatch
 import json
 import re
 import subprocess
@@ -86,46 +87,341 @@ def tracked(pathspec):
     return [line for line in out.splitlines() if line]
 
 
-def _individually_classified_rows_section():
-    """Return ``(sentence, table_rows)`` for the duplication register's
-    "## Individually classified rows" section.
+_TRACKED_FILES = None
 
-    ``sentence`` is the prose line immediately preceding the table (skipping blank
-    lines). ``table_rows`` is one list of stripped cells per data row — the header
-    row (``| Pair | ... |``) and the separator row (``| --- | ... |``) are excluded.
-    The section is bounded below by the next ``## `` heading, so a later table
-    (e.g. "## Grouped patterns") is never mixed in.
-    """
-    text = (REPO / "docs" / "duplication-register.md").read_text()
+
+def _register_sections(text):
+    """Return ``(name, pre_table_sentence, data_rows)`` for every ``##`` section."""
     lines = text.splitlines()
-    start = next(
-        i
-        for i, line in enumerate(lines)
-        if line.strip() == "## Individually classified rows"
-    )
-    end = next(
-        (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
-        len(lines),
-    )
+    starts = [i for i, line in enumerate(lines) if line.startswith("## ")]
+    sections = []
+    separator = re.compile(r":?-{3,}:?")
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(lines)
+        name = lines[start][3:]
+        table_start = None
+        for i in range(start + 1, end - 1):
+            if not lines[i].strip().startswith("|"):
+                continue
+            header = _split_table_cells(lines[i])
+            separators = _split_table_cells(lines[i + 1])
+            if (
+                header
+                and separators
+                and all(separator.fullmatch(cell.strip()) for cell in separators)
+            ):
+                table_start = i
+                break
+        sentence = None
+        if table_start is not None:
+            for line in reversed(lines[start + 1 : table_start]):
+                if line.strip():
+                    sentence = line.strip()
+                    break
+        rows = []
+        if table_start is not None:
+            for i in range(table_start + 2, end):
+                if not lines[i].strip().startswith("|"):
+                    break
+                rows.append((i + 1, _split_table_cells(lines[i])))
+        sections.append((name, sentence, rows))
+    return sections
 
-    sentence = None
-    in_table = False
-    table_rows = []
-    for line in lines[start + 1 : end]:
-        stripped = line.strip()
-        if not stripped:
+
+def _split_table_cells(line):
+    """Split one Markdown table line, preserving escaped and code-span pipes."""
+    text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|") and not text.endswith("\\|"):
+        text = text[:-1]
+    cells = []
+    current = []
+    delimiter = None
+    i = 0
+    while i < len(text):
+        if text[i] == "\\" and i + 1 < len(text) and text[i + 1] == "|":
+            current.extend(("\\", "|"))
+            i += 2
             continue
-        if stripped.startswith("| Pair"):
-            in_table = True
+        if text[i] == "`":
+            end = i
+            while end < len(text) and text[end] == "`":
+                end += 1
+            run = end - i
+            current.append(text[i:end])
+            if delimiter is None:
+                delimiter = run
+            elif delimiter == run:
+                delimiter = None
+            i = end
             continue
-        if in_table and stripped.startswith("| ---"):
+        if text[i] == "|" and delimiter is None:
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(text[i])
+        i += 1
+    cells.append("".join(current).strip())
+    return cells
+
+
+def _code_spans(text):
+    """Return ``(start, end, content)`` for matched single or multi-backtick spans."""
+    spans = []
+    i = 0
+    while i < len(text):
+        if text[i] != "`":
+            i += 1
             continue
-        if in_table and stripped.startswith("|"):
-            table_rows.append([cell.strip() for cell in stripped.strip("|").split("|")])
+        end = i
+        while end < len(text) and text[end] == "`":
+            end += 1
+        delimiter = text[i:end]
+        close = text.find(delimiter, end)
+        if close < 0:
+            i = end
             continue
-        if sentence is None and not in_table:
-            sentence = stripped
-    return sentence, table_rows
+        spans.append((i, close + len(delimiter), text[end:close]))
+        i = close + len(delimiter)
+    return spans
+
+
+_LOCATION_ATOM = re.compile(r"^/?[\w.*\-]+(?:/[\w.*\-]+)*/?$")
+
+
+def _is_location_span(span, extensions):
+    """True iff a test could be asked to resolve the span: an UNRESOLVED marker, a
+    same-file shorthand (":12", "::Name", "#frag"), or a leading atom that is
+    path-shaped and either crosses a directory or ends in an extension some tracked
+    file has. Malformed locations (line specs, elisions, bare basenames, absolute
+    paths, whitespace, shorthand) classify True so validation rejects them by name;
+    expressions ("re.ASCII", "^[ab]/", "/i", "title.lower()", "{20,}") classify False."""
+    if span.startswith("UNRESOLVED:") or re.match(r"^(?::\d|::|#)", span):
+        return True
+    leader = re.split(r"::|#", span, maxsplit=1)[0]
+    atom = re.split(r"[\s:]", leader, maxsplit=1)[0]
+    if not atom or not _LOCATION_ATOM.match(atom):
+        return False
+    body = atom.lstrip("/")
+    return "/" in body or Path(body).suffix in extensions
+
+
+DEFINITION_PATTERNS = (
+    ("python", r"^[ \t]*(?:async[ \t]+)?def[ \t]+{S}[ \t]*\("),
+    ("python", r"^[ \t]*class[ \t]+{S}(?=[ \t]*[(:])"),
+    ("python_constant", r"^{S}[ \t]*(?::[^=\n]+)?[ \t]*=(?!=)"),
+    (
+        "js",
+        r"^[ \t]*(?:export[ \t]+)?(?:default[ \t]+)?(?:async[ \t]+)?function[ \t]*\*?[ \t]+{S}[ \t]*\(",
+    ),
+    ("js", r"^[ \t]*(?:export[ \t]+)?(?:default[ \t]+)?class[ \t]+{S}(?=[ \t{])"),
+    ("js", r"^[ \t]*(?:export[ \t]+)?(?:const|let|var)[ \t]+{S}[ \t]*=(?!=)"),
+    ("js", r"""(?:^|[{,])[ \t]*(?:{S}|"{S}"|'{S}')[ \t]*:"""),
+    ("yaml", r"""^[ \t]*-[ \t]+id:[ \t]*(?:{S}|"{S}"|'{S}')[ \t]*(?:#.*)?$"""),
+    ("node_title", r"^[ \t]*(?:test|describe|it)[ \t]*\([ \t]*{Q}{T}{Q}[ \t]*,"),
+)
+HEADING_PATTERN = r"^#{1,6}\s+{H}\s*$"
+
+
+def _tracked_files():
+    global _TRACKED_FILES
+    if _TRACKED_FILES is None:
+        output = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=REPO, capture_output=True, check=True
+        ).stdout.decode()
+        _TRACKED_FILES = tuple(path for path in output.split("\0") if path)
+    return _TRACKED_FILES
+
+
+def _parse_citation(span):
+    """Parse a path, symbol chain, quoted title, or heading citation."""
+    if span.startswith("UNRESOLVED:"):
+        return "unresolved", span, (), None
+    separator = span.find("::")
+    if separator >= 0 and span[separator + 2 :].startswith('"'):
+        path = span[:separator]
+        suffix = span[separator + 2 :]
+        try:
+            title = json.loads(suffix)
+        except json.JSONDecodeError:
+            return "invalid", path, (), None
+        if not isinstance(title, str):
+            return "invalid", path, (), None
+        return "title", path, (), title
+    if "#" in span:
+        hash_at = span.find("#")
+        before = span[:hash_at]
+        if "::" in before:
+            return "invalid", span, (), None
+        return "heading", before, (), span[hash_at + 1 :]
+    if separator >= 0:
+        path = span[:separator]
+        suffix = span[separator + 2 :]
+        return "symbol", path, tuple(suffix.split("::")), None
+    return "file", span, (), None
+
+
+def _path_reason(path, tracked_files):
+    if not path:
+        return "same-file shorthand forbidden"
+    if path.startswith("/"):
+        return "absolute path forbidden"
+    if re.search(r":\d", path):
+        return "line-number citation forbidden"
+    if "..." in path:
+        return "elided path forbidden"
+    if any(char.isspace() for char in path):
+        return "whitespace in location"
+    components = path.split("/")
+    if any(component in (".", "..") for component in components):
+        return "dot path component forbidden"
+    if any(not component for component in components[:-1]):
+        return "empty path component forbidden"
+    if path.endswith("/"):
+        prefix = path
+        if not any(candidate.startswith(prefix) for candidate in tracked_files):
+            return "untracked path"
+        return None
+    if any(char in path for char in "*?["):
+        if not any(fnmatch.fnmatchcase(candidate, path) for candidate in tracked_files):
+            return "glob matches no tracked files"
+        return None
+    if path in tracked_files:
+        return None
+    return "untracked path"
+
+
+def _definition_reason(path, symbols, tracked_files):
+    path_reason = _path_reason(path, tracked_files)
+    if path_reason:
+        return path_reason
+    if path not in tracked_files:
+        return "symbols require an exact tracked file"
+    if not symbols:
+        return None
+    if any(
+        not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$-]*", segment) for segment in symbols
+    ):
+        return "invalid symbol chain"
+    suffix = Path(path).suffix
+    applicable = {
+        ".py": {"python", "python_constant"},
+        ".js": {"js"},
+        ".mjs": {"js"},
+        ".yaml": {"yaml"},
+        ".yml": {"yaml"},
+    }
+    kinds = applicable.get(suffix, set())
+    if not kinds:
+        return f"no definition patterns for {suffix or 'this file type'}"
+    lines = (REPO / path).read_text().splitlines()
+    cursor = 0
+    for segment in symbols:
+        S = re.escape(segment)
+        found = None
+        for line_number in range(cursor, len(lines)):
+            for kind, pattern in DEFINITION_PATTERNS:
+                if kind not in kinds:
+                    continue
+                if kind == "python_constant" and (
+                    not re.fullmatch(r"[A-Z_][A-Z0-9_]*", segment)
+                    or not lines[line_number].startswith(segment)
+                ):
+                    continue
+                regex = re.compile(pattern.replace("{S}", S))
+                if regex.search(lines[line_number]):
+                    found = line_number
+                    break
+            if found is not None:
+                break
+        if found is None:
+            return f"unresolved symbol {segment!r} after line {cursor}"
+        cursor = found
+    return None
+
+
+def _title_reason(path, title, tracked_files):
+    path_reason = _path_reason(path, tracked_files)
+    if path_reason:
+        return path_reason
+    if path not in tracked_files:
+        return "titles require an exact tracked file"
+    if Path(path).suffix not in {".js", ".mjs"}:
+        return "titles require a JS test source"
+    text = (REPO / path).read_text().splitlines()
+    title_pattern = next(
+        (pattern for kind, pattern in DEFINITION_PATTERNS if kind == "node_title"),
+        None,
+    )
+    if title_pattern is None:
+        return "title not found"
+    for delimiter in ("'", '"', "`"):
+        escaped_title = title.replace("\\", "\\\\").replace(delimiter, "\\" + delimiter)
+        regex = re.compile(
+            title_pattern.replace("{Q}", re.escape(delimiter)).replace(
+                "{T}", re.escape(escaped_title)
+            )
+        )
+        if delimiter == "`" and "${" in title:
+            continue
+        if any(regex.search(line) for line in text):
+            return None
+    return "title not found"
+
+
+def _citation_reason(span, tracked_files):
+    if span.startswith("UNRESOLVED:"):
+        return "UNRESOLVED requires orchestrator ruling"
+    kind, path, symbols, anchor = _parse_citation(span)
+    if kind == "invalid":
+        return "invalid citation syntax"
+    unquoted = (
+        path
+        if kind in {"file", "heading", "title"}
+        else path + "::" + "::".join(symbols)
+    )
+    if re.search(r":\d", unquoted):
+        return "line-number citation forbidden"
+    if "..." in unquoted:
+        return "elided path forbidden"
+    if kind == "heading" and not anchor:
+        return "empty heading forbidden"
+    if kind == "heading":
+        path_reason = _path_reason(path, tracked_files)
+        if path_reason:
+            return path_reason
+        if path not in tracked_files:
+            return "heading requires an exact tracked file"
+        if Path(path).suffix != ".md":
+            return "heading requires a Markdown file"
+        heading_regex = re.compile(HEADING_PATTERN.replace("{H}", re.escape(anchor)))
+        if not any(
+            heading_regex.match(line) for line in (REPO / path).read_text().splitlines()
+        ):
+            return "heading not found"
+        return None
+    if kind == "title":
+        return _title_reason(path, anchor, tracked_files)
+    if kind == "symbol":
+        if any(char.isspace() for segment in symbols for char in segment):
+            return "whitespace in location"
+        return _definition_reason(path, symbols, tracked_files)
+    return _path_reason(path, tracked_files)
+
+
+def _looks_like_location(span, extensions, top_dirs):
+    """A path-shaped token that could only be a repository location: it ends in an
+    extension some tracked file has, or its first segment is a tracked top-level
+    directory. A slash-joined word pair in prose ("JS/Python", "read/write") is
+    neither and stays prose."""
+    if span.startswith(("http://", "https://", "/")):
+        return False
+    atom = re.split(r"::|#|\s", span, maxsplit=1)[0]
+    return bool(_LOCATION_ATOM.match(atom)) and (
+        Path(atom).suffix in extensions
+        or ("/" in atom and atom.split("/", 1)[0] in top_dirs)
+    )
 
 
 class TestDocsRegistry(unittest.TestCase):
@@ -251,12 +547,19 @@ class TestDocsRegistry(unittest.TestCase):
         checked against the table, and the table's classifications must each be
         named — an unnamed classification, not a fixed vocabulary, is the failure.
         """
-        sentence, table_rows = _individually_classified_rows_section()
+        sections = _register_sections(
+            (REPO / "docs" / "duplication-register.md").read_text()
+        )
+        sentence, table_rows = next(
+            (sentence, rows)
+            for name, sentence, rows in sections
+            if name == "Individually classified rows"
+        )
         self.assertIsNotNone(sentence, "no row-count sentence found above the table")
         self.assertTrue(table_rows, "no data rows found in the table")
 
         table_counts = {}
-        for cells in table_rows:
+        for _, cells in table_rows:
             classification = cells[1]
             table_counts[classification] = table_counts.get(classification, 0) + 1
         table_total = len(table_rows)
@@ -297,6 +600,235 @@ class TestDocsRegistry(unittest.TestCase):
                 f"sentence says {sentence_counts.get(classification)!r} "
                 f"`{classification}` rows but the table has {count}",
             )
+
+    def test_duplication_register_citations_resolve(self):
+        """Every location citation in the register is a durable tracked anchor."""
+        register_path = "docs/duplication-register.md"
+        text = (REPO / register_path).read_text()
+        tracked_files = _tracked_files()
+        extensions = {Path(path).suffix for path in tracked_files if Path(path).suffix}
+        top_dirs = {path.split("/", 1)[0] for path in tracked_files if "/" in path}
+        sections = _register_sections(text)
+        section_map = {name: (sentence, rows) for name, sentence, rows in sections}
+        errors = []
+
+        def add_error(line, span, reason):
+            errors.append(f"{register_path}:{line}: {span!r}: {reason}")
+
+        for name in ("Individually classified rows", "Grouped patterns"):
+            if name not in section_map:
+                add_error(0, name, "required table missing")
+            elif not section_map[name][1]:
+                add_error(0, name, "required table empty")
+
+        classification_cases = (
+            ("re.ASCII", False),
+            ("re.IGNORECASE", False),
+            ("/i", False),
+            ("/", False),
+            (".venv", False),
+            ("math.trunc", False),
+            ("_WS_TRIM_RE.sub", False),
+            ("WS_TRIM_RE.replace", False),
+            ("script_io.write_result", False),
+            ("title.lower()", False),
+            ("^[ab]/", False),
+            ("{20,}", False),
+            ("filter_findings.py", True),
+            ("/tmp/file.py", True),
+            ("::Name", True),
+            ("#frag", True),
+            (":12", True),
+            ("scripts/a spaced file.py", True),
+            ("tests/.../expected.json", True),
+            ("UNRESOLVED:foo.py", True),
+        )
+        for span, expected in classification_cases:
+            actual = _is_location_span(span, extensions)
+            if actual != expected:
+                add_error(
+                    0, span, f"classifier returned {actual!r}, expected {expected!r}"
+                )
+
+        location_helper_cases = (
+            ("stages.js", True),
+            ("workflows/src/stages.js", True),
+            ("workflows/", True),
+            ("agents/*.md", True),
+            ("http://x/y", False),
+            ("/i", False),
+            ("title.lower()", False),
+            ("JS/Python", False),
+            ("read/write", False),
+            ("tests", False),
+        )
+        for span, expected in location_helper_cases:
+            actual = _looks_like_location(span, extensions, top_dirs)
+            if actual != expected:
+                add_error(
+                    0,
+                    span,
+                    f"location helper returned {actual!r}, expected {expected!r}",
+                )
+
+        helper_citations = (
+            (
+                "tests/test_docs_registry.py::TestDocsRegistry::test_duplication_register_row_count_sentence_matches_table",
+                None,
+            ),
+            (".pre-commit-config.yaml::agent-instruction-layout", None),
+            ("workflows/src/stages.js::dispatchVerifySlice", None),
+            ("workflows/src/registry.js::SEVERITY_EMOJI::low", None),
+            (
+                "workflows/src/stages.js::normalizeFieldNames",
+                "unresolved symbol 'normalizeFieldNames' after line 0",
+            ),
+            ("workflows/", None),
+            ("agents/*.md", None),
+            ("workflows/AGENTS.md#The verify boundary", None),
+            (
+                'workflows/test/filter_unit.test.js::"#244/coerce-table: pyIntOrNull/lineBucket shared cross-twin table"',
+                None,
+            ),
+            (
+                'workflows/test/args.test.js::"normalizeArgs treats a provided challengeCap:0 as a real value, not an absent one to default over"',
+                None,
+            ),
+            (
+                'workflows/test/filter_unit.test.js::"#211: template filepath with brace markers matches (the {...} alternative)"',
+                None,
+            ),
+        )
+        for span, expected_reason in helper_citations:
+            actual_reason = _citation_reason(span, tracked_files)
+            if actual_reason != expected_reason:
+                add_error(
+                    0,
+                    span,
+                    f"helper resolved as {actual_reason!r}, expected {expected_reason!r}",
+                )
+
+        ordered_helper_citations = (
+            (
+                "tests/test_docs_registry.py::TestDocsRegistry::_register_sections",
+                "unresolved symbol '_register_sections'",
+            ),
+        )
+        for span, expected_prefix in ordered_helper_citations:
+            actual_reason = _citation_reason(span, tracked_files)
+            if not actual_reason or not actual_reason.startswith(expected_prefix):
+                add_error(
+                    0,
+                    span,
+                    f"ordered helper resolved as {actual_reason!r}, expected prefix {expected_prefix!r}",
+                )
+
+        malformed_citations = (
+            ("scripts/verify_findings.py:12", "line-number citation forbidden"),
+            ("tests/.../test_docs_registry.py", "elided path forbidden"),
+            ("/tmp/file.py", "absolute path forbidden"),
+            ("::Name", "same-file shorthand forbidden"),
+            ("#frag", "same-file shorthand forbidden"),
+            ("scripts/missing.py", "untracked path"),
+            ("scripts/a spaced file.py", "whitespace in location"),
+            ("filter_findings.py", "untracked path"),
+            ("UNRESOLVED:foo.py", "UNRESOLVED requires orchestrator ruling"),
+            ("scripts/./verify_findings.py", "dot path component forbidden"),
+            ("scripts//verify_findings.py", "empty path component forbidden"),
+            ("scripts/*.nothing", "glob matches no tracked files"),
+            ("nope/", "untracked path"),
+            ("scripts/*.py::x", "symbols require an exact tracked file"),
+            ("scripts/verify_findings.py::bad.symbol", "invalid symbol chain"),
+            ("scripts/verify_findings.py::bad symbol", "whitespace in location"),
+            ("README.md::Foo", "no definition patterns for .md"),
+            (
+                "scripts/verify_findings.py::no_such_definition",
+                "unresolved symbol 'no_such_definition' after line 0",
+            ),
+            ('workflows/test/*.test.js::"x"', "titles require an exact tracked file"),
+            ('scripts/verify_findings.py::"x"', "titles require a JS test source"),
+            ('workflows/test/parity.test.js::"no such title"', "title not found"),
+            ('scripts/verify_findings.py::"unterminated', "invalid citation syntax"),
+            ("a::b#c", "invalid citation syntax"),
+            ("CLAUDE.md#", "empty heading forbidden"),
+            ("docs/*.md#X", "heading requires an exact tracked file"),
+            ("scripts/verify_findings.py#X", "heading requires a Markdown file"),
+            ("CLAUDE.md#Nonexistent Heading", "heading not found"),
+        )
+        for span, expected_reason in malformed_citations:
+            actual_reason = _citation_reason(span, tracked_files)
+            if actual_reason != expected_reason:
+                add_error(
+                    0,
+                    span,
+                    f"validator returned {actual_reason!r}, expected {expected_reason!r}",
+                )
+
+        table_citation_keys = set()
+        for _, _, rows in sections:
+            for line, cells in rows:
+                for cell in cells:
+                    for _, _, span in _code_spans(cell):
+                        if not _is_location_span(span, extensions):
+                            continue
+                        table_citation_keys.add((line, span))
+                        reason = _citation_reason(span, tracked_files)
+                        if reason:
+                            add_error(line, span, reason)
+
+        residual_location_spans = set()
+        for start, _, span in _code_spans(text):
+            line = text.count("\n", 0, start) + 1
+            if (line, span) in table_citation_keys:
+                continue
+            if span == "::":
+                continue
+            if _looks_like_location(span, extensions, top_dirs):
+                residual_location_spans.add(span)
+            if _is_location_span(span, extensions):
+                reason = _citation_reason(span, tracked_files)
+                if reason:
+                    add_error(line, span, reason)
+            elif _looks_like_location(span, extensions, top_dirs):
+                add_error(line, span, "location-shaped span not classified")
+
+        fenced = False
+        for line_number, line_text in enumerate(text.splitlines(), 1):
+            if line_text.lstrip().startswith(("```", "~~~")):
+                fenced = not fenced
+                continue
+            if fenced:
+                continue
+            without_code = re.sub(r"`+[^`]*`+", "", line_text)
+            without_links = re.sub(r"\[[^\]]*\]\([^)]*\)", "", without_code)
+            for token in re.findall(r"(?<!\w)\S+", without_links):
+                token = token.strip(".,;:()[]{}<>\"'")
+                if _looks_like_location(token, extensions, top_dirs):
+                    add_error(line_number, token, "uncited location in plain text")
+
+        for span in {
+            "tests/fixtures/parity/",
+            "agents/",
+            "workflows/src/stages.js",
+            "tests/test_parity_fixtures.py",
+            "workflows/test/tools/record_parity.py",
+        }:
+            if span not in residual_location_spans:
+                add_error(0, span, "residual scan missed expected location-shaped span")
+
+        for line_number, line_text in enumerate(text.splitlines(), 1):
+            for match in re.finditer(r"\]\(([^)]+)\)", line_text):
+                target = match.group(1)
+                if target.startswith(("http://", "https://")):
+                    continue
+                if not (REPO / "docs" / target).is_file():
+                    add_error(
+                        line_number,
+                        target,
+                        "markdown link target not found relative to docs/",
+                    )
+
+        self.assertFalse(errors, "\n".join(errors))
 
 
 if __name__ == "__main__":

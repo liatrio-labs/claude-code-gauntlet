@@ -1179,6 +1179,17 @@ def _decode_inline_string(value, path):
                 _inline_reject(
                     f"invalid %u escape U+{unit:04X} at {path} (only surrogates are allowed)"
                 )
+            if (
+                0xD800 <= unit <= 0xDBFF
+                and i + 12 <= len(value)
+                and value[i + 6 : i + 8] == "%u"
+                and all(digit in _INLINE_HEX for digit in value[i + 8 : i + 12])
+                and 0xDC00 <= int(value[i + 8 : i + 12], 16) <= 0xDFFF
+            ):
+                _inline_reject(
+                    f"non-canonical surrogate pair {value[i : i + 12]} at {path} "
+                    "(an astral character is spelled as its UTF-8 bytes)"
+                )
             out.append(chr(unit))
             i += 6
             continue
@@ -1213,13 +1224,13 @@ def _decode_inline_string(value, path):
 
 def _decode_inline_node(node, path="$"):
     if isinstance(node, _InlineObject):
-        # No decoded-duplicate check here: the accepted spelling alphabet is injective, so
-        # two distinct raw keys can never decode to one string. A safe byte is spelled only
-        # as itself (a %XX escape of one is rejected as non-canonical), every other byte
-        # only as canonical uppercase %XX, and a surrogate only as %uXXXX. Raw duplicates
-        # are rejected earlier, by _inline_pairs. tests/test_verify_findings.py pins the
-        # injectivity property; the branch that used to sit here was unreachable and its
-        # test passed on the non-canonical-escape guard instead.
+        # No decoded-duplicate check here: the accepted spelling alphabet is injective as JS
+        # values, so two distinct raw keys cannot decode to the same JS string. A safe byte is
+        # spelled only as itself (a %XX escape of one is rejected as non-canonical), every
+        # other UTF-8 byte only as canonical uppercase %XX, a lone surrogate only as %uXXXX,
+        # and an astral character only as its UTF-8 bytes. Adjacent escaped high/low surrogate
+        # pairs are rejected by name. Raw duplicates are rejected earlier, by _inline_pairs.
+        # tests/test_verify_findings.py pins the injectivity property.
         decoded = {}
         for raw_key, raw_value in node:
             key = _decode_inline_string(raw_key, f"{path}.<key>")
@@ -1610,9 +1621,9 @@ def _run_receipt(args):
     sha = args.head_sha or _resolve_head_sha() or ""
     try:
         # BEFORE the decode, over the bytes as received: the token proof covers what the
-        # executor was asked to reproduce, so it survives every normalisation the decode
-        # would erase (a re-spelled number, an astral character re-spelled as an escaped
-        # surrogate pair). Always computable -- the token is printable ASCII -- where
+        # executor was asked to reproduce, so it survives number-spelling normalisation. It
+        # also distinguishes an astral character re-spelled as an escaped surrogate pair,
+        # which the decoder rejects by name. Always computable -- the token is printable ASCII -- where
         # _input_checksum goes None on a number the two runtimes spell differently.
         inline_checksum = fnv1a32(args.input_inline)
         data = decode_inline_slice(args.input_inline)

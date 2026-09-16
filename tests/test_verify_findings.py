@@ -2976,26 +2976,46 @@ class TestSliceInputRecovery(unittest.TestCase):
         self.assertEqual(envelope["receipt"]["inline_checksum"], fnv1a32(token))
 
     def test_the_token_proof_separates_documents_the_value_proof_cannot(self):
-        """An astral character re-spelled as an escaped surrogate pair.
+        """Rejected token input and the independent value-proof limitation.
 
-        The decoder accepts both spellings and they decode to different Python strings,
-        but js_stringify_pretty serialises them identically, so the value proof reports
-        one checksum for both. The token proof tells them apart.
+        An astral character and its escaped surrogate pair are distinct Python strings,
+        but independently constructed documents containing them serialize identically as
+        JS values, so the value proof cannot separate them. The decoder rejects the
+        escaped spelling by name, while the token proof still distinguishes the tokens.
         """
         from scripts.assemble_artifacts import fnv1a32
 
+        astral_file = "\U0001f600.js"
+        escaped_file = chr(0xD83D) + chr(0xDE00) + ".js"
+        self.assertEqual(len(astral_file), 4)
+        self.assertEqual(len(escaped_file), 5)
+        self.assertNotEqual(astral_file, escaped_file)
+        astral_doc = {
+            "findings": [{"id": "a", "file": astral_file}],
+            "base_branch": "main",
+        }
+        escaped_doc = {
+            "findings": [{"id": "a", "file": escaped_file}],
+            "base_branch": "main",
+        }
         astral = (
             '{"findings":[{"id":"a","file":"%F0%9F%98%80.js"}],"base_branch":"main"}'
         )
         escaped = (
             '{"findings":[{"id":"a","file":"%uD83D%uDE00.js"}],"base_branch":"main"}'
         )
-        decoded_astral = decode_inline_slice(astral)
-        decoded_escaped = decode_inline_slice(escaped)
-        self.assertNotEqual(decoded_astral, decoded_escaped)
-        self.assertEqual(
-            _input_checksum(decoded_astral), _input_checksum(decoded_escaped)
+        self.assertEqual(decode_inline_slice(astral), astral_doc)
+        with self.assertRaises(InputError) as ctx:
+            decode_inline_slice(escaped)
+        self.assertIn(
+            "non-canonical surrogate pair %uD83D%uDE00",
+            str(ctx.exception),
         )
+        astral_checksum = _input_checksum(astral_doc)
+        escaped_checksum = _input_checksum(escaped_doc)
+        self.assertIsNotNone(astral_checksum)
+        self.assertIsNotNone(escaped_checksum)
+        self.assertEqual(astral_checksum, escaped_checksum)
         self.assertNotEqual(fnv1a32(astral), fnv1a32(escaped))
 
     def test_receipt_writes_the_decoded_inline_document_before_coercion(self):
@@ -3251,6 +3271,56 @@ class TestInlineSliceDecoder(unittest.TestCase):
             decode_inline_slice(payload)
         self.assertIn("inline slice-input rejected", str(ctx.exception))
 
+    def test_rejects_adjacent_escaped_surrogate_pair_by_name(self):
+        cases = [
+            (
+                '{"findings":[{"file":"%uD83D%uDE00.js"}]}',
+                "$.findings[0].file",
+            ),
+            (
+                '{"findings":[{"%uD83D%uDE00":"ok"}]}',
+                "$.findings[0].<key>",
+            ),
+        ]
+        for payload, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaises(InputError) as ctx:
+                    decode_inline_slice(payload)
+                self.assertEqual(
+                    str(ctx.exception),
+                    "inline slice-input rejected: non-canonical surrogate pair "
+                    f"%uD83D%uDE00 at {path} "
+                    "(an astral character is spelled as its UTF-8 bytes)",
+                )
+
+    def test_inline_surrogate_pair_accept_reject_matrix(self):
+        cases = [
+            ("%uD83D%uDE00", None),
+            ("%uDBFF%uDFFF", None),
+            ("%uD800%uDBFF", "\ud800\udbff"),
+            ("%uDFFF%uD800", "\udfff\ud800"),
+            ("tail%uD800", "tail\ud800"),
+            ("%uD800x%uDFFF", "\ud800x\udfff"),
+            ("%uD800%C3%A9", "\ud800\u00e9"),
+            ("%F0%9F%98%80", "\U0001f600"),
+            ("%F4%8F%BF%BF", "\U0010ffff"),
+        ]
+        from scripts.verify_findings import _decode_inline_string
+
+        for token, expected in cases:
+            with self.subTest(token=token):
+                if expected is None:
+                    with self.assertRaises(InputError) as ctx:
+                        _decode_inline_string(token, "$")
+                    message = str(ctx.exception)
+                    self.assertIn(f"non-canonical surrogate pair {token}", message)
+                    self.assertIn(
+                        "(an astral character is spelled as its UTF-8 bytes)",
+                        message,
+                    )
+                else:
+                    self.assertEqual(_decode_inline_string(token, "$"), expected)
+
     def test_rejects_lowercase_percent_escape(self):
         self._assert_rejected('{"findings":[{"evidence":"%5c"}]}')
 
@@ -3297,9 +3367,14 @@ class TestInlineSliceDecoder(unittest.TestCase):
 
         This is the property that makes a decoded-duplicate check unnecessary: raw
         duplicates are rejected by _inline_pairs, and no code point has two accepted
-        spellings, so distinct raw keys stay distinct after decoding.
+        spellings as JS values, so distinct raw keys stay distinct after decoding.
         """
         from scripts.verify_findings import _decode_inline_string
+
+        def normalize_js_value(value):
+            return value.encode("utf-16-le", "surrogatepass").decode(
+                "utf-16-le", "surrogatepass"
+            )
 
         def accepted_spellings(cp):
             ch = chr(cp)
@@ -3311,10 +3386,15 @@ class TestInlineSliceDecoder(unittest.TestCase):
                 f"%u{cp:04X}",
                 f"%u{cp:04x}",
             )
+            if cp > 0xFFFF:
+                high = 0xD800 + ((cp - 0x10000) >> 10)
+                low = 0xDC00 + ((cp - 0x10000) & 0x3FF)
+                candidates += (f"%u{high:04X}%u{low:04X}",)
             out = set()
             for candidate in candidates:
                 try:
-                    if _decode_inline_string(candidate, "$") == ch:
+                    decoded = _decode_inline_string(candidate, "$")
+                    if normalize_js_value(decoded) == normalize_js_value(ch):
                         out.add(candidate)
                 except InputError:
                     # A rejected spelling is not an accepted one, and only accepted
@@ -3323,14 +3403,21 @@ class TestInlineSliceDecoder(unittest.TestCase):
                     continue
             return out
 
-        probes = [*range(0x20, 0x300), 0x2028, 0xD800, 0xDFFF, 0x1F600]
+        probes = [
+            *range(0x20, 0x300),
+            0x2028,
+            0xD800,
+            0xDFFF,
+            0x1F600,
+            0x10FFFF,
+        ]
         for cp in probes:
             with self.subTest(code_point=hex(cp)):
                 self.assertLessEqual(
                     len(accepted_spellings(cp)),
                     1,
-                    f"U+{cp:04X} has more than one accepted spelling, so two distinct "
-                    "raw keys could decode equal and the decoder needs a "
+                    f"JS-value equality: U+{cp:04X} has more than one accepted spelling, "
+                    "so two distinct raw keys could decode equal and the decoder needs a "
                     "duplicate-decoded-key check again",
                 )
 

@@ -1410,8 +1410,9 @@ export function sliceInputChecksum(content) {
 // The stronger half of guard (4): it covers the exact characters the executor was asked to
 // reproduce, so it catches every alteration the value proof can miss — key transposition,
 // a findings-array or cross_file_refs permutation, an invented field, a re-spelled number,
-// and an astral character rewritten as an escaped surrogate pair (the decoder accepts that
-// spelling, and both decode to documents the value proof serialises identically). The
+// and an astral character rewritten as an escaped surrogate pair. The decoder rejects that
+// spelling by name; independently constructed documents containing an astral character or
+// its surrogate pair still serialize identically for the value proof. The
 // token is printable ASCII by construction (encodeSliceInline's postcondition), so this
 // proof needs no collation, escaping or number-spelling contract in either runtime — the
 // property that made it unavailable when PR #171 weighed it, and that PR #287's inline
@@ -1560,8 +1561,9 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
   // (4a) TOKEN PROOF — over the exact characters the executor was handed. Checked FIRST
   //      because it is the strictly stronger half: every mutation the value proof catches
   //      moves the token too, and the token also covers what the value proof cannot see
-  //      (a re-spelled number, an astral character rewritten as an escaped surrogate
-  //      pair). It is also always computable, where the value proof goes null on a number
+  //      (a re-spelled number, or an escaped surrogate pair whose decoded JS value would be
+  //      unchanged). The decoder also rejects the escaped-pair spelling by name. It is also
+  //      always computable, where the value proof goes null on a number
   //      the two runtimes spell differently.
   if (expectedInlineChecksum != null) {
     const tokenProof = typeof r.inline_checksum === 'string' ? r.inline_checksum.trim() : '';
