@@ -1294,7 +1294,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         self.assertEqual(
             identity["derivedFrom"],
             {
-                "reviewConfigPath": "`present` when `reviewConfigPath` is set, else `absent`",
+                "reviewMd": "`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`",
             },
         )
         self.assertEqual(

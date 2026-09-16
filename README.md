@@ -114,7 +114,7 @@ Code under review is untrusted input throughout: trust-boundary delimiters on th
 
 ## Configuration: REVIEW.md
 
-Code Gauntlet tells you when it doesn't find a `REVIEW.md` — a non-blocking notice, not an offer — and you can scaffold one any time with `/build-review-md`, mirroring your CLAUDE.md locations: a root file for global defaults, subdirectory files for per-area thresholds or ignores (say, stricter security for `src/auth/`). Matching child thresholds override root defaults and matching ignore patterns accumulate; free prose remains shared project guidance.
+Code Gauntlet tells you when it doesn't find a `REVIEW.md` — a non-blocking notice, not an offer — and you can scaffold one any time with `/build-review-md`, mirroring your CLAUDE.md locations: a root file for global defaults, subdirectory files for per-area thresholds or ignores (say, stricter security for `src/auth/`). Matching child thresholds override root defaults and ignore patterns accumulate per subtree; every context-reading agent receives all source-path-tagged prose blocks, each advisory for its source directory's subtree.
 
 ````markdown
 ## Rules
@@ -127,7 +127,7 @@ ignore:
 ```
 ````
 
-Only the fenced `yaml # code-gauntlet` block above is parsed mechanically; `## Rules` and any other prose reach the review agents as advisory context but aren't otherwise interpreted. Confidence thresholds default to 55 for non-security findings and 70 for security findings — set `confidence_threshold` (and optionally `security_min_confidence`) in the config block to override them. You maintain the ignore list by hand — there's no auto-maintenance. Hierarchy rules and the full field reference: [review-md-spec.md](skills/code-gauntlet/references/review-md-spec.md). The companion `/build-review-md` skill walks you through initial setup.
+Only the fenced `yaml # code-gauntlet` block above is parsed mechanically by the pipeline for subtree thresholds and ignores; every context-reading agent receives all source-path-tagged prose blocks as advisory guidance for their source subtrees. Confidence thresholds default to 55 for non-security findings and 70 for security findings — set `confidence_threshold` (and optionally `security_min_confidence`) in the config block to override them. You maintain the ignore list by hand — there's no auto-maintenance. Hierarchy rules and the full field reference: [review-md-spec.md](skills/code-gauntlet/references/review-md-spec.md). The companion `/build-review-md` skill walks you through initial setup.
 
 ## Architecture
 

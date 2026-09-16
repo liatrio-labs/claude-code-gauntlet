@@ -673,7 +673,7 @@ class TestGeneratedDataContracts(unittest.TestCase):
             (
                 "skills/code-gauntlet/references/phase2-triage.md",
                 "scopeAnswer",
-            ): 4,
+            ): 5,
             (
                 "skills/code-gauntlet/references/phase3-dispatch.md",
                 "limits.deliveryCap",

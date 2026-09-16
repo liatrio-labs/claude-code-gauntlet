@@ -405,5 +405,14 @@ class TestPromptInjectionArtifactsMirror(unittest.TestCase):
         self.assertIn(sentence, convention)
 
 
+class TestReviewDimensionsContract(unittest.TestCase):
+    def test_2l_names_the_dispatch_mechanism(self):
+        text = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text()
+        tail = text.split("## 2l.", 1)[1]
+        section = re.split(r"(?m)^(?:---|## )", tail, maxsplit=1)[0]
+        self.assertIn("deriveAgentFlags", section)
+        self.assertNotIn("REVIEW.md", section)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -409,7 +409,7 @@ KNOB_REGISTRY = [
         "type": "string",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": "reviewConfigPath",
+        "derivedFrom": "reviewMd",
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": False,

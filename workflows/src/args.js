@@ -75,7 +75,7 @@ export const KNOB_REGISTRY = [
   { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['incremental', 'full', 'skip'] }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' }, derivedFrom: null, deriveWhen: 'priorReviewDetector', nullReceipt: [], resolvedKey: true },
   { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['local', 'error'] }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
   { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'scopeAnswer', waistMap: null, derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [], resolvedKey: false },
-  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: 'reviewConfigPath', deriveWhen: null, nullReceipt: [], resolvedKey: false },
+  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [], resolvedKey: false },
 ];
 
 export function matchesRule(rule, value, mode) {
@@ -396,10 +396,15 @@ export const DERIVE_WHEN = {
 };
 
 export const DERIVED_FROM = {
-  reviewConfigPath: {
-    fill: (args) => (args.reviewConfigPath != null ? 'present' : 'absent'),
+  reviewMd: {
+    fill: (args) => {
+      if (Array.isArray(args.reviewMd)) {
+        return args.reviewMd.length > 0 ? 'present' : 'absent';
+      }
+      return args.reviewConfigPath != null ? 'present' : 'absent';
+    },
     source: 'discovery',
-    describe: '`present` when `reviewConfigPath` is set, else `absent`',
+    describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`',
   },
 };
 
@@ -1045,8 +1050,8 @@ export function validateArgs(args) {
       }
     }
   }
-  // Optional reviewMd (issue #24 PR2): the raw, ORDERED discovery of REVIEW.md files —
-  // root-first, increasing directory depth — as [{path, text}]. This is the RAW-text
+  // Optional reviewMd (issue #24 PR2): the raw, ORDERED discovery of REVIEW.md files
+  // as [{path, text}]; layer construction owns depth ordering. This is the RAW-text
   // counterpart to the pre-parsed `reviewConfig` above: resolveReviewConfig (below) builds
   // a root layer and optional subtree layers by calling parseReviewMd per entry. An empty
   // array is a legal, authoritative "discovery ran and found
@@ -1081,6 +1086,13 @@ export function validateArgs(args) {
         if (typeof entry.text !== 'string') {
           errors.push(`reviewMd[${i}].text must be a string`);
         }
+      }
+      const hasRootReviewMd = args.reviewMd.some((entry) => (
+        isPlainObject(entry) && entry.path === 'REVIEW.md'
+      ));
+      const hasReviewConfigPath = args.reviewConfigPath != null;
+      if (hasRootReviewMd !== hasReviewConfigPath) {
+        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd contains an entry with path exactly REVIEW.md');
       }
     }
   }

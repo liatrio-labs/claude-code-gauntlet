@@ -118,54 +118,35 @@ Validate the saved diff before relying on it:
 
 If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own git diff chain — but note that fallback runs inside an executor subagent (which has shell), not in the script. For **branch comparison** and **local changes** target types, produce the diff with `git diff <base>...HEAD` / `git diff HEAD` and the file list with `git diff --name-only`.
 
-Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md` at repo root and in directories with changed files.
+Check for `docs/`, `specs/`, and `research/` directories. Use only the collector receipt from 2d for REVIEW.md discovery and its output for CLAUDE.md/AGENTS.md/QODO.md rules.
 
 ---
 
 ## 2d. Gather Project Context
 
-1. **CLAUDE.md / AGENTS.md / QODO.md** — resolved by `scripts/collect_project_rules.py` (step 3
-   below); never `Read` or `Glob` these directly here.
-2. **REVIEW.md** — Discover across the repo root + changed-file directories + their ancestors (the same directory set step 3 below walks for AGENTS.md/CLAUDE.md/QODO.md, issue #80) — not a CLAUDE.md-location anchor. See `references/review-md-spec.md` for format, scaffolding templates, and hierarchy rules. REVIEW.md lets maintainers set confidence/severity thresholds and finding-suppression patterns via its config block, plus custom rules and other free-text guidance folded into agent context by value. It does not gate which dimensions run — that is automatic (the trivial-scope gate below). Stamp each discovered file's raw text into `args.reviewMd` (root-first, increasing depth) — do not hand-parse it here; `resolveReviewConfig` (`workflows/src/args.js`) owns the parse/merge.
-3. **AGENTS.md / QODO.md — resolved by `scripts/collect_project_rules.py`, never `Read` directly.** A plain `Read` of a repo's CLAUDE.md does not expand Claude Code's `@path` import directive — verified empirically — and Anthropic's own docs tell AGENTS.md-using repos to write exactly that: a CLAUDE.md whose entire body is an import pointer. Measured against the benchmark mirror repos at current HEAD: sentry's and grafana's root CLAUDE.md is the identical 11-byte string `@AGENTS.md\n`; discourse's is the 40-byte inline pointer `See @AI-AGENTS.md for all instructions.\n`. A plain `Read` returns that literal pointer text as the entirety of "project rules" for three of five repos, silently — and a fourth hardcoded filename would still miss discourse's arbitrary `AI-AGENTS.md` target. Resolving the pointer, not naming more files, is the fix.
+1. **Project-rule inputs.** The script below collects CLAUDE.md, AGENTS.md, QODO.md, and REVIEW.md for shared context; Read REVIEW.md separately only for the raw waist in step 3, and never Read or Glob CLAUDE.md/AGENTS.md/QODO.md directly here.
+2. **Run the collector first**, after 2c saves the changed-file list, as a standalone script call:
 
-   Invoke the script directly (a standalone script call, not `python3 -c` JSON assembly), after 2c has saved the changed-files list:
-
-   ```
+   ```bash
    python3 "{plugin_root}/scripts/collect_project_rules.py" --repo-root "$(git rev-parse --show-toplevel)" --out "{output_dir}/code-gauntlet-project-rules-{head_sha_short}.md" --changed-files "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
    ```
 
-   `PROJECT_RULE_FILENAMES = ("CLAUDE.md", "AGENTS.md", "QODO.md")` is the one place a source name is added. QODO.md is discovered on identical terms as maintainer-authored review-tool metadata (distinct from Qodo's own `.pr_agent.toml` behavior config) — no repo in the benchmark set has exercised that path yet, but the script does not special-case it. **REVIEW.md is deliberately not a source here** — it has its own structured parse path (step 2 above, `references/review-md-spec.md`) and its own precedence semantics; this script does not duplicate it.
+   Parse its one-line stdout JSON receipt and retain it; stop on failure instead of stamping a successful empty discovery. The script owns the repo-root, changed-file-directory, and ancestor walk. REVIEW.md text is copied with source provenance into review-rules blocks before project-rules blocks; the script does not parse its config fence. PROJECT_RULE_FILENAMES controls CLAUDE.md/AGENTS.md/QODO.md discovery, and REVIEW_RULE_FILENAME names the separate REVIEW.md source kind.
+   Project-rule imports resolve relative to their containing file, within the repository, to Markdown targets, up to four hops; inline imports are recognized outside code spans and fences. The review pass does not follow imports or deduplicate scopes by content. A project import of a realpath already rendered as review-rules records `review_rules_source` and stops at that target. Direct project walk hits remain eligible. Other project imports, including out-of-walk REVIEW.md targets, remain project rules and do not add review scopes.
+   Project rules remain additive: more specific directories win on conflict, with CLAUDE.md before AGENTS.md before QODO.md at equal specificity. REVIEW.md settings retain the separate pipeline precedence in `references/review-md-spec.md`.
+3. **Stamp REVIEW.md raw inputs from the receipt.** Read exactly the paths in `receipt.review_md`, in receipt order, and stamp `args.reviewMd` as `[{ path, text }, ...]`, using each repo-relative path and the full raw file text. Do not sort, walk directories, or parse the files yourself. An empty list stamps `[]`, an authoritative "discovered nothing", not an omitted field. Keep the text by value because the workflow has no filesystem. Set `reviewConfigPath` to the root REVIEW.md path when the list contains `REVIEW.md`, otherwise null.
+   A capped REVIEW.md remains listed: Read its full raw text for settings, retain the cap gap, and do not add its text separately to the shared context. A failed raw Read stops this handoff; never replace it with empty text. See `references/review-md-spec.md` for format and hierarchy; `resolveReviewConfig` owns parsing and subtree settings.
+4. **Derive the optional notice from the receipt.** In interactive mode, use only `receipt.review_md` and `receipt.review_md_dirs`. If `review_md` is empty, emit the spec's "No REVIEW.md found" notice. Otherwise, when an entry's path is exactly `REVIEW.md`, select the first directory in `review_md_dirs` other than `.` whose {directory}/REVIEW.md path is absent from `review_md` and whose REVIEW.md does not appear in the receipt's skipped list, and emit the spec's root notice with that directory. If no such directory exists, or only subdirectory REVIEW.md files exist, emit no optional notice. Emit at most one, alongside triage. Suppress these notices headless. Receipt failures stop the handoff; all receipt gaps are disclosed separately. Never reconstruct a directory walk or ask a configuration question.
 
-   The script follows `@path` imports found in any discovered file (recognized inline mid-sentence, not only on a standalone line; skipped inside code spans and fenced code blocks; relative paths resolve against the containing file's own directory — matching Claude Code's real import contract up to its 4-hop depth cap), confines every resolved target inside the repo via `realpath`, and requires it to be `.md`. Every skip or refusal (outside the repo, non-markdown, over a byte/depth cap, a cycle) is recorded, never silent; stdout is exactly one line of JSON — the provenance receipt — on every path, including failure. The assembled markdown block itself goes to `--out`, not stdout. The `--out` block wraps each source in `<project-rules path=... modified-in-this-diff=...>` with a leading caveat line, and the receipt's `sources[].modified_in_diff` mirrors the attribute.
-
-   **Precedence.** Sources accumulate — CLAUDE.md, AGENTS.md, and QODO.md text are additive rule content, not competing settings, so every discovered file's content is included, not just the first found. A directory-level file's rules apply to that subtree. On a direct conflict between two rules, the more specific directory wins; at equal specificity, CLAUDE.md wins over AGENTS.md over QODO.md, matching `PROJECT_RULE_FILENAMES`'s declared order. This is separate from REVIEW.md's own precedence (`references/review-md-spec.md` → Hierarchy), which this script does not touch.
-
-**Tool instructions for REVIEW.md discovery:**
-
-Do not `Glob(pattern: "**/REVIEW.md")` — a repo-wide glob returns REVIEW.md files with no
-relationship to any changed file and defeats the discovery walk's cost and precision bound
-(issue #80). Walk the same directory set step 3 walks
-for AGENTS.md/CLAUDE.md/QODO.md instead: the repo root, every changed file's directory, and
-their ancestors up to root. Check each directory in that walk for a `REVIEW.md`. CLAUDE.md
-project-rules discovery is not a `Glob` either — it is resolved by
-`scripts/collect_project_rules.py` in step 3 above, never `Read` or `Glob`'d directly here.
-
-Never use `find` from Bash for locating these files.
+Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a second search. Never use `find` from Bash for locating these files. Never Read or Glob CLAUDE.md/AGENTS.md/QODO.md directly here.
 
 ### REVIEW.md Detection
 
-Complete this check before proceeding to 2e. REVIEW.md thresholds and ignore patterns apply to the
-root by default and to matching finding subtrees; free prose remains shared context for every agent.
+Complete 2d's collector and raw-input handoff before proceeding to 2e. REVIEW.md thresholds and ignore patterns apply to matching finding subtrees through the pipeline. Every context-reading agent receives all source-path-tagged `review-rules` blocks; each block's prose is advisory for its source directory's subtree.
 
-Walk the repo root + changed-file directories + their ancestors (the project-rules directory set) and
-check each for a matching REVIEW.md. **Discovery never blocks and never asks** (issue #35) — report what
-you found as part of the triage announcement and continue. `references/review-md-spec.md` → Discovery is
-the canonical owner of the notice wording; do not restate it here.
+Use only `receipt.review_md` and `receipt.review_md_dirs` from step 2 for the optional notice in step 4. A successful empty discovery never blocks or asks a question (issue #35). Report the result alongside triage and continue. Collector or raw Read failures stop the handoff. `references/review-md-spec.md` -> Discovery owns the exact notice wording.
 
-Merge configs hierarchically — thresholds override and ignore patterns accumulate by matching
-finding subtree, while free prose remains shared — via the raw `args.reviewMd` handoff described
-in SKILL.md, never by hand-parsing here.
+Pass raw `args.reviewMd` as described in SKILL.md. The pipeline merges thresholds and ignore patterns per matching finding subtree; the shared context retains every source-path-tagged prose block as advisory guidance for its source subtree. Never hand-parse here.
 
 > Headless mode has identical behavior, minus the notice — REVIEW.md is
 > read-only headless and `build-review-md` is never invoked. The hierarchical parse still runs. See
@@ -294,9 +275,10 @@ Never use `grep` or `find` from Bash for AI detection.
 
 ## 2l. Determine Review Dimensions
 
-All on by default unless REVIEW.md disables them. All agents use Sonnet except security-reviewer (always Opus) — the single benchmarked model policy.
-
-Skip conditions: test-analyzer (no test files in repo), type-design-analyzer (no new types).
+The workflow computes the dispatched dimensions with `deriveAgentFlags(riskTable, changedLines, scopeAnswer)` in `workflows/src/stages.js`.
+A `light` answer on a light-eligible diff (every changed file low-risk and fewer than 50 changed lines) yields `{ deep: false }` and dispatches only bug-detector and security-reviewer.
+Every other valid run dispatches all seven discovery agents.
+The default discovery model policy uses Sonnet except security-reviewer, which uses Opus; a `policy.subagentModel` override applies to every stage.
 
 ---
 
@@ -306,18 +288,13 @@ The workflow's **summarize, discovery, and validate** agents Read a shared conte
 
 Write it with `python3 -c "import json; ..."`. Contents, concatenated in this order into one `content` string:
 
-1. REVIEW.md project rules (2d step 2, gathered by value).
-2. CLAUDE.md / AGENTS.md / QODO.md project rules, resolved by `scripts/collect_project_rules.py` (2d step 3) and folded in via `open(path).read()` on its `--out` file, **inside this same `python3 -c` invocation** — never retyped by the model. CLAUDE.md's "Artifact persistence" section records the artifact-writer's transcription of a multi-KB payload diverging from its input on 3 of 3 measured runs; hand-copying this block into `content` risks the identical failure one stage earlier, for no reason, when the file is already on disk to `open()`.
-3. Risk classification (2e) and AI-generated-code status (2k).
-4. The full diff inside `<untrusted-code-content>` tags. Raw diff lines only — never substitute a summary for changed content; evidence destroyed during summarization cannot be recovered by agents.
+1. REVIEW.md and CLAUDE.md/AGENTS.md/QODO.md rules from `scripts/collect_project_rules.py` (2d step 2), folded into `content` with `open(path).read()` on its `--out` file inside this same `python3 -c` invocation. The file already contains review-rules blocks before project-rules blocks; never retype it.
+2. Risk classification (2e) and AI-generated-code status (2k).
+3. The full diff inside `<untrusted-code-content>` tags. Use raw diff lines; never substitute a summary for changed content.
 
-**Do not guard the read in step 2.** The `open(path).read()` on `collect_project_rules.py`'s `--out` file must be unconditional — no `try`/`except`, no `os.path.exists()` check, no empty-string fallback if it raises. A missing rules file means the collection step (2d step 3) did not run; that must fail the context-file write, because a context file with a silently empty rules section is indistinguishable from a repo that genuinely has no convention files. This is the same file-based handoff already established for the diff: SKILL.md's `diff` section writes it with `gh pr diff {pr_number} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"`, and its `numstat` section reads it back with a plain, unguarded `open(path, 'r', errors='replace')` — no existence check there either. The rules block follows that precedent, not a new one.
-
-This is a deliberate asymmetry with `contextLines`/`contextChars` below, which *do* degrade to a disclosed gap rather than fail. An unmeasured context file still IS the context file, just one whose size is unknown — hard-failing there would trade a partial-but-usable read for a dead run. The rules file has no such partial-but-usable state: `collect_project_rules.py` always succeeds and always writes a file: a repo with no CLAUDE.md/AGENTS.md/QODO.md anywhere yields a clean `ok:true` and an **empty** `--out` file, not a missing one. A missing file is therefore unambiguously "the collection step did not run" — never a legitimate state a well-behaved run can produce — which is exactly what makes hard-failing correct here and wrong there.
-
-**What this does not cover.** No test can force a model-executed Phase 2 to actually invoke `collect_project_rules.py` before writing the context file — that is a live-execution property, not a static one, and a test asserting only that this doc mentions the script would be the "phrase count" guard CLAUDE.md's own design doctrine forbids (a wording-defeated guard is already on record elsewhere in this file: an earlier `contextPath` guard was defeated in a single edit by rewording, whole suite green). The unconditional `open()` above is the guard that exists: if the collection step was skipped, the write fails loudly instead of producing a plausible-looking, silently rules-less context file. It proves nothing about whether the step ran — only that if it didn't, the run cannot quietly proceed as though it had.
-
-**Ordering is load-bearing, not cosmetic.** All four pieces above must be concatenated into `content` — the exact string measured for `contextLines`/`contextChars` below — *before* that measurement runs, never appended to the file afterward. `contextReadPlan` sizes every agent's `Read` plan strictly from those two stamped numbers; a project-rules block folded in after the count is taken is a block those numbers don't describe, so the plan built from them stops short of the file's true end — silently reopening issue #48 for exactly the reason a partial `Read` looks identical to a complete one. Build the full `content` string first, in the order above, *then* measure it, *then* write it — never write-then-append, and never measure a string that is still missing a piece.
+**Do not guard the read in item 1.** The `open(path).read()` of the collector's `--out` must be unconditional: no existence check, try/except, or empty-string fallback. A missing file must fail the context write. A successful collection with neither source kind writes `project rules: none collected (REVIEW.md, CLAUDE.md, AGENTS.md, QODO.md)`, not an empty file. A failed collection is reported by its receipt and must not proceed as successful discovery.
+**Build all three items into `content` before measuring and writing it.** `contextLines` and `contextChars` must describe that complete string, including every collected rule block. Never append a block after measurement. The measurement fields may degrade to a disclosed gap; a missing collector artifact cannot silently become a rules-free context.
+The existing transcription evidence for model-copied project rules also applies to REVIEW.md text. The shared-context fold reads the collector's text from disk; the raw workflow waist still passes text by value. No static wording pin proves a model invoked the collector or copied the waist faithfully.
 
 The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to `renderReport()`. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record. (The emission machinery still ships — its removal is the deferred S8 migration.)
 
@@ -362,7 +339,7 @@ Producer command:
 
 **Omit optional fields you have no value for; never stamp an explicit `null`.**
 The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`.
-Keep `reviewConfigPath: null` when REVIEW.md is absent; it records provenance.
+Keep `reviewConfigPath: null` when the receipt has no root REVIEW.md, even if it lists subdirectory files; this field records root provenance.
 
 **Required fields (`validateArgs` fails loud without them):**
 
@@ -396,7 +373,7 @@ The workflow derives these waist fields from the copied `configEcho` receipt. Do
 
 The workflow fills these receipt entries itself; never stamp them.
 
-- `configEcho.review_md` (interactive runs): `present` when `reviewConfigPath` is set, else `absent`.
+- `configEcho.review_md` (interactive runs): `present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`.
 <!-- /generated-from-registry-identity:derived_waist_fields -->
 
 The Challenge stage applies the receipt-backed tier and cap before Phase 8 posts `artifactPaths.postReview` verbatim.
@@ -414,10 +391,10 @@ The Challenge stage applies the receipt-backed tier and cap before Phase 8 posts
 - `contextLines` / `contextChars` — the shared context file's measured size, from the write step above. **Not provenance — consumed.** `contextReadPlan` turns them into the exact `Read` calls the Summarize/Discover/Validate prompts enumerate, so the agent is told which calls to make instead of having to notice an unannounced truncation. Both optional (absent ⇒ count-free read-to-end wording); `contextChars` requires `contextLines`; both must be positive integers.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
-- `reviewMd` — `[{ path, text }, ...]` in discovery order (root-first, increasing depth), the raw text of every REVIEW.md found (2d step 2). Never hand-parsed by the skill: the workflow's `resolveReviewConfig` (`workflows/src/args.js`) builds root and subtree layers before the Filter stage selects settings by finding file. An empty array is a legal, authoritative "discovered nothing."
+- `reviewMd` - `[{ path, text }, ...]` in collector receipt order (2d step 3), the raw text of every REVIEW.md listed by the receipt. Never hand-parse it here: the workflow's `resolveReviewConfig` (`workflows/src/args.js`) builds root and subtree layers before the Filter stage selects settings by finding file. An empty array is a legal, authoritative "discovered nothing."
 - `exclusionsText` — the raw text of whatever exclusions source was found (e.g. `.reviewignore`), parsed by `resolveReviewConfig` via `loadExclusions`.
 - `reviewConfig` / `exclusionPatterns` — the LEGACY pre-parsed form. Still accepted for backward compatibility (bench children, older callers), but do not stamp these alongside `reviewMd`/`exclusionsText` for the same axis — the waist rejects a waist that stamps both the raw and pre-parsed form (single authority).
-- `reviewConfigPath` — the REVIEW.md path (or `null`), carried for provenance. Unrelated to the reviewMd/reviewConfig choice above.
+- `reviewConfigPath` - the root REVIEW.md path (or `null`), carried for provenance. When `reviewMd` is an array, this must be non-null iff an entry has path exactly "REVIEW.md"; legacy pre-parsed callers retain their existing path provenance.
 - `persist` — optional, `{ assembleScriptPath: "{plugin_root}/scripts/assemble_artifacts.py", returnPrimaries: true }`. **Stamp both.** It selects one of three channels. `returnPrimaries: true` takes the RETURN channel: no agent is dispatched at persist time — the workflow returns the three primaries (findings JSON, report markdown, persist plan) in its own return, and Phase 8 writes them with `materialize_artifacts.py`. `{ assembleScriptPath }` alone takes the derived-writer path: the artifact-writer transcribes those primaries and a pinned executor runs `assemble_artifacts.py` to *derive* the post-review and checkpoint artifacts from `findings.json` plus the plan, returning a content-proof receipt instead of re-emitting them by value. That path is still live and is the automatic fallback when the primaries exceed the return channel's budget, which is the only reason to stamp the script path alongside `returnPrimaries`. Absent → the legacy full by-value writer, unchanged. `artifactPaths` and Phase 8 are the same on all three; see `SKILL.md` § "`persist` (optional, but stamp it)".
 
 **`verify` handoff (sha-scoped paths for the executor's pinned command):**
@@ -440,4 +417,4 @@ The skill supplies only the path base (and `verifySliceSize` only when REVIEW.md
 
 Announce triage results before proceeding: PR title, review mode, file counts by risk level, AI-generated files if any, active dimensions, incremental scope (`Full`, or `Incremental since {last_reviewed_sha} (N commits)` when 2b-post step 3 resolved Incremental — `Full` is the no-op case for a normal review). For 1000+ line PRs, add: "This PR is [N] lines. Review effectiveness drops sharply above 400 lines. Consider splitting into smaller PRs."
 
-If `collect_project_rules.py`'s receipt (2d step 3) carries a non-empty `gaps[]`, fold each entry into this announcement as a one-line note. A skipped or refused project-rules source (outside the repo, non-markdown, over a cap, a cycle, a missing import target) is exactly the kind of silent degradation this announcement exists to surface — a receipt line on stdout nobody reads is not disclosure. Also announce, as a one-line note, every receipt source with `modified_in_diff: true`; a PR editing the rules that govern its own review is disclosed, not blocked.
+If the collector receipt (2d step 2) has `gaps[]`, announce each as a one-line note. Also announce every `sources[]` and `review_md[]` entry with `modified_in_diff: true`; a change to rules governing this review is disclosed, not blocked.
