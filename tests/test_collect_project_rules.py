@@ -685,10 +685,14 @@ class TestReviewRules(_RepoCase):
                 if gap.startswith("project_rules_truncated: ")
             ],
             [
-                "project_rules_truncated: api/REVIEW.md (total_cap_reached) "
-                "\u2014 its rules are NOT in the review context",
-                "project_rules_truncated: CLAUDE.md (total_cap_reached) "
-                "\u2014 its rules are NOT in the review context",
+                (
+                    "project_rules_truncated: api/REVIEW.md (total_cap_reached) "
+                    "\u2014 its rules are NOT in the review context"
+                ),
+                (
+                    "project_rules_truncated: CLAUDE.md (total_cap_reached) "
+                    "\u2014 its rules are NOT in the review context"
+                ),
             ],
         )
 
@@ -872,12 +876,10 @@ class TestReviewRules(_RepoCase):
                     outside = os.path.join(self.base, "outside-security.md")
                     with open(outside, "w") as handle:
                         handle.write("OUTSIDE\n")
-                    resolved = os.path.realpath(candidate)
                 elif reason == "not_markdown":
                     payload = os.path.join(repo, "payload.txt")
                     with open(payload, "w") as handle:
                         handle.write("PAYLOAD\n")
-                    resolved = os.path.realpath(candidate)
                 os.symlink(target, candidate)
                 resolved = os.path.realpath(candidate)
             changed = os.path.join(self.base, f"security-changed-{index}.json")
