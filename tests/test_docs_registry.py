@@ -1164,6 +1164,11 @@ class TestDocsRegistry(unittest.TestCase):
                 h + "::MD_SYMBOL",
                 "no definition patterns for .md",
             ),  # kind: unknown suffix has no symbol patterns
+            (
+                p
+                + "#Python resolver matching fixtures; data only. kinds: python, python_constant",
+                "heading requires a Markdown file",
+            ),  # kind: headings require the Markdown suffix
             (p + "::Parent::child", None),  # cursor: selects the first parent match
             (j + "::SAME::same_key", None),  # cursor: includes the parent line
             (j + "::$cash", None),  # escape: escapes symbol regex syntax
