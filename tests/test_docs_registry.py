@@ -865,7 +865,8 @@ class TestDocsRegistry(unittest.TestCase):
         # Each definition fixture declares the kinds its suffix grants on line one.
         # Each near-miss row flips when the clause it names is removed.
         # Witness assertions tie every pattern and suffix to a positive row.
-        # Near misses isolate constraints; positives pin accepted forms.
+        # Near misses isolate constraints.
+        # Positive rows pin accepted forms.
         # Cursor diagnostics use exact offsets in this fixed fixture tree.
         citations = (
             (p + "::py_ok", None),  # def: accepts a definition
