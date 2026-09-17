@@ -1242,7 +1242,7 @@ class TestDocsRegistry(unittest.TestCase):
                     f"resolver returned {actual_reason!r}, expected {expected_reason!r}",
                 )
             if expected_reason is None:
-                citation_kind, _, symbols, _ = _parse_citation(span)
+                citation_kind, path, symbols, _ = _parse_citation(span)
                 expected_count = {"file": 0, "symbol": len(symbols)}.get(
                     citation_kind, 1
                 )
@@ -1252,7 +1252,7 @@ class TestDocsRegistry(unittest.TestCase):
                         f"{len(witness)} witnesses recorded, expected {expected_count}",
                     )
                 witnessed.extend(witness)
-                positive_paths.add(_parse_citation(span)[1])
+                positive_paths.add(path)
         foreign_symbols = {
             "python": "foreign_python",
             "python_constant": "FOREIGN_PYTHON_CONSTANT",
