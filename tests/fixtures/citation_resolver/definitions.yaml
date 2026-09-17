@@ -1,0 +1,22 @@
+# YAML resolver matching fixtures; data only. kinds: yaml
+items:
+  - id: yaml_ok
+  - id: "double_id"
+  - id: 'single_id' # accepted comment
+  - id: yaml_prefix_long
+  - name: wrong_key
+mapping:
+  id: no_dash
+foreign_js: 1
+extra:
+  -  id: wide_dash
+near_misses: |
+  x: - id: inline_id
+  -id: joined_dash
+  -Xid: punct_dash
+def foreign_python(): pass
+FOREIGN_PYTHON_CONSTANT: x = 1
+spaced:
+  - id : spaced_colon
+tab_forms: |
+  	-	id:	tab_id	# tab comment

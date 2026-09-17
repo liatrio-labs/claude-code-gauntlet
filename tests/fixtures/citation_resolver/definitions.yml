@@ -1,0 +1,6 @@
+# Short-extension YAML resolver matching fixtures; data only. kinds: yaml
+items:
+  - id: yml_ok
+foreign_js: 1
+def foreign_python(): pass
+FOREIGN_PYTHON_CONSTANT: x = 1
