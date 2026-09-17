@@ -906,7 +906,7 @@ class TestDocsRegistry(unittest.TestCase):
             (p + "::WithBase", None),  # class: accepts a base-class parenthesis
             (p + "::tab_def", None),  # def: accepts tabs in every gap
             (p + "::TabClass", None),  # class: accepts tabs in every gap
-            (p + "::TAB_CONST", None),  # constant: accepts tabs in every gap
+            (p + "::TAB_CONST", None),  # constant: accepts tabs around the assignment
             (
                 p + "::Joined",
                 "unresolved symbol 'Joined' after line 0",
@@ -1012,6 +1012,7 @@ class TestDocsRegistry(unittest.TestCase):
             (j + "::TabClassJs", None),  # JS class: accepts tabs in every gap
             (j + "::TAB_VAR", None),  # variable: accepts tabs in every gap
             (j + "::tab_key", None),  # key: accepts tabs in every gap
+            (j + "::DUAL", None),  # pattern order: the first matching pattern wins
             (
                 j + "::JoinedClass",
                 "unresolved symbol 'JoinedClass' after line 0",

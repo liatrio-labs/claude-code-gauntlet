@@ -19,4 +19,4 @@ FOREIGN_PYTHON_CONSTANT: x = 1
 spaced:
   - id : spaced_colon
 tab_forms: |
-  	-	id:	tab_id
+  	-	id:	tab_id	# tab comment

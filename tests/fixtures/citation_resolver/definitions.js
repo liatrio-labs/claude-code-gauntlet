@@ -46,3 +46,4 @@ class JsBrace{}
 	export	default	class	TabClassJs	{}
 	export	const	TAB_VAR	= 1;
 const TABS = {	tab_key	: 1 };
+const DUAL = { DUAL: 1 };
