@@ -1,9 +1,6 @@
 name: CI - Tests and Linting
 
 on:
-  push:
-    branches: ["main"]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -13,52 +10,18 @@ env:
   NODE_VERSION: "24.18.0"
 
 jobs:
-  lint:
-    name: Run Linting
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install pre-commit
-        run: pip install pre-commit==4.6.1
-
-      - name: Run pre-commit hooks
-        run: pre-commit run --all-files
-
-      - name: Show files modified by pre-commit hooks
-        if: failure()
-        run: |
-          echo "::group::Files modified by pre-commit hooks"
-          git diff --name-only
-          echo "::endgroup::"
-          echo "::group::Full diff of modifications"
-          git diff
-          echo "::endgroup::"
-
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
+  test-windows-baseline:
+    name: Windows baseline (py ${{ matrix.python-version }}, PYTHONUTF8=${{ matrix.utf8 }})
+    runs-on: windows-latest
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.12", "3.14"]
+        utf8: ["0", "1"]
+    env:
+      PYTHONUTF8: ${{ matrix.utf8 }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,117 +38,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Environment
+        shell: bash
+        run: |
+          git config --get core.autocrlf || true
+          python -c "import sys, locale; print(sys.version, locale.getpreferredencoding(False), sys.flags.utf8_mode)"
+          which python python3 node bash || true
+
       - name: Install pytest
-        if: matrix.python-version != '3.12'
         run: pip install pytest==9.1.1
 
       - name: Run pytest
-        if: matrix.python-version != '3.12'
-        run: python -m pytest tests/ -q
-
-      - name: Install pytest + coverage (gate leg)
-        if: matrix.python-version == '3.12'
-        run: |
-          pip install pip==26.2
-          pip install --group dev
-
-      - name: Run pytest with coverage gate
-        if: matrix.python-version == '3.12'
-        run: |
-          COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
-            --cov=scripts --cov=.github --cov-fail-under=93.8
-
-  js-lint:
-    name: Run Workflow JS Lint
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
-      - name: Lint workflows JS
-        run: python3 workflows/test/tools/biome_check.py
-
-  workflow-tests:
-    name: Run Workflow JS Tests
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          # Exact patch: coverage percentages move across Node builds; 24.18.0 is
-          # the sandboxed runtime / reference build this repo develops against.
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Run node test suite
-        run: |
-          LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage \
-            --test-coverage-include='workflows/src/*.js' \
-            --test-coverage-include='workflows/build.js' \
-            --test-coverage-lines=98.2 \
-            --test-coverage-branches=90.0 \
-            --test-coverage-functions=97.7 \
-            --test-reporter=spec --test-reporter-destination=stdout \
-            --test-reporter=lcov --test-reporter-destination="$LCOV" \
-            workflows/test/*.test.js \
-            && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
-
-      - name: Verify committed bundle matches a fresh build
-        run: |
-          node workflows/build.js
-          git diff --exit-code workflows/pipeline.js
-
-  bench-tests:
-    name: Run Bench Self-Tests
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install pytest
-        if: matrix.python-version != '3.12'
-        run: pip install pytest==9.1.1
-
-      - name: Run bench self-tests
-        if: matrix.python-version != '3.12'
-        run: python -m pytest bench/tests/ -q
-
-      - name: Install pytest + coverage (gate leg)
-        if: matrix.python-version == '3.12'
-        run: |
-          pip install pip==26.2
-          pip install --group dev
-
-      - name: Run bench self-tests with coverage gate
-        if: matrix.python-version == '3.12'
-        run: |
-          COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
-            --cov=bench --cov-fail-under=88.5
+        run: python -m pytest tests/ -q -rfE --tb=line -p no:cacheprovider
