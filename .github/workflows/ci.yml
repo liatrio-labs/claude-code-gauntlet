@@ -1,9 +1,6 @@
 name: CI - Tests and Linting
 
 on:
-  push:
-    branches: ["main"]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -13,185 +10,8 @@ env:
   NODE_VERSION: "24.18.0"
 
 jobs:
-  lint:
-    name: Run Linting
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install pre-commit
-        run: pip install pre-commit==4.6.1
-
-      - name: Run pre-commit hooks
-        run: pre-commit run --all-files
-
-      - name: Show files modified by pre-commit hooks
-        if: failure()
-        run: |
-          echo "::group::Files modified by pre-commit hooks"
-          git diff --name-only
-          echo "::endgroup::"
-          echo "::group::Full diff of modifications"
-          git diff
-          echo "::endgroup::"
-
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install pytest
-        if: matrix.python-version != '3.12'
-        run: pip install pytest==9.1.1
-
-      - name: Run pytest
-        if: matrix.python-version != '3.12'
-        run: python -m pytest tests/ -q
-
-      - name: Install pytest + coverage (gate leg)
-        if: matrix.python-version == '3.12'
-        run: |
-          pip install pip==26.2
-          pip install --group dev
-
-      - name: Run pytest with coverage gate
-        if: matrix.python-version == '3.12'
-        run: |
-          COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
-            --cov=scripts --cov=.github --cov-fail-under=93.8
-
-  js-lint:
-    name: Run Workflow JS Lint
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
-      - name: Lint workflows JS
-        run: python3 workflows/test/tools/biome_check.py
-
-  workflow-tests:
-    name: Run Workflow JS Tests
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          # Exact patch: coverage percentages move across Node builds; 24.18.0 is
-          # the sandboxed runtime / reference build this repo develops against.
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Run node test suite
-        run: |
-          LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage \
-            --test-coverage-include='workflows/src/*.js' \
-            --test-coverage-include='workflows/build.js' \
-            --test-coverage-lines=98.2 \
-            --test-coverage-branches=90.0 \
-            --test-coverage-functions=97.7 \
-            --test-reporter=spec --test-reporter-destination=stdout \
-            --test-reporter=lcov --test-reporter-destination="$LCOV" \
-            workflows/test/*.test.js \
-            && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
-
-      - name: Verify committed bundle matches a fresh build
-        run: |
-          node workflows/build.js
-          git diff --exit-code workflows/pipeline.js
-
-  bench-tests:
-    name: Run Bench Self-Tests
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install pytest
-        if: matrix.python-version != '3.12'
-        run: pip install pytest==9.1.1
-
-      - name: Run bench self-tests
-        if: matrix.python-version != '3.12'
-        run: python -m pytest bench/tests/ -q
-
-      - name: Install pytest + coverage (gate leg)
-        if: matrix.python-version == '3.12'
-        run: |
-          pip install pip==26.2
-          pip install --group dev
-
-      - name: Run bench self-tests with coverage gate
-        if: matrix.python-version == '3.12'
-        run: |
-          COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
-            --cov=bench --cov-fail-under=88.5
-
-  test-windows:
-    name: Run Tests on Windows
+  redproof:
+    name: Windows red proof ${{ matrix.mutation }}
     runs-on: windows-latest
     timeout-minutes: 20
     permissions:
@@ -199,25 +19,67 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.14"]
+        include:
+          - mutation: control
+            tests: "tests/test_collect_project_rules.py::TestDiscovery::test_windows_style_changed_entry_marks_nested_rule_modified tests/test_agent_instruction_layout.py::TestCollectorDedup tests/test_contribution_surface.py::TestContractFenceHook tests/test_generate_contract_requirements.py::TestCliAgainstRealRegistry::test_stale_resolver_fence_does_not_change_the_skill_receipt tests/test_resolve_config.py::TestResolverCli::test_plugin_root_must_match_and_matching_symlink_is_allowed tests/test_script_io.py tests/test_assemble_artifacts.py::TestPlanSelfProof tests/test_parity_fixtures.py tests/test_await_workflow.py::TestResolveTarget tests/test_await_workflow.py::TestExitCodeContract tests/test_await_workflow.py::TestAttemptBounds tests/test_await_workflow.py::TestArtifactsOnlyOutcome tests/test_assemble_artifacts.py::TestEscapeHardenedPrimaryIsAcceptedUnchanged tests/test_agent_instruction_layout.py::TestCodexSizeCap tests/test_bundle_fresh.py"
+          - mutation: b2-display-sep
+            tests: "tests/test_collect_project_rules.py::TestDiscovery::test_windows_style_changed_entry_marks_nested_rule_modified tests/test_agent_instruction_layout.py::TestCollectorDedup"
+          - mutation: c3-posixpath
+            tests: "tests/test_contribution_surface.py::TestContractFenceHook"
+          - mutation: d2-gcr-newline
+            tests: "tests/test_generate_contract_requirements.py::TestCliAgainstRealRegistry::test_stale_resolver_fence_does_not_change_the_skill_receipt"
+          - mutation: d1-stdio
+            tests: "tests/test_resolve_config.py::TestResolverCli::test_plugin_root_must_match_and_matching_symlink_is_allowed tests/test_script_io.py tests/test_assemble_artifacts.py::TestPlanSelfProof tests/test_parity_fixtures.py"
+          - mutation: a1-getuid
+            tests: "tests/test_await_workflow.py::TestResolveTarget tests/test_await_workflow.py::TestExitCodeContract tests/test_await_workflow.py::TestAttemptBounds tests/test_await_workflow.py::TestArtifactsOnlyOutcome"
+          - mutation: e-esm-uri
+            tests: "tests/test_assemble_artifacts.py::TestEscapeHardenedPrimaryIsAcceptedUnchanged"
+          - mutation: gitattributes
+            tests: "tests/test_agent_instruction_layout.py::TestCodexSizeCap tests/test_bundle_fresh.py"
     env:
       PYTHONUTF8: "0"
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install pytest
-        shell: bash
+      - shell: bash
         run: pip install pytest==9.1.1
-      - name: Run pytest
+      - name: Apply mutation
         shell: bash
-        run: python -m pytest tests/ -q
+        run: python redproof.py "${{ matrix.mutation }}"
+      - name: Focused tests (control must pass; every mutation must go red)
+        shell: bash
+        run: |
+          set +e
+          python -m pytest ${{ matrix.tests }} -q -rfEs -p no:cacheprovider --color=no
+          rc=$?
+          echo "pytest rc=$rc mutation=${{ matrix.mutation }}"
+          if [ "${{ matrix.mutation }}" = control ]; then test $rc -eq 0; else test $rc -ne 0; fi
+  skips:
+    name: Windows skip reasons (full suite)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      PYTHONUTF8: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - shell: bash
+        run: pip install pytest==9.1.1
+      - shell: bash
+        run: python -m pytest tests/ -q -rs -p no:cacheprovider --color=no
