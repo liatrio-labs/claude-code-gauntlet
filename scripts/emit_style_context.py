@@ -12,7 +12,6 @@ Usage:
 
 import json
 import os
-import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CARRIER = os.path.join(REPO_ROOT, "docs", "style", "session-context.md")
@@ -44,4 +43,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

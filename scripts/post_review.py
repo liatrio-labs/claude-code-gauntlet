@@ -3402,4 +3402,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

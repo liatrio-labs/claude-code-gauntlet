@@ -360,18 +360,12 @@ def _receipt(
 def _emit_receipt(receipt):
     """Write the one JSON receipt line this script ever emits — never empty.
 
-    ``ensure_ascii=True`` is load-bearing, not cosmetic: the receipt is
-    machine-read, so escaping every non-ASCII codepoint as ``\\uXXXX`` costs
-    nothing a reader needs, and it guarantees *line* is pure ASCII before it
-    ever reaches ``sys.stdout``. That guarantee is what stops a host whose
-    stdout is opened with a narrow codec (``PYTHONIOENCODING=ascii``, the
-    default *stderr* error handler is ``backslashreplace`` but *stdout*'s is
-    not) from raising ``UnicodeEncodeError`` on a warning line that embeds a
-    repo path outside ASCII — which previously left stdout completely empty,
-    indistinguishable from a dead executor. The write itself stays inside the
-    same ``try`` as ``json.dumps`` — belt and suspenders against any other
-    codec surprise — and the fallback string below is hand-verified ASCII so
-    it can never trip the same failure it exists to recover from.
+    ``ensure_ascii=True`` is load-bearing because input JSON may contain a
+    lone surrogate, which has no valid UTF-8 encoding. Escaping non-ASCII
+    codepoints keeps the machine-readable receipt valid ASCII even when a
+    warning contains such a path. Ordinary non-ASCII text is supported by the
+    UTF-8 CLI bootstrap; the write remains inside the same ``try`` as
+    ``json.dumps`` and the fallback below is hand-verified ASCII.
     """
     try:
         line = json.dumps(receipt, ensure_ascii=True)
@@ -540,4 +534,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

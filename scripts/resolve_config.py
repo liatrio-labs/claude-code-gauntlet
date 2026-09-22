@@ -864,4 +864,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

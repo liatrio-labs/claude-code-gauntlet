@@ -21,6 +21,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPO / "scripts" / "build_style_artifacts.py"
 EMIT_SCRIPT = REPO / "scripts" / "emit_style_context.py"
+SCRIPT_IO = REPO / "scripts" / "script_io.py"
 WORDING_SOURCE = REPO / "docs" / "style" / "wording-rules.md"
 CADENCE_SOURCE = REPO / "docs" / "style" / "cadence-rules.md"
 CARRIER = REPO / "docs" / "style" / "session-context.md"
@@ -480,7 +481,8 @@ class _fixture_tree:
 
     Never mutates the real tree. The emitter's repo root is derived from its own file
     location, so the fixture ships a copy of emit_style_context.py alongside the copied
-    build script to exercise that path-resolution behavior too.
+    build script to exercise that path-resolution behavior too. Both entry points also
+    need their shared script_io.py bootstrap helper.
     """
 
     def __enter__(self):
@@ -494,6 +496,7 @@ class _fixture_tree:
         shutil.copy(CADENCE_SOURCE, tmp / "docs" / "style" / "cadence-rules.md")
         shutil.copy(BUILD_SCRIPT, tmp / "scripts" / "build_style_artifacts.py")
         shutil.copy(EMIT_SCRIPT, tmp / "scripts" / "emit_style_context.py")
+        shutil.copy(SCRIPT_IO, tmp / "scripts" / "script_io.py")
         result = subprocess.run(
             [sys.executable, str(tmp / "scripts" / "build_style_artifacts.py")],
             cwd=tmp,

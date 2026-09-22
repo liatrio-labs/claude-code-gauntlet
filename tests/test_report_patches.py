@@ -1545,19 +1545,14 @@ class TestEncodingPathsEmitReceipt(ReportPatchesTestBase):
 
 
 class TestEmitReceiptStdoutEncoding(ReportPatchesTestBase):
-    """``_emit_receipt`` must never leave stdout empty even when the HOST's
-    stdout is opened with a codec narrower than UTF-8 — the exact scenario an
-    in-process ``io.StringIO`` capture (every other test in this file) cannot
-    observe, because ``StringIO`` has no codec at all. Only a real subprocess,
-    with ``PYTHONIOENCODING`` actually controlling ``sys.stdout``'s encoding,
-    can prove this.
+    """Pin the CLI bootstrap end to end under a parent-requested ASCII
+    encoding. Unlike an in-process ``io.StringIO`` capture, a subprocess
+    proves that the entry point emits UTF-8 bytes and a single LF-terminated
+    line. The receipt still escapes lone surrogates with ``ensure_ascii``.
 
-    RED (both tests) when ``ensure_ascii=True`` is reverted to ``False`` and
-    the ``sys.stdout.write`` call is pulled back out of the same ``try`` as
-    ``json.dumps`` (the pre-fix shape): a receipt whose bytes are not pure
-    ASCII then hits ``UnicodeEncodeError`` on the unguarded write, under
-    strict ``PYTHONIOENCODING=ascii`` — stdout ends up completely empty,
-    indistinguishable from a dead executor.
+    RED when both the ``run_entrypoint`` bootstrap and ``ensure_ascii=True``
+    are removed: raw non-ASCII receipt text then reaches the ASCII stdout
+    configuration and leaves stdout empty.
     """
 
     SCRIPT = os.path.join(
@@ -1578,16 +1573,12 @@ class TestEmitReceiptStdoutEncoding(ReportPatchesTestBase):
             ],
             env=env,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
         )
 
     def test_non_ascii_path_in_a_downgrade_warning_survives_ascii_stdout(self):
-        """No diff file at all (oracle missing) forces every candidate to
-        downgrade as ``no_diff_oracle``, which puts the finding's raw ``file``
-        value — ``src/unié.py``, carrying a non-ASCII character — straight
-        into a ``report-patch downgraded: ...`` warning line that lands in
-        the receipt's ``warnings`` array.
+        """The CLI bootstrap must emit valid UTF-8 with LF even when the
+        parent requests an ASCII locale. With no diff file, the finding's
+        non-ASCII path is included in a downgraded warning and its receipt.
         """
         self._write_findings(
             [
@@ -1608,13 +1599,16 @@ class TestEmitReceiptStdoutEncoding(ReportPatchesTestBase):
             0,
             f"stderr: {result.stderr!r}, stdout: {result.stdout!r}",
         )
-        lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
-        self.assertEqual(
-            len(lines), 1, f"expected exactly one stdout line, got {result.stdout!r}"
-        )
-        receipt = json.loads(lines[0])
+        stdout = result.stdout.decode("utf-8")
+        self.assertEqual(len(stdout.splitlines()), 1)
+        self.assertTrue(result.stdout.endswith(b"\n"))
+        self.assertFalse(result.stdout.endswith(b"\r\n"))
+        receipt = json.loads(stdout)
         self.assertEqual(len(receipt["warnings"]), 1)
         self.assertIn("unié", receipt["warnings"][0])
+        self.assertTrue(
+            b"uni\\u00e9" in result.stdout or "unié".encode() in result.stdout
+        )
 
     def test_lone_surrogate_in_a_findings_file_path_never_leaves_stdout_empty(self):
         """A lone (unpaired) UTF-16 surrogate inside the findings JSON's
@@ -1726,15 +1720,13 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         )
 
     def test_write_failure_is_ok_false_with_sorted_reasons_present(self):
-        """A permission-denied output directory makes ``write_text_atomic``
-        raise ``OSError`` — the broad ``except`` in ``main()`` must still
+        """A permission-denied ``write_text_atomic`` call raises ``OSError``;
+        the broad ``except`` in ``main()`` must still
         emit a full receipt, with the downgrade reasons this run accumulated
         reported ALPHABETICALLY even though they were inserted in a
         different order (finding order: redacted, then empty) — proving
         ``_receipt()`` itself sorts rather than merely passing through
         insertion order."""
-        if os.geteuid() == 0:
-            self.skipTest("root bypasses permission bits")
         secret = "ghp_" + "A" * 24
         self._write_findings(
             [
@@ -1754,11 +1746,12 @@ class TestOperationalHygiene(ReportPatchesTestBase):
                 },
             ]
         )
-        os.chmod(self.tmp, 0o500)
-        try:
+        with patch.object(
+            report_patches,
+            "write_text_atomic",
+            side_effect=PermissionError(13, "Permission denied"),
+        ):
             exit_code, receipt, *_ = self._run()
-        finally:
-            os.chmod(self.tmp, 0o700)
 
         self.assertEqual(exit_code, 1)
         self.assertEqual(receipt["ok"], False)

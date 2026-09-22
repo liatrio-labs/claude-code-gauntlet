@@ -386,4 +386,6 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))
+    from script_io import run_entrypoint
+
+    run_entrypoint(main, sys.argv)

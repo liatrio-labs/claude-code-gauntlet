@@ -80,7 +80,7 @@ def load_live(source):
     """
     try:
         text = (
-            sys.stdin.read()
+            sys.stdin.buffer.read().decode("utf-8")
             if source == "-"
             else Path(source).read_text(encoding="utf-8")
         )
@@ -252,4 +252,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

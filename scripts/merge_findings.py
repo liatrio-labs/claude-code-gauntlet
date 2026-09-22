@@ -660,4 +660,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 from typing import Any
@@ -62,3 +63,21 @@ def write_result(
             print(line, file=sys.stderr)
     else:
         print(output_text)
+
+
+def utf8_stdio() -> None:
+    """Use Python UTF-8 mode stream encodings and LF output at CLI boundaries."""
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8", errors="surrogateescape", newline="\n")
+    if isinstance(sys.stderr, io.TextIOWrapper):
+        sys.stderr.reconfigure(
+            encoding="utf-8", errors="backslashreplace", newline="\n"
+        )
+    if isinstance(sys.stdin, io.TextIOWrapper):
+        sys.stdin.reconfigure(encoding="utf-8", errors="surrogateescape")
+
+
+def run_entrypoint(main, *args) -> None:
+    """Apply the shared stdio contract, then propagate the CLI's exit status."""
+    utf8_stdio()
+    raise SystemExit(main(*args))

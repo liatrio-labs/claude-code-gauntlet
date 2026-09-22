@@ -22,7 +22,10 @@ it raises on shapes it does not understand rather than returning an empty result
 would make a test vacuously pass.
 """
 
+import importlib.util
+import io
 import json
+import os
 import re
 import shlex
 import shutil
@@ -31,6 +34,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts import generate_contract_requirements as contract_gen
 
@@ -479,6 +483,40 @@ class TestLabelsDiffHelper(unittest.TestCase):
         self.assertEqual(
             {shlex.split(line)[3] for line in narrowed}, {dropped, changed}
         )
+
+    def test_stdin_utf8_and_cli_output_ignore_pythonioencoding(self):
+        live = self._as_live(_labels())
+        changed = live[0]
+        changed["description"] = "crème brûlée — live label"
+        payload = json.dumps(live, ensure_ascii=False).encode("utf-8")
+        environment = dict(os.environ, PYTHONIOENCODING="cp1252")
+        result = subprocess.run(
+            [sys.executable, str(LABELS_DIFF), "--live", "-"],
+            cwd=REPO,
+            env=environment,
+            input=payload,
+            capture_output=True,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"diverging: {changed['name']}".encode(), result.stdout)
+        self.assertIn("crème brûlée".encode(), result.stdout)
+        self.assertIn("—".encode(), result.stderr)
+
+    def test_live_stdin_decodes_utf8_bytes_independent_of_text_encoding(self):
+        spec = importlib.util.spec_from_file_location("labels_diff_test", LABELS_DIFF)
+        labels_diff = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(labels_diff)
+        payload = json.dumps(
+            [{"name": "review", "color": "ffffff", "description": "café"}],
+            ensure_ascii=False,
+        ).encode("utf-8")
+        stream = io.TextIOWrapper(io.BytesIO(payload), encoding="cp1252")
+
+        with patch.object(labels_diff.sys, "stdin", stream):
+            labels = labels_diff.load_live("-")
+
+        self.assertEqual(labels[0]["description"], "café")
 
     def test_a_label_the_manifest_does_not_manage_is_reported_but_not_drift(self):
         # An extra label in the repo is informational: the sync never deletes, so it is
@@ -1062,6 +1100,8 @@ REQUIRED_PR_CHECK_CONTEXTS = (
     "Run Workflow JS Tests",
     "Run Bench Self-Tests (3.11)",
     "Run Bench Self-Tests (3.12)",
+    "Run Tests on Windows (3.12)",
+    "Run Tests on Windows (3.14)",
     "Validate plugin.json",
     "lint-pr-title",
 )
@@ -1080,6 +1120,8 @@ LOCAL_COMMAND_FOR_REQUIRED_CHECK = {
     "Run Workflow JS Tests": "node --test workflows/test/*.test.js",
     "Run Bench Self-Tests (3.11)": "python -m pytest bench/tests/ -q",
     "Run Bench Self-Tests (3.12)": "python -m pytest bench/tests/ -q",
+    "Run Tests on Windows (3.12)": "python -m pytest tests/ -q",
+    "Run Tests on Windows (3.14)": "python -m pytest tests/ -q",
     "Validate plugin.json": "claude plugin validate .",
     "lint-pr-title": None,  # Needs the PR title; nothing local to run.
 }
