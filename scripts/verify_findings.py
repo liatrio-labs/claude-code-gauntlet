@@ -1369,7 +1369,7 @@ def _write_output(output, output_path, *, receipt=False):
     """
     text = json.dumps(output, indent=2, ensure_ascii=receipt)
     if output_path:
-        with open(output_path, "w", encoding="utf-8") as f:
+        with open(output_path, "w", encoding="utf-8", newline="") as f:
             f.write(text)
     else:
         print(text)

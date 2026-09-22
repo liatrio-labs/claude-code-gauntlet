@@ -179,7 +179,7 @@ def try_post_json(cmd_prefix, payload):
         return {}, None
     fd, tmppath = tempfile.mkstemp(suffix=".json")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             json.dump(payload, f, ensure_ascii=False)
         cmd = [*cmd_prefix, "--input", tmppath]
         stdout, stderr, rc = run_api(cmd)
@@ -3265,7 +3265,7 @@ def write_dry_run_payload(platform, findings_path):
     payload = build_dry_run_payload(platform)
     out_dir = os.path.dirname(os.path.abspath(findings_path))
     out_path = os.path.join(out_dir, "post-review-payload.json")
-    with open(out_path, "w", encoding="utf-8") as f:
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
     return out_path
 

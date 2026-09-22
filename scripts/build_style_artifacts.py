@@ -122,7 +122,7 @@ def sync(repo_root, check_only=False):
     if current == expected:
         return False
     if not check_only:
-        with open(target, "w", encoding="utf-8") as handle:
+        with open(target, "w", encoding="utf-8", newline="") as handle:
             handle.write(expected)
     return True
 

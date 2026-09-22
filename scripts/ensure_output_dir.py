@@ -125,7 +125,7 @@ def append_exclude_pattern(exclude_path: str, pattern: str) -> None:
             existing = fh.read()
         if pattern in existing.splitlines():
             return
-    with open(exclude_path, "a", encoding="utf-8") as fh:
+    with open(exclude_path, "a", encoding="utf-8", newline="") as fh:
         if existing and not existing.endswith("\n"):
             fh.write("\n")
         fh.write(pattern + "\n")

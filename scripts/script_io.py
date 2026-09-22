@@ -55,7 +55,7 @@ def write_result(
     """
     output_text = escape_lone_surrogates(json.dumps(obj, indent=2, ensure_ascii=False))
     if path:
-        with open(path, "w", encoding="utf-8") as fh:
+        with open(path, "w", encoding="utf-8", newline="") as fh:
             fh.write(output_text)
             fh.write("\n")
         for line in summary_lines or []:

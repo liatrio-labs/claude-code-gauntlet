@@ -99,7 +99,7 @@ class TestFilterFindingsParity(unittest.TestCase):
                     self.assertEqual({"findings": findings}, expected)
                 elif fn == "parse_review_md":
                     with tempfile.NamedTemporaryFile(
-                        "w", suffix=".md", delete=False
+                        "w", suffix=".md", delete=False, encoding="utf-8", newline=""
                     ) as t:
                         t.write(inp["markdown"])
                         path = t.name
@@ -115,7 +115,7 @@ class TestFilterFindingsParity(unittest.TestCase):
                     )
                 elif fn == "load_exclusions":
                     with tempfile.NamedTemporaryFile(
-                        "w", suffix=".md", delete=False
+                        "w", suffix=".md", delete=False, encoding="utf-8", newline=""
                     ) as t:
                         t.write(inp["markdown"])
                         path = t.name

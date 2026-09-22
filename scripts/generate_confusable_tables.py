@@ -236,7 +236,7 @@ def apply_targets(repo_root=REPO_ROOT, check_only=False):
             continue
         stale.append(rel_path)
         if not check_only:
-            with open(abs_path, "w", encoding="utf-8") as handle:
+            with open(abs_path, "w", encoding="utf-8", newline="") as handle:
                 handle.write(expected)
     return stale
 

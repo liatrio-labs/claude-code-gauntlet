@@ -63,7 +63,9 @@ def _filter_findings(inp):
         ff.normalize_field_names(findings)
         return {"findings": findings}
     if fn == "parse_review_md":
-        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as t:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".md", delete=False, encoding="utf-8", newline=""
+        ) as t:
             t.write(inp["markdown"])
             path = t.name
         return {"config": ff.parse_review_md(path)}
@@ -76,7 +78,9 @@ def _filter_findings(inp):
         # is a Produced part-1 function (brief interfaces list) and the exclusions/
         # fixture case names (fenced_block_match, bullet_list_fallback) describe
         # load_exclusions's two parse paths, not apply_exclusions's matching.
-        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as t:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".md", delete=False, encoding="utf-8", newline=""
+        ) as t:
             t.write(inp["markdown"])
             path = t.name
         return {"patterns": ff.load_exclusions(path)}

@@ -1827,10 +1827,14 @@ class TestReceipt(unittest.TestCase):
         import json
 
         findings = self._findings()
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             json.dump({"findings": findings, "base_branch": "main"}, f)
             findings_path = f.name
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
         with (
             tempfile.NamedTemporaryFile(suffix=".json", delete=False) as legacy_file,
@@ -1914,7 +1918,9 @@ class TestReceipt(unittest.TestCase):
         import json
 
         findings = self._findings()
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             json.dump({"findings": findings}, f)
             findings_path = f.name
         try:
@@ -1957,7 +1963,9 @@ class TestReceipt(unittest.TestCase):
         """The receipt path accepts only the exact percent-encoded inline token."""
         import io
 
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             findings_path = f.name
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
             out_path = out_file.name
@@ -2004,7 +2012,9 @@ class TestReceipt(unittest.TestCase):
         """
         import io
 
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             f.write(json.dumps({"findings": self._findings()}) + "}")
             corrupt_path = f.name
         try:
@@ -2029,7 +2039,9 @@ class TestReceipt(unittest.TestCase):
         message on stderr, nothing on stdout."""
         import io
 
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             f.write(json.dumps({"findings": self._findings()}) + "oops")
             corrupt_path = f.name
         try:
@@ -2118,7 +2130,9 @@ class TestBuildDeltas(unittest.TestCase):
             "cross_file_refs": [],
         }
         findings = [eliminated_finding, verified_finding]
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
         try:
             import io
@@ -2335,12 +2349,16 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
     def _write_input(self, findings):
         import json
 
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             json.dump({"findings": findings, "base_branch": "main"}, f)
             return f.name
 
     def _empty_diff(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             return f.name
 
     def test_result_key_order_starts_with_deltas_full_arrays_unchanged(self):
@@ -2625,7 +2643,9 @@ class TestCoerceNumericFields(unittest.TestCase):
         self.assertEqual(f["title"], "t")
 
     def test_load_input_casts_numeric_fields(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             json.dump(
                 {"findings": [{"id": "b1", "line_start": "10", "line_end": "12"}]}, f
             )
@@ -2661,7 +2681,9 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
         # A real file with enough lines so the (in-range) line reference reaches the
         # arithmetic that crashed on a string line_start; description has no extractable
         # symbols, so no git grep is needed.
-        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as srcf:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".txt", delete=False
+        ) as srcf:
             srcf.write("\n".join(f"line {i}" for i in range(1, 51)) + "\n")
             src_path = srcf.name
         slice_input = {
@@ -2682,10 +2704,14 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
             ],
             "base_branch": "main",
         }
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             json.dump(slice_input, f)
             in_path = f.name
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             empty_diff = f.name
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
             out_path = out_file.name
@@ -2749,7 +2775,9 @@ class TestEliminationReasonStamp(unittest.TestCase):
             "evidence": "e",
             "cross_file_refs": [],
         }
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
         try:
             import io
@@ -3712,7 +3740,9 @@ class TestSliceProjectionBehavioralEquivalence(unittest.TestCase):
     }
 
     def _empty_diff(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             self.addCleanup(os.unlink, f.name)
             return f.name  # empty file -> parse_diff_lines("") -> set(), not None
 
