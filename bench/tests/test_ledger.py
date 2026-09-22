@@ -106,7 +106,7 @@ class LedgerTestCase(unittest.TestCase):
         rows = [valid_row(run_id="r1"), valid_row(run_id="r2", cost_usd=9.99)]
         for row in rows:
             append_row(self.ledger_path, row)
-        with open(self.ledger_path) as fh:
+        with open(self.ledger_path, encoding="utf-8") as fh:
             parsed = [json.loads(line) for line in fh if line.strip()]
         self.assertEqual(parsed, rows)
 
@@ -130,7 +130,7 @@ class LedgerTestCase(unittest.TestCase):
     def test_extra_keys_allowed(self):
         # The full spec schema has more keys; extras must not be rejected.
         append_row(self.ledger_path, valid_row(f1_strict=0.37, change="none"))
-        with open(self.ledger_path) as fh:
+        with open(self.ledger_path, encoding="utf-8") as fh:
             record = json.loads(fh.readline())
         self.assertEqual(record["f1_strict"], 0.37)
 
@@ -245,13 +245,13 @@ class AuthModeTestCase(unittest.TestCase):
 
     def test_historical_row_without_auth_mode_still_appends(self):
         append_row(self.ledger_path, valid_row())
-        with open(self.ledger_path) as fh:
+        with open(self.ledger_path, encoding="utf-8") as fh:
             record = json.loads(fh.readline())
         self.assertNotIn("auth_mode", record)
 
     def test_subscription_row_appends_with_its_cost_verbatim(self):
         append_row(self.ledger_path, valid_row(auth_mode="subscription"))
-        with open(self.ledger_path) as fh:
+        with open(self.ledger_path, encoding="utf-8") as fh:
             record = json.loads(fh.readline())
         self.assertEqual(record["auth_mode"], "subscription")
         self.assertEqual(record["cost_usd"], 4.20)

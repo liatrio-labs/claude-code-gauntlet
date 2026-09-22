@@ -22,7 +22,7 @@ class TestBundleFresh(unittest.TestCase):
         )
 
     def test_bundle_has_no_module_imports(self):
-        text = BUNDLE.read_text()
+        text = BUNDLE.read_text(encoding="utf-8")
         for line in text.splitlines():
             self.assertFalse(
                 line.strip().startswith("import "),
@@ -31,16 +31,18 @@ class TestBundleFresh(unittest.TestCase):
             self.assertNotIn("require(", line)
 
     def test_plugin_version_matches_source_pipeline_version(self):
-        source = (REPO / "workflows" / "src" / "pipeline_entry.js").read_text()
+        source = (REPO / "workflows" / "src" / "pipeline_entry.js").read_text(
+            encoding="utf-8"
+        )
         match = re.search(r"const PIPELINE_VERSION = ['\"]([^'\"]+)['\"]", source)
         self.assertIsNotNone(match)
         plugin_version = json.loads(
-            (REPO / ".claude-plugin" / "plugin.json").read_text()
+            (REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
         )["version"]
         self.assertEqual(plugin_version, match.group(1))
 
     def test_bundle_begins_with_meta_and_exposes_version(self):
-        text = BUNDLE.read_text()
+        text = BUNDLE.read_text(encoding="utf-8")
         first = next(line for line in text.splitlines() if line.strip())
         self.assertTrue(
             first.startswith("export const meta"),
@@ -49,7 +51,7 @@ class TestBundleFresh(unittest.TestCase):
         self.assertIn("PIPELINE_VERSION", text)
 
     def test_bundle_meta_has_nonempty_description(self):
-        text = BUNDLE.read_text()
+        text = BUNDLE.read_text(encoding="utf-8")
         first = next(line for line in text.splitlines() if line.strip())
         match = re.search(r"description:\s*'([^']*)'", first)
         self.assertIsNotNone(
@@ -63,7 +65,7 @@ class TestBundleFresh(unittest.TestCase):
         # The workflow runtime rejects any `export` keyword other than the meta
         # literal (e.g. `export default` is a runtime SyntaxError), so exactly one
         # line may start with `export` — everything else must be stripped by build.js.
-        text = BUNDLE.read_text()
+        text = BUNDLE.read_text(encoding="utf-8")
         export_stmt_lines = [
             line for line in text.splitlines() if re.match(r"^\s*export\b", line)
         ]
@@ -86,6 +88,7 @@ class TestBundleFresh(unittest.TestCase):
             capture_output=True,
             text=True,
             cwd=REPO,
+            encoding="utf-8",
         )
         self.assertEqual(
             result.returncode,
@@ -96,7 +99,7 @@ class TestBundleFresh(unittest.TestCase):
     def test_bundle_ends_with_top_level_run_invocation(self):
         # The runtime executes the bundle body as a wrapped async function with no
         # `export default` entry — the contract is a trailing top-level `return`.
-        text = BUNDLE.read_text()
+        text = BUNDLE.read_text(encoding="utf-8")
         stripped_lines = [line for line in text.splitlines() if line.strip()]
         self.assertTrue(stripped_lines, "bundle is empty")
         last = stripped_lines[-1].strip()
@@ -106,7 +109,7 @@ class TestBundleFresh(unittest.TestCase):
         )
 
     def test_bundle_fits_the_workflow_script_cap(self):
-        source = BUILD.read_text()
+        source = BUILD.read_text(encoding="utf-8")
         cap_match = re.search(r"export const WORKFLOW_SCRIPT_CAP = (\d[\d_]*);", source)
         headroom_match = re.search(
             r"export const BUNDLE_HEADROOM = (\d[\d_]*);", source

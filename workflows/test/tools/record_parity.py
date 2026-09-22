@@ -35,9 +35,9 @@ def _merge_findings(inp):
     args = inp["args"]
     with tempfile.TemporaryDirectory() as fd, tempfile.TemporaryDirectory() as td:
         for name, text in inp.get("findings_dir_files", {}).items():
-            (Path(fd) / name).write_text(text)
+            (Path(fd) / name).write_text(text, encoding="utf-8")
         for name, text in inp.get("text_dir_files", {}).items():
-            (Path(td) / name).write_text(text)
+            (Path(td) / name).write_text(text, encoding="utf-8")
         env = merge(
             findings_dir=fd,
             session_sha=args["session_sha"],
@@ -268,6 +268,7 @@ def _slice_inline(inp):
         text=True,
         cwd=REPO,
         check=True,
+        encoding="utf-8",
     ).stdout
     return {
         "encoded": encoded,
@@ -292,7 +293,7 @@ RECORDERS = {
 
 
 def _compute(script, case_dir):
-    inp = json.loads((case_dir / "input.json").read_text())
+    inp = json.loads((case_dir / "input.json").read_text(encoding="utf-8"))
     return RECORDERS[script](inp)
 
 
@@ -301,7 +302,9 @@ def _serialize(out):
 
 
 def record(script, case_dir):
-    (case_dir / "expected.json").write_text(_serialize(_compute(script, case_dir)))
+    (case_dir / "expected.json").write_text(
+        _serialize(_compute(script, case_dir)), encoding="utf-8"
+    )
 
 
 def _iter_cases(only_script, only_case):
@@ -347,7 +350,7 @@ def check(only_script=None, only_case=None):
                 "-- run record_parity.py to author it"
             )
             continue
-        committed_bytes = committed_path.read_text()
+        committed_bytes = committed_path.read_text(encoding="utf-8")
         if committed_bytes != fresh_bytes:
             mismatches.append(
                 f"STALE golden: {rel}/expected.json -- rerun record_parity.py"

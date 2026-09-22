@@ -421,7 +421,9 @@ class TestLabelsDiffHelper(unittest.TestCase):
                 path = Path(tmp) / "live.json"
                 path.write_text(json.dumps(live), encoding="utf-8")
                 argv += ["--live", str(path)]
-            return subprocess.run(argv, cwd=REPO, capture_output=True, text=True)
+            return subprocess.run(
+                argv, cwd=REPO, capture_output=True, text=True, encoding="utf-8"
+            )
 
     @staticmethod
     def _as_live(labels):
@@ -506,6 +508,7 @@ class TestLabelsDiffHelper(unittest.TestCase):
                     input=payload,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("in sync", result.stdout)
@@ -539,6 +542,7 @@ class TestLabelsDiffHelper(unittest.TestCase):
                     input=payload,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                 )
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertNotIn("Traceback", result.stderr)
@@ -573,6 +577,7 @@ class TestLabelsDiffHelper(unittest.TestCase):
                         cwd=REPO,
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
                     )
                     self.assertEqual(result.returncode, 2, f"{mode}: {result.stdout}")
                     self.assertNotIn("Traceback", result.stderr)
@@ -588,6 +593,7 @@ class TestLabelsDiffHelper(unittest.TestCase):
                     cwd=REPO,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                 )
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertNotIn("Traceback", result.stderr)
@@ -622,6 +628,7 @@ class TestLabelsDiffHelper(unittest.TestCase):
                     cwd=REPO,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                 )
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertEqual(result.stdout, "", "nothing may be emitted")
@@ -1416,6 +1423,7 @@ class TestContractFenceHook(unittest.TestCase):
                 cwd=root,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
             self.assertEqual(
                 clean_result.returncode,
@@ -1444,6 +1452,7 @@ class TestContractFenceHook(unittest.TestCase):
                 cwd=root,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
             self.assertEqual(stale_result.returncode, 1)
             self.assertIn(

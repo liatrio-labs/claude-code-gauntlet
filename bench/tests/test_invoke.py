@@ -235,6 +235,7 @@ class BuildEnvTest(InvokeTestBase):
             capture_output=True,
             text=True,
             check=False,
+            encoding="utf-8",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = json.loads(result.stdout)["waist"]["configEcho"]
@@ -344,7 +345,7 @@ class BuildEnvTest(InvokeTestBase):
         env = build_env(PR, self.run_dir, {})
         cfg = Path(env["CLAUDE_CONFIG_DIR"]) / ".claude.json"
         self.assertTrue(cfg.exists())
-        data = json.loads(cfg.read_text())
+        data = json.loads(cfg.read_text(encoding="utf-8"))
         wt = str((self.run_dir / invoke.pr_dir_name(PR) / "worktree").resolve())
         self.assertIn(wt, data["projects"])
         self.assertTrue(data["projects"][wt]["hasTrustDialogAccepted"])
@@ -358,10 +359,10 @@ class BuildEnvTest(InvokeTestBase):
             "numStartups": 4,
             "projects": {"/some/other/repo": {"hasTrustDialogAccepted": True}},
         }
-        (cfg_dir / ".claude.json").write_text(json.dumps(existing))
+        (cfg_dir / ".claude.json").write_text(json.dumps(existing), encoding="utf-8")
 
         build_env(PR, self.run_dir, {})
-        data = json.loads((cfg_dir / ".claude.json").read_text())
+        data = json.loads((cfg_dir / ".claude.json").read_text(encoding="utf-8"))
         # existing content preserved
         self.assertEqual(data["numStartups"], 4)
         self.assertIn("/some/other/repo", data["projects"])
@@ -438,7 +439,7 @@ class BuildEnvDotenvTest(InvokeTestBase):
 
     def _use_env_file(self, text):
         path = Path(self.tmp) / "bench.env"
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         saved = invoke.ENV_PATH
         invoke.ENV_PATH = path
         self.addCleanup(setattr, invoke, "ENV_PATH", saved)
@@ -487,7 +488,7 @@ class BuildEnvChildAuthTest(InvokeTestBase):
 
     def _use_env_file(self, text):
         path = Path(self.tmp) / "bench.env"
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         saved = invoke.ENV_PATH
         invoke.ENV_PATH = path
         self.addCleanup(setattr, invoke, "ENV_PATH", saved)
@@ -718,22 +719,28 @@ class ApiKeyHelperSourcesTest(InvokeTestBase):
 
     def test_settings_without_the_key_is_empty(self):
         cfg = self._config_dir()
-        (cfg / "settings.json").write_text(json.dumps({"model": "opus"}))
+        (cfg / "settings.json").write_text(
+            json.dumps({"model": "opus"}), encoding="utf-8"
+        )
         self.assertEqual(invoke.api_key_helper_files(cfg.parent), [])
 
     def test_empty_helper_value_is_empty(self):
         cfg = self._config_dir()
-        (cfg / "settings.json").write_text(json.dumps({"apiKeyHelper": "   "}))
+        (cfg / "settings.json").write_text(
+            json.dumps({"apiKeyHelper": "   "}), encoding="utf-8"
+        )
         self.assertEqual(invoke.api_key_helper_files(cfg.parent), [])
 
     def test_corrupt_json_is_empty(self):
         cfg = self._config_dir()
-        (cfg / "settings.json").write_text("{not json")
+        (cfg / "settings.json").write_text("{not json", encoding="utf-8")
         self.assertEqual(invoke.api_key_helper_files(cfg.parent), [])
 
     def test_non_object_json_is_empty(self):
         cfg = self._config_dir()
-        (cfg / "settings.json").write_text(json.dumps(["apiKeyHelper"]))
+        (cfg / "settings.json").write_text(
+            json.dumps(["apiKeyHelper"]), encoding="utf-8"
+        )
         self.assertEqual(invoke.api_key_helper_files(cfg.parent), [])
 
     def test_unreadable_file_is_empty(self):
@@ -746,19 +753,27 @@ class ApiKeyHelperSourcesTest(InvokeTestBase):
     def test_finds_helper_in_settings_json(self):
         cfg = self._config_dir()
         path = cfg / "settings.json"
-        path.write_text(json.dumps({"apiKeyHelper": "/bin/echo sk-x"}))
+        path.write_text(
+            json.dumps({"apiKeyHelper": "/bin/echo sk-x"}), encoding="utf-8"
+        )
         self.assertEqual(invoke.api_key_helper_files(cfg.parent), [str(path)])
 
     def test_finds_helper_in_settings_local_json(self):
         cfg = self._config_dir()
         path = cfg / "settings.local.json"
-        path.write_text(json.dumps({"apiKeyHelper": "/bin/echo sk-x"}))
+        path.write_text(
+            json.dumps({"apiKeyHelper": "/bin/echo sk-x"}), encoding="utf-8"
+        )
         self.assertEqual(invoke.api_key_helper_files(cfg.parent), [str(path)])
 
     def test_both_files_reported_sorted(self):
         cfg = self._config_dir()
-        (cfg / "settings.json").write_text(json.dumps({"apiKeyHelper": "a"}))
-        (cfg / "settings.local.json").write_text(json.dumps({"apiKeyHelper": "b"}))
+        (cfg / "settings.json").write_text(
+            json.dumps({"apiKeyHelper": "a"}), encoding="utf-8"
+        )
+        (cfg / "settings.local.json").write_text(
+            json.dumps({"apiKeyHelper": "b"}), encoding="utf-8"
+        )
         self.assertEqual(
             invoke.api_key_helper_files(cfg.parent),
             sorted([str(cfg / "settings.json"), str(cfg / "settings.local.json")]),
@@ -781,7 +796,9 @@ class ApiKeyHelperSourcesTest(InvokeTestBase):
         dot_claude = home / ".claude"
         dot_claude.mkdir(parents=True)
         path = dot_claude / "settings.json"
-        path.write_text(json.dumps({"apiKeyHelper": "/bin/echo sk-x"}))
+        path.write_text(
+            json.dumps({"apiKeyHelper": "/bin/echo sk-x"}), encoding="utf-8"
+        )
         self.assertEqual(invoke.api_key_helper_files(home), [str(path)])
 
     def test_helpers_from_both_dirs_are_reported_together(self):
@@ -790,8 +807,8 @@ class ApiKeyHelperSourcesTest(InvokeTestBase):
         (home / ".claude").mkdir()
         config_path = cfg / "settings.json"
         home_path = home / ".claude" / "settings.local.json"
-        config_path.write_text(json.dumps({"apiKeyHelper": "a"}))
-        home_path.write_text(json.dumps({"apiKeyHelper": "b"}))
+        config_path.write_text(json.dumps({"apiKeyHelper": "a"}), encoding="utf-8")
+        home_path.write_text(json.dumps({"apiKeyHelper": "b"}), encoding="utf-8")
         self.assertEqual(
             invoke.api_key_helper_files(home),
             sorted([str(config_path), str(home_path)]),
@@ -953,7 +970,7 @@ class InvokeReviewTest(InvokeTestBase):
         res = self._run("ok", extra_env={"FAKE_CLAUDE_ARGV_FILE": str(argv_file)})
         self.assertEqual(res.status, "ok")
         self.assertTrue(argv_file.exists())
-        argv = argv_file.read_text().splitlines()
+        argv = argv_file.read_text(encoding="utf-8").splitlines()
         self.assertIn("-p", argv)
         prompt = argv[argv.index("-p") + 1]
         self.assertEqual(
@@ -972,7 +989,7 @@ class InvokeReviewTest(InvokeTestBase):
         # The fake recorded its process-group id at startup; after invoke returns the
         # group must be gone (no orphaned child).
         self.assertTrue(pidfile.exists())
-        pgid = int(pidfile.read_text().strip())
+        pgid = int(pidfile.read_text(encoding="utf-8").strip())
         with self.assertRaises(ProcessLookupError):
             os.killpg(pgid, 0)
 
@@ -1320,7 +1337,7 @@ class PluginMutationGuardTest(InvokeTestBase):
         for rel, content in files.items():
             p = root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content)
+            p.write_text(content, encoding="utf-8")
         env = {
             **os.environ,
             "GIT_AUTHOR_NAME": "t",
@@ -1344,6 +1361,7 @@ class PluginMutationGuardTest(InvokeTestBase):
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
         ).stdout.strip()
 
     def _run_mutating(self, root, mutate_path):
@@ -1368,7 +1386,9 @@ class PluginMutationGuardTest(InvokeTestBase):
         self.assertEqual(res.status, "invalid")
         self.assertEqual(res.reason, "plugin_mutated_by_child")
         self.assertEqual(
-            target.read_text(), "ORIGINAL\n", "tracked edit reverted on reset"
+            target.read_text(encoding="utf-8"),
+            "ORIGINAL\n",
+            "tracked edit reverted on reset",
         )
         self.assertEqual(self._porcelain(root), "")
 
@@ -1407,7 +1427,9 @@ class PluginMutationGuardTest(InvokeTestBase):
         # — the guard flags DELTA, not absolute dirtiness.
         root = self._init_repo({"workflows/src/stages.js": "COMMITTED\n"})
         preexisting = root / "workflows" / "src" / "stages.js"
-        preexisting.write_text("LOCAL WIP\n")  # dirty BEFORE the child runs
+        preexisting.write_text(
+            "LOCAL WIP\n", encoding="utf-8"
+        )  # dirty BEFORE the child runs
         injected = root / "agents" / "injected.md"
         res = self._run_mutating(root, injected)
         # The child's NEW file is flagged + removed; the pre-existing edit is preserved.
@@ -1415,7 +1437,9 @@ class PluginMutationGuardTest(InvokeTestBase):
         self.assertEqual(res.reason, "plugin_mutated_by_child")
         self.assertFalse(injected.exists())
         self.assertEqual(
-            preexisting.read_text(), "LOCAL WIP\n", "pre-existing local edit untouched"
+            preexisting.read_text(encoding="utf-8"),
+            "LOCAL WIP\n",
+            "pre-existing local edit untouched",
         )
 
     def test_clean_run_is_not_flagged(self):
@@ -1443,7 +1467,7 @@ class ChildModelCommandTest(InvokeTestBase):
             "ok", tool="deep-review-v3", child_model="sonnet", extra_env=env
         )
         self.assertEqual(res.status, "ok")
-        argv = argv_file.read_text().splitlines()
+        argv = argv_file.read_text(encoding="utf-8").splitlines()
         self.assertIn("--model", argv)
         self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
 
@@ -1452,7 +1476,7 @@ class ChildModelCommandTest(InvokeTestBase):
         argv_file = self._argv(env)
         res = self._run("ok", child_model="opus", extra_env=env)
         self.assertEqual(res.status, "ok")
-        argv = argv_file.read_text().splitlines()
+        argv = argv_file.read_text(encoding="utf-8").splitlines()
         self.assertEqual(argv[argv.index("--model") + 1], "opus")
 
     def test_inherit_omits_model_flag(self):
@@ -1460,7 +1484,7 @@ class ChildModelCommandTest(InvokeTestBase):
         argv_file = self._argv(env)
         res = self._run("ok", child_model="inherit", extra_env=env)
         self.assertEqual(res.status, "ok")
-        self.assertNotIn("--model", argv_file.read_text().splitlines())
+        self.assertNotIn("--model", argv_file.read_text(encoding="utf-8").splitlines())
 
 
 class InvokeReviewChildAuthTest(InvokeTestBase):
@@ -1536,7 +1560,7 @@ class ChildProcessCredentialEnvTest(InvokeTestBase):
             child_auth=child_auth,
         )
         self.assertEqual(result.status, "ok", result.reason)
-        return json.loads(self.env_file.read_text())
+        return json.loads(self.env_file.read_text(encoding="utf-8"))
 
     # Spelled out rather than read from invoke._OUTRANKING_CREDENTIAL_VARS: a test that
     # iterates the list it is checking passes vacuously the moment that list is emptied,

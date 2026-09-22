@@ -59,6 +59,7 @@ class TestNodeDiagnostic(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")
@@ -1392,7 +1393,9 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             [ruff, "format", resolver_path],
             [ruff, "format", "--check", resolver_path],
         ):
-            result = subprocess.run(command, capture_output=True, text=True)
+            result = subprocess.run(
+                command, capture_output=True, text=True, encoding="utf-8"
+            )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             results.append(result)
         self.assertNotIn("reformatted", results[2].stdout)
@@ -1540,6 +1543,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("stale generated registry blocks", result.stderr)
@@ -1561,6 +1565,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(write_result.returncode, 0)
         self.assertIn("regenerated:", write_result.stdout)
@@ -1575,6 +1580,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(check_result.returncode, 0)
         self.assertIn("current", check_result.stdout)

@@ -218,6 +218,7 @@ def _run_node(node_src, repo_root):
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
         )
     except FileNotFoundError:
         raise SystemExit(_node_failure_message(command)) from None

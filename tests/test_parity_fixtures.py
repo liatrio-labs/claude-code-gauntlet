@@ -11,8 +11,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 def _load(case_dir):
     return (
-        json.loads((case_dir / "input.json").read_text()),
-        json.loads((case_dir / "expected.json").read_text()),
+        json.loads((case_dir / "input.json").read_text(encoding="utf-8")),
+        json.loads((case_dir / "expected.json").read_text(encoding="utf-8")),
     )
 
 
@@ -53,9 +53,9 @@ class TestMergeFindingsParity(unittest.TestCase):
                     tempfile.TemporaryDirectory() as td,
                 ):
                     for n, t in inp.get("findings_dir_files", {}).items():
-                        (Path(fd) / n).write_text(t)
+                        (Path(fd) / n).write_text(t, encoding="utf-8")
                     for n, t in inp.get("text_dir_files", {}).items():
-                        (Path(td) / n).write_text(t)
+                        (Path(td) / n).write_text(t, encoding="utf-8")
                     got = merge(
                         findings_dir=fd,
                         session_sha=a["session_sha"],
@@ -369,6 +369,7 @@ class TestGoldenFreshness(unittest.TestCase):
             cwd=REPO,
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(
             result.returncode,
@@ -410,8 +411,10 @@ class TestRecordParityCheckDirect(unittest.TestCase):
                     / "word_count_nel_joined_high_confidence"
                 )
                 golden_path = case_dir / "expected.json"
-                corrupted = golden_path.read_text() + "\n// corrupted by test\n"
-                golden_path.write_text(corrupted)
+                corrupted = (
+                    golden_path.read_text(encoding="utf-8") + "\n// corrupted by test\n"
+                )
+                golden_path.write_text(corrupted, encoding="utf-8")
 
                 mismatches = mod.check()
             finally:
@@ -425,7 +428,7 @@ class TestRecordParityCheckDirect(unittest.TestCase):
                 mismatches,
             )
             self.assertEqual(
-                golden_path.read_text(),
+                golden_path.read_text(encoding="utf-8"),
                 corrupted,
                 "check() must never write into the fixture tree it is checking",
             )

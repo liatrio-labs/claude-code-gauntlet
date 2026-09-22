@@ -83,6 +83,7 @@ def _tracked_files():
         capture_output=True,
         text=True,
         check=True,
+        encoding="utf-8",
     ).stdout
     return [line for line in out.splitlines() if line]
 

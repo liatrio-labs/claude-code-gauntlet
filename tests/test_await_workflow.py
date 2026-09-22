@@ -616,6 +616,7 @@ class TestBrokenPipeDegradesToADocumentedCode(unittest.TestCase):
                 stdout=reader.stdin,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
             )
             assert reader.stdin is not None
             reader.stdin.close()
@@ -690,6 +691,7 @@ class TestTerminalPathIsSilentOnStderr(unittest.TestCase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
             )
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(len([x for x in proc.stdout.split("\n") if x]), 1)
@@ -1373,7 +1375,12 @@ class TestNextCommand(unittest.TestCase):
             # Run it exactly as emitted, from the workspace, so the target really
             # is the bare relative token `-dashy.output`.
             proc = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, cwd=ws.path
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=ws.path,
+                encoding="utf-8",
             )
         self.assertEqual(proc.returncode, 3, proc.stderr)
         marker = json.loads(proc.stdout.strip())
@@ -1396,7 +1403,12 @@ class TestNextCommand(unittest.TestCase):
             # target rides behind a trailing `--` and a later flag would be
             # swallowed as a positional.
             proc = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, cwd=REPO_ROOT
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                encoding="utf-8",
             )
         self.assertEqual(proc.returncode, 3)
         marker = json.loads(proc.stdout.strip())

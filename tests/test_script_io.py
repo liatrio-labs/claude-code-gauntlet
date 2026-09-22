@@ -23,7 +23,9 @@ class TestWriteResult(unittest.TestCase):
             path = Path(tmp) / "result.json"
             write_result(str(path), {"value": "bad\udfff"})
             self.assertIn(r"\udfff", path.read_text(encoding="utf-8"))
-            self.assertEqual(json.loads(path.read_text())["value"], "bad\udfff")
+            self.assertEqual(
+                json.loads(path.read_text(encoding="utf-8"))["value"], "bad\udfff"
+            )
 
 
 if __name__ == "__main__":

@@ -24,7 +24,9 @@ def run_identity(platform, url, sha=SHA, title=None):
     ]
     if title is not None:
         command.extend(["--title", title])
-    return subprocess.run(command, cwd=REPO, capture_output=True, text=True, timeout=10)
+    return subprocess.run(
+        command, cwd=REPO, capture_output=True, text=True, timeout=10, encoding="utf-8"
+    )
 
 
 class TestResolvePrIdentity(unittest.TestCase):

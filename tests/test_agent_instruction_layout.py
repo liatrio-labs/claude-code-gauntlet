@@ -312,6 +312,7 @@ class TestGeneratedTwins(unittest.TestCase):
             [sys.executable, str(REPO / "scripts" / "sync_agent_rules.py"), "--check"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(
             result.returncode,
@@ -360,6 +361,7 @@ class TestCollectorDedup(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
@@ -530,7 +532,11 @@ class TestClaimsResolve(unittest.TestCase):
 
     def repo_files(self):
         out = subprocess.run(
-            ["git", "ls-files"], cwd=REPO, capture_output=True, text=True
+            ["git", "ls-files"],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
         return set(out.stdout.split())
 
@@ -566,6 +572,7 @@ class TestClaimsResolve(unittest.TestCase):
                         cwd=REPO,
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
                     ).stdout.split()
                     # Hits in the instruction files themselves prove nothing: the twins
                     # are copies, so a symbol could otherwise vouch for itself.

@@ -1326,7 +1326,7 @@ class CheckRunTest(unittest.TestCase):
 
     def test_naive_anchor_refused(self):
         _build_ok_run(self.run_dir)
-        manifest = json.loads((self.run_dir / "run.json").read_text())
+        manifest = json.loads((self.run_dir / "run.json").read_text(encoding="utf-8"))
         manifest["anchor"] = "naive"
         _write_json(self.run_dir / "run.json", manifest)
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
@@ -1450,7 +1450,7 @@ class WorkflowRecordCollectionTest(unittest.TestCase):
         dest = self.pr_dir / "workflows"
         self.assertTrue((dest / "wf_new.json").is_file())
         self.assertTrue((dest / "wf_old.json").is_file())
-        data = json.loads((dest / "wf_new.json").read_text())
+        data = json.loads((dest / "wf_new.json").read_text(encoding="utf-8"))
         self.assertEqual(data["scriptPath"], PIPELINE)
 
     def test_unchanged_baseline_copies_nothing(self):
@@ -1478,7 +1478,10 @@ class WorkflowRecordCollectionTest(unittest.TestCase):
         dest = self.pr_dir / "workflows"
         self.assertTrue((dest / "wf_same.json").is_file())
         self.assertTrue((dest / "wf_same-2.json").is_file())
-        paths = {json.loads((dest / name).read_text())["scriptPath"] for name in copied}
+        paths = {
+            json.loads((dest / name).read_text(encoding="utf-8"))["scriptPath"]
+            for name in copied
+        }
         self.assertEqual(paths, {PIPELINE, "/other/workflows/pipeline.js"})
 
 
@@ -1512,7 +1515,7 @@ class SupersedeWorkflowRecordsTest(unittest.TestCase):
         archived = self.pr_dir / "workflows" / "superseded" / "wf_old.json"
         self.assertTrue(archived.is_file())
         self.assertEqual(
-            json.loads(archived.read_text())["scriptPath"],
+            json.loads(archived.read_text(encoding="utf-8"))["scriptPath"],
             PIPELINE,
         )
 
@@ -1526,7 +1529,9 @@ class SupersedeWorkflowRecordsTest(unittest.TestCase):
         self.assertTrue((dest / "wf_same.json").is_file())
         self.assertTrue((dest / "wf_same-2.json").is_file())
         self.assertEqual(
-            json.loads((dest / "wf_same-2.json").read_text())["scriptPath"],
+            json.loads((dest / "wf_same-2.json").read_text(encoding="utf-8"))[
+                "scriptPath"
+            ],
             PIPELINE,
         )
 
@@ -1608,9 +1613,13 @@ class SupersedeAttemptArtifactsTest(unittest.TestCase):
         )
         moved = invoke.supersede_attempt_artifacts(self.pr_dir)
         self.assertEqual(moved, ["code-gauntlet-report-deadbeef.md"])
-        self.assertEqual((dest / "code-gauntlet-report-deadbeef.md").read_text(), "old")
         self.assertEqual(
-            (dest / "code-gauntlet-report-deadbeef-2.md").read_text(), "new"
+            (dest / "code-gauntlet-report-deadbeef.md").read_text(encoding="utf-8"),
+            "old",
+        )
+        self.assertEqual(
+            (dest / "code-gauntlet-report-deadbeef-2.md").read_text(encoding="utf-8"),
+            "new",
         )
 
     def test_missing_pr_dir_and_only_raw_are_noops(self):
@@ -1767,7 +1776,7 @@ class CheckCliTest(unittest.TestCase):
         self.assertIn("does not accept", err.getvalue())
 
     def test_check_naive_is_exit_2(self):
-        manifest = json.loads((self.run_dir / "run.json").read_text())
+        manifest = json.loads((self.run_dir / "run.json").read_text(encoding="utf-8"))
         manifest["anchor"] = "naive"
         _write_json(self.run_dir / "run.json", manifest)
         with (
@@ -1780,14 +1789,20 @@ class CheckCliTest(unittest.TestCase):
 
 class MiniResolutionTest(unittest.TestCase):
     def test_tier_mini_resolves_six(self):
-        subsets = json.loads((REPO_ROOT / "bench/golden/subsets.json").read_text())
-        shas = json.loads((REPO_ROOT / "bench/golden/shas.json").read_text())
+        subsets = json.loads(
+            (REPO_ROOT / "bench/golden/subsets.json").read_text(encoding="utf-8")
+        )
+        shas = json.loads(
+            (REPO_ROOT / "bench/golden/shas.json").read_text(encoding="utf-8")
+        )
         urls = run._resolve_tier("mini", subsets, shas)
         self.assertEqual(len(urls), 6)
         self.assertEqual(urls, subsets["mini"])
 
     def test_prs_mini_alias_expands(self):
-        subsets = json.loads((REPO_ROOT / "bench/golden/subsets.json").read_text())
+        subsets = json.loads(
+            (REPO_ROOT / "bench/golden/subsets.json").read_text(encoding="utf-8")
+        )
         args = run.parse_args(["--prs", "mini"])
         self.assertEqual(args.prs, subsets["mini"])
 

@@ -44,6 +44,7 @@ def git_run(cwd: str, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         capture_output=True,
         check=False,
+        encoding="utf-8",
     )
 
 

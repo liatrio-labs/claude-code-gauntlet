@@ -93,10 +93,11 @@ def load_pipeline_payload():
             capture_output=True,
             text=True,
             timeout=60,
+            encoding="utf-8",
         )
         if proc.returncode != 0:
             raise RuntimeError(f"recorder failed: {proc.stderr}")
-        with open(out) as fh:
+        with open(out, encoding="utf-8") as fh:
             return json.load(fh)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -232,9 +233,9 @@ class TestVerifyFindingsBoundary(unittest.TestCase):
         findings_path = os.path.join(self.tmp, "findings.json")
         out_path = os.path.join(self.tmp, "out.json")
         diff_path = os.path.join(self.tmp, "diff.patch")
-        with open(findings_path, "w") as fh:
+        with open(findings_path, "w", encoding="utf-8") as fh:
             json.dump({"findings": PERSISTED_FINDINGS, "base_branch": "main"}, fh)
-        with open(diff_path, "w") as fh:
+        with open(diff_path, "w", encoding="utf-8") as fh:
             fh.write(build_gh_diff(PERSISTED_FINDINGS))
 
         proc = subprocess.run(
@@ -251,6 +252,7 @@ class TestVerifyFindingsBoundary(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=60,
+            encoding="utf-8",
         )
         self.assertEqual(
             proc.returncode,
@@ -258,7 +260,7 @@ class TestVerifyFindingsBoundary(unittest.TestCase):
             f"verify_findings.py errored on the persisted schema: {proc.stderr}",
         )
 
-        with open(out_path) as fh:
+        with open(out_path, encoding="utf-8") as fh:
             envelope = json.load(fh)
         for key in ("verified", "eliminated", "batches", "stats"):
             self.assertIn(key, envelope, f"verify envelope missing '{key}'")
@@ -278,7 +280,7 @@ class TestPostReviewBoundary(unittest.TestCase):
         post_review._SKIP_WARNINGS.clear()
 
     def _write(self, findings):
-        with open(self.findings_path, "w") as fh:
+        with open(self.findings_path, "w", encoding="utf-8") as fh:
             json.dump(
                 {
                     "platform": "github",
@@ -308,7 +310,7 @@ class TestPostReviewBoundary(unittest.TestCase):
         self.assertTrue(
             os.path.exists(payload_path), "dry-run payload was not captured"
         )
-        with open(payload_path) as fh:
+        with open(payload_path, encoding="utf-8") as fh:
             cap = json.load(fh)
         self.assertEqual(cap["platform"], "github")
         # Every persisted finding rendered into an inline comment (file:line valid).
@@ -331,7 +333,9 @@ class TestPostReviewBoundary(unittest.TestCase):
         ):
             post_review.main()
 
-        with open(os.path.join(self.tmp, "post-review-payload.json")) as fh:
+        with open(
+            os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"
+        ) as fh:
             comments = json.load(fh)["payload"]["comments"]
         bodies = "\n".join(c["body"] for c in comments)
 
@@ -374,7 +378,9 @@ class TestPostReviewBoundary(unittest.TestCase):
         ):
             post_review.main()
 
-        with open(os.path.join(self.tmp, "post-review-payload.json")) as fh:
+        with open(
+            os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"
+        ) as fh:
             comments = json.load(fh)["payload"]["comments"]
         bodies = "\n".join(c["body"] for c in comments)
         for finding in PERSISTED_FINDINGS:
@@ -424,7 +430,9 @@ class TestPostReviewBoundary(unittest.TestCase):
         ):
             post_review.main()  # must not raise
 
-        with open(os.path.join(self.tmp, "post-review-payload.json")) as fh:
+        with open(
+            os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"
+        ) as fh:
             payload = json.load(fh)["payload"]
         self.assertEqual(len(payload["comments"]), 0)
         self.assertIn("could not be anchored inline", payload["body"])
@@ -453,7 +461,7 @@ class TestReportPatchesBoundary(unittest.TestCase):
     def test_report_patches_consumes_pipeline_findings_without_error(self):
         sha = "abc1234"
         findings_path = os.path.join(self.tmp, f"code-gauntlet-findings-{sha}.json")
-        with open(findings_path, "w") as fh:
+        with open(findings_path, "w", encoding="utf-8") as fh:
             json.dump(PERSISTED_FINDINGS, fh)
 
         stdout_buf = io.StringIO()
@@ -472,11 +480,11 @@ class TestReportPatchesBoundary(unittest.TestCase):
 
     def _run_report_patches(self, findings, sha="abc1234", diff=None):
         findings_path = os.path.join(self.tmp, f"code-gauntlet-findings-{sha}.json")
-        with open(findings_path, "w") as fh:
+        with open(findings_path, "w", encoding="utf-8") as fh:
             json.dump(findings, fh)
         if diff is not None:
             diff_path = os.path.join(self.tmp, f"code-gauntlet-diff-{sha}.patch")
-            with open(diff_path, "w") as fh:
+            with open(diff_path, "w", encoding="utf-8") as fh:
                 fh.write(diff)
 
         stdout_buf = io.StringIO()
@@ -603,6 +611,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            encoding="utf-8",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout, expected
@@ -661,6 +670,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            encoding="utf-8",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         match = re.search(
@@ -741,6 +751,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            encoding="utf-8",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)
@@ -978,6 +989,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     timeout=30,
+                    encoding="utf-8",
                 )
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 result = json.loads(proc.stdout)
@@ -1173,6 +1185,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            encoding="utf-8",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         js_verdicts = json.loads(proc.stdout)
@@ -1214,6 +1227,7 @@ class TestPrIdentityProducerParity(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     timeout=10,
+                    encoding="utf-8",
                 )
                 self.assertEqual(produced.returncode, 0, produced.stderr)
                 identity = json.loads(produced.stdout)
@@ -1231,6 +1245,7 @@ class TestPrIdentityProducerParity(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     timeout=30,
+                    encoding="utf-8",
                 )
                 self.assertEqual(accepted.returncode, 0, accepted.stderr)
                 self.assertEqual(

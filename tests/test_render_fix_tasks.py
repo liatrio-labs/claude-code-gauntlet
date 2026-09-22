@@ -69,6 +69,7 @@ class RenderFixTasksTest(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         return result
 
@@ -860,6 +861,7 @@ class RenderFixTasksTest(unittest.TestCase):
             [sys.executable, str(SCRIPT), str(self.artifact)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(malformed.returncode, 2)
         self.assertEqual(malformed.stdout, "")

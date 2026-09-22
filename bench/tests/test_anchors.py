@@ -43,8 +43,8 @@ class AnchorCandidatesFileTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.anchors = json.loads(ANCHORS_FILE.read_text())
-        subs = json.loads(SUBSETS_FILE.read_text())
+        cls.anchors = json.loads(ANCHORS_FILE.read_text(encoding="utf-8"))
+        subs = json.loads(SUBSETS_FILE.read_text(encoding="utf-8"))
         cls.subsets = subs
         cls.subset_urls = set(subs["gate"]) | set(subs["holdout"]) | set(subs["smoke"])
 
@@ -228,7 +228,9 @@ class SpotCheckTests(unittest.TestCase):
         self.assertEqual(report["per_tool"]["coderabbit"]["deltas"]["fp"], 1)
         # diff file always written.
         self.assertTrue(self.diff_out.is_file())
-        self.assertEqual(json.loads(self.diff_out.read_text())["pr_url"], self.url)
+        self.assertEqual(
+            json.loads(self.diff_out.read_text(encoding="utf-8"))["pr_url"], self.url
+        )
 
     def test_drift_beyond_tolerance_fails_and_captures_diff(self):
         our = {
@@ -249,7 +251,7 @@ class SpotCheckTests(unittest.TestCase):
         self.assertFalse(report["per_tool"]["coderabbit"]["within_tolerance"])
         self.assertEqual(report["per_tool"]["coderabbit"]["deltas"]["fp"], 3)
         # full per-comment comparison persisted for verbatim inspection.
-        saved = json.loads(self.diff_out.read_text())
+        saved = json.loads(self.diff_out.read_text(encoding="utf-8"))
         self.assertIn("fp_ours", saved["per_tool"]["coderabbit"])
         self.assertIn("matched_upstream", saved["per_tool"]["coderabbit"])
 

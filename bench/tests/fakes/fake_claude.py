@@ -178,14 +178,16 @@ def _write_payload():
         },
         "skipped": [],
     }
-    with open(os.path.join(output_dir, "post-review-payload.json"), "w") as fh:
+    with open(
+        os.path.join(output_dir, "post-review-payload.json"), "w", encoding="utf-8"
+    ) as fh:
         json.dump(payload, fh)
 
 
 def _record_pgid():
     pidfile = os.environ.get("FAKE_CLAUDE_PIDFILE")
     if pidfile:
-        with open(pidfile, "w") as fh:
+        with open(pidfile, "w", encoding="utf-8") as fh:
             fh.write(str(os.getpgrp()))
 
 
@@ -199,14 +201,14 @@ def _mutate_repo():
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write("// self-healed by child mid-run\n")
 
 
 def _record_argv():
     argv_file = os.environ.get("FAKE_CLAUDE_ARGV_FILE")
     if argv_file:
-        with open(argv_file, "w") as fh:
+        with open(argv_file, "w", encoding="utf-8") as fh:
             fh.write("\n".join(sys.argv[1:]))
 
 
@@ -226,7 +228,7 @@ def _record_credential_env():
     if not env_file:
         return
     seen = {name: bool(os.environ.get(name)) for name in _CREDENTIAL_VARS}
-    with open(env_file, "w") as fh:
+    with open(env_file, "w", encoding="utf-8") as fh:
         json.dump(seen, fh)
 
 
@@ -237,7 +239,9 @@ def _write_report(lines):
         return
     os.makedirs(output_dir, exist_ok=True)
     body = ["# Deep Review Report", "", "## Methodology", "", "```", *lines, "```", ""]
-    with open(os.path.join(output_dir, "code-gauntlet-report-fake.md"), "w") as fh:
+    with open(
+        os.path.join(output_dir, "code-gauntlet-report-fake.md"), "w", encoding="utf-8"
+    ) as fh:
         fh.write("\n".join(body) + "\n")
 
 
@@ -260,7 +264,7 @@ def _plant_stale_workflow_record():
         payload = {"runId": "wf_stale", "input": {"scriptPath": stale}}
     else:
         payload = {"runId": "wf_stale", "scriptPath": stale}
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh)
 
 
@@ -302,7 +306,7 @@ def _write_workflow_record(
         "args": json.dumps(args) if args_as_json else args,
         "result": result,
     }
-    with open(os.path.join(wf_dir, f"{name}.json"), "w") as fh:
+    with open(os.path.join(wf_dir, f"{name}.json"), "w", encoding="utf-8") as fh:
         json.dump(record, fh)
 
 

@@ -237,7 +237,7 @@ def _run_pr_records(run_dir):
     if state_dir.is_dir():
         for path in sorted(state_dir.glob("*.json")):
             try:
-                rec = json.loads(path.read_text())
+                rec = json.loads(path.read_text(encoding="utf-8"))
             except (ValueError, OSError):
                 continue
             url = rec.get("url")
@@ -381,6 +381,7 @@ def _run_stage(cmd, env, stage):
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     if result.returncode != 0:
         tail = (result.stderr or result.stdout or "").strip()[-2000:]
@@ -505,7 +506,7 @@ def _head_file_lines(pr_info, path):
     candidate = Path(pr_dir) / "worktree" / path
     if candidate.is_file():
         try:
-            return candidate.read_text(errors="replace").splitlines()
+            return candidate.read_text(errors="replace", encoding="utf-8").splitlines()
         except OSError:
             return []
     return []
@@ -527,7 +528,11 @@ def _adjudicate_bucket(buckets, per_pr, pin, api_key, adjudicator):
         info = per_pr.get(url, {})
         adj_texts = set(split["adjudicator"])
         diff_path = Path(info.get("pr_dir", "")) / "diff.patch"
-        diff_text = diff_path.read_text(errors="replace") if diff_path.is_file() else ""
+        diff_text = (
+            diff_path.read_text(errors="replace", encoding="utf-8")
+            if diff_path.is_file()
+            else ""
+        )
 
         for cand in info.get("candidates", []):
             text = cand.get("text")
@@ -651,6 +656,7 @@ def _git_head():
             capture_output=True,
             text=True,
             timeout=5,
+            encoding="utf-8",
         )
         if out.returncode == 0:
             return out.stdout.strip()
@@ -703,7 +709,9 @@ def _read_run_costs(run_dir):
         for raw_name in ("raw.json", "raw-naive.json"):
             raw = pr_dir / raw_name
             if raw.is_file():
-                envelope = invoke.parse_result_envelope(raw.read_text(errors="replace"))
+                envelope = invoke.parse_result_envelope(
+                    raw.read_text(errors="replace", encoding="utf-8")
+                )
                 if envelope is not None:
                     break
         if envelope is None:
@@ -711,7 +719,9 @@ def _read_run_costs(run_dir):
                 path = pr_dir / name
                 if path.is_file():
                     try:
-                        envelope = json.loads(path.read_text(errors="replace"))
+                        envelope = json.loads(
+                            path.read_text(errors="replace", encoding="utf-8")
+                        )
                     except (ValueError, OSError):
                         envelope = None
                     break

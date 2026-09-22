@@ -64,8 +64,10 @@ def fake_invoke_ok(
     outdir = Path(run_dir) / "output"
     outdir.mkdir(parents=True, exist_ok=True)
     payload = outdir / "post-review-payload.json"
-    payload.write_text(json.dumps({"payload": {"comments": []}, "skipped": []}))
-    (outdir / "deep-review-report.md").write_text("# report\n")
+    payload.write_text(
+        json.dumps({"payload": {"comments": []}, "skipped": []}), encoding="utf-8"
+    )
+    (outdir / "deep-review-report.md").write_text("# report\n", encoding="utf-8")
     return run.invoke.InvokeResult("ok", cost_usd=0.42, payload_path=str(payload))
 
 
@@ -153,7 +155,9 @@ def make_naive_expecting_auth(expected):
             Path(run_dir) / run.invoke.pr_dir_name(pr) / "post-review-payload.json"
         )
         payload.parent.mkdir(parents=True, exist_ok=True)
-        payload.write_text(json.dumps({"payload": {"comments": []}, "skipped": []}))
+        payload.write_text(
+            json.dumps({"payload": {"comments": []}, "skipped": []}), encoding="utf-8"
+        )
         return run.invoke.InvokeResult("ok", cost_usd=0.11, payload_path=str(payload))
 
     return _naive
@@ -201,7 +205,7 @@ class RunTestBase(unittest.TestCase):
 
     def _detail(self, cp, url):
         """Return the persisted checkpoint detail dict for *url*."""
-        return json.loads(Path(cp._path(url)).read_text())["detail"]
+        return json.loads(Path(cp._path(url)).read_text(encoding="utf-8"))["detail"]
 
 
 # ----------------------------------------------------------------------------- prereqs
@@ -233,7 +237,7 @@ class PrereqTest(RunTestBase):
 
     def test_present_env_key_removes_that_failure(self):
         env_file = self.tmp / "bench.env"
-        env_file.write_text("ANTHROPIC_API_KEY=sk-test-123\n")
+        env_file.write_text("ANTHROPIC_API_KEY=sk-test-123\n", encoding="utf-8")
         failures = None
         empty_bin = self.tmp / "empty-bin2"
         empty_bin.mkdir()
@@ -260,7 +264,7 @@ class PrereqTest(RunTestBase):
                 child_model=None,
             )
             run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
-            manifest = json.loads((run_dir / "run.json").read_text())
+            manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["invocation"], expected)
 
     def test_quoted_empty_key_is_a_failure(self):
@@ -268,7 +272,7 @@ class PrereqTest(RunTestBase):
         # it: _read_env_key delegates to invoke._load_dotenv_key, so the two parsers
         # can never disagree on this again.
         env_file = self.tmp / "bench.env"
-        env_file.write_text('ANTHROPIC_API_KEY=""\n')
+        env_file.write_text('ANTHROPIC_API_KEY=""\n', encoding="utf-8")
         empty_bin = self.tmp / "empty-bin3"
         empty_bin.mkdir()
         with patch.dict(os.environ, {"PATH": str(empty_bin)}):
@@ -277,7 +281,7 @@ class PrereqTest(RunTestBase):
 
     def test_low_disk_is_a_failure(self):
         env_file = self.tmp / "bench.env"
-        env_file.write_text("ANTHROPIC_API_KEY=sk-test\n")
+        env_file.write_text("ANTHROPIC_API_KEY=sk-test\n", encoding="utf-8")
         # An absurd threshold forces the disk check to fail regardless of the partition.
         failures = run.check_prereqs(
             env_path=env_file, workspace_dir=self.tmp, min_free_gb=10**9
@@ -334,7 +338,10 @@ class FixtureWriteTest(RunTestBase):
         plain_review = run_dir / plain_key / "worktree" / "REVIEW.md"
 
         self.assertTrue(fixture_review.exists())
-        self.assertEqual(fixture_review.read_text(), run.FIXTURE_PATH.read_text())
+        self.assertEqual(
+            fixture_review.read_text(encoding="utf-8"),
+            run.FIXTURE_PATH.read_text(encoding="utf-8"),
+        )
         self.assertFalse(plain_review.exists())
 
 
@@ -438,7 +445,9 @@ class ArtifactCaptureTest(RunTestBase):
         self.assertTrue(
             collected.is_file(), "new wf record must land in pr_dir/workflows/"
         )
-        self.assertEqual(json.loads(collected.read_text())["scriptPath"], pipeline)
+        self.assertEqual(
+            json.loads(collected.read_text(encoding="utf-8"))["scriptPath"], pipeline
+        )
         self.assertFalse(
             (pr_dir / "workflows" / "wf_stale.json").exists(),
             "unchanged baseline wf records must not be copied",
@@ -845,7 +854,7 @@ class MultiRunTest(RunTestBase):
         args = run.parse_args(["--tier", "smoke"])
         run._new_run(args)
         run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
-        manifest = json.loads((run_dir / "run.json").read_text())
+        manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["tier"], "smoke")
         fingerprint = manifest["env_fingerprint"]
         self.assertEqual(fingerprint["CODE_GAUNTLET_HEADLESS"], "1")
@@ -875,7 +884,7 @@ class MultiRunTest(RunTestBase):
         ):
             expected_removed = run.invoke.scrub_ambient(os.environ)[1]
             run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
-        manifest = json.loads((run_dir / "run.json").read_text())
+        manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         fingerprint = manifest["env_fingerprint"]
         self.assertEqual(
             set(fingerprint),
@@ -922,7 +931,7 @@ class ToolWiringTest(RunTestBase):
         run_dir = self.tmp / f"tool-manifest-{len(list(self.tmp.iterdir()))}"
         run_dir.mkdir(parents=True)
         run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
-        return json.loads((run_dir / "run.json").read_text())
+        return json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
 
     def test_default_tool_is_v3_in_manifest(self):
         self.assertEqual(
@@ -1097,7 +1106,7 @@ class ChildAuthCliTest(RunTestBase):
         manifest = {"tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None}
         if child_auth is not None:
             manifest["child_auth"] = child_auth
-        (run_dir / "run.json").write_text(json.dumps(manifest))
+        (run_dir / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
         return run_dir
 
     def test_resume_preflights_the_manifest_mode_not_the_flag_default(self):
@@ -1206,7 +1215,7 @@ class ChildAuthCliTest(RunTestBase):
     def test_preflight_and_resume_agree_for_a_corrupt_manifest(self):
         run_dir = self.runs_root / "smoke-corrupt"
         run_dir.mkdir(parents=True)
-        (run_dir / "run.json").write_text("{not json")
+        (run_dir / "run.json").write_text("{not json", encoding="utf-8")
         preflighted, resumed = self._resume_modes(
             "smoke-corrupt",
             ["--resume", "smoke-corrupt", "--child-auth", "subscription"],
@@ -1244,7 +1253,8 @@ class ChildAuthCliTest(RunTestBase):
                     "anchor": None,
                     "env_fingerprint": {"child_auth": "subscription"},
                 }
-            )
+            ),
+            encoding="utf-8",
         )
         args = run.parse_args(["--resume", "smoke-fingerprint-only"])
         self.assertEqual(
@@ -1280,7 +1290,7 @@ class ChildAuthPrereqTest(RunTestBase):
         config = (claude_home or (self.tmp / "claude-home")) / "config"
         config.mkdir(parents=True, exist_ok=True)
         path = config / name
-        path.write_text(json.dumps({"apiKeyHelper": value}))
+        path.write_text(json.dumps({"apiKeyHelper": value}), encoding="utf-8")
         return path
 
     def test_subscription_drops_the_api_key_requirement(self):
@@ -1309,7 +1319,7 @@ class ChildAuthPrereqTest(RunTestBase):
 
     def test_subscription_token_in_dotenv_satisfies_the_check(self):
         env_file = self.tmp / "bench.env"
-        env_file.write_text("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
+        env_file.write_text("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n", encoding="utf-8")
         joined = "\n".join(self._failures("subscription", {}, env_path=env_file))
         self.assertNotIn("OAUTH_TOKEN", joined)
 
@@ -1406,7 +1416,7 @@ class ChildAuthJudgeKeyNoteTest(RunTestBase):
 
     def test_dotenv_key_silences_it(self):
         env_file = self.tmp / "bench.env"
-        env_file.write_text("ANTHROPIC_API_KEY=sk-dotenv\n")
+        env_file.write_text("ANTHROPIC_API_KEY=sk-dotenv\n", encoding="utf-8")
         self.assertIsNone(self._note("subscription", {}, env_path=env_file))
 
     def test_api_mode_is_silent(self):
@@ -1435,7 +1445,7 @@ class ChildAuthWiringTest(RunTestBase):
         run_dir = self.tmp / f"auth-manifest-{len(list(self.tmp.iterdir()))}"
         run_dir.mkdir(parents=True)
         run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
-        return json.loads((run_dir / "run.json").read_text())
+        return json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
 
     def test_manifest_defaults_to_api(self):
         self.assertEqual(self._manifest_for(["--tier", "smoke"])["child_auth"], "api")
@@ -1554,7 +1564,10 @@ class ChildAuthWiringTest(RunTestBase):
         run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
         run_id = run_dir.name
         self.assertEqual(
-            json.loads((run_dir / "run.json").read_text())["child_auth"], "subscription"
+            json.loads((run_dir / "run.json").read_text(encoding="utf-8"))[
+                "child_auth"
+            ],
+            "subscription",
         )
 
         api_args = run.parse_args(["--resume", run_id, "--child-auth", "api"])
@@ -1580,7 +1593,7 @@ class ChildAuthWiringTest(RunTestBase):
         )
         run._resume("smoke-orphan-record", args, retry=False)
 
-        manifest = json.loads((run_dir / "run.json").read_text())
+        manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["child_auth"], "subscription")
         # Recorded means honoured: a later resume reads it back, so main's conflict guard
         # can refuse a flag that disagrees instead of silently switching credentials.
@@ -1601,7 +1614,7 @@ class ChildAuthWiringTest(RunTestBase):
             run.parse_args(["--resume", "smoke-orphan-api"]),
             retry=False,
         )
-        manifest = json.loads((run_dir / "run.json").read_text())
+        manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["child_auth"], "api")
 
     def test_resume_never_rewrites_an_existing_manifest(self):
@@ -1610,7 +1623,8 @@ class ChildAuthWiringTest(RunTestBase):
         run_dir = self.runs_root / "smoke-legacy-untouched"
         run_dir.mkdir(parents=True)
         (run_dir / "run.json").write_text(
-            json.dumps({"tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None})
+            json.dumps({"tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None}),
+            encoding="utf-8",
         )
         before = (run_dir / "run.json").read_bytes()
         self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("api"))
@@ -1626,7 +1640,8 @@ class ChildAuthWiringTest(RunTestBase):
         run_dir = self.runs_root / "legacy-run"
         run_dir.mkdir(parents=True)
         (run_dir / "run.json").write_text(
-            json.dumps({"tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None})
+            json.dumps({"tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None}),
+            encoding="utf-8",
         )
         self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("api"))
         run._resume(
@@ -1667,7 +1682,7 @@ class PrsListTest(RunTestBase):
         args = run.parse_args(["--prs", ",".join(urls)])
         run._new_run(args)
         run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
-        manifest = json.loads((run_dir / "run.json").read_text())
+        manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["tier"], "custom")
         self.assertEqual(manifest["prs"], urls)
         self.assertEqual(manifest["pr_urls"], urls)
@@ -1679,7 +1694,7 @@ class PrsListTest(RunTestBase):
         args = run.parse_args(["--tier", "smoke"])
         run._new_run(args)
         run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
-        manifest = json.loads((run_dir / "run.json").read_text())
+        manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         self.assertIsNone(manifest["prs"])
         self.assertEqual(manifest["tier"], "smoke")
 
@@ -1757,7 +1772,7 @@ class ResumeTest(RunTestBase):
             (pr_dir / name).write_text(contents, encoding="utf-8")
         # A sibling ok PR's record must stay put (not in failed() todo).
         ok_url = FIXTURE_URL
-        manifest = json.loads((run_dir / "run.json").read_text())
+        manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         manifest["pr_urls"] = [url, ok_url]
         (run_dir / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
         cp.mark(ok_url, "ok", detail={})
@@ -1850,7 +1865,8 @@ class ResumeTest(RunTestBase):
         run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
         run_id = run_dir.name
         self.assertEqual(
-            json.loads((run_dir / "run.json").read_text())["tool"], "deep-review-v2"
+            json.loads((run_dir / "run.json").read_text(encoding="utf-8"))["tool"],
+            "deep-review-v2",
         )
 
         captured = []
@@ -1888,7 +1904,10 @@ class ResumeTest(RunTestBase):
         run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
         run_id = run_dir.name
         self.assertEqual(
-            json.loads((run_dir / "run.json").read_text())["child_model"], "opus"
+            json.loads((run_dir / "run.json").read_text(encoding="utf-8"))[
+                "child_model"
+            ],
+            "opus",
         )
 
         captured = []
@@ -2004,7 +2023,7 @@ class NaivePayloadParseTest(RunTestBase):
         )
         dest = run._naive_payload_from_result(text, pr_dir)
         self.assertIsNotNone(dest)
-        payload = json.loads(Path(dest).read_text())
+        payload = json.loads(Path(dest).read_text(encoding="utf-8"))
         self.assertEqual(payload["platform"], "github")
         self.assertIsNone(payload["endpoint"])
         self.assertIsNone(payload["method"])
@@ -2029,7 +2048,7 @@ class NaivePayloadParseTest(RunTestBase):
         )
         dest = run._naive_payload_from_result(text, pr_dir)
         self.assertIsNotNone(dest)
-        payload = json.loads(Path(dest).read_text())
+        payload = json.loads(Path(dest).read_text(encoding="utf-8"))
         self.assertEqual(
             payload["payload"]["comments"], [{"path": "a.py", "line": 3, "body": body}]
         )
@@ -2042,7 +2061,7 @@ class NaivePayloadParseTest(RunTestBase):
             'more prose\n```json\n{"comments": [{"path": "y", "line": 2, "body": "second"}]}\n```'
         )
         dest = run._naive_payload_from_result(text, pr_dir)
-        payload = json.loads(Path(dest).read_text())
+        payload = json.loads(Path(dest).read_text(encoding="utf-8"))
         self.assertEqual(
             [c["body"] for c in payload["payload"]["comments"]], ["second"]
         )
@@ -2053,7 +2072,7 @@ class NaivePayloadParseTest(RunTestBase):
         text = 'No issues found.\n```json\n{"comments": []}\n```'
         dest = run._naive_payload_from_result(text, pr_dir)
         self.assertIsNotNone(dest)
-        payload = json.loads(Path(dest).read_text())
+        payload = json.loads(Path(dest).read_text(encoding="utf-8"))
         self.assertEqual(payload["payload"]["comments"], [])
 
     def test_no_parseable_block_returns_none(self):
@@ -2075,7 +2094,7 @@ class NaiveInvokeTest(RunTestBase):
         bindir = self.tmp / "naive-bin"
         bindir.mkdir(exist_ok=True)
         claude = bindir / "claude"
-        claude.write_text(NAIVE_FAKE_CLAUDE)
+        claude.write_text(NAIVE_FAKE_CLAUDE, encoding="utf-8")
         claude.chmod(0o755)
         return {
             "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
@@ -2101,7 +2120,7 @@ class NaiveInvokeTest(RunTestBase):
         result = self._run_naive(text)
         self.assertEqual(result.status, "ok")
         self.assertIsNotNone(result.payload_path)
-        payload = json.loads(Path(result.payload_path).read_text())
+        payload = json.loads(Path(result.payload_path).read_text(encoding="utf-8"))
         self.assertEqual(payload["payload"]["comments"][0]["body"], "Bug")
 
     def test_unparseable_output_is_failed_and_retryable(self):
@@ -2112,7 +2131,7 @@ class NaiveInvokeTest(RunTestBase):
     def test_empty_comments_is_ok_with_empty_payload(self):
         result = self._run_naive('```json\n{"comments": []}\n```')
         self.assertEqual(result.status, "ok")
-        payload = json.loads(Path(result.payload_path).read_text())
+        payload = json.loads(Path(result.payload_path).read_text(encoding="utf-8"))
         self.assertEqual(payload["payload"]["comments"], [])
 
     def test_delegates_to_canonical_envelope_parser(self):
@@ -2163,7 +2182,7 @@ class NaiveFailureReasonTest(RunTestBase):
         bindir = self.tmp / "naive-param-bin"
         bindir.mkdir(exist_ok=True)
         claude = bindir / "claude"
-        claude.write_text(NAIVE_FAKE_CLAUDE_PARAM)
+        claude.write_text(NAIVE_FAKE_CLAUDE_PARAM, encoding="utf-8")
         claude.chmod(0o755)
         overrides = {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}
         overrides.update({k: str(v) for k, v in fake_env.items()})

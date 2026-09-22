@@ -50,7 +50,12 @@ class MirrorsTestBase(unittest.TestCase):
     # --- git helpers ------------------------------------------------------
     def _git(self, *args, cwd):
         return subprocess.run(
-            ["git", *args], cwd=str(cwd), env=_GIT_ENV, capture_output=True, text=True
+            ["git", *args],
+            cwd=str(cwd),
+            env=_GIT_ENV,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
 
     def _git_ok(self, *args, cwd):
@@ -73,13 +78,13 @@ class MirrorsTestBase(unittest.TestCase):
         self.src.mkdir(parents=True)
         self._git_ok("init", "-q", str(self.src), cwd=self.tmp)
         self._git_ok("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.src)
-        (self.src / "f.txt").write_text("base\n")
+        (self.src / "f.txt").write_text("base\n", encoding="utf-8")
         self._git_ok("add", "-A", cwd=self.src)
         self._git_ok("commit", "-qm", "base", cwd=self.src)
         base_sha = self._git_ok("rev-parse", "HEAD", cwd=self.src).strip()
 
         self._git_ok("checkout", "-q", "-b", "feature", cwd=self.src)
-        (self.src / "f.txt").write_text("base\nfeat\n")
+        (self.src / "f.txt").write_text("base\nfeat\n", encoding="utf-8")
         self._git_ok("add", "-A", cwd=self.src)
         self._git_ok("commit", "-qm", "feat", cwd=self.src)
         feat_sha = self._git_ok("rev-parse", "HEAD", cwd=self.src).strip()
@@ -99,7 +104,7 @@ class MirrorsTestBase(unittest.TestCase):
         """Add a brand-new commit + `refs/pull/{n}/head` to the remote."""
         branch = f"pr{pr_number}"
         self._git_ok("checkout", "-q", "-b", branch, "main", cwd=self.src)
-        (self.src / f"file{pr_number}.txt").write_text("x\n")
+        (self.src / f"file{pr_number}.txt").write_text("x\n", encoding="utf-8")
         self._git_ok("add", "-A", cwd=self.src)
         self._git_ok("commit", "-qm", f"pr{pr_number}", cwd=self.src)
         sha = self._git_ok("rev-parse", "HEAD", cwd=self.src).strip()
@@ -116,18 +121,18 @@ class EnsureMirrorTest(MirrorsTestBase):
         # A marker inside the mirror must survive a second call: a re-clone
         # would wipe the directory.
         marker = mirror / "REUSE_MARKER"
-        marker.write_text("kept")
+        marker.write_text("kept", encoding="utf-8")
         again = ensure_mirror(str(self.remote), self.mirrors_dir)
         self.assertEqual(again, mirror)  # deterministic dir name -> same path
         self.assertTrue(marker.exists())
-        self.assertEqual("kept", marker.read_text())
+        self.assertEqual("kept", marker.read_text(encoding="utf-8"))
 
     def test_empty_dir_is_torn_down_and_recloned(self):
         # Interrupted clone / poisoned cache: directory exists but is not a bare repo.
         dirname = mirrors._mirror_dirname(str(self.remote))
         poison = self.mirrors_dir / dirname
         poison.mkdir(parents=True)
-        (poison / "junk").write_text("incomplete")
+        (poison / "junk").write_text("incomplete", encoding="utf-8")
         mirror = ensure_mirror(str(self.remote), self.mirrors_dir)
         self.assertEqual(mirror, poison)
         self.assertFalse((poison / "junk").exists())
@@ -197,7 +202,7 @@ class MakeWorktreeTest(MirrorsTestBase):
         mirror = ensure_mirror(str(self.remote), self.mirrors_dir)
         dest = self.tmp / "wt-stale-dir"
         dest.mkdir(parents=True)
-        (dest / "leftover.txt").write_text("stale")
+        (dest / "leftover.txt").write_text("stale", encoding="utf-8")
         result = make_worktree(
             mirror, self.feat_sha, self.base_sha, "main", dest, pr_number=7
         )

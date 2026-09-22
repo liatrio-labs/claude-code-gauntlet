@@ -604,6 +604,7 @@ class TestFindingMarker(unittest.TestCase):
                 check=True,
                 text=True,
                 timeout=10,
+                encoding="utf-8",
             )
         except subprocess.CalledProcessError as exc:
             details = (exc.stderr or "").strip().splitlines()

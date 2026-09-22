@@ -1579,6 +1579,7 @@ class TestEmitReceiptStdoutEncoding(ReportPatchesTestBase):
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
 
     def test_non_ascii_path_in_a_downgrade_warning_survives_ascii_stdout(self):

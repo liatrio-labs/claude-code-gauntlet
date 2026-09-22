@@ -60,6 +60,7 @@ def record_task_output(tmp, nonce=NONCE):
         capture_output=True,
         text=True,
         timeout=60,
+        encoding="utf-8",
     )
     if proc.returncode != 0:
         raise RuntimeError(f"recorder failed: {proc.stderr}")
@@ -91,6 +92,7 @@ def run_cli(args, environ=None):
         text=True,
         timeout=60,
         env=env,
+        encoding="utf-8",
     )
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
     assert len(lines) == 1, f"expected exactly one stdout line, got {proc.stdout!r}"
@@ -282,6 +284,7 @@ class TestResolution(MaterializeTestCase):
             capture_output=True,
             text=True,
             timeout=60,
+            encoding="utf-8",
         )
         self.assertEqual(proc.returncode, 2)
         self.assertEqual(proc.stdout, "")

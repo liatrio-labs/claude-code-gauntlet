@@ -49,6 +49,7 @@ def run_build(args, cwd=REPO):
         cwd=cwd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
 
 
@@ -425,7 +426,10 @@ class TestGeneratorErrorPaths(unittest.TestCase):
 class TestEmitter(unittest.TestCase):
     def test_stdout_is_the_expected_hook_payload(self):
         result = subprocess.run(
-            [sys.executable, str(EMIT_SCRIPT)], capture_output=True, text=True
+            [sys.executable, str(EMIT_SCRIPT)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
@@ -444,7 +448,10 @@ class TestEmitter(unittest.TestCase):
         would leave stray banner text ahead of the real heading without this failing.
         """
         result = subprocess.run(
-            [sys.executable, str(EMIT_SCRIPT)], capture_output=True, text=True
+            [sys.executable, str(EMIT_SCRIPT)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
@@ -459,7 +466,10 @@ class TestEmitter(unittest.TestCase):
             (tmp / "docs" / "style" / "session-context.md").unlink()
             script = tmp / "scripts" / "emit_style_context.py"
             result = subprocess.run(
-                [sys.executable, str(script)], capture_output=True, text=True
+                [sys.executable, str(script)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, "")
@@ -489,6 +499,7 @@ class _fixture_tree:
             cwd=tmp,
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         return tmp

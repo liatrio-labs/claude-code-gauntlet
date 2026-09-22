@@ -25,7 +25,9 @@ class DriftError(Exception):
 
 def _git(args, check=True):
     """Run ``git <args>`` capturing output. Raises CalledProcessError if check."""
-    result = subprocess.run(["git", *args], capture_output=True, text=True)
+    result = subprocess.run(
+        ["git", *args], capture_output=True, text=True, encoding="utf-8"
+    )
     if check and result.returncode != 0:
         raise subprocess.CalledProcessError(
             result.returncode, ["git", *args], result.stdout, result.stderr

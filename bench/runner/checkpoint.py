@@ -60,7 +60,7 @@ class Checkpoint:
         path = self._path(url)
         if not os.path.exists(path):
             return "pending"
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)["status"]
 
     def detail(self, url) -> dict:
@@ -68,7 +68,7 @@ class Checkpoint:
         path = self._path(url)
         if not os.path.exists(path):
             return {}
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             detail = json.load(fh).get("detail")
         return detail if isinstance(detail, dict) else {}
 
@@ -90,7 +90,7 @@ class Checkpoint:
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         tmp = self._path(url) + ".tmp"
-        with open(tmp, "w") as fh:
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(record, fh)
         os.replace(tmp, self._path(url))
 

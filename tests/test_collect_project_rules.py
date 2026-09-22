@@ -80,7 +80,7 @@ class _RepoCase(unittest.TestCase):
         parent = os.path.dirname(path)
         if parent and not os.path.isdir(parent):
             os.makedirs(parent)
-        with open(path, "w") as handle:
+        with open(path, "w", encoding="utf-8") as handle:
             handle.write(content)
         return path
 
@@ -874,16 +874,16 @@ class TestReviewRules(_RepoCase):
             else:
                 if reason == "outside_repo":
                     outside = os.path.join(self.base, "outside-security.md")
-                    with open(outside, "w") as handle:
+                    with open(outside, "w", encoding="utf-8") as handle:
                         handle.write("OUTSIDE\n")
                 elif reason == "not_markdown":
                     payload = os.path.join(repo, "payload.txt")
-                    with open(payload, "w") as handle:
+                    with open(payload, "w", encoding="utf-8") as handle:
                         handle.write("PAYLOAD\n")
                 os.symlink(target, candidate)
                 resolved = os.path.realpath(candidate)
             changed = os.path.join(self.base, f"security-changed-{index}.json")
-            with open(changed, "w") as handle:
+            with open(changed, "w", encoding="utf-8") as handle:
                 json.dump(["api/x.py"], handle)
             opened = []
             real_open = builtins.open
@@ -1224,6 +1224,7 @@ class TestDisclosureContract(_RepoCase):
             [sys.executable, SCRIPT, "--repo-root", self.repo, "--out", self.out],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(len(proc.stdout.strip().split("\n")), 1)
@@ -1247,7 +1248,7 @@ class TestPureHelpers(unittest.TestCase):
         repo = os.path.join(base, "repo")
         os.makedirs(repo)
         outside = os.path.join(base, "outside.md")
-        with open(outside, "w") as handle:
+        with open(outside, "w", encoding="utf-8") as handle:
             handle.write("OUTSIDE\n")
 
         realpaths = _changed_path_sets(repo, ["../outside.md"])

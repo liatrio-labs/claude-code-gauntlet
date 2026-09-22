@@ -83,6 +83,7 @@ def tracked(pathspec):
         capture_output=True,
         text=True,
         check=True,
+        encoding="utf-8",
     ).stdout
     return [line for line in out.splitlines() if line]
 
@@ -319,7 +320,7 @@ def _definition_reason(path, symbols, tracked_files, *, witness=None):
     kinds = DEFINITION_KINDS_BY_SUFFIX.get(suffix, set())
     if not kinds:
         return f"no definition patterns for {suffix or 'this file type'}"
-    lines = (REPO / path).read_text().splitlines()
+    lines = (REPO / path).read_text(encoding="utf-8").splitlines()
     cursor = 0
     for segment in symbols:
         S = re.escape(segment)
@@ -354,7 +355,7 @@ def _title_reason(path, title, tracked_files, *, witness=None):
         return "titles require an exact tracked file"
     if Path(path).suffix not in {".js", ".mjs"}:
         return "titles require a JS test source"
-    text = (REPO / path).read_text().splitlines()
+    text = (REPO / path).read_text(encoding="utf-8").splitlines()
     title_entry = next(
         (
             (index, pattern)
@@ -409,7 +410,7 @@ def _citation_reason(span, tracked_files, *, witness=None):
         if Path(path).suffix != HEADING_SUFFIX:
             return "heading requires a Markdown file"
         heading_regex = re.compile(HEADING_PATTERN.replace("{H}", re.escape(anchor)))
-        for line in (REPO / path).read_text().splitlines():
+        for line in (REPO / path).read_text(encoding="utf-8").splitlines():
             if heading_regex.search(line):
                 if witness is not None:
                     witness.append(("heading", None))
@@ -444,7 +445,7 @@ class TestDocsRegistry(unittest.TestCase):
         registry = contract_generator.load_registry(str(REPO))["knobs"]
         resolver = contract_generator._load_resolver(str(REPO))
         path = REPO / "skills" / "code-gauntlet" / "SKILL.md"
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         open_marker, close_marker = contract_generator.identity_marker_lines(
             "config_receipt", "skills/code-gauntlet/SKILL.md"
         )
@@ -478,7 +479,9 @@ class TestDocsRegistry(unittest.TestCase):
 
     def test_config_receipt_examples_follow_registry_order(self):
         """Every skill example must render knobs in the source registry's mode order."""
-        args_source = (REPO / "workflows" / "src" / "args.js").read_text()
+        args_source = (REPO / "workflows" / "src" / "args.js").read_text(
+            encoding="utf-8"
+        )
         descriptors = re.findall(
             r"\{ key: '([^']+)', modes: \[([^\]]+)\]",
             args_source,
@@ -493,7 +496,7 @@ class TestDocsRegistry(unittest.TestCase):
             ]
             for mode in ("interactive", "headless")
         }
-        skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text()
+        skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
         open_marker, close_marker = contract_generator.identity_marker_lines(
             "config_receipt", "skills/code-gauntlet/SKILL.md"
         )
@@ -509,7 +512,9 @@ class TestDocsRegistry(unittest.TestCase):
             keys = re.findall(r"^  ([A-Za-z_]+)=", match.group(1), re.MULTILINE)
             self.assertEqual(keys[:-2], expected[mode])
 
-        report = (REPO / "skills/code-gauntlet/references/report-format.md").read_text()
+        report = (REPO / "skills/code-gauntlet/references/report-format.md").read_text(
+            encoding="utf-8"
+        )
         report_match = re.search(
             r"^Resolved config:\n((?:^  [^\n]+\n?)+)", report, re.MULTILINE
         )
@@ -562,7 +567,7 @@ class TestDocsRegistry(unittest.TestCase):
         named — an unnamed classification, not a fixed vocabulary, is the failure.
         """
         sections = _register_sections(
-            (REPO / "docs" / "duplication-register.md").read_text()
+            (REPO / "docs" / "duplication-register.md").read_text(encoding="utf-8")
         )
         sentence, table_rows = next(
             (sentence, rows)
@@ -618,7 +623,7 @@ class TestDocsRegistry(unittest.TestCase):
     def test_duplication_register_citations_resolve(self):
         """Every location citation in the register is a durable tracked anchor."""
         register_path = "docs/duplication-register.md"
-        text = (REPO / register_path).read_text()
+        text = (REPO / register_path).read_text(encoding="utf-8")
         tracked_files = _tracked_files()
         extensions = {Path(path).suffix for path in tracked_files if Path(path).suffix}
         top_dirs = {path.split("/", 1)[0] for path in tracked_files if "/" in path}
@@ -1266,7 +1271,7 @@ class TestDocsRegistry(unittest.TestCase):
             "foreign_symbols must name every definition kind",
         )
         for path in definition_paths:
-            text = (REPO / path).read_text()
+            text = (REPO / path).read_text(encoding="utf-8")
             granted = DEFINITION_KINDS_BY_SUFFIX.get(Path(path).suffix, set())
             declaration = re.search(r"kinds: ([\w, ]+)$", text.splitlines()[0])
             declared = set(declaration.group(1).split(", ")) if declaration else set()
