@@ -32,7 +32,31 @@ def _main_guard(node):
     )
 
 
-def _is_script_path_insert(node):
+def _is_entry_point(tree):
+    functions = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    return (
+        "main" in functions
+        or any(_main_guard(node) for node in tree.body)
+        or any(
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id in functions
+            for node in tree.body
+        )
+    )
+
+
+def _is_repo_root(node, depth):
+    expected = ast.parse(f"Path(__file__).resolve().parents[{depth}]", mode="eval").body
+    return ast.dump(node) == ast.dump(expected)
+
+
+def _is_script_path_insert(node, relpath, tree):
     call = node.value if isinstance(node, ast.Expr) else node
     if not isinstance(call, ast.Call):
         return False
@@ -62,10 +86,33 @@ def _is_script_path_insert(node):
         and destination.args[0].right.value == "scripts"
     ):
         return False
-    anchors = tuple(ast.walk(destination.args[0].left))
-    return any(
-        isinstance(node, ast.Name) and node.id in {"__file__", "REPO"}
-        for node in anchors
+    depth = len(relpath.split("/")) - 1
+    anchor = destination.args[0].left
+    if _is_repo_root(anchor, depth):
+        return True
+    if not isinstance(anchor, ast.Name) or anchor.id != "REPO":
+        return False
+    definitions = [
+        statement.value
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "REPO"
+            for target in statement.targets
+        )
+    ]
+    return len(definitions) == 1 and _is_repo_root(definitions[0], depth)
+
+
+def _is_sys_path_insert(node):
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "insert"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "path"
+        and isinstance(node.func.value.value, ast.Name)
+        and node.func.value.value.id == "sys"
     )
 
 
@@ -85,7 +132,7 @@ def _bootstrap_problem(source, relpath):
         and isinstance(node.value.func, ast.Name)
         and node.value.func.id in functions
     ]
-    if "main" not in functions and not guards and not module_calls:
+    if not _is_entry_point(tree):
         return None
     if module_calls:
         return (
@@ -96,14 +143,12 @@ def _bootstrap_problem(source, relpath):
 
     outside_scripts = not relpath.startswith("scripts/")
     body = list(guards[0].body)
-    insertions = [node for node in body if _is_script_path_insert(node)]
+    insertions = [node for node in body if _is_script_path_insert(node, relpath, tree)]
     if outside_scripts:
-        path_inserts = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and _is_script_path_insert(node)
-        ]
-        if len(path_inserts) != 1:
+        path_inserts = [node for node in ast.walk(tree) if _is_sys_path_insert(node)]
+        if len(path_inserts) != 1 or not _is_script_path_insert(
+            path_inserts[0], relpath, tree
+        ):
             return "expected one scripts/ path insertion before the bootstrap import"
         if insertions:
             if len(insertions) != 1 or not body or body[0] is not insertions[0]:
@@ -193,14 +238,26 @@ class TestWriteResult(unittest.TestCase):
 
 
 class TestUtf8Stdio(unittest.TestCase):
-    def test_stdout_is_utf8_with_lf_and_only_text_wrappers_are_reconfigured(self):
-        buffer = io.BytesIO()
-        stream = io.TextIOWrapper(buffer, encoding="latin-1", newline="\r\n")
-        with patch.object(sys, "stdout", stream):
+    def test_text_streams_use_utf8_mode_errors_and_lf(self):
+        stdout_buffer = io.BytesIO()
+        stderr_buffer = io.BytesIO()
+        stdin_buffer = io.BytesIO(b"\xe2\x80\x94\xff")
+        stdout = io.TextIOWrapper(stdout_buffer, encoding="latin-1", newline="\r\n")
+        stderr = io.TextIOWrapper(stderr_buffer, encoding="latin-1", newline="\r\n")
+        stdin = io.TextIOWrapper(stdin_buffer, encoding="latin-1", newline="\r\n")
+        with (
+            patch.object(sys, "stdout", stdout),
+            patch.object(sys, "stderr", stderr),
+            patch.object(sys, "stdin", stdin),
+        ):
             utf8_stdio()
-            print("—")
-            stream.flush()
-        self.assertEqual(buffer.getvalue(), b"\xe2\x80\x94\n")
+            stdout.write("\udcff—\n")
+            stderr.write("\ud800\n")
+            stdout.flush()
+            stderr.flush()
+            self.assertEqual(stdin.read(), "—\udcff")
+        self.assertEqual(stdout_buffer.getvalue(), b"\xff\xe2\x80\x94\n")
+        self.assertEqual(stderr_buffer.getvalue(), b"\\ud800\n")
 
     def test_non_text_streams_are_left_alone(self):
         streams = (io.StringIO(), io.StringIO(), io.StringIO())
@@ -215,9 +272,16 @@ class TestUtf8Stdio(unittest.TestCase):
 class TestEntryPointBootstrap(unittest.TestCase):
     def test_tracked_entry_points_use_the_canonical_bootstrap(self):
         problems = []
+        discovered = {root: [] for root in BOOTSTRAP_ROOTS}
         for relpath in _tracked_bootstrap_modules():
             source = (REPO / relpath).read_text(encoding="utf-8")
             try:
+                tree = ast.parse(source, filename=relpath)
+                if _is_entry_point(tree):
+                    root = next(
+                        root for root in BOOTSTRAP_ROOTS if relpath.startswith(root)
+                    )
+                    discovered[root].append(relpath)
                 problem = _bootstrap_problem(source, relpath)
             except SyntaxError as error:
                 problems.append(f"{relpath}: syntax error: {error}")
@@ -225,6 +289,46 @@ class TestEntryPointBootstrap(unittest.TestCase):
             if problem:
                 problems.append(f"{relpath}: {problem}")
         self.assertEqual(problems, [])
+        self.assertIn("scripts/", BOOTSTRAP_ROOTS)
+        for root, paths in discovered.items():
+            self.assertTrue(paths, f"no tracked entry points discovered under {root}")
+
+    def test_each_entry_point_trigger_is_discovered_on_its_own(self):
+        cases = (
+            "def main():\n    pass\n",
+            "if __name__ == '__main__':\n    pass\n",
+            "def helper():\n    pass\nhelper()\n",
+        )
+        for source in cases:
+            with self.subTest(source=source):
+                self.assertIsNotNone(_bootstrap_problem(source, "scripts/synthetic.py"))
+        self.assertIsNone(
+            _bootstrap_problem("def helper():\n    pass\n", "scripts/library.py")
+        )
+
+    def test_outside_scripts_insert_resolves_to_repo_scripts_directory(self):
+        bootstrap = (
+            "if __name__ == '__main__':\n"
+            "    sys.path.insert(0, str({anchor} / 'scripts'))\n"
+            "    from script_io import run_entrypoint\n"
+            "    run_entrypoint(main)\n"
+        )
+        for anchor, expected_problem in (
+            ("Path(__file__).resolve().parents[3]", None),
+            ("Path(__file__).resolve().parents[2]", "scripts/ path insertion"),
+            (
+                "Path(__file__).resolve().parents[3] / 'extra'",
+                "scripts/ path insertion",
+            ),
+        ):
+            source = "def main():\n    pass\n" + bootstrap.format(anchor=anchor)
+            with self.subTest(anchor=anchor):
+                problem = _bootstrap_problem(source, "workflows/test/tools/example.py")
+                if expected_problem is None:
+                    self.assertIsNone(problem)
+                else:
+                    self.assertIsNotNone(problem)
+                    self.assertIn(expected_problem, problem)
 
     def test_module_level_call_is_discovered_as_an_entry_point(self):
         with tempfile.TemporaryDirectory() as temporary:

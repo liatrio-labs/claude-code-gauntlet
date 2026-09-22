@@ -170,7 +170,10 @@ pre-commit run --all-files
 `python -m pytest tests/ -q` is supported on Linux, macOS and Windows. The Node
 suite (`workflows/test`) and `bench/tests` run in CI on Linux only; on Windows,
 run them under WSL or skip them. Scripts write UTF-8 with LF on every OS;
-`tests/test_text_io_guard.py` fails on a text-mode call without `encoding=`.
+`tests/test_text_io_guard.py` checks known standard-library file, path,
+compression, temporary-file, logging, and subprocess calls; it requires a
+literal encoding for supported text-mode calls and rejects APIs that cannot
+configure text encoding.
 
 This will:
 

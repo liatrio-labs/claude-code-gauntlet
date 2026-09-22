@@ -12,6 +12,21 @@ SCANNED_ROOTS = ("scripts/", "tests/", "bench/", ".github/", "workflows/test/too
 EXCLUDED_ROOTS = ("bench/vendor/", "bench/workspace/", "tests/fixtures/")
 NEWLINE_ROOTS = ("scripts/",)
 NON_TEXT_OPEN_RECEIVERS = frozenset({"os", "tarfile", "zipfile", "webbrowser"})
+GUARDED_STAR_IMPORTS = frozenset(
+    {
+        "subprocess",
+        "io",
+        "os",
+        "tempfile",
+        "codecs",
+        "pathlib",
+        "builtins",
+        "gzip",
+        "bz2",
+        "lzma",
+        "logging",
+    }
+)
 _MISSING = object()
 
 
@@ -19,9 +34,9 @@ _MISSING = object()
 # Add a call kind here so both matching and its positive/negative examples stay together.
 CALL_RULES: tuple[dict[str, Any], ...] = (
     {
-        "name": "open and io.open",
+        "name": "open, builtins.open and io.open",
         "kind": "exact",
-        "names": ("open", "io.open"),
+        "names": ("open", "builtins.open", "io.open"),
         "mode_index": 1,
         "default_mode": "r",
         "always_text": False,
@@ -31,8 +46,31 @@ CALL_RULES: tuple[dict[str, Any], ...] = (
             ('open("file")', 1),
             ('io.open("file", "w", encoding="utf-8")', 0),
             ('io.open("file", "w")', 1),
+            ('builtins.open("file")', 1),
+            ('builtins.open("file", "rb")', 0),
+            ('from builtins import open as file_open\nfile_open("file")', 1),
+            ('from builtins import open as file_open\nfile_open("file", "rb")', 0),
         ),
     },
+    *(
+        {
+            "name": f"{module}.open",
+            "kind": "exact",
+            "names": (f"{module}.open",),
+            "mode_index": 1,
+            "default_mode": "rb",
+            "text_mode_marker": "t",
+            "always_text": False,
+            "encoding_index": None,
+            "examples": (
+                (f'{module}.open("file")', 0),
+                (f'{module}.open("file", "r")', 0),
+                (f'{module}.open("file", "rt")', 1),
+                (f'{module}.open("file", "rt", encoding="utf-8")', 0),
+            ),
+        }
+        for module in ("gzip", "bz2", "lzma")
+    ),
     {
         "name": "os.fdopen",
         "kind": "exact",
@@ -155,6 +193,21 @@ CALL_RULES: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "name": "logging.FileHandler",
+        "kind": "exact",
+        "names": ("logging.FileHandler",),
+        "mode_index": 1,
+        "default_mode": "a",
+        "always_text": True,
+        "encoding_index": 2,
+        "examples": (
+            ('logging.FileHandler("file", encoding="utf-8")', 0),
+            ('logging.FileHandler("file")', 1),
+            ('logging.FileHandler("file", "w", "utf-8")', 0),
+            ('logging.FileHandler("file", "w")', 1),
+        ),
+    },
+    {
         "name": "subprocess text-capable calls",
         "kind": "exact",
         "names": tuple(
@@ -186,6 +239,20 @@ CALL_RULES: tuple[dict[str, Any], ...] = (
         "examples": (
             ('codecs.open("file", encoding="utf-8")', 0),
             ('codecs.open("file")', 1),
+            ('codecs.open("file", "rb")', 0),
+            ('codecs.open("file", "r")', 1),
+        ),
+    },
+    {
+        "name": "tempfile.mkstemp(text=True) (forbidden)",
+        "kind": "exact",
+        "names": ("tempfile.mkstemp",),
+        "forbidden_text_flag": True,
+        "examples": (
+            ("tempfile.mkstemp()", 0),
+            ("tempfile.mkstemp(text=False)", 0),
+            ("tempfile.mkstemp(text=True)", 1),
+            ("tempfile.mkstemp(text=TEXT)", 1),
         ),
     },
     {
@@ -263,6 +330,10 @@ def _matched_rule(call: ast.Call, aliases: dict[str, str]) -> dict | None:
                 "exclude_receivers", ()
             ):
                 continue
+            if rule["attribute"] == "open" and call.args:
+                first = call.args[0]
+                if _literal_string(first) and not _valid_open_mode(first.value):
+                    continue
             return rule
     return None
 
@@ -278,6 +349,14 @@ def _argument(call: ast.Call, keyword: str, position: int | None) -> ast.expr | 
 
 def _literal_string(node: ast.expr | object) -> TypeGuard[ast.Constant]:
     return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+def _valid_open_mode(mode: str) -> bool:
+    return (
+        bool(mode)
+        and set(mode) <= set("rwxabt+")
+        and sum(mode.count(char) for char in "rwxa") == 1
+    )
 
 
 def _encoding_state(call: ast.Call, rule: dict) -> tuple[bool, bool]:
@@ -316,10 +395,12 @@ def _text_mode(call: ast.Call, rule: dict) -> tuple[bool, bool]:
     if mode is _MISSING:
         mode = rule["default_mode"]
     if isinstance(mode, str):
-        return "b" not in mode, False
+        marker = rule.get("text_mode_marker")
+        return (marker in mode if marker else "b" not in mode), False
     if not isinstance(mode, ast.Constant) or not isinstance(mode.value, str):
         return False, True
-    return "b" not in mode.value, False
+    marker = rule.get("text_mode_marker")
+    return (marker in mode.value if marker else "b" not in mode.value), False
 
 
 def _has_expansion(call: ast.Call) -> bool:
@@ -335,6 +416,13 @@ def _call_offender(call: ast.Call, rule: dict, path: str, source: str) -> str | 
     name = " ".join(name.split())
     if rule.get("forbidden"):
         return f"{path}:{call.lineno} {name} (forbidden text I/O API)"
+    if rule.get("forbidden_text_flag"):
+        text_flag = _argument(call, "text", None)
+        if text_flag is _MISSING or (
+            isinstance(text_flag, ast.Constant) and text_flag.value is False
+        ):
+            return None
+        return f"{path}:{call.lineno} {name} (tempfile.mkstemp text mode is forbidden)"
 
     valid_encoding, invalid_encoding = _encoding_state(call, rule)
     text_mode, dynamic_text = _text_mode(call, rule)
@@ -376,6 +464,15 @@ def _scan_source(source: str, path: str) -> list[str]:
     aliases = _import_aliases(tree)
     offenders = []
     for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module in GUARDED_STAR_IMPORTS
+            and any(imported.name == "*" for imported in node.names)
+        ):
+            offenders.append(
+                f"{path}:{node.lineno} from {node.module} import * "
+                "(star import hides guarded text I/O calls)"
+            )
         if not isinstance(node, ast.Call):
             continue
         rule = _matched_rule(node, aliases)
@@ -425,11 +522,36 @@ def test_call_rule_table_examples_cover_each_call_kind():
             )
 
 
+def test_added_api_rules_are_pinned_independently_of_the_rule_table():
+    cases = (
+        ('builtins.open("file")', 1),
+        ('builtins.open("file", "rb")', 0),
+        ('from builtins import open as file_open\nfile_open("file")', 1),
+        ('from builtins import open as file_open\nfile_open("file", "rb")', 0),
+        ('gzip.open("file")', 0),
+        ('gzip.open("file", "rt")', 1),
+        ('bz2.open("file")', 0),
+        ('bz2.open("file", "rt")', 1),
+        ('lzma.open("file")', 0),
+        ('lzma.open("file", "rt")', 1),
+        ('logging.FileHandler("file", encoding="utf-8")', 0),
+        ('logging.FileHandler("file")', 1),
+        ('logging.FileHandler("file", "w", "utf-8")', 0),
+        ('logging.FileHandler("file", "w")', 1),
+        ("tempfile.mkstemp()", 0),
+        ("tempfile.mkstemp(text=True)", 1),
+    )
+    for snippet, expected_count in cases:
+        offenders = _scan_source(snippet, "tests/added_api.py")
+        assert len(offenders) == expected_count, f"{snippet!r}: {offenders}"
+
+
 def test_alias_resolution_handles_all_import_spellings():
     examples = (
         "import subprocess as sp\nsp.run([], text=True)",
         "from os import fdopen\nfdopen(3, 'w')",
         "from io import open as text_open\ntext_open('file')",
+        "from builtins import open as file_open\nfile_open('file')",
         "from tempfile import NamedTemporaryFile as make_temp\nmake_temp('w')",
         "from subprocess import getoutput as get_output\nget_output('command')",
     )
@@ -481,6 +603,39 @@ webbrowser.open("https://example.test")
     assert _scan_source(exempt, "tests/exempt.py") == []
     offenders = _scan_source('Path("member").open()', "tests/archive.py")
     assert len(offenders) == 1
+
+
+def test_archive_members_do_not_look_like_path_open_modes():
+    cases = (
+        ('zipfile.ZipFile("archive.zip").open("member.txt")', 0),
+        ('z.open("m")', 0),
+        ('z.open("rr")', 0),
+        ('Path("file").open("r")', 1),
+    )
+    for snippet, expected_count in cases:
+        offenders = _scan_source(snippet, "tests/archive_members.py")
+        assert len(offenders) == expected_count, f"{snippet!r}: {offenders}"
+
+
+def test_guarded_star_imports_fail_closed():
+    modules = (
+        "subprocess",
+        "io",
+        "os",
+        "tempfile",
+        "codecs",
+        "pathlib",
+        "builtins",
+        "gzip",
+        "bz2",
+        "lzma",
+        "logging",
+    )
+    for module in modules:
+        snippet = f"from {module} import *"
+        offenders = _scan_source(snippet, "tests/star_import.py")
+        assert len(offenders) == 1, f"{snippet!r}: {offenders}"
+        assert "star import hides guarded text I/O calls" in offenders[0]
 
 
 def test_syntax_error_reports_the_scanned_path():
