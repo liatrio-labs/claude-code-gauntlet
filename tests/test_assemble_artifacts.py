@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from typing import ClassVar
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -354,7 +355,7 @@ class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
                 "--input-type=module",
                 "-e",
                 js,
-                os.path.join(REPO_ROOT, "workflows", "src", "stages.js"),
+                Path(REPO_ROOT, "workflows", "src", "stages.js").as_uri(),
                 json.dumps(findings),
             ],
             capture_output=True,

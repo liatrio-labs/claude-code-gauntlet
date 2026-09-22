@@ -99,6 +99,10 @@ def run_cli(args, environ=None):
     return proc.returncode, json.loads(lines[0]), proc.stdout
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "the pipeline waist accepts only a POSIX /-prefixed outputDir (workflows/src/args.js:834); Windows paths: #351",
+)
 class MaterializeTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -267,6 +271,14 @@ class TestResolution(MaterializeTestCase):
         self.assertFalse(receipt["ok"])
         self.assertEqual(receipt["materialized"], [])
         self.assertFalse(os.path.exists(self.artifact("findings")))
+
+
+class TestResolutionWithoutARecordedRun(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.out_dir = os.path.join(self.tmp, ".code-gauntlet")
+        os.makedirs(self.out_dir, exist_ok=True)
 
     def test_no_source_at_all_still_prints_one_line(self):
         code, receipt, _ = run_cli(

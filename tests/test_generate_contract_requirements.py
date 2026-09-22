@@ -1252,7 +1252,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             src = REPO / rel
             dst = root / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            dst.write_bytes(src.read_bytes())
         self.root = root
 
     def test_check_is_clean_on_a_freshly_regenerated_copy(self):
@@ -1422,7 +1422,10 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
                 resolver.resolve(mode, {}, None, "pr", registry=registry)["configEcho"],
                 registry=registry,
             )
-            self.assertIn(expected.encode(), skill_before)
+            self.assertTrue(
+                expected.encode() in skill_before,
+                f"{mode} receipt not found in SKILL.md",
+            )
         cases = {
             "field deletion": resolver_before.replace(
                 '        "deriveWhen": None,\n', "", 1

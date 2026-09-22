@@ -1710,14 +1710,16 @@ class TestRunTimeout(unittest.TestCase):
 
     def test_timeout_returns_sentinel(self):
         """run() with timeout returns (-1) returncode on TimeoutExpired."""
-        stdout, stderr, rc = run(["sleep", "10"], timeout=0.1)
+        stdout, stderr, rc = run(
+            [sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.1
+        )
         self.assertEqual(rc, -1)
         self.assertEqual(stdout, "")
         self.assertEqual(stderr, "")
 
     def test_timeout_none_no_limit(self):
         """run() without timeout behaves as before."""
-        stdout, stderr, rc = run(["echo", "hello"])
+        stdout, stderr, rc = run([sys.executable, "-c", "print('hello')"])
         self.assertEqual(rc, 0)
         self.assertIn("hello", stdout)
 
@@ -1727,15 +1729,17 @@ class TestRunTimeout(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            stdout, stderr, rc = run(["pwd"], cwd=d)
+            stdout, stderr, rc = run(
+                [sys.executable, "-c", "import os; print(os.getcwd())"], cwd=d
+            )
             self.assertEqual(rc, 0)
             self.assertEqual(os.path.realpath(stdout.strip()), os.path.realpath(d))
 
     def test_backward_compat_no_new_params(self):
         """run() still works with only (cmd) or (cmd, check) args."""
-        stdout, stderr, rc = run(["echo", "hi"])
+        stdout, stderr, rc = run([sys.executable, "-c", "print('hi')"])
         self.assertEqual(rc, 0)
-        stdout2, stderr2, rc2 = run(["echo", "hi"], check=True)
+        stdout2, stderr2, rc2 = run([sys.executable, "-c", "print('hi')"], check=True)
         self.assertEqual(rc2, 0)
 
 

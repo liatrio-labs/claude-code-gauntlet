@@ -899,13 +899,14 @@ class TestDeduplicateImportPath(unittest.TestCase):
             "assert len(merged) == 1 and merged[0]['title'] == 'n' and dupes == 1\n"
             "print('ok')\n"
         )
-        proc = subprocess.run(
-            [sys.executable, "-c", code],
-            cwd="/tmp",
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
+        with tempfile.TemporaryDirectory() as cwd:
+            proc = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
 
 

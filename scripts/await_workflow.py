@@ -87,6 +87,7 @@ import json
 import os
 import shlex
 import sys
+import tempfile
 import time
 
 # ---------------------------------------------------------------------------
@@ -218,7 +219,11 @@ def looks_like_path(target):
     """True when *target* should be used verbatim rather than resolved as an id."""
     if not target:
         return False
-    return os.sep in target or target.endswith(".output")
+    return (
+        os.sep in target
+        or (os.altsep is not None and os.altsep in target)
+        or target.endswith(".output")
+    )
 
 
 def task_roots(environ=None):
@@ -242,9 +247,16 @@ def task_roots(environ=None):
     tmpdir = environ.get("TMPDIR")
     if tmpdir:
         bases.append(tmpdir.rstrip(os.sep) or os.sep)
+    getuid = getattr(os, "getuid", None)
+    if callable(getuid):
+        root_name = f"claude-{getuid()}"
+    else:
+        # Windows has no uid; issue #352 tracks measuring Claude's task root.
+        root_name = "claude"
+        bases.append(tempfile.gettempdir())
     roots, seen = [], set()
     for base in bases:
-        candidate = os.path.join(base, f"claude-{os.getuid()}")
+        candidate = os.path.join(base, root_name)
         real = os.path.realpath(candidate)
         if real in seen:
             continue

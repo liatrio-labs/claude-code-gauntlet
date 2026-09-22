@@ -108,7 +108,7 @@ def sites():
                 ms = _MULTISELECT.search(seg)
                 found.append(
                     {
-                        "path": str(path.relative_to(REPO)),
+                        "path": path.relative_to(REPO).as_posix(),
                         "question": q.group(1) if q else None,
                         "header": h.group(1) if h else None,
                         "multiSelect": ms.group(1) if ms else None,

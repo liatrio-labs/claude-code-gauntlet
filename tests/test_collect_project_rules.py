@@ -80,7 +80,7 @@ class _RepoCase(unittest.TestCase):
         parent = os.path.dirname(path)
         if parent and not os.path.isdir(parent):
             os.makedirs(parent)
-        with open(path, "w", encoding="utf-8") as handle:
+        with open(path, "w", encoding="utf-8", newline="") as handle:
             handle.write(content)
         return path
 
@@ -1106,6 +1106,10 @@ class TestProvenance(_RepoCase):
                 body,
             )
 
+    @unittest.skipIf(
+        os.name == "nt",
+        'NTFS/Win32 forbid " < > in file names; escaping is pinned by test_render_escapes_html_sensitive_path',
+    )
     def test_attribute_path_escapes_html_sensitive_characters(self):
         directory = 'odd"&<>dir'
         self.write(f"{directory}/AGENTS.md", "ODD-RULE\n")
@@ -1117,6 +1121,16 @@ class TestProvenance(_RepoCase):
             body,
         )
         self.assertIn(f"### {directory}/AGENTS.md\n", body)
+
+    def test_render_escapes_html_sensitive_path(self):
+        path = 'odd"&<>dir/AGENTS.md'
+        body = render([{"path": path, "text": "ODD-RULE\n"}])
+        self.assertIn(
+            '<project-rules path="odd&quot;&amp;&lt;&gt;dir/AGENTS.md" '
+            'modified-in-this-diff="false">',
+            body,
+        )
+        self.assertIn(f"### {path}\n", body)
 
 
 class TestFirstClassFileTypes(_RepoCase):
@@ -1289,9 +1303,10 @@ class TestPureHelpers(unittest.TestCase):
         self.assertEqual(_find_imports("@b.md @a.md @b.md"), ["b.md", "a.md"])
 
     def test_within_is_separator_aware(self):
-        self.assertTrue(_within("/base/repo", "/base/repo"))
-        self.assertTrue(_within("/base/repo/x.md", "/base/repo"))
-        self.assertFalse(_within("/base/repo-evil/x.md", "/base/repo"))
+        root = os.path.join(os.sep, "base", "repo")
+        self.assertTrue(_within(root, root))
+        self.assertTrue(_within(os.path.join(root, "x.md"), root))
+        self.assertFalse(_within(os.path.join(root + "-evil", "x.md"), root))
 
 
 if __name__ == "__main__":

@@ -25,11 +25,13 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -48,12 +50,29 @@ from scripts.await_workflow import (
     emit,
     find_terminal,
     is_terminal_return,
+    looks_like_path,
     main,
     resolve_target,
     terminal_from,
 )
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _find_posix_shell():
+    if sys.platform != "win32":
+        return shutil.which("bash")
+    git = shutil.which("git")
+    if git is None:
+        return None
+    for ancestor in Path(git).resolve().parents[:3]:
+        candidate = ancestor / "bin" / "bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+POSIX_SHELL = _find_posix_shell()
 
 # The success return, exactly as observed at `.result` in
 # .../tasks/w3eeyrqqm.output (a real headless smoke run, 2026-07-28), with the
@@ -607,12 +626,12 @@ class TestBrokenPipeDegradesToADocumentedCode(unittest.TestCase):
             path = ws.write("w1.output", json.dumps(envelope(big)))
             script = os.path.join(REPO_ROOT, "scripts", "await_workflow.py")
             reader = subprocess.Popen(
-                ["head", "-c", "20"],
+                [sys.executable, "-c", "import sys; sys.stdin.readline(20)"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
             )
             writer = subprocess.Popen(
-                ["python3", script, "--timeout-seconds", "0", "--", path],
+                [sys.executable, script, "--timeout-seconds", "0", "--", path],
                 stdout=reader.stdin,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -681,7 +700,7 @@ class TestTerminalPathIsSilentOnStderr(unittest.TestCase):
             path = ws.write("w1.output", json.dumps(envelope(SUCCESS_RETURN)))
             proc = subprocess.run(
                 [
-                    "python3",
+                    sys.executable,
                     os.path.join(REPO_ROOT, "scripts", "await_workflow.py"),
                     "--timeout-seconds",
                     "0",
@@ -829,6 +848,10 @@ class TestTruncatedFragmentIsNotPromoted(unittest.TestCase):
 class TestNonRegularFileTargets(unittest.TestCase):
     """Regression: open() on a FIFO blocks forever and prints nothing."""
 
+    @unittest.skipUnless(
+        hasattr(os, "mkfifo"),
+        "os.mkfifo: named FIFOs are a POSIX filesystem feature; the isfile() guard is also pinned by test_directory_target_does_not_raise",
+    )
     def test_fifo_target_does_not_block(self):
         with _Workspace() as ws:
             fifo = os.path.join(ws.path, "afifo.output")
@@ -920,7 +943,19 @@ class TestResolveTarget(unittest.TestCase):
             "wnosuchtask000", {"CODE_GAUNTLET_TASKS_DIR": "/nonexistent-dir"}
         )
         self.assertIsNone(path)
-        self.assertIn("/nonexistent-dir/wnosuchtask000.output", searched)
+        self.assertIn(
+            os.path.join("/nonexistent-dir", "wnosuchtask000.output"), searched
+        )
+
+    def test_missing_getuid_uses_system_temp_root(self):
+        with patch.object(os, "getuid", None, create=True):
+            path, searched = resolve_target("wnosuchtask000", {})
+        self.assertIsNone(path)
+        self.assertTrue(searched)
+
+    def test_altsep_marks_a_target_as_a_path(self):
+        with patch.object(os, "altsep", "!", create=True):
+            self.assertTrue(looks_like_path("a!b"))
 
 
 # ---------------------------------------------------------------------------
@@ -1361,6 +1396,10 @@ class TestNextCommand(unittest.TestCase):
         cmd = build_next_command(self._args(), "-weird.output", 1.0)
         self.assertTrue(cmd.rstrip().endswith("-- -weird.output"), cmd)
 
+    @unittest.skipUnless(
+        POSIX_SHELL,
+        "next_command is a bash command line; no POSIX shell found",
+    )
     def test_a_leading_dash_target_round_trips(self):
         """The target must lead with '-' at the ARGV-TOKEN level to reproduce the
         bug. An absolute path with a dashed basename starts with '/', so argparse
@@ -1375,8 +1414,7 @@ class TestNextCommand(unittest.TestCase):
             # Run it exactly as emitted, from the workspace, so the target really
             # is the bare relative token `-dashy.output`.
             proc = subprocess.run(
-                cmd,
-                shell=True,
+                [POSIX_SHELL, "-c", cmd],
                 capture_output=True,
                 text=True,
                 cwd=ws.path,
@@ -1387,6 +1425,10 @@ class TestNextCommand(unittest.TestCase):
         self.assertEqual(marker["attempt"], 2)
         self.assertEqual(marker["target"], "-dashy.output")
 
+    @unittest.skipUnless(
+        POSIX_SHELL,
+        "next_command is a bash command line; no POSIX shell found",
+    )
     def test_is_actually_runnable(self):
         """Round-trip it: the printed command must run and behave identically."""
         with _Workspace() as ws:
@@ -1395,7 +1437,7 @@ class TestNextCommand(unittest.TestCase):
                 [path, "--timeout-seconds", "0", "--poll-interval", "0"]
             )
             cmd = sole_json_line(out)["next_command"]
-            # shell=True is the property under test, not an oversight: the script
+            # A shell is the property under test, not an oversight: the script
             # emits a command STRING that the orchestrator pastes into a Bash tool
             # call, so the only way to prove the quoting holds is to hand it to a
             # shell. The string is built by our own code from our own argv.
@@ -1403,8 +1445,7 @@ class TestNextCommand(unittest.TestCase):
             # target rides behind a trailing `--` and a later flag would be
             # swallowed as a positional.
             proc = subprocess.run(
-                cmd,
-                shell=True,
+                [POSIX_SHELL, "-c", cmd],
                 capture_output=True,
                 text=True,
                 cwd=REPO_ROOT,

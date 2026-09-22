@@ -146,9 +146,7 @@ class TestEnsureOutputDir(unittest.TestCase):
             self.repo, env={"CODE_GAUNTLET_OUTPUT_DIR": "artifacts/out"}
         )
         abs_path = self._assert_in_repo_success_ignored(code, out)
-        self.assertTrue(
-            abs_path.endswith("/artifacts/out") or abs_path.endswith("/artifacts/out/")
-        )
+        self.assertEqual(Path(abs_path).parts[-2:], ("artifacts", "out"))
         exclude = _git(
             self.repo, "rev-parse", "--git-path", "info/exclude"
         ).stdout.strip()

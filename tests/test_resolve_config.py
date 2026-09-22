@@ -545,7 +545,7 @@ class TestGeneratedDataContracts(unittest.TestCase):
         for path in sorted((REPO / "skills/code-gauntlet").rglob("*.md")):
             blocks = pattern.findall(path.read_text(encoding="utf-8"))
             if blocks:
-                actual[str(path.relative_to(REPO))] = len(blocks)
+                actual[path.relative_to(REPO).as_posix()] = len(blocks)
         self.assertEqual(
             actual,
             {
