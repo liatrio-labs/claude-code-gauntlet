@@ -332,7 +332,11 @@ def _matched_rule(call: ast.Call, aliases: dict[str, str]) -> dict | None:
                 continue
             if rule["attribute"] == "open" and call.args:
                 first = call.args[0]
-                if _literal_string(first) and not _valid_open_mode(first.value):
+                if (
+                    isinstance(first, ast.Constant)
+                    and isinstance(first.value, str)
+                    and not _valid_open_mode(first.value)
+                ):
                     continue
             return rule
     return None
