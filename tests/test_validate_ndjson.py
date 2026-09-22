@@ -9,14 +9,19 @@ inside a JSON string value).
 
 import io
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.validate_ndjson import main, validate
+
+REPO = Path(__file__).resolve().parents[1]
+SCRIPT = REPO / "scripts" / "validate_ndjson.py"
 
 
 class _TmpFile:
@@ -179,6 +184,38 @@ class TestMainEntrypoint(unittest.TestCase):
         with _TmpFile(b'{"ok":true}\n') as path, patch("sys.stderr", new=io.StringIO()):
             rc = main(["validate_ndjson.py", path])
         self.assertEqual(rc, 0)
+
+
+class TestCliSubprocess(unittest.TestCase):
+    def test_script_bootstrap_passes_argv_for_valid_and_invalid_files(self):
+        valid_content = b'{"id":"bug-1","title":"Example"}\n'
+        invalid_content = b'{"id":"bug-1"}\nnot-json\n'
+        with (
+            _TmpFile(valid_content) as valid_path,
+            _TmpFile(invalid_content) as invalid_path,
+        ):
+            valid = subprocess.run(
+                [sys.executable, str(SCRIPT), valid_path],
+                cwd=REPO,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            invalid = subprocess.run(
+                [sys.executable, str(SCRIPT), invalid_path],
+                cwd=REPO,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+        self.assertEqual(valid.returncode, 0)
+        self.assertEqual(valid.stdout, "")
+        self.assertIn(": 1 valid finding(s).", valid.stderr)
+        self.assertEqual(invalid.returncode, 1)
+        self.assertEqual(invalid.stdout, "")
+        self.assertIn(": 1 valid, 1 invalid line(s).", invalid.stderr)
+        self.assertIn("line 2: JSONDecodeError:", invalid.stderr)
 
 
 if __name__ == "__main__":

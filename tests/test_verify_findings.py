@@ -1729,16 +1729,19 @@ class TestRunTimeout(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
+            unicode_cwd = os.path.join(d, "caf\u00e9")
+            os.mkdir(unicode_cwd)
             stdout, stderr, rc = run(
                 [
                     sys.executable,
                     "-c",
                     "import os, sys; sys.stdout.buffer.write(os.getcwd().encode('utf-8'))",
                 ],
-                cwd=d,
+                cwd=unicode_cwd,
             )
             self.assertEqual(rc, 0)
-            self.assertEqual(os.path.realpath(stdout.strip()), os.path.realpath(d))
+            resolved_cwd = os.path.realpath(unicode_cwd)
+            self.assertEqual(os.path.realpath(stdout.strip()), resolved_cwd)
 
     def test_backward_compat_no_new_params(self):
         """run() still works with only (cmd) or (cmd, check) args."""

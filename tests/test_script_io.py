@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
@@ -32,23 +33,43 @@ def _main_guard(node):
     )
 
 
-def _is_entry_point(tree):
-    functions = {
-        node.name
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    return (
-        "main" in functions
-        or any(_main_guard(node) for node in tree.body)
-        or any(
+@dataclass(frozen=True)
+class _EntryPointFacts:
+    has_main_definition: bool
+    main_guards: tuple[ast.If, ...]
+    module_calls: tuple[ast.Expr, ...]
+    block_statements: tuple[tuple[ast.stmt, ...], ...]
+
+
+def _entry_point_facts(tree):
+    functions = set()
+    guards = []
+    bare_calls = []
+    block_statements = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.add(node.name)
+        if isinstance(node, ast.If) and _main_guard(node):
+            guards.append(node)
+            block_statements.append(tuple(node.body))
+        if (
             isinstance(node, ast.Expr)
             and isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Name)
-            and node.value.func.id in functions
-            for node in tree.body
-        )
+        ):
+            bare_calls.append((node, node.value.func.id))
+
+    module_calls = tuple(node for node, name in bare_calls if name in functions)
+    return _EntryPointFacts(
+        has_main_definition="main" in functions,
+        main_guards=tuple(guards),
+        module_calls=module_calls,
+        block_statements=tuple(block_statements),
     )
+
+
+def _is_entry_point(facts):
+    return bool(facts.has_main_definition or facts.main_guards or facts.module_calls)
 
 
 def _is_repo_root(node, depth):
@@ -116,33 +137,22 @@ def _is_sys_path_insert(node):
     )
 
 
-def _bootstrap_problem(source, relpath):
-    tree = ast.parse(source, filename=relpath)
-    functions = {
-        node.name
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    guards = [node for node in tree.body if _main_guard(node)]
-    module_calls = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.Expr)
-        and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Name)
-        and node.value.func.id in functions
-    ]
-    if not _is_entry_point(tree):
+def _bootstrap_problem(source, relpath, tree=None, facts=None):
+    if tree is None:
+        tree = ast.parse(source, filename=relpath)
+    if facts is None:
+        facts = _entry_point_facts(tree)
+    if not _is_entry_point(facts):
         return None
-    if module_calls:
+    if facts.module_calls:
         return (
             "module-level call to a locally defined function is outside the entry block"
         )
-    if len(guards) != 1:
+    if len(facts.main_guards) != 1:
         return "expected one module-level __main__ block"
 
     outside_scripts = not relpath.startswith("scripts/")
-    body = list(guards[0].body)
+    body = list(facts.block_statements[0])
     insertions = [node for node in body if _is_script_path_insert(node, relpath, tree)]
     if outside_scripts:
         path_inserts = [node for node in ast.walk(tree) if _is_sys_path_insert(node)]
@@ -164,7 +174,7 @@ def _bootstrap_problem(source, relpath):
             ]
             if (
                 len(top_level_insertions) != 1
-                or top_level_insertions[0].lineno >= guards[0].lineno
+                or top_level_insertions[0].lineno >= facts.main_guards[0].lineno
             ):
                 return (
                     "expected the scripts/ path insertion before the bootstrap import"
@@ -277,12 +287,13 @@ class TestEntryPointBootstrap(unittest.TestCase):
             source = (REPO / relpath).read_text(encoding="utf-8")
             try:
                 tree = ast.parse(source, filename=relpath)
-                if _is_entry_point(tree):
+                facts = _entry_point_facts(tree)
+                if _is_entry_point(facts):
                     root = next(
                         root for root in BOOTSTRAP_ROOTS if relpath.startswith(root)
                     )
                     discovered[root].append(relpath)
-                problem = _bootstrap_problem(source, relpath)
+                problem = _bootstrap_problem(source, relpath, tree, facts)
             except SyntaxError as error:
                 problems.append(f"{relpath}: syntax error: {error}")
                 continue

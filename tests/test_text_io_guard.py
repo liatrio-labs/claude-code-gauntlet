@@ -330,14 +330,18 @@ def _matched_rule(call: ast.Call, aliases: dict[str, str]) -> dict | None:
                 "exclude_receivers", ()
             ):
                 continue
-            if rule["attribute"] == "open" and call.args:
-                first = call.args[0]
-                if (
-                    isinstance(first, ast.Constant)
-                    and isinstance(first.value, str)
-                    and not _valid_open_mode(first.value)
-                ):
+            if rule["attribute"] == "open":
+                if any(keyword.arg == "name" for keyword in call.keywords):
                     continue
+                if call.args:
+                    first = call.args[0]
+                    # A ZipFile member named "r" remains a fail-closed false positive.
+                    if (
+                        isinstance(first, ast.Constant)
+                        and isinstance(first.value, str)
+                        and not _valid_open_mode(first.value)
+                    ):
+                        continue
             return rule
     return None
 
@@ -532,6 +536,9 @@ def test_added_api_rules_are_pinned_independently_of_the_rule_table():
         ('builtins.open("file", "rb")', 0),
         ('from builtins import open as file_open\nfile_open("file")', 1),
         ('from builtins import open as file_open\nfile_open("file", "rb")', 0),
+        ('codecs.open("file")', 1),
+        ('codecs.open("file", "rb")', 0),
+        ('codecs.open("file", encoding="utf-8")', 0),
         ('gzip.open("file")', 0),
         ('gzip.open("file", "rt")', 1),
         ('bz2.open("file")', 0),
@@ -612,6 +619,7 @@ webbrowser.open("https://example.test")
 def test_archive_members_do_not_look_like_path_open_modes():
     cases = (
         ('zipfile.ZipFile("archive.zip").open("member.txt")', 0),
+        ('z.open(name="member.txt")', 0),
         ('z.open("m")', 0),
         ('z.open("rr")', 0),
         ('Path("file").open("r")', 1),
