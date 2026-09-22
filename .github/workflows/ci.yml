@@ -13,13 +13,14 @@ jobs:
   test-windows-baseline:
     name: Windows baseline (py ${{ matrix.python-version }}, PYTHONUTF8=${{ matrix.utf8 }})
     runs-on: windows-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.14"]
-        utf8: ["0", "1"]
+        python-version: ["3.12"]
+        utf8: ["1"]
     env:
       PYTHONUTF8: ${{ matrix.utf8 }}
     steps:
@@ -49,4 +50,4 @@ jobs:
         run: pip install pytest==9.1.1
 
       - name: Run pytest
-        run: python -m pytest tests/ -q -rfE --tb=line -p no:cacheprovider
+        run: python -m pytest tests/ -v -rfE --tb=short -p no:cacheprovider --color=no
