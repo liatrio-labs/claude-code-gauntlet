@@ -11,7 +11,7 @@ env:
 
 jobs:
   test-windows-baseline:
-    name: Windows baseline (py ${{ matrix.python-version }}, PYTHONUTF8=${{ matrix.utf8 }})
+    name: Windows baseline (py ${{ matrix.python-version }}, PYTHONUTF8=${{ matrix.utf8 }}, autocrlf=${{ matrix.autocrlf }})
     runs-on: windows-latest
     timeout-minutes: 30
     permissions:
@@ -21,9 +21,13 @@ jobs:
       matrix:
         python-version: ["3.12"]
         utf8: ["1"]
+        autocrlf: ["true", "false"]
     env:
       PYTHONUTF8: ${{ matrix.utf8 }}
     steps:
+      - name: Set autocrlf
+        run: git config --global core.autocrlf ${{ matrix.autocrlf }}
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,4 +54,11 @@ jobs:
         run: pip install pytest==9.1.1
 
       - name: Run pytest
-        run: python -m pytest tests/ -v -rfE --tb=short -p no:cacheprovider --color=no
+        run: python -m pytest tests/ -q -rfE --tb=short -p no:cacheprovider --color=no --junitxml=junit.xml
+
+      - name: Upload junit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.autocrlf }}
+          path: junit.xml
