@@ -857,11 +857,23 @@ class TestNonRegularFileTargets(unittest.TestCase):
             fifo = os.path.join(ws.path, "afifo.output")
             os.mkfifo(fifo)
             try:
-                code, out, _ = run_main([fifo, "--timeout-seconds", "0"])
+                proc = subprocess.run(
+                    [
+                        sys.executable,
+                        os.path.join(REPO_ROOT, "scripts", "await_workflow.py"),
+                        fifo,
+                        "--timeout-seconds",
+                        "0",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=2,
+                )
             finally:
                 os.unlink(fifo)
-        self.assertEqual(code, 3)
-        self.assertEqual(sole_json_line(out)["await"], "pending")
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertEqual(sole_json_line(proc.stdout)["await"], "pending")
 
     def test_directory_target_does_not_raise(self):
         with _Workspace() as ws:
@@ -948,10 +960,19 @@ class TestResolveTarget(unittest.TestCase):
         )
 
     def test_missing_getuid_uses_system_temp_root(self):
-        with patch.object(os, "getuid", None, create=True):
+        with (
+            tempfile.TemporaryDirectory() as sentinel,
+            patch.object(os, "getuid", None, create=True),
+            patch("scripts.await_workflow.tempfile.gettempdir", return_value=sentinel),
+        ):
             path, searched = resolve_target("wnosuchtask000", {})
         self.assertIsNone(path)
-        self.assertTrue(searched)
+        self.assertTrue(
+            any(os.path.join(sentinel, "claude") in pattern for pattern in searched)
+        )
+        self.assertFalse(
+            any(re.search(r"(?:^|[\\/])claude-\d+(?:[\\/]|$)", p) for p in searched)
+        )
 
     def test_altsep_marks_a_target_as_a_path(self):
         with patch.object(os, "altsep", "!", create=True):

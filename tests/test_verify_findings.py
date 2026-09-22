@@ -1730,7 +1730,12 @@ class TestRunTimeout(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             stdout, stderr, rc = run(
-                [sys.executable, "-c", "import os; print(os.getcwd())"], cwd=d
+                [
+                    sys.executable,
+                    "-c",
+                    "import os, sys; sys.stdout.buffer.write(os.getcwd().encode('utf-8'))",
+                ],
+                cwd=d,
             )
             self.assertEqual(rc, 0)
             self.assertEqual(os.path.realpath(stdout.strip()), os.path.realpath(d))

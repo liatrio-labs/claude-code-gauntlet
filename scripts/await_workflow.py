@@ -231,10 +231,11 @@ def task_roots(environ=None):
 
     Background-task output lives at
     ``<tmp-root>/<project-slug>/<session-uuid>/tasks/<task-id>.output``. The
-    tmp-root is `claude-<uid>` under the system temp directory, but which spelling
-    of that directory is real varies (on macOS ``/tmp`` is a symlink to
-    ``/private/tmp``), so every candidate is listed and de-duplicated by realpath
-    rather than assumed.
+    On POSIX, the tmp-root is `claude-<uid>` under the system temp directory.
+    Windows has no uid, so its fallback root is `claude` under
+    `tempfile.gettempdir()` (tracked by issue #352). Which spelling of a POSIX
+    directory is real varies (on macOS ``/tmp`` is a symlink to ``/private/tmp``),
+    so every candidate is listed and de-duplicated by realpath rather than assumed.
 
     Candidates that do not exist are RETAINED, not filtered out. They cost nothing
     to skip at glob time, and dropping them made the failure undiagnosable: on a

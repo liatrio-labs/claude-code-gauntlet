@@ -1545,14 +1545,15 @@ class TestEncodingPathsEmitReceipt(ReportPatchesTestBase):
 
 
 class TestEmitReceiptStdoutEncoding(ReportPatchesTestBase):
-    """Pin the CLI bootstrap end to end under a parent-requested ASCII
-    encoding. Unlike an in-process ``io.StringIO`` capture, a subprocess
-    proves that the entry point emits UTF-8 bytes and a single LF-terminated
-    line. The receipt still escapes lone surrogates with ``ensure_ascii``.
+    """Pin the CLI bootstrap end to end when ``PYTHONIOENCODING=ascii``
+    requests ASCII stdout encoding. Unlike an in-process ``io.StringIO`` capture,
+    a subprocess proves that the entry point emits UTF-8 bytes and a single
+    LF-terminated line. The receipt still escapes lone surrogates with
+    ``ensure_ascii``.
 
     RED when both the ``run_entrypoint`` bootstrap and ``ensure_ascii=True``
     are removed: raw non-ASCII receipt text then reaches the ASCII stdout
-    configuration and leaves stdout empty.
+    configuration, so the script emits its ASCII fallback receipt instead.
     """
 
     SCRIPT = os.path.join(
@@ -1577,7 +1578,7 @@ class TestEmitReceiptStdoutEncoding(ReportPatchesTestBase):
 
     def test_non_ascii_path_in_a_downgrade_warning_survives_ascii_stdout(self):
         """The CLI bootstrap must emit valid UTF-8 with LF even when the
-        parent requests an ASCII locale. With no diff file, the finding's
+        parent sets ``PYTHONIOENCODING=ascii``. With no diff file, the finding's
         non-ASCII path is included in a downgraded warning and its receipt.
         """
         self._write_findings(

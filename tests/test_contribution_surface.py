@@ -1504,6 +1504,31 @@ class TestContractFenceHook(unittest.TestCase):
             self.assertEqual(target.read_bytes(), corrupted)
 
 
+class TestWindowsCiContract(unittest.TestCase):
+    def test_windows_pytest_job_contract_is_pinned(self):
+        text = _read(".github/workflows/ci.yml")
+        windows_jobs = [
+            job
+            for _, job in _ci_job_blocks(text)
+            if re.search(r"(?m)^    name: Run Tests on Windows\s*$", job)
+        ]
+        self.assertEqual(len(windows_jobs), 1)
+        job = windows_jobs[0]
+
+        self.assertRegex(job, r"(?m)^    runs-on:\s*windows-latest\s*$")
+        self.assertRegex(job, r"(?m)^      matrix:\s*$")
+        self.assertRegex(
+            job,
+            r'(?m)^        python-version:\s*\[[^\]]*["\']3\.12["\'][^\]]*\]\s*$',
+        )
+        self.assertRegex(job, r'(?m)^      PYTHONUTF8:\s*["\']?0["\']?\s*$')
+
+        run_bodies = [
+            body for step in _ci_step_blocks(job) for body in _ci_step_run_bodies(step)
+        ]
+        self.assertIn("python -m pytest tests/ -q", run_bodies)
+
+
 class TestCiNodePin(unittest.TestCase):
     def test_node_is_pinned_before_every_relevant_ci_job(self):
         text = _read(".github/workflows/ci.yml")
