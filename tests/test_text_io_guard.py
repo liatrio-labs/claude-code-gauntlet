@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import subprocess
 from pathlib import Path
+from typing import Any, TypeGuard
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCANNED_ROOTS = ("scripts/", "tests/", "bench/", ".github/", "workflows/test/tools/")
@@ -16,7 +17,7 @@ _MISSING = object()
 
 # Each row is a call shape, its argument positions, and executable examples.
 # Add a call kind here so both matching and its positive/negative examples stay together.
-CALL_RULES = (
+CALL_RULES: tuple[dict[str, Any], ...] = (
     {
         "name": "open and io.open",
         "kind": "exact",
@@ -275,7 +276,7 @@ def _argument(call: ast.Call, keyword: str, position: int | None) -> ast.expr | 
     return _MISSING
 
 
-def _literal_string(node: ast.expr | object) -> bool:
+def _literal_string(node: ast.expr | object) -> TypeGuard[ast.Constant]:
     return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
 
