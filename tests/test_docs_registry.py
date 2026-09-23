@@ -1419,6 +1419,19 @@ class TestDocsRegistry(unittest.TestCase):
                 t + '::"after deep fence"',
                 None,
             ),  # fence: closers allow docstring-depth indentation
+            (
+                h + "#Trailing Backtick Info",
+                None,
+            ),  # fence: backtick info is checked to its last character
+            (
+                h + "#Blank Line Body",
+                "heading not found",
+            ),  # fence: blank lines do not close
+            (
+                h + "#Fence Tail Body",
+                "heading not found",
+            ),  # fence: closer tails reject fence characters
+            (h + "#Quoted Fence", None),  # fence: openers reject blockquote markers
         )
         errors = []
         witnessed = []
@@ -1529,6 +1542,25 @@ class TestDocsRegistry(unittest.TestCase):
             ["", "", "", "kept", "", "", ""],
             "fences open on the first line, blank both delimiters, and keep every slot",
         )
+        marker_cases = (
+            ("- ```\nx", ["- ```", "x"]),
+            ("* ```\nx", ["* ```", "x"]),
+            ("| ```\nx", ["| ```", "x"]),
+            ("# ```\nx", ["# ```", "x"]),
+            ("```\n~```\nx\n```", ["", "", "", ""]),
+            ("```\n>```\nx\n```", ["", "", "", ""]),
+            ("```\n#```\nx\n```", ["", "", "", ""]),
+            ("```\n` ```\nx\n```", ["", "", "", ""]),
+            ("```\n```~\nx\n```", ["", "", "", ""]),
+            ("```\n```>\nx\n```", ["", "", "", ""]),
+            ("```\n```#\nx\n```", ["", "", "", ""]),
+            ("```\n```x\nx\n```", ["", "", "", ""]),
+        )
+        self.assertEqual(
+            [_unfenced_lines(text) for text, _ in marker_cases],
+            [expected for _, expected in marker_cases],
+            "only spaces and tabs may surround a fence run",
+        )
         self.assertEqual(
             [
                 _kind_line_visible(text, kind, symbol)
@@ -1538,9 +1570,11 @@ class TestDocsRegistry(unittest.TestCase):
                     ("# foreign_js", "js", "foreign_js"),
                     ("def foreign_js(): pass", "js", "foreign_js"),
                     ("foreign_python = 1", "python", "foreign_python"),
+                    ("const a = { FOREIGN_JS: 1 };", "js", "foreign_js"),
+                    ("```\nconst a = { foreign_js: 1 };", "js", "foreign_js"),
                 )
             ],
-            [True, False, False, False, False],
+            [True, False, False, False, False, False, False],
             "a foreign line counts only unfenced and shaped like its kind",
         )
 
