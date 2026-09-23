@@ -30,9 +30,10 @@ uv.lock
 coverage.xml
 htmlcov/
 
-# Claude Code local settings (shared project settings.json is tracked)
+# Claude Code local settings (shared project settings.json and project skills are tracked)
 .claude/*
 !.claude/settings.json
+!.claude/skills/
 
 # Internal development artifacts (not shipped)
 docs/specs/
