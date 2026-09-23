@@ -87,3 +87,12 @@ x````
 # Nbsp Tail
 ~~~
 # Before ~~~ # Hidden ~~~ # Separator
+```` a`b
+# Long Backtick Info
+```
+# Much Longer Body
+``````
+# Much Longer Close
+```~x
+# Backtick Tilde Info
+```

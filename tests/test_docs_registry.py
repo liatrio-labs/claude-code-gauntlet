@@ -326,6 +326,20 @@ def _unfenced_lines(text):
     return lines
 
 
+def _kind_line_visible(text, kind, symbol):
+    """True when an unfenced line of text is shaped like a kind definition of symbol."""
+    patterns = [
+        pattern.replace("{S}", re.escape(symbol))
+        for pattern_kind, pattern in DEFINITION_PATTERNS
+        if pattern_kind == kind
+    ]
+    return any(
+        re.search(pattern, line)
+        for pattern in patterns
+        for line in _unfenced_lines(text)
+    )
+
+
 def _definition_reason(path, symbols, tracked_files, *, witness=None):
     path_reason = _path_reason(path, tracked_files)
     if path_reason:
@@ -1277,7 +1291,7 @@ class TestDocsRegistry(unittest.TestCase):
             (
                 h + "#Wrong Close",
                 "heading not found",
-            ),  # fence: another character does not close or reopen
+            ),  # fence: another character does not close
             (
                 h + "#Text Close",
                 "heading not found",
@@ -1371,6 +1385,22 @@ class TestDocsRegistry(unittest.TestCase):
                 "heading not found",
             ),  # fence: closer tails reject non-ASCII whitespace
             (h + "#Separator", None),  # fence: lines split as splitlines splits them
+            (
+                h + "#Long Backtick Info",
+                None,
+            ),  # fence: longer backtick openers reject backtick info
+            (
+                h + "#Much Longer Body",
+                "heading not found",
+            ),  # fence: a fence stays open until its closer
+            (
+                h + "#Much Longer Close",
+                None,
+            ),  # fence: closers may exceed the opener by any length
+            (
+                h + "#Backtick Tilde Info",
+                "heading not found",
+            ),  # fence: backtick info may contain tildes
         )
         errors = []
         witnessed = []
@@ -1413,7 +1443,6 @@ class TestDocsRegistry(unittest.TestCase):
         )
         for path in definition_paths:
             text = (REPO / path).read_text(encoding="utf-8")
-            masked = _unfenced_lines(text)
             granted = DEFINITION_KINDS_BY_SUFFIX.get(Path(path).suffix, set())
             declaration = re.search(r"kinds: ([\w, ]+)$", text.splitlines()[0])
             declared = set(declaration.group(1).split(", ")) if declaration else set()
@@ -1432,10 +1461,10 @@ class TestDocsRegistry(unittest.TestCase):
                             f"fixture has no foreign {kind} line naming {symbol!r}",
                         )
                     continue
-                if not any(symbol in line for line in masked):
+                if not _kind_line_visible(text, kind, symbol):
                     add_error(
                         span,
-                        f"foreign {kind} line naming {symbol!r} is fenced",
+                        f"foreign {kind} line naming {symbol!r} is fenced or not {kind}-shaped",
                     )
                 actual_reason = _citation_reason(span, tracked_files)
                 expected_reason = f"unresolved symbol {symbol!r} after line 0"
@@ -1478,9 +1507,22 @@ class TestDocsRegistry(unittest.TestCase):
             f"fixture files with no positive row: {sorted(set(fixture_paths) - positive_paths)}; rows citing untracked files: {sorted(positive_paths - set(fixture_paths))}",
         )
         self.assertEqual(
-            _unfenced_lines("~~~\n# First\n~~~\nkept"),
-            ["", "", "", "kept"],
-            "fences open on the first line and blank both delimiters",
+            _unfenced_lines("~~~\n# First\n~~~\nkept\n```\nx"),
+            ["", "", "", "kept", "", ""],
+            "fences open on the first line, blank both delimiters, and keep every slot",
+        )
+        self.assertEqual(
+            [
+                _kind_line_visible(text, "js", "foreign_js")
+                for text in (
+                    "const a = { foreign_js: 1 };",
+                    "```\nconst a = { foreign_js: 1 };\n```",
+                    "# foreign_js",
+                    "def foreign_js(): pass",
+                )
+            ],
+            [True, False, False, False],
+            "a foreign line counts only unfenced and shaped like its kind",
         )
 
 
