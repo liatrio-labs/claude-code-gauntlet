@@ -47,6 +47,8 @@ def load_manifest(path=MANIFEST):
         document = json.loads(Path(path).read_text(encoding="utf-8"))
     except OSError as error:
         _die(f"cannot read the manifest: {error}")
+    except UnicodeDecodeError as error:
+        _die(f"{path} is not UTF-8: {error}")
     except json.JSONDecodeError as error:
         _die(f"{path} is not valid JSON: {error}")
 
@@ -86,6 +88,8 @@ def load_live(source):
         )
     except OSError as error:
         _die(f"cannot read the label response: {error}")
+    except UnicodeDecodeError as error:
+        _die(f"the label response is not UTF-8: {error}")
     if not text.strip():
         _die(
             f"no JSON in {'stdin' if source == '-' else source}: "

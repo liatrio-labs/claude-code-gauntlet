@@ -636,6 +636,31 @@ class TestLabelsDiffHelper(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertNotIn("Traceback", result.stderr)
 
+    def test_non_utf8_input_is_refused_rather_than_raising(self):
+        # UnicodeDecodeError is a ValueError, not an OSError, so each reader
+        # needs its own refusal; a traceback here would read as drift upstream.
+        invalid = b'[{"name": "caf\xe9"}]'
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "not-utf8.json"
+            path.write_bytes(invalid)
+            cases = (
+                (["--live", "-"], invalid),
+                (["--live", str(path)], None),
+                (["--manifest", str(path), "--commands"], None),
+            )
+            for args, stdin in cases:
+                with self.subTest(args=args):
+                    result = subprocess.run(
+                        [sys.executable, str(LABELS_DIFF), *args],
+                        cwd=REPO,
+                        input=stdin,
+                        capture_output=True,
+                    )
+                    stderr = result.stderr.decode("utf-8")
+                    self.assertEqual(result.returncode, 2, stderr)
+                    self.assertNotIn("Traceback", stderr)
+                    self.assertIn("not UTF-8", stderr)
+
     def test_a_manifest_that_cannot_be_shell_quoted_is_refused(self):
         # The documented recipe pipes this output into a shell, so a value that would
         # not survive a command line must stop the run rather than be emitted.

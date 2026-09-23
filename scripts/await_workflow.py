@@ -230,7 +230,7 @@ def task_roots(environ=None):
     """Return every directory that MAY hold this session's tasks/ tree.
 
     Background-task output lives at
-    ``<tmp-root>/<project-slug>/<session-uuid>/tasks/<task-id>.output``. The
+    ``<tmp-root>/<project-slug>/<session-uuid>/tasks/<task-id>.output``.
     On POSIX, the tmp-root is `claude-<uid>` under the system temp directory.
     Windows has no uid, so its fallback root is `claude` under
     `tempfile.gettempdir()` (tracked by issue #352). Which spelling of a POSIX
