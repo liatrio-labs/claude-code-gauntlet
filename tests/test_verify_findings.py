@@ -85,6 +85,7 @@ def js_encode_inline(doc):
         text=True,
         cwd=REPO_ROOT,
         check=True,
+        encoding="utf-8",
     )
     return proc.stdout
 
@@ -884,7 +885,9 @@ class TestVerifyFactual(unittest.TestCase):
         self.assertFalse(result)
 
     def test_line_out_of_range_eliminates(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("line1\nline2\n")
             tmppath = f.name
         try:
@@ -901,7 +904,9 @@ class TestVerifyFactual(unittest.TestCase):
             os.unlink(tmppath)
 
     def test_valid_file_and_lines_verified(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("def hello():\n    pass\n")
             tmppath = f.name
         try:
@@ -923,7 +928,9 @@ class TestVerifyFactual(unittest.TestCase):
 
     def test_symbol_in_code_at_lines_fast_path(self):
         """Symbol present at cited lines must skip git grep for that symbol."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("def calculate_total():\n    return 42\n")
             tmppath = f.name
         try:
@@ -957,7 +964,9 @@ class TestVerifyFactual(unittest.TestCase):
 
     def test_missing_symbol_reduces_confidence_proportionally(self):
         """V5-05: Missing symbols reduce confidence proportionally, not to zero."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("def hello():\n    pass\n")
             tmppath = f.name
         try:
@@ -1003,7 +1012,9 @@ class TestVerifyFactual(unittest.TestCase):
 
     def test_no_extractable_symbols_skips_verification(self):
         """V5-05: When no symbols can be extracted, skip symbol verification entirely."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("x = 1\ny = 2\n")
             tmppath = f.name
         try:
@@ -1029,7 +1040,9 @@ class TestVerifyFactual(unittest.TestCase):
 
     def test_proportional_reduction_partial_match(self):
         """V5-05: 1 of 2 symbols missing → proportional reduction of 35 points."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             # File contains func_a but NOT func_d
             f.write("def func_a():\n    pass\n")
             tmppath = f.name
@@ -1061,7 +1074,9 @@ class TestVerifyFactual(unittest.TestCase):
 
     def test_confidence_floor_at_30(self):
         """V5-05: Confidence never goes below 30 on symbol check alone."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("x = 1\n")
             tmppath = f.name
         try:
@@ -1084,7 +1099,9 @@ class TestVerifyFactual(unittest.TestCase):
 
     def test_confidence_floor_at_30_high_starting_confidence(self):
         """V5-05: 100% miss ratio from high confidence still floors at 30."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("x = 1\n")
             tmppath = f.name
         try:
@@ -1107,7 +1124,9 @@ class TestVerifyFactual(unittest.TestCase):
 
     def test_all_symbols_found_no_confidence_change(self):
         """V5-05: When all symbols are found, confidence stays unchanged."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("def real_function():\n    return real_value\n")
             tmppath = f.name
         try:
@@ -1308,7 +1327,9 @@ class TestRepoRoot(unittest.TestCase):
 
     def test_grep_called_with_repo_root(self):
         """verify_factual must pass REPO_ROOT as cwd to git grep."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("def missing_func():\n    pass\n")
             tmppath = f.name
         try:
@@ -1351,7 +1372,9 @@ class TestRepoRoot(unittest.TestCase):
 class TestVerifyFactualGrepError(unittest.TestCase):
     def test_grep_rc2_skips_symbol_not_zeros_confidence(self):
         """RF-03: grep exit code 2 (I/O error) must not add symbol to missing list."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("def my_func():\n    pass\n")
             tmppath = f.name
         try:
@@ -1377,7 +1400,9 @@ class TestVerifyFactualGrepError(unittest.TestCase):
 
     def test_grep_rc1_still_records_missing_symbol(self):
         """RF-03: grep exit code 1 (no match) must still flag the symbol as missing."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("def my_func():\n    pass\n")
             tmppath = f.name
         try:
@@ -1413,7 +1438,9 @@ class TestVerifyFactualGitGrep(unittest.TestCase):
 
     def test_symbol_timeout_no_confidence_reduction(self):
         """Timed-out symbol search must not reduce confidence."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("def my_func():\n    pass\n")
             tmppath = f.name
         try:
@@ -1436,7 +1463,9 @@ class TestVerifyFactualGitGrep(unittest.TestCase):
 
     def test_git_grep_called_with_timeout_and_cwd(self):
         """Symbol search must call git grep with timeout=3 and cwd=REPO_ROOT."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("x = 1\n")
             tmppath = f.name
         try:
@@ -1464,7 +1493,9 @@ class TestVerifyFactualGitGrep(unittest.TestCase):
 
     def test_git_grep_fatal_error_skips_symbol(self):
         """git grep fatal error (rc=128) must skip symbol, not penalize."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
             f.write("x = 1\n")
             tmppath = f.name
         try:
@@ -1553,7 +1584,9 @@ class TestGetDiff(unittest.TestCase):
 
     def test_diff_file_read_successfully(self):
         """R01.1: --diff-file path is read and its content returned."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".diff", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".diff", delete=False, encoding="utf-8"
+        ) as f:
             f.write("diff --git a/foo.py b/foo.py\n+added line\n")
             tmppath = f.name
         try:
@@ -1649,7 +1682,9 @@ class TestGetDiff(unittest.TestCase):
 
     def test_diff_file_logging_includes_bytes(self):
         """R01.4: --diff-file source logs path and byte count."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".diff", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".diff", delete=False, encoding="utf-8"
+        ) as f:
             f.write("x" * 50)
             tmppath = f.name
         try:
@@ -1675,14 +1710,16 @@ class TestRunTimeout(unittest.TestCase):
 
     def test_timeout_returns_sentinel(self):
         """run() with timeout returns (-1) returncode on TimeoutExpired."""
-        stdout, stderr, rc = run(["sleep", "10"], timeout=0.1)
+        stdout, stderr, rc = run(
+            [sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.1
+        )
         self.assertEqual(rc, -1)
         self.assertEqual(stdout, "")
         self.assertEqual(stderr, "")
 
     def test_timeout_none_no_limit(self):
         """run() without timeout behaves as before."""
-        stdout, stderr, rc = run(["echo", "hello"])
+        stdout, stderr, rc = run([sys.executable, "-c", "print('hello')"])
         self.assertEqual(rc, 0)
         self.assertIn("hello", stdout)
 
@@ -1692,15 +1729,25 @@ class TestRunTimeout(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            stdout, stderr, rc = run(["pwd"], cwd=d)
+            unicode_cwd = os.path.join(d, "caf\u00e9")
+            os.mkdir(unicode_cwd)
+            stdout, stderr, rc = run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os, sys; sys.stdout.buffer.write(os.getcwd().encode('utf-8'))",
+                ],
+                cwd=unicode_cwd,
+            )
             self.assertEqual(rc, 0)
-            self.assertEqual(os.path.realpath(stdout.strip()), os.path.realpath(d))
+            resolved_cwd = os.path.realpath(unicode_cwd)
+            self.assertEqual(os.path.realpath(stdout.strip()), resolved_cwd)
 
     def test_backward_compat_no_new_params(self):
         """run() still works with only (cmd) or (cmd, check) args."""
-        stdout, stderr, rc = run(["echo", "hi"])
+        stdout, stderr, rc = run([sys.executable, "-c", "print('hi')"])
         self.assertEqual(rc, 0)
-        stdout2, stderr2, rc2 = run(["echo", "hi"], check=True)
+        stdout2, stderr2, rc2 = run([sys.executable, "-c", "print('hi')"], check=True)
         self.assertEqual(rc2, 0)
 
 
@@ -1721,7 +1768,7 @@ class TestVerifyOutputFlag(unittest.TestCase):
             outpath = f.name
         try:
             _write_output(output, outpath)
-            with open(outpath) as f:
+            with open(outpath, encoding="utf-8") as f:
                 written = json.load(f)
             self.assertEqual(written["verified"][0]["id"], "bug-1")
             self.assertEqual(written["stats"]["total"], 1)
@@ -1792,10 +1839,14 @@ class TestReceipt(unittest.TestCase):
         import json
 
         findings = self._findings()
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             json.dump({"findings": findings, "base_branch": "main"}, f)
             findings_path = f.name
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
         with (
             tempfile.NamedTemporaryFile(suffix=".json", delete=False) as legacy_file,
@@ -1815,7 +1866,7 @@ class TestReceipt(unittest.TestCase):
                     legacy_out,
                 ]
             )
-            with open(legacy_out) as fh:
+            with open(legacy_out, encoding="utf-8") as fh:
                 legacy = json.load(fh)
 
             # Receipt path: --input is the destination the script rewrites, while the
@@ -1837,7 +1888,7 @@ class TestReceipt(unittest.TestCase):
                     "deadbeef",
                 ]
             )
-            with open(receipt_out) as fh:
+            with open(receipt_out, encoding="utf-8") as fh:
                 envelope = json.load(fh)
 
             # (a) envelope shape + receipt fields. deltas_checksum is the delta echo's
@@ -1879,7 +1930,9 @@ class TestReceipt(unittest.TestCase):
         import json
 
         findings = self._findings()
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             json.dump({"findings": findings}, f)
             findings_path = f.name
         try:
@@ -1922,7 +1975,9 @@ class TestReceipt(unittest.TestCase):
         """The receipt path accepts only the exact percent-encoded inline token."""
         import io
 
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             findings_path = f.name
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
             out_path = out_file.name
@@ -1950,7 +2005,7 @@ class TestReceipt(unittest.TestCase):
                 from scripts.verify_findings import main
 
                 main()
-            with open(out_path) as fh:
+            with open(out_path, encoding="utf-8") as fh:
                 envelope = json.load(fh)
             self.assertEqual(envelope["status"], "failed")
             self.assertEqual(envelope["exitCode"], 1)
@@ -1969,7 +2024,9 @@ class TestReceipt(unittest.TestCase):
         """
         import io
 
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             f.write(json.dumps({"findings": self._findings()}) + "}")
             corrupt_path = f.name
         try:
@@ -1994,7 +2051,9 @@ class TestReceipt(unittest.TestCase):
         message on stderr, nothing on stdout."""
         import io
 
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             f.write(json.dumps({"findings": self._findings()}) + "oops")
             corrupt_path = f.name
         try:
@@ -2083,7 +2142,9 @@ class TestBuildDeltas(unittest.TestCase):
             "cross_file_refs": [],
         }
         findings = [eliminated_finding, verified_finding]
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
         try:
             import io
@@ -2300,12 +2361,16 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
     def _write_input(self, findings):
         import json
 
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             json.dump({"findings": findings, "base_branch": "main"}, f)
             return f.name
 
     def _empty_diff(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             return f.name
 
     def test_result_key_order_starts_with_deltas_full_arrays_unchanged(self):
@@ -2341,9 +2406,10 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            with open(out_path) as fh:
+            with open(out_path, encoding="utf-8") as fh:
                 envelope = json.load(fh)
             self.assertEqual(envelope["status"], "ok", envelope)
             result_keys = list(envelope["result"])
@@ -2390,9 +2456,10 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            with open(out_path) as fh:
+            with open(out_path, encoding="utf-8") as fh:
                 output = json.load(fh)
             self.assertEqual(
                 set(output.keys()), {"verified", "eliminated", "batches", "stats"}
@@ -2441,11 +2508,12 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 cwd=unrelated_cwd,
+                encoding="utf-8",
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertNotIn("ImportError", proc.stderr)
             self.assertNotIn("ModuleNotFoundError", proc.stderr)
-            with open(out_path) as fh:
+            with open(out_path, encoding="utf-8") as fh:
                 envelope = json.load(fh)
             self.assertEqual(envelope["status"], "ok", envelope)
             self.assertRegex(
@@ -2491,9 +2559,10 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            with open(out_path) as fh:
+            with open(out_path, encoding="utf-8") as fh:
                 envelope = json.load(fh)
             self.assertEqual(envelope["status"], "ok", envelope)
             self.assertIsNone(envelope["receipt"]["deltas_checksum"])
@@ -2586,7 +2655,9 @@ class TestCoerceNumericFields(unittest.TestCase):
         self.assertEqual(f["title"], "t")
 
     def test_load_input_casts_numeric_fields(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             json.dump(
                 {"findings": [{"id": "b1", "line_start": "10", "line_end": "12"}]}, f
             )
@@ -2622,7 +2693,9 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
         # A real file with enough lines so the (in-range) line reference reaches the
         # arithmetic that crashed on a string line_start; description has no extractable
         # symbols, so no git grep is needed.
-        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as srcf:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".txt", delete=False
+        ) as srcf:
             srcf.write("\n".join(f"line {i}" for i in range(1, 51)) + "\n")
             src_path = srcf.name
         slice_input = {
@@ -2643,10 +2716,14 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
             ],
             "base_branch": "main",
         }
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as f:
             json.dump(slice_input, f)
             in_path = f.name
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             empty_diff = f.name
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
             out_path = out_file.name
@@ -2668,7 +2745,7 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
                     "abc1234",
                 ]
             )
-            with open(out_path) as fh:
+            with open(out_path, encoding="utf-8") as fh:
                 envelope = json.load(fh)
             self.assertEqual(envelope["status"], "ok", f"expected ok, got {envelope}")
             self.assertEqual(envelope["receipt"]["n_in"], 1)
@@ -2710,7 +2787,9 @@ class TestEliminationReasonStamp(unittest.TestCase):
             "evidence": "e",
             "cross_file_refs": [],
         }
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
         try:
             import io
@@ -2905,7 +2984,7 @@ class TestSliceInputRecovery(unittest.TestCase):
             from scripts.verify_findings import main
 
             main()
-        with open(out_path) as fh:
+        with open(out_path, encoding="utf-8") as fh:
             return json.load(fh)
 
     def test_the_input_checksum_covers_the_document_as_parsed(self):
@@ -3206,6 +3285,7 @@ class TestSliceInputRecovery(unittest.TestCase):
                     [sys.executable, SCRIPT, *argv],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                 )
                 self.assertNotEqual(proc.returncode, 0)
                 self.assertEqual(
@@ -3672,7 +3752,9 @@ class TestSliceProjectionBehavioralEquivalence(unittest.TestCase):
     }
 
     def _empty_diff(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".patch", delete=False
+        ) as f:
             self.addCleanup(os.unlink, f.name)
             return f.name  # empty file -> parse_diff_lines("") -> set(), not None
 
@@ -3683,7 +3765,7 @@ class TestSliceProjectionBehavioralEquivalence(unittest.TestCase):
         actual history (proven in the docstring's dry run). verify_factual reads
         real content from it."""
         fd, path = tempfile.mkstemp(suffix=".py")
-        with os.fdopen(fd, "w") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
         self.addCleanup(os.unlink, path)
         return path

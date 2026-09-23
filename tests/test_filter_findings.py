@@ -102,7 +102,9 @@ class TestParseReviewMd(unittest.TestCase):
             "  - child-only\n"
             "```\n"
         )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write(content)
             path = f.name
         try:
@@ -123,7 +125,9 @@ class TestParseReviewMd(unittest.TestCase):
             "  - pattern two\n"
             "```\n"
         )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write(content)
             path = f.name
         try:
@@ -143,7 +147,9 @@ class TestParseReviewMd(unittest.TestCase):
             "severity_threshold: medium\n"
             "-->\n"
         )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write(content)
             path = f.name
         try:
@@ -160,7 +166,9 @@ class TestParseReviewMd(unittest.TestCase):
             "confidence_threshold: 95\n"
             "severity_threshold: critical\n"
         )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write(content)
             path = f.name
         try:
@@ -181,7 +189,9 @@ class TestParseReviewMd(unittest.TestCase):
         self.assertEqual(config["ignore"], [])
 
     def test_empty_file_returns_defaults(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write("")
             path = f.name
         try:
@@ -198,7 +208,9 @@ class TestParseReviewMd(unittest.TestCase):
             "severity_threshold: medium\n"
             "```\n"
         )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write(content)
             path = f.name
         try:
@@ -223,7 +235,9 @@ class TestParseReviewMd(unittest.TestCase):
             "# severity_threshold: medium\n"
             "```\n"
         )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write(content)
             path = f.name
         try:
@@ -248,7 +262,9 @@ class TestParseReviewMd(unittest.TestCase):
             "  - 'single quoted pattern'\n"
             "```\n"
         )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write(content)
             path = f.name
         try:
@@ -274,7 +290,9 @@ class TestParseReviewMd(unittest.TestCase):
             "  - third pattern\n"
             "```\n"
         )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write(content)
             path = f.name
         try:
@@ -3522,7 +3540,9 @@ class TestConsolidateCrossAgent(unittest.TestCase):
         import json
         import tempfile
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             json.dump({"findings": [bug, test]}, f)
             tmppath = f.name
         try:
@@ -3561,7 +3581,9 @@ class TestConsolidateCrossAgent(unittest.TestCase):
         import json
         import tempfile
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             json.dump({"findings": [finding]}, f)
             tmppath = f.name
         try:
@@ -3595,7 +3617,9 @@ class TestConsolidateCrossAgent(unittest.TestCase):
         import json
         import tempfile
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             json.dump({"findings": [finding]}, f)
             tmppath = f.name
         try:
@@ -3631,7 +3655,9 @@ class TestConsolidateCrossAgent(unittest.TestCase):
         import json
         import tempfile
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             json.dump({"findings": [finding]}, f)
             tmppath = f.name
         try:
@@ -3682,8 +3708,12 @@ class TestConsolidateCrossAgent(unittest.TestCase):
         )
 
         with (
-            tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f,
-            tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as rf,
+            tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, encoding="utf-8"
+            ) as f,
+            tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False, encoding="utf-8"
+            ) as rf,
         ):
             json.dump({"findings": [matching, clean]}, f)
             tmppath = f.name
@@ -3744,7 +3774,9 @@ class TestConsolidateCrossAgent(unittest.TestCase):
             agent="security-reviewer",
         )
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             json.dump({"findings": [null_sev, other]}, f)
             tmppath = f.name
         try:
@@ -3778,7 +3810,9 @@ class TestConsolidateCrossAgent(unittest.TestCase):
         import json
         import tempfile
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             json.dump({"findings": [finding]}, f)
             tmppath = f.name
         try:
@@ -3863,7 +3897,9 @@ class TestLoadExclusions(unittest.TestCase):
 
     def test_fenced_block_patterns(self):
         content = "# Exclusions\n\n```\n# comment\npattern one\npattern two\n```\n"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write(content)
             path = f.name
         try:
@@ -3877,7 +3913,9 @@ class TestLoadExclusions(unittest.TestCase):
 
     def test_bullet_list_fallback(self):
         content = "# Exclusions\n\n- first pattern\n- second pattern\n* third pattern\n"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write(content)
             path = f.name
         try:
@@ -4911,7 +4949,7 @@ class TestDefaultConstants(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             findings_path = os.path.join(td, "findings.json")
             out_path = os.path.join(td, "out.json")
-            with open(findings_path, "w") as fh:
+            with open(findings_path, "w", encoding="utf-8") as fh:
                 json.dump({"findings": [_make_finding()]}, fh)
             captured_out = io.StringIO()
             captured_err = io.StringIO()
@@ -4956,11 +4994,15 @@ class TestFixBoundConstantsLockstep(unittest.TestCase):
     drifts from the other two."""
 
     def test_fix_max_lines_and_chars_agree_across_all_three_homes(self):
-        post_review_src = (_REPO_ROOT / "scripts" / "post_review.py").read_text()
-        py_twin_src = (_REPO_ROOT / "scripts" / "filter_findings.py").read_text()
+        post_review_src = (_REPO_ROOT / "scripts" / "post_review.py").read_text(
+            encoding="utf-8"
+        )
+        py_twin_src = (_REPO_ROOT / "scripts" / "filter_findings.py").read_text(
+            encoding="utf-8"
+        )
         js_twin_src = (
             _REPO_ROOT / "workflows" / "src" / "filterFindings.js"
-        ).read_text()
+        ).read_text(encoding="utf-8")
 
         sources = {
             "scripts/post_review.py": post_review_src,
@@ -4991,7 +5033,9 @@ class TestInjectionStrippedProseFieldsLockstep(unittest.TestCase):
     derived `{field}s_removed` receipt stat must go red here."""
 
     def test_python_and_js_field_lists_agree_element_wise(self):
-        js_src = (_REPO_ROOT / "workflows" / "src" / "filterFindings.js").read_text()
+        js_src = (_REPO_ROOT / "workflows" / "src" / "filterFindings.js").read_text(
+            encoding="utf-8"
+        )
         m = re.search(r"INJECTION_STRIPPED_PROSE_FIELDS\s*=\s*\[([^\]]*)\]", js_src)
         if m is None:
             raise AssertionError(
@@ -5032,7 +5076,7 @@ class TestInjectionStrippedProseFieldsLockstep(unittest.TestCase):
                 }
             )
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False
+                mode="w", suffix=".json", delete=False, encoding="utf-8"
             ) as f:
                 json.dump({"findings": [finding]}, f)
                 tmppath = f.name
@@ -5103,7 +5147,7 @@ class TestCombinedScanIsSupersetOfFieldwiseScans(unittest.TestCase):
         checked = 0
         live_pairs = 0
         for input_path in base.rglob("input.json"):
-            data = json.loads(input_path.read_text())
+            data = json.loads(input_path.read_text(encoding="utf-8"))
             findings = data.get("findings") if isinstance(data, dict) else None
             if not findings:
                 continue
@@ -5350,12 +5394,12 @@ class TestReachabilityPolicy(unittest.TestCase):
             reachability="future_change_only",
         )
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
         ) as findings_file:
             json.dump({"findings": [finding]}, findings_file)
             findings_path = findings_file.name
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".md", delete=False
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
         ) as review_file:
             review_file.write(
                 "confidence_threshold: 50\n"

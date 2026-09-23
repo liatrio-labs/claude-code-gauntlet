@@ -76,7 +76,7 @@ def sync(repo_root, check_only=False):
             continue
         stale.append(os.path.relpath(target, repo_root))
         if not check_only:
-            with open(target, "w", encoding="utf-8") as handle:
+            with open(target, "w", encoding="utf-8", newline="") as handle:
                 handle.write(expected)
     return stale
 
@@ -104,4 +104,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

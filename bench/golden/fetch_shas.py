@@ -111,7 +111,7 @@ def fetch_one(owner, repo, pr_number, run=None):
 
 
 def main():
-    with open(GOLDEN / "benchmark_data.min.json") as handle:
+    with open(GOLDEN / "benchmark_data.min.json", encoding="utf-8") as handle:
         golden_urls = sorted(json.load(handle).keys())
     out = {}
     missing = []

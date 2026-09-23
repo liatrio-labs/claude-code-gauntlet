@@ -268,7 +268,7 @@ class _Collector:
         try:
             real = os.path.realpath(path)
             if _within(real, self.repo_root):
-                return os.path.relpath(real, self.repo_root)
+                return os.path.relpath(real, self.repo_root).replace(os.sep, "/")
         except OSError:
             # Broken symlinks, missing targets, and other path errors should
             # never crash receipt emission; fall back to a basename-only view.
@@ -767,4 +767,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

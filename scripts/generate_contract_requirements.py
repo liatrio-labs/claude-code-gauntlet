@@ -35,6 +35,7 @@ import argparse
 import importlib.util
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -138,7 +139,7 @@ def _script_module_path(module, repo_root):
         module = module[len("scripts.") :]
     elif "." in module:
         return None
-    rel_path = os.path.join("scripts", *module.split(".")) + ".py"
+    rel_path = posixpath.join("scripts", *module.split(".")) + ".py"
     if os.path.isfile(os.path.join(repo_root, rel_path)):
         return rel_path
     return None
@@ -166,7 +167,7 @@ def _python_imported_script_paths(source, repo_root):
             if path:
                 imported.add(path)
     for match in _DYNAMIC_SCRIPT_PATH_RE.finditer(source):
-        rel_path = os.path.normpath(os.path.join("scripts", match.group("path")))
+        rel_path = posixpath.normpath(posixpath.join("scripts", match.group("path")))
         if rel_path.startswith("scripts/") and os.path.isfile(
             os.path.join(repo_root, rel_path)
         ):
@@ -218,6 +219,7 @@ def _run_node(node_src, repo_root):
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
         )
     except FileNotFoundError:
         raise SystemExit(_node_failure_message(command)) from None
@@ -237,9 +239,9 @@ def _workflow_import_closure(repo_root):
         path = os.path.join(repo_root, rel_path)
         with open(path, encoding="utf-8") as handle:
             source = handle.read()
-        base = os.path.dirname(rel_path)
+        base = posixpath.dirname(rel_path)
         for specifier in _WORKFLOW_RELATIVE_IMPORT_RE.findall(source):
-            imported = os.path.normpath(os.path.join(base, specifier))
+            imported = posixpath.normpath(posixpath.join(base, specifier))
             if imported not in seen:
                 pending.append(imported)
     return seen
@@ -1288,7 +1290,7 @@ def apply_targets(repo_root, check_only=False):
             continue
         stale.append(rel_path)
         if not check_only:
-            with open(abs_path, "w", encoding="utf-8") as handle:
+            with open(abs_path, "w", encoding="utf-8", newline="") as handle:
                 handle.write(expected)
     return stale
 
@@ -1318,4 +1320,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

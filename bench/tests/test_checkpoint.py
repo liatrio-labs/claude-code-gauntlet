@@ -128,7 +128,9 @@ class CheckpointTestCase(unittest.TestCase):
             if f.endswith(".json")
         ]
         self.assertEqual(len(state_files), 1)
-        with open(os.path.join(self.run_dir, "state", state_files[0])) as fh:
+        with open(
+            os.path.join(self.run_dir, "state", state_files[0]), encoding="utf-8"
+        ) as fh:
             record = json.load(fh)
         self.assertEqual(record["status"], "drifted")
         self.assertEqual(record["detail"], "head SHA mismatch")

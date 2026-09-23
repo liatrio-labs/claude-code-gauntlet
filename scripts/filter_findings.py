@@ -473,7 +473,7 @@ def parse_review_md_text(text, warning_path=None):
 def parse_review_md(path):
     """Read and parse one REVIEW.md file, preserving file warnings."""
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             text = fh.read()
     except FileNotFoundError:
         warn(f"REVIEW.md not found at {path!r}; using default thresholds.")
@@ -2217,7 +2217,7 @@ def load_exclusions(path):
         return []
 
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             text = fh.read()
     except FileNotFoundError:
         warn(f"Exclusions file not found at {path!r}; no exclusions applied.")
@@ -2430,7 +2430,7 @@ def main():
     # Load input findings
     # ------------------------------------------------------------------
     try:
-        with open(args.findings_json) as fh:
+        with open(args.findings_json, encoding="utf-8") as fh:
             raw = json.load(fh)
     except FileNotFoundError:
         die(f"Findings file not found: {args.findings_json}")
@@ -2477,4 +2477,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

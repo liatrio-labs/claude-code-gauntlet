@@ -87,6 +87,7 @@ import json
 import os
 import shlex
 import sys
+import tempfile
 import time
 
 # ---------------------------------------------------------------------------
@@ -218,18 +219,23 @@ def looks_like_path(target):
     """True when *target* should be used verbatim rather than resolved as an id."""
     if not target:
         return False
-    return os.sep in target or target.endswith(".output")
+    return (
+        os.sep in target
+        or (os.altsep is not None and os.altsep in target)
+        or target.endswith(".output")
+    )
 
 
 def task_roots(environ=None):
     """Return every directory that MAY hold this session's tasks/ tree.
 
     Background-task output lives at
-    ``<tmp-root>/<project-slug>/<session-uuid>/tasks/<task-id>.output``. The
-    tmp-root is `claude-<uid>` under the system temp directory, but which spelling
-    of that directory is real varies (on macOS ``/tmp`` is a symlink to
-    ``/private/tmp``), so every candidate is listed and de-duplicated by realpath
-    rather than assumed.
+    ``<tmp-root>/<project-slug>/<session-uuid>/tasks/<task-id>.output``.
+    On POSIX, the tmp-root is `claude-<uid>` under the system temp directory.
+    Windows has no uid, so its fallback root is `claude` under
+    `tempfile.gettempdir()` (tracked by issue #352). Which spelling of a POSIX
+    directory is real varies (on macOS ``/tmp`` is a symlink to ``/private/tmp``),
+    so every candidate is listed and de-duplicated by realpath rather than assumed.
 
     Candidates that do not exist are RETAINED, not filtered out. They cost nothing
     to skip at glob time, and dropping them made the failure undiagnosable: on a
@@ -242,9 +248,16 @@ def task_roots(environ=None):
     tmpdir = environ.get("TMPDIR")
     if tmpdir:
         bases.append(tmpdir.rstrip(os.sep) or os.sep)
+    getuid = getattr(os, "getuid", None)
+    if callable(getuid):
+        root_name = f"claude-{getuid()}"
+    else:
+        # Windows has no uid; issue #352 tracks measuring Claude's task root.
+        root_name = "claude"
+        bases.append(tempfile.gettempdir())
     roots, seen = [], set()
     for base in bases:
-        candidate = os.path.join(base, f"claude-{os.getuid()}")
+        candidate = os.path.join(base, root_name)
         real = os.path.realpath(candidate)
         if real in seen:
             continue
@@ -1018,4 +1031,6 @@ def main(argv=None, environ=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

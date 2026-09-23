@@ -636,7 +636,7 @@ def main(argv: list[str] | None = None) -> int:
         repo=args.repo,
     )
 
-    with open(args.output, "w", encoding="utf-8") as fh:
+    with open(args.output, "w", encoding="utf-8", newline="") as fh:
         json.dump(result, fh, indent=2)
 
     # Print summary to stderr
@@ -660,4 +660,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

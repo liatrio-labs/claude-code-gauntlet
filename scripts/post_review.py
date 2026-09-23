@@ -147,7 +147,9 @@ def warn_skip(msg):
 
 def check_tool(name):
     """Exit with clear error if CLI tool is not available."""
-    result = subprocess.run(["which", name], capture_output=True, text=True)
+    result = subprocess.run(
+        ["which", name], capture_output=True, text=True, encoding="utf-8"
+    )
     if result.returncode != 0:
         die(
             f"'{name}' CLI tool not found. "
@@ -157,7 +159,7 @@ def check_tool(name):
 
 def run_api(cmd):
     """Run a CLI API command. Returns (stdout, stderr, returncode)."""
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     return result.stdout, result.stderr, result.returncode
 
 
@@ -177,7 +179,7 @@ def try_post_json(cmd_prefix, payload):
         return {}, None
     fd, tmppath = tempfile.mkstemp(suffix=".json")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             json.dump(payload, f, ensure_ascii=False)
         cmd = [*cmd_prefix, "--input", tmppath]
         stdout, stderr, rc = run_api(cmd)
@@ -3263,7 +3265,7 @@ def write_dry_run_payload(platform, findings_path):
     payload = build_dry_run_payload(platform)
     out_dir = os.path.dirname(os.path.abspath(findings_path))
     out_path = os.path.join(out_dir, "post-review-payload.json")
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
     return out_path
 
@@ -3313,7 +3315,7 @@ def main():
 
     # Load input
     try:
-        with open(args.findings_json) as fh:
+        with open(args.findings_json, encoding="utf-8") as fh:
             loaded = json.load(fh)
     except FileNotFoundError:
         die(f"Findings file not found: {args.findings_json}")
@@ -3400,4 +3402,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

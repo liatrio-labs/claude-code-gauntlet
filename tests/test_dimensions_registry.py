@@ -133,6 +133,7 @@ def registry():
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
         )
         _REGISTRY_CACHE = json.loads(out.stdout)
     return _REGISTRY_CACHE
@@ -278,7 +279,7 @@ def dispatch_required_claims(name):
     Scans line by line: a line containing the canonical phrase contributes every backticked
     field name ON THAT LINE to the claimed set.
     """
-    text = (REPO / "agents" / f"{name}.md").read_text()
+    text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
     claimed = set()
     for line in text.splitlines():
         if _DISPATCH_REQUIRED_PHRASE in line:
@@ -292,7 +293,7 @@ def dimension_conditional_claims(name):
 
     Scans line by line, same shape as dispatch_required_claims above.
     """
-    text = (REPO / "agents" / f"{name}.md").read_text()
+    text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
     claimed = set()
     for line in text.splitlines():
         if _DIMENSION_CONDITIONAL_PHRASE in line:
@@ -306,7 +307,7 @@ def raw_contract_blocks(name):
     Source-level guards read from here and parse-level guards from `contract_blocks`, which
     is built on it — so the two can never disagree about which blocks exist.
     """
-    text = (REPO / "agents" / f"{name}.md").read_text()
+    text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
     raw_blocks = _JSON_BLOCK.findall(text)
     if not raw_blocks:
         raise AssertionError(
@@ -352,7 +353,7 @@ def instructed_fields(name):
 
 def report_format_tables():
     """The Finding Fields Reference section's tables, keyed by their ### heading."""
-    text = REPORT_FORMAT.read_text()
+    text = REPORT_FORMAT.read_text(encoding="utf-8")
     match = re.search(
         r"^## Finding Fields Reference\n(.*?)(?=^## )", text, re.DOTALL | re.MULTILINE
     )
@@ -404,7 +405,9 @@ def claude_md_bullet(anchor):
     """The single agents/AGENTS.md line containing `anchor`."""
     lines = [
         line
-        for line in (REPO / "agents" / "AGENTS.md").read_text().splitlines()
+        for line in (REPO / "agents" / "AGENTS.md")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if anchor in line
     ]
     if len(lines) != 1:
@@ -862,7 +865,7 @@ class TestContractSchemaLockstep(unittest.TestCase):
         offenders = []
         for row in registry()["dimensions"]:
             name = agent_name(row["agentType"])
-            text = (REPO / "agents" / f"{name}.md").read_text()
+            text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
             blocks = raw_contract_blocks(name)
             for field in row.get("requiredWhenDimension", []):
                 has_omit = any(
@@ -987,6 +990,7 @@ class TestContractSchemaLockstep(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(
             result.returncode,
@@ -1077,7 +1081,9 @@ class TestClaudeMdFieldLists(unittest.TestCase):
 class TestConventionOutputRequirements(unittest.TestCase):
     def test_rule_source_vocabulary_and_worked_example_match_registry(self):
         labels = set(contract_gen.load_registry(str(REPO))["ruleSourceLabels"])
-        section = convention_output_requirements(CONVENTION_CONTRACT.read_text())
+        section = convention_output_requirements(
+            CONVENTION_CONTRACT.read_text(encoding="utf-8")
+        )
         values = re.search(
             r"^Allowed values are (?P<values>.+)\.$", section, re.MULTILINE
         )

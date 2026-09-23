@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from typing import ClassVar
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -90,6 +91,7 @@ def js_stringify_many(docs_as_json_text):
         ["node", "-e", JS_STRINGIFY, json.dumps(docs_as_json_text)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     if proc.returncode != 0:
         raise AssertionError(proc.stderr)
@@ -244,6 +246,7 @@ def run_script(plan_path):
         [sys.executable, SCRIPT, "--plan", plan_path],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     return proc
 
@@ -312,7 +315,10 @@ class TestCrossRuntimeChecksumParity(unittest.TestCase):
             self.skipTest("node not available")
         for s in self.STRINGS:
             proc = subprocess.run(
-                ["node", "-e", JS_CHECKSUM, s], capture_output=True, text=True
+                ["node", "-e", JS_CHECKSUM, s],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             js_checksum, js_chars = proc.stdout.strip().split(" ")
@@ -349,11 +355,12 @@ class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
                 "--input-type=module",
                 "-e",
                 js,
-                os.path.join(REPO_ROOT, "workflows", "src", "stages.js"),
+                Path(REPO_ROOT, "workflows", "src", "stages.js").as_uri(),
                 json.dumps(findings),
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout
@@ -850,6 +857,7 @@ class TestPlanChecksumCrossRuntime(unittest.TestCase):
                     ["node", "-e", JS_PLAN_CHECKSUM, path],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                 )
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertEqual(

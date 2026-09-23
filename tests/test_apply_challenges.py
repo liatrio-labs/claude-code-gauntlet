@@ -68,7 +68,9 @@ def _make_challenge(id_, score, justification=None):
 
 def _write_json(data):
     """Write data to a temp file and return the path."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    ) as f:
         json.dump(data, f)
         return f.name
 
@@ -147,7 +149,9 @@ class TestLoadFiltered(unittest.TestCase):
             load_filtered("/nonexistent/path.json")
 
     def test_invalid_json_exits(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             f.write("not json {{{")
         try:
             with self.assertRaises(SystemExit):
@@ -194,7 +198,9 @@ class TestLoadChallenges(unittest.TestCase):
             load_challenges("/nonexistent/challenges.json")
 
     def test_invalid_json_exits(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             f.write("[bad json")
         try:
             with self.assertRaises(SystemExit):
@@ -686,7 +692,7 @@ class TestMainCLI(unittest.TestCase):
                 argv.extend(extra_args)
             with patch("sys.argv", argv):
                 main()
-            with open(out_path) as fh:
+            with open(out_path, encoding="utf-8") as fh:
                 return json.load(fh)
         finally:
             os.unlink(f_path)
@@ -757,7 +763,7 @@ class TestMainCLI(unittest.TestCase):
                 ["apply_challenges.py", f_path, c_path, "--output", out_path],
             ):
                 main()
-            with open(out_path) as fh:
+            with open(out_path, encoding="utf-8") as fh:
                 result = json.load(fh)
             elim_ids = [f["id"] for f in result["eliminated"]]
             self.assertIn("e1", elim_ids)

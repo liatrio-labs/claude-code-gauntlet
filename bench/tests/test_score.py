@@ -93,7 +93,9 @@ class ResolveJudgePinTests(unittest.TestCase):
             )
         self.assertEqual(pin, "claude-opus-4-8-20260315")
         # Persisted back into baselines.json.
-        self.assertEqual(json.loads(self.baselines.read_text())["judge_pin"], pin)
+        self.assertEqual(
+            json.loads(self.baselines.read_text(encoding="utf-8"))["judge_pin"], pin
+        )
 
     def test_no_key_raises(self):
         write_json(self.baselines, {"judge_pin": None})
@@ -189,7 +191,9 @@ class ResolveJudgePinTests(unittest.TestCase):
                 env={"ANTHROPIC_API_KEY": "k"}, baselines_path=self.baselines
             )
         self.assertEqual(pin, "claude-opus-4-5-20251101")
-        self.assertEqual(json.loads(self.baselines.read_text())["judge_pin"], pin)
+        self.assertEqual(
+            json.loads(self.baselines.read_text(encoding="utf-8"))["judge_pin"], pin
+        )
 
 
 # ------------------------------------------------------------- bucket join
@@ -1020,7 +1024,7 @@ class ScoreRunEndToEndTests(unittest.TestCase):
             self.assertIn(key, row)
         appended = [
             json.loads(line)
-            for line in self.ledger.read_text().splitlines()
+            for line in self.ledger.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
         self.assertEqual(len(appended), 1)
@@ -1033,10 +1037,12 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         self.assertNotIn(self.uC, scores["buckets"])
 
         # candidates.json + injected benchmark_data.json staged for the scorer.
-        staged = json.loads((model_dir / "candidates.json").read_text())
+        staged = json.loads((model_dir / "candidates.json").read_text(encoding="utf-8"))
         self.assertEqual(set(staged), {self.uA, self.uB})
         bench_data = json.loads(
-            (self.vendor / "results" / "benchmark_data.json").read_text()
+            (self.vendor / "results" / "benchmark_data.json").read_text(
+                encoding="utf-8"
+            )
         )
         self.assertEqual(bench_data[self.uA]["reviews"][0]["tool"], "deep-review")
         self.assertEqual(bench_data[self.uC]["reviews"], [])  # not scored -> no stub
@@ -1051,8 +1057,8 @@ class PrepareScorerInputsStaleTests(unittest.TestCase):
         results = tmp / "results"
         model = results / "pin"
         model.mkdir(parents=True)
-        (model / "evaluations.json").write_text('{"stale": true}')
-        (model / "dedup_groups.json").write_text('{"stale": true}')
+        (model / "evaluations.json").write_text('{"stale": true}', encoding="utf-8")
+        (model / "dedup_groups.json").write_text('{"stale": true}', encoding="utf-8")
         url = "https://github.com/grafana/grafana/pull/80329"
         score._prepare_scorer_inputs({url: {"deep-review": []}}, results, model)
         self.assertFalse((model / "evaluations.json").exists())

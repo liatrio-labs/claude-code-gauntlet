@@ -60,6 +60,7 @@ def record_task_output(tmp, nonce=NONCE):
         capture_output=True,
         text=True,
         timeout=60,
+        encoding="utf-8",
     )
     if proc.returncode != 0:
         raise RuntimeError(f"recorder failed: {proc.stderr}")
@@ -91,12 +92,17 @@ def run_cli(args, environ=None):
         text=True,
         timeout=60,
         env=env,
+        encoding="utf-8",
     )
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
     assert len(lines) == 1, f"expected exactly one stdout line, got {proc.stdout!r}"
     return proc.returncode, json.loads(lines[0]), proc.stdout
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "the pipeline waist accepts only a POSIX /-prefixed outputDir (workflows/src/args.js:834); Windows paths: #351",
+)
 class MaterializeTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -266,6 +272,14 @@ class TestResolution(MaterializeTestCase):
         self.assertEqual(receipt["materialized"], [])
         self.assertFalse(os.path.exists(self.artifact("findings")))
 
+
+class TestResolutionWithoutARecordedRun(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.out_dir = os.path.join(self.tmp, ".code-gauntlet")
+        os.makedirs(self.out_dir, exist_ok=True)
+
     def test_no_source_at_all_still_prints_one_line(self):
         code, receipt, _ = run_cli(
             ["--output-dir", self.out_dir, "--nonce", "nothing-here"],
@@ -282,6 +296,7 @@ class TestResolution(MaterializeTestCase):
             capture_output=True,
             text=True,
             timeout=60,
+            encoding="utf-8",
         )
         self.assertEqual(proc.returncode, 2)
         self.assertEqual(proc.stdout, "")

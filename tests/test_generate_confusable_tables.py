@@ -87,6 +87,7 @@ class TestShippedTwinsAreFresh(unittest.TestCase):
             capture_output=True,
             text=True,
             cwd=str(REPO),
+            encoding="utf-8",
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -127,6 +128,7 @@ class TestRuffFormatFixedPoint(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

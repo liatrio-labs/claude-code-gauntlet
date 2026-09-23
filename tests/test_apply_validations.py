@@ -52,7 +52,9 @@ def _make_finding(**kwargs):
 
 def _write_json(data):
     """Write data to a temp file, return the path."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    ) as f:
         json.dump(data, f)
         return f.name
 
@@ -109,7 +111,9 @@ class TestLoadFindings(unittest.TestCase):
             load_findings("/nonexistent/path/findings.json")
 
     def test_invalid_json_exits(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             f.write("{not valid json}")
         try:
             with self.assertRaises(SystemExit):
@@ -164,7 +168,9 @@ class TestLoadValidations(unittest.TestCase):
             load_validations("/nonexistent/validations.json")
 
     def test_invalid_json_exits(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             f.write("not json")
         try:
             with self.assertRaises(SystemExit):
@@ -440,13 +446,13 @@ class TestApplyValidationsMain(unittest.TestCase):
         findings = [_make_finding(id="bug-1", confidence=80)]
         validations = [{"id": "bug-1", "confidence": 65}]
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
         ) as out_file:
             out_path = out_file.name
 
         try:
             self._run_main(findings, validations, extra_args=["--output", out_path])
-            with open(out_path) as fh:
+            with open(out_path, encoding="utf-8") as fh:
                 result = json.loads(fh.read())
             self.assertIn("findings", result)
             self.assertEqual(result["findings"][0]["confidence"], 65)

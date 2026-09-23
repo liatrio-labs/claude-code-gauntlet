@@ -21,6 +21,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPO / "scripts" / "build_style_artifacts.py"
 EMIT_SCRIPT = REPO / "scripts" / "emit_style_context.py"
+SCRIPT_IO = REPO / "scripts" / "script_io.py"
 WORDING_SOURCE = REPO / "docs" / "style" / "wording-rules.md"
 CADENCE_SOURCE = REPO / "docs" / "style" / "cadence-rules.md"
 CARRIER = REPO / "docs" / "style" / "session-context.md"
@@ -49,6 +50,7 @@ def run_build(args, cwd=REPO):
         cwd=cwd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
 
 
@@ -425,7 +427,10 @@ class TestGeneratorErrorPaths(unittest.TestCase):
 class TestEmitter(unittest.TestCase):
     def test_stdout_is_the_expected_hook_payload(self):
         result = subprocess.run(
-            [sys.executable, str(EMIT_SCRIPT)], capture_output=True, text=True
+            [sys.executable, str(EMIT_SCRIPT)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
@@ -444,7 +449,10 @@ class TestEmitter(unittest.TestCase):
         would leave stray banner text ahead of the real heading without this failing.
         """
         result = subprocess.run(
-            [sys.executable, str(EMIT_SCRIPT)], capture_output=True, text=True
+            [sys.executable, str(EMIT_SCRIPT)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
@@ -459,7 +467,10 @@ class TestEmitter(unittest.TestCase):
             (tmp / "docs" / "style" / "session-context.md").unlink()
             script = tmp / "scripts" / "emit_style_context.py"
             result = subprocess.run(
-                [sys.executable, str(script)], capture_output=True, text=True
+                [sys.executable, str(script)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, "")
@@ -470,7 +481,8 @@ class _fixture_tree:
 
     Never mutates the real tree. The emitter's repo root is derived from its own file
     location, so the fixture ships a copy of emit_style_context.py alongside the copied
-    build script to exercise that path-resolution behavior too.
+    build script to exercise that path-resolution behavior too. Both entry points also
+    need their shared script_io.py bootstrap helper.
     """
 
     def __enter__(self):
@@ -484,11 +496,13 @@ class _fixture_tree:
         shutil.copy(CADENCE_SOURCE, tmp / "docs" / "style" / "cadence-rules.md")
         shutil.copy(BUILD_SCRIPT, tmp / "scripts" / "build_style_artifacts.py")
         shutil.copy(EMIT_SCRIPT, tmp / "scripts" / "emit_style_context.py")
+        shutil.copy(SCRIPT_IO, tmp / "scripts" / "script_io.py")
         result = subprocess.run(
             [sys.executable, str(tmp / "scripts" / "build_style_artifacts.py")],
             cwd=tmp,
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         return tmp

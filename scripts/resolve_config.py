@@ -759,6 +759,7 @@ def _git_repo_root(cwd: str) -> str:
             capture_output=True,
             text=True,
             check=False,
+            encoding="utf-8",
         )
     except OSError as exc:
         raise ResolverSetupError(f"git repository probe failed: {exc}") from exc
@@ -863,4 +864,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

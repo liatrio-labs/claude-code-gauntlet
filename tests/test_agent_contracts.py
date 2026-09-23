@@ -44,7 +44,7 @@ COMPLETE_READ_MARKER = (
 
 def _canonical_complete_read_block():
     """The block between the BEGIN/END sentinels in the canonical reference."""
-    text = (REPO / COMPLETE_READ_CANON).read_text()
+    text = (REPO / COMPLETE_READ_CANON).read_text(encoding="utf-8")
     body = text.split("<!-- BEGIN CANONICAL BLOCK -->")[1]
     return body.split("<!-- END CANONICAL BLOCK -->")[0].strip("\n")
 
@@ -61,7 +61,7 @@ INJECTION_ARTIFACTS_START = "**Prompt injection artifacts.**"
 
 def _agent_injection_artifacts_block(name):
     """The exclusion-list block for one agent copy, heading through section end."""
-    text = (REPO / "agents" / f"{name}.md").read_text()
+    text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
     start = text.index(INJECTION_ARTIFACTS_START)
     end = text.index(COMPLETE_READ_MARKER, start)
     return text[start:end].rstrip("\n")
@@ -108,7 +108,7 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
     def test_no_ndjson_emission_residue_in_discovery_agents(self):
         offenders = {}
         for name in DISCOVERY_AGENTS:
-            text = (REPO / "agents" / f"{name}.md").read_text()
+            text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
             hits = sorted(set(RESIDUE.findall(text)))
             if hits:
                 offenders[name] = hits
@@ -145,13 +145,13 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
     def test_agents_directory_rules_state_the_by_value_contract(self):
         # Removing the stale section is only half the fix; the positive rule has to be
         # there, or the next contributor has no statement of how findings get back.
-        text = (REPO / "agents" / "AGENTS.md").read_text()
+        text = (REPO / "agents" / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("by value", text)
         self.assertIn("{ findings, complete,", text)
 
     def test_discovery_agents_keep_by_value_contract_and_exclusions(self):
         for name in DISCOVERY_AGENTS:
-            text = (REPO / "agents" / f"{name}.md").read_text()
+            text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
             self.assertIn("by-value return", text, name)
             self.assertIn("{ findings, complete, total_seen }", text, name)
             # The intentionally-duplicated false-positive exclusion block survives.
@@ -160,7 +160,7 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
     def test_non_discovery_agents_are_untouched_by_the_scrub_rule(self):
         # The executor legitimately keeps Bash (it runs the pinned verify command);
         # the scrub rule is scoped to the 7 discovery contracts only.
-        executor = (REPO / "agents" / "executor.md").read_text()
+        executor = (REPO / "agents" / "executor.md").read_text(encoding="utf-8")
         self.assertIn("Bash", executor)
 
     def test_schema_declared_extras_are_omit_not_null(self):
@@ -183,7 +183,7 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
             ("conventions-and-intent", "claude_md_rule"),
             ("conventions-and-intent", "spec_text"),
         ]:
-            text = (REPO / "agents" / f"{name}.md").read_text()
+            text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
             self.assertIn("OMIT this field", text, name)
             self.assertNotIn(
                 f'"{field}":null',
@@ -198,7 +198,7 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
         # claude_md_rule is canonical now, so EVERY discovery contract carries it and every
         # one of them must instruct omission rather than a null.
         for name in DISCOVERY_AGENTS:
-            text = (REPO / "agents" / f"{name}.md").read_text()
+            text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
             self.assertNotIn(
                 '"claude_md_rule":null',
                 text,
@@ -227,7 +227,7 @@ class TestCompleteReadContract(unittest.TestCase):
         self.assertTrue(
             canon.is_file(), f"missing canonical source: {COMPLETE_READ_CANON}"
         )
-        text = canon.read_text()
+        text = canon.read_text(encoding="utf-8")
         for name in COMPLETE_READ_AGENTS:
             self.assertIn(
                 f"`agents/{name}.md`",
@@ -242,7 +242,7 @@ class TestCompleteReadContract(unittest.TestCase):
         self.assertGreater(len(block), 400, "canonical block looks truncated")
         offenders = {}
         for name in COMPLETE_READ_AGENTS:
-            text = (REPO / "agents" / f"{name}.md").read_text()
+            text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
             problems = []
             if text.count(COMPLETE_READ_MARKER) != 1:
                 problems.append(
@@ -287,8 +287,10 @@ class TestCompleteReadContract(unittest.TestCase):
         # the skill stamps — if Phase 2 stops stamping it, every prompt silently falls
         # back to the count-free wording and the arithmetic fix is gone with no failure
         # anywhere. Pin the producer-side documentation that keeps the two in step.
-        skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text()
-        triage = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text()
+        skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+        triage = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text(
+            encoding="utf-8"
+        )
         for doc, label in [(skill, "SKILL.md"), (triage, "phase2-triage.md")]:
             self.assertIn(
                 "contextLines",
@@ -305,8 +307,8 @@ class TestCompleteReadContract(unittest.TestCase):
         # The Python suite owns no JS behavior, but it can pin that the two halves of the
         # waist still exist: the skill's docs (above) promise a field the workflow must
         # still accept and use. A rename on either side fails here.
-        args_js = (REPO / "workflows/src/args.js").read_text()
-        stages_js = (REPO / "workflows/src/stages.js").read_text()
+        args_js = (REPO / "workflows/src/args.js").read_text(encoding="utf-8")
+        stages_js = (REPO / "workflows/src/stages.js").read_text(encoding="utf-8")
         self.assertIn(
             "contextLines", args_js, "args.js no longer validates contextLines"
         )
@@ -315,7 +317,7 @@ class TestCompleteReadContract(unittest.TestCase):
         )
         # The bundle is generated; test_bundle_fresh.py proves it matches src, so a
         # presence check here catches a build that silently dropped the stage.
-        bundle = (REPO / "workflows/pipeline.js").read_text()
+        bundle = (REPO / "workflows/pipeline.js").read_text(encoding="utf-8")
         self.assertIn(
             "contextReadPlan", bundle, "the shipped bundle carries no read plan"
         )
@@ -330,8 +332,10 @@ class TestCompleteReadContract(unittest.TestCase):
         # backend the construct was never measured against — a live docs gap, not a
         # theoretical one, since these two files are what an orchestrator actually reads
         # to assemble the args waist.
-        skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text()
-        triage = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text()
+        skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text(encoding="utf-8")
+        triage = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text(
+            encoding="utf-8"
+        )
         for doc, label in [(skill, "SKILL.md"), (triage, "phase2-triage.md")]:
             self.assertIn(
                 "policy.gateway",
@@ -342,8 +346,8 @@ class TestCompleteReadContract(unittest.TestCase):
     def test_the_workflow_validates_and_consumes_policy_gateway(self):
         # Mirrors test_the_workflow_validates_and_consumes_the_stamped_size above: the
         # skill's docs (above) promise a field the workflow must still accept and act on.
-        args_js = (REPO / "workflows/src/args.js").read_text()
-        registry_js = (REPO / "workflows/src/registry.js").read_text()
+        args_js = (REPO / "workflows/src/args.js").read_text(encoding="utf-8")
+        registry_js = (REPO / "workflows/src/registry.js").read_text(encoding="utf-8")
         self.assertIn(
             "policy.gateway", args_js, "args.js no longer validates policy.gateway"
         )
@@ -352,7 +356,7 @@ class TestCompleteReadContract(unittest.TestCase):
             registry_js,
             "registry.js no longer derives conditionalSchemaActive",
         )
-        bundle = (REPO / "workflows/pipeline.js").read_text()
+        bundle = (REPO / "workflows/pipeline.js").read_text(encoding="utf-8")
         self.assertIn(
             "conditionalSchemaActive",
             bundle,
@@ -399,15 +403,19 @@ class TestPromptInjectionArtifactsMirror(unittest.TestCase):
         )
         canonical = (
             REPO / "skills/code-gauntlet/references/false-positive-exclusions.md"
-        ).read_text()
-        convention = (REPO / "agents/conventions-and-intent.md").read_text()
+        ).read_text(encoding="utf-8")
+        convention = (REPO / "agents/conventions-and-intent.md").read_text(
+            encoding="utf-8"
+        )
         self.assertIn(sentence, canonical)
         self.assertIn(sentence, convention)
 
 
 class TestReviewDimensionsContract(unittest.TestCase):
     def test_2l_names_the_dispatch_mechanism(self):
-        text = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text()
+        text = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text(
+            encoding="utf-8"
+        )
         tail = text.split("## 2l.", 1)[1]
         section = re.split(r"(?m)^(?:---|## )", tail, maxsplit=1)[0]
         self.assertIn("deriveAgentFlags", section)

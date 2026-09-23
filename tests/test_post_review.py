@@ -1118,6 +1118,7 @@ process.stdout.write(JSON.stringify(results));
             text=True,
             check=True,
             timeout=10,
+            encoding="utf-8",
         )
         node_labels = json.loads(result.stdout)
         self.assertEqual(len(node_labels), len(matrix))
@@ -2835,7 +2836,7 @@ def _fake_run(
             # The live path hands its JSON to gh/glab through a temp file that is
             # unlinked the moment the call returns, so reading it here is the only
             # place a test can see the bytes that actually go on the wire.
-            with open(cmd[cmd.index("--input") + 1]) as fh:
+            with open(cmd[cmd.index("--input") + 1], encoding="utf-8") as fh:
                 payloads.append(json.load(fh))
         if cmd[0] == "which":
             return res(out="/usr/bin/" + cmd[1])
@@ -2905,11 +2906,13 @@ class _DryRunTestBase(unittest.TestCase):
         post_review._FIX_COUNTS.update(kept=0, downgraded=0)
 
     def _write(self, data):
-        with open(self.findings_path, "w") as f:
+        with open(self.findings_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
     def _payload(self):
-        with open(os.path.join(self.tmp, "post-review-payload.json")) as f:
+        with open(
+            os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"
+        ) as f:
             return json.load(f)
 
 
@@ -11118,7 +11121,7 @@ class TestResetRunState(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         findings_path = os.path.join(tmp, "findings.json")
-        with open(findings_path, "w") as fh:
+        with open(findings_path, "w", encoding="utf-8") as fh:
             json.dump(
                 {
                     "platform": "github",

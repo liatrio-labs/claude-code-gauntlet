@@ -110,7 +110,7 @@ def load_findings(path):
     replaced downstream with this script's own counters, not round-tripped).
     """
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             raw = json.load(fh)
     except FileNotFoundError:
         die(f"Findings file not found: {path}")
@@ -142,7 +142,7 @@ def load_validations(path):
     Returns a list of validation dicts.
     """
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             raw = json.load(fh)
     except FileNotFoundError:
         die(f"Validations file not found: {path}")
@@ -343,4 +343,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

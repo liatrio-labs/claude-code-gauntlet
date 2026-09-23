@@ -453,7 +453,7 @@ def count_by_source(entries):
 def load_bodies_file(path):
     """Return ``(entries, errors)`` from the offline hook file. Never raises."""
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             payload = json.load(fh)
     except (OSError, ValueError, RecursionError) as exc:
         return [], [f"bodies-file: could not read {path} ({exc})"]
@@ -782,4 +782,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

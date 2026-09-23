@@ -320,6 +320,7 @@ class TestResolverCli(unittest.TestCase):
             env=clean_environment(**values),
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
 
     def test_success_shape_identity_and_stderr_block(self):
@@ -334,7 +335,9 @@ class TestResolverCli(unittest.TestCase):
         )
         # The release commit bumps plugin.json and the bundle together; the manifest is
         # the oracle the resolver does not read, so a wrong bundle read goes red here.
-        manifest = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text())
+        manifest = json.loads(
+            (REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
         self.assertEqual(payload["identity"]["pipeline_version"], manifest["version"])
         self.assertEqual(payload["identity"]["plugin_root"], str(REPO))
         self.assertEqual(payload["block"] + "\n", proc.stderr)
@@ -542,7 +545,7 @@ class TestGeneratedDataContracts(unittest.TestCase):
         for path in sorted((REPO / "skills/code-gauntlet").rglob("*.md")):
             blocks = pattern.findall(path.read_text(encoding="utf-8"))
             if blocks:
-                actual[str(path.relative_to(REPO))] = len(blocks)
+                actual[path.relative_to(REPO).as_posix()] = len(blocks)
         self.assertEqual(
             actual,
             {

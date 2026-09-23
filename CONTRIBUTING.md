@@ -32,7 +32,7 @@ ladder, costs, and pre-registered owner options.
 
 1. Fork and clone the repository.
 2. Ensure you have Python 3.10 or newer installed (for the test suite and pre-commit hooks). CI runs the pipeline
-   suite on 3.10, 3.11, and 3.12.
+   suite on 3.10, 3.11, and 3.12 on Linux, and on 3.12 and 3.14 on Windows.
 3. Ensure Node `24.18.0` is installed; the `contract-fences-current` pre-commit hook uses it to verify generated fences.
 4. Set up the development environment:
 
@@ -166,6 +166,16 @@ node workflows/build.js && git diff --exit-code workflows/pipeline.js
 claude plugin validate .
 pre-commit run --all-files
 ```
+
+`python -m pytest tests/ -q` runs on Linux, macOS and Windows. That covers the
+test suite only: the plugin itself does not yet run on Windows, because the
+workflow waist refuses Windows drive paths (#351). The Node
+suite (`workflows/test`) and `bench/tests` run in CI on Linux only; on Windows,
+run them under WSL or skip them. Scripts write UTF-8 with LF on every OS;
+`tests/test_text_io_guard.py` checks known standard-library file, path,
+compression, temporary-file, logging, and subprocess calls; it requires a
+literal encoding for supported text-mode calls and rejects APIs that cannot
+configure text encoding.
 
 This will:
 

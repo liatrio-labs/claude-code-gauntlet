@@ -108,9 +108,9 @@ def _extract_js_constants(text):
 
 class TestReviewMdDefaultsContract(unittest.TestCase):
     def setUp(self):
-        self.spec_text = SPEC_PATH.read_text()
-        self.py_text = FILTER_PY_PATH.read_text()
-        self.js_text = FILTER_JS_PATH.read_text()
+        self.spec_text = SPEC_PATH.read_text(encoding="utf-8")
+        self.py_text = FILTER_PY_PATH.read_text(encoding="utf-8")
+        self.js_text = FILTER_JS_PATH.read_text(encoding="utf-8")
 
     def test_doc_numbers_match_python_constants(self):
         doc = _extract_doc_defaults(self.spec_text)

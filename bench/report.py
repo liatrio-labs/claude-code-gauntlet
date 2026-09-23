@@ -240,6 +240,7 @@ def git_short_sha(cwd=None):
             capture_output=True,
             text=True,
             timeout=5,
+            encoding="utf-8",
         )
         sha = out.stdout.strip()
         if out.returncode == 0 and sha:

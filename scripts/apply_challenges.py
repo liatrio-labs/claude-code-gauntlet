@@ -164,7 +164,7 @@ def load_filtered(path):
       - envelope        the original dict (None for bare arrays)
     """
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             raw = json.load(fh)
     except FileNotFoundError:
         die(f"Filtered findings file not found: {path}")
@@ -202,7 +202,7 @@ def load_challenges(path):
     Returns a list of challenge dicts.
     """
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             raw = json.load(fh)
     except FileNotFoundError:
         die(f"Challenges file not found: {path}")
@@ -521,4 +521,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

@@ -1005,7 +1005,7 @@ class _CliTestBase(unittest.TestCase):
 
     def _bodies_file(self, entries):
         path = os.path.join(self.tmp, "bodies.json")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(entries, f)
         return path
 
@@ -1725,7 +1725,7 @@ class TestRound3And4FixRegressions(unittest.TestCase):
         always-exit-0 contract."""
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "bodies.json")
-            with open(path, "w") as fh:
+            with open(path, "w", encoding="utf-8") as fh:
                 fh.write("[" * 60000 + "]" * 60000)
             out, code = _run_main(["--platform", "github", "--bodies-file", path])
         self.assertEqual(code, 0)

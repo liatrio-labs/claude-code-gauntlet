@@ -539,7 +539,7 @@ def _seed_trust(config_dir, worktree):
     data = {}
     if path.exists():
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             data = {}
     if not isinstance(data, dict):
@@ -557,7 +557,7 @@ def _seed_trust(config_dir, worktree):
     projects[key] = entry
     data["projects"] = projects
 
-    path.write_text(json.dumps(data, indent=2))
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def _gh_auth_env(base_env):
@@ -746,7 +746,11 @@ def _git(args, repo_root):
     launch failure). Never raises — the guard degrades to "cannot judge" instead."""
     try:
         proc = subprocess.run(
-            ["git", *args], cwd=str(repo_root), capture_output=True, text=True
+            ["git", *args],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
     except OSError:
         return ("", -1)
@@ -905,7 +909,7 @@ def _echo_in_reports(report_dirs):
                 continue
             seen.add(resolved)
             try:
-                if _echo_in_text(md.read_text(errors="replace")):
+                if _echo_in_text(md.read_text(errors="replace", encoding="utf-8")):
                     return True
             except OSError:
                 continue
@@ -982,7 +986,9 @@ def extract_identity_receipt(raw_text, envelope=None, report_dirs=()):
                 continue
             seen.add(resolved)
             try:
-                got = parse_identity_echo(md.read_text(errors="replace"))
+                got = parse_identity_echo(
+                    md.read_text(errors="replace", encoding="utf-8")
+                )
             except OSError:
                 continue
             if "pipeline_version" in got and "plugin_root" in got:
@@ -1342,7 +1348,11 @@ def _claude_version(claude_bin):
     """
     try:
         out = subprocess.run(
-            [claude_bin, "--version"], capture_output=True, text=True, timeout=10
+            [claude_bin, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -1452,7 +1462,7 @@ def invoke_review(
     if child_model != "inherit":
         cmd += ["--model", child_model]
 
-    with open(raw_path, "w") as fh:
+    with open(raw_path, "w", encoding="utf-8") as fh:
         proc = subprocess.Popen(
             cmd,
             cwd=str(worktree),
@@ -1482,7 +1492,7 @@ def invoke_review(
                 "timeout", raw_json_path=str(raw_path), reason="watchdog_timeout"
             )
 
-    raw_text = raw_path.read_text(errors="replace")
+    raw_text = raw_path.read_text(errors="replace", encoding="utf-8")
     envelope = parse_result_envelope(raw_text)
     # The receipt may live in stdout, the envelope .result, or a report .md — collected
     # into pr_dir by run.py, or still in the shared output dir at echo-check time.

@@ -77,7 +77,7 @@ class TestParseNdjsonFile(unittest.TestCase):
     def test_valid_single_finding(self):
         f = _make_finding()
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".ndjson", delete=False
+            mode="w", suffix=".ndjson", delete=False, encoding="utf-8"
         ) as fh:
             fh.write(json.dumps(f) + "\n")
             path = fh.name
@@ -92,7 +92,7 @@ class TestParseNdjsonFile(unittest.TestCase):
     def test_multiple_findings(self):
         items = [_make_finding(id=f"bug-{i}") for i in range(3)]
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".ndjson", delete=False
+            mode="w", suffix=".ndjson", delete=False, encoding="utf-8"
         ) as fh:
             for item in items:
                 fh.write(json.dumps(item) + "\n")
@@ -106,7 +106,7 @@ class TestParseNdjsonFile(unittest.TestCase):
 
     def test_invalid_json_line_skipped_with_warning(self):
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".ndjson", delete=False
+            mode="w", suffix=".ndjson", delete=False, encoding="utf-8"
         ) as fh:
             fh.write(json.dumps(_make_finding()) + "\n")
             fh.write("{not valid json}\n")
@@ -122,7 +122,7 @@ class TestParseNdjsonFile(unittest.TestCase):
 
     def test_non_object_line_skipped_with_warning(self):
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".ndjson", delete=False
+            mode="w", suffix=".ndjson", delete=False, encoding="utf-8"
         ) as fh:
             fh.write('"just a string"\n')
             path = fh.name
@@ -136,7 +136,7 @@ class TestParseNdjsonFile(unittest.TestCase):
 
     def test_empty_file_returns_no_findings(self):
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".ndjson", delete=False
+            mode="w", suffix=".ndjson", delete=False, encoding="utf-8"
         ) as fh:
             path = fh.name
         try:
@@ -148,7 +148,7 @@ class TestParseNdjsonFile(unittest.TestCase):
 
     def test_blank_lines_ignored(self):
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".ndjson", delete=False
+            mode="w", suffix=".ndjson", delete=False, encoding="utf-8"
         ) as fh:
             fh.write("\n")
             fh.write(json.dumps(_make_finding()) + "\n")
@@ -181,7 +181,9 @@ class TestParseTextFile(unittest.TestCase):
             f"{json.dumps(f)}\n\n"
             "Moving to the next issue.\n"
         )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as fh:
             fh.write(content)
             path = fh.name
         try:
@@ -195,7 +197,9 @@ class TestParseTextFile(unittest.TestCase):
     def test_multiple_json_blocks_extracted(self):
         items = [_make_finding(id=f"bug-{i}") for i in range(3)]
         content = "\n".join(json.dumps(item) for item in items)
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as fh:
             fh.write(content)
             path = fh.name
         try:
@@ -206,7 +210,9 @@ class TestParseTextFile(unittest.TestCase):
 
     def test_no_json_blocks_returns_empty(self):
         content = "I found no issues in this file. The code looks correct."
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as fh:
             fh.write(content)
             path = fh.name
         try:
@@ -219,7 +225,9 @@ class TestParseTextFile(unittest.TestCase):
 
     def test_skip_line_detected(self):
         content = "SKIP: off-by-one check was actually correct\nSKIP: boundary is safe"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as fh:
             fh.write(content)
             path = fh.name
         try:
@@ -230,7 +238,9 @@ class TestParseTextFile(unittest.TestCase):
 
     def test_json_without_id_field_ignored(self):
         content = '{"dimension": "bug", "severity": "high"}'
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as fh:
             fh.write(content)
             path = fh.name
         try:
@@ -248,7 +258,9 @@ class TestParseTextFile(unittest.TestCase):
         self.assertFalse(has_skip)
 
     def test_empty_file_returns_empty(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as fh:
             path = fh.name
         try:
             findings, warns, has_prose, has_skip = parse_text_file(path, "bug-detector")
@@ -260,7 +272,9 @@ class TestParseTextFile(unittest.TestCase):
 
     def test_skip_line_case_insensitive(self):
         content = "skip: no issue found here"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as fh:
             fh.write(content)
             path = fh.name
         try:
@@ -841,14 +855,14 @@ class TestMain(unittest.TestCase):
 
     def test_cli_output_is_valid_json(self):
         main(self._argv())
-        with open(self.output_path) as fh:
+        with open(self.output_path, encoding="utf-8") as fh:
             data = json.load(fh)
         self.assertIn("findings", data)
         self.assertIn("methodology", data)
 
     def test_cli_output_contains_finding(self):
         main(self._argv())
-        with open(self.output_path) as fh:
+        with open(self.output_path, encoding="utf-8") as fh:
             data = json.load(fh)
         self.assertEqual(len(data["findings"]), 1)
         self.assertEqual(data["findings"][0]["id"], "bug-1")
@@ -861,7 +875,7 @@ class TestMain(unittest.TestCase):
         _write_ndjson(ndjson_path2, [_make_finding(id="sec-1", dimension="security")])
         rc = main(self._argv(**{"--agents": [self.agent, second_agent]}))
         self.assertEqual(rc, 0)
-        with open(self.output_path) as fh:
+        with open(self.output_path, encoding="utf-8") as fh:
             data = json.load(fh)
         self.assertEqual(len(data["findings"]), 2)
 
@@ -885,12 +899,14 @@ class TestDeduplicateImportPath(unittest.TestCase):
             "assert len(merged) == 1 and merged[0]['title'] == 'n' and dupes == 1\n"
             "print('ok')\n"
         )
-        proc = subprocess.run(
-            [sys.executable, "-c", code],
-            cwd="/tmp",
-            capture_output=True,
-            text=True,
-        )
+        with tempfile.TemporaryDirectory() as cwd:
+            proc = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
 
 

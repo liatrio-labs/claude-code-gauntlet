@@ -304,6 +304,7 @@ class TestCli(unittest.TestCase):
                 # A stray PYTHONPATH pointing at the repo would mask the very failure
                 # this test exists to catch.
                 env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
+                encoding="utf-8",
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue(out.exists())

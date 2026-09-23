@@ -387,6 +387,7 @@ class TestRuffFormatFixedPoint(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -418,6 +419,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
 
     def test_a_pristine_copy_is_already_current(self):
@@ -572,6 +574,7 @@ class TestShippedTwinsAreFresh(unittest.TestCase):
             capture_output=True,
             text=True,
             cwd=str(REPO),
+            encoding="utf-8",
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

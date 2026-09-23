@@ -47,6 +47,8 @@ def load_manifest(path=MANIFEST):
         document = json.loads(Path(path).read_text(encoding="utf-8"))
     except OSError as error:
         _die(f"cannot read the manifest: {error}")
+    except UnicodeDecodeError as error:
+        _die(f"{path} is not UTF-8: {error}")
     except json.JSONDecodeError as error:
         _die(f"{path} is not valid JSON: {error}")
 
@@ -80,12 +82,14 @@ def load_live(source):
     """
     try:
         text = (
-            sys.stdin.read()
+            sys.stdin.buffer.read().decode("utf-8")
             if source == "-"
             else Path(source).read_text(encoding="utf-8")
         )
     except OSError as error:
         _die(f"cannot read the label response: {error}")
+    except UnicodeDecodeError as error:
+        _die(f"the label response is not UTF-8: {error}")
     if not text.strip():
         _die(
             f"no JSON in {'stdin' if source == '-' else source}: "
@@ -252,4 +256,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

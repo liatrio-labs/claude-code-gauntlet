@@ -126,6 +126,7 @@ def _resolve_repo_root():
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
@@ -182,7 +183,12 @@ def run(cmd, check=False, timeout=None, cwd=None):
     """
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=cwd,
+            encoding="utf-8",
         )
     except subprocess.TimeoutExpired:
         return ("", "", -1)
@@ -214,7 +220,7 @@ def get_diff(base_branch, diff_file=None):
     """
     if diff_file:
         try:
-            with open(diff_file) as fh:
+            with open(diff_file, encoding="utf-8") as fh:
                 content = fh.read()
             print(
                 f"Diff source: --diff-file ({diff_file}), {len(content)} bytes",
@@ -1308,7 +1314,7 @@ def load_input(findings_json_path):
     document on disk genuinely is not the one the pipeline dispatched.
     """
     try:
-        with open(findings_json_path) as fh:
+        with open(findings_json_path, encoding="utf-8") as fh:
             text = fh.read()
     except FileNotFoundError:
         die(f"Findings file not found: {findings_json_path}")
@@ -1363,7 +1369,7 @@ def _write_output(output, output_path, *, receipt=False):
     """
     text = json.dumps(output, indent=2, ensure_ascii=receipt)
     if output_path:
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8", newline="") as f:
             f.write(text)
     else:
         print(text)
@@ -1795,4 +1801,6 @@ def _run_legacy(args, parser):
 
 
 if __name__ == "__main__":
-    main()
+    from script_io import run_entrypoint
+
+    run_entrypoint(main)

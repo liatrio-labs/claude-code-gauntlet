@@ -77,7 +77,7 @@ _ASK_RE = re.compile(r'"(?:name|tool_name)"\s*:\s*"AskUserQuestion"')
 
 
 def _load_json(path):
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 
 
@@ -86,6 +86,7 @@ def _git_short_sha():
         ["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     if result.returncode != 0:
         return "nogit"
@@ -188,6 +189,7 @@ def _compute_diff(worktree, base_sha, head_sha):
         cwd=str(worktree),
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     return result.stdout
 
@@ -241,7 +243,7 @@ def check_prereqs(
         )
     else:
         result = subprocess.run(
-            [claude_bin, "--version"], capture_output=True, text=True
+            [claude_bin, "--version"], capture_output=True, text=True, encoding="utf-8"
         )
         blob = (result.stdout or "") + (result.stderr or "")
         if result.returncode != 0 or not re.search(r"\d+\.\d+", blob):
@@ -255,7 +257,7 @@ def check_prereqs(
         )
     else:
         result = subprocess.run(
-            ["gh", "auth", "status"], capture_output=True, text=True
+            ["gh", "auth", "status"], capture_output=True, text=True, encoding="utf-8"
         )
         if result.returncode != 0:
             failures.append(
@@ -476,7 +478,7 @@ def _naive_payload_from_result(result_text, pr_dir):
         "skipped": [],
     }
     dest = Path(pr_dir) / "post-review-payload.json"
-    dest.write_text(json.dumps(payload))
+    dest.write_text(json.dumps(payload), encoding="utf-8")
     return dest
 
 
@@ -532,6 +534,7 @@ def _invoke_naive(
         stderr=subprocess.STDOUT,
         start_new_session=True,
         text=True,
+        encoding="utf-8",
     )
     try:
         out, _ = proc.communicate(input=prompt, timeout=timeout_s)
@@ -542,12 +545,12 @@ def _invoke_naive(
             out, _ = proc.communicate(timeout=10)
         except (subprocess.TimeoutExpired, ValueError, OSError):
             out = ""
-        raw_path.write_text(out or "")
+        raw_path.write_text(out or "", encoding="utf-8")
         return invoke.InvokeResult(
             "timeout", raw_json_path=str(raw_path), reason="watchdog_timeout"
         )
 
-    raw_path.write_text(out or "")
+    raw_path.write_text(out or "", encoding="utf-8")
     if _ASK_RE.search(out or ""):
         return invoke.InvokeResult(
             "invalid", raw_json_path=str(raw_path), reason="askuserquestion_detected"
@@ -616,7 +619,9 @@ def _run_prs(
     """
     run_dir = Path(run_dir)
     output_dir = run_dir / "output"
-    fixture_text = FIXTURE_PATH.read_text() if FIXTURE_PATH.exists() else ""
+    fixture_text = (
+        FIXTURE_PATH.read_text(encoding="utf-8") if FIXTURE_PATH.exists() else ""
+    )
     counts = defaultdict(int)
     drifted = []
 
@@ -678,10 +683,10 @@ def _run_prs(
         start = time.monotonic()
         try:
             if url in fixture_urls:
-                (worktree / "REVIEW.md").write_text(fixture_text)
+                (worktree / "REVIEW.md").write_text(fixture_text, encoding="utf-8")
 
             diff_text = _compute_diff(worktree, meta["base_sha"], meta["head_sha"])
-            (pr_dir / "diff.patch").write_text(diff_text)
+            (pr_dir / "diff.patch").write_text(diff_text, encoding="utf-8")
 
             _clear_dir(output_dir)
             # Snapshot per-child Workflow records before invoke so we can copy only
@@ -887,7 +892,9 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         # is "custom" and pr_urls carries the same URLs, so resume works from the manifest.
         "prs": list(args.prs) if getattr(args, "prs", None) else None,
     }
-    (Path(run_dir) / "run.json").write_text(json.dumps(manifest, indent=2))
+    (Path(run_dir) / "run.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
 
 
 def _write_child_auth_stub(manifest_path, run_id, child_auth):
@@ -900,7 +907,8 @@ def _write_child_auth_stub(manifest_path, run_id, child_auth):
     provenance without inventing history.
     """
     manifest_path.write_text(
-        json.dumps({"run_id": run_id, "child_auth": child_auth}, indent=2)
+        json.dumps({"run_id": run_id, "child_auth": child_auth}, indent=2),
+        encoding="utf-8",
     )
 
 

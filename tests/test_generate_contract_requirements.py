@@ -59,6 +59,7 @@ class TestNodeDiagnostic(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
             )
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")
@@ -1251,7 +1252,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             src = REPO / rel
             dst = root / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            dst.write_bytes(src.read_bytes())
         self.root = root
 
     def test_check_is_clean_on_a_freshly_regenerated_copy(self):
@@ -1392,7 +1393,9 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             [ruff, "format", resolver_path],
             [ruff, "format", "--check", resolver_path],
         ):
-            result = subprocess.run(command, capture_output=True, text=True)
+            result = subprocess.run(
+                command, capture_output=True, text=True, encoding="utf-8"
+            )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             results.append(result)
         self.assertNotIn("reformatted", results[2].stdout)
@@ -1419,7 +1422,10 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
                 resolver.resolve(mode, {}, None, "pr", registry=registry)["configEcho"],
                 registry=registry,
             )
-            self.assertIn(expected.encode(), skill_before)
+            self.assertTrue(
+                expected.encode() in skill_before,
+                f"{mode} receipt not found in SKILL.md",
+            )
         cases = {
             "field deletion": resolver_before.replace(
                 '        "deriveWhen": None,\n', "", 1
@@ -1540,6 +1546,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("stale generated registry blocks", result.stderr)
@@ -1561,6 +1568,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(write_result.returncode, 0)
         self.assertIn("regenerated:", write_result.stdout)
@@ -1575,6 +1583,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(check_result.returncode, 0)
         self.assertIn("current", check_result.stdout)
