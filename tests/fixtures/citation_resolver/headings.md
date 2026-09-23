@@ -11,3 +11,79 @@ Plain prose with Embedded Heading text
 MD_SYMBOL: 1
 #	Tabbed Heading
 ## Trailing Tab	
+```
+# Fenced Heading
+```
+# After Backticks
+~~~`info`
+# Tilde Heading
+~~~
+# After Tildes
+``
+# Two Backticks
+~~
+# Two Tildes
+x```
+# Inline Fence
+``~
+# Mixed Fence
+```bad`info
+# Backtick Info
+````
+# Long Backtick Body
+```
+# Short Close
+~~~~
+# Wrong Close
+```` trailing
+# Text Close
+x````
+# Inline Close
+`````
+# Longer Close
+    ```
+# Space Open
+    ```
+# Space Close
+		~~~
+# Tab Open
+		~~~
+# Tab Close
+```
+# Space Tail Body
+```  
+# Space Tail Close
+~~~
+# Tab Tail Body
+~~~	
+# Tab Tail Close
+~~~~
+~~~
+# Tilde Short Close
+~~~~~
+# Tilde Longer Close
+```
+~~~
+# Nested Fence
+```
+# After Nested
+ 	 ~~~
+# Mixed Open
+ 	 ~~~ 	 
+# Mixed Close
+``` a`b
+# Spaced Backtick Info
+~~~ a~b
+# Tilde Tilde Info
+~~~
+ ~~~
+# Nbsp Open
+~~~
+ ~~~
+# Nbsp Close
+~~~
+~~~
+~~~ 
+# Nbsp Tail
+~~~
+# Before ~~~ # Hidden ~~~ # Separator
