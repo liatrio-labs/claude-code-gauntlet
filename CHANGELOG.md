@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v3.41.3 (2026-09-23)
+
+### Bug Fixes
+
+- Bound the summary index and harden the footer check
+  ([#366](https://github.com/liatrio-labs/claude-code-gauntlet/pull/366),
+  [`047bd02`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/047bd02d65cda8955c397a50da82f87aba8b5f62))
+
+- Lead the summary comment with the outcome and locate the findings
+  ([#366](https://github.com/liatrio-labs/claude-code-gauntlet/pull/366),
+  [`047bd02`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/047bd02d65cda8955c397a50da82f87aba8b5f62))
+
+- Lead the summary comment with the outcome and locate the findings (#362)
+  ([#366](https://github.com/liatrio-labs/claude-code-gauntlet/pull/366),
+  [`047bd02`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/047bd02d65cda8955c397a50da82f87aba8b5f62))
+
+### Testing
+
+- Mask fenced code blocks in the register-citation resolver (#348)
+  ([#361](https://github.com/liatrio-labs/claude-code-gauntlet/pull/361),
+  [`da14d40`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/da14d4094385c1c792461871eeee5a18e053f194))
+
+- Pin the summary index length cut and the footer-line whitespace rule
+  ([#366](https://github.com/liatrio-labs/claude-code-gauntlet/pull/366),
+  [`047bd02`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/047bd02d65cda8955c397a50da82f87aba8b5f62))
+
+
 ## v3.41.2 (2026-09-23)
 
 ### Bug Fixes
