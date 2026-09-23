@@ -2,6 +2,103 @@
 
 <!-- version list -->
 
+## v3.41.2 (2026-09-23)
+
+### Bug Fixes
+
+- Declare UTF-8 at every implicit text-mode call site
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+- Port POSIX-only paths and tests to Windows
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+- Refuse non-UTF-8 label input by name instead of raising
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+- Run the pytest suite on Windows (UTF-8 text boundary, LF, POSIX ports) (#349)
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+- Scripts write UTF-8 with LF to stdout and stderr on every OS
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+### Chores
+
+- **deps**: Bump github/codeql-action/upload-sarif in the actions group
+  ([#350](https://github.com/liatrio-labs/claude-code-gauntlet/pull/350),
+  [`bbabd37`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/bbabd376f3d28e9608fc1b7bcc5f4635129f560f))
+
+### Testing
+
+- Address the final Fable and Astra reviews of #356
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+- Close guard gaps and pin every entry-point trigger and stream setting
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+- Derive suffix-map value rows and tighten the witness tie
+  ([#347](https://github.com/liatrio-labs/claude-code-gauntlet/pull/347),
+  [`593ec16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/593ec1649d5c3a7ae741584ed9c286b0b687177f))
+
+- Guard every text-mode call for an explicit encoding
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+- Narrow the archive-member mode check for mypy
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+- Pin every register-resolver matching clause with a tracked fixture tree
+  ([#347](https://github.com/liatrio-labs/claude-code-gauntlet/pull/347),
+  [`593ec16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/593ec1649d5c3a7ae741584ed9c286b0b687177f))
+
+- Pin every register-resolver matching clause with a tracked fixture tree (#346)
+  ([#347](https://github.com/liatrio-labs/claude-code-gauntlet/pull/347),
+  [`593ec16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/593ec1649d5c3a7ae741584ed9c286b0b687177f))
+
+- Pin first-pattern-wins and the YAML comment gap; drop the inert end-of-file exclusion
+  ([#347](https://github.com/liatrio-labs/claude-code-gauntlet/pull/347),
+  [`593ec16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/593ec1649d5c3a7ae741584ed9c286b0b687177f))
+
+- Pin the class delimiter arms and declare each fixture's kinds
+  ([#347](https://github.com/liatrio-labs/claude-code-gauntlet/pull/347),
+  [`593ec16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/593ec1649d5c3a7ae741584ed9c286b0b687177f))
+
+- Pin the heading branch's Markdown-suffix gate in the resolver test
+  ([#347](https://github.com/liatrio-labs/claude-code-gauntlet/pull/347),
+  [`593ec16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/593ec1649d5c3a7ae741584ed9c286b0b687177f))
+
+- Pin the title gate's mjs arm, paired delimiters, tab gaps and the heading witness index
+  ([#347](https://github.com/liatrio-labs/claude-code-gauntlet/pull/347),
+  [`593ec16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/593ec1649d5c3a7ae741584ed9c286b0b687177f))
+
+- Pin the Windows CI job, the temp-root fallback and a bounded FIFO check
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+- Reuse the parsed citation path in the resolver test
+  ([#347](https://github.com/liatrio-labs/claude-code-gauntlet/pull/347),
+  [`593ec16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/593ec1649d5c3a7ae741584ed9c286b0b687177f))
+
+- Share entry-point facts and pin the last guard and CLI gaps
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+- Split a two-claim comment in the resolver test
+  ([#347](https://github.com/liatrio-labs/claude-code-gauntlet/pull/347),
+  [`593ec16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/593ec1649d5c3a7ae741584ed9c286b0b687177f))
+
+- Type the text-I/O guard's rule table for mypy
+  ([#356](https://github.com/liatrio-labs/claude-code-gauntlet/pull/356),
+  [`9c3699c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c3699cfab2b2b6d841c90430a61aadfa8f26907))
+
+
 ## v3.41.1 (2026-09-16)
 
 ### Bug Fixes
