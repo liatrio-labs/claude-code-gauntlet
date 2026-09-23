@@ -18,11 +18,12 @@ export const REPORT_EXCLUDED_FIELDS = [
   'suggested_fix_code_removal_reason',
 ];
 
-// Per-field display folds only. They are not a whole-report bound or a return-budget
-// mechanism: findings.json keeps unfolded confirmed values, and cardinality is unbounded.
+// Display limits, not a whole-report or return-budget mechanism. The summary index
+// admits whole bullets; findings.json keeps unfolded values and unbounded cardinality.
 export const REPORT_FOLD_LIMITS = {
   proseChars: 4000,
   summaryChars: 12000,
+  summaryIndexChars: 12000,
   evidenceLines: 40,
   evidenceChars: 8000,
   inlineChars: 512,
@@ -801,14 +802,14 @@ function summaryIndex(rawFindings, findingsView, input) {
   if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
     input.deliveryTier !== 'main_only' || members.some(isMain)
   ))) {
-    reasons.push(`over the delivery cap of ${input.deliveryCap} findings`);
+    reasons.push(`over the delivery cap of ${input.deliveryCap} ${plural(input.deliveryCap, 'finding')}`);
   }
   if (input.deliveryTier === 'main_only' && omittedUnits.some((members) => (
     members.some((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion')
   ))) {
     reasons.push('improvement suggestions held back by delivery tier main_only');
   }
-  if (!reasons.length) reasons.push('not selected for delivery');
+  if (!reasons.length && omittedUnits.length) reasons.push('not selected for delivery');
   return { indexed, remainder: reported.length - indexed.length, reasons };
 }
 
@@ -820,20 +821,33 @@ export function summaryBlock(builder, input) {
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
   builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
-  const { indexed, remainder, reasons } = summaryIndex(rawFindings, findingsView, inp);
+  const { indexed, reasons } = summaryIndex(rawFindings, findingsView, inp);
   const permalinks = permalinkContext(inp.prIdentity);
-  if (indexed.length) builder.add();
-  const remainderNoun = findings.length === rawFindings.length
-    ? plural(remainder, 'finding')
-    : `reported ${plural(remainder, 'issue')}`;
+  const bullets = [];
+  let indexChars = 0;
+  let cutForLength = false;
   for (const finding of indexed) {
     const severity = normalizeReportSeverity(finding.severity);
     const where = location(finding) || 'location unavailable';
     const url = locationUrl(finding, permalinks);
     const link = url ? `[\`${where}\`](${url})` : `\`${where}\``;
     const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
-    builder.add(`- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${inline(finding.title)}`);
+    const bullet = `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${inline(finding.title)}`;
+    const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
+    if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
+      cutForLength = true;
+      break;
+    }
+    bullets.push(bullet);
+    indexChars += nextChars;
   }
+  if (bullets.length) builder.add();
+  for (const bullet of bullets) builder.add(bullet);
+  const remainder = findings.length - bullets.length;
+  if (cutForLength) reasons.push('over the summary length limit');
+  const remainderNoun = findings.length === rawFindings.length
+    ? plural(remainder, 'finding')
+    : `reported ${plural(remainder, 'issue')}`;
   if (remainder) {
     builder.add();
     builder.add(`${remainder} more ${remainderNoun} not listed here (${reasons.join('; ')}).`);

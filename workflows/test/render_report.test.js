@@ -239,6 +239,7 @@ test('T-FOLDS: every exact cap and cap-plus-one has deterministic bytes', () => 
   // before foldEvidence; these hand-typed boundary expectations turn red.
   assert.equal(REPORT_FOLD_LIMITS.proseChars, 4000);
   assert.equal(REPORT_FOLD_LIMITS.summaryChars, 12000);
+  assert.equal(REPORT_FOLD_LIMITS.summaryIndexChars, 12000);
   assert.equal(REPORT_FOLD_LIMITS.evidenceLines, 40);
   assert.equal(REPORT_FOLD_LIMITS.evidenceChars, 8000);
   assert.equal(REPORT_FOLD_LIMITS.inlineChars, 512);
@@ -991,16 +992,16 @@ test('T-SUMMARY-INDEX: original references select units in report order with lin
 });
 
 test('T-SUMMARY-INDEX: delivered membership uses original object references', () => {
-  const first = finding('duplicate', { title: 'same title' });
-  const second = finding('duplicate', { title: 'same title' });
+  const first = finding('duplicate', { title: 'first title', file: 'first.js' });
+  const second = finding('duplicate', { title: 'second title', file: 'second.js' });
   const emptyId = finding('', { title: 'empty id' });
   const missingId = finding('temporary', { title: 'missing id' });
   delete missingId.id;
   const findings = [first, second, emptyId, missingId];
-  const body = renderSummaryBody({ findings, delivered: [second, missingId] });
+  const body = renderSummaryBody({ findings, delivered: [second, emptyId] });
   assert.deepEqual(body.split('\n').filter((line) => line.startsWith('- ')), [
-    '- 🟠 [HIGH] `duplicate.js:10`: same title',
-    '- 🟠 [HIGH] `temporary.js:10`: missing id',
+    '- 🟠 [HIGH] `second.js:10`: second title',
+    '- 🟠 [HIGH] `.js:10`: empty id',
   ]);
   assert.ok(body.endsWith('2 more findings not listed here (not selected for delivery).'));
 
@@ -1044,12 +1045,71 @@ test('T-SUMMARY-INDEX: remainder noun follows the leading counts noun', () => {
   assert.ok(grouped(2, 2).endsWith('2 more reported issues not listed here (not selected for delivery).'));
 });
 
+test('T-SUMMARY-UNITS: a withheld primary uses the first delivered child', () => {
+  const primary = finding('P', { consolidation_key: 'g', consolidation_primary: true, confidence: 10 });
+  const lower = finding('A', { title: 'lower rank', consolidation_key: 'g', consolidation_primary: false, confidence: 60 });
+  const higher = finding('B', { title: 'higher rank', consolidation_key: 'g', consolidation_primary: false, confidence: 95 });
+  const body = renderSummaryBody({ findings: [primary, lower, higher], delivered: [higher, lower], deliveryCap: 2 });
+  assert.deepEqual(body.split('\n').filter((line) => line.startsWith('- ')), [
+    '- 🟠 [HIGH] `B.js:10`: higher rank',
+  ]);
+  assert.ok(!body.includes('lower rank'));
+  assert.ok(!body.includes('not listed here'));
+});
+
+test('T-SUMMARY-INDEX: null-prototype findings retain delivered identity', () => {
+  const plain = Object.assign(Object.create(null), finding('N', { title: 'null prototype' }));
+  const body = renderSummaryBody({ findings: [plain], delivered: [plain] });
+  assert.deepEqual(body.split('\n').filter((line) => line.startsWith('- ')), [
+    '- 🟠 [HIGH] `N.js:10`: null prototype',
+  ]);
+  assert.ok(!body.includes('not listed here'));
+});
+
+test('T-SUMMARY-INDEX: whole bullets fit exactly and the next code point moves a unit', () => {
+  const limit = REPORT_FOLD_LIMITS.summaryIndexChars;
+  const bullet = (id, title) => renderSummaryBody({ findings: [finding(id, { title })] })
+    .split('\n').find((line) => line.startsWith('- '));
+  const findings = [];
+  let used = 0;
+  while (limit - used > 400) {
+    const id = String(findings.length).padStart(3, '0');
+    const title = 'x'.repeat(100);
+    used += [...bullet(id, title)].length + (findings.length ? 1 : 0);
+    findings.push(finding(id, { title }));
+  }
+  const tailId = String(findings.length).padStart(3, '0');
+  const tailChars = limit - used - 1 - [...bullet(tailId, '')].length;
+  assert.ok(tailChars > 0 && tailChars < 512);
+  findings.push(finding(tailId, { title: 'z'.repeat(tailChars) }));
+  const exact = renderSummaryBody({ findings });
+  const exactBullets = exact.split('\n').filter((line) => line.startsWith('- '));
+  assert.equal(exactBullets.length, findings.length);
+  assert.equal([...exactBullets.join('\n')].length, limit);
+  assert.ok(!exact.includes('not listed here'));
+
+  const over = [...findings.slice(0, -1), finding(tailId, { title: 'z'.repeat(tailChars + 1) })];
+  const lengthOnly = renderSummaryBody({ findings: over });
+  assert.equal(lengthOnly.split('\n').filter((line) => line.startsWith('- ')).length, findings.length - 1);
+  assert.ok(lengthOnly.endsWith('1 more finding not listed here (over the summary length limit).'));
+
+  const allDelivered = renderSummaryBody({ findings: over, delivered: over, deliveryCap: over.length });
+  assert.ok(allDelivered.endsWith('1 more finding not listed here (over the summary length limit).'));
+
+  const omitted = finding('OMIT', { title: 'delivery omitted' });
+  const capped = renderSummaryBody({
+    findings: [...over, omitted], delivered: over, deliveryCap: over.length,
+  });
+  assert.equal(capped.split('\n').filter((line) => line.startsWith('- ')).length, findings.length - 1);
+  assert.ok(capped.endsWith(`2 more findings not listed here (over the delivery cap of ${over.length} findings; over the summary length limit).`));
+});
+
 test('T-SUMMARY-INDEX: cap, tier, fallback and severity strings are exact', () => {
   const allMain = [finding('A', { report_tag: 'main' }), finding('B', { report_tag: 'main' })];
   const capOnly = renderSummaryBody({
     findings: allMain, delivered: [allMain[0]], deliveryTier: 'main_only', deliveryCap: 1,
   });
-  assert.ok(capOnly.endsWith('1 more finding not listed here (over the delivery cap of 1 findings).'));
+  assert.ok(capOnly.endsWith('1 more finding not listed here (over the delivery cap of 1 finding).'));
 
   const offEnum = renderSummaryBody({ findings: [finding('L', { severity: 'unrecognized' })] });
   assert.equal(offEnum.split('\n').filter((line) => line.startsWith('- '))[0], '- 💡 [LOW] `L.js:10`: finding L');

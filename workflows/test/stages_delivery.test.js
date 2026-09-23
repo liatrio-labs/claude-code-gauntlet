@@ -304,7 +304,7 @@ test('runWith indexes replayed challenge findings without ids by selected object
   const body = persisted.postReview.review_body;
   assert.equal(body.split('\n').filter((line) => line.startsWith('- ')).length, 1);
   assert.ok(body.includes(': critical choice'));
-  assert.ok(body.endsWith('2 more findings not listed here (over the delivery cap of 1 findings).'));
+  assert.ok(body.endsWith('2 more findings not listed here (over the delivery cap of 1 finding).'));
 });
 
 test('runWith indexes every finding unless a PR comment delivery is enabled', async () => {
@@ -360,6 +360,15 @@ test('runWith indexes every finding unless a PR comment delivery is enabled', as
   const localSummary = local.persisted.report.split('## Summary\n\n')[1].split('\n\n## Change Context')[0];
   assert.equal(localSummary.split('\n').filter((line) => line.startsWith('- ')).length, 9);
   assert.ok(!localSummary.includes('not listed here'));
+
+  const localWithSettings = await makeBodyFor({
+    mode: 'interactive', limits: { deliveryCap: 1 }, capReceipt: '1',
+    delivery: { tier: 'all' },
+  });
+  const localWithSettingsSummary = localWithSettings.persisted.report.split('## Summary\n\n')[1].split('\n\n## Change Context')[0];
+  assert.equal(localWithSettings.persisted.postReview.length, 1);
+  assert.equal(localWithSettingsSummary.split('\n').filter((line) => line.startsWith('- ')).length, 9);
+  assert.ok(!localWithSettingsSummary.includes('not listed here'));
 
   const interactive = await makeBodyFor({
     mode: 'interactive', limits: { deliveryCap: null }, capReceipt: 'null',

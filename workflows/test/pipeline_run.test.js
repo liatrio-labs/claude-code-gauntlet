@@ -139,7 +139,7 @@ test('summary delivery selection reaches persisted review body', async () => {
     const body = persisted.postReview.review_body;
     assert.equal(persisted.postReview.findings.length, cap);
     assert.equal(body.split('\n').filter(line => line.startsWith('- ')).length, cap);
-    assert.ok(body.endsWith(`${2 - cap} more finding not listed here (over the delivery cap of ${cap} findings).`));
+    assert.ok(body.endsWith(`${2 - cap} more finding not listed here (over the delivery cap of ${cap} finding).`));
     assert.ok(persisted.report.includes(`## Summary\n\n${body}\n\n## Change Context`));
   }
 });

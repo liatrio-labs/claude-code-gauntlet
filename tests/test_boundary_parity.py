@@ -91,22 +91,32 @@ class TestSummaryIndexParity(unittest.TestCase):
                 "file": "a.js",
                 "line_start": 1,
                 "severity": "high",
-                "confidence": 90,
+                "confidence": 10,
                 "consolidation_key": "g",
                 "consolidation_primary": True,
             },
             {
                 "id": "c",
-                "title": "Child",
-                "file": "a.js",
-                "line_start": 1,
-                "severity": "low",
-                "confidence": 80,
+                "title": "Lower ranked child",
+                "file": "lower.js",
+                "line_start": 11,
+                "severity": "high",
+                "confidence": 60,
+                "consolidation_key": "g",
+                "consolidation_primary": False,
+            },
+            {
+                "id": "h",
+                "title": "Higher ranked child",
+                "file": "higher.js",
+                "line_start": 12,
+                "severity": "high",
+                "confidence": 95,
                 "consolidation_key": "g",
                 "consolidation_primary": False,
             },
         ]
-        for delivered_indexes in ([], [0, 1], [1]):
+        for delivered_indexes in ([], [0, 1, 2], [1], [2, 1]):
             fixture = {
                 "summary": "The PR claims to change things.",
                 "findings": findings,
@@ -134,6 +144,11 @@ class TestSummaryIndexParity(unittest.TestCase):
             self.assertEqual(len(bullets), len(groups))
             for group, bullet in zip(groups, bullets, strict=True):
                 self.assertIn(group["primary"]["title"], bullet)
+                self.assertIn(group["primary"]["file"], bullet)
+            if delivered_indexes == [2, 1]:
+                self.assertEqual(len(bullets), 1)
+                self.assertIn("Higher ranked child", bullets[0])
+                self.assertNotIn("Lower ranked child", bullets[0])
             self.assertNotIn("The PR claims", body)
 
 
