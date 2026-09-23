@@ -1168,13 +1168,13 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         comments = real["payload"]["comments"]
         self.assertEqual(len(comments), 1)
         self.assertEqual(comments[0]["path"], "src/edited.py")
-        self.assertIn("### ⚠️ 2 finding(s) could not be anchored inline", body)
+        self.assertIn("### ⚠️ 2 findings could not be anchored inline", body)
         # Hand-typed intro sentence, group_note included — dropping
         # inline_count OR group_note on both sides (poster and mirror) stays
         # green against each other; only this full literal (and the
         # regenerated fixture) catches either (#234).
         self.assertIn(
-            "1 inline comment(s) were posted; the following 2 finding(s) "
+            "1 inline comment was posted; the following 2 findings "
             "reference lines outside this diff and are included here "
             "instead: A finding listed here may not have an anchoring "
             "problem of its own — a consolidation group whose primary "
@@ -1227,9 +1227,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             line_texts=line_texts,
         )
         self.assertEqual(real, mirror)
-        self.assertIn(
-            "_1 of these 1 finding(s) are not shown:", real["payload"]["body"]
-        )
+        self.assertIn("_1 of these 1 finding is not shown:", real["payload"]["body"])
 
     def test_github_inline_budget_composition_matches_mirror(self):
         finding = {
@@ -1380,13 +1378,13 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         self.assertEqual(fenced["position"]["new_line"], 2)
         self.assertNotIn("old_line", fenced["position"])
         summary_body = real["summary"]["body"]
-        self.assertIn("### ⚠️ 2 finding(s) could not be anchored inline", summary_body)
+        self.assertIn("### ⚠️ 2 findings could not be anchored inline", summary_body)
         # Hand-typed intro sentence, group_note included — dropping
         # inline_count OR group_note on both sides (poster and mirror) stays
         # green against each other; only this full literal (and the
         # regenerated fixture) catches either (#234).
         self.assertIn(
-            "The following 2 finding(s) reference lines outside this diff "
+            "The following 2 findings reference lines outside this diff "
             "and are included here instead of as inline comments: A "
             "finding listed here may not have an anchoring problem of its "
             "own — a consolidation group whose primary could not be "
@@ -1443,9 +1441,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             sha=_GH_SHA,
         )
         self.assertEqual(real, mirror)
-        self.assertIn(
-            "_1 of these 1 finding(s) are not shown:", real["summary"]["body"]
-        )
+        self.assertIn("_1 of these 1 finding is not shown:", real["summary"]["body"])
 
     def test_github_overlap_demotion(self):
         """#223: two findings whose stated ranges overlap in the same file.

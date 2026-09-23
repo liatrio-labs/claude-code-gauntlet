@@ -107,7 +107,7 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
 
 ```json
 {
-    "review_body": "The report's Summary section body: folded summary prose plus the short code-owned counts sentence",
+    "review_body": "The report's Summary section body: counts first, selected findings index, and any remainder with selection reasons",
     "findings": [
         {
             "file": "src/foo.py",
@@ -133,8 +133,8 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
 
 **Fields:**
 
-- `review_body` — exactly the pipeline-rendered Summary section body: summary prose folded at
-  `REPORT_FOLD_LIMITS.summaryChars`, followed by the short code-owned counts sentence. `post_review.py`
+- `review_body` — exactly the pipeline-rendered Summary section body: counts first, selected findings index,
+  and any remainder with selection reasons. The change summary stays in the report's Change Context section. `post_review.py`
   bounds the summary comment, and every inline comment, discussion and note, with a per-platform
   UTF-8 byte budget. Each includes its trailer; GitLab discussions and notes also include a live
   marker when one is appended. Inline folds happen in place at a line boundary with a fold line

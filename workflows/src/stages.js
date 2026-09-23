@@ -21,7 +21,7 @@ import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
-import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible } from './args.js';
+import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible, configEchoValue } from './args.js';
 import { renderReport, renderSummaryBody, coerceReportFindings } from './renderReport.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
@@ -4355,9 +4355,14 @@ export async function runWith(ctx, rawArgs) {
     // the original finding objects for persistence. renderReport applies the projection again
     // to its own input, so malformed replay findings cannot reach a raw rankKey.
     const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
+    const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
+    const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
+      && (A.mode !== 'headless'
+        || headlessCommentsEnabled);
 
     const reportInput = {
       summary: summaryOut.summary,
+      ...(includeDelivered ? { delivered: postReview } : {}),
       findings: challengeOut.findings,
       unverified: challengeOut.unverified,
       stats: {

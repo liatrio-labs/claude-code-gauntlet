@@ -179,7 +179,7 @@ Only stamp `scopeAnswer` when this gate actually fired (every file low-risk AND 
 
 ## 2f. Change Summary (now the workflow's Summarize stage)
 
-The semantic change summary is no longer produced in Phase 2. The workflow's **Summarize** stage dispatches the `change-summarizer` agent internally (its model comes from `resolvePolicy` — Sonnet) and threads the result to `renderReport()`. The skill neither dispatches a summarizer nor writes the summary into the context file.
+The semantic change summary is no longer produced in Phase 2. The workflow's **Summarize** stage dispatches the `change-summarizer` agent internally (its model comes from `resolvePolicy` — Sonnet) and threads the result to `renderReport()` for its Change Context section. The skill neither dispatches a summarizer nor writes the summary into the context file.
 
 For reference, the Summarize stage produces a 3–5 sentence summary of what the change *claims* to do, its rationale, and its risk profile, framed strictly as claims (never "clean", "correct", "safe", "straightforward", "trivial", or "verbatim" — the summary must never conclude a refactoring is correct). The change-summarizer agent definition holds the authoritative framing rules.
 
@@ -296,7 +296,7 @@ Write it with `python3 -c "import json; ..."`. Contents, concatenated in this or
 **Build all three items into `content` before measuring and writing it.** `contextLines` and `contextChars` must describe that complete string, including every collected rule block. Never append a block after measurement. The measurement fields may degrade to a disclosed gap; a missing collector artifact cannot silently become a rules-free context.
 The existing transcription evidence for model-copied project rules also applies to REVIEW.md text. The shared-context fold reads the collector's text from disk; the raw workflow waist still passes text by value. No static wording pin proves a model invoked the collector or copied the waist faithfully.
 
-The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to `renderReport()`. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record. (The emission machinery still ships — its removal is the deferred S8 migration.)
+The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to `renderReport()` for its Change Context section. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record. (The emission machinery still ships — its removal is the deferred S8 migration.)
 
 ### Measure it (issue #48)
 

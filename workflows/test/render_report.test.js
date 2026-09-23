@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline, openProseFence, proseFenceCloser, normalizeReportSeverity } from '../src/renderReport.js';
+import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline, openProseFence, proseFenceCloser, normalizeReportSeverity, plural } from '../src/renderReport.js';
 import { normalizeArgs, validateArgs } from '../src/args.js';
 import { SEVERITY_EMOJI, AGENTS, resolvePolicy } from '../src/registry.js';
 import { makeFinding, validArgs } from './helpers/pipelineMock.js';
@@ -43,7 +43,7 @@ function rendered(over = {}) {
 
 function countSentence(report) {
   const lines = report.split('\n');
-  return lines[lines.indexOf('## Summary') + 4];
+  return lines[lines.indexOf('## Summary') + 2];
 }
 
 function methodologyRow(report, aspect) {
@@ -98,7 +98,7 @@ test('T-SUMMARY-BODY: the standalone Summary body is the report Summary body', (
   // neutralization and exact report-section comparison turn red.
   const input = {
     summary: 'summary prose with <!-- marker text',
-    findings: [finding('S')],
+    findings: [finding('S', { title: 'title <!-- marker text' })],
     unverified: [],
     dimensions: dims,
     generatedAt: '2026-09-02T12:00:00Z',
@@ -158,6 +158,7 @@ test('T-CODE-OWNED-HEADINGS: renderer owns exactly the registered H2 headings', 
   // this hand-typed source scan turns red instead of trusting the registry table.
   const expected = [
     '## Summary',
+    '## Change Context',
     '## Findings',
     '## Unverified / pipeline-degraded findings',
     '## Review Dimensions Summary',
@@ -407,7 +408,7 @@ test('T-SEV: report severity headings use the closed set and fold unknown values
       `### ${SEVERITY_EMOJI.low} Low`,
     ],
   );
-  assert.equal(countSentence(report), '6 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 3 low.');
+  assert.equal(countSentence(report), '6 findings after the gauntlet — 1 critical, 1 high, 1 medium, 3 low.');
   const sparse = rendered({ findings: [finding('L', { severity: 'low' })] });
   assert.ok(sparse.includes(`### ${SEVERITY_EMOJI.low} Low`));
   assert.ok(!sparse.includes(`### ${SEVERITY_EMOJI.high} High`));
@@ -445,8 +446,8 @@ test('S-LABELS: report severity normalization is closed, total, and non-mutating
   }
   assert.match(report, /^### 🟠 High$/m);
   assert.match(report, /^### 💡 Low$/m);
-  assert.equal(countSentence(report), '4 reported issue(s) from 5 finding(s) after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
-  assert.equal(summaryBody, '4 reported issue(s) from 5 finding(s) after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
+  assert.equal(countSentence(report), '4 reported issues from 5 findings after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
+  assert.equal(summaryBody.split('\n')[0], '4 reported issues from 5 findings after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
   assert.equal(JSON.stringify(input), before, 'rendering does not mutate confirmed, unverified, or corroborated inputs');
 });
 
@@ -680,26 +681,26 @@ test('T-TOTAL: absent and empty inputs always render a complete non-empty report
 });
 
 test('T-COUNTS: the computed sentence follows rendered blocks and preserves pre-consolidation count', () => {
-  assert.equal(countSentence(rendered()), '0 finding(s) after the gauntlet.');
+  assert.equal(countSentence(rendered()), '0 findings after the gauntlet.');
   assert.equal(
     countSentence(rendered({ findings: [finding('C', { severity: 'critical' })] })),
-    '1 finding(s) after the gauntlet — 1 critical.',
+    '1 finding after the gauntlet — 1 critical.',
   );
   assert.equal(
     countSentence(rendered({ findings: [finding('X', { severity: 'exotic' }), finding('Y', { severity: 'strange' })] })),
-    '2 finding(s) after the gauntlet — 2 low.',
+    '2 findings after the gauntlet — 2 low.',
   );
   assert.equal(
     countSentence(rendered({ findings: ['critical', 'high', 'medium', 'low'].map((severity) => finding(severity, { severity })) })),
-    '4 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 1 low.',
+    '4 findings after the gauntlet — 1 critical, 1 high, 1 medium, 1 low.',
   );
   assert.equal(
     countSentence(rendered({ findings: [finding('S', { severity: 'low', report_tag: 'suggestion' })] })),
-    '1 finding(s) after the gauntlet — 1 low. 1 routed as improvement suggestion(s).',
+    '1 finding after the gauntlet — 1 low. 1 routed as improvement suggestion.',
   );
   assert.equal(
     countSentence(rendered({ unverified: [finding('U', { severity: 'medium' })] })),
-    '0 finding(s) after the gauntlet. 1 unverified / pipeline-degraded.',
+    '0 findings after the gauntlet. 1 unverified / pipeline-degraded.',
   );
   const group = { consolidation_key: 'one-group' };
   const consolidated = [
@@ -709,7 +710,7 @@ test('T-COUNTS: the computed sentence follows rendered blocks and preserves pre-
   ];
   assert.equal(
     countSentence(rendered({ findings: consolidated })),
-    '1 reported issue(s) from 3 finding(s) after the gauntlet — 1 high.',
+    '1 reported issue from 3 findings after the gauntlet — 1 high.',
   );
 });
 
@@ -961,6 +962,209 @@ function renderedConfigEcho() {
   };
 }
 
+test('T-SUMMARY-PLURALS: zero, one and many use grammatical nouns', () => {
+  for (const [n, expected] of [[0, 'findings'], [1, 'finding'], [2, 'findings']]) assert.equal(plural(n, 'finding'), expected);
+  assert.equal(renderSummaryBody(), '0 findings after the gauntlet.');
+  assert.equal(renderSummaryBody({ findings: [finding('A', { report_tag: 'suggestion' }), finding('B', { report_tag: 'suggestion' })] }).split('\n')[0], '2 findings after the gauntlet \u2014 2 high. 2 routed as improvement suggestions.');
+});
+
+test('T-SUMMARY-INDEX: original references select units in report order with links and labels', () => {
+  const a = finding('A', { title: 'same', severity: 'low', report_tag: 'suggestion', file: 'src/a b.js', line_start: 7, line_end: 9 });
+  const b = finding('B', { title: 'same', severity: 'critical', file: 'b.js' });
+  const c = finding('C', { title: 'same', severity: 'high' });
+  const identity = { platform: 'gitlab', web_origin: 'https://gitlab.com', owner: 'g/sub', repo: 'r', sha_full: 'a'.repeat(40) };
+  const input = { findings: [a, c, b], delivered: [a, b], prIdentity: identity, deliveryCap: 2, unverified: [finding('U')] };
+  const body = renderSummaryBody(input);
+  assert.equal(body, [
+    '3 findings after the gauntlet \u2014 1 critical, 1 high, 1 low. 1 routed as improvement suggestion. 1 unverified / pipeline-degraded.', '',
+    `- \u{1f534} [CRITICAL] [\`b.js:10\`](https://gitlab.com/g/sub/r/-/blob/${'a'.repeat(40)}/b.js#L10): same`,
+    `- \u{1f4a1} [LOW] [\`src/a b.js:7-9\`](https://gitlab.com/g/sub/r/-/blob/${'a'.repeat(40)}/src/a%20b.js#L7-9) (improvement suggestion): same`, '',
+    '1 more finding not listed here (over the delivery cap of 2 findings).',
+  ].join('\n'));
+  const gh = renderSummaryBody({ findings: [a], prIdentity: { ...identity, platform: 'github' } });
+  assert.ok(gh.includes(`/blob/${'a'.repeat(40)}/src/a%20b.js#L7-L9)`));
+  const plain = renderSummaryBody({ findings: [a] });
+  assert.ok(plain.includes('- \u{1f4a1} [LOW] `src/a b.js:7-9` (improvement suggestion): same'));
+  assert.ok(!plain.includes(']('));
+  assert.equal(renderSummaryBody({ findings: [a], delivered: [] }), '1 finding after the gauntlet \u2014 1 low. 1 routed as improvement suggestion.\n\n1 more finding not listed here (not selected for delivery).');
+  assert.ok(renderSummaryBody({ findings: [finding('X', { file: '' })] }).includes('`location unavailable`'));
+});
+
+test('T-SUMMARY-INDEX: delivered membership uses original object references', () => {
+  const first = finding('duplicate', { title: 'same title' });
+  const second = finding('duplicate', { title: 'same title' });
+  const emptyId = finding('', { title: 'empty id' });
+  const missingId = finding('temporary', { title: 'missing id' });
+  delete missingId.id;
+  const findings = [first, second, emptyId, missingId];
+  const body = renderSummaryBody({ findings, delivered: [second, missingId] });
+  assert.deepEqual(body.split('\n').filter((line) => line.startsWith('- ')), [
+    '- 🟠 [HIGH] `duplicate.js:10`: same title',
+    '- 🟠 [HIGH] `temporary.js:10`: missing id',
+  ]);
+  assert.ok(body.endsWith('2 more findings not listed here (not selected for delivery).'));
+
+  const copy = { ...first };
+  const copied = renderSummaryBody({ findings: [first], delivered: [null, 7, copy] });
+  assert.ok(!copied.split('\n').some((line) => line.startsWith('- ')));
+  assert.ok(copied.endsWith('1 more finding not listed here (not selected for delivery).'));
+
+  const groupedPrimary = finding('primary', {
+    title: 'group primary', consolidation_key: 'shared', consolidation_primary: true,
+  });
+  const groupedChild = finding('child', {
+    title: 'group child', consolidation_key: 'shared', consolidation_primary: false,
+  });
+  const collidingId = finding('shared', { title: 'ordinary finding' });
+  const collision = renderSummaryBody({
+    findings: [groupedPrimary, groupedChild, collidingId],
+    delivered: [groupedChild],
+  });
+  assert.deepEqual(collision.split('\n').filter((line) => line.startsWith('- ')), [
+    '- 🟠 [HIGH] `child.js:10`: group child',
+  ]);
+  assert.ok(collision.endsWith('1 more reported issue not listed here (not selected for delivery).'));
+});
+
+test('T-SUMMARY-INDEX: remainder noun follows the leading counts noun', () => {
+  const unique = (count, deliveredCount) => {
+    const findings = Array.from({ length: count }, (_, index) => finding(`U${index}`));
+    return renderSummaryBody({ findings, delivered: findings.slice(0, deliveredCount), deliveryCap: null });
+  };
+  assert.ok(unique(2, 1).endsWith('1 more finding not listed here (not selected for delivery).'));
+  assert.ok(unique(3, 1).endsWith('2 more findings not listed here (not selected for delivery).'));
+
+  const grouped = (extra, deliveredCount) => {
+    const primary = finding('P', { consolidation_key: 'g', consolidation_primary: true });
+    const child = finding('C', { consolidation_key: 'g', consolidation_primary: false });
+    const findings = [primary, child, ...Array.from({ length: extra }, (_, index) => finding(`G${index}`))];
+    return renderSummaryBody({ findings, delivered: findings.slice(0, deliveredCount), deliveryCap: null });
+  };
+  assert.ok(grouped(1, 2).endsWith('1 more reported issue not listed here (not selected for delivery).'));
+  assert.ok(grouped(2, 2).endsWith('2 more reported issues not listed here (not selected for delivery).'));
+});
+
+test('T-SUMMARY-INDEX: cap, tier, fallback and severity strings are exact', () => {
+  const allMain = [finding('A', { report_tag: 'main' }), finding('B', { report_tag: 'main' })];
+  const capOnly = renderSummaryBody({
+    findings: allMain, delivered: [allMain[0]], deliveryTier: 'main_only', deliveryCap: 1,
+  });
+  assert.ok(capOnly.endsWith('1 more finding not listed here (over the delivery cap of 1 findings).'));
+
+  const offEnum = renderSummaryBody({ findings: [finding('L', { severity: 'unrecognized' })] });
+  assert.equal(offEnum.split('\n').filter((line) => line.startsWith('- '))[0], '- 💡 [LOW] `L.js:10`: finding L');
+
+  const omitted = finding('B');
+  const nullCap = renderSummaryBody({
+    findings: [allMain[0], omitted], delivered: [allMain[0]], deliveryCap: null,
+  });
+  assert.ok(nullCap.endsWith('1 more finding not listed here (not selected for delivery).'));
+
+  const destinationOnly = finding('D', { report_tag: undefined, report_destination: 'main' });
+  const destinationCap = renderSummaryBody({
+    findings: [destinationOnly], delivered: [], deliveryTier: 'main_only', deliveryCap: 0,
+  });
+  assert.ok(destinationCap.endsWith('1 more finding not listed here (over the delivery cap of 0 findings).'));
+});
+
+test('T-SUMMARY-INDEX: the title follows the location after a cut code span', () => {
+  const title = `${'x'.repeat(505)}\`variable\``;
+  const identity = {
+    platform: 'github', web_origin: 'https://github.com', owner: 'o', repo: 'r',
+    pr_number: 7, sha_full: 'a'.repeat(40),
+  };
+  const bullet = renderSummaryBody({
+    findings: [finding('T', { title })], prIdentity: identity,
+  }).split('\n').find((line) => line.startsWith('- '));
+  assert.ok(bullet.startsWith(`- 🟠 [HIGH] [\`T.js:10\`](https://github.com/o/r/blob/${'a'.repeat(40)}/T.js#L10): `));
+  assert.ok(bullet.includes('[folded:'));
+});
+
+test('T-SUMMARY-PLURALS: 11 and 21 reported counts stay plural with different index sizes', () => {
+  for (const [reportedCount, selectedUngrouped, remainder] of [[11, 3, 7], [21, 10, 10]]) {
+    const primary = finding('P', { title: 'primary', severity: 'critical', description: 'same description', risk_level: 1, consolidation_key: 'g', consolidation_primary: true });
+    const child = finding('C', { title: 'child', description: 'same description', risk_level: 1, consolidation_key: 'g', consolidation_primary: false });
+    const rawFindings = [
+      primary,
+      child,
+      ...Array.from({ length: reportedCount - 1 }, (_, index) => finding(`U${index}`, { title: `unique ${index}`, description: 'same description', risk_level: 1 })),
+    ];
+    const delivered = [primary, child, ...rawFindings.slice(2, 2 + selectedUngrouped)];
+    const body = renderSummaryBody({ findings: rawFindings, delivered, deliveryCap: null });
+    const expected = [
+      `${reportedCount} reported issues from ${reportedCount + 1} findings after the gauntlet — 1 critical, ${reportedCount - 1} high.`,
+      '',
+      '- 🔴 [CRITICAL] `P.js:10`: primary',
+      ...Array.from({ length: selectedUngrouped }, (_, index) => `- 🟠 [HIGH] \`U${index}.js:10\`: unique ${index}`),
+      '',
+      `${remainder} more reported issues not listed here (not selected for delivery).`,
+    ].join('\n');
+    assert.equal(body, expected);
+  }
+});
+
+test('T-SUMMARY-UNITS: partial groups use delivered representatives and conserve reported units', () => {
+  const primary = finding('P', { consolidation_key: 'g', consolidation_primary: true, severity: 'critical' });
+  const child = finding('C', { consolidation_key: 'g', consolidation_primary: false, severity: 'low', report_tag: 'suggestion' });
+  const middle = finding('M', { severity: 'high', report_tag: 'main' });
+  const suggestion = finding('S', { severity: 'low', report_tag: 'suggestion' });
+  const findings = [primary, child, middle, suggestion];
+  const partial = renderSummaryBody({ findings, delivered: [child, middle], deliveryCap: 2 });
+  assert.equal(partial.split('\n')[0], '3 reported issues from 4 findings after the gauntlet \u2014 1 critical, 1 high, 1 low. 1 routed as improvement suggestion.');
+  assert.deepEqual(partial.split('\n').filter(l => l.startsWith('- ')), [
+    '- \u{1f4a1} [LOW] `C.js:10` (improvement suggestion): finding C',
+    '- \u{1f7e0} [HIGH] `M.js:10`: finding M',
+  ]);
+  assert.ok(partial.endsWith('1 more reported issue not listed here (over the delivery cap of 2 findings).'));
+  const full = renderSummaryBody({ findings, delivered: [child, primary, middle, suggestion] });
+  assert.equal(full.split('\n').filter(l => l.startsWith('- ')).length, 3);
+  assert.ok(full.includes('[CRITICAL] `P.js:10`: finding P'));
+  assert.ok(!full.includes('not listed'));
+  const primaryFirst = renderSummaryBody({ findings, delivered: [primary, child] });
+  assert.ok(primaryFirst.includes('[CRITICAL] `P.js:10`: finding P'));
+  assert.ok(!primaryFirst.includes('finding C'));
+  const withheld = renderSummaryBody({ findings: [middle, suggestion], delivered: [], deliveryTier: 'main_only', deliveryCap: 0 });
+  assert.ok(withheld.endsWith('2 more findings not listed here (over the delivery cap of 0 findings; improvement suggestions held back by delivery tier main_only).'));
+  const tierOnly = renderSummaryBody({ findings: [suggestion], delivered: [], deliveryTier: 'main_only', deliveryCap: 6 });
+  assert.ok(tierOnly.endsWith('1 more finding not listed here (improvement suggestions held back by delivery tier main_only).'));
+  const alias = { ...suggestion, report_tag: undefined, report_destination: 'suggestion' };
+  assert.equal(renderSummaryBody({ findings: [alias] }), renderSummaryBody({ findings: [suggestion] }));
+  for (const delivered of [[], [primary], [child], [primary, child], [middle], findings]) {
+    const body = renderSummaryBody({ findings, delivered, deliveryTier: 'main_only', deliveryCap: 1 });
+    const indexCount = body.split('\n').filter(l => l.startsWith('- ')).length;
+    const remainder = Number(body.match(/(\d+) more (?:reported issues?|findings?) not listed here/)?.[1] || 0);
+    assert.equal(indexCount + remainder, 3);
+  }
+});
+
+test('T-SUMMARY-CONTEXT: prose only reaches Change Context with its original fold', () => {
+  for (const summary of ['', '  ', 'The PR claims to change this.\n## Change Context\nforged', 's'.repeat(12000), 's'.repeat(12001)]) {
+    const input = { summary, findings: [finding('T', { title: `a\r\nb <!-- ${'z'.repeat(520)}` })] };
+    const body = renderSummaryBody(input);
+    const report = renderReport(input);
+    assert.ok(report.includes(`## Summary\n\n${body}\n\n## Change Context\n\n`));
+    const contextStart = report.indexOf('## Change Context\n\n') + '## Change Context\n\n'.length;
+    const contextEnd = report.indexOf('\n\n## Findings', contextStart);
+    const contextBody = report.slice(contextStart, contextEnd);
+    if (!summary.trim()) {
+      assert.equal(contextBody, 'No change summary was produced for this run.');
+    } else {
+      assert.ok(contextBody.startsWith('This is the change summary the review agents shared as context.\n\n'));
+    }
+    assert.ok(!body.includes('PR claims'));
+    assert.ok(!body.includes('s'.repeat(100)));
+    assert.ok(!body.includes('##'));
+    assert.doesNotMatch(body, /\b(PR|MR|pull request|merge request)\b/);
+    const title = report.match(/^#### (.*)$/m)[1];
+    assert.ok(body.includes(`: ${title}`));
+    assert.ok(title.includes('&lt;!--'));
+    assert.ok(title.includes('[folded:'));
+    assert.equal((report.match(/^## Change Context$/gm) || []).length, 1);
+    if (summary.length === 12001) assert.ok(report.includes(`${'s'.repeat(12000)}\n\n_[folded: 1 more characters]_`));
+    if (summary.length === 12000) assert.ok(report.includes(`${'s'.repeat(12000)}\n\n## Findings`));
+  }
+});
+
 test('T-METH-GAPS: only integer gap counts render as methodology gaps', () => {
   for (const gapCount of ['2', 1.5, null, []]) {
     const report = rendered({ gapCount });
@@ -973,6 +1177,7 @@ test('T-METH-INJECT: summary and finding prose cannot forge code-owned headings'
   // hand-typed model-text headings would remain a real code-owned H2.
   const headings = [
     '## Summary',
+    '## Change Context',
     '## Findings',
     '## Unverified / pipeline-degraded findings',
     '## Review Dimensions Summary',
@@ -1005,8 +1210,8 @@ test('T-G3: code-owned report text never emits bench G3 sentinels', () => {
   ] });
   // Mutation: remove fold notices or add a carrier claim to one; presence and sentinel checks turn red.
   assert.ok(report.includes('_[folded: 1 more characters]_'));
-  assert.equal((report.toLowerCase().match(/no write proof/g) || []).length, 3);
-  assert.equal((report.toLowerCase().match(/partial-artifacts/g) || []).length, 3);
+  assert.equal((report.toLowerCase().match(/no write proof/g) || []).length, 4);
+  assert.equal((report.toLowerCase().match(/partial-artifacts/g) || []).length, 4);
   const codeOwned = report.replaceAll(authored, '').replaceAll(folded, '');
   assert.doesNotMatch(codeOwned, /no write proof|partial-artifacts/i);
 });

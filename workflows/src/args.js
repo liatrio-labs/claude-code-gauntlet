@@ -546,7 +546,7 @@ const TRUSTED_SCRIPT_BASENAMES = {
   verify: 'verify_findings.py',
 };
 
-function configEchoValue(args, key) {
+export function configEchoValue(args, key) {
   const entry = args && isPlainObject(args.configEcho) ? args.configEcho[key] : undefined;
   return isPlainObject(entry) && typeof entry.value === 'string' ? entry.value : undefined;
 }

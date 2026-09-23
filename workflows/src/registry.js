@@ -67,6 +67,7 @@ export const PR_IDENTITY_FIELDS = [
 
 export const CODE_OWNED_HEADINGS = [
   '## Summary',
+  '## Change Context',
   '## Findings',
   '## Unverified / pipeline-degraded findings',
   '## Review Dimensions Summary',

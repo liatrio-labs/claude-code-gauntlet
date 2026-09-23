@@ -84,6 +84,56 @@ def parse_composite_rows(text: str) -> list[dict]:
 
 
 class TestMachineParsedStrings(unittest.TestCase):
+    def test_summary_counts_are_not_benchmark_candidates(self):
+        from bench.adapter.adapt import payload_to_candidates
+
+        for summary in (
+            "0 findings after the gauntlet.",
+            "9 reported issues from 10 findings after the gauntlet.\n\n- index entry\n\n3 more reported issues not listed here (over the delivery cap of 6 findings).",
+        ):
+            for platform, payload in (
+                (
+                    "github",
+                    {
+                        "payload": {
+                            "body": summary,
+                            "comments": [{"body": "inline", "path": "a.js", "line": 1}],
+                        }
+                    },
+                ),
+                (
+                    "gitlab",
+                    {
+                        "summary": {"body": summary},
+                        "discussions": [
+                            {
+                                "body": "inline",
+                                "position": {"new_path": "a.js", "new_line": 1},
+                            }
+                        ],
+                    },
+                ),
+            ):
+                result, stats = payload_to_candidates(
+                    {"platform": platform, **payload}, "fixture"
+                )
+                self.assertEqual(
+                    result,
+                    {
+                        "fixture": {
+                            "deep-review": [
+                                {
+                                    "text": "inline",
+                                    "path": "a.js",
+                                    "line": 1,
+                                    "source": "extracted",
+                                }
+                            ]
+                        }
+                    },
+                )
+                self.assertEqual(stats, {"n_candidates": 1, "n_skipped": 0})
+
     def test_parse_registry_handles_fixture_shapes(self):
         # Fixture-based unit test: the live-registry presence checks only exercise
         # today's table shape. A broken _ROW / split / NO_PARSER path must fail

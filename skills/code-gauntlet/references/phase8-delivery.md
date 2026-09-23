@@ -123,7 +123,7 @@ follows `configResult.resolved.post_mode`.)
 
 When `delivery.prIdentity` is set in the args waist, the persisted `artifactPaths.postReview` file
 already is the post_review-ready wrapper (`{ owner, repo, pr_number, sha, platform, review_body, findings }`).
-Pass that file to `post_review.py` unchanged. Its `review_body` is exactly the report's rendered Summary section body. `post_review.py` bounds the complete posted comment with a per-platform UTF-8 byte
+Pass that file to `post_review.py` unchanged. Its `review_body` is exactly the report's outcome-first Summary section body: counts, selected findings index, and any remainder. `post_review.py` bounds the complete posted comment with a per-platform UTF-8 byte
 budget: the header and footer are reserved first; the summary folds only when it cannot fit beside
 the skipped-section frame and footer; skipped groups appear whole or not at all in list order,
 followed by one closing count line when any group is omitted; the footer stays last. Keep its `sha` field because it pins the
