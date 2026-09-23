@@ -20,3 +20,12 @@ FOREIGN_PYTHON_CONSTANT = 1;
 - id: foreign_yaml
 test('mismatch", () => {});
 	test	(	'tab title'	,	() => {});
+~~~ { opener_key: 1 }
+test('fenced title', () => {});
+~~~
+test('after fence', () => {});
+```bad`info { invalid_key: 1 }
+        ~~~ { deep_key: 1 }
+test('deep fenced title', () => {});
+        ~~~
+test('after deep fence', () => {});

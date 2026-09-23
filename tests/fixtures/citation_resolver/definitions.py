@@ -30,3 +30,9 @@ class WithBase(Base): pass
 	async	def	tab_def	(): pass
 	class	TabClass	:
 TAB_CONST	=	1
+"""
+    ```python
+    def fenced_py(): pass
+    ```
+"""
+def after_fence(): pass

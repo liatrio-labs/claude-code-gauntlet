@@ -304,6 +304,39 @@ def _path_reason(path, tracked_files):
     return "untracked path"
 
 
+def _unfenced_lines(text):
+    """Blank fenced lines, including delimiters, without changing line indices."""
+    lines = text.splitlines()
+    fence = ""
+    for index, line in enumerate(lines):
+        if fence:
+            if re.fullmatch(
+                r"[ \t]*" + fence[0] + "{" + str(len(fence)) + r",}[ \t]*", line
+            ):
+                fence = ""
+            lines[index] = ""
+            continue
+        match = re.match(r"[ \t]*(`{3,}|~{3,})(.*)", line)
+        if match:
+            run, info = match.groups()
+            if run[0] == "`" and "`" in info:
+                continue
+            fence = run
+            lines[index] = ""
+    return lines
+
+
+def _kind_line_visible(text, kind, symbol):
+    """True when an unfenced line of text is shaped like a kind definition of symbol."""
+    patterns = [
+        pattern.replace("{S}", re.escape(symbol))
+        for pattern_kind, pattern in DEFINITION_PATTERNS
+        if pattern_kind == kind
+    ]
+    lines = _unfenced_lines(text)
+    return any(re.search(pattern, line) for pattern in patterns for line in lines)
+
+
 def _definition_reason(path, symbols, tracked_files, *, witness=None):
     path_reason = _path_reason(path, tracked_files)
     if path_reason:
@@ -320,7 +353,7 @@ def _definition_reason(path, symbols, tracked_files, *, witness=None):
     kinds = DEFINITION_KINDS_BY_SUFFIX.get(suffix, set())
     if not kinds:
         return f"no definition patterns for {suffix or 'this file type'}"
-    lines = (REPO / path).read_text(encoding="utf-8").splitlines()
+    lines = _unfenced_lines((REPO / path).read_text(encoding="utf-8"))
     cursor = 0
     for segment in symbols:
         S = re.escape(segment)
@@ -355,7 +388,7 @@ def _title_reason(path, title, tracked_files, *, witness=None):
         return "titles require an exact tracked file"
     if Path(path).suffix not in {".js", ".mjs"}:
         return "titles require a JS test source"
-    text = (REPO / path).read_text(encoding="utf-8").splitlines()
+    text = _unfenced_lines((REPO / path).read_text(encoding="utf-8"))
     title_entry = next(
         (
             (index, pattern)
@@ -410,7 +443,7 @@ def _citation_reason(span, tracked_files, *, witness=None):
         if Path(path).suffix != HEADING_SUFFIX:
             return "heading requires a Markdown file"
         heading_regex = re.compile(HEADING_PATTERN.replace("{H}", re.escape(anchor)))
-        for line in (REPO / path).read_text(encoding="utf-8").splitlines():
+        for line in _unfenced_lines((REPO / path).read_text(encoding="utf-8")):
             if heading_regex.search(line):
                 if witness is not None:
                     witness.append(("heading", None))
@@ -811,13 +844,7 @@ class TestDocsRegistry(unittest.TestCase):
             elif _looks_like_location(span, extensions, top_dirs):
                 add_error(line, span, "location-shaped span not classified")
 
-        fenced = False
-        for line_number, line_text in enumerate(text.splitlines(), 1):
-            if line_text.lstrip().startswith(("```", "~~~")):
-                fenced = not fenced
-                continue
-            if fenced:
-                continue
+        for line_number, line_text in enumerate(_unfenced_lines(text), 1):
             without_code = re.sub(r"`+[^`]*`+", "", line_text)
             without_links = re.sub(r"\[[^\]]*\]\([^)]*\)", "", without_code)
             for token in re.findall(r"(?<!\w)\S+", without_links):
@@ -859,6 +886,7 @@ class TestDocsRegistry(unittest.TestCase):
         z = base + "definitions.yml"
         t = base + "titles.js"
         h = base + "headings.md"
+        u = base + "headings_unclosed.md"
         fixture_paths = sorted(path for path in tracked_files if path.startswith(base))
         definition_paths = [
             path
@@ -873,6 +901,7 @@ class TestDocsRegistry(unittest.TestCase):
         # Near misses isolate constraints.
         # Positive rows pin accepted forms.
         # Cursor diagnostics use exact offsets in this fixed fixture tree.
+        # Fence rows pin masking and the boundaries that restore matching.
         citations = (
             (p + "::py_ok", None),  # def: accepts a definition
             (p + "::py_async", None),  # def: accepts async
@@ -1230,6 +1259,191 @@ class TestDocsRegistry(unittest.TestCase):
                 "heading not found",
             ),  # heading: requires the requested text
             (h + "#Literal.*", "heading not found"),  # heading: rejects regex wildcards
+            (
+                h + "#Fenced Heading",
+                "heading not found",
+            ),  # fence: backticks mask a heading
+            (h + "#After Backticks", None),  # fence: equal backticks close
+            (
+                h + "#Tilde Heading",
+                "heading not found",
+            ),  # fence: tildes allow backticks in info
+            (h + "#After Tildes", None),  # fence: equal tildes close
+            (h + "#Two Backticks", None),  # fence: two backticks do not open
+            (h + "#Two Tildes", None),  # fence: two tildes do not open
+            (h + "#Inline Fence", None),  # fence: openers start after indentation only
+            (h + "#Mixed Fence", None),  # fence: opener runs use one character
+            (
+                h + "#Backtick Info",
+                None,
+            ),  # fence: backtick info cannot contain backticks
+            (
+                h + "#Long Backtick Body",
+                "heading not found",
+            ),  # fence: backtick runs may exceed three
+            (
+                h + "#Short Close",
+                "heading not found",
+            ),  # fence: short backticks do not close
+            (
+                h + "#Wrong Close",
+                "heading not found",
+            ),  # fence: another character does not close
+            (
+                h + "#Text Close",
+                "heading not found",
+            ),  # fence: closer suffix must be spaces or tabs
+            (
+                h + "#Inline Close",
+                "heading not found",
+            ),  # fence: closers start after indentation only
+            (h + "#Longer Close", None),  # fence: longer backticks close
+            (
+                h + "#Space Open",
+                "heading not found",
+            ),  # fence: openers allow four spaces
+            (h + "#Space Close", None),  # fence: closers allow four spaces
+            (
+                h + "#Tab Open",
+                "heading not found",
+            ),  # fence: openers allow repeated tabs
+            (h + "#Tab Close", None),  # fence: closers allow repeated tabs
+            (
+                h + "#Space Tail Body",
+                "heading not found",
+            ),  # fence: fenced body is masked
+            (h + "#Space Tail Close", None),  # fence: closers allow trailing spaces
+            (h + "#Tab Tail Body", "heading not found"),  # fence: tilde body is masked
+            (h + "#Tab Tail Close", None),  # fence: closers allow trailing tabs
+            (
+                h + "#Tilde Short Close",
+                "heading not found",
+            ),  # fence: short tildes do not close
+            (h + "#Tilde Longer Close", None),  # fence: longer tildes close
+            (
+                h + "#Nested Fence",
+                "heading not found",
+            ),  # fence: a fence inside a fence remains masked
+            (
+                h + "#After Nested",
+                None,
+            ),  # fence: a nested fence cannot replace the opener
+            (
+                h + "#Mixed Open",
+                "heading not found",
+            ),  # fence: opener indentation may mix spaces and tabs
+            (
+                h + "#Mixed Close",
+                None,
+            ),  # fence: closer indentation and tail may mix spaces and tabs
+            (
+                u + "#Before Unclosed",
+                None,
+            ),  # fence: headings before an open fence resolve
+            (
+                u + "#Unclosed Heading",
+                "heading not found",
+            ),  # fence: unclosed fences mask to EOF
+            (
+                u + "#Fenced EOF",
+                "heading not found",
+            ),  # fence: the last fenced line is masked
+            (
+                p + "::fenced_py",
+                "unresolved symbol 'fenced_py' after line 0",
+            ),  # fence: definitions use the mask
+            (
+                p + "::TabClass::fenced_py",
+                "unresolved symbol 'fenced_py' after line 30",
+            ),  # fence: later chain segments use the mask
+            (p + "::after_fence", None),  # fence: definitions resume after a closer
+            (
+                p + "::after_fence::missing",
+                "unresolved symbol 'missing' after line 37",
+            ),  # fence: masking preserves cursor indices
+            (t + '::"fenced title"', "title not found"),  # fence: titles use the mask
+            (t + '::"after fence"', None),  # fence: titles resume after a closer
+            (
+                t + "::opener_key",
+                "unresolved symbol 'opener_key' after line 0",
+            ),  # fence: the opener itself is masked
+            (
+                h + "#Spaced Backtick Info",
+                None,
+            ),  # fence: backtick info is checked past whitespace
+            (
+                h + "#Tilde Tilde Info",
+                "heading not found",
+            ),  # fence: tilde info may contain tildes
+            (t + "::invalid_key", None),  # fence: a rejected opener stays visible
+            (h + "#Nbsp Open", None),  # fence: openers reject non-ASCII indentation
+            (
+                h + "#Nbsp Close",
+                "heading not found",
+            ),  # fence: closers reject non-ASCII indentation
+            (
+                h + "#Nbsp Tail",
+                "heading not found",
+            ),  # fence: closer tails reject non-ASCII whitespace
+            (h + "#Separator", None),  # fence: lines split as splitlines splits them
+            (
+                h + "#Long Backtick Info",
+                None,
+            ),  # fence: longer backtick openers reject backtick info
+            (
+                h + "#Much Longer Body",
+                "heading not found",
+            ),  # fence: a fence stays open until its closer
+            (
+                h + "#Much Longer Close",
+                None,
+            ),  # fence: closers may be longer than the opener
+            (
+                h + "#Backtick Tilde Info",
+                "heading not found",
+            ),  # fence: backtick info may contain tildes
+            (
+                h + "#Very Long Backtick Info",
+                None,
+            ),  # fence: any backtick opener rejects backtick info
+            (
+                h + "#Very Long Body",
+                "heading not found",
+            ),  # fence: openers have no maximum run
+            (h + "#Very Long Close", None),  # fence: closers have no maximum run
+            (
+                t + "::deep_key",
+                "unresolved symbol 'deep_key' after line 0",
+            ),  # fence: deep-indented openers are masked
+            (
+                t + '::"deep fenced title"',
+                "title not found",
+            ),  # fence: openers allow docstring-depth indentation
+            (
+                t + '::"after deep fence"',
+                None,
+            ),  # fence: closers allow docstring-depth indentation
+            (
+                h + "#Trailing Backtick Info",
+                None,
+            ),  # fence: backtick info is checked to its last character
+            (
+                h + "#Blank Line Body",
+                "heading not found",
+            ),  # fence: blank lines do not close
+            (
+                h + "#Fence Tail Body",
+                "heading not found",
+            ),  # fence: closer tails reject fence characters
+            (h + "#Quoted Fence", None),  # fence: openers reject blockquote markers
+            (
+                h + "#Backtick In Tilde Body",
+                "heading not found",
+            ),  # fence: backticks do not close a tilde fence
+            (
+                z + "::fenced_yaml",
+                "unresolved symbol 'fenced_yaml' after line 0",
+            ),  # fence: block-scalar fences are masked
         )
         errors = []
         witnessed = []
@@ -1290,6 +1504,11 @@ class TestDocsRegistry(unittest.TestCase):
                             f"fixture has no foreign {kind} line naming {symbol!r}",
                         )
                     continue
+                if not _kind_line_visible(text, kind, symbol):
+                    add_error(
+                        span,
+                        f"foreign {kind} line naming {symbol!r} is fenced or not {kind}-shaped",
+                    )
                 actual_reason = _citation_reason(span, tracked_files)
                 expected_reason = f"unresolved symbol {symbol!r} after line 0"
                 if actual_reason != expected_reason:
@@ -1329,6 +1548,73 @@ class TestDocsRegistry(unittest.TestCase):
             positive_paths,
             set(fixture_paths),
             f"fixture files with no positive row: {sorted(set(fixture_paths) - positive_paths)}; rows citing untracked files: {sorted(positive_paths - set(fixture_paths))}",
+        )
+        self.assertEqual(
+            _unfenced_lines("~~~\n# First\n~~~\nkept\n  ```\nx\n  ```"),
+            ["", "", "", "kept", "", "", ""],
+            "fences open on the first line, blank both delimiters, and keep every slot",
+        )
+        marker_cases = (
+            ("- ```\nx", ["- ```", "x"]),
+            ("* ```\nx", ["* ```", "x"]),
+            ("| ```\nx", ["| ```", "x"]),
+            ("# ```\nx", ["# ```", "x"]),
+            ("```\n~```\nx\n```", ["", "", "", ""]),
+            ("```\n>```\nx\n```", ["", "", "", ""]),
+            ("```\n#```\nx\n```", ["", "", "", ""]),
+            ("```\n` ```\nx\n```", ["", "", "", ""]),
+            ("```\n```~\nx\n```", ["", "", "", ""]),
+            ("```\n```>\nx\n```", ["", "", "", ""]),
+            ("```\n```#\nx\n```", ["", "", "", ""]),
+            ("```\n```x\nx\n```", ["", "", "", ""]),
+        )
+        self.assertEqual(
+            [_unfenced_lines(text) for text, _ in marker_cases],
+            [expected for _, expected in marker_cases],
+            "only spaces and tabs may surround a fence run",
+        )
+        edge_cases = (
+            ("~~~\n```\nx\n~~~", ["", "", "", ""]),
+            ("~~~\n~~~ x\nx\n~~~", ["", "", "", ""]),
+            ("```\nx\n```\t\ny", ["", "", "", "y"]),
+            ("```\nx\n\t```\ny", ["", "", "", "y"]),
+            ("\t```\nx\n```\ny", ["", "", "", "y"]),
+            ("  ~~~\nx\n~~~\ny", ["", "", "", "y"]),
+            ("~~~\nx", ["", ""]),
+            ("~~~\n\nx\n~~~", ["", "", "", ""]),
+            ("```\n \t\nx\n```", ["", "", "", ""]),
+            ("```\n```\ny", ["", "", "y"]),
+            ("```\nx\n`````\ny", ["", "", "", "y"]),
+            ("x\n~~~", ["x", ""]),
+            ("x\n```", ["x", ""]),
+            ("``` a``b\nx", ["``` a``b", "x"]),
+            ("~~~~\nx\n~~~~", ["", "", ""]),
+            ("\n```\nx\n```\ny", ["", "", "", "", "y"]),
+        )
+        self.assertEqual(
+            [_unfenced_lines(text) for text, _ in edge_cases],
+            [expected for _, expected in edge_cases],
+            "backtick and tilde fences follow the same rules at every edge",
+        )
+        self.assertEqual(
+            [
+                _kind_line_visible(text, kind, symbol)
+                for text, kind, symbol in (
+                    ("const a = { foreign_js: 1 };", "js", "foreign_js"),
+                    ("```\nconst a = { foreign_js: 1 };\n```", "js", "foreign_js"),
+                    ("# foreign_js", "js", "foreign_js"),
+                    ("def foreign_js(): pass", "js", "foreign_js"),
+                    ("foreign_python = 1", "python", "foreign_python"),
+                    ("const a = { FOREIGN_JS: 1 };", "js", "foreign_js"),
+                    ("```\nconst a = { foreign_js: 1 };", "js", "foreign_js"),
+                    ("const a = { foreign_jsx: 1 };", "js", "foreign_js"),
+                    ("~~~\nconst a = { foreign_js: 1 };\n~~~", "js", "foreign_js"),
+                    ("- id: foreign_js", "js", "foreign_js"),
+                    ("  const a = { foreign_js: 1 };", "js", "foreign_js"),
+                )
+            ],
+            [True, False, False, False, False, False, False, False, False, False, True],
+            "a foreign line counts only unfenced and shaped like its kind",
         )
 
 
