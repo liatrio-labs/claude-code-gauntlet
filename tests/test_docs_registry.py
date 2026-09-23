@@ -1352,6 +1352,10 @@ class TestDocsRegistry(unittest.TestCase):
                 p + "::fenced_py",
                 "unresolved symbol 'fenced_py' after line 0",
             ),  # fence: definitions use the mask
+            (
+                p + "::TabClass::fenced_py",
+                "unresolved symbol 'fenced_py' after line 30",
+            ),  # fence: later chain segments use the mask
             (p + "::after_fence", None),  # fence: definitions resume after a closer
             (
                 p + "::after_fence::missing",
@@ -1574,10 +1578,13 @@ class TestDocsRegistry(unittest.TestCase):
             ("~~~\n~~~ x\nx\n~~~", ["", "", "", ""]),
             ("```\nx\n```\t\ny", ["", "", "", "y"]),
             ("```\nx\n\t```\ny", ["", "", "", "y"]),
-            ("\t```\nx\n```", ["", "", ""]),
-            ("  ~~~\nx\n~~~", ["", "", ""]),
+            ("\t```\nx\n```\ny", ["", "", "", "y"]),
+            ("  ~~~\nx\n~~~\ny", ["", "", "", "y"]),
             ("~~~\nx", ["", ""]),
             ("~~~\n\nx\n~~~", ["", "", "", ""]),
+            ("```\n \t\nx\n```", ["", "", "", ""]),
+            ("```\n```\ny", ["", "", "y"]),
+            ("```\nx\n`````\ny", ["", "", "", "y"]),
             ("x\n~~~", ["x", ""]),
             ("x\n```", ["x", ""]),
             ("~~~~\nx\n~~~~", ["", "", ""]),
@@ -1602,9 +1609,10 @@ class TestDocsRegistry(unittest.TestCase):
                     ("const a = { foreign_jsx: 1 };", "js", "foreign_js"),
                     ("~~~\nconst a = { foreign_js: 1 };\n~~~", "js", "foreign_js"),
                     ("- id: foreign_js", "js", "foreign_js"),
+                    ("  const a = { foreign_js: 1 };", "js", "foreign_js"),
                 )
             ],
-            [True, False, False, False, False, False, False, False, False, False],
+            [True, False, False, False, False, False, False, False, False, False, True],
             "a foreign line counts only unfenced and shaped like its kind",
         )
 
