@@ -1368,6 +1368,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             identity["codeOwnedHeadings"],
             [
                 "## Summary",
+                "## Change Context",
                 "## Findings",
                 "## Unverified / pipeline-degraded findings",
                 "## Review Dimensions Summary",

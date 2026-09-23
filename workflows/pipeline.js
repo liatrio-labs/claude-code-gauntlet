@@ -1600,6 +1600,7 @@ const PR_IDENTITY_FIELDS = [
 ];
 const CODE_OWNED_HEADINGS = [
   '## Summary',
+  '## Change Context',
   '## Findings',
   '## Unverified / pipeline-degraded findings',
   '## Review Dimensions Summary',
@@ -1682,6 +1683,7 @@ const REPORT_EXCLUDED_FIELDS = [
 const REPORT_FOLD_LIMITS = {
   proseChars: 4000,
   summaryChars: 12000,
+  summaryIndexChars: 12000,
   evidenceLines: 40,
   evidenceChars: 8000,
   inlineChars: 512,
@@ -2259,17 +2261,82 @@ function renderSeverityBuckets(builder, view, unverified, permalinks) {
     }
   }
 }
+function plural(count, noun) {
+  return count === 1 ? noun : `${noun}s`;
+}
 function countsSentence(findings, rawCount, unverified, view) {
   const count = findings.length;
   let sentence = count === rawCount
-    ? `${count} finding(s) after the gauntlet`
-    : `${count} reported issue(s) from ${rawCount} finding(s) after the gauntlet`;
+    ? `${count} ${plural(count, 'finding')} after the gauntlet`
+    : `${count} reported ${plural(count, 'issue')} from ${rawCount} ${plural(rawCount, 'finding')} after the gauntlet`;
   const breakdown = view.order.map((severity) => `${view.buckets.get(severity).length} ${severity}`);
   sentence += count > 0 && breakdown.length ? ` — ${breakdown.join(', ')}.` : '.';
   const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
-  if (suggestions) sentence += ` ${suggestions} routed as improvement suggestion(s).`;
+  if (suggestions) sentence += ` ${suggestions} routed as improvement ${plural(suggestions, 'suggestion')}.`;
   if (unverified.length) sentence += ` ${unverified.length} unverified / pipeline-degraded.`;
   return sentence;
+}
+function reportUnitKey(finding, original) {
+  return finding.consolidation_key
+    ? finding.consolidation_key
+    : (original && typeof original === 'object' ? original : finding);
+}
+function plainReportObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
+  }
+}
+function summaryIndex(rawFindings, findingsView, input) {
+  const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
+  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [] };
+  const originals = Array.isArray(input.findings) ? input.findings : [];
+  const projected = rawFindings;
+  const delivered = input.delivered.filter(plainReportObject);
+  const deliveredOriginals = new Set(delivered);
+  const deliveryOrder = new Map();
+  delivered.forEach((finding, index) => {
+    if (!deliveryOrder.has(finding)) deliveryOrder.set(finding, index);
+  });
+  const originalByProjected = new WeakMap();
+  const pairs = [];
+  const unitMembers = new Map();
+  for (let index = 0; index < originals.length; index += 1) {
+    const original = originals[index];
+    const finding = projected[index] || {};
+    if (finding && typeof finding === 'object') originalByProjected.set(finding, original);
+    const key = reportUnitKey(finding, original);
+    if (!unitMembers.has(key)) unitMembers.set(key, []);
+    unitMembers.get(key).push(finding);
+    if (plainReportObject(original) && deliveredOriginals.has(original)) {
+      pairs.push({ original, finding });
+    }
+  }
+  pairs.sort((left, right) => deliveryOrder.get(left.original) - deliveryOrder.get(right.original));
+  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding)).map((finding) => (
+    [reportUnitKey(finding, originalByProjected.get(finding)), finding]
+  )));
+  const indexed = reported.map((finding) => deliveredUnits.get(
+    reportUnitKey(finding, originalByProjected.get(finding)),
+  )).filter(Boolean);
+  const omittedUnits = [...unitMembers].filter(([key]) => !deliveredUnits.has(key)).map(([, members]) => members);
+  const reasons = [];
+  const isMain = (finding) => (finding.report_tag ?? finding.report_destination) === 'main';
+  if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
+    input.deliveryTier !== 'main_only' || members.some(isMain)
+  ))) {
+    reasons.push(`over the delivery cap of ${input.deliveryCap} ${plural(input.deliveryCap, 'finding')}`);
+  }
+  if (input.deliveryTier === 'main_only' && omittedUnits.some((members) => (
+    members.some((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion')
+  ))) {
+    reasons.push('improvement suggestions held back by delivery tier main_only');
+  }
+  if (!reasons.length && omittedUnits.length) reasons.push('not selected for delivery');
+  return { indexed, reasons };
 }
 function summaryBlock(builder, input) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
@@ -2278,11 +2345,38 @@ function summaryBlock(builder, input) {
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
-  if (isPresent(inp.summary)) {
-    builder.add(foldedProse(inp.summary, REPORT_FOLD_LIMITS.summaryChars));
-    builder.add();
-  }
   builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
+  const { indexed, reasons } = summaryIndex(rawFindings, findingsView, inp);
+  const permalinks = permalinkContext(inp.prIdentity);
+  const bullets = [];
+  let indexChars = 0;
+  let cutForLength = false;
+  for (const finding of indexed) {
+    const severity = normalizeReportSeverity(finding.severity);
+    const where = location(finding) || 'location unavailable';
+    const url = locationUrl(finding, permalinks);
+    const link = url ? `[\`${where}\`](${url})` : `\`${where}\``;
+    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
+    const bullet = `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${inline(finding.title)}`;
+    const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
+    if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
+      cutForLength = true;
+      break;
+    }
+    bullets.push(bullet);
+    indexChars += nextChars;
+  }
+  if (bullets.length) builder.add();
+  for (const bullet of bullets) builder.add(bullet);
+  const remainder = findings.length - bullets.length;
+  if (cutForLength) reasons.push('over the summary length limit');
+  const remainderNoun = findings.length === rawFindings.length
+    ? plural(remainder, 'finding')
+    : `reported ${plural(remainder, 'issue')}`;
+  if (remainder) {
+    builder.add();
+    builder.add(`${remainder} more ${remainderNoun} not listed here (${reasons.join('; ')}).`);
+  }
 }
 function renderSummaryBody(input) {
   const builder = reportBuilder();
@@ -2453,7 +2547,17 @@ function renderReport(input) {
   builder.add();
   builder.add('## Summary');
   builder.add();
-  summaryBlock(builder, { ...inp, findings: rawFindings, unverified: rawUnverified });
+  summaryBlock(builder, inp);
+  builder.add();
+  builder.add('## Change Context');
+  builder.add();
+  if (isPresent(inp.summary)) {
+    builder.add('This is the change summary the review agents shared as context.');
+    builder.add();
+    builder.add(foldedProse(inp.summary, REPORT_FOLD_LIMITS.summaryChars));
+  } else {
+    builder.add('No change summary was produced for this run.');
+  }
   if (findings.length) {
     builder.add();
     builder.add('## Findings');
@@ -5454,8 +5558,13 @@ async function runWith(ctx, rawArgs) {
     }
     const deliveryTier = A.delivery && A.delivery.tier;
     const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
+    const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
+    const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
+      && (A.mode !== 'headless'
+        || headlessCommentsEnabled);
     const reportInput = {
       summary: summaryOut.summary,
+      ...(includeDelivered ? { delivered: postReview } : {}),
       findings: challengeOut.findings,
       unverified: challengeOut.unverified,
       stats: {

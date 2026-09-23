@@ -168,7 +168,7 @@ test('D2.2: a checkpointed summarize does NOT dispatch, while discover still run
   assert.equal(out.ok, true);
   assert.ok(!ctx.calls.some((c) => c.label === 'summarize'), 'summarize was replayed, never dispatched');
   assert.ok(ctx.calls.some((c) => c.label === 'code-gauntlet:bug-detector'), 'discover still dispatched');
-  assert.ok(persistedReport.includes('## Summary\n\nreplayed summary'), 'the checkpointed summary flows into the persisted report');
+  assert.ok(persistedReport.includes('## Change Context\n\nThis is the change summary the review agents shared as context.\n\nreplayed summary'), 'the checkpointed summary flows into Change Context');
 });
 
 test('D2.2: a checkpointed discover does NOT dispatch, while summarize still runs', async () => {

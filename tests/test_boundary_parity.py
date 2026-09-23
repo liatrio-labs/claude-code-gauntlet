@@ -82,6 +82,76 @@ ISSUE_47_FIELDS = [
 ]
 
 
+class TestSummaryIndexParity(unittest.TestCase):
+    def test_delivered_groups_and_summary_slice_cross_runtime(self):
+        findings = [
+            {
+                "id": "p",
+                "title": "Primary",
+                "file": "a.js",
+                "line_start": 1,
+                "severity": "high",
+                "confidence": 10,
+                "consolidation_key": "g",
+                "consolidation_primary": True,
+            },
+            {
+                "id": "c",
+                "title": "Lower ranked child",
+                "file": "lower.js",
+                "line_start": 11,
+                "severity": "high",
+                "confidence": 60,
+                "consolidation_key": "g",
+                "consolidation_primary": False,
+            },
+            {
+                "id": "h",
+                "title": "Higher ranked child",
+                "file": "higher.js",
+                "line_start": 12,
+                "severity": "high",
+                "confidence": 95,
+                "consolidation_key": "g",
+                "consolidation_primary": False,
+            },
+        ]
+        for delivered_indexes in ([], [0, 1, 2], [1], [2, 1]):
+            fixture = {
+                "summary": "The PR claims to change things.",
+                "findings": findings,
+                "deliveredIndexes": delivered_indexes,
+            }
+            script = (
+                "import {renderReport, renderSummaryBody} from './workflows/src/renderReport.js'; const x="
+                + json.dumps(fixture)
+                + "; x.delivered=x.deliveredIndexes.map(i=>x.findings[i]); delete x.deliveredIndexes; process.stdout.write(JSON.stringify([renderReport(x),renderSummaryBody(x)]));"
+            )
+            result = subprocess.run(
+                ["node", "--input-type=module", "-e", script],
+                cwd=REPO,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report, body = json.loads(result.stdout)
+            self.assertEqual(post_review.summary_body_from_report(report), body)
+            delivered = [findings[index] for index in delivered_indexes]
+            groups = post_review.consolidate_delivery(delivered)
+            bullets = [line for line in body.splitlines() if line.startswith("- ")]
+            self.assertEqual(len(bullets), len(groups))
+            for group, bullet in zip(groups, bullets, strict=True):
+                self.assertIn(group["primary"]["title"], bullet)
+                self.assertIn(group["primary"]["file"], bullet)
+            if delivered_indexes == [2, 1]:
+                self.assertEqual(len(bullets), 1)
+                self.assertIn("Higher ranked child", bullets[0])
+                self.assertNotIn("Lower ranked child", bullets[0])
+            self.assertNotIn("The PR claims", body)
+
+
 def load_pipeline_payload():
     """Run the wired pipeline and return its real persisted payload."""
     tmp = tempfile.mkdtemp()

@@ -135,7 +135,7 @@ A review runs in eight phases. Phases 1–2 happen in your session; phases 3–8
 
 1. **Pre-flight** — eligibility (closed/merged, draft, trivially-scoped change), configuration resolution
 2. **Target & triage** — platform detection, PR checkout, head-SHA resolution, prior-review gate, diff fetch, risk classification, test discovery, CLAUDE.md/REVIEW.md context, shared context file
-3. **Summarize & discover** — change summary, then the parallel discovery agents (schema-enforced structured output)
+3. **Summarize & discover** — shared change context (retained in the report's Change Context section), then the parallel discovery agents (schema-enforced structured output)
 4. **Merge & verify** — gauntlet stages 1–2
 5. **Validate** — gauntlet stage 3
 6. **Filter** — gauntlet stage 4

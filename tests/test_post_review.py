@@ -6083,9 +6083,9 @@ class TestBuildSkippedSection(unittest.TestCase):
             "body": "Untrusted input reaches the query.",
         }
         section = build_skipped_section([("src/app.py", 216, finding)], 4)
-        self.assertIn("### ⚠️ 1 finding(s) could not be anchored inline", section)
-        self.assertIn("4 inline comment(s) were posted", section)
-        self.assertIn("following 1 finding(s)", section)
+        self.assertIn("### ⚠️ 1 finding could not be anchored inline", section)
+        self.assertIn("4 inline comments were posted", section)
+        self.assertIn("following 1 finding", section)
         self.assertIn("`src/app.py:216`", section)
         self.assertIn("SQL injection risk", section)
         self.assertIn(post_review._finding_sections(finding), section)
@@ -6141,7 +6141,7 @@ class TestBuildSkippedSection(unittest.TestCase):
             inline_count=0,
         ).body
         self.assertIn(
-            "prose\n\n---\n\n### ⚠️ 1 finding(s) could not be anchored inline", body
+            "prose\n\n---\n\n### ⚠️ 1 finding could not be anchored inline", body
         )
         self.assertNotIn("prose\n\n\n---", body)
 
@@ -6612,11 +6612,11 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         return payload, stdout.getvalue(), stderr.getvalue(), exit_code
 
     def _exact_review_body(self, platform, limit):
-        # Hand arithmetic only: header 24 + two 2-byte separators + frame (367 for
-        # GitHub, 356 for GitLab) + piece 46 + footer 211.
+        # Hand arithmetic only: header 24 + two 2-byte separators + frame (359 for
+        # GitHub, 350 for GitLab) + piece 46 + footer 211.
         fixed_bytes = {
-            "github": 24 + 2 + 2 + 367 + 46 + 211,
-            "gitlab": 24 + 2 + 2 + 356 + 46 + 211,
+            "github": 24 + 2 + 2 + 359 + 46 + 211,
+            "gitlab": 24 + 2 + 2 + 350 + 46 + 211,
         }[platform]
         return "x" * (limit - fixed_bytes)
 
@@ -6660,7 +6660,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         body = payload["payload"]["body"]
         self.assertFalse(exit_code)
         self.assertEqual(len(body.encode("utf-8")), 65536)
-        self.assertIn("### ⚠️ 1 finding(s) could not be anchored inline", body)
+        self.assertIn("### ⚠️ 1 finding could not be anchored inline", body)
         self.assertNotIn("are not shown", body)
         self.assertNotIn("[folded:", body)
 
@@ -6673,7 +6673,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertFalse(exit_code)
         self.assertLessEqual(len(body.encode("utf-8")), 65536)
         self.assertIn(
-            "_1 of these 1 finding(s) are not shown: this review body reached the "
+            "_1 of these 1 finding is not shown: this review body reached the "
             "65536-byte GitHub body limit._",
             body,
         )
@@ -6705,7 +6705,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertFalse(exit_code)
         self.assertLessEqual(len(body.encode("utf-8")), 1000000)
         self.assertIn(
-            "_1 of these 1 finding(s) are not shown: this summary note reached the "
+            "_1 of these 1 finding is not shown: this summary note reached the "
             "1000000-byte GitLab body limit._",
             body,
         )
@@ -6736,10 +6736,10 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                 # Hand-typed trade-off: UTF-8 fitting yields shown=0 and omitted=1;
                 # a code-point budget would incorrectly show the CJK entry.
                 self.assertIn("界" * 10, body)
-                self.assertIn("following 0 finding(s)", body)
+                self.assertIn("following 0 findings", body)
                 self.assertNotIn("CJK skipped", body)
                 self.assertIn(
-                    "_1 of these 1 finding(s) are not shown: this "
+                    "_1 of these 1 finding is not shown: this "
                     + (
                         "review body reached the 65536-byte GitHub body limit._"
                         if platform == "github"
@@ -7030,7 +7030,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         body = payload["payload"]["body"]
         self.assertFalse(exit_code)
         self.assertIn("_[folded:", body)
-        self.assertIn("_2 of these 2 finding(s) are not shown:", body)
+        self.assertIn("_2 of these 2 findings are not shown:", body)
         self.assertNotIn("One", body)
         self.assertNotIn("Two", body)
 
@@ -7076,19 +7076,19 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             (
                 "github",
                 65536,
-                64781,
-                65536,
-                708,
-                "_2 of these 2 finding(s) are not shown: this review body reached the "
+                64789,
+                65534,
+                700,
+                "_2 of these 2 findings are not shown: this review body reached the "
                 "65536-byte GitHub body limit._",
             ),
             (
                 "gitlab",
                 1000000,
-                999253,
-                1000000,
-                700,
-                "_2 of these 2 finding(s) are not shown: this summary note reached the "
+                999259,
+                999998,
+                694,
+                "_2 of these 2 findings are not shown: this summary note reached the "
                 "1000000-byte GitLab body limit._",
             ),
         )
@@ -7112,10 +7112,10 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                     [("admit.py", 1, admitted)],
                     [("oversized.py", 2, oversized)],
                 ]
-                # GitHub: 64781 + 47 = 64828, which is
-                # 65536 - (24 + 2 + 1 + 2 + 367 + 2 + 99 + 211).
-                # GitLab: 999253 + 47 = 999300, which is
-                # 1000000 - (24 + 2 + 1 + 2 + 356 + 2 + 102 + 211).
+                # GitHub: 64789 + 47 = 64836, which is
+                # 65536 - (24 + 2 + 1 + 2 + 361 + 2 + 97 + 211).
+                # GitLab: 999259 + 47 = 999306, which is
+                # 1000000 - (24 + 2 + 1 + 2 + 352 + 2 + 100 + 211).
                 composed = post_review.compose_review_body(
                     "x",
                     groups,
@@ -7125,7 +7125,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                     inline_count=inline_count,
                 )
                 self.assertEqual((composed.shown, composed.omitted), (1, 1))
-                # Exact count holds here because this twin does not fold and the closing line keeps the reserved digit width.
+                # The singular shown/omitted forms use two fewer bytes than the plural reservation.
                 self.assertEqual(len(composed.body.encode("utf-8")), exact_bytes)
                 self.assertLessEqual(len(composed.body.encode("utf-8")), limit)
                 self.assertIn("Admitted", composed.body)
@@ -7159,12 +7159,12 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             inline_count=0,
         )
         # 64887 + 43-byte large piece = 64930; the reserved allowance is
-        # 64831 = 65536 - (24 + 211 + 2 + 367 + 2 + 99), while dropping the
-        # 99-byte closing line would make it fit.
+        # 64839 = 65536 - (24 + 211 + 2 + 361 + 2 + 97), while dropping the
+        # 97-byte closing line would make it fit.
         self.assertEqual((composed.shown, composed.omitted), (1, 1))
         self.assertNotIn("Large", composed.body)
         self.assertIn("Small", composed.body)
-        self.assertIn("_1 of these 2 finding(s) are not shown:", composed.body)
+        self.assertIn("_1 of these 2 findings is not shown:", composed.body)
         self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
 
     def test_bounded_frame_uses_n_k_and_closing_order(self):
@@ -7185,11 +7185,11 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         )
         body = composed.body
         self.assertLessEqual(len(body.encode("utf-8")), 65536)
-        self.assertIn("### ⚠️ 3 finding(s) could not be anchored inline", body)
-        self.assertIn("120 inline comment(s) were posted; the following 2", body)
-        self.assertLess(body.index("T1"), body.index("are not shown"))
+        self.assertIn("### ⚠️ 3 findings could not be anchored inline", body)
+        self.assertIn("120 inline comments were posted; the following 2", body)
+        self.assertLess(body.index("T1"), body.index("is not shown"))
         self.assertLess(
-            body.index("are not shown"), body.index("Generated by code-gauntlet")
+            body.index("is not shown"), body.index("Generated by code-gauntlet")
         )
         self.assertNotIn("[folded:", body)
 
@@ -7198,12 +7198,12 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         # under-two-byte-slack case becomes over the limit.
         groups = [
             [("one.py", 1, {"title": "One", "body": "a" * 39960, "severity": "high"})],
-            [("two.py", 2, {"title": "Two", "body": "b" * 24790, "severity": "high"})],
+            [("two.py", 2, {"title": "Two", "body": "b" * 24798, "severity": "high"})],
             [
                 (
                     "three.py",
                     3,
-                    {"title": "Three", "body": "c" * 24785, "severity": "high"},
+                    {"title": "Three", "body": "c" * 24793, "severity": "high"},
                 )
             ],
         ]
@@ -7220,10 +7220,10 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertEqual(composed.omitted_entries, (("two.py:2", "Two"),))
         self.assertLess(composed.body.index("One"), composed.body.index("Three"))
         self.assertLessEqual(body_bytes, 65536)
-        self.assertLess(65536 - body_bytes, 2)
-        self.assertIn("### ⚠️ 3 finding(s) could not be anchored inline", composed.body)
+        self.assertEqual(65536 - body_bytes, 1)
+        self.assertIn("### ⚠️ 3 findings could not be anchored inline", composed.body)
         self.assertIn(
-            "120 inline comment(s) were posted; the following 2 finding(s) reference "
+            "120 inline comments were posted; the following 2 findings reference "
             "lines outside this diff and are included here instead: A finding listed "
             "here may not have an anchoring problem of its own — a consolidation "
             "group whose primary could not be anchored inline is listed here in full, "
@@ -7231,7 +7231,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             composed.body,
         )
         self.assertIn(
-            "_1 of these 3 finding(s) are not shown: this review body reached the "
+            "_1 of these 3 findings is not shown: this review body reached the "
             "65536-byte GitHub body limit._",
             composed.body,
         )
@@ -7239,15 +7239,15 @@ class TestSummaryBodyBudget(_DryRunTestBase):
     def test_bounded_frame_reserves_two_digit_skipped_counts(self):
         # Mutations: clamp the heading n, intro k, closing m, or closing n to one
         # digit; each single-term mutation admits First and must turn this red.
-        # Hand arithmetic: the first piece is 64783 + 44 = 64827 bytes, while its
-        # full two-digit reservation is 65536 - (24 + 212 + 2 + 369 + 2 + 101) = 64826.
-        # The all-omitted body is 24 + 2 + 368 + 2 + 101 + 212 = 709 bytes.
+        # Hand arithmetic: the first piece is 64791 + 44 = 64835 bytes, while its
+        # full two-digit reservation is 65536 - (24 + 212 + 2 + 363 + 2 + 99) = 64834.
+        # The all-omitted body is 24 + 2 + 362 + 2 + 99 + 212 = 701 bytes.
         first = {
             "file": "shown.py",
             "line": 1,
             "severity": "high",
             "title": "First",
-            "body": "a" * 64783,
+            "body": "a" * 64791,
         }
         groups = [[("shown.py", 1, first)]]
         groups.extend(
@@ -7275,11 +7275,11 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             inline_count=0,
         )
         self.assertEqual((composed.shown, composed.omitted), (0, 10))
-        self.assertEqual(len(composed.body.encode("utf-8")), 709)
+        self.assertEqual(len(composed.body.encode("utf-8")), 701)
         self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
-        self.assertIn("### ⚠️ 10 finding(s) could not be anchored inline", composed.body)
+        self.assertIn("### ⚠️ 10 findings could not be anchored inline", composed.body)
         self.assertIn(
-            "0 inline comment(s) were posted; the following 0 finding(s) reference "
+            "0 inline comments were posted; the following 0 findings reference "
             "lines outside this diff and are included here instead: A finding listed "
             "here may not have an anchoring problem of its own — a consolidation "
             "group whose primary could not be anchored inline is listed here in full, "
@@ -7287,7 +7287,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             composed.body,
         )
         self.assertIn(
-            "_10 of these 10 finding(s) are not shown: this review body reached the "
+            "_10 of these 10 findings are not shown: this review body reached the "
             "65536-byte GitHub body limit._",
             composed.body,
         )
@@ -7304,8 +7304,8 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             inline_count=0,
         )
         self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
-        self.assertIn("0 inline comment(s) were posted; the following 0", composed.body)
-        self.assertIn("_1 of these 1 finding(s) are not shown:", composed.body)
+        self.assertIn("0 inline comments were posted; the following 0", composed.body)
+        self.assertIn("_1 of these 1 finding is not shown:", composed.body)
 
     def test_budget_reporting_uses_stdout_and_stderr_without_capture_mutation(self):
         # Mutation: delete budget reporting or print it outside the GitLab note branch; these streams turn red.
@@ -7481,6 +7481,296 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                     review_body, [], platform="github", findings_count=0, sha=self.SHA
                 )
                 self.assertEqual(composed.body, expected)
+
+    def test_footer_dedup_uses_only_standalone_summary_lines_on_both_platforms(self):
+        footer = f"Generated by code-gauntlet | Reviewed up to: {self.SHA}"
+        for platform in ("github", "gitlab"):
+            title_body = f"- 💡 [LOW] `foo.py:99`: {footer}"
+            payload, _, _, exit_code = self._run_poster(platform, title_body, [])
+            self.assertFalse(exit_code)
+            body = (
+                payload["payload"]["body"]
+                if platform == "github"
+                else payload["summary"]["body"]
+            )
+            self.assertIn(f"\n---\n{footer}\n\n", body)
+            self.assertEqual(
+                sum(
+                    line.lstrip(" \t").startswith("Generated by code-gauntlet")
+                    for line in body.splitlines()
+                ),
+                1,
+            )
+
+            legacy_body = f"Summary\n\n\t{footer}"
+            payload, _, _, exit_code = self._run_poster(platform, legacy_body, [])
+            self.assertFalse(exit_code)
+            body = (
+                payload["payload"]["body"]
+                if platform == "github"
+                else payload["summary"]["body"]
+            )
+            self.assertEqual(body.count(footer), 1)
+            self.assertEqual(
+                sum(
+                    line.lstrip(" \t").startswith("Generated by code-gauntlet")
+                    for line in body.splitlines()
+                ),
+                1,
+            )
+
+    def test_unicode_title_separators_cannot_suppress_the_canonical_footer(self):
+        footer = f"Generated by code-gauntlet | Reviewed up to: {self.SHA}"
+        for platform in ("github", "gitlab"):
+            for separator in ("\u2028", "\u0085", "\x0c", "\x1e"):
+                with self.subTest(platform=platform, separator=repr(separator)):
+                    title_body = f"- 💡 [LOW] `foo.py:99`: x{separator}{footer}"
+                    payload, _, _, exit_code = self._run_poster(
+                        platform, title_body, []
+                    )
+                    self.assertFalse(exit_code)
+                    body = (
+                        payload["payload"]["body"]
+                        if platform == "github"
+                        else payload["summary"]["body"]
+                    )
+                    self.assertIn(f"\n---\n{footer}\n\n", body)
+                    self.assertEqual(
+                        sum(line == footer for line in body.split("\n")), 1
+                    )
+
+    def test_leading_unicode_separator_does_not_make_a_footer_line_standalone(self):
+        footer = f"Generated by code-gauntlet | Reviewed up to: {self.SHA}"
+        for platform in ("github", "gitlab"):
+            with self.subTest(platform=platform):
+                payload, _, _, exit_code = self._run_poster(
+                    platform, f"\u2028{footer}", []
+                )
+                self.assertFalse(exit_code)
+                body = (
+                    payload["payload"]["body"]
+                    if platform == "github"
+                    else payload["summary"]["body"]
+                )
+                self.assertIn(f"\n---\n{footer}\n\n", body)
+                self.assertEqual(sum(line == footer for line in body.split("\n")), 1)
+
+    def test_standalone_current_footer_ignores_later_inline_foreign_sha(self):
+        footer = f"Generated by code-gauntlet | Reviewed up to: {self.SHA}"
+        foreign = f"Generated by code-gauntlet | Reviewed up to: {'b' * 40}"
+        for platform in ("github", "gitlab"):
+            review_body = f"Summary\n\n{footer}\n\n- `foo.py:99`: x {foreign}"
+            payload, _, _, exit_code = self._run_poster(platform, review_body, [])
+            self.assertFalse(exit_code)
+            body = (
+                payload["payload"]["body"]
+                if platform == "github"
+                else payload["summary"]["body"]
+            )
+            self.assertEqual(sum(line == footer for line in body.split("\n")), 1)
+            self.assertIn(f"x {foreign}", body)
+
+    def test_long_uncapped_index_keeps_off_diff_finding_in_github_section(self):
+        script = (
+            "import {renderSummaryBody} from './workflows/src/renderReport.js';"
+            "const findings=Array.from({length:300},(_,i)=>({id:String(i),file:'foo.py',"
+            "line_start:2,severity:'high',title:'T'.repeat(215)+i}));"
+            "process.stdout.write(renderSummaryBody({findings}));"
+        )
+        rendered = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout
+        self.assertIn("over the summary length limit", rendered)
+        findings = [
+            {"file": "foo.py", "line": 2, "title": f"T{'T' * 214}{i}", "body": "b"}
+            for i in range(300)
+        ]
+        findings.append(self._invalid_finding("OFF DIFF FINDING", "off diff detail"))
+        payload, _, _, exit_code = self._run_poster("github", rendered, findings)
+        self.assertFalse(exit_code)
+        body = payload["payload"]["body"]
+        self.assertIn("OFF DIFF FINDING", body)
+        self.assertIn("over the summary length limit", body)
+        self.assertLessEqual(len(body.encode("utf-8")), 65536)
+
+
+class TestSummaryPluralContract(unittest.TestCase):
+    def test_plural_sites_at_zero_one_many(self):
+        for n, noun, ref, be, past in [
+            (0, "findings", "reference", "are", "were"),
+            (1, "finding", "references", "is", "was"),
+            (2, "findings", "reference", "are", "were"),
+        ]:
+            self.assertEqual(post_review._plural(n, "finding"), noun)
+            for inline_count in (None, n):
+                frame = post_review._skipped_frame(n, n, inline_count)
+                self.assertIn(f"{n} {noun} could not be anchored inline", frame)
+                self.assertIn(
+                    f"following {n} {noun} {ref} lines outside this diff and {be} included here",
+                    frame,
+                )
+                if inline_count is not None:
+                    comment = "comment" if n == 1 else "comments"
+                    self.assertIn(f"{n} inline {comment} {past} posted", frame)
+                self.assertNotIn("(s)", frame)
+            self.assertIn(
+                f"_{n} of these {n} {noun} {be} not shown:",
+                post_review._closing_line(n, n, "github"),
+            )
+        self.assertIn(
+            "_1 of these 2 findings is not shown:",
+            post_review._closing_line(1, 2, "github"),
+        )
+
+    def test_plural_sites_at_eleven_and_twenty_one_have_exact_posted_wording(self):
+        cases = (
+            (
+                11,
+                4,
+                7,
+                9,
+                "---\n\n### ⚠️ 11 findings could not be anchored inline\n\n"
+                "9 inline comments were posted; the following 4 findings reference lines "
+                "outside this diff and are included here instead: A finding listed here may "
+                "not have an anchoring problem of its own — a consolidation group whose "
+                "primary could not be anchored inline is listed here in full, corroborators included.",
+                "_7 of these 11 findings are not shown: this review body reached the "
+                "65536-byte GitHub body limit._",
+            ),
+            (
+                21,
+                13,
+                8,
+                17,
+                "---\n\n### ⚠️ 21 findings could not be anchored inline\n\n"
+                "17 inline comments were posted; the following 13 findings reference lines "
+                "outside this diff and are included here instead: A finding listed here may "
+                "not have an anchoring problem of its own — a consolidation group whose "
+                "primary could not be anchored inline is listed here in full, corroborators included.",
+                "_8 of these 21 findings are not shown: this review body reached the "
+                "65536-byte GitHub body limit._",
+            ),
+        )
+        for (
+            total,
+            shown,
+            omitted,
+            inline_count,
+            expected_frame,
+            expected_closing,
+        ) in cases:
+            with self.subTest(total=total):
+                frame = post_review._skipped_frame(total, shown, inline_count)
+                closing = post_review._closing_line(omitted, total, "github")
+                self.assertEqual(frame, expected_frame)
+                self.assertEqual(closing, expected_closing)
+                groups = [
+                    [
+                        (
+                            "foo.py",
+                            index + 1,
+                            {"title": "small" if index < shown else "large"},
+                        )
+                    ]
+                    for index in range(total)
+                ]
+
+                def piece(_filepath, _line, finding):
+                    return (
+                        "\n\n#### item small"
+                        if finding["title"] == "small"
+                        else "x" * 70000
+                    )
+
+                with patch("scripts.post_review._skipped_piece", side_effect=piece):
+                    composed = post_review.compose_review_body(
+                        "Summary",
+                        groups,
+                        platform="github",
+                        findings_count=total,
+                        sha="a" * 40,
+                        inline_count=inline_count,
+                    )
+                expected_body = (
+                    "### ⚔️ Code Gauntlet\n\nSummary\n\n"
+                    + expected_frame
+                    + "\n\n#### item small" * shown
+                    + "\n\n"
+                    + expected_closing
+                    + TestSummaryBodyBudget.CANONICAL_FOOTER.format(
+                        findings_count=total
+                    )
+                )
+                self.assertEqual(composed.shown, shown)
+                self.assertEqual(composed.omitted, omitted)
+                self.assertEqual(composed.body, expected_body)
+
+    def test_singular_to_zero_frame_reservation_is_bounded(self):
+        for platform in ("github", "gitlab"):
+            for inline_count in (None, 1):
+                finding = {"title": "Oversized", "body": "x" * 2000000}
+                groups = [[("a.js", 1, finding)]]
+                # Fill precisely the old singular reservation; a zero-shown frame
+                # grows by one byte, so restoring that whole mechanism overflows.
+                old_fixed = (
+                    post_review.BRAND_SUMMARY_HEADER
+                    + post_review.build_footer(1, "a" * 40, body="")
+                    + "\n\n" * 3
+                    + post_review._skipped_frame(1, 1, inline_count)
+                    + post_review._closing_line(1, 1, platform)
+                )
+                old_allowance = post_review._body_limit(platform)["bytes"] - len(
+                    old_fixed.encode("utf-8")
+                )
+                exact_old = compose_review_body(
+                    "x" * old_allowance,
+                    groups,
+                    platform=platform,
+                    findings_count=1,
+                    sha="a" * 40,
+                    inline_count=inline_count,
+                )
+                self.assertLessEqual(
+                    len(exact_old.body.encode("utf-8")),
+                    post_review._body_limit(platform)["bytes"],
+                )
+                self.assertEqual(exact_old.omitted, 1)
+                for size in (2000000, 64000):
+                    composed = compose_review_body(
+                        "x" * size,
+                        groups,
+                        platform=platform,
+                        findings_count=1,
+                        sha="a" * 40,
+                        inline_count=inline_count,
+                    )
+                    self.assertLessEqual(
+                        len(composed.body.encode("utf-8")),
+                        post_review._body_limit(platform)["bytes"],
+                    )
+                    self.assertEqual(composed.omitted, 1)
+                    self.assertIn("following 0 findings reference", composed.body)
+                    self.assertIn("_1 of these 1 finding is not shown:", composed.body)
+                for n in (1, 2, 9, 10, 100):
+                    reserve = post_review._skipped_reserve(n, inline_count, platform)
+                    for shown in range(n):
+                        actual = post_review._skipped_frame(
+                            n, shown, inline_count
+                        ) + post_review._closing_line(n - shown, n, platform)
+                        self.assertLessEqual(len(actual.encode("utf-8")), reserve)
+
+    def test_summary_parser_stops_at_change_context(self):
+        self.assertEqual(
+            summary_body_from_report(
+                "## Summary\n\n0 findings after the gauntlet.\n\n## Change Context\n\nThe PR claims to change things.\n\n## Review Dimensions Summary\n"
+            ),
+            "0 findings after the gauntlet.",
+        )
 
 
 class TestSummaryBodyDelivery(_DryRunTestBase):
@@ -7743,8 +8033,8 @@ class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
 
         cap = self._payload()
         body = cap["payload"]["body"]
-        self.assertIn("### ⚠️ 1 finding(s) could not be anchored inline", body)
-        self.assertIn("1 inline comment(s) were posted", body)
+        self.assertIn("### ⚠️ 1 finding could not be anchored inline", body)
+        self.assertIn("1 inline comment was posted", body)
         self.assertIn("Off-diff bug", body)
         self.assertIn("foo.py:99", body)
         # Excluded from the inline comments payload.
@@ -7810,7 +8100,7 @@ class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
 
         cap = self._payload()
         body = cap["payload"]["body"]
-        self.assertIn("### ⚠️ 1 finding(s) could not be anchored inline", body)
+        self.assertIn("### ⚠️ 1 finding could not be anchored inline", body)
         self.assertIn("No-line bug", body)
         self.assertIn("`foo.py`", body)
         self.assertEqual(len(cap["payload"]["comments"]), 1)
@@ -7958,7 +8248,7 @@ class TestGitlabSkippedFindingsDegrade(_GitlabLiveRunBase):
         self.assertIsNone(run.exit_code)
 
         body = self._summary_note_body(payloads)
-        self.assertIn("### ⚠️ 2 finding(s) could not be anchored inline", body)
+        self.assertIn("### ⚠️ 2 findings could not be anchored inline", body)
         self.assertIn("Off-diff finding", body)
         self.assertIn("No-line finding", body)
         self.assertIn("src/edited.py`", body)  # the no-line entry has a bare path

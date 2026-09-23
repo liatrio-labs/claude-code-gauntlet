@@ -245,7 +245,7 @@ test('S-REPLAY: legacy off-enum severity is accepted, report is regenerated, and
 
   assert.equal(out.ok, true);
   assert.ok(persisted, 'writer received regenerated artifacts');
-  assert.ok(persisted.report.includes('1 finding(s) after the gauntlet — 1 low.'), 'Summary uses the normalized low label');
+  assert.ok(persisted.report.includes('1 finding after the gauntlet — 1 low.'), 'Summary uses the normalized low label');
   assert.ok(persisted.report.includes('### 💡 Low'), 'severity heading uses the normalized low label');
   assert.ok(!persisted.report.includes('STALE REPORT CHECKPOINT'));
   assert.ok(!persisted.report.includes('x'.repeat(70000)), 'raw long severity is not rendered');
@@ -268,6 +268,124 @@ test('runWith persists postReview built from every challenge-survivor, ranked an
     'delivery = ranked top-cap of ALL survivors; the suggestion is delivered over the lower main finding');
   // Delivered findings are v2-aliased so post_review.py consumes them unchanged.
   assert.equal(persisted.postReview[0].line, persisted.postReview[0].line_start);
+});
+
+test('runWith indexes replayed challenge findings without ids by selected object identity', async () => {
+  const findings = [
+    makeFinding('critical', { severity: 'critical', title: 'critical choice' }),
+    makeFinding('high', { severity: 'high', title: 'high choice' }),
+    makeFinding('medium', { severity: 'medium', title: 'medium choice' }),
+  ];
+  for (const finding of findings) delete finding.id;
+  const challenge = {
+    findings, unverified: [], eliminated: [], gaps: [],
+    stats: { total_input: 3, dispatched: 3, completed: 3, skipped: 0, final_count: 3 },
+    generated_at: '2026-07-18T00:00:00Z',
+  };
+  const base = validArgs();
+  const args = validArgs({
+    checkpoints: { challenge },
+    limits: { ...base.limits, deliveryCap: 1 },
+    configEcho: {
+      ...base.configEcho,
+      delivery: { value: 'markdown,pr_comments', source: 'default' },
+      pr_comment_cap: { value: '1', source: 'default' },
+    },
+    delivery: { tier: 'all', prIdentity: {
+      owner: 'o', repo: 'r', pr_number: 362, sha_full: 'a'.repeat(40),
+      platform: 'github', web_origin: 'https://github.com',
+    } },
+  });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true);
+  assert.equal(persisted.postReview.findings.length, 1);
+  assert.equal(persisted.postReview.findings[0].title, 'critical choice');
+  const body = persisted.postReview.review_body;
+  assert.equal(body.split('\n').filter((line) => line.startsWith('- ')).length, 1);
+  assert.ok(body.includes(': critical choice'));
+  assert.ok(body.endsWith('2 more findings not listed here (over the delivery cap of 1 finding).'));
+});
+
+test('runWith indexes every finding unless a PR comment delivery is enabled', async () => {
+  const findings = Array.from({ length: 9 }, (_, index) => makeFinding(`N${index}`, {
+    severity: 'high', confidence: 90 - index, title: `finding ${index}`,
+  }));
+  const challenge = {
+    findings, unverified: [], eliminated: [], gaps: [],
+    stats: { total_input: 9, dispatched: 9, completed: 9, skipped: 0, final_count: 9 },
+    generated_at: '2026-07-18T00:00:00Z',
+  };
+  const identity = {
+    owner: 'o', repo: 'r', pr_number: 362, sha_full: 'b'.repeat(40),
+    platform: 'github', web_origin: 'https://github.com',
+  };
+  const base = validArgs();
+  const makeBodyFor = async (over) => {
+    const mode = over.mode || 'headless';
+    const configEcho = mode === 'interactive'
+      ? {
+        model_tier: { value: 'optimized', source: 'fixed' },
+        pr_comment_cap: { value: over.capReceipt || 'null', source: 'default' },
+        delivery_tier: { value: 'all', source: 'default' },
+        review_md: { value: 'absent', source: 'discovery' },
+      }
+      : {
+        ...base.configEcho,
+        delivery: { value: over.receipt || 'markdown', source: 'default' },
+        pr_comment_cap: { value: over.capReceipt || '6', source: 'default' },
+      };
+    const args = validArgs({
+      checkpoints: { challenge },
+      limits: { ...base.limits, deliveryCap: 6, ...(over.limits || {}) },
+      configEcho,
+      ...(over.delivery === undefined ? {} : { delivery: over.delivery }),
+      ...(over.mode ? { mode: over.mode } : {}),
+    });
+    let persisted = null;
+    const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+    assert.equal(out.ok, true);
+    return { args, persisted };
+  };
+
+  const markdown = await makeBodyFor({ delivery: { tier: 'all', prIdentity: identity } });
+  assert.equal(markdown.persisted.postReview.findings.length, 6);
+  const markdownSummary = markdown.persisted.report.split('## Summary\n\n')[1].split('\n\n## Change Context')[0];
+  assert.equal(markdownSummary.split('\n').filter((line) => line.startsWith('- ')).length, 9);
+  assert.ok(!markdownSummary.includes('not listed here'));
+
+  const local = await makeBodyFor({
+    mode: 'interactive', limits: { deliveryCap: null }, capReceipt: 'null',
+  });
+  const localSummary = local.persisted.report.split('## Summary\n\n')[1].split('\n\n## Change Context')[0];
+  assert.equal(localSummary.split('\n').filter((line) => line.startsWith('- ')).length, 9);
+  assert.ok(!localSummary.includes('not listed here'));
+
+  const localWithSettings = await makeBodyFor({
+    mode: 'interactive', limits: { deliveryCap: 1 }, capReceipt: '1',
+    delivery: { tier: 'all' },
+  });
+  const localWithSettingsSummary = localWithSettings.persisted.report.split('## Summary\n\n')[1].split('\n\n## Change Context')[0];
+  assert.equal(localWithSettings.persisted.postReview.length, 1);
+  assert.equal(localWithSettingsSummary.split('\n').filter((line) => line.startsWith('- ')).length, 9);
+  assert.ok(!localWithSettingsSummary.includes('not listed here'));
+
+  const interactive = await makeBodyFor({
+    mode: 'interactive', limits: { deliveryCap: null }, capReceipt: 'null',
+    delivery: { tier: 'all', prIdentity: identity },
+  });
+  assert.equal(interactive.persisted.postReview.findings.length, 9);
+  const interactiveSummary = interactive.persisted.postReview.review_body;
+  assert.equal(interactiveSummary.split('\n').filter((line) => line.startsWith('- ')).length, 9);
+  assert.ok(!interactiveSummary.includes('not listed here'));
+
+  const comments = await makeBodyFor({
+    receipt: 'markdown,pr_comments', delivery: { tier: 'all', prIdentity: identity },
+  });
+  assert.equal(comments.persisted.postReview.findings.length, 6);
+  const commentSummary = comments.persisted.postReview.review_body;
+  assert.equal(commentSummary.split('\n').filter((line) => line.startsWith('- ')).length, 6);
+  assert.ok(commentSummary.endsWith('3 more findings not listed here (over the delivery cap of 6 findings).'));
 });
 
 test('runWith with no deliveryCap and no tier delivers every challenge-survivor (both tags, default all)', async () => {

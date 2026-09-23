@@ -682,7 +682,7 @@ selection is the pipeline's job, not yours:** the delivery set is `artifactPaths
 survivors the pipeline already selected per `args.delivery.tier` (`all` by default → every survivor
 including suggestions; `main_only` → main-tagged only), ranked and capped at `limits.deliveryCap`. Feed it
    to `post_review.py` **verbatim** — when `delivery.prIdentity` was stamped, the persisted file already IS
-   the post_review-ready wrapper and its `review_body` is the rendered Summary body; pass the file unchanged.
+   the post_review-ready wrapper and its `review_body` is the outcome-first Summary body (counts, selected findings index, and any remainder); pass the file unchanged.
    A legacy bare-array artifact uses `post_review.py --report` with `--owner`, `--repo`, `--pr-number`,
    `--platform`, and `--sha` so the script forms the wrapper. Never re-filter by tag, re-rank, or re-apply
    the cap yourself. Every finding in that

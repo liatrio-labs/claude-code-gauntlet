@@ -4,7 +4,7 @@ The workflow renders the unified review report in code. Its section order is fix
 sections and empty severity groups are omitted.
 
 **Zero findings:** The renderer still emits the title, identity line, Summary (showing 0 findings),
-and Review Dimensions Summary, followed by the code-rendered Review Methodology section. The
+Change Context, and Review Dimensions Summary, followed by the code-rendered Review Methodology section. The
 clean outcome is meaningful — it confirms the pipeline ran and found nothing.
 
 <!-- generated-from-registry-identity:severity_legend — do not edit; run scripts/generate_contract_requirements.py -->
@@ -110,9 +110,18 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 
 ## Summary
 
-{summary}
+4 findings after the gauntlet — 1 critical, 1 high, 1 medium, 1 low. 1 routed as improvement suggestion. 1 unverified / pipeline-degraded.
 
-4 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 1 low. 1 routed as improvement suggestion(s). 1 unverified / pipeline-degraded.
+- 🔴 [CRITICAL] `{finding.file}:{finding.line_start}-{finding.line_end}`: {finding.title}
+- 🟠 [HIGH] `{finding.file}:{finding.line_start}`: {finding.title}
+- 🟡 [MEDIUM] `{finding.file}:{finding.line_start}`: {finding.title}
+- 💡 [LOW] `{finding.file}:{finding.line_start}` (improvement suggestion): {finding.title}
+
+## Change Context
+
+This is the change summary the review agents shared as context.
+
+{summary}
 
 ## Findings
 
@@ -248,8 +257,18 @@ the fold line. The display fold counts Unicode code points; the posted summary b
 bytes.
 Description, suggestion, cited text, cross-file references, extra fields, and corroboration
 descriptions fold after 4,000 Unicode code points. The summary comment body is the report's
-Summary section body: summary prose folds at `REPORT_FOLD_LIMITS.summaryChars`, followed by the
-short code-owned counts sentence. `post_review.py` bounds the summary comment, and every inline
+Summary section body: the code-owned counts sentence comes first, followed by an index of the
+consolidation units selected for delivery and any remainder count with its selection reasons.
+The change-summarizer prose appears only in the following Change Context section. A present summary
+has a code-owned lead-in explaining its role as shared review-agent context, then folds at
+`REPORT_FOLD_LIMITS.summaryChars`. An absent or blank summary uses this exact sentence with no
+lead-in:
+
+```text
+No change summary was produced for this run.
+```
+
+`post_review.py` bounds the summary comment, and every inline
 comment, discussion and note, with a per-platform UTF-8 byte budget. Each includes its trailer;
 GitLab discussions and notes also include a live marker when one is appended. Inline folds happen
 in place at a line boundary with a fold line and may keep or drop a whole committable suggestion;
@@ -284,8 +303,31 @@ report; persistence, delivery, and duration are reported by the orchestrator at 
 
 ## PR Comment Format (abbreviated)
 
-The persisted wrapper's `review_body` is exactly the report's Summary section body: summary prose
-folded at `REPORT_FOLD_LIMITS.summaryChars`, followed by the short code-owned counts sentence.
+The persisted wrapper's `review_body` is exactly the report's Summary section body: the code-owned
+counts sentence, the selected findings index, and any remainder count with its selection reasons.
+The Summary contains no change-summarizer prose. Index bullets show severity, a folded title, a
+head-SHA location permalink (or a code span without a usable identity), and an improvement
+suggestion label where applicable. Locations link to source, not to discussion threads.
+The pipeline passes selected findings by object identity; structurally equal copies and IDs do not
+establish membership. A consolidation key identifies grouped units, while each ungrouped unit uses
+its original finding object. The index follows the full report's group order. Each selected
+consolidation group uses its selected primary, or its first selected member in delivery order if the
+primary was withheld. A partially selected group counts once in the index and zero times in the
+remainder. The remainder noun follows the counts sentence: `finding(s)` when consolidation merged
+nothing, and `reported issue(s)` when it did. Its line is `{K} more {noun} not listed here ({reasons}).`
+The delivery selection appears only when a PR identity is present and comments can be posted; in
+headless mode the `delivery` receipt must include `pr_comments`. Otherwise every reported unit is
+eligible for the index. Whole bullets are admitted in index order while their code-point total,
+including newlines between bullets, stays at or below 12,000. The first bullet that does not fit
+and every later unit join the remainder with the reason `over the summary length limit`. An
+applicable numeric cap reason reads `over the delivery cap of {cap} finding(s)`, with the noun
+pluralized for the cap, because selection caps raw findings before grouping. Cap and tier reasons
+consider only units omitted by delivery selection.
+Unverified findings contribute to
+the counts sentence but never to the index. Index units plus remainder equal the reported-unit count,
+before the poster applies its byte budget. Each bullet places its location link or code span before
+the optional improvement-suggestion label, then the colon and folded title, so title Markdown cannot
+alter the location.
 The complete posted comment is assembled in this order: header, body, skipped section, footer.
 `post_review.py` bounds the summary comment, and every inline comment, discussion and note, with a
 per-platform UTF-8 byte budget. Each includes its trailer; GitLab discussions and notes also include
@@ -294,9 +336,11 @@ line and may keep or drop a whole committable suggestion; summary folds do not a
 rule. Every fold emits a stderr notice. The header and footer are reserved first; the summary folds only when it cannot fit beside
 the skipped-section frame and footer. Skipped groups appear whole or not at all in list order,
 followed by one closing count line when any group is omitted; the footer stays last.
-The footer contains `Generated by code-gauntlet | Reviewed up to: {full_sha}`.
+The footer contains `Generated by code-gauntlet | Reviewed up to: {full_sha}`. A model-authored
+title that contains footer-like text does not satisfy the footer check unless it occupies a
+standalone Markdown line separated by CR or LF.
 
-**Do not hand-type a footer or marker here.** `scripts/post_review.py` appends both, mechanically and idempotently when the composed body fits the platform budget (each half is skipped if already present); an over-budget body always ends with the full canonical footer. The prose line is `Generated by code-gauntlet | Reviewed up to: {full_sha}` and the other half is the `code-gauntlet-findings` hidden HTML comment. `<!-- Canonical source: scripts/review_marker.py -->`.
+**Do not hand-type a footer or marker here.** `scripts/post_review.py` appends both mechanically when the composed body fits the platform budget. The marker half deduplicates against the full body; the prose half deduplicates only against a standalone footer line carrying the same head SHA. An over-budget body always ends with the full canonical footer. The prose line is `Generated by code-gauntlet | Reviewed up to: {full_sha}` and the other half is the `code-gauntlet-findings` hidden HTML comment. `<!-- Canonical source: scripts/review_marker.py -->`.
 
 What the code writes (for reference — never compose this by hand):
 
