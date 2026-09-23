@@ -25,3 +25,7 @@ test('fenced title', () => {});
 ~~~
 test('after fence', () => {});
 ```bad`info { invalid_key: 1 }
+        ~~~ { deep_key: 1 }
+test('deep fenced title', () => {});
+        ~~~
+test('after deep fence', () => {});
