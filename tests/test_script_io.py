@@ -72,71 +72,6 @@ def _is_entry_point(facts):
     return bool(facts.has_main_definition or facts.main_guards or facts.module_calls)
 
 
-def _is_repo_root(node, depth):
-    expected = ast.parse(f"Path(__file__).resolve().parents[{depth}]", mode="eval").body
-    return ast.dump(node) == ast.dump(expected)
-
-
-def _is_script_path_insert(node, relpath, tree):
-    call = node.value if isinstance(node, ast.Expr) else node
-    if not isinstance(call, ast.Call):
-        return False
-    func = call.func
-    if not (
-        isinstance(func, ast.Attribute)
-        and func.attr == "insert"
-        and isinstance(func.value, ast.Attribute)
-        and func.value.attr == "path"
-        and isinstance(func.value.value, ast.Name)
-        and func.value.value.id == "sys"
-        and len(call.args) == 2
-        and isinstance(call.args[0], ast.Constant)
-        and call.args[0].value == 0
-        and not call.keywords
-    ):
-        return False
-    destination = call.args[1]
-    if not (
-        isinstance(destination, ast.Call)
-        and isinstance(destination.func, ast.Name)
-        and destination.func.id == "str"
-        and len(destination.args) == 1
-        and isinstance(destination.args[0], ast.BinOp)
-        and isinstance(destination.args[0].op, ast.Div)
-        and isinstance(destination.args[0].right, ast.Constant)
-        and destination.args[0].right.value == "scripts"
-    ):
-        return False
-    depth = len(relpath.split("/")) - 1
-    anchor = destination.args[0].left
-    if _is_repo_root(anchor, depth):
-        return True
-    if not isinstance(anchor, ast.Name) or anchor.id != "REPO":
-        return False
-    definitions = [
-        statement.value
-        for statement in tree.body
-        if isinstance(statement, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "REPO"
-            for target in statement.targets
-        )
-    ]
-    return len(definitions) == 1 and _is_repo_root(definitions[0], depth)
-
-
-def _is_sys_path_insert(node):
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "insert"
-        and isinstance(node.func.value, ast.Attribute)
-        and node.func.value.attr == "path"
-        and isinstance(node.func.value.value, ast.Name)
-        and node.func.value.value.id == "sys"
-    )
-
-
 def _bootstrap_problem(source, relpath, tree=None, facts=None):
     if tree is None:
         tree = ast.parse(source, filename=relpath)
@@ -151,51 +86,21 @@ def _bootstrap_problem(source, relpath, tree=None, facts=None):
     if len(facts.main_guards) != 1:
         return "expected one module-level __main__ block"
 
-    outside_scripts = not relpath.startswith("scripts/")
     body = list(facts.block_statements[0])
-    insertions = [node for node in body if _is_script_path_insert(node, relpath, tree)]
-    if outside_scripts:
-        path_inserts = [node for node in ast.walk(tree) if _is_sys_path_insert(node)]
-        if len(path_inserts) != 1 or not _is_script_path_insert(
-            path_inserts[0], relpath, tree
-        ):
-            return "expected one scripts/ path insertion before the bootstrap import"
-        if insertions:
-            if len(insertions) != 1 or not body or body[0] is not insertions[0]:
-                return (
-                    "expected one scripts/ path insertion before the bootstrap import"
-                )
-            body.pop(0)
-        else:
-            top_level_insertions = [
-                node
-                for node in tree.body
-                if isinstance(node, ast.Expr) and node.value is path_inserts[0]
-            ]
-            if (
-                len(top_level_insertions) != 1
-                or top_level_insertions[0].lineno >= facts.main_guards[0].lineno
-            ):
-                return (
-                    "expected the scripts/ path insertion before the bootstrap import"
-                )
-    elif insertions:
-        return "scripts/ entry points must not alter sys.path"
-
-    if len(body) != 2:
-        return "expected only the bootstrap import and run_entrypoint call"
-    imported = body[0]
-    if not (
-        isinstance(imported, ast.ImportFrom)
-        and imported.module == "script_io"
-        and imported.level == 0
-        and len(imported.names) == 1
-        and imported.names[0].name == "run_entrypoint"
-        and imported.names[0].asname is None
-    ):
+    imports = [
+        node
+        for node in body[:-1]
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "script_io"
+        and node.level == 0
+        and len(node.names) == 1
+        and node.names[0].name == "run_entrypoint"
+        and node.names[0].asname is None
+    ]
+    if len(imports) != 1:
         return "expected from script_io import run_entrypoint"
 
-    statement = body[1]
+    statement = body[-1]
     if not (
         isinstance(statement, ast.Expr)
         and isinstance(statement.value, ast.Call)
@@ -280,6 +185,21 @@ class TestUtf8Stdio(unittest.TestCase):
 
 
 class TestEntryPointBootstrap(unittest.TestCase):
+    def test_biome_check_help_runs_as_a_script(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "workflows/test/tools/biome_check.py"),
+                "--help",
+            ],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--cache-dir", result.stdout)
+
     def test_tracked_entry_points_use_the_canonical_bootstrap(self):
         problems = []
         discovered = {root: [] for root in BOOTSTRAP_ROOTS}
@@ -316,30 +236,6 @@ class TestEntryPointBootstrap(unittest.TestCase):
         self.assertIsNone(
             _bootstrap_problem("def helper():\n    pass\n", "scripts/library.py")
         )
-
-    def test_outside_scripts_insert_resolves_to_repo_scripts_directory(self):
-        bootstrap = (
-            "if __name__ == '__main__':\n"
-            "    sys.path.insert(0, str({anchor} / 'scripts'))\n"
-            "    from script_io import run_entrypoint\n"
-            "    run_entrypoint(main)\n"
-        )
-        for anchor, expected_problem in (
-            ("Path(__file__).resolve().parents[3]", None),
-            ("Path(__file__).resolve().parents[2]", "scripts/ path insertion"),
-            (
-                "Path(__file__).resolve().parents[3] / 'extra'",
-                "scripts/ path insertion",
-            ),
-        ):
-            source = "def main():\n    pass\n" + bootstrap.format(anchor=anchor)
-            with self.subTest(anchor=anchor):
-                problem = _bootstrap_problem(source, "workflows/test/tools/example.py")
-                if expected_problem is None:
-                    self.assertIsNone(problem)
-                else:
-                    self.assertIsNotNone(problem)
-                    self.assertIn(expected_problem, problem)
 
     def test_module_level_call_is_discovered_as_an_entry_point(self):
         with tempfile.TemporaryDirectory() as temporary:

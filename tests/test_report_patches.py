@@ -1551,9 +1551,8 @@ class TestEmitReceiptStdoutEncoding(ReportPatchesTestBase):
     LF-terminated line. The receipt still escapes lone surrogates with
     ``ensure_ascii``.
 
-    RED when both the ``run_entrypoint`` bootstrap and ``ensure_ascii=True``
-    are removed: raw non-ASCII receipt text then reaches the ASCII stdout
-    configuration, so the script emits its ASCII fallback receipt instead.
+    A lone surrogate in a downgraded warning must be escaped in the receipt;
+    otherwise stdout raises and the script emits its warning-free fallback.
     """
 
     SCRIPT = os.path.join(
@@ -1638,6 +1637,29 @@ class TestEmitReceiptStdoutEncoding(ReportPatchesTestBase):
         )
         self.assertIn(result.returncode, (0, 1))
         json.loads(lines[0])  # must be valid JSON regardless of ok/errors
+
+    def test_lone_surrogate_warning_survives_with_bootstrapped_stdout(self):
+        self._write_findings(
+            [
+                {
+                    "file": "src/bad\ud800.py",
+                    "line": 1,
+                    "end_line": 1,
+                    "title": "Surrogate path",
+                    "suggested_fix_code": "changed",
+                }
+            ]
+        )
+
+        result = self._run_subprocess(self.tmp, self.SHA, {"PYTHONIOENCODING": "ascii"})
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+        self.assertIn(b"\\ud800", result.stdout)
+        receipt = json.loads(result.stdout.decode("utf-8"))
+        self.assertEqual(len(receipt["warnings"]), 1)
+        self.assertIn("bad\ud800.py", receipt["warnings"][0])
+        self.assertNotIn("receipt could not be serialized", receipt["errors"])
 
 
 class TestOperationalHygiene(ReportPatchesTestBase):

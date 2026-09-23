@@ -10,7 +10,7 @@ from typing import Any, TypeGuard
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCANNED_ROOTS = ("scripts/", "tests/", "bench/", ".github/", "workflows/test/tools/")
 EXCLUDED_ROOTS = ("bench/vendor/", "bench/workspace/", "tests/fixtures/")
-NEWLINE_ROOTS = ("scripts/",)
+NEWLINE_ROOTS = ("scripts/", "workflows/test/tools/")
 NON_TEXT_OPEN_RECEIVERS = frozenset({"os", "tarfile", "zipfile", "webbrowser"})
 GUARDED_STAR_IMPORTS = frozenset(
     {
@@ -253,6 +253,9 @@ CALL_RULES: tuple[dict[str, Any], ...] = (
             ("tempfile.mkstemp(text=False)", 0),
             ("tempfile.mkstemp(text=True)", 1),
             ("tempfile.mkstemp(text=TEXT)", 1),
+            ("tempfile.mkstemp(None, None, None, False)", 0),
+            ("tempfile.mkstemp(None, None, None, True)", 1),
+            ("tempfile.mkstemp(**options)", 1),
         ),
     },
     {
@@ -372,7 +375,11 @@ def _encoding_state(call: ast.Call, rule: dict) -> tuple[bool, bool]:
     encoding = _argument(call, "encoding", rule.get("encoding_index"))
     if encoding is _MISSING:
         return False, False
-    valid = _literal_string(encoding) and encoding.value is not None
+    valid = (
+        isinstance(encoding, ast.Constant)
+        and isinstance(encoding.value, str)
+        and encoding.value.lower() != "locale"
+    )
     return valid, not valid
 
 
@@ -425,7 +432,11 @@ def _call_offender(call: ast.Call, rule: dict, path: str, source: str) -> str | 
     if rule.get("forbidden"):
         return f"{path}:{call.lineno} {name} (forbidden text I/O API)"
     if rule.get("forbidden_text_flag"):
-        text_flag = _argument(call, "text", None)
+        text_flag = _argument(call, "text", 3)
+        if _has_expansion(call):
+            return (
+                f"{path}:{call.lineno} {name} (tempfile.mkstemp text mode is forbidden)"
+            )
         if text_flag is _MISSING or (
             isinstance(text_flag, ast.Constant) and text_flag.value is False
         ):
@@ -528,6 +539,22 @@ def test_call_rule_table_examples_cover_each_call_kind():
             assert len(offenders) == expected_count, (
                 f"{rule['name']} example {snippet!r}: {offenders}"
             )
+
+
+def test_locale_encoding_is_rejected_for_every_call_kind():
+    for rule in CALL_RULES:
+        if "encoding_index" not in rule:
+            continue
+        examples = [
+            snippet
+            for snippet, expected_count in rule["examples"]
+            if expected_count == 0 and 'encoding="utf-8"' in snippet
+        ]
+        assert examples, rule["name"]
+        for spelling in ("locale", "LoCaLe"):
+            snippet = examples[0].replace('encoding="utf-8"', f'encoding="{spelling}"')
+            offenders = _scan_source(snippet, "tests/locale.py")
+            assert len(offenders) == 1, f"{rule['name']} {snippet!r}: {offenders}"
 
 
 def test_added_api_rules_are_pinned_independently_of_the_rule_table():
@@ -672,6 +699,12 @@ def test_scripts_writes_require_literal_empty_newline():
         offenders = _scan_source(snippet, "scripts/snippet.py")
         assert len(offenders) == expected_count, f"{snippet!r}: {offenders}"
     assert _scan_source('open("file", "w", encoding="utf-8")', "tests/snippet.py") == []
+    tools_path = "workflows/test/tools/record_parity.py"
+    offenders = _scan_source(
+        'Path("expected.json").write_text("x", encoding="utf-8")', tools_path
+    )
+    assert len(offenders) == 1
+    assert tools_path in offenders[0]
 
 
 def test_gitattributes_pins_lf_for_text_files():

@@ -35,9 +35,9 @@ def _merge_findings(inp):
     args = inp["args"]
     with tempfile.TemporaryDirectory() as fd, tempfile.TemporaryDirectory() as td:
         for name, text in inp.get("findings_dir_files", {}).items():
-            (Path(fd) / name).write_text(text, encoding="utf-8")
+            (Path(fd) / name).write_text(text, encoding="utf-8", newline="")
         for name, text in inp.get("text_dir_files", {}).items():
-            (Path(td) / name).write_text(text, encoding="utf-8")
+            (Path(td) / name).write_text(text, encoding="utf-8", newline="")
         env = merge(
             findings_dir=fd,
             session_sha=args["session_sha"],
@@ -307,7 +307,7 @@ def _serialize(out):
 
 def record(script, case_dir):
     (case_dir / "expected.json").write_text(
-        _serialize(_compute(script, case_dir)), encoding="utf-8"
+        _serialize(_compute(script, case_dir)), encoding="utf-8", newline=""
     )
 
 

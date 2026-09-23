@@ -167,7 +167,9 @@ claude plugin validate .
 pre-commit run --all-files
 ```
 
-`python -m pytest tests/ -q` is supported on Linux, macOS and Windows. The Node
+`python -m pytest tests/ -q` runs on Linux, macOS and Windows. That covers the
+test suite only: the plugin itself does not yet run on Windows, because the
+workflow waist refuses Windows drive paths (#351). The Node
 suite (`workflows/test`) and `bench/tests` run in CI on Linux only; on Windows,
 run them under WSL or skip them. Scripts write UTF-8 with LF on every OS;
 `tests/test_text_io_guard.py` checks known standard-library file, path,

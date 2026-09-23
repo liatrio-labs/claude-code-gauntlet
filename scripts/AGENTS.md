@@ -1,8 +1,10 @@
 # scripts/
 
-Retained Python. **stdlib only** — no pip dependencies in shipped runtime (CI tooling
-pinned in `pyproject.toml` `[dependency-groups]` is exempt) — and **language-agnostic**: never
-assume a language in the reviewed codebase.
+Retained Python is **stdlib only**; CI tooling in `pyproject.toml` `[dependency-groups]` is
+exempt. Scripts are **language-agnostic**: never assume the reviewed codebase's language.
+
+Run entry points as files (`python3 scripts/<name>.py`); module mode is unsupported because entry
+points import siblings by bare name.
 
 - **Repo root for searches.** `verify_findings.py` resolves the root at startup via
   `git rev-parse --show-toplevel`; symbol searches use `git grep -l` with `cwd=REPO_ROOT` and a
@@ -11,10 +13,9 @@ assume a language in the reviewed codebase.
   not expand the `@import` directive, and real repos ship `CLAUDE.md` as a single `@AGENTS.md`
   pointer, so a filename allowlist misses arbitrary targets. Resolved paths are confined via
   `realpath`, must be `.md`, are byte-bounded with `os.stat` before any `open`, and are depth-capped.
-- **`review_marker.py` is the single source of truth** for the prior-review marker: it builds what
-  `post_review.py` writes and parses what `detect_prior_review.py` reads back. Readers never branch
-  on the payload's `version` field — both token generations carry `"version":"3.0"` despite being
-  different wire shapes. `tests/test_review_marker.py::TestRoundTrip` guards the agreement.
+- **`review_marker.py` owns the prior-review marker:** it builds what `post_review.py` writes and
+  parses what `detect_prior_review.py` reads. Readers never branch on `version`: both token
+  generations carry `"version":"3.0"` with different wire shapes. `TestRoundTrip` guards parity.
 - **Twins must stay at parity.** `merge_findings.py`, `finding_dedup.py`, `filter_findings.py`,
   `apply_validations.py` and `apply_challenges.py` each have a JS twin proven against frozen golden
   fixtures in `tests/fixtures/parity/`. Change one, change both, re-record the fixture.
