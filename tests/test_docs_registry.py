@@ -1432,6 +1432,14 @@ class TestDocsRegistry(unittest.TestCase):
                 "heading not found",
             ),  # fence: closer tails reject fence characters
             (h + "#Quoted Fence", None),  # fence: openers reject blockquote markers
+            (
+                h + "#Backtick In Tilde Body",
+                "heading not found",
+            ),  # fence: backticks do not close a tilde fence
+            (
+                z + "::fenced_yaml",
+                "unresolved symbol 'fenced_yaml' after line 0",
+            ),  # fence: block-scalar fences are masked
         )
         errors = []
         witnessed = []
@@ -1561,6 +1569,25 @@ class TestDocsRegistry(unittest.TestCase):
             [expected for _, expected in marker_cases],
             "only spaces and tabs may surround a fence run",
         )
+        edge_cases = (
+            ("~~~\n```\nx\n~~~", ["", "", "", ""]),
+            ("~~~\n~~~ x\nx\n~~~", ["", "", "", ""]),
+            ("```\nx\n```\t\ny", ["", "", "", "y"]),
+            ("```\nx\n\t```\ny", ["", "", "", "y"]),
+            ("\t```\nx\n```", ["", "", ""]),
+            ("  ~~~\nx\n~~~", ["", "", ""]),
+            ("~~~\nx", ["", ""]),
+            ("~~~\n\nx\n~~~", ["", "", "", ""]),
+            ("x\n~~~", ["x", ""]),
+            ("x\n```", ["x", ""]),
+            ("~~~~\nx\n~~~~", ["", "", ""]),
+            ("\n```\nx\n```\ny", ["", "", "", "", "y"]),
+        )
+        self.assertEqual(
+            [_unfenced_lines(text) for text, _ in edge_cases],
+            [expected for _, expected in edge_cases],
+            "backtick and tilde fences follow the same rules at every edge",
+        )
         self.assertEqual(
             [
                 _kind_line_visible(text, kind, symbol)
@@ -1572,9 +1599,12 @@ class TestDocsRegistry(unittest.TestCase):
                     ("foreign_python = 1", "python", "foreign_python"),
                     ("const a = { FOREIGN_JS: 1 };", "js", "foreign_js"),
                     ("```\nconst a = { foreign_js: 1 };", "js", "foreign_js"),
+                    ("const a = { foreign_jsx: 1 };", "js", "foreign_js"),
+                    ("~~~\nconst a = { foreign_js: 1 };\n~~~", "js", "foreign_js"),
+                    ("- id: foreign_js", "js", "foreign_js"),
                 )
             ],
-            [True, False, False, False, False, False, False],
+            [True, False, False, False, False, False, False, False, False, False],
             "a foreign line counts only unfenced and shaped like its kind",
         )
 

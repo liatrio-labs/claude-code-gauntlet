@@ -4,3 +4,7 @@ items:
 foreign_js: 1
 def foreign_python(): pass
 FOREIGN_PYTHON_CONSTANT: x = 1
+notes: |
+  ```yaml
+  - id: fenced_yaml
+  ```
