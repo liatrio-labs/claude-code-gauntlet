@@ -9,10 +9,8 @@ Plan, implement and validate the next open item on the roadmap in issue #101. Th
 
 Issue to work instead, if given: $ARGUMENTS
 
-You are the orchestrator and planner; your agents do the work. Follow your usual pattern. No paired mini or other paid bench run.
+You are the orchestrator and planner; your agents do the work. Follow your usual pattern. Run no paired mini or other paid bench run unless the plan calls for one, and never without my approval.
 
 When the work is validated, open the PR and run the headless gauntlet on it. Address its findings and every other comment on the PR, and get CI fully green. File each out-of-scope problem you find as an issue, nested in #101 under the item it came from.
 
-Then stop. Merging is the one sign-off that is mine.
-
-After I merge, close out: check off every completed issue in #101 and post the close-out records.
+Then stop and ask me to approve the merge. That approval is the one human gate in this run. Once I approve, merge if I tell you to, then close out: check off every completed issue in #101 and post the close-out records.
