@@ -1093,6 +1093,13 @@ test('T-SUMMARY-INDEX: whole bullets fit exactly and the next code point moves a
   assert.equal(lengthOnly.split('\n').filter((line) => line.startsWith('- ')).length, findings.length - 1);
   assert.ok(lengthOnly.endsWith('1 more finding not listed here (over the summary length limit).'));
 
+  // A shorter, lower-ranked unit after the cut stays out: the list stops at the first bullet that does not fit.
+  const stopped = renderSummaryBody({ findings: [...over, finding('ZZZ', { title: 'z', severity: 'low' })] });
+  const stoppedBullets = stopped.split('\n').filter((line) => line.startsWith('- '));
+  assert.equal(stoppedBullets.length, findings.length - 1);
+  assert.ok(!stoppedBullets.some((line) => line.endsWith(': z')));
+  assert.ok(stopped.endsWith('2 more findings not listed here (over the summary length limit).'));
+
   const allDelivered = renderSummaryBody({ findings: over, delivered: over, deliveryCap: over.length });
   assert.ok(allDelivered.endsWith('1 more finding not listed here (over the summary length limit).'));
 

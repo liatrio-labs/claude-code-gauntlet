@@ -764,7 +764,7 @@ function plainReportObject(value) {
 
 function summaryIndex(rawFindings, findingsView, input) {
   const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
-  if (!Array.isArray(input.delivered)) return { indexed: reported, remainder: 0, reasons: [] };
+  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [] };
   const originals = Array.isArray(input.findings) ? input.findings : [];
   const projected = rawFindings;
   const delivered = input.delivered.filter(plainReportObject);
@@ -810,7 +810,7 @@ function summaryIndex(rawFindings, findingsView, input) {
     reasons.push('improvement suggestions held back by delivery tier main_only');
   }
   if (!reasons.length && omittedUnits.length) reasons.push('not selected for delivery');
-  return { indexed, remainder: reported.length - indexed.length, reasons };
+  return { indexed, reasons };
 }
 
 export function summaryBlock(builder, input) {
