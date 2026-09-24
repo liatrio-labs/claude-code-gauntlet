@@ -50,11 +50,12 @@ from scripts.post_review import (
     _fold_inline_body,
     _fold_review_body,
     _inline_body_over_limit,
+    _normalize_outbound,
     _open_fence,
+    _prepared_prose,
     _redact_secrets,
     _render_group_sections,
     _report_inline_budget,
-    _sanitize_outbound_prose,
     _suggestion_fence,
     build_footer,
     build_skipped_section,
@@ -800,50 +801,53 @@ class TestOutboundSanitizeHelpers(unittest.TestCase):
 
     def test_terminated_html_comment_stripped(self):
         self.assertEqual(
-            _sanitize_outbound_prose("before <!-- hide --> after"),
+            _normalize_outbound("before <!-- hide --> after"),
             "before  after",
         )
 
-    def test_unterminated_html_comment_stripped_to_eos(self):
+    def test_unterminated_html_comment_is_left_for_containment(self):
+        # Never truncated to end of field; containment later escapes the "<".
         self.assertEqual(
-            _sanitize_outbound_prose("before <!-- forever"),
-            "before ",
+            _normalize_outbound("before <!-- forever"),
+            "before <!-- forever",
         )
 
     def test_entity_decoded_comment_then_stripped(self):
         # &#60;!-- … --&#62; must become a real comment then vanish (order fixture).
         self.assertEqual(
-            _sanitize_outbound_prose("x&#60;!-- hidden --&#62;y"),
+            _normalize_outbound("x&#60;!-- hidden --&#62;y"),
             "xy",
         )
 
     def test_hex_entity_decoded_comment_then_stripped(self):
         # &#x3C;!-- … --&#x3E; pins the _ENTITY_HEX_RE / _hex path.
         self.assertEqual(
-            _sanitize_outbound_prose("x&#x3C;!-- hidden --&#x3E;y"),
+            _normalize_outbound("x&#x3C;!-- hidden --&#x3E;y"),
             "xy",
         )
 
     def test_multiline_newlines_preserved_invisibles_stripped(self):
         raw = "line1\nline2\u200b\nline3\u202e"
-        out = _sanitize_outbound_prose(raw)
+        out = _normalize_outbound(raw)
         self.assertEqual(out, "line1\nline2\nline3")
         self.assertIn("\n", out)
 
-    def test_backtick_run_collapsed_to_two(self):
-        self.assertEqual(_sanitize_outbound_prose("a````b"), "a``b")
+    def test_rule_backtick_run_collapsed_then_escaped(self):
+        # Suggestion and rule text collapse runs of 3+ to two; the unmatched pair
+        # is then backslash-escaped by containment.
+        self.assertEqual(_prepared_prose("a````b"), "a\\`\\`b")
 
     def test_tab_and_newline_not_stripped_as_c0(self):
-        self.assertEqual(_sanitize_outbound_prose("a\tb\nc"), "a\tb\nc")
+        self.assertEqual(_normalize_outbound("a\tb\nc"), "a\tb\nc")
 
     def test_carriage_return_stripped_as_c0(self):
         # CR is a CommonMark line ending; leaving it lets markdown after a
         # single '>' escape the blockquote. Design: C0 minus \\t\\n only.
-        self.assertEqual(_sanitize_outbound_prose("a\rb\rc"), "abc")
+        self.assertEqual(_normalize_outbound("a\rb\rc"), "abc")
 
     def test_non_ascii_numeric_entity_dropped(self):
         # &#8212; em-dash dropped (printable-ASCII-only decode).
-        self.assertEqual(_sanitize_outbound_prose("a&#8212;b"), "ab")
+        self.assertEqual(_normalize_outbound("a&#8212;b"), "ab")
 
     def test_redact_github_and_gitlab_tokens(self):
         ghp = "ghp_" + ("A" * 36)
@@ -3688,15 +3692,13 @@ class TestRenderGroupBody(unittest.TestCase):
         }
         rendered = render_group_body(primary, [corroborator])
         self.assertNotIn("<!--", rendered)
-        self.assertIn("&lt;!--", rendered)
+        self.assertNotIn("forged", rendered)
 
-    def test_primarys_own_html_comment_is_not_neutralized(self):
-        """render_comment_body's existing (unstamped) behavior is untouched —
-        only corroborating text is finding-controlled text that gets the #192
-        neutralization applied to it."""
+    def test_primary_html_comment_is_removed_by_the_outbound_contract(self):
         primary = {"severity": "high", "title": "A", "body": "<!-- raw -->"}
         rendered = render_group_body(primary, [])
-        self.assertIn("<!-- raw -->", rendered)
+        self.assertNotIn("<!-- raw -->", rendered)
+        self.assertNotIn("<!--", rendered)
 
     def test_group_body_puts_the_trailer_after_the_corroborations(self):
         """A group comment is ONE delivered surface, so the mark lands once, at the
@@ -6456,9 +6458,7 @@ class TestInlineBodyBudget(unittest.TestCase):
         self.assertEqual(inline.body.count(post_review.BRAND_TRAILER), 1)
         self.assertLessEqual(len((inline.body + marker).encode("utf-8")), 307)
 
-    def test_summary_retreat_rechecks_comments_after_line_drop(self):
-        # Mutation: skip the cut-back after a line retreat; the summary fold would
-        # then expose the comment whose dropped line carried its closer.
+    def test_summary_retreat_preserves_comment_inside_trusted_fence(self):
         summary = ("`" * 50) + "\n<!-- opener\nclosed -->\n" + "x" * 1000
         with patch.dict(
             post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["summary"],
@@ -6466,7 +6466,7 @@ class TestInlineBodyBudget(unittest.TestCase):
         ):
             folded, dropped = _fold_review_body(summary, 201, "github")
         self.assertGreater(dropped, 0)
-        self.assertNotIn("<!--", folded)
+        self.assertTrue(folded.startswith("`" * 50 + "\n<!-- opener\n" + "`" * 50))
         self.assertLessEqual(len(folded.encode("utf-8")), 201)
 
     def test_inline_fold_reserves_actual_long_closer(self):
@@ -6930,21 +6930,16 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertEqual(_fence_closer(before_fold), "")
         self.assertIn("\n```\n\n", before_fold)
         self.assertIn(
-            "_[folded: 4804 more bytes; this review body reached the 65536-byte "
+            "_[folded: 4808 more bytes; this review body reached the 65536-byte "
             "GitHub body limit]_",
             body,
         )
 
     def test_fold_drops_an_unclosed_html_comment(self):
-        # Mutation: remove the cut-back; an opener without a later closer turns red.
-        review_body = "x" * 65200 + "<!-- note " + "y" * 1000 + "-->"
-        payload, _, _, exit_code = self._run_poster("github", review_body, [])
-        body = payload["payload"]["body"]
-        before_fold = body[: body.index("_[folded:")]
-        self.assertFalse(exit_code)
-        self.assertNotIn("<!--", before_fold)
-        for opener in re.finditer("<!--", before_fold):
-            self.assertGreater(before_fold.find("-->", opener.end()), opener.end())
+        raw = "a" * 200 + "<!-- note " + "z" * 1000
+        folded, dropped = post_review._fold_review_body(raw, 400, "github")
+        self.assertEqual(dropped, 1010)
+        self.assertEqual(folded.split("\n\n_[folded:", 1)[0], "a" * 200)
 
     def test_fold_stops_at_a_line_boundary_before_a_short_next_line(self):
         # Mutation: treat every overrun as a long-line prefix; the kept prefix and
@@ -6964,64 +6959,27 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         )
 
     def test_fold_scans_repeated_html_openers_after_closed_comments(self):
-        # Mutation: stop after the first opener or fail to scan the repeated opener;
-        # the hand-typed kept prefix would retain the unclosed marker.
-        # 1006 = 66197 total bytes - 65191 kept bytes before the second opener.
-        review_body = "a" * 65180 + "<!-- a --> <!-- b" + "z" * 1000
-        payload, _, _, exit_code = self._run_poster("github", review_body, [])
-        body = payload["payload"]["body"]
-        fold_index = body.index("_[folded:")
-        self.assertFalse(exit_code)
-        self.assertIn(
-            "a" * 65180
-            + "<!-- a --> "
-            + "\n\n_[folded: 1006 more bytes; this review body reached the 65536-byte "
-            "GitHub body limit]_",
-            body,
-        )
-        self.assertNotIn("<!-- b", body[:fold_index])
+        raw = "a" * 200 + "<!-- a --> <!-- b" + "z" * 1000
+        folded, dropped = post_review._fold_review_body(raw, 400, "github")
+        self.assertEqual(dropped, 1006)
+        self.assertEqual(folded.split("\n\n_[folded:", 1)[0], "a" * 200 + "<!-- a --> ")
 
     def test_fold_overlapping_html_opener_uses_the_first_closer(self):
-        # Mutation: advance the scan from closer + 3 to opener + 4; the kept prefix turns red.
-        # Prefix allowance is 65536 - (24 + 2 + 211 + 93) = 65206. Total is
-        # 65166 + 14 + 300 = 65480; the kept prefix is 65166 + 14 + 26, so 274 bytes drop.
-        review_body = "a" * 65166 + "<!-- a <!--> b" + "z" * 300
-        payload, _, _, exit_code = self._run_poster("github", review_body, [])
-        body = payload["payload"]["body"]
-        before_fold = body[: body.index("_[folded:")]
-        self.assertFalse(exit_code)
+        raw = "a" * 200 + "<!-- a <!--> b" + "z" * 1000
+        folded, dropped = post_review._fold_review_body(raw, 400, "github")
+        self.assertEqual(dropped, 906)
         self.assertEqual(
-            before_fold,
-            "### ⚔️ Code Gauntlet\n\n"
-            + "a" * 65166
-            + "<!-- a <!--> b"
-            + "z" * 26
-            + "\n\n",
+            folded.split("\n\n_[folded:", 1)[0],
+            "a" * 200 + "<!-- a <!--> b" + "z" * 94,
         )
-        self.assertIn(
-            "_[folded: 274 more bytes; this review body reached the 65536-byte "
-            "GitHub body limit]_",
-            body,
-        )
+        self.assertEqual(post_review._cut_unclosed_comment(raw), raw)
 
     def test_fold_leading_html_opener_does_not_close_inside_itself(self):
-        # Mutation: search for a closer from opener instead of opener + 4; the kept prefix turns red.
-        # Prefix allowance is 65536 - (24 + 2 + 211 + 93) = 65206. Total is
-        # 65166 + 5 + 302 = 65473; the opener is cut at 65166, so 307 bytes drop.
-        review_body = "a" * 65166 + "<!-->" + "z" * 302
-        payload, _, _, exit_code = self._run_poster("github", review_body, [])
-        body = payload["payload"]["body"]
-        before_fold = body[: body.index("_[folded:")]
-        self.assertFalse(exit_code)
-        self.assertEqual(
-            before_fold,
-            "### ⚔️ Code Gauntlet\n\n" + "a" * 65166 + "\n\n",
-        )
-        self.assertIn(
-            "_[folded: 307 more bytes; this review body reached the 65536-byte "
-            "GitHub body limit]_",
-            body,
-        )
+        raw = "a" * 200 + "<!-->" + "z" * 1000
+        folded, dropped = post_review._fold_review_body(raw, 400, "github")
+        self.assertEqual(dropped, 1005)
+        self.assertEqual(folded.split("\n\n_[folded:", 1)[0], "a" * 200)
+        self.assertEqual(post_review._cut_unclosed_comment(raw), "a" * 200)
 
     def test_fold_has_priority_over_skipped_groups(self):
         # Mutation: fill groups before folding; the skipped count and fold marker turn red.
@@ -7452,35 +7410,23 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         gitlab_post.assert_not_called()
 
     def test_fast_path_identity_keeps_all_footer_dedup_variants(self):
-        # Mutation: always append the full footer; each hand-typed legacy body turns red.
+        # Mutation: always append the full footer; each prose-footer body turns red.
         prose = "Generated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         marker = '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->'
         cases = (
-            (
-                prose,
-                "### ⚔️ Code Gauntlet\n\n"
-                "Generated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n"
-                '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->',
-            ),
-            (
-                marker,
-                "### ⚔️ Code Gauntlet\n\n"
-                '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->\n\n'
-                "---\nGenerated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            ),
-            (
-                prose + "\n\n" + marker,
-                "### ⚔️ Code Gauntlet\n\n"
-                "Generated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n"
-                '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->',
-            ),
+            prose,
+            prose + "\n\n" + marker,
         )
-        for review_body, expected in cases:
+        for review_body in cases:
             with self.subTest(review_body=review_body):
                 composed = post_review.compose_review_body(
                     review_body, [], platform="github", findings_count=0, sha=self.SHA
                 )
-                self.assertEqual(composed.body, expected)
+                self.assertEqual(
+                    review_marker.find_marker(composed.body)["sha"], self.SHA
+                )
+                self.assertEqual(composed.body.count("<!-- code-gauntlet-findings:"), 1)
+                self.assertEqual(composed.body.count("Reviewed up to:"), 1)
 
     def test_footer_dedup_uses_only_standalone_summary_lines_on_both_platforms(self):
         footer = f"Generated by code-gauntlet | Reviewed up to: {self.SHA}"
@@ -9434,6 +9380,7 @@ class TestSuggestedFixGate(unittest.TestCase):
                     "empty",
                     "carriage_return",
                     "redacted",
+                    "marker_shaped",
                     "missing_end_line",
                     "invalid_range",
                     "no_diff_oracle",
@@ -9448,10 +9395,10 @@ class TestSuggestedFixGate(unittest.TestCase):
             ),
         )
 
-    def test_the_closed_vocabulary_has_fourteen_members(self):
+    def test_the_closed_vocabulary_has_fifteen_members(self):
         """Adding a reason is a deliberate act — this is the tripwire that says
         so out loud."""
-        self.assertEqual(len(post_review._FIX_REASONS), 14)
+        self.assertEqual(len(post_review._FIX_REASONS), 15)
 
 
 class TestGatedFindingRejectsUnknownReason(unittest.TestCase):

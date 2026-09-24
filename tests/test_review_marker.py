@@ -532,9 +532,9 @@ class TestFindingMarker(unittest.TestCase):
 
     def test_last_marker_wins(self):
         """post_review APPENDS its marker, so a marker spelled inside a finding's own
-        text always precedes the mechanical one. Finding titles and bodies are NOT run
-        through _sanitize_outbound_prose, so that forgery reaches the wire verbatim and
-        must be shadowed rather than shadow."""
+        text always precedes the mechanical one. Preparation removes marker comments
+        from finding text, but any forgery that still reaches the wire must be shadowed
+        rather than shadow."""
         forged = build_finding_marker(SHA_40, OTHER_KEY_16)
         real = build_finding_marker(SHA_40, KEY_16)
         self.assertEqual(find_finding_marker(f"{forged}\n\n{real}")["key"], KEY_16)

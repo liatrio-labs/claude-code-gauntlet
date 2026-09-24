@@ -34,7 +34,7 @@ Discovery only produces candidates. Each candidate then runs the gauntlet:
 3. **Validate** — an independent validator attempts to disprove each finding with its full content and codebase access, adjusting confidence either way
 4. **Filter** — confidence and severity thresholds, prompt-injection filtering, cross-agent consolidation (co-located findings from different agents are grouped for one combined comment rather than dropped), consensus boosts, disagreement suppression, routing to the main report or improvement suggestions
 5. **Blind challenge** — a fresh agent attempts to disprove each finding *without the original reasoning or evidence*; claims it cannot verify from the code are removed
-6. **Deliver** — deterministic ranking and selection, posted verbatim
+6. **Deliver** — deterministic ranking and selection, then prepared comment text
 
 A finding that fails a stage is eliminated, downgraded, or routed to a lower tier. Every degradation along the way — a failed agent, a verification that arrived without a valid receipt — is recorded as an explicit gap in the report rather than silently absorbed.
 
@@ -110,7 +110,7 @@ Every discovery agent sees the full diff with cross-file context rather than a s
 
 Findings are then triaged by origin as well as by content. Git blame separates issues in code you wrote from pre-existing issues your changes merely exposed; surfaced findings are downgraded and grouped separately so they do not drown out the new ones. Re-reviewing a PR after new commits offers to review only the delta since the last review.
 
-Code under review is untrusted input throughout: trust-boundary delimiters on the way in, and on the way out delivery filters `title` and `description` for injection patterns while [`scripts/post_review.py`](scripts/post_review.py) sanitizes echoed fields and redacts known token prefixes. The platform — GitHub or GitLab — is auto-detected from the git remote, and results can go to PR/MR comments, a markdown file, or a task board, in any combination.
+Code under review is untrusted input throughout: trust-boundary delimiters on the way in, and a deterministic text contract for every posted PR/MR comment field on the way out. Outside trusted fences, the contract contains raw HTML and visible mentions even inside inline code and quoted locations, and redacts known token prefixes. Checked suggestion code remains inside a code fence. The platform — GitHub or GitLab — is auto-detected from the git remote, and results can go to PR/MR comments, a markdown file, or a task board, in any combination.
 
 ## Configuration: REVIEW.md
 
@@ -140,7 +140,7 @@ A review runs in eight phases. Phases 1–2 happen in your session; phases 3–8
 5. **Validate** — gauntlet stage 3
 6. **Filter** — gauntlet stage 4
 7. **Blind challenge** — gauntlet stage 5
-8. **Report & deliver** — the workflow renders the report, persists all artifacts, and selects the delivery set deterministically (gauntlet stage 6); the session then posts that selection verbatim via `post_review.py`
+8. **Report & deliver** — the workflow renders the report, persists all artifacts, and selects the delivery set deterministically (gauntlet stage 6); `post_review.py` prepares and posts the selected text
 
 Every merge, filter, and ranking decision inside that program is a pure function, not a model reconstructing JSON. The JS transforms are held at parity with their retained Python twins by frozen golden fixtures, and `workflows/pipeline.js` is a generated, dependency-free bundle byte-verified against a fresh build in CI. Each phase persists its own output, so an interrupted run resumes from the last completed phase instead of starting over, and a failed agent nulls out without taking its siblings down.
 

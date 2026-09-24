@@ -111,7 +111,9 @@ from detect_prior_review import gitlab_prior_delivery_state
 from diff_lines import walk_diff
 from report_severity import normalize_report_severity
 from review_marker import (
+    FINDING_MARKER_TOKEN,
     LEGACY_PRODUCT,
+    MARKER_TOKENS,
     SHA_RE,
     build_finding_marker,
     build_footer,
@@ -679,10 +681,9 @@ _TRUNCATION_MARKER = "…[truncated]"
 _GH_TOKEN_RE = re.compile(r"(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}")
 _GL_TOKEN_RE = re.compile(r"(?:glpat-|glrt-)[A-Za-z0-9_\-]{20,}")
 
-_ENTITY_DEC_RE = re.compile(r"&#(\d+);")
+_ENTITY_DEC_RE = re.compile(r"&#([0-9]+);")
 _ENTITY_HEX_RE = re.compile(r"&#x([0-9a-fA-F]+);", re.IGNORECASE)
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
-_HTML_COMMENT_UNTERMINATED_RE = re.compile(r"<!--[\s\S]*\Z")
 _BACKTICK_RUN_RE = re.compile(r"`{3,}")
 
 # Invisible / control code points stripped from outbound prose. Built as an
@@ -719,7 +720,8 @@ def _strip_invisibles(text):
 def _decode_numeric_entities(text):
     """Decode printable-ASCII numeric entities; drop all others.
 
-    Named entities are left untouched. Non-ASCII numeric entities (e.g.
+    ``&commat;`` is decoded too; other named entities are left untouched.
+    Non-ASCII numeric entities (e.g.
     ``&#8212;``) are dropped deliberately — decoding the full Unicode range
     would reintroduce smuggleable invisibles if pass order ever drifts.
     Markdown parses fences before HTML entity decode, so a surviving literal
@@ -740,23 +742,174 @@ def _decode_numeric_entities(text):
 
     text = _ENTITY_DEC_RE.sub(_dec, text)
     text = _ENTITY_HEX_RE.sub(_hex, text)
-    return text
+    return text.replace("&commat;", "@")
 
 
-def _sanitize_outbound_prose(text):
-    """Sanitize repo-derived / quoted prose before it enters a PR/MR comment.
+_DANGEROUS_LT_RE = re.compile(r"<(?=[A-Za-z/!?])")
+_MARKER_OPEN_RE = re.compile(
+    r"<!--\s*(?:"
+    + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
+    + r")\s*:"
+)
+_FENCE_SHAPE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*([`~])\1{2,}")
 
-    Order is load-bearing: decode entities first (so ``&#60;!--`` becomes a
-    real comment), then strip terminated HTML comments, then unterminated
-    ``<!--`` through EOS, then invisibles, then collapse backtick runs of
-    length ≥3 to exactly two.
-    """
-    text = _decode_numeric_entities(text)
-    text = _HTML_COMMENT_RE.sub("", text)
-    text = _HTML_COMMENT_UNTERMINATED_RE.sub("", text)
-    text = _strip_invisibles(text)
-    text = _BACKTICK_RUN_RE.sub("``", text)
-    return text
+
+def _remove_comments(text):
+    while True:
+        cleaned = _HTML_COMMENT_RE.sub("", text)
+        if cleaned == text:
+            return text
+        text = cleaned
+
+
+def _normalize_outbound(text):
+    while True:
+        normalized = _strip_invisibles(_remove_comments(_decode_numeric_entities(text)))
+        if normalized == text:
+            return text
+        text = normalized
+
+
+def _break_marker_openers(text):
+    return _MARKER_OPEN_RE.sub(lambda match: "&lt;" + match.group()[1:], text)
+
+
+def _escape_visible(text, *, code=False):
+    text = _DANGEROUS_LT_RE.sub("\uff1c" if code else "&lt;", text)
+    return re.sub(
+        r"@",
+        lambda match: (
+            "\uff20"
+            if not match.start()
+            or not re.match(r"[A-Za-z0-9]", text[match.start() - 1])
+            else "@"
+        ),
+        text,
+    )
+
+
+def _escaped_tick(text, index):
+    backslashes = 0
+    index -= 1
+    while index >= 0 and text[index] == "\\":
+        backslashes += 1
+        index -= 1
+    return bool(backslashes % 2)
+
+
+def _contain_line(line):
+    line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
+    out = []
+    index = 0
+    while index < len(line):
+        if line[index] == "`":
+            if _escaped_tick(line, index):
+                out.append("`")
+                index += 1
+                continue
+            end = index
+            while end < len(line) and line[end] == "`":
+                end += 1
+            width = end - index
+            # Only a complete run of exactly this width closes; backslashes
+            # inside the span have no escape meaning.
+            cursor = end
+            close = -1
+            while cursor < len(line):
+                tick = line.find("`", cursor)
+                if tick < 0:
+                    break
+                after = tick
+                while after < len(line) and line[after] == "`":
+                    after += 1
+                if after - tick == width:
+                    close = tick
+                    break
+                cursor = after
+            if close >= 0:
+                out.append(
+                    line[index : close + width].replace(
+                        line[end:close],
+                        _escape_visible(line[end:close], code=True),
+                        1,
+                    )
+                )
+                index = close + width
+                continue
+            out.append("\\`")
+            index += 1
+            continue
+        next_tick = line.find("`", index)
+        if next_tick < 0:
+            next_tick = len(line)
+        out.append(_escape_visible(line[index:next_tick]))
+        index = next_tick
+    return "".join(out)
+
+
+def _prepare_text(
+    text, *, single_line=False, collapse_ticks=False, cap=None, trust_fences=True
+):
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+    if not text.strip():
+        return ""
+    text = _normalize_outbound(text)
+    text = _redact_secrets(text)
+    if collapse_ticks:
+        text = _BACKTICK_RUN_RE.sub("``", text)
+    if single_line:
+        text = re.sub(r"[\r\n]+", " ", text)
+    if cap is not None:
+        text = _cap_rule_text(text, cap)
+    if not text.strip():
+        return ""
+    intervals = []
+    fence = (
+        _open_fence(text, strict=True, intervals=intervals)
+        if not single_line and trust_fences
+        else None
+    )
+    lines = text.split("\n")
+    prepared = []
+    protected_lines = []
+    offset = 0
+    for line in lines:
+        protected = any(start <= offset < end for start, end in intervals)
+        original_length = len(line)
+        shape = _FENCE_SHAPE_RE.match(line) if not single_line else None
+        if shape and not protected:
+            tick = shape.start(1)
+            line = line[:tick] + "\\" + line[tick:]
+        prepared.append(line if protected else _contain_line(line))
+        protected_lines.append(protected)
+        offset += original_length + 1
+    start = None
+    for index in range(len(prepared) + 1):
+        if index < len(prepared) and protected_lines[index]:
+            if start is None:
+                start = index
+        elif start is not None:
+            prepared[start:index] = _break_marker_openers(
+                "\n".join(prepared[start:index])
+            ).split("\n")
+            start = None
+    result = "\n".join(prepared)
+    if fence is not None:
+        result += "\n" + fence[0] * fence[1]
+    return result if result.strip() else ""
+
+
+def prepare_prose(text):
+    """Prepare multiline, untrusted text for a posted Markdown field."""
+    return _prepare_text(text)
+
+
+def prepare_line(text):
+    """Prepare a single-line, untrusted display field."""
+    return _prepare_text(text, single_line=True)
 
 
 def _redact_secrets(text):
@@ -784,13 +937,13 @@ def _prepared_prose(text, *, cap=False):
 
     Returns ``None`` when the field is absent before or after processing.
     """
-    text = _rendered_text(text)
-    if not text:
-        return None
-    text = _redact_secrets(_sanitize_outbound_prose(text))
-    if cap:
-        text = _cap_rule_text(text)
-    return _rendered_text(text)
+    prepared = _prepare_text(
+        text,
+        collapse_ticks=True,
+        cap=_RULE_TEXT_CAP if cap else None,
+        trust_fences=not cap,
+    )
+    return _rendered_text(prepared)
 
 
 def _blockquote(text):
@@ -862,6 +1015,7 @@ def _suggestion_fence(payload, *, offsets=None):
 _FIX_NON_STRING = "non_string"
 _FIX_EMPTY = "empty"
 _FIX_REDACTED = "redacted"
+_FIX_MARKER_SHAPED = "marker_shaped"
 _FIX_MISSING_END_LINE = "missing_end_line"
 _FIX_INVALID_RANGE = "invalid_range"
 _FIX_NO_ORACLE = "no_diff_oracle"
@@ -891,6 +1045,7 @@ _FIX_REASONS = frozenset(
         _FIX_NON_STRING,
         _FIX_EMPTY,
         _FIX_REDACTED,
+        _FIX_MARKER_SHAPED,
         _FIX_MISSING_END_LINE,
         _FIX_INVALID_RANGE,
         _FIX_NO_ORACLE,
@@ -1069,6 +1224,8 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
     # guaranteed no-op, so the posted fence is byte-identical to what was checked.
     if _redact_secrets(text) != text:
         return False, _FIX_REDACTED
+    if _MARKER_OPEN_RE.search(text):
+        return False, _FIX_MARKER_SHAPED
 
     line = finding.get("line")
     end_line = finding.get("end_line")
@@ -1610,11 +1767,12 @@ def _finding_sections(finding, *, fence_offsets=None):
     severity = _normalize_report_severity(finding.get("severity"))
     emoji = SEVERITY_EMOJI.get(severity, SEVERITY_EMOJI_FALLBACK)
 
-    title = finding.get("title", "Finding")
-    body = finding.get("body", "")
+    raw_title = finding.get("title")
+    title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
+    body = prepare_prose(finding.get("body", ""))
     suggested_fix = _fix_code_text(finding.get("suggested_fix_code"))
 
-    parts = [f"**{emoji} [{severity.upper()}] {title}**", "", body]
+    parts = [f"**{emoji} [{severity.upper()}] {title or 'Finding'}**", "", body]
 
     # Prose fix suggestion (issue #47 / #122). Agent-authored: sanitize +
     # redact, uncapped. Structural sanitize only — not the cited-rule cap.
@@ -1622,8 +1780,9 @@ def _finding_sections(finding, *, fence_offsets=None):
     if suggestion_text:
         parts += ["", "**Suggested fix:**", suggestion_text]
 
-    # Cited rule (issue #47 / #122). Repo-derived: sanitize → redact → cap →
-    # blockquote. Each candidate is prepared independently; `claude_md_rule`
+    # Cited rule: normalize, redact, collapse long backtick runs, cap the source
+    # at 500 characters, contain every line, then blockquote. Each candidate
+    # is prepared independently; `claude_md_rule`
     # wins only when it survives sanitize (comment-only rules fall through).
     rule_text = _prepared_prose(finding.get("claude_md_rule"), cap=True)
     if not rule_text:
@@ -1684,8 +1843,9 @@ def key_material_body(finding):
     surrounding-whitespace labels, off-enum labels including empty strings, missing labels that
     previously defaulted to medium, and non-strings that
     previously raised and produced no delivered finding key. Canonical severities and plain
-    case variants keep their bytes and keys. Affected already-delivered findings may post
-    again once on the same SHA; the new normalized keys then support reruns normally.
+    case variants keep their bytes and keys. Preparing posted title, body, suggestion and
+    rule text intentionally re-keys affected findings once. None titles also now use the
+    absent-title key. The new keys then support reruns normally.
     """
     return _finding_sections(_key_material_finding(finding))
 
@@ -1738,16 +1898,17 @@ def consolidate_delivery(findings):
 
 def _render_corroboration(finding):
     """Render one non-primary group member as a corroborating section."""
-    agent = finding.get("agent", "unknown")
-    dimension = finding.get("dimension", "unknown")
+    agent = prepare_line(finding.get("agent", "unknown"))
+    dimension = prepare_line(finding.get("dimension", "unknown"))
     confidence = finding.get("confidence")
-    conf_text = str(confidence) if confidence is not None else "?"
-    title = finding.get("title", "Finding")
-    body = finding.get("body", "")
+    conf_text = prepare_line(confidence) if confidence is not None else "?"
+    raw_title = finding.get("title")
+    title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
+    body = prepare_prose(finding.get("body", ""))
     parts = [
         f"**Corroborating finding — {agent} ({dimension}, confidence {conf_text}):**",
         "",
-        f"**{title}**",
+        f"**{title or 'Finding'}**",
     ]
     if body:
         parts += ["", body]
@@ -1769,9 +1930,8 @@ def render_group_body(primary, corroborators, *, fence_offsets=None):
     most the one header, measured from the anchor the group is posted at.
     Each corroborator is appended as its own section; that appended text is
     finding-controlled, so it is run through the same ``<!--`` neutralization
-    ``build_skipped_section`` applies (see its docstring) — the primary's own
-    render is deliberately left alone, matching its existing raw-on-the-wire
-    behavior.
+    ``build_skipped_section`` applies (see its docstring). The primary's fields
+    are prepared before this group is assembled.
     """
     return _render_group_sections(
         primary, corroborators, fence_offsets=fence_offsets
@@ -1790,6 +1950,18 @@ def _render_group_sections(primary, corroborators, *, fence_offsets=None):
 
 def _skipped_location(filepath, line):
     return f"{filepath}:{line}" if line is not None else str(filepath or "?")
+
+
+def _quoted_location(value):
+    """Keep display location text inside a delimiter longer than its tick runs."""
+    value = _redact_secrets(_normalize_outbound(str(value)))
+    value = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", value)
+    value = _escape_visible(value, code=True).replace("\r", " ").replace("\n", " ")
+    longest = max((len(run) for run in re.findall(r"`+", value)), default=0)
+    delimiter = "`" * (longest + 1)
+    if value.startswith(("`", " ")) or value.endswith(("`", " ")):
+        value = f" {value} "
+    return f"{delimiter}{value}{delimiter}"
 
 
 def _plural(count, singular, plural=None):
@@ -1831,14 +2003,11 @@ def _skipped_frame(n, shown, inline_count):
 def _skipped_piece(filepath, line, finding):
     """Render and neutralize one whole skipped entry, including its heading.
 
-    The finding's file, line, title, and body reach the wire raw; nothing mechanical
-    follows a skipped entry, so a forged finding-key or summary marker would parse as
-    a real signal on the next run. Neutralizing the whole piece, heading included,
-    closes every present or future field by construction. The frame is code-owned and
-    contains no ``<``.
+    The finding fields are prepared by their renderers. The whole piece also
+    neutralizes any remaining marker opener, including one in its heading.
     """
     location = _skipped_location(filepath, line)
-    piece = f"\n\n#### `{location}`\n\n{_finding_sections(finding)}"
+    piece = f"\n\n#### {_quoted_location(location)}\n\n{_finding_sections(finding)}"
     return piece.replace("<!--", "&lt;!--")
 
 
@@ -1888,10 +2057,11 @@ def _codepoint_prefix(text, allowance):
 
 
 # Twin of ``foldProse`` in ``workflows/src/renderReport.js``.
-def _open_fence(text):
+def _open_fence(text, *, strict=False, intervals=None):
     """Return the final open prose fence as ``(char, length, offset)``."""
 
     state = None
+    opened_at = None
     line_start = 0
     index = 0
 
@@ -1907,8 +2077,8 @@ def _open_fence(text):
             end += 1
         return char, end - indent, end, indent
 
-    def visit(line, offset):
-        nonlocal state
+    def visit(line, offset, line_end):
+        nonlocal state, opened_at
         run = line_run(line)
         if state is not None:
             if (
@@ -1918,17 +2088,21 @@ def _open_fence(text):
                 and all(character in " \t" for character in line[run[2] :])
             ):
                 state = None
+                if intervals is not None:
+                    intervals.append((opened_at, line_end))
             return
         if (
             run is not None
             and run[1] >= 3
+            and (not strict or run[3] == 0)
             and not (run[0] == "`" and "`" in line[run[2] :])
         ):
             state = (run[0], run[1], offset + run[3])
+            opened_at = offset
 
     while index < len(text):
         if text[index] in "\r\n":
-            visit(text[line_start:index], line_start)
+            visit(text[line_start:index], line_start, index + 1)
             if (
                 text[index] == "\r"
                 and index + 1 < len(text)
@@ -1940,7 +2114,9 @@ def _open_fence(text):
             line_start = index
         else:
             index += 1
-    visit(text[line_start:], line_start)
+    visit(text[line_start:], line_start, len(text))
+    if intervals is not None and state is not None:
+        intervals.append((opened_at, len(text)))
     return state
 
 
@@ -1949,14 +2125,71 @@ def _fence_closer(prefix):
     return "" if state is None else state[0] * state[1]
 
 
-def _cut_unclosed_comment(prefix):
+def _code_intervals(text):
+    """Return paired single-line spans and trusted fences as separate intervals."""
+    fences = []
+    intervals = []
+    _open_fence(text, intervals=fences)
+    offset = 0
+    for line in text.split("\n"):
+        if any(start <= offset < end for start, end in fences):
+            offset += len(line) + 1
+            continue
+        cursor = 0
+        while cursor < len(line):
+            start = line.find("`", cursor)
+            if start < 0:
+                break
+            end = start
+            while end < len(line) and line[end] == "`":
+                end += 1
+            if _escaped_tick(line, start):
+                cursor = start + 1
+                continue
+            width = end - start
+            close = end
+            while close < len(line):
+                close = line.find("`", close)
+                if close < 0:
+                    break
+                after = close
+                while after < len(line) and line[after] == "`":
+                    after += 1
+                if after - close == width:
+                    intervals.append((offset + start, offset + after))
+                    cursor = after
+                    break
+                close = after
+            else:
+                cursor = end
+            if close < 0:
+                cursor = end
+        offset += len(line) + 1
+    return intervals, fences
+
+
+def _retreat_inside_span(text, cut, intervals):
+    for start, end in intervals:
+        if start < cut < end:
+            return text[:start]
+    return text[:cut]
+
+
+def _cut_unclosed_comment(prefix, intervals=None):
     """Remove the first unclosed HTML comment and everything after it."""
+
+    if intervals is None:
+        spans, fences = _code_intervals(prefix)
+        intervals = spans + fences
 
     position = 0
     while True:
         opener = prefix.find("<!--", position)
         if opener < 0:
             return prefix
+        if any(start <= opener < end for start, end in intervals):
+            position = opener + 4
+            continue
         closer = prefix.find("-->", opener + 4)
         if closer < 0:
             return prefix[:opener]
@@ -1983,7 +2216,14 @@ def _drop_last_line(prefix):
     return prefix[:line_start]
 
 
-def _retreat_fold_prefix(prefix, *, cut_inside_line, suggestion_start=None):
+def _retreat_fold_prefix(
+    prefix,
+    *,
+    cut_inside_line,
+    suggestion_start=None,
+    intervals=(),
+    comment_intervals=None,
+):
     """Retreat a fold prefix and re-cut any HTML comment it exposes."""
     if suggestion_start is not None:
         prefix = prefix[:suggestion_start]
@@ -1993,13 +2233,16 @@ def _retreat_fold_prefix(prefix, *, cut_inside_line, suggestion_start=None):
     else:
         prefix = _drop_last_line(prefix)
         cut_inside_line = False
-    return _cut_unclosed_comment(prefix), cut_inside_line
+    prefix = _retreat_inside_span(prefix, len(prefix), intervals)
+    return _cut_unclosed_comment(prefix, comment_intervals), cut_inside_line
 
 
 def _fold_review_body(text, allowance, platform):
     """Fold *text* into *allowance* bytes while preserving lines and code points."""
     limits = _body_limit(platform)
     total = _utf8_len(text)
+    intervals, fences = _code_intervals(text)
+    comment_intervals = intervals + fences
 
     def fold_line_for(byte_count):
         return (
@@ -2029,7 +2272,8 @@ def _fold_review_body(text, allowance, platform):
                 cut_inside_line = bool(partial) and not partial.endswith(("\n", "\r"))
             break
 
-    prefix = _cut_unclosed_comment(prefix)
+    prefix = _retreat_inside_span(text, len(prefix), intervals)
+    prefix = _cut_unclosed_comment(prefix, comment_intervals)
 
     while True:
         closer = _fence_closer(prefix)
@@ -2043,7 +2287,10 @@ def _fold_review_body(text, allowance, platform):
         # point at a time: dropping the line would discard the partial that a cut
         # inside an opener run keeps (the PARTIAL fixture row).
         prefix, cut_inside_line = _retreat_fold_prefix(
-            prefix, cut_inside_line=cut_inside_line
+            prefix,
+            cut_inside_line=cut_inside_line,
+            intervals=intervals,
+            comment_intervals=comment_intervals,
         )
 
 
@@ -2069,6 +2316,8 @@ def _fold_inline_body(sections, allowance, platform, surface):
     """Fold inline *sections* into *allowance* bytes without breaking markdown."""
     limits = _body_limit(platform, surface)
     total = _utf8_len(sections)
+    intervals, fences = _code_intervals(sections)
+    comment_intervals = intervals + fences
 
     def fold_line_for(byte_count):
         return (
@@ -2099,7 +2348,8 @@ def _fold_inline_body(sections, allowance, platform, surface):
                 cut_inside_line = bool(partial) and not partial.endswith(("\n", "\r"))
             break
 
-    prefix = _cut_unclosed_comment(prefix)
+    prefix = _retreat_inside_span(sections, len(prefix), intervals)
+    prefix = _cut_unclosed_comment(prefix, comment_intervals)
 
     while True:
         state = _open_fence(prefix)
@@ -2111,6 +2361,8 @@ def _fold_inline_body(sections, allowance, platform, surface):
                 prefix,
                 cut_inside_line=cut_inside_line,
                 suggestion_start=suggestion_start,
+                intervals=intervals,
+                comment_intervals=comment_intervals,
             )
             continue
 
@@ -2124,7 +2376,10 @@ def _fold_inline_body(sections, allowance, platform, surface):
         # After an overlong-line cut the prefix ends mid-line, so retreat one code
         # point at a time. This preserves the shared summary fold's opener behavior.
         prefix, cut_inside_line = _retreat_fold_prefix(
-            prefix, cut_inside_line=cut_inside_line
+            prefix,
+            cut_inside_line=cut_inside_line,
+            intervals=intervals,
+            comment_intervals=comment_intervals,
         )
 
 
@@ -2223,17 +2478,18 @@ def compose_review_body(
 ):
     """Compose and budget the complete summary comment for one platform.
 
-    The fast path preserves the supplied body bytes and any existing footer halves.
+    The fast path preserves the prepared body and any existing footer halves.
     The bounded path reserves the header, the skipped-section frame and closing line,
     and builds the canonical footer before folding the supplied prose or fitting whole
     skipped groups in list order. No output is printed. This is deliberately not
     idempotent by regex: a hand-typed heading in ``review_body`` yields two headings
     once and self-heals, whereas a phrase-sniffing stripper would make identity depend
-    on counting prose. The composer owns the footer: marker deduplication sees the
-    full ``review_body``, while prose-footer deduplication sees only standalone footer
-    lines with the same head SHA; the bounded path always appends the full canonical
+    on counting prose. Preparation removes terminated comments before footer
+    deduplication; prose-footer deduplication sees only standalone footer lines
+    with the same head SHA. The bounded path always appends the full canonical
     footer, and skipped-finding text never reaches the dedup.
     """
+    review_body = prepare_prose(review_body)
     limits = _body_limit(platform)
     skipped = [entry for group in skipped_groups for entry in group]
     n = len(skipped)
@@ -2866,10 +3122,12 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         :func:`_key_material_finding`), so a key is fence-independent: the apply-check
         can strip a fence here and keep it there without ever moving a delivery key.
         """
+        raw_title = m.get("title")
+        title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
         return finding_key(
             filepath,
             line,
-            m.get("title", ""),
+            title,
             key_material_body(m),
         )
 

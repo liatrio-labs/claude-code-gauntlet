@@ -1187,9 +1187,9 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         self.assertIn("#### `?`", body)
         # The degraded entries' fences were stripped — only the prose survives.
         self.assertNotIn("```suggestion", body)
-        # The forged marker was neutralized inside the skipped section; the
-        # real trailing marker (appended after it) was not.
-        self.assertIn("&lt;!--", body)
+        # The forged terminated marker is removed during field preparation;
+        # only the code-owned trailing marker remains.
+        self.assertNotIn("&lt;!--", body)
         self.assertEqual(body.count("<!--"), 1)
 
     def test_github_summary_budget_omission_matches_mirror(self):

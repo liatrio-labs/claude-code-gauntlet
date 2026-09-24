@@ -83,6 +83,58 @@ ISSUE_47_FIELDS = [
 
 
 class TestSummaryIndexParity(unittest.TestCase):
+    def test_permalinked_summary_slice_and_guard_equality(self):
+        fixture = {
+            "prIdentity": {
+                "platform": "github",
+                "web_origin": "https://github.com",
+                "owner": "o",
+                "repo": "r",
+                "sha_full": "a" * 40,
+            },
+            "findings": [
+                {
+                    "id": "p",
+                    "severity": "high",
+                    "file": "app/@modal/<Slot>.tsx",
+                    "line_start": 8,
+                    "title": "Use `foo()` and `<Slot>`; mail dev@example.test; &#٦٤;",
+                },
+                {
+                    "id": "crossing-location",
+                    "severity": "low",
+                    "file": "src/a<`b.py",
+                    "line_start": 1,
+                    "title": "Path boundary",
+                },
+            ],
+        }
+        script = (
+            "import {renderReport,renderSummaryBody} from './workflows/src/renderReport.js';"
+            "const x="
+            + json.dumps(fixture)
+            + ";process.stdout.write(JSON.stringify([renderReport(x),renderSummaryBody(x)]));"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report, summary = json.loads(result.stdout)
+        self.assertEqual(post_review.summary_body_from_report(report), summary)
+        self.assertEqual(post_review.prepare_prose(summary), summary)
+        self.assertIn("app/\uff20modal/\uff1cSlot>.tsx", summary)
+        self.assertIn("dev@example.test", summary)
+        self.assertIn("&#٦٤;", summary)
+        self.assertIn("%40modal", summary)
+        self.assertIn("%3CSlot%3E.tsx", summary)
+        self.assertIn("src/a\uff1c`b.py", summary)
+        self.assertIn("src/a%3C%60b.py", summary)
+
     def test_delivered_groups_and_summary_slice_cross_runtime(self):
         findings = [
             {

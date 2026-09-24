@@ -32,6 +32,10 @@ Two cautions about attachments:
 
 - Review artifacts under `.code-gauntlet/`, and the comments the pipeline posts, quote excerpts of the source under
   review. Mask tokens, keys, internal hostnames, and anything else sensitive before attaching them.
+  Posted comment fields receive deterministic mention and raw-HTML containment, including
+  inline code and quoted locations. Trusted fences retain normalized and redacted source
+  bytes apart from marker breaks. Report artifacts have a separate rendering contract and
+  may contain source excerpts beyond posted Summary text.
 - Reproductions that drive the benchmark harness (`bench/`) spend real API credits against your own key. Prefer a
   reproduction that runs against the deterministic suites, and say so explicitly if a live run is genuinely
   required.

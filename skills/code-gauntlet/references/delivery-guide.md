@@ -10,7 +10,7 @@ Implementation details for each delivery method in Phase 8, interactive and head
 
 **Batch ALL inline comments into a single review event** — one GitHub notification instead of N separate ones. Notification fatigue causes teams to auto-dismiss AI review within ~10 days.
 
-**The inline comment set is the pipeline's, not yours.** When the user answers "Post to PR/MR" at the Phase 8 delivery question, post the `artifactPaths.postReview` payload verbatim — `selectDelivery` already applied the delivery tier, ranked the survivors, and capped them at `limits.deliveryCap`. Do not re-rank, re-filter, or re-apply the cap. There is no per-finding selection pass: the choice is post or don't.
+**The inline comment set is the pipeline's, not yours.** When the user answers "Post to PR/MR" at the Phase 8 delivery question, pass the `artifactPaths.postReview` payload unchanged to `post_review.py`; the script prepares posted fields. `selectDelivery` already applied the delivery tier, ranked the survivors, and capped them at `limits.deliveryCap`. Do not re-rank, re-filter, or re-apply the cap. There is no per-finding selection pass: the choice is post or don't.
 
 ### Comment body format
 
@@ -51,7 +51,7 @@ per-finding judgement call ("if `suggestion` looks like code, fence it"), which 
 wrong shape: a```suggestion fence is a one-click APPLY button, so turning prose into one on a
 hunch writes the guess straight into the author's branch. The rule is still structural — a fence
 comes from a field that exists to be a patch, or it does not appear — the apply-check is the
-mechanism that keeps that promise now that agents populate the field too.
+mechanism that keeps that promise when agents populate the field too.
 
 A multi-line fence on GitLab carries an offsets header, `` ```suggestion:-m+n ``, with `m`/`n`
 decided by the poster from the discussion's anchor line — never supplied on the finding itself.
@@ -133,6 +133,40 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
 
 **Fields:**
 
+Every posted text field is prepared before Markdown is assembled. Titles and corroborator
+header values use the single-line class; body and suggestion use multiline prose; the cited
+rule is normalized, redacted, and has backtick runs of three or more collapsed to two
+before its source text is capped at 500 characters. Containment then escapes fence-shaped
+lines and unsafe visible characters before blockquote markers are added. Escaping can make
+the posted rule longer than 500 characters. Display
+locations are quoted with a code-span delimiter longer than any path backtick run. The
+caller-supplied `review_body` runs through the same prose guard before composition. A visible
+ASCII `@` at text start or after a non-alphanumeric character becomes U+FF20 FULLWIDTH COMMERCIAL AT,
+including inside inline code, quoted locations and a URL segment such as `/@name`.
+`<` before an ASCII letter, `/`, `!` or `?` becomes `&lt;` in prose and U+FF1C
+FULLWIDTH LESS-THAN SIGN inside a paired inline span or quoted location. Email address
+syntax stays intact. Numeric references and `&commat;` decode to a fixpoint with comment
+removal and invisible stripping; other named references and query ampersands stay literal.
+Secrets are redacted before containment. Inline spans pair on one line at the next exact
+backtick-run length. A wrong pairing can show literal `&lt;` or backslashes, or show
+fullwidth characters in prose, but leaves the text contained. Fullwidth `＜` and `＠`
+inside code and display locations paste as different characters. Permalink URLs are
+encoded separately and retain the original path.
+
+Column-zero fences in body and suggestion text keep raw content after normalization and
+redaction, except that finding-marker opening grammar is broken across the whole fence,
+including across
+newlines. Exact CommonMark closers end a trusted fence: up to three spaces of indent,
+the same fence character and at least the opener length, then only spaces or tabs.
+Other fence-shaped lines have their first fence character escaped, including lines after
+bullets or `[0-9]{1,9}[.)]` list markers followed by a space or tab. Single-line fields
+do not track fences. Cited rules trust no fences: every fence-shaped rule line has its first
+fence character escaped and every line receives outside-fence containment before blockquoting.
+An unclosed trusted body or suggestion fence gets a synthetic closer. A terminated
+HTML comment inside code is removed before fence or inline classification. Fields
+containing only Unicode whitespace are absent; Markdown blank lines still use only
+spaces and tabs.
+
 - `review_body` — exactly the pipeline-rendered Summary section body: counts first, selected findings index,
   and any remainder with selection reasons. Whole index bullets fit within a 12,000-code-point
   limit; later units join the remainder. The change summary stays in the report's Change Context section. `post_review.py`
@@ -153,6 +187,7 @@ and forms the wrapper in code. Wrapper inputs already carrying `review_body` use
   - `suggestion` — optional prose fix advice, rendered under a **Suggested fix:** heading. Carried on every finding the pipeline produces (canonical schema), so the delivery JSON should pass it straight through.
   - `claude_md_rule` / `spec_text` — optional; whichever survives sanitize renders under a heading as a blockquote (`claude_md_rule` preferred when both survive). When `claude_md_rule` is rendered, `rule_source` selects **Cited rule**, **Cited comment**, **Repo precedent**, or **Inconsistency**. Unknown or absent values use **Cited rule**. A `spec_text` fallback uses **Cited rule**. The raw `rule_source` value is never rendered.
   - `suggested_fix_code` — optional code block, rendered as a committable GitHub/GitLab suggestion IF it passes `post_review.py`'s deterministic apply-check at the render site; otherwise stripped and the finding falls back to the prose `suggestion`. A body-budget cut also omits a suggestion block whole. Emitted by discovery agents when the fix is a byte-exact drop-in replacement, or supplied directly by a caller's own post-review JSON — same gate either way.
+    A patch containing marker-shaped text is downgraded with reason `marker_shaped`.
   - Every optional field above treats `null`, `""` and whitespace-only identically to absent: no heading is emitted at all.
 - `owner` — repository owner (GitHub org/user or GitLab group)
 - `repo` — repository name
@@ -194,9 +229,12 @@ python3 {plugin_root}/scripts/post_review.py \
 
 - **GitHub:** Posts a single batched review with inline comments (event: COMMENT), then summary.
 - **GitLab:** Posts a summary note, then per-finding inline discussions with position metadata.
+- **Delivery keys:** Keys hash prepared title and rendered sections. Findings whose posted text
+  changes under this contract may post once more on an open MR, then deduplicate on the new key.
+  A `null` title uses the absent-title key. Grouping, patch gating and folds do not change it.
 - **Diff validation:** Parses diff to verify each finding line is in the PR/MR. Skips invalid lines with warning.
 - **Exit status:** Non-zero when nothing could be delivered, and — GitLab only — when a `--dry-run` finds any malformed inline position. The dry-run payload is still written; read it for what was wrong. Non-zero on both platforms when the composed summary body is still over the platform byte budget after composition; that refusal happens before the post, so no dry-run payload is written for it.
-- **Metadata footer:** Appends the prose `Generated by code-gauntlet | Reviewed up to: {sha}` line and the `code-gauntlet-findings` HTML comment to `review_body`. When the body fits, the marker half deduplicates against the full body; the prose half deduplicates only against a standalone footer line carrying the same head SHA. An over-budget body always ends with the full canonical footer.
+- **Metadata footer:** Appends the prose `Generated by code-gauntlet | Reviewed up to: {sha}` line and the `code-gauntlet-findings` HTML comment to `review_body`. Preparation removes terminated comments before composition; the prose half deduplicates only against a standalone footer line carrying the same head SHA. An over-budget body always ends with the full canonical footer.
 <!-- generated-from-registry-identity:delivery_identity — do not edit; run scripts/generate_contract_requirements.py -->
 - **Identity:** prepends `### ⚔️ Code Gauntlet` to `review_body` and appends `⚔️ *Code Gauntlet*` to every rendered comment body — one mark per delivered surface, never one per finding. Never hand-type either.
 <!-- /generated-from-registry-identity:delivery_identity -->
