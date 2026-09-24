@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import subprocess
@@ -26,6 +27,7 @@ from tests.tools.render_probes import (
     seed,
     serialize_fixture,
     structure,
+    update_cases,
     write_utf8,
 )
 
@@ -151,6 +153,22 @@ def test_blob_prefix_only_normalizes_matching_project_links() -> None:
     assert structure(
         '<a href="https://other.test/file.md">x</a>', blob_prefix=prefix
     ) != structure('<a href="file.md">x</a>')
+
+
+def test_pair_hash_binds_gitlab_links_after_blob_prefix_normalization() -> None:
+    prefix = "http://gitlab.test/cdr-group/probe/-/blob/main/"
+    github_html = '<a href="docs/guide.md">guide</a>'
+    gitlab_html = f'<a href="{prefix}docs/guide.md">guide</a>'
+    normalized_pair = (
+        structure(github_html) + "\0" + structure(gitlab_html, blob_prefix=prefix)
+    )
+    assert (
+        pair_sha256(github_html, gitlab_html, blob_prefix=prefix)
+        == hashlib.sha256(normalized_pair.encode("utf-8")).hexdigest()
+    )
+    assert pair_sha256(github_html, gitlab_html, blob_prefix=prefix) != pair_sha256(
+        github_html, gitlab_html
+    )
 
 
 def test_element_vocabularies_are_closed_and_platform_specific() -> None:
@@ -316,7 +334,7 @@ def test_canary_names_unresolved_seedable_handles_and_skips_plain_handles() -> N
         run_canary(["alice", "missing", "all", "x"], fake_render)
 
 
-def test_gitlab_adapter_uses_expected_request_shape_without_exposing_token() -> None:
+def test_gitlab_adapter_extracts_html_from_json_response() -> None:
     token = "private-render-token-value"
     seen = {}
 
@@ -325,7 +343,7 @@ def test_gitlab_adapter_uses_expected_request_shape_without_exposing_token() -> 
         seen["url"] = request.full_url
         seen["headers"] = request.header_items()
         seen["body"] = json.loads(request.data.decode("utf-8"))
-        return io.BytesIO(b"<p>rendered</p>")
+        return io.BytesIO(b'{"html":"<p>rendered</p>"}')
 
     html = GitLabClient("http://gitlab.test/", token, opener=fake_opener).render(
         "expected\n\nfooter line", "cdr-group/probe"
@@ -343,6 +361,62 @@ def test_gitlab_adapter_uses_expected_request_shape_without_exposing_token() -> 
         "project": "cdr-group/probe",
     }
     assert html == "<p>rendered</p>"
+
+
+def test_divergence_rejects_href_only_difference() -> None:
+    prefix = "http://gitlab.test/cdr-group/probe/-/blob/main/"
+    github_html = '<a href="one.md">guide</a>'
+    gitlab_html = '<a href="two.md">guide</a>'
+    case = {
+        "id": "href_difference",
+        "input": "@alice",
+        "expected": "@alice",
+        "github_probe": {"html": github_html},
+        "gitlab_probe": {
+            "html": gitlab_html,
+            "blob_prefix": prefix,
+            "divergence": {
+                "note": "href difference",
+                "issue": 1,
+                "pair_sha256": pair_sha256(
+                    github_html, gitlab_html, blob_prefix=prefix
+                ),
+            },
+        },
+    }
+    result = update_cases(
+        [case],
+        platform="gitlab",
+        render=lambda text: gitlab_html,
+        rendered="2026-01-01",
+        version="19.4.1 ce",
+        blob_prefix=prefix,
+    )
+    assert result.cases[0]["gitlab_probe"]["divergence"] is None
+
+
+def test_gitlab_http_error_includes_truncated_json_message_without_token() -> None:
+    token = "private-render-token-value"
+    message = "namespace path already taken " + token + " " + ("x" * 240)
+    safe_message = message.replace(token, "[redacted]")[:200]
+    requests = []
+
+    class ErrorResponse(io.BytesIO):
+        status = 400
+
+    def fake_opener(request):
+        requests.append(request)
+        return ErrorResponse(json.dumps({"message": message}).encode("utf-8"))
+
+    client = GitLabClient("http://gitlab.test", token, opener=fake_opener)
+    with pytest.raises(GitLabHTTPError) as error:
+        client.json_request("POST", "/api/v4/groups", {"path": "taken"})
+    rendered_error = str(error.value)
+    assert "namespace path already taken" in rendered_error
+    assert rendered_error.endswith(": " + safe_message)
+    assert token not in rendered_error
+    assert "PRIVATE-TOKEN" not in rendered_error
+    assert len(requests) == 1
 
 
 def test_gitlab_http_errors_do_not_include_the_token() -> None:

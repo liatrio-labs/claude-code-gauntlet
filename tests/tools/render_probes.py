@@ -1,10 +1,24 @@
 """Record and check renderer probes.
 
-Start GitLab with ``docker run --detach --hostname gitlab.example.com
---publish 8929:80 --name cdr-gitlab gitlab/gitlab-ce:19.4.1-ce.0``. Export a
-root API token from ``gitlab-rails runner`` with
-``export GITLAB_TOKEN="$(docker exec cdr-gitlab gitlab-rails runner 'u=User.find_by_username("root"); puts u.personal_access_tokens.create!(name: "render-probes", scopes: ["api"], expires_at: Date.today + 30).token')"``.
-Then run ``python tests/tools/render_probes.py seed --base-url http://localhost:8929 --token-env GITLAB_TOKEN`` followed by ``python tests/tools/render_probes.py record --platform gitlab --base-url http://localhost:8929 --token-env GITLAB_TOKEN``.
+Start GitLab with the same external URL the recorded probes use, since rendered
+links are absolute::
+
+    docker run --detach --name cdr-gitlab --hostname localhost \
+      --publish 8929:8929 --shm-size 256m \
+      --env GITLAB_OMNIBUS_CONFIG="external_url 'http://localhost:8929'" \
+      gitlab/gitlab-ce:19.4.1-ce.0
+
+When ``curl -s -o /dev/null -w '%{http_code}' http://localhost:8929/api/v4/version``
+prints 401, export a root API token::
+
+    export GITLAB_TOKEN="$(docker exec cdr-gitlab gitlab-rails runner \
+      'u=User.find_by_username("root"); puts u.personal_access_tokens.create!(name: "render-probes", scopes: ["api"], expires_at: Date.today + 30).token')"
+
+Then run ``python3 tests/tools/render_probes.py seed`` and
+``python3 tests/tools/render_probes.py record --platform gitlab``. The GitHub probe
+needs only an authenticated ``gh``: ``python3 tests/tools/render_probes.py record
+--platform github``. Add ``--check`` to either ``record`` to re-render and compare
+without writing.
 """
 
 from __future__ import annotations
@@ -369,8 +383,9 @@ def check_render(platform: str, html_text: str) -> None:
 
 
 class GitLabHTTPError(RuntimeError):
-    def __init__(self, status: int, path: str):
-        super().__init__(f"GitLab request failed with HTTP {status}: {path}")
+    def __init__(self, status: int, path: str, message: str | None = None):
+        detail = f": {message}" if message else ""
+        super().__init__(f"GitLab request failed with HTTP {status}: {path}{detail}")
         self.status = status
 
 
@@ -413,13 +428,14 @@ class GitLabClient:
                         close()
             except HTTPError as error:
                 status = error.code
-                payload = b""
+                payload = error.read()
                 error.close()
             if status == 429 and attempt < 3:
                 self.sleeper(min(0.25 * (2**attempt), 2.0))
                 continue
             if status >= 400:
-                raise GitLabHTTPError(status, path)
+                message = _gitlab_error_message(payload, self._token)
+                raise GitLabHTTPError(status, path, message)
             return payload
         raise GitLabHTTPError(429, path)
 
@@ -439,6 +455,19 @@ class GitLabClient:
         if not isinstance(html_text, str):
             raise ValueError("GitLab markdown response has no html string")
         return html_text
+
+
+def _gitlab_error_message(payload: bytes, token: str) -> str | None:
+    try:
+        result = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    message = result.get("message") if isinstance(result, dict) else None
+    if not isinstance(message, str):
+        return None
+    if token:
+        message = message.replace(token, "[redacted]")
+    return message[:200]
 
 
 def render_github(
@@ -625,24 +654,30 @@ def _reference_originals(html_text: str) -> list[str]:
 class _TagCollector(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
-        self.tags: list[str] = []
+        self.tags: list[tuple[str, tuple[tuple[str, str | None], ...]]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.tags.append(tag)
+        self.tags.append((tag, tuple(sorted(attrs))))
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.tags.append(tag)
+        self.tags.append((tag, tuple(sorted(attrs))))
 
 
-def _skeleton(html_text: str, blob_prefix: str | None = None) -> tuple[str, ...]:
+def _skeleton(
+    html_text: str, blob_prefix: str | None = None
+) -> tuple[tuple[str, tuple[tuple[str, str | None], ...]], ...]:
     collector = _TagCollector()
     collector.feed(structure(html_text, blob_prefix=blob_prefix))
     collector.close()
     return tuple(collector.tags)
 
 
-def pair_sha256(github_html: str, gitlab_html: str) -> str:
-    pair = structure(github_html) + "\0" + structure(gitlab_html)
+def pair_sha256(
+    github_html: str, gitlab_html: str, *, blob_prefix: str | None = None
+) -> str:
+    pair = (
+        structure(github_html) + "\0" + structure(gitlab_html, blob_prefix=blob_prefix)
+    )
     return hashlib.sha256(pair.encode("utf-8")).hexdigest()
 
 
@@ -742,7 +777,8 @@ def update_cases(
                     isinstance(divergence, dict)
                     and isinstance(divergence.get("note"), str)
                     and type(divergence.get("issue")) is int
-                    and divergence.get("pair_sha256") == pair_sha256(gh_html, gl_html)
+                    and divergence.get("pair_sha256")
+                    == pair_sha256(gh_html, gl_html, blob_prefix=prefix)
                     and gh_structure != gl_structure
                     and _skeleton(gh_html) == _skeleton(gl_html, prefix)
                 )
