@@ -191,7 +191,8 @@ class _TreeParser(HTMLParser):
 class _GitLabAPI(Protocol):
     def json_request(
         self, method: str, path: str, body: Mapping[str, object] | None = None
-    ) -> Any: ...
+    ) -> Any:
+        """Send one GitLab API request and return its decoded JSON reply."""
 
 
 def _attrs(node: _Node) -> dict[str, str | None]:
@@ -582,16 +583,14 @@ def _ensure_group(client: _GitLabAPI, group_path: str) -> dict[str, Any]:
     if "/" in group_path:
         parent_path, leaf = group_path.rsplit("/", 1)
         parent = _ensure_group(client, parent_path)
-        create_path = "/api/v4/groups"
     else:
         leaf = group_path
         parent = None
-        create_path = "/api/v4/groups"
     body: dict[str, object] = {"name": leaf, "path": leaf}
     if parent is not None:
         body["parent_id"] = parent["id"]
     try:
-        created = client.json_request("POST", create_path, body)
+        created = client.json_request("POST", "/api/v4/groups", body)
     except GitLabHTTPError as error:
         if error.status != 409:
             raise

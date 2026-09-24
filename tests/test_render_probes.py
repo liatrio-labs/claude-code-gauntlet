@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -18,6 +19,7 @@ from tests.tools.render_probes import (
     SEED_GROUPS,
     GitLabClient,
     GitLabHTTPError,
+    _gitlab_blob_prefix,
     _gitlab_version,
     _reference_originals,
     build_argument_parser,
@@ -227,6 +229,40 @@ def test_blob_prefix_only_normalizes_matching_project_links() -> None:
         ) != structure('<a href="file.md">x</a>', platform="gitlab", blob_prefix=prefix)
 
 
+def test_gitlab_blob_prefix_strips_web_url_slash_and_uses_default_branch(
+    monkeypatch,
+) -> None:
+    client = GitLabClient("http://gitlab.test", "fake-token")
+    requests = []
+
+    def json_request(method: str, path: str) -> dict[str, str]:
+        requests.append((method, path))
+        return {
+            "web_url": "https://gitlab.test/team/probe/",
+            "default_branch": "develop",
+        }
+
+    monkeypatch.setattr(client, "json_request", json_request)
+    assert (
+        _gitlab_blob_prefix(client, "team/probe")
+        == "https://gitlab.test/team/probe/-/blob/develop/"
+    )
+    assert requests == [("GET", "/api/v4/projects/team%2Fprobe")]
+
+
+def test_gitlab_blob_prefix_rejects_incomplete_metadata(monkeypatch) -> None:
+    client = GitLabClient("http://gitlab.test", "fake-token")
+    monkeypatch.setattr(
+        client,
+        "json_request",
+        lambda method, path: {"web_url": "https://gitlab.test/team/probe"},
+    )
+    with pytest.raises(
+        ValueError, match="GitLab project metadata is incomplete for team/probe"
+    ):
+        _gitlab_blob_prefix(client, "team/probe")
+
+
 def test_renderer_attributes_are_platform_and_value_specific() -> None:
     assert structure('<p dir="rtl">y</p>', platform="github") != structure(
         '<p dir="auto">y</p>', platform="gitlab"
@@ -264,14 +300,11 @@ def test_renderer_attributes_are_platform_and_value_specific() -> None:
         ),
         ("gitlab", '<p id="user-content-x">x</p>', "<p>x</p>"),
         ("github", '<h1 id="user-content-x">x</h1>', "<h1>x</h1>"),
-    ]
-    for platform, left, right in pairs:
-        assert structure(left, platform=platform) != structure(right, platform=platform)
-    for platform, left, right in [
         ("gitlab", '<pre v-pre="false">x</pre>', "<pre>x</pre>"),
         ("gitlab", '<a href="x" rel="noopener">x</a>', '<a href="x">x</a>'),
         ("gitlab", '<a href="x" target="_self">x</a>', '<a href="x">x</a>'),
-    ]:
+    ]
+    for platform, left, right in pairs:
         assert structure(left, platform=platform) != structure(right, platform=platform)
 
 
@@ -599,6 +632,8 @@ def test_seed_creates_group_chains_users_project_and_idempotent_memberships() ->
             self.creates = []
             self.next_id = 1
             self.raced_group = False
+            self.raced_user = False
+            self.raced_membership = False
 
         def _new(self, mapping, key, value):
             item = {**value, "id": self.next_id}
@@ -635,7 +670,11 @@ def test_seed_creates_group_chains_users_project_and_idempotent_memberships() ->
                 return created
             if method == "POST" and path == "/api/v4/users":
                 self.creates.append((method, path, body))
-                return self._new(self.users, body["username"], body)
+                created = self._new(self.users, body["username"], body)
+                if body["username"] == "alice" and not self.raced_user:
+                    self.raced_user = True
+                    raise GitLabHTTPError(409, path)
+                return created
             if method == "POST" and path == "/api/v4/projects":
                 self.creates.append((method, path, body))
                 self.project = {**body, "id": self.next_id}
@@ -646,6 +685,9 @@ def test_seed_creates_group_chains_users_project_and_idempotent_memberships() ->
                 parts = path.split("/")
                 resource, resource_id = parts[-3], parts[-2]
                 self.memberships.add((resource, int(resource_id), int(body["user_id"])))
+                if not self.raced_membership:
+                    self.raced_membership = True
+                    raise GitLabHTTPError(409, path)
                 return {"id": body["user_id"]}
             raise AssertionError((method, path, body))
 
@@ -656,6 +698,9 @@ def test_seed_creates_group_chains_users_project_and_idempotent_memberships() ->
     second = seed(cases, api)
     assert set(first["groups"]) == {"cdr-group", "team", "types", "types/node"}
     assert set(first["users"]) == {"alice", "bob"}
+    assert api.raced_user
+    assert first["users"]["alice"] == api.users["alice"]
+    assert api.raced_membership
     assert second["project"] == first["project"]
     assert len(api.creates) == create_count
     assert any(
@@ -1106,6 +1151,32 @@ def test_main_record_check_and_cleared_divergence_output(
         json.loads(_read_fixture(path))["cases"][0]["gitlab_probe"]["divergence"]
         is None
     )
+
+
+def test_main_seed_dispatch_prints_seed_counts(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("FAKE_ENV", "fake-token")
+    cases = [{"input": "@alice", "expected": "@alice"}]
+    client = object()
+
+    def fake_client(base_url: str, token_env: str) -> object:
+        assert base_url == "http://localhost:8929"
+        assert token_env == "FAKE_ENV"
+        assert os.environ[token_env] == "fake-token"
+        return client
+
+    def fake_seed(actual_cases, actual_client):
+        assert actual_cases == cases
+        assert actual_client is client
+        return {"users": {"alice": {}}, "groups": {"team": {}, "cdr-group": {}}}
+
+    monkeypatch.setattr("tests.tools.render_probes._fixture_path", lambda: "unused")
+    monkeypatch.setattr("tests.tools.render_probes._read_cases", lambda path: cases)
+    monkeypatch.setattr(
+        "tests.tools.render_probes._client_from_environment", fake_client
+    )
+    monkeypatch.setattr("tests.tools.render_probes.seed", fake_seed)
+    assert main(["seed", "--token-env", "FAKE_ENV"]) == 0
+    assert capsys.readouterr().out.strip() == "seeded 1 users and 2 groups"
 
 
 @pytest.mark.parametrize("platform", ["gitlab", "github"])
