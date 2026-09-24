@@ -90,7 +90,10 @@ def test_fixture_schema_and_rule_coverage():
         assert case["kind"] in {"regression", "control"}
         assert isinstance(case["input"], str)
         assert isinstance(case["expected"], str)
-        assert case["github_probe"] is None
+        assert case["github_probe"] is None or (
+            case["github_probe"]["renderer"] == "gh api markdown mode=gfm"
+            and isinstance(case["github_probe"]["html"], str)
+        )
         assert isinstance(case["rule_ids"], list)
 
     for rule_id in _Q2_RULES:
@@ -190,9 +193,13 @@ def test_comment_only_rule_falls_back_to_spec_text():
 def test_prepare_prose_fixture_cases():
     prepare_prose = getattr(post_review, "prepare_prose", None)
     assert callable(prepare_prose), "missing expected Python entry point prepare_prose"
-    cases = [case for case in CASES if case["field_class"] in {"prose", "rule"}]
+    cases = [case for case in CASES if case["field_class"] == "prose"]
     for case in cases:
         assert prepare_prose(case["input"]) == case["expected"], case["id"]
+    for case in (case for case in CASES if case["field_class"] == "rule"):
+        assert (post_review._prepared_prose(case["input"], cap=True) or "") == case[
+            "expected"
+        ], case["id"]
 
 
 def test_prepare_line_fixture_cases():
@@ -226,6 +233,22 @@ def test_preparation_is_idempotent_over_fixture_and_seeded_corpus():
         assert prepare_line(prepared_line) == prepared_line
 
 
+def test_backslash_escaped_tick_cannot_close_a_code_span():
+    source = r"left `protected\` <table> @inside` right @outside"
+    assert post_review.prepare_prose(source) == (
+        "left `protected\\` <table> @inside` right \uff20outside"
+    )
+
+
+def test_rejected_final_closer_does_not_protect_prose():
+    assert post_review.prepare_prose(r"left `danger <table> @user\`") == (
+        "left \\`danger &lt;table> \uff20user\\`"
+    )
+    assert post_review.prepare_prose("| `x | <b> @user`") == (
+        "| \\`x | &lt;b> \uff20user\\`"
+    )
+
+
 def test_live_node_prepare_line_matches_single_line_and_location_fixtures():
     line_cases = [
         case for case in CASES if case["field_class"] in {"single_line", "location"}
@@ -236,7 +259,12 @@ def test_live_node_prepare_line_matches_single_line_and_location_fixtures():
         if "Q3" in case["rule_ids"]
         or any(rule_id in case["rule_ids"] for rule_id in _Q2_RULES)
     ]
-    cases = {case["id"]: case for case in line_cases + idempotency_cases}
+    parity_cases = [
+        case
+        for case in CASES
+        if "\n" not in case["input"] and "\r" not in case["input"]
+    ]
+    cases = {case["id"]: case for case in line_cases + idempotency_cases + parity_cases}
     inputs = [case["input"] for case in cases.values()]
     script = """
 const renderer = await import('./workflows/src/renderReport.js');
@@ -268,6 +296,8 @@ if (typeof renderer.prepareLine !== 'function') {
     assert python_prepared == expected
     assert js_prepared == expected
     assert js_prepared == python_prepared
+    for case in parity_cases:
+        assert js_by_id[case["id"]]["once"] == prepare_line(case["input"]), case["id"]
 
 
 def test_generated_summary_is_unchanged_by_python_guard():
@@ -361,4 +391,5 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
     assert result.returncode == 0, result.stderr
     bullet = next(line for line in result.stdout.splitlines() if line.startswith("- "))
     title_text = bullet.split("`: ", 1)[1]
-    assert title_text.count("`") % 2 == 0, result.stdout
+    assert "\\`&lt;tabl" in title_text, result.stdout
+    assert "<table" not in title_text, result.stdout

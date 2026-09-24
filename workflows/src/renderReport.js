@@ -444,6 +444,120 @@ function oneLine(value) {
   return reportAsText(value).replace(/[\r\n]+/g, ' ').replace(/ +/g, ' ').trim();
 }
 
+const OUTBOUND_INVISIBLES = /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/g;
+const OUTBOUND_REFERENCE = /&(?:[A-Za-z][A-Za-z0-9]*|#(?:[0-9]+|[xX][0-9A-Fa-f]+));/g;
+const OUTBOUND_SAFE_REFERENCES = new Set(['&amp;', '&lt;', '&gt;', '&quot;']);
+const OUTBOUND_MARKER = /<!--\s*code-gauntlet-[a-z-]+\s*:/g;
+
+function outboundBase(value) {
+  let text = reportAsText(value);
+  if (!text.trim()) return '';
+  let previous;
+  do {
+    previous = text;
+    text = text.replace(/&#(\d+);|&#[xX]([0-9a-fA-F]+);/g, (_, decimal, hex) => {
+      const number = Number.parseInt(decimal || hex, decimal ? 10 : 16);
+      return number >= 32 && number <= 126 ? String.fromCharCode(number) : '';
+    });
+  } while (text !== previous);
+  do {
+    previous = text;
+    text = text.replace(/<!--[\s\S]*?-->/g, '');
+  } while (text !== previous);
+  return text.replace(OUTBOUND_INVISIBLES, '')
+    .replace(/(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}/g, '[REDACTED]')
+    .replace(/(?:glpat-|glrt-)[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
+    .replace(/[\r\n]+/g, ' ');
+}
+
+function outboundMarker(text) {
+  return text.replace(OUTBOUND_MARKER, (opening) => `&lt;${opening.slice(1)}`);
+}
+
+function outboundVisible(text, destination) {
+  const referenced = text.replace(OUTBOUND_REFERENCE, (match) => (
+    OUTBOUND_SAFE_REFERENCES.has(match) ? match : `&amp;${match.slice(1)}`
+  ));
+  const escaped = referenced.replace(/<(?=[A-Za-z/!?])/g, '&lt;');
+  return escaped.replace(/@/g, (match, index) => (
+    index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])
+      ? (destination ? '%40' : '\uFF20') : match
+  ));
+}
+
+function outboundEscapedTick(text, index) {
+  let slashes = 0;
+  for (let at = index - 1; at >= 0 && text[at] === '\\'; at -= 1) slashes += 1;
+  return slashes % 2 === 1;
+}
+
+function outboundContain(line) {
+  const destinations = [...line.matchAll(/\]\([^\n)]*(?:\)|$)/g)].map((match) => [
+    match.index + 2,
+    match.index + match[0].length - (match[0].endsWith(')') ? 1 : 0),
+  ]);
+  const inDestination = (index) => destinations.some(([start, end]) => start <= index && index < end);
+  let output = '';
+  let index = 0;
+  while (index < line.length) {
+    if (line[index] === '`' && !outboundEscapedTick(line, index)) {
+      let end = index;
+      while (end < line.length && line[end] === '`') end += 1;
+      const width = end - index;
+      if (inDestination(index)) {
+        output += '\\`'.repeat(width);
+        index = end;
+        continue;
+      }
+      let close = -1;
+      let cursor = end;
+      while (cursor < line.length) {
+        close = line.indexOf('`'.repeat(width), cursor);
+        if (close < 0) break;
+        const after = close + width;
+        if (!outboundEscapedTick(line, close) && (after === line.length || line[after] !== '`')
+          && !inDestination(close)) break;
+        cursor = after;
+        close = -1;
+      }
+      if (close >= 0) {
+        output += `${line.slice(index, end)}${outboundMarker(line.slice(end, close))}${line.slice(close, close + width)}`;
+        index = close + width;
+        continue;
+      }
+      output += '\\`'.repeat(width);
+      index = end;
+      continue;
+    }
+    let next = line.indexOf('`', index);
+    if (next < 0) next = line.length;
+    if (next === index) {
+      output += '`';
+      index += 1;
+      continue;
+    }
+    let at = index;
+    while (at < next) {
+      const destination = inDestination(at);
+      let stop = at + 1;
+      while (stop < next && inDestination(stop) === destination) stop += 1;
+      output += outboundVisible(line.slice(at, stop), destination);
+      at = stop;
+    }
+    index = next;
+  }
+  return output;
+}
+
+export function prepareLine(value) {
+  const text = outboundBase(value);
+  return text.trim() ? outboundContain(text) : '';
+}
+
+function prepareSummaryTitle(value) {
+  return prepareLine(foldInline(oneLine(outboundBase(value))));
+}
+
 function inline(value) {
   return foldInline(oneLine(value));
 }
@@ -543,6 +657,24 @@ function location(finding) {
   return `${file}:${start}-${oneLine(finding.line_end)}`;
 }
 
+function quotedSummaryLocation(finding) {
+  if (!isPresent(finding.file)) return '';
+  const file = oneLine(outboundBase(finding.file));
+  let display = file;
+  if (isPresent(finding.line_start)) {
+    const start = oneLine(outboundBase(finding.line_start));
+    display += `:${start}`;
+    if (isPresent(finding.line_end) && String(finding.line_end) !== String(finding.line_start)) {
+      display += `-${oneLine(outboundBase(finding.line_end))}`;
+    }
+  }
+  display = outboundMarker(display);
+  const longest = Math.max(0, ...[...display.matchAll(/`+/g)].map((match) => match[0].length));
+  const delimiter = '`'.repeat(longest + 1);
+  if (/^[` ]|[` ]$/.test(display)) display = ` ${display} `;
+  return `${delimiter}${display}${delimiter}`;
+}
+
 export function encodeUrlSegment(segment) {
   const repaired = reportAsText(segment)
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '\uFFFD')
@@ -587,6 +719,7 @@ function positiveLine(value) {
 function locationUrl(finding, permalinks) {
   if (!permalinks.blobBase || !isPresent(finding.file)) return null;
   const rawFile = reportAsText(finding.file);
+  if (outboundBase(rawFile) !== rawFile) return null;
   if (oneLine(rawFile) !== rawFile) return null;
   const segments = rawFile.split('/');
   if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
@@ -828,11 +961,11 @@ export function summaryBlock(builder, input) {
   let cutForLength = false;
   for (const finding of indexed) {
     const severity = normalizeReportSeverity(finding.severity);
-    const where = location(finding) || 'location unavailable';
+    const where = quotedSummaryLocation(finding) || '`location unavailable`';
     const url = locationUrl(finding, permalinks);
-    const link = url ? `[\`${where}\`](${url})` : `\`${where}\``;
+    const link = url ? `[${where}](${url})` : where;
     const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
-    const bullet = `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${inline(finding.title)}`;
+    const bullet = `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`;
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
     if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
       cutForLength = true;

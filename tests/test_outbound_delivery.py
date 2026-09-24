@@ -190,7 +190,7 @@ def _assert_poison_containment(test, body, property_names, expected_markers=()):
                         any(visible in block for block in suggestion_blocks)
                     )
             else:
-                test.assertNotIn(visible, body, key)
+                test.assertNotIn(f"@zz363{key}", body, key)
         if key not in location_names and key != patch_name:
             test.assertNotIn(f"<ins data-zz363{key}", body, key)
     test.assertNotIn("@zz363unknown_key", body)
@@ -304,8 +304,8 @@ class TestOutboundComposerContracts(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         rendered = json.loads(result.stdout)
-        self.assertNotIn("@zz363", rendered)
-        self.assertNotIn("<table", rendered)
+        self.assertTrue(_contains_code_span(rendered, "@zz363sentinel <table>.py"))
+        self.assertIn("\uff20zz363sentinel &lt;table>&lt;tr>&lt;td>", rendered)
         self.assertEqual(review_marker.find_finding_markers(rendered), [])
 
     def test_github_payload_guards_review_inline_and_skipped_fields(self):
@@ -418,7 +418,14 @@ class TestFoldAndGateContracts(unittest.TestCase):
                 folded, dropped = fold()
                 self.assertGreater(dropped, 0)
                 prefix = folded.split("\n\n_[folded:", 1)[0]
-                self.assertNotIn("<table", prefix)
+                if "<table" in prefix:
+                    self.assertTrue(_contains_code_span(prefix, "<table><tr><td>"))
+                shorter, _ = (
+                    post_review._fold_inline_body(text, 65320, "github", "inline")
+                    if name == "inline"
+                    else post_review._fold_review_body(text, 65320, "github")
+                )
+                self.assertNotIn("<table", shorter)
 
     def test_line_boundary_fold_keeps_a_complete_single_line_code_span(self):
         span = "`<table><tr><td>`"
@@ -442,6 +449,16 @@ class TestFoldAndGateContracts(unittest.TestCase):
         text = "`<!--` code survives\n<!-- unclosed comment"
         self.assertEqual(
             post_review._cut_unclosed_comment(text), "`<!--` code survives\n"
+        )
+
+    def test_unclosed_comment_cut_ignores_comment_opener_inside_fence(self):
+        text = "```text\n<!-- literal -->\n```\n<!-- unclosed comment"
+        self.assertEqual(
+            post_review._cut_unclosed_comment(text), "```text\n<!-- literal -->\n```\n"
+        )
+        self.assertEqual(
+            post_review._cut_unclosed_comment("```text\n<!-- literal\n```\nafter"),
+            "```text\n<!-- literal\n```\nafter",
         )
 
     def test_patch_with_a_finding_marker_opener_is_rejected_as_marker_shaped(self):
@@ -642,6 +659,37 @@ class TestGitlabLiveFallbackContracts(unittest.TestCase):
         _assert_no_hostile_prose(self, fallback_body, expected_markers=markers)
         lookup.assert_called_once_with("o", "r", 7, SHA)
 
+    def test_partial_prior_delivery_posts_only_the_missing_corroborator(self):
+        primary = _hostile_finding(
+            consolidation_key="src/edited.py:2", consolidation_primary=True
+        )
+        title = post_review.prepare_line(primary["title"])
+        prior_key = post_review.finding_key(
+            primary["file"],
+            primary["line"],
+            title,
+            post_review.key_material_body(primary),
+        )
+        for line, endpoint in ((3, "/discussions"), (None, "/notes")):
+            with self.subTest(line=line):
+                corroborator = _hostile_finding(
+                    line=line,
+                    consolidation_key="src/edited.py:2",
+                    consolidation_primary=False,
+                )
+                calls, lookup = self._post_live(
+                    [primary, corroborator], (True, {prior_key}, set())
+                )
+                self.assertEqual(len(calls), 1)
+                cmd, payload = calls[0]
+                self.assertTrue(cmd[-1].endswith(endpoint))
+                body = payload["body"]
+                markers = review_marker.find_finding_markers(body)
+                self.assertEqual(len(markers), 1)
+                self.assertNotEqual(markers[0]["key"], prior_key)
+                _assert_no_hostile_prose(self, body, expected_markers=markers)
+                lookup.assert_called_once_with("o", "r", 7, SHA)
+
 
 class TestPoisonedOutboundSinks(unittest.TestCase):
     @staticmethod
@@ -744,15 +792,24 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
         primary = self._finding(property_names, reads, primary=True)
         corroborator = self._finding(property_names, reads)
 
+        direct_primary = {
+            key: value for key, value in primary.items() if key != "suggested_fix_code"
+        }
+        direct_corroborator = {
+            key: value
+            for key, value in corroborator.items()
+            if key != "suggested_fix_code"
+        }
         direct_bodies = [
-            post_review.render_comment_body(primary),
-            post_review.render_group_body(primary, [corroborator]),
+            post_review.render_comment_body(direct_primary),
+            post_review.render_group_body(direct_primary, [direct_corroborator]),
             post_review.build_skipped_section(
-                [(primary.get("file"), primary.get("line"), primary)]
+                [(primary.get("file"), primary.get("line"), direct_primary)]
             ),
         ]
         fallback = self._finding(property_names, reads)
         fallback["claude_md_rule"] = FAKE_FINDING_MARKER
+        fallback.pop("suggested_fix_code", None)
         direct_bodies.append(post_review.render_comment_body(fallback))
 
         for platform in ("github", "gitlab"):

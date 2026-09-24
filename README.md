@@ -110,7 +110,7 @@ Every discovery agent sees the full diff with cross-file context rather than a s
 
 Findings are then triaged by origin as well as by content. Git blame separates issues in code you wrote from pre-existing issues your changes merely exposed; surfaced findings are downgraded and grouped separately so they do not drown out the new ones. Re-reviewing a PR after new commits offers to review only the delta since the last review.
 
-Code under review is untrusted input throughout: trust-boundary delimiters on the way in, and on the way out delivery filters `title` and `description` for injection patterns while [`scripts/post_review.py`](scripts/post_review.py) sanitizes echoed fields and redacts known token prefixes. The platform — GitHub or GitLab — is auto-detected from the git remote, and results can go to PR/MR comments, a markdown file, or a task board, in any combination.
+Code under review is untrusted input throughout: trust-boundary delimiters on the way in, and a deterministic text contract for every posted PR/MR comment field on the way out. The contract contains raw HTML, neutralizes visible mentions, and redacts known token prefixes; checked suggestion code remains inside a code fence. The platform — GitHub or GitLab — is auto-detected from the git remote, and results can go to PR/MR comments, a markdown file, or a task board, in any combination.
 
 ## Configuration: REVIEW.md
 

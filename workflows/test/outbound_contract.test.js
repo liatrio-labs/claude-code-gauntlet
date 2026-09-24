@@ -63,6 +63,13 @@ test('single-line preparation preserves code spans and escapes unmatched backtic
   );
 });
 
+test('an escaped final closer leaves the preceding prose unprotected', () => {
+  assert.equal(
+    prepareLine('left `danger <table> @user\\`'),
+    'left \\`danger &lt;table> ＠user\\`',
+  );
+});
+
 test('single-line preparation percent-encodes mentions in link destinations', () => {
   assert.equal(
     prepareLine('[profile](https://example.test/@alice)'),

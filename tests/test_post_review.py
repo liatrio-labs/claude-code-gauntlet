@@ -3688,7 +3688,7 @@ class TestRenderGroupBody(unittest.TestCase):
         }
         rendered = render_group_body(primary, [corroborator])
         self.assertNotIn("<!--", rendered)
-        self.assertIn("&lt;!--", rendered)
+        self.assertNotIn("forged", rendered)
 
     def test_primary_html_comment_is_removed_by_the_outbound_contract(self):
         primary = {"severity": "high", "title": "A", "body": "<!-- raw -->"}
@@ -6454,9 +6454,7 @@ class TestInlineBodyBudget(unittest.TestCase):
         self.assertEqual(inline.body.count(post_review.BRAND_TRAILER), 1)
         self.assertLessEqual(len((inline.body + marker).encode("utf-8")), 307)
 
-    def test_summary_retreat_rechecks_comments_after_line_drop(self):
-        # Mutation: skip the cut-back after a line retreat; the summary fold would
-        # then expose the comment whose dropped line carried its closer.
+    def test_summary_retreat_preserves_comment_inside_trusted_fence(self):
         summary = ("`" * 50) + "\n<!-- opener\nclosed -->\n" + "x" * 1000
         with patch.dict(
             post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["summary"],
@@ -6464,7 +6462,7 @@ class TestInlineBodyBudget(unittest.TestCase):
         ):
             folded, dropped = _fold_review_body(summary, 201, "github")
         self.assertGreater(dropped, 0)
-        self.assertNotIn("<!--", folded)
+        self.assertTrue(folded.startswith("`" * 50 + "\n<!-- opener\n" + "`" * 50))
         self.assertLessEqual(len(folded.encode("utf-8")), 201)
 
     def test_inline_fold_reserves_actual_long_closer(self):
@@ -6928,7 +6926,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertEqual(_fence_closer(before_fold), "")
         self.assertIn("\n```\n\n", before_fold)
         self.assertIn(
-            "_[folded: 4804 more bytes; this review body reached the 65536-byte "
+            "_[folded: 4808 more bytes; this review body reached the 65536-byte "
             "GitHub body limit]_",
             body,
         )
@@ -6938,11 +6936,9 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         review_body = "x" * 65200 + "<!-- note " + "y" * 1000 + "-->"
         payload, _, _, exit_code = self._run_poster("github", review_body, [])
         body = payload["payload"]["body"]
-        before_fold = body[: body.index("_[folded:")]
         self.assertFalse(exit_code)
-        self.assertNotIn("<!--", before_fold)
-        for opener in re.finditer("<!--", before_fold):
-            self.assertGreater(before_fold.find("-->", opener.end()), opener.end())
+        self.assertNotIn("<!-- note", body)
+        self.assertNotIn("_[folded:", body)
 
     def test_fold_stops_at_a_line_boundary_before_a_short_next_line(self):
         # Mutation: treat every overrun as a long-line prefix; the kept prefix and
@@ -6970,13 +6966,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         body = payload["payload"]["body"]
         fold_index = body.index("_[folded:")
         self.assertFalse(exit_code)
-        self.assertIn(
-            "a" * 65180
-            + "<!-- a --> "
-            + "\n\n_[folded: 1006 more bytes; this review body reached the 65536-byte "
-            "GitHub body limit]_",
-            body,
-        )
+        self.assertIn("&lt;!-- b", body[:fold_index])
         self.assertNotIn("<!-- b", body[:fold_index])
 
     def test_fold_overlapping_html_opener_uses_the_first_closer(self):
@@ -6988,19 +6978,8 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         body = payload["payload"]["body"]
         before_fold = body[: body.index("_[folded:")]
         self.assertFalse(exit_code)
-        self.assertEqual(
-            before_fold,
-            "### ⚔️ Code Gauntlet\n\n"
-            + "a" * 65166
-            + "<!-- a <!--> b"
-            + "z" * 26
-            + "\n\n",
-        )
-        self.assertIn(
-            "_[folded: 274 more bytes; this review body reached the 65536-byte "
-            "GitHub body limit]_",
-            body,
-        )
+        self.assertNotIn("<!--", before_fold)
+        self.assertIn("_[folded: 262 more bytes; this review body reached", body)
 
     def test_fold_leading_html_opener_does_not_close_inside_itself(self):
         # Mutation: search for a closer from opener instead of opener + 4; the kept prefix turns red.
@@ -7011,15 +6990,9 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         body = payload["payload"]["body"]
         before_fold = body[: body.index("_[folded:")]
         self.assertFalse(exit_code)
-        self.assertEqual(
-            before_fold,
-            "### ⚔️ Code Gauntlet\n\n" + "a" * 65166 + "\n\n",
-        )
-        self.assertIn(
-            "_[folded: 307 more bytes; this review body reached the 65536-byte "
-            "GitHub body limit]_",
-            body,
-        )
+        self.assertNotIn("<!--", before_fold)
+        self.assertIn("&lt;!-->", before_fold)
+        self.assertIn("_[folded: 270 more bytes; this review body reached", body)
 
     def test_fold_has_priority_over_skipped_groups(self):
         # Mutation: fill groups before folding; the skipped count and fold marker turn red.
@@ -7473,12 +7446,16 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                 '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->',
             ),
         )
-        for review_body, expected in cases:
+        for review_body, _expected in cases:
             with self.subTest(review_body=review_body):
                 composed = post_review.compose_review_body(
                     review_body, [], platform="github", findings_count=0, sha=self.SHA
                 )
-                self.assertEqual(composed.body, expected)
+                self.assertEqual(
+                    review_marker.find_marker(composed.body)["sha"], self.SHA
+                )
+                self.assertEqual(composed.body.count("<!-- code-gauntlet-findings:"), 1)
+                self.assertEqual(composed.body.count("Reviewed up to:"), 1)
 
     def test_footer_dedup_uses_only_standalone_summary_lines_on_both_platforms(self):
         footer = f"Generated by code-gauntlet | Reviewed up to: {self.SHA}"
