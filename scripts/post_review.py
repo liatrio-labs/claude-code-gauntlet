@@ -684,7 +684,6 @@ _GL_TOKEN_RE = re.compile(r"(?:glpat-|glrt-)[A-Za-z0-9_\-]{20,}")
 _ENTITY_DEC_RE = re.compile(r"&#([0-9]+);")
 _ENTITY_HEX_RE = re.compile(r"&#x([0-9a-fA-F]+);", re.IGNORECASE)
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
-_HTML_COMMENT_UNTERMINATED_RE = re.compile(r"<!--[\s\S]*\Z")
 _BACKTICK_RUN_RE = re.compile(r"`{3,}")
 
 # Invisible / control code points stripped from outbound prose. Built as an
@@ -753,14 +752,6 @@ _MARKER_OPEN_RE = re.compile(
     + r")\s*:"
 )
 _FENCE_SHAPE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*([`~])\1{2,}")
-
-
-def _decode_to_fixpoint(text):
-    while True:
-        decoded = _decode_numeric_entities(text)
-        if decoded == text:
-            return text
-        text = decoded
 
 
 def _remove_comments(text):
@@ -919,22 +910,6 @@ def prepare_prose(text):
 def prepare_line(text):
     """Prepare a single-line, untrusted display field."""
     return _prepare_text(text, single_line=True)
-
-
-def _sanitize_outbound_prose(text):
-    """Sanitize repo-derived / quoted prose before it enters a PR/MR comment.
-
-    Order is load-bearing: decode entities first (so ``&#60;!--`` becomes a
-    real comment), then strip terminated HTML comments, then unterminated
-    ``<!--`` through EOS, then invisibles, then collapse backtick runs of
-    length ≥3 to exactly two.
-    """
-    text = _decode_numeric_entities(text)
-    text = _HTML_COMMENT_RE.sub("", text)
-    text = _HTML_COMMENT_UNTERMINATED_RE.sub("", text)
-    text = _strip_invisibles(text)
-    text = _BACKTICK_RUN_RE.sub("``", text)
-    return text
 
 
 def _redact_secrets(text):

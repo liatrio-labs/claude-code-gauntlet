@@ -50,11 +50,12 @@ from scripts.post_review import (
     _fold_inline_body,
     _fold_review_body,
     _inline_body_over_limit,
+    _normalize_outbound,
     _open_fence,
+    _prepared_prose,
     _redact_secrets,
     _render_group_sections,
     _report_inline_budget,
-    _sanitize_outbound_prose,
     _suggestion_fence,
     build_footer,
     build_skipped_section,
@@ -800,50 +801,53 @@ class TestOutboundSanitizeHelpers(unittest.TestCase):
 
     def test_terminated_html_comment_stripped(self):
         self.assertEqual(
-            _sanitize_outbound_prose("before <!-- hide --> after"),
+            _normalize_outbound("before <!-- hide --> after"),
             "before  after",
         )
 
-    def test_unterminated_html_comment_stripped_to_eos(self):
+    def test_unterminated_html_comment_is_left_for_containment(self):
+        # Never truncated to end of field; containment later escapes the "<".
         self.assertEqual(
-            _sanitize_outbound_prose("before <!-- forever"),
-            "before ",
+            _normalize_outbound("before <!-- forever"),
+            "before <!-- forever",
         )
 
     def test_entity_decoded_comment_then_stripped(self):
         # &#60;!-- … --&#62; must become a real comment then vanish (order fixture).
         self.assertEqual(
-            _sanitize_outbound_prose("x&#60;!-- hidden --&#62;y"),
+            _normalize_outbound("x&#60;!-- hidden --&#62;y"),
             "xy",
         )
 
     def test_hex_entity_decoded_comment_then_stripped(self):
         # &#x3C;!-- … --&#x3E; pins the _ENTITY_HEX_RE / _hex path.
         self.assertEqual(
-            _sanitize_outbound_prose("x&#x3C;!-- hidden --&#x3E;y"),
+            _normalize_outbound("x&#x3C;!-- hidden --&#x3E;y"),
             "xy",
         )
 
     def test_multiline_newlines_preserved_invisibles_stripped(self):
         raw = "line1\nline2\u200b\nline3\u202e"
-        out = _sanitize_outbound_prose(raw)
+        out = _normalize_outbound(raw)
         self.assertEqual(out, "line1\nline2\nline3")
         self.assertIn("\n", out)
 
-    def test_backtick_run_collapsed_to_two(self):
-        self.assertEqual(_sanitize_outbound_prose("a````b"), "a``b")
+    def test_rule_backtick_run_collapsed_then_escaped(self):
+        # Suggestion and rule text collapse runs of 3+ to two; the unmatched pair
+        # is then backslash-escaped by containment.
+        self.assertEqual(_prepared_prose("a````b"), "a\\`\\`b")
 
     def test_tab_and_newline_not_stripped_as_c0(self):
-        self.assertEqual(_sanitize_outbound_prose("a\tb\nc"), "a\tb\nc")
+        self.assertEqual(_normalize_outbound("a\tb\nc"), "a\tb\nc")
 
     def test_carriage_return_stripped_as_c0(self):
         # CR is a CommonMark line ending; leaving it lets markdown after a
         # single '>' escape the blockquote. Design: C0 minus \\t\\n only.
-        self.assertEqual(_sanitize_outbound_prose("a\rb\rc"), "abc")
+        self.assertEqual(_normalize_outbound("a\rb\rc"), "abc")
 
     def test_non_ascii_numeric_entity_dropped(self):
         # &#8212; em-dash dropped (printable-ASCII-only decode).
-        self.assertEqual(_sanitize_outbound_prose("a&#8212;b"), "ab")
+        self.assertEqual(_normalize_outbound("a&#8212;b"), "ab")
 
     def test_redact_github_and_gitlab_tokens(self):
         ghp = "ghp_" + ("A" * 36)

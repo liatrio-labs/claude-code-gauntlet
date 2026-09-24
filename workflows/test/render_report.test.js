@@ -209,6 +209,12 @@ test('T-PERMALINK: location links are platform-correct, encoded, and fail plain'
     '- **Location:** [`src/a(b).js:10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a%28b%29.js#L10)',
   );
   assert.equal(locationLine({ file: 'src/a.js\r\nforged', line_start: 10 }), '- **Location:** `src/a.js forged:10`');
+  // A path that normalization or redaction changes renders as a bare code span, never a permalink.
+  for (const file of ['src/<!-- x -->a.js', 'src/&#64;a.js', `src/ghp_${'A'.repeat(36)}.js`]) {
+    const line = locationLine({ file, line_start: 10 });
+    assert.match(line, /^- \*\*Location:\*\* `[^`]+:10`$/, file);
+    assert.doesNotMatch(line, /\]\(/, file);
+  }
   assert.equal(
     locationLine({ file: 'src/a.js', line_start: 12, line_end: 10 }),
     '- **Location:** [`src/a.js:12-10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js)',
