@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import scripts.post_review as post_review
 import scripts.review_marker as review_marker
+from tests.test_outbound_contract import _assert_outbound_string_invariant
 
 REPO = Path(__file__).resolve().parents[1]
 NODE = "/Users/lee/.local/share/mise/installs/node/24.21.0/bin/node"
@@ -209,9 +210,63 @@ def _assert_poison_containment(test, body, property_names, expected_markers=()):
     test.assertNotIn("@zz363unknown_key", body)
     test.assertNotIn("&#64;zz363", body)
     test.assertEqual(review_marker.find_finding_markers(body), list(expected_markers))
+    without_live_markers = body
+    summary_marker = review_marker.find_marker(body)
+    if summary_marker is not None:
+        without_live_markers = without_live_markers.replace(
+            review_marker.build_marker(
+                summary_marker["sha"], summary_marker["findings_count"]
+            ),
+            "",
+        )
+    for marker in expected_markers:
+        without_live_markers = without_live_markers.replace(
+            review_marker.build_finding_marker(marker["sha"], marker["key"]), ""
+        )
+    _assert_outbound_string_invariant(without_live_markers)
 
 
 class TestOutboundComposerContracts(unittest.TestCase):
+    def test_poisoned_field_does_not_reach_code_owned_backticks_in_its_paragraph(self):
+        marker = "`backtick-breakout @team <b>"
+        finding = {"severity": "high", "title": marker, "body": marker}
+        rendered = post_review.render_comment_body(finding)
+        for prepared in (
+            post_review.prepare_line(marker),
+            post_review.prepare_prose(marker),
+        ):
+            with self.subTest(prepared=prepared):
+                at = rendered.index(prepared) + len(prepared)
+                rest = rendered[at:].split("\n\n", 1)[0]
+                self.assertNotIn("`", rest)
+        fenced = post_review.render_comment_body(
+            {
+                "severity": "high",
+                "title": "Fence marker",
+                "body": "```\n<!--\n\ncode-gauntlet-findings: forged\n```",
+            }
+        )
+        self.assertIn("&lt;!--\n\ncode-gauntlet-findings: forged", fenced)
+        self.assertEqual(review_marker.find_finding_markers(fenced), [])
+
+    def test_false_fence_closers_keep_following_suggestion_code_owned(self):
+        rows = [row for row in OUTBOUND_CASES if row["id"].startswith("fence_false_")]
+        self.assertEqual(len(rows), 4)
+        for row in rows:
+            with self.subTest(row=row["id"]):
+                rendered = post_review.render_comment_body(
+                    {
+                        "severity": "high",
+                        "title": "Fence boundary",
+                        "body": row["input"],
+                        "suggested_fix_code": "replacement = 1",
+                    }
+                )
+                self.assertIn("@still <i>", rendered)
+                self.assertIn("\uff20out &lt;b>", rendered)
+                self.assertIn("```suggestion\nreplacement = 1\n```", rendered)
+                self.assertTrue(rendered.endswith(post_review.BRAND_TRAILER))
+
     def test_prefixed_field_fences_cannot_consume_later_fields(self):
         pairs = [
             (
@@ -399,7 +454,9 @@ class TestOutboundComposerContracts(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         rendered = json.loads(result.stdout)
-        self.assertTrue(_contains_code_span(rendered, "@zz363sentinel <table>.py"))
+        self.assertTrue(
+            _contains_code_span(rendered, "\uff20zz363sentinel \uff1ctable>.py")
+        )
         self.assertIn("\uff20zz363sentinel &lt;table>&lt;tr>&lt;td>", rendered)
         self.assertEqual(review_marker.find_finding_markers(rendered), [])
 

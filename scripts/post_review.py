@@ -681,7 +681,7 @@ _TRUNCATION_MARKER = "…[truncated]"
 _GH_TOKEN_RE = re.compile(r"(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}")
 _GL_TOKEN_RE = re.compile(r"(?:glpat-|glrt-)[A-Za-z0-9_\-]{20,}")
 
-_ENTITY_DEC_RE = re.compile(r"&#(\d+);")
+_ENTITY_DEC_RE = re.compile(r"&#([0-9]+);")
 _ENTITY_HEX_RE = re.compile(r"&#x([0-9a-fA-F]+);", re.IGNORECASE)
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
 _HTML_COMMENT_UNTERMINATED_RE = re.compile(r"<!--[\s\S]*\Z")
@@ -721,7 +721,8 @@ def _strip_invisibles(text):
 def _decode_numeric_entities(text):
     """Decode printable-ASCII numeric entities; drop all others.
 
-    Named entities are left untouched. Non-ASCII numeric entities (e.g.
+    ``&commat;`` is decoded too; other named entities are left untouched.
+    Non-ASCII numeric entities (e.g.
     ``&#8212;``) are dropped deliberately — decoding the full Unicode range
     would reintroduce smuggleable invisibles if pass order ever drifts.
     Markdown parses fences before HTML entity decode, so a surviving literal
@@ -742,20 +743,16 @@ def _decode_numeric_entities(text):
 
     text = _ENTITY_DEC_RE.sub(_dec, text)
     text = _ENTITY_HEX_RE.sub(_hex, text)
-    return text
+    return text.replace("&commat;", "@")
 
 
-_REFERENCE_RE = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]*|#(?:[0-9]+|[xX][0-9A-Fa-f]+));")
 _DANGEROUS_LT_RE = re.compile(r"<(?=[A-Za-z/!?])")
 _MARKER_OPEN_RE = re.compile(
     r"<!--\s*(?:"
     + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
     + r")\s*:"
 )
-_TABLE_DELIMITER_RE = re.compile(r"^[ \t>|:\-*+.)0-9]+$")
-_FENCE_SHAPE_RE = re.compile(
-    r"^(?:[ \t>]|[-+*][ \t]|[1-9][0-9]{0,8}[.)][ \t])*([`~])\1{2,}"
-)
+_FENCE_SHAPE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*([`~])\1{2,}")
 
 
 def _decode_to_fixpoint(text):
@@ -786,22 +783,13 @@ def _break_marker_openers(text):
     return _MARKER_OPEN_RE.sub(lambda match: "&lt;" + match.group()[1:], text)
 
 
-def _escape_visible(text, *, destination=False):
-    text = _REFERENCE_RE.sub(
-        lambda match: (
-            match.group()
-            if match.group() in {"&amp;", "&lt;", "&gt;", "&quot;"}
-            else "&amp;" + match.group()[1:]
-        ),
-        text,
-    )
-    text = _DANGEROUS_LT_RE.sub("&lt;", text)
+def _escape_visible(text, *, code=False):
+    text = _DANGEROUS_LT_RE.sub("\uff1c" if code else "&lt;", text)
     return re.sub(
         r"@",
         lambda match: (
-            ("%40" if destination else "\uff20")
-            if destination
-            or not match.start()
+            "\uff20"
+            if not match.start()
             or not re.match(r"[A-Za-z0-9]", text[match.start() - 1])
             else "@"
         ),
@@ -818,45 +806,8 @@ def _escaped_tick(text, index):
     return bool(backslashes % 2)
 
 
-def _table_suspect_lines(lines):
-    suspect = set()
-    start = 0
-    for end in range(len(lines) + 1):
-        if end < len(lines) and lines[end].strip(" \t"):
-            continue
-        block = lines[start:end]
-        if any(
-            _TABLE_DELIMITER_RE.fullmatch(line) and "|" in line and "-" in line
-            for line in block
-        ):
-            suspect.update(range(start, end))
-        start = end + 1
-    return suspect
-
-
-def _unescaped_pipe(text):
-    for match in re.finditer(r"\|", text):
-        if not _escaped_tick(text, match.start()):
-            return True
-    return False
-
-
-def _contain_line(line, table_suspect=False, next_line_destination=False):
-    destination_start = line.find("](") + 2 if "](" in line else len(line)
-    if next_line_destination:
-        destination_start = 0
-    url_tokens = [
-        (match.start(), match.end())
-        for match in re.finditer(r"\S+", line)
-        if "://" in match.group() or match.group().startswith("www.")
-    ]
-
-    def in_destination(index):
-        return index >= destination_start
-
-    def in_url(index):
-        return any(start <= index < end for start, end in url_tokens)
-
+def _contain_line(line):
+    line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     out = []
     index = 0
     while index < len(line):
@@ -868,10 +819,6 @@ def _contain_line(line, table_suspect=False, next_line_destination=False):
             end = index
             while end < len(line) and line[end] == "`":
                 end += 1
-            if in_destination(index) or in_url(index):
-                out.append("\\`")
-                index += 1
-                continue
             width = end - index
             # Only a complete run of exactly this width closes; backslashes
             # inside the span have no escape meaning.
@@ -888,12 +835,12 @@ def _contain_line(line, table_suspect=False, next_line_destination=False):
                     close = tick
                     break
                 cursor = after
-            if close >= 0 and table_suspect and _unescaped_pipe(line[end:close]):
-                close = -1
             if close >= 0:
                 out.append(
                     line[index : close + width].replace(
-                        line[end:close], _break_marker_openers(line[end:close]), 1
+                        line[end:close],
+                        _escape_visible(line[end:close], code=True),
+                        1,
                     )
                 )
                 index = close + width
@@ -904,15 +851,7 @@ def _contain_line(line, table_suspect=False, next_line_destination=False):
         next_tick = line.find("`", index)
         if next_tick < 0:
             next_tick = len(line)
-        # A destination may start or end within this chunk.
-        at = index
-        while at < next_tick:
-            destination = in_destination(at)
-            stop = at + 1
-            while stop < next_tick and in_destination(stop) == destination:
-                stop += 1
-            out.append(_escape_visible(line[at:stop], destination=destination))
-            at = stop
+        out.append(_escape_visible(line[index:next_tick]))
         index = next_tick
     return "".join(out)
 
@@ -922,7 +861,7 @@ def _prepare_text(text, *, single_line=False, collapse_ticks=False, cap=None):
         return ""
     if not isinstance(text, str):
         text = str(text)
-    if not text.strip(" \t\n"):
+    if not text.strip():
         return ""
     text = _normalize_outbound(text)
     text = _redact_secrets(text)
@@ -932,37 +871,40 @@ def _prepare_text(text, *, single_line=False, collapse_ticks=False, cap=None):
         text = re.sub(r"[\r\n]+", " ", text)
     if cap is not None:
         text = _cap_rule_text(text, cap)
-    if not text.strip(" \t\n"):
+    if not text.strip():
         return ""
     intervals = []
     fence = (
         _open_fence(text, strict=True, intervals=intervals) if not single_line else None
     )
     lines = text.split("\n")
-    suspect = _table_suspect_lines(lines) if not single_line else set()
     prepared = []
+    protected_lines = []
     offset = 0
-    for number, line in enumerate(lines):
+    for line in lines:
         protected = any(start <= offset < end for start, end in intervals)
-        shape = _FENCE_SHAPE_RE.match(line)
+        original_length = len(line)
+        shape = _FENCE_SHAPE_RE.match(line) if not single_line else None
         if shape and not protected:
             tick = shape.start(1)
             line = line[:tick] + "\\" + line[tick:]
-        prepared.append(
-            _break_marker_openers(line)
-            if protected
-            else _contain_line(
-                line,
-                number in suspect
-                or (not single_line and line.lstrip().startswith("|")),
-                number > 0 and bool(re.search(r"\]\([ \t]*$", lines[number - 1])),
-            )
-        )
-        offset += len(line) + 1
+        prepared.append(line if protected else _contain_line(line))
+        protected_lines.append(protected)
+        offset += original_length + 1
+    start = None
+    for index in range(len(prepared) + 1):
+        if index < len(prepared) and protected_lines[index]:
+            if start is None:
+                start = index
+        elif start is not None:
+            prepared[start:index] = _break_marker_openers(
+                "\n".join(prepared[start:index])
+            ).split("\n")
+            start = None
     result = "\n".join(prepared)
     if fence is not None:
         result += "\n" + fence[0] * fence[1]
-    return result if result.strip(" \t\n") else ""
+    return result if result.strip() else ""
 
 
 def prepare_prose(text):
@@ -2005,9 +1947,8 @@ def render_group_body(primary, corroborators, *, fence_offsets=None):
     most the one header, measured from the anchor the group is posted at.
     Each corroborator is appended as its own section; that appended text is
     finding-controlled, so it is run through the same ``<!--`` neutralization
-    ``build_skipped_section`` applies (see its docstring) — the primary's own
-    render is deliberately left alone, matching its existing raw-on-the-wire
-    behavior.
+    ``build_skipped_section`` applies (see its docstring). The primary's fields
+    are prepared before this group is assembled.
     """
     return _render_group_sections(
         primary, corroborators, fence_offsets=fence_offsets
@@ -2031,7 +1972,7 @@ def _skipped_location(filepath, line):
 def _quoted_location(value):
     """Keep display location text inside a delimiter longer than its tick runs."""
     value = _redact_secrets(_normalize_outbound(str(value)))
-    value = _break_marker_openers(value).replace("\r", " ").replace("\n", " ")
+    value = _escape_visible(value, code=True).replace("\r", " ").replace("\n", " ")
     longest = max((len(run) for run in re.findall(r"`+", value)), default=0)
     delimiter = "`" * (longest + 1)
     if value.startswith(("`", " ")) or value.endswith(("`", " ")):
@@ -2559,9 +2500,9 @@ def compose_review_body(
     skipped groups in list order. No output is printed. This is deliberately not
     idempotent by regex: a hand-typed heading in ``review_body`` yields two headings
     once and self-heals, whereas a phrase-sniffing stripper would make identity depend
-    on counting prose. The composer owns the footer: marker deduplication sees the
-    full ``review_body``, while prose-footer deduplication sees only standalone footer
-    lines with the same head SHA; the bounded path always appends the full canonical
+    on counting prose. Preparation removes terminated comments before footer
+    deduplication; prose-footer deduplication sees only standalone footer lines
+    with the same head SHA. The bounded path always appends the full canonical
     footer, and skipped-finding text never reaches the dedup.
     """
     review_body = prepare_prose(review_body)

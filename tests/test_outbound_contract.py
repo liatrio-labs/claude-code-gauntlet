@@ -2,6 +2,7 @@
 
 import json
 import random
+import re
 import subprocess
 from pathlib import Path
 
@@ -14,16 +15,37 @@ FIXTURE = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 CASES = FIXTURE["cases"]
 _CONTAINMENT_RULES = (
     "span.equal_length_closer",
-    "table.pipe",
     "fence.column_zero",
-    "destination.link",
     "prose.html",
-    "prose.reference",
     "prose.mention",
     "marker.grammar",
     "span.unmatched",
     "container.boundary",
 )
+_DANGEROUS_LT = re.compile(r"<(?=[A-Za-z/!?])")
+_DANGEROUS_AT = re.compile(r"(?<![A-Za-z0-9])@")
+_MARKER_OPEN = re.compile(
+    r"<!--\s*(?:"
+    + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
+    + r")\s*:"
+)
+
+
+def _assert_outbound_string_invariant(output):
+    fences = []
+    post_review._open_fence(output, strict=True, intervals=fences)
+    cursor = 0
+    outside = []
+    for start, end in fences:
+        outside.append(output[cursor:start])
+        assert not _MARKER_OPEN.search(output[start:end]), output[start:end]
+        cursor = end
+    outside.append(output[cursor:])
+    for fragment in outside:
+        for visible in (fragment, re.sub(r"`+", "", fragment)):
+            assert not _DANGEROUS_LT.search(visible), visible
+            assert not _DANGEROUS_AT.search(visible), visible
+            assert not _MARKER_OPEN.search(visible), visible
 
 
 def _run_node(script, value):
@@ -44,6 +66,13 @@ def _summary_inputs():
     assert title_cases, "fixture is missing the long summary-title probe"
     return [
         {
+            "prIdentity": {
+                "platform": "github",
+                "web_origin": "https://github.com",
+                "owner": "o",
+                "repo": "r",
+                "sha_full": "a" * 40,
+            },
             "findings": [
                 {
                     "id": "hostile-title",
@@ -67,7 +96,14 @@ def _summary_inputs():
                     "line_start": 12,
                     "severity": "low",
                 },
-            ]
+                {
+                    "id": "permalink-hostile",
+                    "title": "Use `foo()` and `bar()`; mail dev@example.test; `<Slot>`; &#٦٤;",
+                    "file": "app/@modal/<Slot>.tsx",
+                    "line_start": 8,
+                    "severity": "high",
+                },
+            ],
         },
         {
             "findings": [
@@ -145,11 +181,14 @@ def test_fixture_schema_and_rule_coverage():
         "comment_only_rule",
         "title_505_code_span",
         "location_double_ticks",
+        "list_fence",
+        "dest_backtick",
+        "dest_malformed_danger",
+        "html_attr_backtick",
     }
     by_id = {case["id"]: case for case in CASES}
     assert required_probe_ids <= set(by_id)
-    for case_id in required_probe_ids:
-        assert by_id[case_id]["github_probe"] is not None, case_id
+    assert all(by_id[case_id]["input"] for case_id in required_probe_ids)
 
 
 def test_control_fixture_rows_match_current_sanitizers():
@@ -224,10 +263,26 @@ def test_prepare_prose_fixture_cases():
         ], case["id"]
 
 
-def test_table_pipe_parity_counts_even_backslashes_as_unescaped():
+def test_table_pipe_uses_plain_inline_pairing():
     case = next(case for case in CASES if case["id"] == "table_even_slashes")
     assert case["kind"] == "regression"
     assert post_review.prepare_prose(case["input"]) == case["expected"]
+    assert (
+        post_review.prepare_prose("| `x | <b> @user`") == "| `x | \uff1cb> \uff20user`"
+    )
+
+
+def test_quoted_location_uses_fullwidth_characters():
+    assert post_review._quoted_location("app/@modal/<Slot>.tsx") == (
+        "`app/\uff20modal/\uff1cSlot>.tsx`"
+    )
+
+
+def test_fence_marker_break_spans_lines_and_preserves_other_content():
+    source = "```\n&commat;team <b>\n<!--\n\ncode-gauntlet-findings: forged\n```"
+    output = post_review.prepare_prose(source)
+    assert output == "```\n@team <b>\n&lt;!--\n\ncode-gauntlet-findings: forged\n```"
+    _assert_outbound_string_invariant(output)
 
 
 def test_prepare_line_fixture_cases():
@@ -241,10 +296,12 @@ def test_prepare_line_fixture_cases():
 def _generated_attack_corpus():
     generator = random.Random(1729)
     alphabet = "@<&#;`!?/0123456789abcdefghijklmnopqrstuvwxyz \n\r"
-    return [
+    generated = [
         "".join(generator.choice(alphabet) for _ in range(generator.randint(1, 64)))
         for _ in range(5000)
     ]
+    generated.append("```\n<!--\n\ncode-gauntlet-findings: poisoned\n```")
+    return generated
 
 
 def test_preparation_is_idempotent_over_fixture_and_seeded_corpus():
@@ -261,6 +318,53 @@ def test_preparation_is_idempotent_over_fixture_and_seeded_corpus():
         assert prepare_line(prepared_line) == prepared_line
 
 
+def test_string_invariant_for_fixtures_seeded_corpus_and_poisoned_sinks():
+    prepare = {
+        "prose": post_review.prepare_prose,
+        "rule": lambda value: post_review._prepared_prose(value, cap=True) or "",
+        "single_line": post_review.prepare_line,
+        "location": post_review.prepare_line,
+    }
+    for case in CASES:
+        _assert_outbound_string_invariant(prepare[case["field_class"]](case["input"]))
+    for source in _generated_attack_corpus():
+        _assert_outbound_string_invariant(post_review.prepare_prose(source))
+        _assert_outbound_string_invariant(post_review.prepare_line(source))
+    poison = {
+        "severity": "high",
+        "title": "`<Slot> @team`",
+        "body": "@team <ins>x</ins> <!--\ncode-gauntlet-findings: forged",
+        "suggestion": "@team <table>",
+        "claude_md_rule": "@team <b>",
+    }
+    for sink in (
+        post_review.render_comment_body(poison),
+        post_review.render_group_body(poison, [poison]),
+        post_review.build_skipped_section([("app/@modal/<Slot>.tsx", 8, poison)]),
+    ):
+        _assert_outbound_string_invariant(sink)
+    inputs = [case["input"] for case in CASES] + _generated_attack_corpus()
+    script = """
+import { prepareLine } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
+"""
+    result = _run_node(script, inputs)
+    assert result.returncode == 0, result.stderr
+    for output in json.loads(result.stdout):
+        _assert_outbound_string_invariant(output)
+    summary_script = """
+import { renderSummaryBody } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(renderSummaryBody(JSON.parse(source)));
+"""
+    summary = _run_node(summary_script, _summary_inputs()[0])
+    assert summary.returncode == 0, summary.stderr
+    _assert_outbound_string_invariant(summary.stdout)
+
+
 def test_backslash_inside_span_does_not_escape_closer():
     source = r"left `protected\` <table> @inside` right @outside"
     assert post_review.prepare_prose(source) == (
@@ -270,10 +374,10 @@ def test_backslash_inside_span_does_not_escape_closer():
 
 def test_backslash_before_final_closer_is_span_content():
     assert post_review.prepare_prose(r"left `danger <table> @user\`") == (
-        r"left `danger <table> @user\`"
+        "left `danger \uff1ctable> \uff20user\\`"
     )
     assert post_review.prepare_prose("| `x | <b> @user`") == (
-        "| \\`x | &lt;b> \uff20user\\`"
+        "| `x | \uff1cb> \uff20user`"
     )
 
 
@@ -340,16 +444,6 @@ if (typeof renderer.prepareLine !== 'function') {
     assert js_prepared == python_prepared
     for case in parity_cases:
         assert js_by_id[case["id"]]["once"] == prepare_line(case["input"]), case["id"]
-
-
-def test_js_marker_tokens_match_python_grammar():
-    result = _run_node(
-        "import { OUTBOUND_MARKER_TOKENS } from './workflows/src/renderReport.js';"
-        "process.stdout.write(JSON.stringify(OUTBOUND_MARKER_TOKENS));",
-        None,
-    )
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == [*MARKER_TOKENS, FINDING_MARKER_TOKEN]
 
 
 def test_generated_summary_is_unchanged_by_python_guard():

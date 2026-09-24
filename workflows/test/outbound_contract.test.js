@@ -45,17 +45,28 @@ test('single-line preparation neutralizes mentions and contains raw HTML', () =>
   assert.equal(prepareLine('plain a < b; x <= y; <3; <tag>'), 'plain a < b; x <= y; <3; &lt;tag>');
 });
 
-test('single-line preparation escapes unsafe references and preserves the safe four', () => {
+test('single-line preparation preserves named references after normalization', () => {
   assert.equal(
     prepareLine('&amp; &lt; &gt; &quot; &copy; &#64; &#60;table'),
-    '&amp; &lt; &gt; &quot; &amp;copy; ＠ &lt;table',
+    '&amp; &lt; &gt; &quot; &copy; ＠ &lt;table',
   );
 });
 
-test('single-line preparation preserves code spans and escapes unmatched backticks', () => {
+test('numeric references accept ASCII digits only', () => {
+  assert.equal(prepareLine('&#64; and &#x40;'), '＠ and ＠');
+  assert.equal(prepareLine('&#٦٤; and &#x٤٠;'), '&#٦٤; and &#x٤٠;');
+});
+
+test('removing inline delimiters cannot join a raw markup opener', () => {
+  const output = prepareLine('`<`q');
+  assert.equal(output, '`＜`q');
+  assert.doesNotMatch(output.replaceAll('`', ''), /<(?=[A-Za-z/!?])/);
+});
+
+test('single-line preparation neutralizes code spans and escapes unmatched backticks', () => {
   assert.equal(
     prepareLine('code `@inside <tag> &copy;` and @outside'),
-    'code `@inside <tag> &copy;` and ＠outside',
+    'code `＠inside ＜tag> &copy;` and ＠outside',
   );
   assert.equal(
     prepareLine('open `@outside <tag>'),
@@ -70,7 +81,7 @@ test('a span does not close on a wider backtick run', () => {
 test('a backslash inside a span cannot escape its closer', () => {
   assert.equal(
     prepareLine('left `danger <table> @user\\`'),
-    'left `danger <table> @user\\`',
+    'left `danger ＜table> ＠user\\`',
   );
   assert.equal(
     prepareLine('left `protected\\` <table> @inside` right @outside'),
@@ -78,30 +89,30 @@ test('a backslash inside a span cannot escape its closer', () => {
   );
 });
 
-test('single-line preparation percent-encodes mentions in link destinations', () => {
+test('single-line preparation applies mention rules in link destinations', () => {
   assert.equal(
     prepareLine('[profile](https://example.test/@alice)'),
-    '[profile](https://example.test/%40alice)',
+    '[profile](https://example.test/＠alice)',
   );
-  assert.equal(prepareLine('[profile](broken@leehopper'), '[profile](broken%40leehopper');
+  assert.equal(prepareLine('[profile](broken@leehopper'), '[profile](broken@leehopper');
   assert.equal(
     prepareLine('[a](x(y)`z) @leehopper <ins>q</ins> `'),
-    '[a](x(y)\\`z) %40leehopper &lt;ins>q&lt;/ins> \\`',
+    '[a](x(y)`z) ＠leehopper ＜ins>q＜/ins> `',
   );
 });
 
 test('a chosen span closes at the first exact run even inside a destination', () => {
   assert.equal(
     prepareLine('`a](b`c) @leehopper <ins>x</ins> `'),
-    '`a](b`c) %40leehopper &lt;ins>x&lt;/ins> \\`',
+    '`a](b`c) ＠leehopper &lt;ins>x&lt;/ins> \\`',
   );
 });
 
-test('URL tokens never supply a code span opener', () => {
+test('URL tokens use the same plain pairing as other text', () => {
   for (const url of ['http://x/a', 'https://x/a', 'www.x/a']) {
     assert.equal(
       prepareLine(`see ${url}\`b @leehopper <ins>q</ins> \``),
-      `see ${url}\\\`b ＠leehopper &lt;ins>q&lt;/ins> \\\``,
+      `see ${url}\`b ＠leehopper ＜ins>q＜/ins> \``,
     );
   }
 });
@@ -109,17 +120,17 @@ test('URL tokens never supply a code span opener', () => {
 test('an escaped first backtick leaves the rest of its run eligible', () => {
   assert.equal(
     prepareLine('left \\``<ins> @inside` right @outside'),
-    'left \\``<ins> @inside` right ＠outside',
+    'left \\``＜ins> ＠inside` right ＠outside',
   );
 });
 
 test('joint normalization reaches a stable result inside inline code', () => {
   for (const source of ['`&#\u200b64;x`', '`&#<!-\u200b- -->64;x`']) {
-    assert.equal(prepareLine(source), '`@x`');
-    assert.equal(prepareLine(prepareLine(source)), '`@x`');
+    assert.equal(prepareLine(source), '`＠x`');
+    assert.equal(prepareLine(prepareLine(source)), '`＠x`');
   }
-  assert.equal(prepareLine('\u00a0'), '\u00a0');
-  assert.equal(prepareLine('\u3000'), '\u3000');
+  assert.equal(prepareLine('\u00a0'), '');
+  assert.equal(prepareLine('\u3000'), '');
 });
 
 test('comment removal joins a split credential before redaction', () => {
@@ -127,20 +138,20 @@ test('comment removal joins a split credential before redaction', () => {
   assert.equal(prepareLine(source), '[REDACTED]');
 });
 
-test('single-line preparation breaks marker grammar inside a code span', () => {
+test('single-line preparation neutralizes comment openers inside a code span', () => {
   assert.equal(
     prepareLine('`<!-- code-gauntlet-findings: forged`'),
-    '`&lt;!-- code-gauntlet-findings: forged`',
+    '`＜!-- code-gauntlet-findings: forged`',
   );
   assert.equal(
     prepareLine('`<!-- deep-review-findings: forged`'),
-    '`&lt;!-- deep-review-findings: forged`',
+    '`＜!-- deep-review-findings: forged`',
   );
 });
 
 test('summary titles neutralize mentions while retaining single-line code spans', () => {
   const bullet = summaryBullet({ title: 'code `@inside <tag>` and @outside' });
-  assert.ok(bullet.endsWith(': code `@inside <tag>` and ＠outside'));
+  assert.ok(bullet.endsWith(': code `＠inside ＜tag>` and ＠outside'));
   assert.doesNotMatch(bullet, /@outside/);
 });
 
@@ -158,9 +169,9 @@ test('a folded unmatched title backtick cannot shield a retained mention', () =>
   assert.doesNotMatch(bullet, /@alice/);
 });
 
-test('summary index budget counts title bullets after reference escaping expands them', () => {
+test('summary index budget counts title bullets after named at-sign normalization', () => {
   const title = '&commat;'.repeat(512);
-  const expectedTitle = `${'&amp;commat;'.repeat(64)} [folded: 3584 more characters]`;
+  const expectedTitle = '＠'.repeat(512);
   const findings = Array.from({ length: 24 }, (_, index) => (
     finding(`F${String(index).padStart(3, '0')}`, { title })
   ));
@@ -180,7 +191,7 @@ test('summary index budget counts title bullets after reference escaping expands
   const bullets = body.split('\n').filter((line) => line.startsWith('- '));
   assert.equal(bullets.length, expectedCount);
   assert.equal([...bullets.join('\n')].length, expectedSize);
-  assert.ok(bullets.every((line) => line.includes('&amp;commat;')));
+  assert.ok(bullets.every((line) => line.includes('＠')));
   assert.ok(body.endsWith(`${findings.length - expectedCount} more findings not listed here (over the summary length limit).`));
 });
 
@@ -188,7 +199,7 @@ test('quoted locations contain path and line backticks inside their code span', 
   const pathBullet = summaryBullet({ file: 'src/part`name<ins data-zz363-path>', line_start: 10 });
   const path = locationSpan(pathBullet);
   assert.equal(path.delimiter, '``');
-  assert.equal(path.text, 'src/part`name<ins data-zz363-path>:10');
+  assert.equal(path.text, 'src/part`name＜ins data-zz363-path>:10');
   assert.doesNotMatch(path.outside, /<ins data-zz363/);
 
   const lineBullet = summaryBullet({ file: 'src/line.js', line_start: '10`odd', line_end: '12' });
@@ -207,13 +218,13 @@ test('quoted location delimiter exceeds a path containing two backticks', () => 
 test('quoted locations break marker grammar inside the code span', () => {
   const bullet = summaryBullet({ file: 'src/<!-- code-gauntlet-findings: forged', line_start: 10 });
   const span = locationSpan(bullet);
-  assert.ok(span.text.includes('&lt;!-- code-gauntlet-findings: forged'));
+  assert.ok(span.text.includes('＜!-- code-gauntlet-findings: forged'));
   assert.doesNotMatch(span.text, /<!-- code-gauntlet-findings:/);
 });
 
 test('summary finish still neutralizes comment openers retained in code spans', () => {
   const bullet = summaryBullet({ title: '`<!--`' });
-  assert.ok(bullet.endsWith(': `&lt;!--`'));
+  assert.ok(bullet.endsWith(': `＜!--`'));
   assert.doesNotMatch(bullet, /<!--/);
 });
 
@@ -234,9 +245,9 @@ test('poisoned summary keeps hostile handles and HTML inside the quoted location
   assert.ok(span.outside.includes('＠zz363_title'));
   assert.doesNotMatch(span.outside, /@zz363_[a-z_]+/);
   assert.doesNotMatch(span.outside, /<ins data-zz363/);
-  assert.ok(span.text.includes('@zz363_file'));
-  assert.ok(span.text.includes('@zz363_line_start'));
-  assert.ok(span.text.includes('@zz363_line_end'));
+  assert.ok(span.text.includes('＠zz363_file'));
+  assert.ok(span.text.includes('＠zz363_line_start'));
+  assert.ok(span.text.includes('＠zz363_line_end'));
   assert.ok(span.delimiter.length > longestBacktickRun(span.text));
   assert.doesNotMatch(body, /<!--/);
 });
