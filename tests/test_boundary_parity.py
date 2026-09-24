@@ -99,7 +99,14 @@ class TestSummaryIndexParity(unittest.TestCase):
                     "file": "app/@modal/<Slot>.tsx",
                     "line_start": 8,
                     "title": "Use `foo()` and `<Slot>`; mail dev@example.test; &#٦٤;",
-                }
+                },
+                {
+                    "id": "crossing-location",
+                    "severity": "low",
+                    "file": "src/a<`b.py",
+                    "line_start": 1,
+                    "title": "Path boundary",
+                },
             ],
         }
         script = (
@@ -125,6 +132,8 @@ class TestSummaryIndexParity(unittest.TestCase):
         self.assertIn("&#٦٤;", summary)
         self.assertIn("%40modal", summary)
         self.assertIn("%3CSlot%3E.tsx", summary)
+        self.assertIn("src/a\uff1c`b.py", summary)
+        self.assertIn("src/a%3C%60b.py", summary)
 
     def test_delivered_groups_and_summary_slice_cross_runtime(self):
         findings = [

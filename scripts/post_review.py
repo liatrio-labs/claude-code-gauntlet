@@ -856,7 +856,9 @@ def _contain_line(line):
     return "".join(out)
 
 
-def _prepare_text(text, *, single_line=False, collapse_ticks=False, cap=None):
+def _prepare_text(
+    text, *, single_line=False, collapse_ticks=False, cap=None, trust_fences=True
+):
     if text is None:
         return ""
     if not isinstance(text, str):
@@ -875,7 +877,9 @@ def _prepare_text(text, *, single_line=False, collapse_ticks=False, cap=None):
         return ""
     intervals = []
     fence = (
-        _open_fence(text, strict=True, intervals=intervals) if not single_line else None
+        _open_fence(text, strict=True, intervals=intervals)
+        if not single_line and trust_fences
+        else None
     )
     lines = text.split("\n")
     prepared = []
@@ -959,7 +963,10 @@ def _prepared_prose(text, *, cap=False):
     Returns ``None`` when the field is absent before or after processing.
     """
     prepared = _prepare_text(
-        text, collapse_ticks=True, cap=_RULE_TEXT_CAP if cap else None
+        text,
+        collapse_ticks=True,
+        cap=_RULE_TEXT_CAP if cap else None,
+        trust_fences=not cap,
     )
     return _rendered_text(prepared)
 
@@ -1798,8 +1805,9 @@ def _finding_sections(finding, *, fence_offsets=None):
     if suggestion_text:
         parts += ["", "**Suggested fix:**", suggestion_text]
 
-    # Cited rule (issue #47 / #122). Repo-derived: sanitize → redact → cap →
-    # blockquote. Each candidate is prepared independently; `claude_md_rule`
+    # Cited rule: normalize, redact, collapse long backtick runs, cap the source
+    # at 500 characters, contain every line, then blockquote. Each candidate
+    # is prepared independently; `claude_md_rule`
     # wins only when it survives sanitize (comment-only rules fall through).
     rule_text = _prepared_prose(finding.get("claude_md_rule"), cap=True)
     if not rule_text:
@@ -1972,6 +1980,7 @@ def _skipped_location(filepath, line):
 def _quoted_location(value):
     """Keep display location text inside a delimiter longer than its tick runs."""
     value = _redact_secrets(_normalize_outbound(str(value)))
+    value = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", value)
     value = _escape_visible(value, code=True).replace("\r", " ").replace("\n", " ")
     longest = max((len(run) for run in re.findall(r"`+", value)), default=0)
     delimiter = "`" * (longest + 1)

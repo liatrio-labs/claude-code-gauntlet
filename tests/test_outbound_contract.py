@@ -103,6 +103,13 @@ def _summary_inputs():
                     "line_start": 8,
                     "severity": "high",
                 },
+                {
+                    "id": "crossing-location",
+                    "title": "Path boundary",
+                    "file": "src/a<`b.py",
+                    "line_start": 1,
+                    "severity": "low",
+                },
             ],
         },
         {
@@ -189,6 +196,9 @@ def test_fixture_schema_and_rule_coverage():
     by_id = {case["id"]: case for case in CASES}
     assert required_probe_ids <= set(by_id)
     assert all(by_id[case_id]["input"] for case_id in required_probe_ids)
+    assert all(
+        by_id[case_id]["github_probe"] is not None for case_id in required_probe_ids
+    )
 
 
 def test_control_fixture_rows_match_current_sanitizers():
@@ -276,6 +286,52 @@ def test_quoted_location_uses_fullwidth_characters():
     assert post_review._quoted_location("app/@modal/<Slot>.tsx") == (
         "`app/\uff20modal/\uff1cSlot>.tsx`"
     )
+    assert post_review._quoted_location("src/a<`b.py") == "``src/a\uff1c`b.py``"
+
+
+def test_rule_fixture_rows_are_contained_after_blockquote_prefix():
+    rows = [
+        case
+        for case in CASES
+        if case["id"].startswith("rule_") and "\n" in case["input"]
+    ]
+    assert {row["id"] for row in rows} >= {
+        "rule_tab_tilde",
+        "rule_space_tab_tilde",
+        "rule_plain_tilde",
+        "rule_backtick_block",
+    }
+    for row in rows:
+        finding = {
+            "severity": "high",
+            "title": "Rule",
+            "body": "Body",
+            "claude_md_rule": row["input"],
+        }
+        for rendered in (
+            post_review.render_comment_body(finding),
+            post_review.build_skipped_section([("src/file.py", 3, finding)]),
+        ):
+            quoted = "\n".join("> " + line for line in row["expected"].split("\n"))
+            assert quoted in rendered, row["id"]
+            unquoted = "\n".join(line[2:] for line in quoted.split("\n"))
+            _assert_outbound_string_invariant(unquoted)
+
+
+def test_multiline_non_rule_fields_start_at_column_zero():
+    finding = {
+        "severity": "high",
+        "title": "Title",
+        "body": "Body first\nBody second",
+        "suggestion": "Fix first\nFix second",
+    }
+    for rendered in (
+        post_review.render_comment_body(finding),
+        post_review.render_group_body(finding, [finding]),
+        post_review.build_skipped_section([("src/file.py", 3, finding)]),
+    ):
+        for line in ("Body first", "Body second", "Fix first", "Fix second"):
+            assert re.search(r"(?m)^" + re.escape(line) + r"$", rendered), line
 
 
 def test_fence_marker_break_spans_lines_and_preserves_other_content():
@@ -461,6 +517,27 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
     assert callable(prepare_prose), "missing expected Python guard prepare_prose"
     for summary in summaries:
         assert prepare_prose(summary) == summary
+    path = "src/a<`b.py"
+    result = _run_node(
+        script,
+        [
+            {
+                "findings": [
+                    {
+                        "id": "path",
+                        "title": "Path",
+                        "file": path,
+                        "line_start": 1,
+                        "severity": "low",
+                    }
+                ]
+            }
+        ],
+    )
+    assert result.returncode == 0, result.stderr
+    guarded_summary = json.loads(result.stdout)[0]
+    assert "``src/a\uff1c`b.py:1``" in guarded_summary
+    assert prepare_prose(guarded_summary) == guarded_summary
     location = "```src/dir/``/file.py:7-9```"
     assert location in summaries[0]
 

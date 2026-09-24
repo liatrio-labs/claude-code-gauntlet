@@ -228,17 +228,54 @@ def _assert_poison_containment(test, body, property_names, expected_markers=()):
 
 class TestOutboundComposerContracts(unittest.TestCase):
     def test_poisoned_field_does_not_reach_code_owned_backticks_in_its_paragraph(self):
-        marker = "`backtick-breakout @team <b>"
-        finding = {"severity": "high", "title": marker, "body": marker}
-        rendered = post_review.render_comment_body(finding)
-        for prepared in (
-            post_review.prepare_line(marker),
-            post_review.prepare_prose(marker),
+        title = "Title @title <b>"
+        body = "`backtick-breakout @body <b>"
+        finding = {"severity": "high", "title": title, "body": body}
+        for rendered in (
+            post_review.render_comment_body(finding),
+            post_review.render_group_body(finding, [finding]),
+            post_review.build_skipped_section([("src/file.py", 3, finding)]),
         ):
-            with self.subTest(prepared=prepared):
-                at = rendered.index(prepared) + len(prepared)
-                rest = rendered[at:].split("\n\n", 1)[0]
-                self.assertNotIn("`", rest)
+            with self.subTest(rendered=rendered[:40]):
+                prepared = post_review.prepare_prose(body)
+                self.assertIn(prepared, rendered)
+                for paragraph in rendered.split("\n\n"):
+                    if prepared in paragraph:
+                        self.assertNotIn("`", paragraph[len(prepared) :])
+        script = """
+import { renderSummaryBody } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(renderSummaryBody(JSON.parse(source)));
+"""
+        summary = subprocess.run(
+            [NODE, "--input-type=module", "-e", script],
+            cwd=REPO,
+            input=json.dumps(
+                {
+                    "findings": [
+                        {
+                            "id": "OUT",
+                            "file": "src/file.py",
+                            "line_start": 3,
+                            "title": body,
+                            "severity": "high",
+                        }
+                    ]
+                }
+            ),
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+        )
+        self.assertEqual(summary.returncode, 0, summary.stderr)
+        bullet = next(
+            line for line in summary.stdout.splitlines() if line.startswith("- ")
+        )
+        prepared_title = post_review.prepare_line(body)
+        self.assertIn(prepared_title, bullet)
+        self.assertNotIn("`", bullet.split(prepared_title, 1)[1])
         fenced = post_review.render_comment_body(
             {
                 "severity": "high",
@@ -315,7 +352,7 @@ class TestOutboundComposerContracts(unittest.TestCase):
         self.assertIn("\n```suggestion\n~~~\n@leehopper <ins>x</ins>\n```\n", body)
         self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
 
-    def test_trusted_rule_fence_closes_under_blockquote_prefix(self):
+    def test_rule_fences_are_escaped_under_blockquote_prefix(self):
         body = post_review.render_comment_body(
             {
                 "severity": "high",
@@ -324,8 +361,8 @@ class TestOutboundComposerContracts(unittest.TestCase):
                 "claude_md_rule": "~~~\n@user <b>",
             }
         )
-        self.assertEqual(body.count("> ~~~"), 2)
-        self.assertIn("> @user <b>", body)
+        self.assertIn("> \\~~~", body)
+        self.assertIn("> \uff20user &lt;b>", body)
         self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
 
     def test_skipped_and_corroborator_fields_keep_fence_boundaries(self):

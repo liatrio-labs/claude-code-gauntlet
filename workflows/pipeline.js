@@ -2186,7 +2186,7 @@ function quotedSummaryLocation(finding) {
       display += `-${oneLine(outboundBase(finding.line_end))}`;
     }
   }
-  display = outboundVisible(display, true);
+  display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
   const longest = Math.max(0, ...[...display.matchAll(/`+/g)].map((match) => match[0].length));
   const delimiter = '`'.repeat(longest + 1);
   if (/^[` ]|[` ]$/.test(display)) display = ` ${display} `;

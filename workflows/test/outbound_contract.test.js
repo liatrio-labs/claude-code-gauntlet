@@ -206,6 +206,9 @@ test('quoted locations contain path and line backticks inside their code span', 
   const line = locationSpan(lineBullet);
   assert.equal(line.delimiter, '``');
   assert.equal(line.text, 'src/line.js:10`odd-12');
+
+  const crossing = locationSpan(summaryBullet({ file: 'src/a<`b.py', line_start: 1, line_end: 1 }));
+  assert.equal(crossing.text, 'src/a＜`b.py:1');
 });
 
 test('quoted location delimiter exceeds a path containing two backticks', () => {
