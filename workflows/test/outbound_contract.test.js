@@ -63,6 +63,10 @@ test('single-line preparation preserves code spans and escapes unmatched backtic
   );
 });
 
+test('a span does not close on a wider backtick run', () => {
+  assert.equal(prepareLine('`a`` @inside'), '\\`a\\`\\` ＠inside');
+});
+
 test('a backslash inside a span cannot escape its closer', () => {
   assert.equal(
     prepareLine('left `danger <table> @user\\`'),
@@ -116,6 +120,11 @@ test('joint normalization reaches a stable result inside inline code', () => {
   }
   assert.equal(prepareLine('\u00a0'), '\u00a0');
   assert.equal(prepareLine('\u3000'), '\u3000');
+});
+
+test('comment removal joins a split credential before redaction', () => {
+  const source = `ghp_<!-- split -->${'A'.repeat(20)}`;
+  assert.equal(prepareLine(source), '[REDACTED]');
 });
 
 test('single-line preparation breaks marker grammar inside a code span', () => {

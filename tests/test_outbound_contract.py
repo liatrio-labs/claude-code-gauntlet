@@ -224,6 +224,12 @@ def test_prepare_prose_fixture_cases():
         ], case["id"]
 
 
+def test_table_pipe_parity_counts_even_backslashes_as_unescaped():
+    case = next(case for case in CASES if case["id"] == "table_even_slashes")
+    assert case["kind"] == "regression"
+    assert post_review.prepare_prose(case["input"]) == case["expected"]
+
+
 def test_prepare_line_fixture_cases():
     prepare_line = getattr(post_review, "prepare_line", None)
     assert callable(prepare_line), "missing expected Python entry point prepare_line"

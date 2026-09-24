@@ -647,6 +647,18 @@ class TestDeliveryTitleKeys(unittest.TestCase):
         }
         self.assertEqual(self._live_key(finding), "07961d7c0f9dd168")
 
+    def test_nonstring_title_is_absent_for_rendering_and_keying(self):
+        finding = {
+            "file": "src/edited.py",
+            "line": 61,
+            "severity": "high",
+            "title": 7,
+            "body": "Body one",
+        }
+        self.assertEqual(self._live_key(finding), "07961d7c0f9dd168")
+        self.assertIn("[HIGH] Finding", post_review.key_material_body(finding))
+        self.assertNotIn("[HIGH] 7", post_review.key_material_body(finding))
+
     def test_empty_title_key_is_pinned(self):
         finding = {
             "file": "src/edited.py",
