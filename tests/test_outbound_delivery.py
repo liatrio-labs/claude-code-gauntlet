@@ -96,6 +96,10 @@ class _RecordingFinding(dict):
         super().__init__(*args, **kwargs)
         self.reads = reads if reads is not None else set()
 
+    # The read log is test bookkeeping; a recorded finding compares as its plain dict.
+    __eq__ = dict.__eq__
+    __hash__ = None
+
     def __getitem__(self, key):
         self.reads.add(key)
         return super().__getitem__(key)
