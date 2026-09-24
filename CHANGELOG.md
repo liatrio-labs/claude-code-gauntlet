@@ -2,6 +2,77 @@
 
 <!-- version list -->
 
+## v3.42.0 (2026-09-24)
+
+### Bug Fixes
+
+- Apply one outbound text contract to every posted field (#363)
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+- Make the outbound lexer fail safe against GitHub's parser
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+- Neutralize dangerous characters whatever the inline lexer decides
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+- Pair code spans only on equal-length runs, with no escapes inside a span
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+- Remove sanitizer code the outbound contract orphaned and test permalink suppression
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+- Run tests with node from PATH and give JS comment removal its own loop
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+- Trust no fences in blockquoted cited rules and close review gaps
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+### Chores
+
+- Add a /next-issue project skill for roadmap sessions
+  ([#367](https://github.com/liatrio-labs/claude-code-gauntlet/pull/367),
+  [`c76a8ef`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c76a8ef0926cc60282fdee7c48fcdd13cb1451d2))
+
+- Gate paid bench runs and the merge on the maintainer's approval
+  ([#367](https://github.com/liatrio-labs/claude-code-gauntlet/pull/367),
+  [`c76a8ef`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c76a8ef0926cc60282fdee7c48fcdd13cb1451d2))
+
+### Features
+
+- Apply one outbound text contract to every posted field
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+### Testing
+
+- Add mutation-lens regressions for span width, split credentials, table pipes and non-string titles
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+- Compare recorded findings as plain dicts
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+- Record GitHub renders for the changed outbound fixture rows
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+- Record GitHub renders for the new outbound fixture rows
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+- Specify the outbound text contract with failing tests
+  ([#376](https://github.com/liatrio-labs/claude-code-gauntlet/pull/376),
+  [`820340d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/820340d598cc1e80ce03f30cd154f0c2b9c1069c))
+
+
 ## v3.41.3 (2026-09-23)
 
 ### Bug Fixes
