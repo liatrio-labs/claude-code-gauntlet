@@ -150,13 +150,16 @@ def _js_finding_property_union():
 
 
 def _contains_code_span(text, needle):
+    found = False
     for line in text.splitlines():
         offset = 0
         while True:
             index = line.find(needle, offset)
             if index < 0:
                 break
+            found = True
             runs = list(re.finditer(r"`+", line))
+            enclosed = False
             for opening in runs:
                 if opening.end() > index:
                     break
@@ -168,9 +171,19 @@ def _contains_code_span(text, needle):
                     if len(opening.group()) == len(closing.group()) and len(
                         opening.group()
                     ) > max(map(len, inner_runs), default=0):
-                        return True
+                        enclosed = True
+                        break
+                if enclosed:
+                    break
+            if not enclosed:
+                return False
             offset = index + len(needle)
-    return False
+    return found
+
+
+def test_every_location_sentinel_occurrence_must_be_quoted():
+    assert _contains_code_span("`@zz363file` and ``@zz363file``", "@zz363file")
+    assert not _contains_code_span("`@zz363file` and @zz363file", "@zz363file")
 
 
 def _assert_poison_containment(test, body, property_names, expected_markers=()):
@@ -199,6 +212,88 @@ def _assert_poison_containment(test, body, property_names, expected_markers=()):
 
 
 class TestOutboundComposerContracts(unittest.TestCase):
+    def test_prefixed_field_fences_cannot_consume_later_fields(self):
+        pairs = [
+            (
+                "&#64;@leehopper - ```---&commat;](&#64;\n  ~~~\n* 1. &#x40;",
+                "\n\n\n~~~\n=[<ins>---~~~https://x.com/aa\u200b* ",
+            ),
+            (
+                "\n  ~~~\n/`",
+                "( |<ins>\n\u00a0\n\n~~~\n</ins><ins>\u3000\\|   - ",
+            ),
+            (
+                ' ](&#\u200b64;\n  ~~~\n\\`> "word  >    - <!--',
+                "1. ]\n~~~\n\\](](x(y)\\\t   @leehopper",
+            ),
+            (
+                "\t\n  ~~~\n| --- |&#64;@leehopper \u00a0# &commat;https://x/__\\|",
+                '  \n~~~\n[x](<b>](\n<table><tr><td>&commat;/"',
+            ),
+        ]
+        for source, victim in pairs:
+            with self.subTest(source=source):
+                body = post_review.render_comment_body(
+                    {
+                        "severity": "high",
+                        "title": "Field boundary",
+                        "body": source,
+                        "suggestion": victim,
+                    }
+                )
+                before_victim = body.split("**Suggested fix:**", 1)[0]
+                self.assertIn("\\~~~", before_victim)
+                self.assertIsNone(post_review._open_fence(before_victim))
+                self.assertIn("**Suggested fix:**", body)
+                self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
+
+    def test_untrusted_fence_cannot_swallow_footer_or_suggestion(self):
+        body = post_review.render_comment_body(
+            {
+                "severity": "high",
+                "title": "Field boundary",
+                "body": "Intro\n\n  ~~~\nnote",
+                "suggested_fix_code": "~~~\n@leehopper <ins>x</ins>\n",
+            }
+        )
+        self.assertIn("  \\~~~\n", body)
+        self.assertIn("\n```suggestion\n~~~\n@leehopper <ins>x</ins>\n```\n", body)
+        self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
+
+    def test_trusted_rule_fence_closes_under_blockquote_prefix(self):
+        body = post_review.render_comment_body(
+            {
+                "severity": "high",
+                "title": "Rule",
+                "body": "After rule",
+                "claude_md_rule": "~~~\n@user <b>",
+            }
+        )
+        self.assertEqual(body.count("> ~~~"), 2)
+        self.assertIn("> @user <b>", body)
+        self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
+
+    def test_skipped_and_corroborator_fields_keep_fence_boundaries(self):
+        primary = {
+            "severity": "high",
+            "title": "Primary",
+            "body": "Start\n  ~~~\n@leehopper <ins>x</ins>",
+        }
+        corroborator = {
+            "severity": "low",
+            "title": "Corroborator",
+            "body": "  ~~~\n@leehopper <ins>x</ins>",
+            "agent": "Reviewer",
+        }
+        for rendered in (
+            post_review.build_skipped_section([("src/file.py", 3, primary)]),
+            post_review.render_group_body(primary, [corroborator]),
+        ):
+            with self.subTest(rendered=rendered[:40]):
+                self.assertIn("  \\~~~", rendered)
+                self.assertIn("\uff20leehopper &lt;ins>x&lt;/ins>", rendered)
+                self.assertIsNone(post_review._open_fence(rendered))
+
     def test_python_fixture_rows_match_the_ordered_prose_entry_points(self):
         prepare_prose = getattr(post_review, "prepare_prose", None)
         prepare_line = getattr(post_review, "prepare_line", None)
@@ -375,6 +470,7 @@ class TestOutboundComposerContracts(unittest.TestCase):
                 "## Findings\n\n",
                 encoding="utf-8",
             )
+            original_report = report_path.read_bytes()
             with (
                 patch.object(
                     sys,
@@ -395,6 +491,7 @@ class TestOutboundComposerContracts(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 post_review.main()
+            self.assertEqual(report_path.read_bytes(), original_report)
             payload = json.loads(payload_path.read_text(encoding="utf-8"))
         review_body = payload["payload"]["body"]
         _assert_no_hostile_prose(self, review_body)
@@ -476,6 +573,17 @@ class TestFoldAndGateContracts(unittest.TestCase):
             path_lookup="src/edited.py",
         )
         self.assertEqual(result, (False, "marker_shaped"))
+        finding["end_line"] = 3
+        self.assertEqual(
+            post_review._suggested_fix_gate(
+                finding,
+                apply_range=(1, 1),
+                line_texts={("src/edited.py", 1): "original"},
+                valid_lines={("src/edited.py", 1): 1},
+                path_lookup="src/edited.py",
+            ),
+            (False, "marker_shaped"),
+        )
 
 
 class TestDeliveryTitleKeys(unittest.TestCase):
@@ -659,6 +767,45 @@ class TestGitlabLiveFallbackContracts(unittest.TestCase):
         _assert_no_hostile_prose(self, fallback_body, expected_markers=markers)
         lookup.assert_called_once_with("o", "r", 7, SHA)
 
+    def test_changed_content_key_reposts_once_after_old_key(self):
+        finding = {
+            "file": "src/edited.py",
+            "line": 2,
+            "severity": "high",
+            "title": "@leehopper <table>",
+            "body": "Body one",
+        }
+        old_material = (
+            "src/edited.py\0"
+            "2\0"
+            "@leehopper <table>\0"
+            "**🟠 [HIGH] @leehopper <table>**\n\nBody one"
+        )
+        new_material = (
+            "src/edited.py\0"
+            "2\0"
+            "\uff20leehopper &lt;table>\0"
+            "**🟠 [HIGH] \uff20leehopper &lt;table>**\n\nBody one"
+        )
+        old_key = "13c2bc08cfac5226"
+        new_key = "6970f2dcb5f585fd"
+        self.assertEqual(
+            hashlib.sha256(old_material.encode()).hexdigest()[:16], old_key
+        )
+        self.assertEqual(
+            hashlib.sha256(new_material.encode()).hexdigest()[:16], new_key
+        )
+        first_calls, _ = self._post_live([finding], (True, {old_key}, set()))
+        discussions = [
+            payload for cmd, payload in first_calls if cmd[-1].endswith("/discussions")
+        ]
+        self.assertEqual(len(discussions), 1)
+        self.assertEqual(
+            review_marker.find_finding_marker(discussions[0]["body"])["key"], new_key
+        )
+        second_calls, _ = self._post_live([finding], (True, {old_key, new_key}, set()))
+        self.assertFalse(second_calls)
+
     def test_partial_prior_delivery_posts_only_the_missing_corroborator(self):
         primary = _hostile_finding(
             consolidation_key="src/edited.py:2", consolidation_primary=True
@@ -787,8 +934,36 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
         return calls
 
     def test_poisoned_python_fields_never_reach_any_comment_sink(self):
-        property_names = set(_js_finding_property_union()) | {"unknown_key"}
+        property_names = set(_js_finding_property_union()) | {
+            "body",
+            "line",
+            "end_line",
+            "unknown_key",
+        }
         reads = set()
+        discovery_primary = self._finding(property_names, reads, primary=True)
+        discovery_corroborator = self._finding(property_names, reads)
+        post_review.render_comment_body(discovery_primary)
+        post_review.render_group_body(discovery_primary, [discovery_corroborator])
+        post_review.build_skipped_section(
+            [
+                (
+                    discovery_primary.get("file"),
+                    discovery_primary.get("line"),
+                    discovery_primary,
+                )
+            ]
+        )
+        discovery_fallback = self._finding(property_names, reads)
+        discovery_fallback["claude_md_rule"] = FAKE_FINDING_MARKER
+        post_review.render_comment_body(discovery_fallback)
+        for platform in ("github", "gitlab"):
+            for route in ("anchored", "off_diff", "grouped"):
+                members = [self._finding(property_names, reads, primary=True)]
+                if route == "grouped":
+                    members.append(self._finding(property_names, reads))
+                self._capture(platform, members, anchored=route != "off_diff")
+        property_names.update(reads - {"consolidation_key", "consolidation_primary"})
         primary = self._finding(property_names, reads, primary=True)
         corroborator = self._finding(property_names, reads)
 

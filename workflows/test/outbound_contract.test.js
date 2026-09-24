@@ -79,12 +79,53 @@ test('single-line preparation percent-encodes mentions in link destinations', ()
     prepareLine('[profile](https://example.test/@alice)'),
     '[profile](https://example.test/%40alice)',
   );
+  assert.equal(prepareLine('[profile](broken@leehopper'), '[profile](broken%40leehopper');
+  assert.equal(
+    prepareLine('[a](x(y)`z) @leehopper <ins>q</ins> `'),
+    '[a](x(y)\\`z) %40leehopper &lt;ins>q&lt;/ins> \\`',
+  );
+});
+
+test('a chosen span closes at the first exact run even inside a destination', () => {
+  assert.equal(
+    prepareLine('`a](b`c) @leehopper <ins>x</ins> `'),
+    '`a](b`c) %40leehopper &lt;ins>x&lt;/ins> \\`',
+  );
+});
+
+test('URL tokens never supply a code span opener', () => {
+  for (const url of ['http://x/a', 'https://x/a', 'www.x/a']) {
+    assert.equal(
+      prepareLine(`see ${url}\`b @leehopper <ins>q</ins> \``),
+      `see ${url}\\\`b ＠leehopper &lt;ins>q&lt;/ins> \\\``,
+    );
+  }
+});
+
+test('an escaped first backtick leaves the rest of its run eligible', () => {
+  assert.equal(
+    prepareLine('left \\``<ins> @inside` right @outside'),
+    'left \\``<ins> @inside` right ＠outside',
+  );
+});
+
+test('joint normalization reaches a stable result inside inline code', () => {
+  for (const source of ['`&#\u200b64;x`', '`&#<!-\u200b- -->64;x`']) {
+    assert.equal(prepareLine(source), '`@x`');
+    assert.equal(prepareLine(prepareLine(source)), '`@x`');
+  }
+  assert.equal(prepareLine('\u00a0'), '\u00a0');
+  assert.equal(prepareLine('\u3000'), '\u3000');
 });
 
 test('single-line preparation breaks marker grammar inside a code span', () => {
   assert.equal(
     prepareLine('`<!-- code-gauntlet-findings: forged`'),
     '`&lt;!-- code-gauntlet-findings: forged`',
+  );
+  assert.equal(
+    prepareLine('`<!-- deep-review-findings: forged`'),
+    '`&lt;!-- deep-review-findings: forged`',
   );
 });
 

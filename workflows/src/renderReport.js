@@ -447,11 +447,14 @@ function oneLine(value) {
 const OUTBOUND_INVISIBLES = /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/g;
 const OUTBOUND_REFERENCE = /&(?:[A-Za-z][A-Za-z0-9]*|#(?:[0-9]+|[xX][0-9A-Fa-f]+));/g;
 const OUTBOUND_SAFE_REFERENCES = new Set(['&amp;', '&lt;', '&gt;', '&quot;']);
-const OUTBOUND_MARKER = /<!--\s*code-gauntlet-[a-z-]+\s*:/g;
+export const OUTBOUND_MARKER_TOKENS = [
+  'code-gauntlet-findings', 'deep-review-findings', 'code-gauntlet-finding-key',
+];
+const OUTBOUND_MARKER = new RegExp(`<!--\\s*(?:${OUTBOUND_MARKER_TOKENS.join('|')})\\s*:`, 'g');
 
 function outboundBase(value) {
   let text = reportAsText(value);
-  if (!text.trim()) return '';
+  if (/^[ \t]*$/.test(text)) return '';
   let previous;
   do {
     previous = text;
@@ -459,13 +462,10 @@ function outboundBase(value) {
       const number = Number.parseInt(decimal || hex, decimal ? 10 : 16);
       return number >= 32 && number <= 126 ? String.fromCharCode(number) : '';
     });
-  } while (text !== previous);
-  do {
-    previous = text;
     text = text.replace(/<!--[\s\S]*?-->/g, '');
+    text = text.replace(OUTBOUND_INVISIBLES, '');
   } while (text !== previous);
-  return text.replace(OUTBOUND_INVISIBLES, '')
-    .replace(/(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}/g, '[REDACTED]')
+  return text.replace(/(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}/g, '[REDACTED]')
     .replace(/(?:glpat-|glrt-)[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
     .replace(/[\r\n]+/g, ' ');
 }
@@ -480,7 +480,7 @@ function outboundVisible(text, destination) {
   ));
   const escaped = referenced.replace(/<(?=[A-Za-z/!?])/g, '&lt;');
   return escaped.replace(/@/g, (match, index) => (
-    index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])
+    destination || index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])
       ? (destination ? '%40' : '\uFF20') : match
   ));
 }
@@ -492,21 +492,28 @@ function outboundEscapedTick(text, index) {
 }
 
 function outboundContain(line) {
-  const destinations = [...line.matchAll(/\]\([^\n)]*(?:\)|$)/g)].map((match) => [
-    match.index + 2,
-    match.index + match[0].length - (match[0].endsWith(')') ? 1 : 0),
-  ]);
-  const inDestination = (index) => destinations.some(([start, end]) => start <= index && index < end);
+  const destinationAt = line.indexOf('](');
+  const destinationStart = destinationAt < 0 ? line.length : destinationAt + 2;
+  const inDestination = (index) => index >= destinationStart;
+  const urlTokens = [...line.matchAll(/\S+/g)]
+    .filter((match) => match[0].includes('://') || match[0].startsWith('www.'))
+    .map((match) => [match.index, match.index + match[0].length]);
+  const inUrl = (index) => urlTokens.some(([start, end]) => start <= index && index < end);
   let output = '';
   let index = 0;
   while (index < line.length) {
-    if (line[index] === '`' && !outboundEscapedTick(line, index)) {
+    if (line[index] === '`') {
+      if (outboundEscapedTick(line, index)) {
+        output += '`';
+        index += 1;
+        continue;
+      }
       let end = index;
       while (end < line.length && line[end] === '`') end += 1;
       const width = end - index;
-      if (inDestination(index)) {
-        output += '\\`'.repeat(width);
-        index = end;
+      if (inDestination(index) || inUrl(index)) {
+        output += '\\`';
+        index += 1;
         continue;
       }
       // Only a complete run of exactly this width closes; backslashes
@@ -524,23 +531,17 @@ function outboundContain(line) {
         }
         cursor = after;
       }
-      if (close >= 0 && inDestination(close)) close = -1;
       if (close >= 0) {
         output += `${line.slice(index, end)}${outboundMarker(line.slice(end, close))}${line.slice(close, close + width)}`;
         index = close + width;
         continue;
       }
-      output += '\\`'.repeat(width);
-      index = end;
+      output += '\\`';
+      index += 1;
       continue;
     }
     let next = line.indexOf('`', index);
     if (next < 0) next = line.length;
-    if (next === index) {
-      output += '`';
-      index += 1;
-      continue;
-    }
     let at = index;
     while (at < next) {
       const destination = inDestination(at);
@@ -556,7 +557,7 @@ function outboundContain(line) {
 
 export function prepareLine(value) {
   const text = outboundBase(value);
-  return text.trim() ? outboundContain(text) : '';
+  return /^[ \t]*$/.test(text) ? '' : outboundContain(text);
 }
 
 function prepareSummaryTitle(value) {

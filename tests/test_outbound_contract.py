@@ -6,12 +6,24 @@ import subprocess
 from pathlib import Path
 
 import scripts.post_review as post_review
+from scripts.review_marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURE_PATH = REPO / "tests" / "fixtures" / "outbound_comment_cases.json"
 FIXTURE = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 CASES = FIXTURE["cases"]
-_Q2_RULES = tuple(f"Q2.{letter}" for letter in "abcdefghij")
+_CONTAINMENT_RULES = (
+    "span.equal_length_closer",
+    "table.pipe",
+    "fence.column_zero",
+    "destination.link",
+    "prose.html",
+    "prose.reference",
+    "prose.mention",
+    "marker.grammar",
+    "span.unmatched",
+    "container.boundary",
+)
 
 
 def _run_node(script, value):
@@ -68,11 +80,22 @@ def _summary_inputs():
                 }
             ]
         },
+        {
+            "findings": [
+                {
+                    "id": "joint-normalization",
+                    "title": "`&#<!-\u200b- -->64;x` t",
+                    "file": "a&#\u200b64;b.py",
+                    "line_start": 1,
+                    "severity": "low",
+                }
+            ]
+        },
     ]
 
 
 def test_fixture_schema_and_rule_coverage():
-    assert 60 <= len(CASES) <= 120
+    assert 60 <= len(CASES) <= 160
     required_fields = {
         "id",
         "field_class",
@@ -96,11 +119,11 @@ def test_fixture_schema_and_rule_coverage():
         )
         assert isinstance(case["rule_ids"], list)
 
-    for rule_id in _Q2_RULES:
+    for rule_id in _CONTAINMENT_RULES:
         kinds = {case["kind"] for case in CASES if rule_id in case["rule_ids"]}
         assert kinds == {"regression", "control"}, rule_id
 
-    expected_probe_ids = {
+    required_probe_ids = {
         "span_html_block",
         "span_atx",
         "span_list",
@@ -108,10 +131,6 @@ def test_fixture_schema_and_rule_coverage():
         "ordered_list_span",
         "setext_span",
         "table_cell_span",
-        "list_fence",
-        "dest_backtick",
-        "dest_malformed_danger",
-        "html_attr_backtick",
         "fence_tab",
         "fence_3sp_para",
         "piped_table",
@@ -127,7 +146,10 @@ def test_fixture_schema_and_rule_coverage():
         "title_505_code_span",
         "location_double_ticks",
     }
-    assert expected_probe_ids <= {case["id"] for case in CASES}
+    by_id = {case["id"]: case for case in CASES}
+    assert required_probe_ids <= set(by_id)
+    for case_id in required_probe_ids:
+        assert by_id[case_id]["github_probe"] is not None, case_id
 
 
 def test_control_fixture_rows_match_current_sanitizers():
@@ -270,8 +292,8 @@ def test_live_node_prepare_line_matches_single_line_and_location_fixtures():
     idempotency_cases = [
         case
         for case in CASES
-        if "Q3" in case["rule_ids"]
-        or any(rule_id in case["rule_ids"] for rule_id in _Q2_RULES)
+        if "normalize.idempotent" in case["rule_ids"]
+        or any(rule_id in case["rule_ids"] for rule_id in _CONTAINMENT_RULES)
     ]
     parity_cases = [
         case
@@ -312,6 +334,16 @@ if (typeof renderer.prepareLine !== 'function') {
     assert js_prepared == python_prepared
     for case in parity_cases:
         assert js_by_id[case["id"]]["once"] == prepare_line(case["input"]), case["id"]
+
+
+def test_js_marker_tokens_match_python_grammar():
+    result = _run_node(
+        "import { OUTBOUND_MARKER_TOKENS } from './workflows/src/renderReport.js';"
+        "process.stdout.write(JSON.stringify(OUTBOUND_MARKER_TOKENS));",
+        None,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [*MARKER_TOKENS, FINDING_MARKER_TOKEN]
 
 
 def test_generated_summary_is_unchanged_by_python_guard():

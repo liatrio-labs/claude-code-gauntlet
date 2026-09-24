@@ -141,8 +141,9 @@ caller-supplied `review_body` runs through the same prose guard before compositi
 ASCII `@` becomes U+FF20 FULLWIDTH COMMERCIAL AT in prose; a Markdown link destination uses
 `%40` so the link still works. Email address syntax stays intact. Numeric references decode
 to a fixpoint, comments are removed, and dangerous HTML openers and references are escaped.
-Inside paired code spans and column-zero fences, prose bytes remain literal except for
-finding-marker grammar, which is broken. The fail-safe lexer may render multiline spans,
+Containment preserves the code contents inside paired spans and trusted column-zero fences,
+except for finding-marker grammar. Earlier normalization and secret redaction still apply
+inside code. The fail-safe lexer may render multiline spans,
 table-cell spans containing an unescaped pipe, indented or container fences, and indented
 code blocks as escaped prose. A terminated HTML comment inside code is removed before lexing.
 
