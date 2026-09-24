@@ -457,7 +457,12 @@ function outboundBase(value) {
       return number >= 32 && number <= 126 ? String.fromCharCode(number) : '';
     });
     text = text.replaceAll('&commat;', '@');
-    text = text.replace(/<!--[\s\S]*?-->/g, '');
+    // Its own fixpoint loop so static analysis sees the removal repeat; the outer loop alone already converges.
+    let uncommented;
+    do {
+      uncommented = text;
+      text = text.replace(/<!--[\s\S]*?-->/g, '');
+    } while (text !== uncommented);
     text = text.replace(OUTBOUND_INVISIBLES, '');
   } while (text !== previous);
   return text.replace(/(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}/g, '[REDACTED]')

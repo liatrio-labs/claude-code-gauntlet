@@ -18,7 +18,7 @@ import scripts.review_marker as review_marker
 from tests.test_outbound_contract import _assert_outbound_string_invariant
 
 REPO = Path(__file__).resolve().parents[1]
-NODE = "/Users/lee/.local/share/mise/installs/node/24.21.0/bin/node"
+NODE = "node"
 OUTBOUND_CASES = json.loads(
     (REPO / "tests/fixtures/outbound_comment_cases.json").read_text(encoding="utf-8")
 )["cases"]
