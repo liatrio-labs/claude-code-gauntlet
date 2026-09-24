@@ -7,6 +7,8 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
+import pytest  # type: ignore[import-not-found]
+
 import scripts.post_review as post_review
 from scripts.review_marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 from tests.tools.render_probes import (
@@ -300,6 +302,30 @@ def test_divergences_are_text_only_and_bound_to_normalized_pairs():
         assert _skeleton(github_html, platform="github") == _skeleton(
             gitlab_html, platform="gitlab", blob_prefix=blob_prefix
         )
+
+
+def test_divergence_check_rejects_nesting_only_difference(monkeypatch):
+    github_html = "<blockquote><p>a</p></blockquote><p>b</p>"
+    gitlab_html = "<blockquote><p>a</p><p>b</p></blockquote>"
+    assert structure(github_html, platform="github") != structure(
+        gitlab_html, platform="gitlab"
+    )
+    case = {
+        "id": "nesting",
+        "github_probe": {"html": github_html},
+        "gitlab_probe": {
+            "html": gitlab_html,
+            "blob_prefix": "",
+            "divergence": {
+                "note": "text differs",
+                "issue": 1,
+                "pair_sha256": pair_sha256(github_html, gitlab_html),
+            },
+        },
+    }
+    monkeypatch.setitem(globals(), "CASES", [case])
+    with pytest.raises(AssertionError):
+        test_divergences_are_text_only_and_bound_to_normalized_pairs()
 
 
 def test_fullwidth_expected_handles_are_covered_by_twin_references():

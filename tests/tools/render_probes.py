@@ -40,10 +40,12 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Protocol, cast
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
-RENDERER_ATTRIBUTES_BY_PLATFORM = {
+RENDERER_ATTRIBUTES_BY_PLATFORM: dict[
+    str, dict[tuple[str, str], str | Callable[[str | None], bool] | None]
+] = {
     "gitlab": {
         ("*", "data-sourcepos"): None,
         ("*", "dir"): "auto",
@@ -51,11 +53,14 @@ RENDERER_ATTRIBUTES_BY_PLATFORM = {
         ("pre", "data-canonical-lang"): None,
         ("pre", "data-lang-params"): None,
         ("pre", "v-pre"): "true",
-        ("span", "data-lang"): None,
-        ("span", "data-escaped-char"): "",
-        ("a", "data-heading-content"): None,
         ("a", "rel"): "nofollow noreferrer noopener",
         ("a", "target"): "_blank",
+        **{
+            (f"h{level}", "id"): lambda value: (
+                isinstance(value, str) and value.startswith("user-content-")
+            )
+            for level in range(1, 7)
+        },
     },
     "github": {
         ("table", "role"): "table",
@@ -202,7 +207,11 @@ def _is_renderer_attribute(
     for key in ((tag, name), ("*", name)):
         if key in attributes:
             expected = attributes[key]
-            return expected is None or expected == value
+            return (
+                expected(value)
+                if callable(expected)
+                else expected is None or expected == value
+            )
     return False
 
 
@@ -235,17 +244,6 @@ _CHROME_RULES: tuple[
         "div",
         "unwrap",
         lambda n, p: _attrs(n) == {"class": "highlight highlight-text-adblock"},
-    ),
-    (
-        "both",
-        "div",
-        "unwrap",
-        lambda n, p: (
-            not n.attrs
-            and len(n.children) == 1
-            and isinstance(n.children[0], _Node)
-            and n.children[0].tag == "pre"
-        ),
     ),
     ("github", "markdown-accessiblity-table", "unwrap", lambda n, p: not n.attrs),
     (
@@ -310,10 +308,6 @@ def _serialize_parts(
         href = attrs.get("href")
         if href == blob_prefix or (href and href.startswith(blob_prefix)):
             attrs["href"] = href[len(blob_prefix) :]
-    if node.tag in {f"h{number}" for number in range(1, 7)} and (
-        attrs.get("id") or ""
-    ).startswith("user-content-"):
-        attrs.pop("id", None)
     attrs = {
         key: value
         for key, value in attrs.items()
@@ -556,7 +550,17 @@ def run_github_canary(login: str, render: Callable[[str], str]) -> None:
     parser.feed(render("@" + login))
     parser.close()
     if not any(
-        node.tag == "a" and "user-mention" in (_attrs(node).get("class") or "").split()
+        node.tag == "a"
+        and "user-mention" in (_attrs(node).get("class") or "").split()
+        and (
+            urlsplit(_attrs(node).get("href") or "")
+            .path.lower()
+            .endswith("/" + login.lower())
+            or "".join(
+                child for child in node.children if isinstance(child, str)
+            ).lower()
+            == "@" + login.lower()
+        )
         for node, _ in _walk(parser.root)
     ):
         raise RuntimeError(f"GitHub mention canary unresolved login: {login}")
@@ -740,6 +744,9 @@ class _TagCollector(HTMLParser):
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.tags.append((tag, tuple(sorted(attrs))))
+
+    def handle_endtag(self, tag: str) -> None:
+        self.tags.append(("/" + tag, ()))
 
 
 def _skeleton(
@@ -1150,7 +1157,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.platform == "github":
         result = record_fixture(
-            path, platform="github", render=render_github, check=args.check
+            path,
+            platform="github",
+            render=render_github,
+            check=args.check,
+            get_github_login=github_login,
         )
     else:
         client = _client_from_environment(args.base_url, args.token_env)
