@@ -63,10 +63,14 @@ test('single-line preparation preserves code spans and escapes unmatched backtic
   );
 });
 
-test('an escaped final closer leaves the preceding prose unprotected', () => {
+test('a backslash inside a span cannot escape its closer', () => {
   assert.equal(
     prepareLine('left `danger <table> @user\\`'),
-    'left \\`danger &lt;table> ＠user\\`',
+    'left `danger <table> @user\\`',
+  );
+  assert.equal(
+    prepareLine('left `protected\\` <table> @inside` right @outside'),
+    'left `protected\\` &lt;table> ＠inside\\` right ＠outside',
   );
 });
 

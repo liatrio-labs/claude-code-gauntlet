@@ -72,7 +72,7 @@ def _summary_inputs():
 
 
 def test_fixture_schema_and_rule_coverage():
-    assert 60 <= len(CASES) <= 90
+    assert 60 <= len(CASES) <= 120
     required_fields = {
         "id",
         "field_class",
@@ -233,20 +233,34 @@ def test_preparation_is_idempotent_over_fixture_and_seeded_corpus():
         assert prepare_line(prepared_line) == prepared_line
 
 
-def test_backslash_escaped_tick_cannot_close_a_code_span():
+def test_backslash_inside_span_does_not_escape_closer():
     source = r"left `protected\` <table> @inside` right @outside"
     assert post_review.prepare_prose(source) == (
-        "left `protected\\` <table> @inside` right \uff20outside"
+        "left `protected\\` &lt;table> \uff20inside\\` right \uff20outside"
     )
 
 
-def test_rejected_final_closer_does_not_protect_prose():
+def test_backslash_before_final_closer_is_span_content():
     assert post_review.prepare_prose(r"left `danger <table> @user\`") == (
-        "left \\`danger &lt;table> \uff20user\\`"
+        r"left `danger <table> @user\`"
     )
     assert post_review.prepare_prose("| `x | <b> @user`") == (
         "| \\`x | &lt;b> \uff20user\\`"
     )
+
+
+def test_byte_fold_intervals_use_exact_runs_and_literal_span_backslashes():
+    unequal = "left `x ``` <ins> @user`"
+    assert post_review._code_intervals(unequal)[0] == [(5, len(unequal))]
+
+    ended_by_backslash = r"left `protected\` <table> @inside`"
+    first_close = ended_by_backslash.index("`", 6) + 1
+    assert post_review._code_intervals(ended_by_backslash)[0] == [(5, first_close)]
+
+    escaped_first = r"left \``<ins> @inside`"
+    assert post_review._code_intervals(escaped_first)[0] == [
+        (escaped_first.index("``") + 1, len(escaped_first))
+    ]
 
 
 def test_live_node_prepare_line_matches_single_line_and_location_fixtures():

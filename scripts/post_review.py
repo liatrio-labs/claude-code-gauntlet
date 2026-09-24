@@ -846,24 +846,25 @@ def _contain_line(line, table_suspect=False):
                 index = end
                 continue
             width = end - index
+            # Only a complete run of exactly this width closes; backslashes
+            # inside the span have no escape meaning.
             cursor = end
             close = -1
             while cursor < len(line):
-                close = line.find("`" * width, cursor)
-                if close < 0:
+                tick = line.find("`", cursor)
+                if tick < 0:
                     break
-                after = close + width
-                if (
-                    not _escaped_tick(line, close)
-                    and (after == len(line) or line[after] != "`")
-                    and not in_destination(close)
-                    and (
-                        not re.search(r"(?<!\\)\|", line[end:close])
-                        or not table_suspect
-                    )
-                ):
+                after = tick
+                while after < len(line) and line[after] == "`":
+                    after += 1
+                if after - tick == width:
+                    close = tick
                     break
                 cursor = after
+            if close >= 0 and (
+                in_destination(close)
+                or (table_suspect and re.search(r"(?<!\\)\|", line[end:close]))
+            ):
                 close = -1
             if close >= 0:
                 out.append(
@@ -2190,18 +2191,35 @@ def _code_intervals(text):
         if any(start <= offset < end for start, end in fences):
             offset += len(line) + 1
             continue
-        for opening in re.finditer(r"`+", line):
-            start = opening.start()
-            if _escaped_tick(line, start) or any(
-                a <= offset + start < b for a, b in intervals
-            ):
+        cursor = 0
+        while cursor < len(line):
+            start = line.find("`", cursor)
+            if start < 0:
+                break
+            end = start
+            while end < len(line) and line[end] == "`":
+                end += 1
+            if _escaped_tick(line, start):
+                cursor = start + 1
                 continue
-            width = len(opening.group())
-            for closing in re.finditer(r"`+", line[opening.end() :]):
-                close = opening.end() + closing.start()
-                if len(closing.group()) == width and not _escaped_tick(line, close):
-                    intervals.append((offset + start, offset + close + width))
+            width = end - start
+            close = end
+            while close < len(line):
+                close = line.find("`", close)
+                if close < 0:
                     break
+                after = close
+                while after < len(line) and line[after] == "`":
+                    after += 1
+                if after - close == width:
+                    intervals.append((offset + start, offset + after))
+                    cursor = after
+                    break
+                close = after
+            else:
+                cursor = end
+            if close < 0:
+                cursor = end
         offset += len(line) + 1
     return intervals, fences
 

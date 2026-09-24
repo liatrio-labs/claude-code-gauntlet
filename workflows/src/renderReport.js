@@ -509,17 +509,22 @@ function outboundContain(line) {
         index = end;
         continue;
       }
+      // Only a complete run of exactly this width closes; backslashes
+      // inside the span have no escape meaning.
       let close = -1;
       let cursor = end;
       while (cursor < line.length) {
-        close = line.indexOf('`'.repeat(width), cursor);
-        if (close < 0) break;
-        const after = close + width;
-        if (!outboundEscapedTick(line, close) && (after === line.length || line[after] !== '`')
-          && !inDestination(close)) break;
+        const tick = line.indexOf('`', cursor);
+        if (tick < 0) break;
+        let after = tick;
+        while (after < line.length && line[after] === '`') after += 1;
+        if (after - tick === width) {
+          close = tick;
+          break;
+        }
         cursor = after;
-        close = -1;
       }
+      if (close >= 0 && inDestination(close)) close = -1;
       if (close >= 0) {
         output += `${line.slice(index, end)}${outboundMarker(line.slice(end, close))}${line.slice(close, close + width)}`;
         index = close + width;
