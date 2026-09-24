@@ -430,12 +430,15 @@ class GitLabClient:
         return json.loads(payload.decode("utf-8")) if payload else None
 
     def render(self, text: str, project: str) -> str:
-        result = self.request(
+        result = self.json_request(
             "POST",
             "/api/v4/markdown",
             {"text": text, "gfm": True, "project": project},
         )
-        return result.decode("utf-8")
+        html_text = result.get("html") if isinstance(result, dict) else None
+        if not isinstance(html_text, str):
+            raise ValueError("GitLab markdown response has no html string")
+        return html_text
 
 
 def render_github(
