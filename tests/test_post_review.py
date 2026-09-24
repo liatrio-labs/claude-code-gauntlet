@@ -3690,13 +3690,11 @@ class TestRenderGroupBody(unittest.TestCase):
         self.assertNotIn("<!--", rendered)
         self.assertIn("&lt;!--", rendered)
 
-    def test_primarys_own_html_comment_is_not_neutralized(self):
-        """render_comment_body's existing (unstamped) behavior is untouched —
-        only corroborating text is finding-controlled text that gets the #192
-        neutralization applied to it."""
+    def test_primary_html_comment_is_removed_by_the_outbound_contract(self):
         primary = {"severity": "high", "title": "A", "body": "<!-- raw -->"}
         rendered = render_group_body(primary, [])
-        self.assertIn("<!-- raw -->", rendered)
+        self.assertNotIn("<!-- raw -->", rendered)
+        self.assertNotIn("<!--", rendered)
 
     def test_group_body_puts_the_trailer_after_the_corroborations(self):
         """A group comment is ONE delivered surface, so the mark lands once, at the
@@ -9434,6 +9432,7 @@ class TestSuggestedFixGate(unittest.TestCase):
                     "empty",
                     "carriage_return",
                     "redacted",
+                    "marker_shaped",
                     "missing_end_line",
                     "invalid_range",
                     "no_diff_oracle",
@@ -9448,10 +9447,10 @@ class TestSuggestedFixGate(unittest.TestCase):
             ),
         )
 
-    def test_the_closed_vocabulary_has_fourteen_members(self):
+    def test_the_closed_vocabulary_has_fifteen_members(self):
         """Adding a reason is a deliberate act — this is the tripwire that says
         so out loud."""
-        self.assertEqual(len(post_review._FIX_REASONS), 14)
+        self.assertEqual(len(post_review._FIX_REASONS), 15)
 
 
 class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
