@@ -43,35 +43,33 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-_GL_CODE_BLOCK_CLASS = "gl-relative markdown-code-block js-markdown-code"
-_GH_HIGHLIGHT_CLASS = "highlight highlight-text-adblock"
 RENDERER_ATTRIBUTES_BY_PLATFORM = {
-    "gitlab": frozenset(
-        {
-            "data-sourcepos",
-            "dir",
-            "data-canonical-src",
-            "data-canonical-lang",
-            "data-lang-params",
-            "v-pre",
-            "data-lang",
-            "data-escaped-char",
-            "data-heading-content",
-            "rel",
-            "target",
-            "class",
-        }
-    ),
-    "github": frozenset({"role", "data-meta", "lang", "rel", "class"}),
+    "gitlab": {
+        ("*", "data-sourcepos"): None,
+        ("*", "dir"): "auto",
+        ("a", "data-canonical-src"): None,
+        ("pre", "data-canonical-lang"): None,
+        ("pre", "data-lang-params"): None,
+        ("pre", "v-pre"): "true",
+        ("span", "data-lang"): None,
+        ("span", "data-escaped-char"): "",
+        ("a", "data-heading-content"): None,
+        ("a", "rel"): "nofollow noreferrer noopener",
+        ("a", "target"): "_blank",
+    },
+    "github": {
+        ("table", "role"): "table",
+        ("pre", "data-meta"): None,
+        ("pre", "lang"): None,
+        ("a", "rel"): "nofollow",
+    },
 }
-_RENDERER_ATTRIBUTE_NAMES = frozenset().union(
-    *RENDERER_ATTRIBUTES_BY_PLATFORM.values()
-) - {"class"}
-_RENDERER_ATTRIBUTE_VALUES = {
-    ("a", "class", "gfm"),
-    ("pre", "class", "code highlight js-syntax-highlight language-plaintext"),
-    ("pre", "class", "notranslate"),
-    ("code", "class", "notranslate"),
+_RENDERER_CLASS_VALUES = {
+    "gitlab": {
+        ("a", "gfm"),
+        ("pre", "code highlight js-syntax-highlight language-plaintext"),
+    },
+    "github": {("pre", "notranslate"), ("code", "notranslate")},
 }
 INHERENTLY_PLAIN = {
     "all": "GitLab 19.4.1 renders @all as plain text",
@@ -88,16 +86,12 @@ ELEMENT_VOCABULARIES = {
             "a",
             "blockquote",
             "code",
-            "copy-code",
-            "div",
             "h1",
             "h2",
-            "insert-code-snippet",
             "li",
             "ol",
             "p",
             "pre",
-            "span",
             "strong",
             "table",
             "tbody",
@@ -114,11 +108,9 @@ ELEMENT_VOCABULARIES = {
             "blockquote",
             "br",
             "code",
-            "div",
             "h1",
             "h2",
             "li",
-            "markdown-accessiblity-table",
             "ol",
             "p",
             "pre",
@@ -201,50 +193,94 @@ def _attrs(node: _Node) -> dict[str, str | None]:
     return dict(node.attrs)
 
 
-def _is_renderer_attribute(tag: str, name: str, value: str | None) -> bool:
-    return (
-        name in _RENDERER_ATTRIBUTE_NAMES
-        or (tag, name, value) in _RENDERER_ATTRIBUTE_VALUES
-    )
+def _is_renderer_attribute(
+    platform: str, tag: str, name: str, value: str | None
+) -> bool:
+    if name == "class":
+        return (tag, value) in _RENDERER_CLASS_VALUES[platform]
+    attributes = RENDERER_ATTRIBUTES_BY_PLATFORM[platform]
+    for key in ((tag, name), ("*", name)):
+        if key in attributes:
+            expected = attributes[key]
+            return expected is None or expected == value
+    return False
 
 
-def _is_wrapper(node: _Node) -> bool:
-    attrs = _attrs(node)
-    if node.tag == "div" and attrs == {"class": _GL_CODE_BLOCK_CLASS}:
-        return True
-    if node.tag == "div" and attrs == {"class": _GH_HIGHLIGHT_CLASS}:
-        return True
-    if (
-        node.tag == "div"
-        and not attrs
-        and len(node.children) == 1
-        and isinstance(node.children[0], _Node)
-        and node.children[0].tag == "pre"
-    ):
-        return True
-    if node.tag == "markdown-accessiblity-table" and not attrs:
-        return True
-    if (
-        node.tag == "span"
-        and attrs.get("class") == "line"
-        and re.fullmatch(r"LC[0-9]+", attrs.get("id") or "")
-        and set(attrs) == {"id", "class", "data-lang"}
-    ):
-        return True
-    return (
-        node.tag == "span"
-        and attrs.get("data-escaped-char") == ""
-        and set(attrs) == {"data-escaped-char", "data-sourcepos"}
-    )
-
-
-def _is_heading_anchor(node: _Node) -> bool:
+def _heading_anchor(node: _Node, parent: _Node | None) -> bool:
     attrs = _attrs(node)
     return (
-        node.tag == "a"
-        and attrs.get("class") == "anchor"
+        parent is not None
+        and parent.tag in {f"h{number}" for number in range(1, 7)}
+        and parent.children[-1] is node
+        and not node.children
+        and "anchor" in (attrs.get("class") or "").split()
         and (attrs.get("href") or "").startswith("#")
         and set(attrs) <= {"href", "class", "aria-label", "data-heading-content"}
+    )
+
+
+_CHROME_RULES: tuple[
+    tuple[str, str, str, Callable[[_Node, _Node | None], bool]], ...
+] = (
+    (
+        "gitlab",
+        "div",
+        "unwrap",
+        lambda n, p: (
+            _attrs(n) == {"class": "gl-relative markdown-code-block js-markdown-code"}
+        ),
+    ),
+    (
+        "github",
+        "div",
+        "unwrap",
+        lambda n, p: _attrs(n) == {"class": "highlight highlight-text-adblock"},
+    ),
+    (
+        "both",
+        "div",
+        "unwrap",
+        lambda n, p: (
+            not n.attrs
+            and len(n.children) == 1
+            and isinstance(n.children[0], _Node)
+            and n.children[0].tag == "pre"
+        ),
+    ),
+    ("github", "markdown-accessiblity-table", "unwrap", lambda n, p: not n.attrs),
+    (
+        "gitlab",
+        "span",
+        "unwrap",
+        lambda n, p: (
+            _attrs(n).get("class") == "line"
+            and re.fullmatch(r"LC[0-9]+", _attrs(n).get("id") or "") is not None
+            and set(_attrs(n)) == {"id", "class", "data-lang"}
+        ),
+    ),
+    (
+        "gitlab",
+        "span",
+        "unwrap",
+        lambda n, p: (
+            _attrs(n).get("data-escaped-char") == ""
+            and set(_attrs(n)) == {"data-escaped-char", "data-sourcepos"}
+        ),
+    ),
+    ("gitlab", "copy-code", "drop", lambda n, p: not n.attrs),
+    ("gitlab", "insert-code-snippet", "drop", lambda n, p: not n.attrs),
+    ("gitlab", "a", "drop", _heading_anchor),
+)
+
+
+def _chrome_action(node: _Node, parent: _Node | None, platform: str) -> str | None:
+    return next(
+        (
+            action
+            for scope, tag, action, matches in _CHROME_RULES
+            if scope in {"both", platform} and node.tag == tag and matches(node, parent)
+        ),
+        None,
     )
 
 
@@ -252,9 +288,11 @@ def _escape_text(text: str) -> str:
     return html.escape(text, quote=False)
 
 
-def _serialize_parts(node: _Node, blob_prefix: str | None) -> list[tuple[bool, str]]:
+def _serialize_parts(
+    node: _Node, platform: str, blob_prefix: str | None, parent: _Node | None = None
+) -> list[tuple[bool, str]]:
     if node.tag == "#root":
-        return _children_parts(node.children, blob_prefix)
+        return _children_parts(node, platform, blob_prefix)
     if node.tag == "#comment":
         data = (
             node.children[0]
@@ -262,21 +300,24 @@ def _serialize_parts(node: _Node, blob_prefix: str | None) -> list[tuple[bool, s
             else ""
         )
         return [(False, "<!--" + data + "-->")]
-    if node.tag in {"copy-code", "insert-code-snippet"} or _is_heading_anchor(node):
+    action = _chrome_action(node, parent, platform)
+    if action == "drop":
         return []
-    if _is_wrapper(node):
-        return _children_parts(node.children, blob_prefix)
+    if action == "unwrap":
+        return _children_parts(node, platform, blob_prefix)
     attrs = _attrs(node)
     if node.tag == "a" and blob_prefix:
         href = attrs.get("href")
         if href == blob_prefix or (href and href.startswith(blob_prefix)):
             attrs["href"] = href[len(blob_prefix) :]
-    if node.tag in {"h1", "h2"} and (attrs.get("id") or "").startswith("user-content-"):
+    if node.tag in {f"h{number}" for number in range(1, 7)} and (
+        attrs.get("id") or ""
+    ).startswith("user-content-"):
         attrs.pop("id", None)
     attrs = {
         key: value
         for key, value in attrs.items()
-        if not _is_renderer_attribute(node.tag, key, value)
+        if not _is_renderer_attribute(platform, node.tag, key, value)
     }
     rendered_attrs = "".join(
         f" {key}" if value is None else f' {key}="{html.escape(value, quote=True)}"'
@@ -293,24 +334,27 @@ def _serialize_parts(node: _Node, blob_prefix: str | None) -> list[tuple[bool, s
         and isinstance(children[0], _Node)
         and children[0].tag == "code"
         and all(
-            _is_renderer_attribute(children[0].tag, name, value)
+            _is_renderer_attribute(platform, children[0].tag, name, value)
             for name, value in children[0].attrs
         )
     ):
         children = children[0].children
-    body = _children_parts(children, blob_prefix)
+    body = _children_parts(node, platform, blob_prefix, children)
     if node.tag == "pre" and body and body[-1][0]:
-        body[-1] = (True, body[-1][1].rstrip())
+        body[-1] = (True, body[-1][1].rstrip(" \t\n\r\f"))
     return [(False, f"<{node.tag}{rendered_attrs}>"), *body, (False, f"</{node.tag}>")]
 
 
 def _children_parts(
-    children: Iterable[_Node | str], blob_prefix: str | None
+    parent: _Node,
+    platform: str,
+    blob_prefix: str | None,
+    children: Iterable[_Node | str] | None = None,
 ) -> list[tuple[bool, str]]:
     parts: list[tuple[bool, str]] = []
-    for child in children:
+    for child in parent.children if children is None else children:
         if isinstance(child, _Node):
-            parts.extend(_serialize_parts(child, blob_prefix))
+            parts.extend(_serialize_parts(child, platform, blob_prefix, parent))
         else:
             parts.append((True, _escape_text(child)))
     return parts
@@ -323,32 +367,36 @@ def _join_parts(parts: list[tuple[bool, str]], *, trim_root: bool = False) -> st
             if normalized and normalized[-1][0]:
                 normalized[-1] = (
                     True,
-                    re.sub(r"\s+", " ", normalized[-1][1] + value),
+                    re.sub(r"[ \t\n\r\f]+", " ", normalized[-1][1] + value),
                 )
             elif value:
-                normalized.append((True, re.sub(r"\s+", " ", value)))
+                normalized.append((True, re.sub(r"[ \t\n\r\f]+", " ", value)))
         else:
             normalized.append((False, value))
     if trim_root and normalized and normalized[0][0]:
-        normalized[0] = (True, normalized[0][1].lstrip())
+        normalized[0] = (True, normalized[0][1].lstrip(" \t\n\r\f"))
     if trim_root and normalized and normalized[-1][0]:
-        normalized[-1] = (True, normalized[-1][1].rstrip())
+        normalized[-1] = (True, normalized[-1][1].rstrip(" \t\n\r\f"))
     return "".join(value for _, value in normalized if value)
 
 
-def structure(html_text: str, *, blob_prefix: str | None = None) -> str:
+def structure(html_text: str, *, platform: str, blob_prefix: str | None = None) -> str:
     """Return normalized renderer structure while preserving meaningful markup."""
     parser = _TreeParser()
     parser.feed(html_text)
     parser.close()
-    return _join_parts(_serialize_parts(parser.root, blob_prefix), trim_root=True)
+    if platform not in ELEMENT_VOCABULARIES:
+        raise ValueError(f"unknown render platform: {platform}")
+    return _join_parts(
+        _serialize_parts(parser.root, platform, blob_prefix), trim_root=True
+    )
 
 
-def _walk(node: _Node) -> list[_Node]:
-    result = [node]
+def _walk(node: _Node, parent: _Node | None = None) -> list[tuple[_Node, _Node | None]]:
+    result = [(node, parent)]
     for child in node.children:
         if isinstance(child, _Node):
-            result.extend(_walk(child))
+            result.extend(_walk(child, node))
     return result
 
 
@@ -360,14 +408,17 @@ def check_render(platform: str, html_text: str) -> None:
     parser.feed(html_text)
     parser.close()
     problems: list[str] = []
-    for node in _walk(parser.root):
+    for node, parent in _walk(parser.root):
         if node.tag == "#comment":
             problems.append("comment node")
             continue
         if node.tag == "#root":
             continue
         attrs = _attrs(node)
-        if node.tag not in ELEMENT_VOCABULARIES[platform]:
+        if (
+            node.tag not in ELEMENT_VOCABULARIES[platform]
+            and _chrome_action(node, parent, platform) is None
+        ):
             problems.append(f"unknown element <{node.tag}>")
         if platform == "gitlab" and "data-reference-type" in attrs:
             problems.append("GitLab reference link")
@@ -482,6 +533,33 @@ def render_github(
         encoding="utf-8",
     )
     return result.stdout
+
+
+def github_login(
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str:
+    result = runner(
+        ["gh", "api", "user", "--jq", ".login"],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    login = result.stdout.strip()
+    if not login:
+        raise RuntimeError("GitHub login is empty")
+    return login
+
+
+def run_github_canary(login: str, render: Callable[[str], str]) -> None:
+    parser = _TreeParser()
+    parser.feed(render("@" + login))
+    parser.close()
+    if not any(
+        node.tag == "a" and "user-mention" in (_attrs(node).get("class") or "").split()
+        for node, _ in _walk(parser.root)
+    ):
+        raise RuntimeError(f"GitHub mention canary unresolved login: {login}")
 
 
 def _lookup(client: _GitLabAPI, path: str) -> Any:
@@ -617,6 +695,7 @@ class RecordResult:
     cases: list[dict[str, Any]]
     changed_ids: list[str] = field(default_factory=list)
     divergence_cleared: list[str] = field(default_factory=list)
+    cleared_details: list[str] = field(default_factory=list)
     version_mismatch: tuple[str, str] | None = None
     check_mode: bool = False
 
@@ -643,7 +722,7 @@ def _reference_originals(html_text: str) -> list[str]:
     parser.feed(html_text)
     parser.close()
     originals = []
-    for node in _walk(parser.root):
+    for node, _ in _walk(parser.root):
         if node.tag == "a" and "data-reference-type" in _attrs(node):
             value = _attrs(node).get("data-original")
             if isinstance(value, str):
@@ -664,10 +743,10 @@ class _TagCollector(HTMLParser):
 
 
 def _skeleton(
-    html_text: str, blob_prefix: str | None = None
+    html_text: str, *, platform: str, blob_prefix: str | None = None
 ) -> tuple[tuple[str, tuple[tuple[str, str | None], ...]], ...]:
     collector = _TagCollector()
-    collector.feed(structure(html_text, blob_prefix=blob_prefix))
+    collector.feed(structure(html_text, platform=platform, blob_prefix=blob_prefix))
     collector.close()
     return tuple(collector.tags)
 
@@ -676,7 +755,9 @@ def pair_sha256(
     github_html: str, gitlab_html: str, *, blob_prefix: str | None = None
 ) -> str:
     pair = (
-        structure(github_html) + "\0" + structure(gitlab_html, blob_prefix=blob_prefix)
+        structure(github_html, platform="github")
+        + "\0"
+        + structure(gitlab_html, platform="gitlab", blob_prefix=blob_prefix)
     )
     return hashlib.sha256(pair.encode("utf-8")).hexdigest()
 
@@ -696,6 +777,7 @@ def update_cases(
     updated = copy.deepcopy(cases)
     changed: list[str] = []
     cleared: list[str] = []
+    cleared_details: list[str] = []
     version_mismatch = None
     for case in updated:
         text = input_text(case)
@@ -771,8 +853,8 @@ def update_cases(
                     if platform == "gitlab"
                     else gitlab_probe.get("blob_prefix")
                 )
-                gh_structure = structure(gh_html)
-                gl_structure = structure(gl_html, blob_prefix=prefix)
+                gh_structure = structure(gh_html, platform="github")
+                gl_structure = structure(gl_html, platform="gitlab", blob_prefix=prefix)
                 valid = (
                     isinstance(divergence, dict)
                     and isinstance(divergence.get("note"), str)
@@ -780,7 +862,8 @@ def update_cases(
                     and divergence.get("pair_sha256")
                     == pair_sha256(gh_html, gl_html, blob_prefix=prefix)
                     and gh_structure != gl_structure
-                    and _skeleton(gh_html) == _skeleton(gl_html, prefix)
+                    and _skeleton(gh_html, platform="github")
+                    == _skeleton(gl_html, platform="gitlab", blob_prefix=prefix)
                 )
             else:
                 valid = False
@@ -790,7 +873,13 @@ def update_cases(
                 elif isinstance(gitlab_probe, dict):
                     gitlab_probe["divergence"] = None
                     cleared.append(str(case["id"]))
-    return RecordResult(updated, changed, cleared, version_mismatch, check)
+                    if isinstance(divergence, dict):
+                        cleared_details.append(
+                            f"{case['id']}: issue {divergence.get('issue')}: {divergence.get('note')}"
+                        )
+    return RecordResult(
+        updated, changed, cleared, cleared_details, version_mismatch, check
+    )
 
 
 def _probe_changed(
@@ -843,14 +932,14 @@ def record_fixture(
     version: str | None = None,
     blob_prefix: str | None = None,
     check: bool = False,
-    canary: bool = True,
+    get_github_login: Callable[[], str] = github_login,
 ) -> RecordResult:
-    document = json.loads(read_text(path))
-    if not isinstance(document, dict) or not isinstance(document.get("cases"), list):
-        raise ValueError("fixture must be an object with a cases array")
+    document = _load_document(read_text(path))
     cases = document["cases"]
-    if platform == "gitlab" and canary:
+    if platform == "gitlab":
         run_canary(derive_handles(cases), render)
+    elif platform == "github":
+        run_github_canary(get_github_login(), render)
     result = update_cases(
         cases,
         platform=platform,
@@ -865,7 +954,60 @@ def record_fixture(
     return result
 
 
-def derive_handles(cases: Iterable[Mapping[str, object]]) -> set[str]:
+def _load_document(contents: str) -> dict[str, Any]:
+    document = json.loads(contents)
+    if (
+        not isinstance(document, dict)
+        or list(document) != ["cases"]
+        or not isinstance(document["cases"], list)
+        or not all(isinstance(case, dict) for case in document["cases"])
+    ):
+        raise ValueError("fixture must contain only a cases array")
+    return document
+
+
+def record_divergence(
+    path: str,
+    *,
+    case_id: str,
+    issue: int,
+    note: str,
+    read_text: Callable[[str], str] = read_utf8,
+    write_text: Callable[[str, str], None] = write_utf8,
+) -> None:
+    document = _load_document(read_text(path))
+    if issue < 1 or not note.strip():
+        raise ValueError("divergence needs a positive issue and nonempty note")
+    matches = [case for case in document["cases"] if case.get("id") == case_id]
+    if len(matches) != 1:
+        raise ValueError(f"expected one fixture row for {case_id}")
+    case = matches[0]
+    github = case["github_probe"]
+    gitlab = case["gitlab_probe"]
+    digest = input_sha256(input_text(case))
+    if any(probe["input_sha256"] != digest for probe in (github, gitlab)):
+        raise ValueError(f"stale probe input for {case_id}")
+    gh_html, gl_html = github["html"], gitlab["html"]
+    prefix = gitlab["blob_prefix"]
+    if structure(gh_html, platform="github") == structure(
+        gl_html, platform="gitlab", blob_prefix=prefix
+    ):
+        raise ValueError(f"equal structures for {case_id}")
+    if _skeleton(gh_html, platform="github") != _skeleton(
+        gl_html, platform="gitlab", blob_prefix=prefix
+    ):
+        raise ValueError(f"different element skeletons for {case_id}")
+    gitlab["divergence"] = {
+        "note": note,
+        "issue": issue,
+        "pair_sha256": pair_sha256(gh_html, gl_html, blob_prefix=prefix),
+    }
+    write_text(path, serialize_fixture(document["cases"]))
+
+
+def derive_handles(
+    cases: Iterable[Mapping[str, object]], *, fullwidth_only: bool = False
+) -> set[str]:
     """Collect GitLab reference handles from each case's input and expected text."""
     handles: set[str] = set()
     for case in cases:
@@ -873,6 +1015,10 @@ def derive_handles(cases: Iterable[Mapping[str, object]]) -> set[str]:
             value = case.get(field_name)
             if isinstance(value, str):
                 for match in _HANDLE_PATTERN.finditer(value):
+                    if fullwidth_only and (
+                        field_name != "expected" or value[match.start()] != "\uff20"
+                    ):
+                        continue
                     handle = match.group(1)
                     suffix = value[match.end(1) :]
                     continues_handle = bool(
@@ -890,18 +1036,24 @@ def derive_handles(cases: Iterable[Mapping[str, object]]) -> set[str]:
                             )
                         )
                     )
-                    if not continues_handle and not handle.endswith((".git", ".atom")):
+                    if (
+                        not continues_handle
+                        and not handle.endswith((".git", ".atom"))
+                        and (not fullwidth_only or handle not in INHERENTLY_PLAIN)
+                    ):
                         handles.add(handle)
     return handles
 
 
-def _has_reference_anchor(html_text: str) -> bool:
+def _has_reference_anchor(html_text: str, handle: str) -> bool:
     parser = _TreeParser()
     parser.feed(html_text)
     parser.close()
     return any(
-        node.tag == "a" and "data-reference-type" in _attrs(node)
-        for node in _walk(parser.root)
+        node.tag == "a"
+        and "data-reference-type" in _attrs(node)
+        and _attrs(node).get("data-original") == "@" + handle
+        for node, _ in _walk(parser.root)
     )
 
 
@@ -910,7 +1062,7 @@ def run_canary(handles: Iterable[str], render: Callable[[str], str]) -> None:
     unresolved = [
         handle
         for handle in sorted(set(handles) - INHERENTLY_PLAIN.keys())
-        if not _has_reference_anchor(render(f"@{handle}"))
+        if not _has_reference_anchor(render(f"@{handle}"), handle)
     ]
     if unresolved:
         raise RuntimeError(
@@ -932,17 +1084,11 @@ def _fixture_path() -> str:
 
 
 def _read_cases(path: str) -> list[dict[str, Any]]:
-    document = json.loads(read_utf8(path))
-    if (
-        not isinstance(document, dict)
-        or not isinstance(document.get("cases"), list)
-        or not all(isinstance(case, dict) for case in document["cases"])
-    ):
-        raise ValueError("fixture must be an object with a cases array")
+    document = _load_document(read_utf8(path))
     return cast(list[dict[str, Any]], document["cases"])
 
 
-def _gitlab_version(client: GitLabClient) -> str:
+def _gitlab_version(client: _GitLabAPI) -> str:
     details = client.json_request("GET", "/api/v4/version")
     if not isinstance(details, dict):
         raise ValueError("GitLab version response is not an object")
@@ -982,12 +1128,21 @@ def build_argument_parser() -> argparse.ArgumentParser:
     record_parser.add_argument("--base-url", default="http://localhost:8929")
     record_parser.add_argument("--token-env", default="GITLAB_TOKEN")
     record_parser.add_argument("--project", default="cdr-group/probe")
+    divergence_parser = commands.add_parser(
+        "divergence", help="bind a text-only render difference"
+    )
+    divergence_parser.add_argument("--id", required=True)
+    divergence_parser.add_argument("--issue", required=True, type=int)
+    divergence_parser.add_argument("--note", required=True)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
     path = _fixture_path()
+    if args.command == "divergence":
+        record_divergence(path, case_id=args.id, issue=args.issue, note=args.note)
+        return 0
     if args.command == "seed":
         client = _client_from_environment(args.base_url, args.token_env)
         seeded = seed(_read_cases(path), client)
@@ -1003,7 +1158,6 @@ def main(argv: list[str] | None = None) -> int:
         def render(text: str) -> str:
             return client.render(text, args.project)
 
-        run_canary(derive_handles(_read_cases(path)), render)
         version = _gitlab_version(client)
         blob_prefix = _gitlab_blob_prefix(client, args.project)
         result = record_fixture(
@@ -1013,12 +1167,14 @@ def main(argv: list[str] | None = None) -> int:
             version=version,
             blob_prefix=blob_prefix,
             check=args.check,
-            canary=False,
         )
     for case_id in result.changed_ids:
         print(case_id)
-    for case_id in result.divergence_cleared:
-        print(f"cleared divergence: {case_id}")
+    for detail in result.cleared_details:
+        print(f"cleared divergence: {detail}")
+    if args.check:
+        for case_id in result.divergence_cleared:
+            print(f"stale divergence: {case_id}")
     if result.version_mismatch:
         before, after = result.version_mismatch
         print(f"version mismatch: {before} -> {after}")

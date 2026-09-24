@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
+import shlex
 import subprocess
 from pathlib import Path
 from urllib.error import HTTPError
@@ -11,19 +13,24 @@ from urllib.parse import parse_qs, unquote
 import pytest  # type: ignore[import-not-found]
 
 from tests.tools.render_probes import (
-    ELEMENT_VOCABULARIES,
     INHERENTLY_PLAIN,
-    RENDERER_ATTRIBUTES_BY_PLATFORM,
     SEED_GROUPS,
     GitLabClient,
     GitLabHTTPError,
+    _gitlab_version,
+    _reference_originals,
+    build_argument_parser,
     check_render,
     derive_handles,
+    github_login,
     input_sha256,
+    main,
     pair_sha256,
+    record_divergence,
     record_fixture,
     render_github,
     run_canary,
+    run_github_canary,
     seed,
     serialize_fixture,
     structure,
@@ -62,13 +69,37 @@ REAL_REFERENCE_HTML = (
 )
 
 
+def test_contributing_probe_commands_parse_with_the_recorder() -> None:
+    text = (Path(__file__).resolve().parents[1] / "CONTRIBUTING.md").read_text(
+        encoding="utf-8"
+    )
+    section = text.split("### Outbound render probes\n", 1)[1]
+    block = re.search(r"```bash\n(.*?)```", section, re.DOTALL)
+    assert block is not None
+    commands = [
+        shlex.split(line.split("#", 1)[0])
+        for line in block.group(1).splitlines()
+        if line.strip()
+    ]
+    assert commands
+    parser = build_argument_parser()
+    for argv in commands:
+        assert argv[:2] == ["python3", "tests/tools/render_probes.py"]
+        args = argv[2:]
+        # The documented --issue value is a placeholder; argparse needs an int there.
+        args = [
+            "1" if prev == "--issue" else arg
+            for prev, arg in zip(["", *args[:-1]], args, strict=True)
+        ]
+        parser.parse_args(args)
+
+
 @pytest.mark.parametrize(
     ("left", "right"),
     [
         ("<copy-code><span>noise</span></copy-code><p>x</p>", "<p>x</p>"),
         ("<insert-code-snippet>noise</insert-code-snippet><p>x</p>", "<p>x</p>"),
-        ('<a href="#head" class="anchor"></a><h1>head</h1>', "<h1>head</h1>"),
-        ('<a href="#head" class="anchor">generated</a>', ""),
+        ('<h1>head<a href="#head" class="anchor"></a></h1>', "<h1>head</h1>"),
         (
             '<div class="gl-relative markdown-code-block js-markdown-code"><p>x</p></div>',
             "<p>x</p>",
@@ -99,10 +130,23 @@ REAL_REFERENCE_HTML = (
         ("<pre><code>x\n</code></pre>", "<pre>x</pre>"),
         ("<p>a  b</p>", "<p>a b</p>"),
         ("<p>a  &lt;b&gt;</p>", "<p>a &lt;b&gt;</p>"),
+        ("<p>a\t\n b</p>", "<p>a b</p>"),
     ],
 )
 def test_structure_rule_must_equal_pairs(left: str, right: str) -> None:
-    assert structure(left) == structure(right)
+    platform = (
+        "github"
+        if any(
+            marker in left
+            for marker in (
+                "notranslate",
+                "highlight-text-adblock",
+                "markdown-accessiblity-table",
+            )
+        )
+        else "gitlab"
+    )
+    assert structure(left, platform=platform) == structure(right, platform=platform)
 
 
 @pytest.mark.parametrize(
@@ -121,9 +165,18 @@ def test_structure_rule_must_equal_pairs(left: str, right: str) -> None:
         ),
         ("&lt;b&gt;", "<b></b>"),
         ("<!-- note -->", "&lt;!-- note --&gt;"),
+        ("<p>a<!-- c -->b</p>", "<p>ab</p>"),
+        ("<hr>", ""),
+        ("<p>a\u00a0b</p>", "<p>a b</p>"),
+        ("<pre>x\u00a0</pre>", "<pre>x</pre>"),
+        ("\u00a0x", "x"),
         ('<abbr title="HTML">HTML</abbr>', "HTML"),
         ('<a href="#head" class="other anchor">content</a>', "content"),
         ('<a href="#head" class="anchor" onclick="run()">content</a>', "content"),
+        ('<h1>T<a href="#poison"></a></h1>', "<h1>T</h1>"),
+        ('<h1>T<a href="#poison" class="anchored"></a></h1>', "<h1>T</h1>"),
+        ('<h1>T<a href="#head" class="other anchor">c</a></h1>', "<h1>T</h1>"),
+        ('<h1>T<a href="#head" class="anchor" onclick="run()"></a></h1>', "<h1>T</h1>"),
         ('<span data-escaped-char="x" data-sourcepos="1:1">x</span>', "x"),
         (
             '<span id="LC1" class="line" data-lang="plaintext" data-extra="x">x</span>',
@@ -139,20 +192,63 @@ def test_structure_rule_must_equal_pairs(left: str, right: str) -> None:
     ],
 )
 def test_structure_rule_must_differ_pairs(left: str, right: str) -> None:
-    assert structure(left) != structure(right)
+    assert structure(left, platform="gitlab") != structure(right, platform="gitlab")
 
 
 def test_blob_prefix_only_normalizes_matching_project_links() -> None:
     prefix = "http://localhost:8929/cdr-group/probe/-/blob/main/"
-    assert structure(f'<a href="{prefix}">x</a>', blob_prefix=prefix) == structure(
-        '<a href="">x</a>'
+    assert structure(
+        f'<a href="{prefix}">x</a>', platform="gitlab", blob_prefix=prefix
+    ) == structure('<a href="">x</a>', platform="gitlab")
+    assert structure(
+        f'<a href="{prefix}file.md">x</a>', platform="gitlab", blob_prefix=prefix
+    ) == structure('<a href="file.md">x</a>', platform="gitlab")
+    assert structure(
+        '<a href="https://other.test/file.md">x</a>',
+        platform="gitlab",
+        blob_prefix=prefix,
+    ) != structure('<a href="file.md">x</a>', platform="gitlab")
+    for foreign in (
+        "https://elsewhere.test/cdr-group/probe/-/blob/main/file.md",
+        "http://localhost:8929/other/proj/-/blob/main/file.md",
+    ):
+        assert structure(
+            f'<a href="{foreign}">x</a>', platform="gitlab", blob_prefix=prefix
+        ) != structure('<a href="file.md">x</a>', platform="gitlab", blob_prefix=prefix)
+
+
+def test_renderer_attributes_are_platform_and_value_specific() -> None:
+    assert structure('<p dir="rtl">y</p>', platform="github") != structure(
+        '<p dir="auto">y</p>', platform="gitlab"
+    )
+    assert structure('<p dir="auto">y</p>', platform="gitlab") == structure(
+        "<p>y</p>", platform="gitlab"
+    )
+    assert structure('<p dir="rtl">y</p>', platform="gitlab") != structure(
+        "<p>y</p>", platform="gitlab"
+    )
+    assert structure('<table role="table"></table>', platform="github") == structure(
+        "<table></table>", platform="github"
+    )
+    assert structure('<table role="alert"></table>', platform="github") != structure(
+        "<table></table>", platform="github"
     )
     assert structure(
-        f'<a href="{prefix}file.md">x</a>', blob_prefix=prefix
-    ) == structure('<a href="file.md">x</a>')
+        '<a href="x" rel="nofollow">x</a>', platform="github"
+    ) == structure('<a href="x">x</a>', platform="github")
+
+
+def test_heading_ids_and_empty_generated_anchors_cover_all_heading_levels() -> None:
+    for level in range(1, 7):
+        rendered = (
+            f'<h{level} id="user-content-title">Title'
+            '<a class="other anchor" href="#title" aria-label="Link to heading"></a>'
+            f"</h{level}>"
+        )
+        assert structure(rendered, platform="gitlab") == f"<h{level}>Title</h{level}>"
     assert structure(
-        '<a href="https://other.test/file.md">x</a>', blob_prefix=prefix
-    ) != structure('<a href="file.md">x</a>')
+        '<p><a class="anchor" href="#title"></a></p>', platform="gitlab"
+    ) != structure("<p></p>", platform="gitlab")
 
 
 def test_pair_hash_binds_gitlab_links_after_blob_prefix_normalization() -> None:
@@ -160,7 +256,9 @@ def test_pair_hash_binds_gitlab_links_after_blob_prefix_normalization() -> None:
     github_html = '<a href="docs/guide.md">guide</a>'
     gitlab_html = f'<a href="{prefix}docs/guide.md">guide</a>'
     normalized_pair = (
-        structure(github_html) + "\0" + structure(gitlab_html, blob_prefix=prefix)
+        structure(github_html, platform="github")
+        + "\0"
+        + structure(gitlab_html, platform="gitlab", blob_prefix=prefix)
     )
     assert (
         pair_sha256(github_html, gitlab_html, blob_prefix=prefix)
@@ -169,80 +267,6 @@ def test_pair_hash_binds_gitlab_links_after_blob_prefix_normalization() -> None:
     assert pair_sha256(github_html, gitlab_html, blob_prefix=prefix) != pair_sha256(
         github_html, gitlab_html
     )
-
-
-def test_element_vocabularies_are_closed_and_platform_specific() -> None:
-    assert ELEMENT_VOCABULARIES["gitlab"] == frozenset(
-        {
-            "a",
-            "blockquote",
-            "code",
-            "copy-code",
-            "div",
-            "h1",
-            "h2",
-            "insert-code-snippet",
-            "li",
-            "ol",
-            "p",
-            "pre",
-            "span",
-            "strong",
-            "table",
-            "tbody",
-            "td",
-            "th",
-            "thead",
-            "tr",
-            "ul",
-        }
-    )
-    assert ELEMENT_VOCABULARIES["github"] == frozenset(
-        {
-            "a",
-            "blockquote",
-            "br",
-            "code",
-            "div",
-            "h1",
-            "h2",
-            "li",
-            "markdown-accessiblity-table",
-            "ol",
-            "p",
-            "pre",
-            "strong",
-            "table",
-            "tbody",
-            "td",
-            "th",
-            "thead",
-            "tr",
-            "ul",
-        }
-    )
-
-
-def test_renderer_attribute_tables_are_closed_per_platform() -> None:
-    assert {
-        "gitlab": frozenset(
-            {
-                "data-sourcepos",
-                "dir",
-                "data-canonical-src",
-                "data-canonical-lang",
-                "data-lang-params",
-                "v-pre",
-                "data-lang",
-                "data-escaped-char",
-                "data-heading-content",
-                "rel",
-                "target",
-                "class",
-            }
-        ),
-        "github": frozenset({"role", "data-meta", "lang", "rel", "class"}),
-    } == RENDERER_ATTRIBUTES_BY_PLATFORM
 
 
 @pytest.mark.parametrize("platform", ["gitlab", "github"])
@@ -257,6 +281,10 @@ def test_hard_check_rejects_gitlab_references_comments_and_unknown_elements() ->
         check_render("gitlab", "<!-- retained -->")
     with pytest.raises(ValueError, match="unknown element <abbr>"):
         check_render("gitlab", "<abbr>HTML</abbr>")
+    with pytest.raises(ValueError, match="unknown element <div>"):
+        check_render("gitlab", "<div>x</div>")
+    with pytest.raises(ValueError, match="unknown element <span>"):
+        check_render("gitlab", "<span>x</span>")
 
 
 def test_hard_check_rejects_github_mentions_comments_and_unknown_elements() -> None:
@@ -267,6 +295,24 @@ def test_hard_check_rejects_github_mentions_comments_and_unknown_elements() -> N
         check_render("github", "<!-- retained -->")
     with pytest.raises(ValueError, match="unknown element <abbr>"):
         check_render("github", "<abbr>HTML</abbr>")
+    with pytest.raises(ValueError, match="unknown element <div>"):
+        check_render("github", "<div>x</div>")
+
+
+def test_chrome_signatures_are_scoped_to_the_renderer() -> None:
+    with pytest.raises(ValueError, match="unknown element <div>"):
+        check_render(
+            "github",
+            '<div class="gl-relative markdown-code-block js-markdown-code"><pre>x</pre></div>',
+        )
+    with pytest.raises(ValueError, match="unknown element <div>"):
+        check_render(
+            "gitlab", '<div class="highlight highlight-text-adblock"><pre>x</pre></div>'
+        )
+    with pytest.raises(ValueError, match="unknown element <span>"):
+        check_render(
+            "github", '<span data-escaped-char="" data-sourcepos="1:1">x</span>'
+        )
 
 
 def test_hard_check_accepts_inlined_gitlab_heading_code_and_angle_attribute_renders() -> (
@@ -277,8 +323,16 @@ def test_hard_check_accepts_inlined_gitlab_heading_code_and_angle_attribute_rend
     check_render("gitlab", REAL_ANGLE_ATTRIBUTE_HTML)
     assert "<b>" in REAL_ANGLE_ATTRIBUTE_HTML
     assert (
-        structure(REAL_CODE_HTML)
+        structure(REAL_CODE_HTML, platform="gitlab")
         == "<pre>@user &lt;table&gt; @</pre> <p>footer line</p>"
+    )
+    assert (
+        structure(REAL_ANGLE_ATTRIBUTE_HTML, platform="gitlab")
+        == "<h1>heading &lt;b&gt; \uff20leehopper`</h1>"
+    )
+    assert (
+        structure(REAL_HEADING_HTML, platform="gitlab")
+        == "<h2>`x Heading</h2><p>&lt;b&gt; \uff20leehopper`</p><p>footer line</p>"
     )
 
 
@@ -316,22 +370,43 @@ def test_derive_handles_accepts_256_character_segment_and_20_segment_path() -> N
     path = "/".join(["a"] * 20)
     cases = [
         {
-            "input": f"@{segment} @{'a' * 257} @{path} @{'/'.join(['a'] * 21)}",
+            "input": f"@{segment} @{'b' * 257} @{path} @{'/'.join(['c'] * 21)}",
             "expected": "",
         }
     ]
     assert derive_handles(cases) == {segment, path}
 
 
+def test_fullwidth_handle_derivation_uses_the_same_filters() -> None:
+    cases = [
+        {
+            "input": "@ascii",
+            "expected": "\uff20visible @ascii \uff20all \uff20x \uff20ignore.git \uff20"
+            + "b" * 257,
+        }
+    ]
+    assert derive_handles(cases, fullwidth_only=True) == {"visible"}
+
+
 def test_canary_names_unresolved_seedable_handles_and_skips_plain_handles() -> None:
     def fake_render(text: str) -> str:
-        if text in {"@alice", "@all", "@x"}:
-            return '<a data-reference-type="user">' + text + "</a>"
+        if text == "@alice":
+            return '<a data-reference-type="user" data-original="@alice">@alice</a>'
         return text
 
     run_canary(["alice", "all", "x"], fake_render)
     with pytest.raises(RuntimeError, match="unresolved handles: missing"):
         run_canary(["alice", "missing", "all", "x"], fake_render)
+
+
+def test_canary_rejects_wrong_handle_reference() -> None:
+    with pytest.raises(RuntimeError, match="alice"):
+        run_canary(
+            ["alice"],
+            lambda text: (
+                '<a data-reference-type="user" data-original="@other">other</a>'
+            ),
+        )
 
 
 def test_gitlab_adapter_extracts_html_from_json_response() -> None:
@@ -417,18 +492,6 @@ def test_gitlab_http_error_includes_truncated_json_message_without_token() -> No
     assert token not in rendered_error
     assert "PRIVATE-TOKEN" not in rendered_error
     assert len(requests) == 1
-
-
-def test_gitlab_http_errors_do_not_include_the_token() -> None:
-    token = "private-render-token-value"
-
-    def fail_opener(request):
-        raise GitLabHTTPError(500, "/api/v4/markdown")
-
-    client = GitLabClient("http://gitlab.test", token, opener=fail_opener)
-    with pytest.raises(GitLabHTTPError) as error:
-        client.render("text", "cdr-group/probe")
-    assert token not in str(error.value)
 
 
 def test_gitlab_adapter_retries_429_with_bounded_backoff() -> None:
@@ -708,3 +771,333 @@ def test_check_writes_nothing_and_reports_changed_id_and_version(tmp_path) -> No
     assert checked.exit_code == 1
     assert writes == []
     assert path.read_bytes() == original
+
+
+def test_record_fixture_runs_gitlab_canary_before_writing(tmp_path) -> None:
+    path = tmp_path / "fixture.json"
+    _write_initial_probe_fixture(path)
+    original = path.read_bytes()
+    writes: list[str] = []
+    with pytest.raises(RuntimeError, match="alice"):
+        record_fixture(
+            str(path),
+            platform="gitlab",
+            render=lambda text: f"<p>{text}</p>",
+            version="19.4.1 ce",
+            blob_prefix="http://gitlab.test/-/blob/main/",
+            write_text=lambda target, contents: writes.append(contents),
+        )
+    assert writes == []
+    assert path.read_bytes() == original
+
+
+def test_github_canary_uses_authenticated_login_and_rejects_plain_render(
+    tmp_path,
+) -> None:
+    seen: list[list[str]] = []
+
+    def runner(argv, **kwargs):
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="lee\n", stderr="")
+
+    assert github_login(runner=runner) == "lee"
+    assert seen == [["gh", "api", "user", "--jq", ".login"]]
+    with pytest.raises(RuntimeError, match="lee"):
+        run_github_canary("lee", lambda text: f"<p>{text}</p>")
+    path = tmp_path / "fixture.json"
+    _write_initial_probe_fixture(path)
+    original = path.read_bytes()
+    writes: list[str] = []
+    with pytest.raises(RuntimeError, match="lee"):
+        record_fixture(
+            str(path),
+            platform="github",
+            render=lambda text: f"<p>{text}</p>",
+            get_github_login=lambda: "lee",
+            write_text=lambda target, contents: writes.append(contents),
+        )
+    assert writes == []
+    assert path.read_bytes() == original
+
+
+def _github_render_with_canary(text: str) -> str:
+    if text == "@lee":
+        return '<a class="user-mention" href="/lee">@lee</a>'
+    return "<p>changed</p>"
+
+
+def test_github_record_clears_pair_bound_divergence(tmp_path) -> None:
+    path = tmp_path / "fixture.json"
+    _write_initial_probe_fixture(path)
+    document = json.loads(_read_fixture(path))
+    row = document["cases"][0]
+    row["github_probe"]["html"] = "<p>old</p>"
+    row["github_probe"]["input_sha256"] = input_sha256("\uff20alice\n\nfooter line")
+    row["gitlab_probe"] = {
+        "renderer": "gitlab api markdown gfm=true project",
+        "version": "19.4.1 ce",
+        "rendered": "2026-01-01",
+        "input": "expected + blank line + footer line",
+        "input_sha256": input_sha256("\uff20alice\n\nfooter line"),
+        "blob_prefix": "http://gitlab.test/-/blob/main/",
+        "twin_references": ["@alice"],
+        "html": "<p>new</p>",
+        "divergence": {
+            "note": "old note",
+            "issue": 12,
+            "pair_sha256": pair_sha256("<p>old</p>", "<p>new</p>"),
+        },
+    }
+    write_utf8(str(path), serialize_fixture(document["cases"]))
+    result = record_fixture(
+        str(path),
+        platform="github",
+        render=_github_render_with_canary,
+        get_github_login=lambda: "lee",
+    )
+    assert result.divergence_cleared == ["probe_row"]
+    assert result.cleared_details == ["probe_row: issue 12: old note"]
+    assert result.cases[0]["gitlab_probe"]["divergence"] is None
+
+
+def test_check_detects_twin_only_change_and_stale_divergence(tmp_path) -> None:
+    path = tmp_path / "fixture.json"
+    _write_initial_probe_fixture(path)
+    record_fixture(
+        str(path),
+        platform="gitlab",
+        render=_fake_gitlab_render,
+        version="19.4.1 ce",
+        blob_prefix="http://gitlab.test/-/blob/main/",
+    )
+
+    def twin_changed(text: str) -> str:
+        if text.startswith("@alice\n"):
+            return '<p><a data-original="@bob" data-reference-type="user">@bob</a></p>'
+        return _fake_gitlab_render(text)
+
+    result = record_fixture(
+        str(path),
+        platform="gitlab",
+        render=twin_changed,
+        version="19.4.1 ce",
+        blob_prefix="http://gitlab.test/-/blob/main/",
+        check=True,
+    )
+    assert result.changed_ids == ["probe_row"]
+    assert result.exit_code == 1
+    document = json.loads(_read_fixture(path))
+    document["cases"][0]["gitlab_probe"]["divergence"] = {
+        "note": "stale",
+        "issue": 12,
+        "pair_sha256": "0" * 64,
+    }
+    write_utf8(str(path), serialize_fixture(document["cases"]))
+    stale = record_fixture(
+        str(path),
+        platform="gitlab",
+        render=_fake_gitlab_render,
+        version="19.4.1 ce",
+        blob_prefix="http://gitlab.test/-/blob/main/",
+        check=True,
+    )
+    assert stale.divergence_cleared == ["probe_row"]
+    assert stale.exit_code == 1
+
+
+def test_divergence_subcommand_binds_current_text_difference(tmp_path) -> None:
+    path = tmp_path / "fixture.json"
+    _write_initial_probe_fixture(path)
+    document = json.loads(_read_fixture(path))
+    row = document["cases"][0]
+    digest = input_sha256("\uff20alice\n\nfooter line")
+    row["github_probe"]["html"] = "<p>github</p>"
+    row["github_probe"]["input_sha256"] = digest
+    row["gitlab_probe"] = {
+        "input_sha256": digest,
+        "html": "<p>gitlab</p>",
+        "blob_prefix": "https://gl.test/-/blob/main/",
+        "divergence": None,
+    }
+    write_utf8(str(path), serialize_fixture(document["cases"]))
+    record_divergence(str(path), case_id="probe_row", issue=378, note="text differs")
+    divergence = json.loads(_read_fixture(path))["cases"][0]["gitlab_probe"][
+        "divergence"
+    ]
+    assert list(divergence) == ["note", "issue", "pair_sha256"]
+    assert divergence == {
+        "note": "text differs",
+        "issue": 378,
+        "pair_sha256": pair_sha256(
+            "<p>github</p>", "<p>gitlab</p>", blob_prefix="https://gl.test/-/blob/main/"
+        ),
+    }
+
+
+def test_divergence_cli_uses_fixture_path_and_stored_pair(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "fixture.json"
+    _write_initial_probe_fixture(path)
+    document = json.loads(_read_fixture(path))
+    row = document["cases"][0]
+    digest = input_sha256("\uff20alice\n\nfooter line")
+    row["github_probe"].update(html="<p>a</p>", input_sha256=digest)
+    row["gitlab_probe"] = {
+        "input_sha256": digest,
+        "html": "<p>b</p>",
+        "blob_prefix": "https://gl.test/-/blob/main/",
+        "divergence": None,
+    }
+    write_utf8(str(path), serialize_fixture(document["cases"]))
+    monkeypatch.setattr("tests.tools.render_probes._fixture_path", lambda: str(path))
+    assert (
+        main(
+            [
+                "divergence",
+                "--id",
+                "probe_row",
+                "--issue",
+                "378",
+                "--note",
+                "text differs",
+            ]
+        )
+        == 0
+    )
+    assert (
+        json.loads(_read_fixture(path))["cases"][0]["gitlab_probe"]["divergence"][
+            "issue"
+        ]
+        == 378
+    )
+
+
+@pytest.mark.parametrize("failure", ["stale", "equal", "skeleton", "extra"])
+def test_divergence_refuses_invalid_fixture_or_pair(tmp_path, failure: str) -> None:
+    path = tmp_path / "fixture.json"
+    _write_initial_probe_fixture(path)
+    document = json.loads(_read_fixture(path))
+    row = document["cases"][0]
+    digest = input_sha256("\uff20alice\n\nfooter line")
+    row["github_probe"]["input_sha256"] = digest
+    row["github_probe"]["html"] = "<p>a</p>"
+    row["gitlab_probe"] = {
+        "input_sha256": digest,
+        "html": "<p>b</p>",
+        "blob_prefix": "https://gl.test/-/blob/main/",
+        "divergence": None,
+    }
+    if failure == "stale":
+        row["gitlab_probe"]["input_sha256"] = "0" * 64
+    elif failure == "equal":
+        row["gitlab_probe"]["html"] = "<p>a</p>"
+    elif failure == "skeleton":
+        row["gitlab_probe"]["html"] = "<h1>b</h1>"
+    else:
+        document["surprise"] = True
+    source = json.dumps(document, ensure_ascii=False)
+    write_utf8(str(path), source)
+    writes: list[str] = []
+    with pytest.raises(
+        ValueError,
+        match={
+            "stale": "stale",
+            "equal": "equal",
+            "skeleton": "skeleton",
+            "extra": "only a cases",
+        }[failure],
+    ):
+        record_divergence(
+            str(path),
+            case_id="probe_row",
+            issue=378,
+            note="text differs",
+            write_text=lambda target, contents: writes.append(contents),
+        )
+    assert writes == []
+    assert _read_fixture(path) == source
+
+
+def test_record_refuses_extra_top_level_key(tmp_path) -> None:
+    path = tmp_path / "fixture.json"
+    _write_initial_probe_fixture(path)
+    source = _read_fixture(path).replace('"cases": [', '"extra": true, "cases": [')
+    write_utf8(str(path), source)
+    with pytest.raises(ValueError, match="only a cases"):
+        record_fixture(str(path), platform="gitlab", render=_fake_gitlab_render)
+    assert _read_fixture(path) == source
+
+
+def test_record_rejects_reference_in_expected_render_without_writing(tmp_path) -> None:
+    path = tmp_path / "fixture.json"
+    _write_initial_probe_fixture(path)
+    source = _read_fixture(path)
+    writes: list[str] = []
+
+    def bad_render(text: str) -> str:
+        return _fake_gitlab_render("@alice")
+
+    with pytest.raises(ValueError, match="GitLab reference link"):
+        record_fixture(
+            str(path),
+            platform="gitlab",
+            render=bad_render,
+            version="19.4.1 ce",
+            blob_prefix="https://gl.test/-/blob/main/",
+            write_text=lambda target, contents: writes.append(contents),
+        )
+    assert writes == []
+    assert _read_fixture(path) == source
+
+
+def test_gitlab_version_detects_enterprise_and_ee_suffix() -> None:
+    class Fake:
+        def __init__(self, details):
+            self.details = details
+
+        def json_request(self, method: str, path: str, body: object = None):
+            return self.details
+
+    assert (
+        _gitlab_version(Fake({"version": "19.4.1", "enterprise": True})) == "19.4.1 ee"
+    )
+    assert (
+        _gitlab_version(Fake({"version": "19.4.1-ee", "enterprise": False}))
+        == "19.4.1 ee"
+    )
+
+
+def test_twin_references_are_sorted_from_unsorted_html() -> None:
+    html_text = '<a data-reference-type="user" data-original="@z"></a><a data-reference-type="user" data-original="@a"></a>'
+    assert _reference_originals(html_text) == ["@a", "@z"]
+
+
+def test_recorder_uses_literal_canonical_layout_for_two_rows(tmp_path) -> None:
+    path = tmp_path / "fixture.json"
+    write_utf8(
+        str(path),
+        serialize_fixture(
+            [
+                {"id": "a", "input": "", "expected": "A"},
+                {"id": "b", "input": "", "expected": "B"},
+            ]
+        ),
+    )
+    record_fixture(
+        str(path),
+        platform="github",
+        render=lambda text: (
+            '<a class="user-mention" href="/lee">@lee</a>'
+            if text == "@lee"
+            else "<p>ok</p>"
+        ),
+        get_github_login=lambda: "lee",
+        clock=lambda: "2026-09-24",
+    )
+    assert _read_fixture(path) == (
+        '{\n  "cases": [\n'
+        '    {"id":"a","input":"","expected":"A","github_probe":{"renderer":"gh api markdown mode=gfm","rendered":"2026-09-24","input":"expected + blank line + footer line","input_sha256":"880da50da47b8c629dd9b6e0095bcb38be1199ed5ea106d893143121981704ca","html":"<p>ok</p>"}},\n'
+        '    {"id":"b","input":"","expected":"B","github_probe":{"renderer":"gh api markdown mode=gfm","rendered":"2026-09-24","input":"expected + blank line + footer line","input_sha256":"81cabb090bb05b16a737a06294f12f9e1e0215ee3c091d5c490569f0dbc08b55","html":"<p>ok</p>"}}\n'
+        "  ]\n}\n"
+    )

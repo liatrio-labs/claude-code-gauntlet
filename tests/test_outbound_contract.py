@@ -10,13 +10,13 @@ from pathlib import Path
 import scripts.post_review as post_review
 from scripts.review_marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 from tests.tools.render_probes import (
-    _HANDLE_PATTERN,
-    INHERENTLY_PLAIN,
     _skeleton,
     check_render,
+    derive_handles,
     input_sha256,
     input_text,
     pair_sha256,
+    serialize_fixture,
     structure,
 )
 
@@ -40,6 +40,10 @@ _MARKER_OPEN = re.compile(
     + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
     + r")\s*:"
 )
+
+
+def test_tracked_fixture_has_canonical_byte_layout():
+    assert FIXTURE_PATH.read_bytes() == serialize_fixture(CASES).encode("utf-8")
 
 
 def _assert_outbound_string_invariant(output):
@@ -204,6 +208,12 @@ def test_fixture_schema_and_rule_coverage():
         assert all(isinstance(item, str) for item in gitlab["twin_references"])
         assert gitlab["twin_references"] == sorted(gitlab["twin_references"])
         assert gitlab["divergence"] is None or isinstance(gitlab["divergence"], dict)
+        if isinstance(gitlab["divergence"], dict):
+            divergence = gitlab["divergence"]
+            assert list(divergence) == ["note", "issue", "pair_sha256"]
+            assert isinstance(divergence["note"], str)
+            assert type(divergence["issue"]) is int
+            assert isinstance(divergence["pair_sha256"], str)
         assert isinstance(case["rule_ids"], list)
 
     for rule_id in _CONTAINMENT_RULES:
@@ -275,8 +285,8 @@ def test_divergences_are_text_only_and_bound_to_normalized_pairs():
         github_html = github["html"]
         gitlab_html = gitlab["html"]
         blob_prefix = gitlab["blob_prefix"]
-        same_structure = structure(github_html) == structure(
-            gitlab_html, blob_prefix=blob_prefix
+        same_structure = structure(github_html, platform="github") == structure(
+            gitlab_html, platform="gitlab", blob_prefix=blob_prefix
         )
         divergence = gitlab["divergence"]
         assert same_structure == (divergence is None), case["id"]
@@ -287,19 +297,16 @@ def test_divergences_are_text_only_and_bound_to_normalized_pairs():
         assert divergence["pair_sha256"] == pair_sha256(
             github_html, gitlab_html, blob_prefix=blob_prefix
         ), case["id"]
-        assert _skeleton(github_html) == _skeleton(gitlab_html, blob_prefix)
+        assert _skeleton(github_html, platform="github") == _skeleton(
+            gitlab_html, platform="gitlab", blob_prefix=blob_prefix
+        )
 
 
 def test_fullwidth_expected_handles_are_covered_by_twin_references():
     required_handles = set()
     observed_handles = set()
     for case in CASES:
-        expected = case["expected"]
-        for match in _HANDLE_PATTERN.finditer(expected):
-            if expected[match.start()] == "\uff20":
-                handle = match.group(1)
-                if handle not in INHERENTLY_PLAIN:
-                    required_handles.add(handle)
+        required_handles.update(derive_handles([case], fullwidth_only=True))
         observed_handles.update(
             reference.removeprefix("@")
             for reference in case["gitlab_probe"]["twin_references"]
