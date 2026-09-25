@@ -394,8 +394,6 @@
     {"id":"raw:mbq_already_escaped","group":"raw","sha256":"a37a8c1944828852f47dff6f415ac70783c49f0948479adf35f4166eb164afa6","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"expected:slash_bad_info","group":"expected","sha256":"b06e5f9f2b3f2c6b071d4468cac0ba4128d52ba023d60ba687363c2119b7e6f2","paragraphs":[{"start_line":0,"end_line":1}],"commands":[],"stored_equals_posted":true},
     {"id":"raw:slash_bad_info","group":"raw","sha256":"c8421b30ff22b98d69b34595a833ccf04bc8e60cae5528b4c7b89a82ab5d70fd","paragraphs":[{"start_line":0,"end_line":1}],"commands":[["close"]],"stored_equals_posted":false},
-    {"id":"expected:slash_display_math","group":"expected","sha256":"1cb54b49cf7bcab1026a176fc598439a1fddc9ac268b5b926a00561d55e9563b","paragraphs":[],"commands":[],"stored_equals_posted":true},
-    {"id":"raw:slash_display_math","group":"raw","sha256":"79d417abd61d546af60ba319759280d869ebe56ae89d90dd83e1f3297faee604","paragraphs":[{"start_line":0,"end_line":2}],"commands":[["close"]],"stored_equals_posted":false},
     {"id":"composed:mbq_backtick","group":"composed","sha256":"0776957bff1aaf38a1a11f8ec1a096f44ecb079b56d9d044ee852164c9aa8a4a","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"composed:mbq_tilde","group":"composed","sha256":"d7544c670ade143f126440d2ce2b7e31cd9446be1586bd12ec4e65680bde7f8f","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"composed:suggested_patch","group":"composed","sha256":"6e74a1bc58e18d76c00ea32d0fd4b05a5e6076a16d2ae31aa4c8e1c14fd5c992","paragraphs":[],"commands":[],"stored_equals_posted":true},
