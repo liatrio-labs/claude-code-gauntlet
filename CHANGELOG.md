@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.42.1 (2026-09-25)
+
+### Bug Fixes
+
+- Escape GitLab quick-action and multiline-quote lines in posted prose (#377)
+  ([#382](https://github.com/liatrio-labs/claude-code-gauntlet/pull/382),
+  [`42a6177`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/42a6177852e294606a6a9f9fb5ea5b0b31427d50))
+
+### Testing
+
+- Record GitLab render probes beside the GitHub probes (#368)
+  ([#379](https://github.com/liatrio-labs/claude-code-gauntlet/pull/379),
+  [`bbed5aa`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/bbed5aaf3269d9b83af0412a6912c2a1d3b4b1d4))
+
+
 ## v3.42.0 (2026-09-24)
 
 ### Bug Fixes
