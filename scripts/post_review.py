@@ -884,7 +884,7 @@ def _prepare_text(
         if shape and not protected:
             tick = shape.start(1)
             line = line[:tick] + "\\" + line[tick:]
-        if not protected:
+        if not protected and not single_line:
             if line.startswith("/"):
                 line = "\\" + line
             quote = _MULTILINE_QUOTE_RE.match(line)

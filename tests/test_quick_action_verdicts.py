@@ -60,18 +60,25 @@ def _fake_rails_runner(
     output_cases = []
     for case in input_cases:
         is_raw_attack = case["id"] == "raw:sample"
-        output_cases.append(
-            {
-                "id": case["id"],
-                "group": case["group"],
-                "sha256": hashlib.sha256(case["text"].encode("utf-8")).hexdigest(),
-                "paragraphs": [{"start_line": 0, "end_line": 0}]
-                if is_raw_attack
-                else [],
-                "commands": [["close"]] if is_raw_attack else [],
-                "stored_equals_posted": not is_raw_attack,
-            }
+        normalized_posted = case["text"].replace("\r", "").rstrip()
+        content = (
+            "substituted"
+            if is_raw_attack
+            else "\u00af\\\uff3f(\u30c4)\uff3f/\u00af\n\nfooter line"
+            if case["text"].startswith("/shrug")
+            else normalized_posted
         )
+        row = {
+            "id": case["id"],
+            "group": case["group"],
+            "sha256": hashlib.sha256(case["text"].encode("utf-8")).hexdigest(),
+            "paragraphs": [{"start_line": 0, "end_line": 0}] if is_raw_attack else [],
+            "commands": [["close"]] if is_raw_attack else [],
+            "stored_equals_posted": content == normalized_posted,
+        }
+        if content != normalized_posted:
+            row["content"] = content
+        output_cases.append(row)
     result = {"gitlab_version": "19.4.1", "cases": output_cases}
     return subprocess.CompletedProcess(
         argv,
@@ -109,6 +116,28 @@ def test_case_list_builds_expected_raw_and_composed_texts() -> None:
     assert raw_suggestion["group"] == "raw"
     assert raw_suggestion["text"].startswith(">>> [!note]\n")
     assert "/label ~zz377nolabel" in raw_suggestion["text"]
+
+
+def _assert_recorded_rows_match_current_cases(
+    recorded: list[dict[str, Any]], current: list[dict[str, str]]
+) -> None:
+    assert [row["id"] for row in recorded] == [case["id"] for case in current]
+    assert [row["group"] for row in recorded] == [case["group"] for case in current]
+    for row, case in zip(recorded, current, strict=True):
+        assert row["sha256"] == input_sha256(case["text"]), case["id"]
+        render_probes._validate_quick_action_paragraphs(
+            case["text"], row["paragraphs"], case["id"]
+        )
+
+
+def _assert_no_raw_slash_in_candidate_paragraphs(
+    text: str, paragraphs: list[dict[str, int]], case_id: str
+) -> None:
+    lines = text.split("\n")
+    for paragraph in paragraphs:
+        for line_number in range(paragraph["start_line"], paragraph["end_line"] + 1):
+            line = lines[line_number]
+            assert not line.startswith("/"), (case_id, line_number, line)
 
 
 def test_composed_builder_is_deterministic_and_covers_delivery_shapes() -> None:
@@ -267,6 +296,7 @@ def test_recorder_serializes_results_and_check_mode_only_reports_differences(
     raw = next(row for row in document["cases"] if row["id"] == "raw:sample")
     assert raw["commands"] == [["close"]]
     assert raw["stored_equals_posted"] is False
+    assert raw["content"] == "substituted"
     assert list(raw) == [
         "id",
         "group",
@@ -274,6 +304,7 @@ def test_recorder_serializes_results_and_check_mode_only_reports_differences(
         "paragraphs",
         "commands",
         "stored_equals_posted",
+        "content",
     ]
     assert len(writes) == 1
 
@@ -318,6 +349,28 @@ def test_ruby_runner_calls_gitlab_pipeline_and_extractor_directly() -> None:
     assert "Gitlab::QuickActions::Extractor.new(" in source
     assert "QuickActions::InterpretService.command_definitions" in source
     assert "extractor.extract_commands(text)" in source
+    assert 'verdict["content"] = content unless content == normalized_posted' in source
+
+
+def test_quick_action_interval_validation_rejects_corrupt_bounds() -> None:
+    with pytest.raises(ValueError, match="out-of-bounds paragraph interval"):
+        render_probes._validate_quick_action_paragraphs(
+            "safe\nbody", [{"start_line": 999, "end_line": 999}], "synthetic"
+        )
+
+
+def test_quick_action_freshness_rejects_a_stale_expected_row_hash() -> None:
+    current = [{"id": "expected:sample", "group": "expected", "text": "safe\n\nfooter"}]
+    recorded = [
+        {
+            "id": "expected:sample",
+            "group": "expected",
+            "sha256": "0" * 64,
+            "paragraphs": [],
+        }
+    ]
+    with pytest.raises(AssertionError):
+        _assert_recorded_rows_match_current_cases(recorded, current)
 
 
 def _load_real_fixture() -> dict[str, Any]:
@@ -352,8 +405,7 @@ def test_fixture_case_ids_match_current_outbound_and_composed_cases() -> None:
     expected = build_quick_action_case_list(outbound)
     recorded = document["cases"]
 
-    assert [row["id"] for row in recorded] == [case["id"] for case in expected]
-    assert [row["group"] for row in recorded] == [case["group"] for case in expected]
+    _assert_recorded_rows_match_current_cases(recorded, expected)
 
 
 def test_fixture_expected_cases_have_no_actions_and_preserve_posted_bodies() -> None:
@@ -397,6 +449,11 @@ def test_fixture_raw_positive_cases_record_quick_action_verdicts() -> None:
             assert command_name in names, case_id
         assert row["stored_equals_posted"] is False, case_id
 
+    substitution = verdicts["raw:slash_substitution"]
+    assert (
+        substitution["content"] == "\u00af\\\uff3f(\u30c4)\uff3f/\u00af\n\nfooter line"
+    )
+
     suggestion_breakout = verdicts["raw:suggestion_alert_payload_breakout"]
     assert any(
         command and command[0] == "label" for command in suggestion_breakout["commands"]
@@ -426,6 +483,10 @@ def test_fixture_composed_verdicts_match_current_bodies_and_have_no_actions() ->
     assert set(recorded_composed) == set(composed)
     for case_id, body in composed.items():
         row = recorded_composed[case_id]
+        render_probes._validate_quick_action_paragraphs(
+            body, row["paragraphs"], f"composed:{case_id}"
+        )
+        _assert_no_raw_slash_in_candidate_paragraphs(body, row["paragraphs"], case_id)
         assert row["sha256"] == input_sha256(body), case_id
         assert row["commands"] == [], case_id
         assert row["stored_equals_posted"] is True, case_id

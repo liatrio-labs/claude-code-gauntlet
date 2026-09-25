@@ -154,10 +154,12 @@ text, then apply containment and divergence checks to the stored renders. They i
 chrome and added attributes, ASCII whitespace runs, soft line breaks, the project blob prefix,
 and recorded divergences. `record --check` re-renders to catch renderer drift.
 
-GitLab quick-action verdicts are recorded separately from Markdown renders in
-`tests/fixtures/gitlab_quick_action_verdicts_19_4_1.json`; they include extracted commands and
-whether GitLab changed the stored note. The Rails recorder uses the `:quick_action` pipeline;
-re-record these verdicts when the supported GitLab version changes.
+GitLab CE 19.4.1 quick-action verdicts are recorded separately from Markdown renders, in
+`tests/fixtures/gitlab_quick_action_verdicts_19_4_1.json`. The recorder runs GitLab's own
+`:quick_action` pipeline and Extractor through `gitlab-rails runner` and creates no note. Each
+verdict lists the extracted commands, and `stored_equals_posted` is false when the Extractor would
+change the posted text. Re-record the verdicts when the supported GitLab version, an outbound
+expected text or a composer's output changes.
 
 When a change alters an expected text, re-record both probes and review the diff. The GitLab
 probe needs the local GitLab instance described in the module docstring of

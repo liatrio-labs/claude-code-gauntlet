@@ -1024,6 +1024,31 @@ def run_gitlab_quick_action_verdicts(
     return parse_quick_action_runner_output(completed.stdout)
 
 
+def _validate_quick_action_paragraphs(
+    text: str, paragraphs: object, case_id: str
+) -> list[dict[str, int]]:
+    if not isinstance(paragraphs, list):
+        raise ValueError(f"invalid paragraphs for GitLab case {case_id!r}")
+    line_count = len(text.split("\n"))
+    validated: list[dict[str, int]] = []
+    for paragraph in paragraphs:
+        if (
+            not isinstance(paragraph, dict)
+            or set(paragraph) != {"start_line", "end_line"}
+            or type(paragraph.get("start_line")) is not int
+            or type(paragraph.get("end_line")) is not int
+        ):
+            raise ValueError(f"invalid paragraph interval for GitLab case {case_id!r}")
+        start_line = paragraph["start_line"]
+        end_line = paragraph["end_line"]
+        if not 0 <= start_line <= end_line < line_count:
+            raise ValueError(
+                f"out-of-bounds paragraph interval for GitLab case {case_id!r}"
+            )
+        validated.append({"start_line": start_line, "end_line": end_line})
+    return validated
+
+
 def _validated_quick_action_rows(
     source_cases: list[dict[str, str]], result: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
@@ -1052,20 +1077,40 @@ def _validated_quick_action_rows(
             raise ValueError(f"invalid paragraphs for GitLab case {source['id']!r}")
         if not isinstance(raw.get("commands"), list):
             raise ValueError(f"invalid commands for GitLab case {source['id']!r}")
-        if type(raw.get("stored_equals_posted")) is not bool:
+        paragraphs = _validate_quick_action_paragraphs(
+            source["text"], raw["paragraphs"], source["id"]
+        )
+        stored_equals_posted = raw.get("stored_equals_posted")
+        if type(stored_equals_posted) is not bool:
             raise ValueError(
                 f"invalid stored-body comparison for GitLab case {source['id']!r}"
             )
-        rows.append(
-            {
-                "id": source["id"],
-                "group": source["group"],
-                "sha256": digest,
-                "paragraphs": raw["paragraphs"],
-                "commands": raw["commands"],
-                "stored_equals_posted": raw["stored_equals_posted"],
-            }
-        )
+        normalized_posted = source["text"].replace("\r", "").rstrip()
+        has_content = "content" in raw
+        content = raw.get("content", normalized_posted)
+        if not isinstance(content, str):
+            raise ValueError(
+                f"invalid Extractor content for GitLab case {source['id']!r}"
+            )
+        if stored_equals_posted != (content == normalized_posted):
+            raise ValueError(
+                f"inconsistent Extractor content for GitLab case {source['id']!r}"
+            )
+        if has_content == (content == normalized_posted):
+            raise ValueError(
+                f"Extractor content must be recorded only when changed for GitLab case {source['id']!r}"
+            )
+        row = {
+            "id": source["id"],
+            "group": source["group"],
+            "sha256": digest,
+            "paragraphs": paragraphs,
+            "commands": raw["commands"],
+            "stored_equals_posted": stored_equals_posted,
+        }
+        if has_content:
+            row["content"] = content
+        rows.append(row)
     return rows
 
 

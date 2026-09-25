@@ -689,6 +689,23 @@ class TestFoldAndGateContracts(unittest.TestCase):
                             body = body.replace(review_marker.build_marker(SHA, 0), "")
                         _assert_outbound_string_invariant(body)
 
+    def test_forced_inline_composer_folds_keep_escaped_slash_lines(self):
+        for platform, surface in (("github", "inline"), ("gitlab", "discussion")):
+            with self.subTest(platform=platform):
+                limit = post_review._body_limit(platform, surface)["bytes"]
+                source = "context\n/close\n" + "tail " * (limit // 5 + 1000)
+                prepared = post_review.prepare_prose(source)
+                composed = post_review.compose_inline_body(
+                    prepared, platform=platform, surface=surface
+                )
+                self.assertGreater(composed.folded_bytes, 0)
+                kept_lines = composed.body.split("\n\n_[folded:", 1)[0].splitlines()
+                self.assertTrue(
+                    any(line == "\\/close" for line in kept_lines),
+                    "prepared slash line was not kept",
+                )
+                _assert_outbound_string_invariant(composed.body)
+
     def test_midline_fold_retires_the_open_code_span_in_both_composers(self):
         text = "x" * 65213 + " `<table><tr><td>`" + "y" * 1000
         for name, fold in (

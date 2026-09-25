@@ -600,10 +600,15 @@ def test_string_invariant_for_fixtures_seeded_corpus_and_poisoned_sinks():
         "location": post_review.prepare_line,
     }
     for case in CASES:
-        _assert_outbound_string_invariant(prepare[case["field_class"]](case["input"]))
+        _assert_outbound_string_invariant(
+            prepare[case["field_class"]](case["input"]),
+            check_prose_rules=case["field_class"] not in {"single_line", "location"},
+        )
     for source in _generated_attack_corpus():
         _assert_outbound_string_invariant(post_review.prepare_prose(source))
-        _assert_outbound_string_invariant(post_review.prepare_line(source))
+        _assert_outbound_string_invariant(
+            post_review.prepare_line(source), check_prose_rules=False
+        )
     poison = {
         "severity": "high",
         "title": "`<Slot> @team`",
@@ -682,12 +687,7 @@ def test_live_node_prepare_line_matches_single_line_and_location_fixtures():
     parity_cases = [
         case
         for case in CASES
-        if "\n" not in case["input"]
-        and "\r" not in case["input"]
-        and not {
-            "prose.leading_slash",
-            "prose.multiline_quote",
-        }.intersection(case["rule_ids"])
+        if "\n" not in case["input"] and "\r" not in case["input"]
     ]
     cases = {case["id"]: case for case in line_cases + idempotency_cases + parity_cases}
     inputs = [case["input"] for case in cases.values()]
@@ -723,6 +723,34 @@ if (typeof renderer.prepareLine !== 'function') {
     assert js_prepared == python_prepared
     for case in parity_cases:
         assert js_by_id[case["id"]]["once"] == prepare_line(case["input"]), case["id"]
+
+
+@pytest.mark.parametrize("text", ("/close", ">>> x", ">>> [!note]"))
+def test_live_node_single_line_prose_rules_are_omitted(text):
+    script = """
+import { prepareLine } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
+"""
+    result = _run_node(script, [text])
+    assert result.returncode == 0, result.stderr
+    assert post_review.prepare_line(text) == json.loads(result.stdout)[0] == text
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    (
+        ("- >>>", "- \\>>>"),
+        ("* >>>", "* \\>>>"),
+        ("1. >>>", "1. \\>>>"),
+        ("1) >>>", "1) \\>>>"),
+    ),
+)
+def test_list_prefixed_multiline_quote_openers_are_escaped(source, expected):
+    prepared = post_review.prepare_prose(source)
+    assert prepared == expected
+    _assert_outbound_string_invariant(prepared)
 
 
 def test_generated_summary_is_unchanged_by_python_guard():

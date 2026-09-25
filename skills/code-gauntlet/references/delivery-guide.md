@@ -177,10 +177,11 @@ committable suggestion lines included, as prose. So every prepared prose field, 
 platforms and outside trusted fences, puts a backslash before a line's leading `/` and before
 a run of three or more `>` that starts a line's content after list, quote and indent prefixes.
 The rules run after normalization and redaction. Suggested-fix code inside its suggestion fence
-is unchanged, and single-line fields do not need the rules because they always follow a
-code-owned prefix or sit inside a code span. The backslash is a CommonMark escape, so both
-platforms display the line unchanged, except that nested-quote shorthand such as `>>> text`
-displays as the literal `>>> text`.
+is unchanged. Single-line fields carry neither escape because they follow a code-owned prefix
+or sit inside a code span. In ordinary prose, CommonMark consumes the escape backslash and
+displays the punctuation as intended. An opener on an indented-code line shows its backslash.
+GitLab CE 19.4.1 passes a backslash inside `$$` display math to its math renderer.
+Nested-quote shorthand such as `>>> text` displays literally.
 
 - `review_body` — exactly the pipeline-rendered Summary section body: counts first, selected findings index,
   and any remainder with selection reasons. Whole index bullets fit within a 12,000-code-point
@@ -249,8 +250,9 @@ python3 {plugin_root}/scripts/post_review.py \
   discussions (a Guest could post on a public project but could not read a private project's
   merge requests). A Reporter can still run `react`
   (alias `award`), `internal_note`, `submit_review`, `todo` and `unsubscribe` and the `shrug` and
-  `tableflip` substitutions, a Guest the same without `internal_note`, and a Developer 29
-  commands, including `approve`, `close`, `merge`, `label` and `rebase`. The prose escapes stay
+  `tableflip` substitutions, a Guest the same without `internal_note`. On GitLab CE 19.4.1, a
+  Developer has 29 available commands, including `approve`, `close`, `label`, `rebase` and
+  `title`; the count includes the `shrug` and `tableflip` substitutions. The prose escapes stay
   on at every role, because GitLab deletes recognized command lines even when it refuses them.
 - **Delivery keys:** Keys hash prepared title and rendered sections. Findings whose posted text
   changes under this contract may post once more on an open MR, then deduplicate on the new key.
