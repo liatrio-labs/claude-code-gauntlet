@@ -4,10 +4,23 @@ import json
 import random
 import re
 import subprocess
+from datetime import date
 from pathlib import Path
+
+import pytest  # type: ignore[import-not-found]
 
 import scripts.post_review as post_review
 from scripts.review_marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
+from tests.tools.render_probes import (
+    _skeleton,
+    check_render,
+    derive_handles,
+    input_sha256,
+    input_text,
+    pair_sha256,
+    serialize_fixture,
+    structure,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURE_PATH = REPO / "tests" / "fixtures" / "outbound_comment_cases.json"
@@ -29,6 +42,10 @@ _MARKER_OPEN = re.compile(
     + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
     + r")\s*:"
 )
+
+
+def test_tracked_fixture_has_canonical_byte_layout():
+    assert FIXTURE_PATH.read_bytes() == serialize_fixture(CASES).encode("utf-8")
 
 
 def _assert_outbound_string_invariant(output):
@@ -138,7 +155,7 @@ def _summary_inputs():
 
 
 def test_fixture_schema_and_rule_coverage():
-    assert 60 <= len(CASES) <= 160
+    assert len(CASES) >= 60
     required_fields = {
         "id",
         "field_class",
@@ -147,6 +164,7 @@ def test_fixture_schema_and_rule_coverage():
         "expected",
         "rule_ids",
         "github_probe",
+        "gitlab_probe",
         "note",
     }
     assert len({case["id"] for case in CASES}) == len(CASES)
@@ -156,10 +174,48 @@ def test_fixture_schema_and_rule_coverage():
         assert case["kind"] in {"regression", "control"}
         assert isinstance(case["input"], str)
         assert isinstance(case["expected"], str)
-        assert case["github_probe"] is None or (
-            case["github_probe"]["renderer"] == "gh api markdown mode=gfm"
-            and isinstance(case["github_probe"]["html"], str)
-        )
+        assert list(case).index("gitlab_probe") == list(case).index("github_probe") + 1
+        github = case["github_probe"]
+        gitlab = case["gitlab_probe"]
+        assert list(github) == [
+            "renderer",
+            "rendered",
+            "input",
+            "input_sha256",
+            "html",
+        ]
+        assert list(gitlab) == [
+            "renderer",
+            "version",
+            "rendered",
+            "input",
+            "input_sha256",
+            "blob_prefix",
+            "twin_references",
+            "html",
+            "divergence",
+        ]
+        assert github["renderer"] == "gh api markdown mode=gfm"
+        assert gitlab["renderer"] == "gitlab api markdown gfm=true project"
+        for probe in (github, gitlab):
+            assert probe["input"] == "expected + blank line + footer line"
+            assert isinstance(probe["rendered"], str)
+            assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", probe["rendered"])
+            date.fromisoformat(probe["rendered"])
+            assert re.fullmatch(r"[0-9a-f]{64}", probe["input_sha256"])
+            assert isinstance(probe["html"], str)
+        assert re.fullmatch(r"\d+\.\d+\.\d+ (?:ce|ee)", gitlab["version"])
+        assert isinstance(gitlab["blob_prefix"], str)
+        assert isinstance(gitlab["twin_references"], list)
+        assert all(isinstance(item, str) for item in gitlab["twin_references"])
+        assert gitlab["twin_references"] == sorted(gitlab["twin_references"])
+        assert gitlab["divergence"] is None or isinstance(gitlab["divergence"], dict)
+        if isinstance(gitlab["divergence"], dict):
+            divergence = gitlab["divergence"]
+            assert list(divergence) == ["note", "issue", "pair_sha256"]
+            assert isinstance(divergence["note"], str)
+            assert type(divergence["issue"]) is int
+            assert isinstance(divergence["pair_sha256"], str)
         assert isinstance(case["rule_ids"], list)
 
     for rule_id in _CONTAINMENT_RULES:
@@ -199,6 +255,91 @@ def test_fixture_schema_and_rule_coverage():
     assert all(
         by_id[case_id]["github_probe"] is not None for case_id in required_probe_ids
     )
+
+
+def test_probe_input_hashes_are_fresh_and_name_rerecord_commands():
+    stale = []
+    for case in CASES:
+        expected_hash = input_sha256(input_text(case))
+        for platform in ("github", "gitlab"):
+            probe = case[f"{platform}_probe"]
+            if probe["input_sha256"] != expected_hash:
+                stale.append(
+                    f"{case['id']} (python tests/tools/render_probes.py record "
+                    f"--platform {platform})"
+                )
+    assert not stale, "stale probe hashes: " + "; ".join(stale)
+
+
+def test_all_recorded_renders_pass_platform_containment_checks():
+    for case in CASES:
+        for platform in ("github", "gitlab"):
+            try:
+                check_render(platform, case[f"{platform}_probe"]["html"])
+            except ValueError as error:
+                raise AssertionError(f"{case['id']} {platform}: {error}") from error
+
+
+def test_divergences_are_text_only_and_bound_to_normalized_pairs():
+    for case in CASES:
+        github = case["github_probe"]
+        gitlab = case["gitlab_probe"]
+        github_html = github["html"]
+        gitlab_html = gitlab["html"]
+        blob_prefix = gitlab["blob_prefix"]
+        same_structure = structure(github_html, platform="github") == structure(
+            gitlab_html, platform="gitlab", blob_prefix=blob_prefix
+        )
+        divergence = gitlab["divergence"]
+        assert same_structure == (divergence is None), case["id"]
+        if divergence is None:
+            continue
+        assert isinstance(divergence["note"], str) and divergence["note"].strip()
+        assert type(divergence["issue"]) is int
+        assert divergence["pair_sha256"] == pair_sha256(
+            github_html, gitlab_html, blob_prefix=blob_prefix
+        ), case["id"]
+        assert _skeleton(github_html, platform="github") == _skeleton(
+            gitlab_html, platform="gitlab", blob_prefix=blob_prefix
+        )
+
+
+def test_divergence_check_rejects_nesting_only_difference(monkeypatch):
+    github_html = "<blockquote><p>a</p></blockquote><p>b</p>"
+    gitlab_html = "<blockquote><p>a</p><p>b</p></blockquote>"
+    assert structure(github_html, platform="github") != structure(
+        gitlab_html, platform="gitlab"
+    )
+    case = {
+        "id": "nesting",
+        "github_probe": {"html": github_html},
+        "gitlab_probe": {
+            "html": gitlab_html,
+            "blob_prefix": "",
+            "divergence": {
+                "note": "text differs",
+                "issue": 1,
+                "pair_sha256": pair_sha256(github_html, gitlab_html),
+            },
+        },
+    }
+    monkeypatch.setitem(globals(), "CASES", [case])
+    with pytest.raises(AssertionError):
+        test_divergences_are_text_only_and_bound_to_normalized_pairs()
+
+
+def test_fullwidth_expected_handles_are_covered_by_twin_references():
+    required_handles = set()
+    observed_handles = set()
+    for case in CASES:
+        required_handles.update(derive_handles([case], fullwidth_only=True))
+        observed_handles.update(
+            reference.removeprefix("@")
+            for reference in case["gitlab_probe"]["twin_references"]
+            if reference.startswith("@")
+        )
+    assert required_handles
+    assert required_handles <= observed_handles
 
 
 def test_control_fixture_rows_match_current_sanitizers():

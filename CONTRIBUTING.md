@@ -145,6 +145,29 @@ python3 workflows/test/tools/record_parity.py filter_findings  # one script
 python3 workflows/test/tools/record_parity.py --check           # verify goldens are fresh, writes nothing
 ```
 
+### Outbound render probes
+
+Every row of `tests/fixtures/outbound_comment_cases.json` records how GitHub and GitLab render its
+expected text: `github_probe` from `gh api markdown`, and `gitlab_probe` from a GitLab markdown API
+call with project context. Tests check each probe's input hash against the row's current expected
+text, then apply containment and divergence checks to the stored renders. They ignore renderer
+chrome and added attributes, ASCII whitespace runs, soft line breaks, the project blob prefix,
+and recorded divergences. `record --check` re-renders to catch renderer drift.
+
+When a change alters an expected text, re-record both probes and review the diff. The GitLab
+probe needs the local GitLab instance described in the module docstring of
+`tests/tools/render_probes.py`; the seed creates the users and groups the fixture mentions, and
+`record` checks that every seedable handle renders as a link. GitLab never links `@all` or
+one-character names.
+
+```bash
+python3 tests/tools/render_probes.py record --platform github   # needs gh auth; posts nothing
+python3 tests/tools/render_probes.py seed                       # local GitLab, GITLAB_TOKEN set
+python3 tests/tools/render_probes.py record --platform gitlab
+python3 tests/tools/render_probes.py divergence --id ROW --issue NUMBER --note TEXT
+python3 tests/tools/render_probes.py record --platform gitlab --check  # re-render, writes nothing
+```
+
 ## Style and Quality
 
 - Markdown is linted using markdownlint (via pre-commit). Keep lines reasonably short and headings well structured.
