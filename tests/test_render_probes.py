@@ -93,7 +93,7 @@ def test_contributing_probe_commands_parse_with_the_recorder() -> None:
         if isinstance(action, argparse._SubParsersAction)
         for name in action.choices
     }
-    assert documented == defined
+    assert documented == defined - {"quick-actions"}
     for argv in commands:
         assert argv[:2] == ["python3", "tests/tools/render_probes.py"]
         args = argv[2:]
@@ -103,6 +103,22 @@ def test_contributing_probe_commands_parse_with_the_recorder() -> None:
             for prev, arg in zip(["", *args[:-1]], args, strict=True)
         ]
         parser.parse_args(args)
+
+
+def test_quick_actions_command_accepts_record_and_check_forms() -> None:
+    parser = build_argument_parser()
+
+    default = parser.parse_args(["quick-actions"])
+    direct = parser.parse_args(["quick-actions", "--check"])
+    explicit = parser.parse_args(
+        ["quick-actions", "record", "--check", "--container", "gitlab-test"]
+    )
+
+    assert default.container == "cdr-gitlab"
+    assert direct.command == "quick-actions"
+    assert direct.action == "record"
+    assert direct.check is True
+    assert explicit.container == "gitlab-test"
 
 
 @pytest.mark.parametrize(

@@ -34,9 +34,14 @@ _CONTAINMENT_RULES = (
     "marker.grammar",
     "span.unmatched",
     "container.boundary",
+    "prose.leading_slash",
+    "prose.multiline_quote",
 )
 _DANGEROUS_LT = re.compile(r"<(?=[A-Za-z/!?])")
 _DANGEROUS_AT = re.compile(r"(?<![A-Za-z0-9])@")
+_MULTILINE_QUOTE_OPENER = re.compile(
+    r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})[ \t]*$"
+)
 _MARKER_OPEN = re.compile(
     r"<!--\s*(?:"
     + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
@@ -48,7 +53,7 @@ def test_tracked_fixture_has_canonical_byte_layout():
     assert FIXTURE_PATH.read_bytes() == serialize_fixture(CASES).encode("utf-8")
 
 
-def _assert_outbound_string_invariant(output):
+def _assert_outbound_string_invariant(output, *, check_prose_rules=True):
     fences = []
     post_review._open_fence(output, strict=True, intervals=fences)
     cursor = 0
@@ -63,6 +68,10 @@ def _assert_outbound_string_invariant(output):
             assert not _DANGEROUS_LT.search(visible), visible
             assert not _DANGEROUS_AT.search(visible), visible
             assert not _MARKER_OPEN.search(visible), visible
+        if check_prose_rules:
+            for line in fragment.splitlines():
+                assert not line.startswith("/"), line
+                assert not _MULTILINE_QUOTE_OPENER.fullmatch(line), line
 
 
 def _run_node(script, value):
@@ -167,13 +176,20 @@ def test_fixture_schema_and_rule_coverage():
         "gitlab_probe",
         "note",
     }
+    pending_probe_fields = required_fields - {"github_probe", "gitlab_probe"}
     assert len({case["id"] for case in CASES}) == len(CASES)
     for case in CASES:
-        assert set(case) == required_fields
+        assert set(case) in (required_fields, pending_probe_fields)
         assert case["field_class"] in {"single_line", "prose", "rule", "location"}
         assert case["kind"] in {"regression", "control"}
         assert isinstance(case["input"], str)
         assert isinstance(case["expected"], str)
+        assert isinstance(case["rule_ids"], list)
+        if set(case) == pending_probe_fields:
+            assert {"prose.leading_slash", "prose.multiline_quote"}.intersection(
+                case["rule_ids"]
+            )
+            continue
         assert list(case).index("gitlab_probe") == list(case).index("github_probe") + 1
         github = case["github_probe"]
         gitlab = case["gitlab_probe"]
@@ -216,7 +232,6 @@ def test_fixture_schema_and_rule_coverage():
             assert isinstance(divergence["note"], str)
             assert type(divergence["issue"]) is int
             assert isinstance(divergence["pair_sha256"], str)
-        assert isinstance(case["rule_ids"], list)
 
     for rule_id in _CONTAINMENT_RULES:
         kinds = {case["kind"] for case in CASES if rule_id in case["rule_ids"]}
@@ -260,6 +275,8 @@ def test_fixture_schema_and_rule_coverage():
 def test_probe_input_hashes_are_fresh_and_name_rerecord_commands():
     stale = []
     for case in CASES:
+        if "github_probe" not in case:
+            continue
         expected_hash = input_sha256(input_text(case))
         for platform in ("github", "gitlab"):
             probe = case[f"{platform}_probe"]
@@ -273,6 +290,8 @@ def test_probe_input_hashes_are_fresh_and_name_rerecord_commands():
 
 def test_all_recorded_renders_pass_platform_containment_checks():
     for case in CASES:
+        if "github_probe" not in case:
+            continue
         for platform in ("github", "gitlab"):
             try:
                 check_render(platform, case[f"{platform}_probe"]["html"])
@@ -282,6 +301,8 @@ def test_all_recorded_renders_pass_platform_containment_checks():
 
 def test_divergences_are_text_only_and_bound_to_normalized_pairs():
     for case in CASES:
+        if "github_probe" not in case:
+            continue
         github = case["github_probe"]
         gitlab = case["gitlab_probe"]
         github_html = github["html"]
@@ -332,6 +353,8 @@ def test_fullwidth_expected_handles_are_covered_by_twin_references():
     required_handles = set()
     observed_handles = set()
     for case in CASES:
+        if "gitlab_probe" not in case:
+            continue
         required_handles.update(derive_handles([case], fullwidth_only=True))
         observed_handles.update(
             reference.removeprefix("@")
@@ -351,7 +374,14 @@ def test_control_fixture_rows_match_current_sanitizers():
     for case in prose_controls:
         if case["field_class"] == "rule" and not case["expected"]:
             continue
-        field = "suggestion" if case["field_class"] == "prose" else "claude_md_rule"
+        field = (
+            "body"
+            if case["field_class"] == "prose"
+            and "fence.column_zero" in case["rule_ids"]
+            else "suggestion"
+            if case["field_class"] == "prose"
+            else "claude_md_rule"
+        )
         rendered = post_review.render_comment_body(
             {"severity": "low", "title": "Control", "body": "", field: case["input"]}
         )
@@ -412,6 +442,47 @@ def test_prepare_prose_fixture_cases():
         assert (post_review._prepared_prose(case["input"], cap=True) or "") == case[
             "expected"
         ], case["id"]
+
+
+def test_outbound_invariant_rejects_unescaped_slash_and_quote_openers():
+    for output in ("/close", ">>>"):
+        with pytest.raises(AssertionError):
+            _assert_outbound_string_invariant(output)
+
+
+def test_escape_rules_preserve_trusted_fences_and_reject_fake_fences():
+    controls = (
+        "```\n/close\n```",
+        "~~~\n/close\n~~~",
+        "````\n/close\n````",
+        "```\n>>>\n```",
+    )
+    for source in controls:
+        prepared = post_review.prepare_prose(source)
+        assert prepared == source
+        _assert_outbound_string_invariant(prepared)
+
+    fake_fences = (
+        ("> ```\n/close\n> ```", "> \\`\\`\\`\n\\/close\n> \\`\\`\\`"),
+        ("- ```\n/close\n- ```", "- \\`\\`\\`\n\\/close\n- \\`\\`\\`"),
+    )
+    for source, expected in fake_fences:
+        assert post_review._open_fence(source, strict=True) is None
+        prepared = post_review.prepare_prose(source)
+        assert prepared == expected
+        _assert_outbound_string_invariant(prepared)
+
+    bad_info = "```a`b\n/close"
+    assert post_review._open_fence(bad_info, strict=True) is None
+    expected_bad_info = "\\`\\``a`b\n\\/close"
+    assert post_review.prepare_prose(bad_info) == expected_bad_info
+    _assert_outbound_string_invariant(expected_bad_info)
+
+
+def test_prose_escape_rules_run_after_normalization_and_redaction(monkeypatch):
+    assert post_review.prepare_prose("&#62;&#62;&#62;") == "\\>>>"
+    monkeypatch.setattr(post_review, "_redact_secrets", lambda _text: "/close\n>>>")
+    assert post_review.prepare_prose("redactor output") == "\\/close\n\\>>>"
 
 
 def test_table_pipe_uses_plain_inline_pairing():
@@ -550,7 +621,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
     result = _run_node(script, inputs)
     assert result.returncode == 0, result.stderr
     for output in json.loads(result.stdout):
-        _assert_outbound_string_invariant(output)
+        _assert_outbound_string_invariant(output, check_prose_rules=False)
     summary_script = """
 import { renderSummaryBody } from './workflows/src/renderReport.js';
 let source = '';
@@ -605,7 +676,12 @@ def test_live_node_prepare_line_matches_single_line_and_location_fixtures():
     parity_cases = [
         case
         for case in CASES
-        if "\n" not in case["input"] and "\r" not in case["input"]
+        if "\n" not in case["input"]
+        and "\r" not in case["input"]
+        and not {
+            "prose.leading_slash",
+            "prose.multiline_quote",
+        }.intersection(case["rule_ids"])
     ]
     cases = {case["id"]: case for case in line_cases + idempotency_cases + parity_cases}
     inputs = [case["input"] for case in cases.values()]

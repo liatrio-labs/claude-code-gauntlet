@@ -24,6 +24,7 @@ without writing.
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import hashlib
 import html
@@ -720,6 +721,354 @@ def input_sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def build_composed_quick_action_cases() -> list[dict[str, Any]]:
+    """Compose deterministic complete GitLab bodies through delivery composers."""
+    import scripts.post_review as post_review
+
+    sha = "a" * 40
+    keys = ("0123456789abcdef", "fedcba9876543210")
+    discussion_marker = post_review._delivery_marker_suffix(sha, [keys[0]])
+
+    def finding(body: str, **values: Any) -> dict[str, Any]:
+        return {
+            "file": "src/probe.py",
+            "line": 1,
+            "end_line": 1,
+            "severity": "medium",
+            "title": "Probe finding",
+            "body": body,
+            **values,
+        }
+
+    def inline_body(
+        body_finding: dict[str, Any],
+        *,
+        surface: str = "discussion",
+        marker: str = discussion_marker,
+        corroborators: list[dict[str, Any]] | None = None,
+        fence_offsets: tuple[int, int] | None = None,
+    ) -> str:
+        sections = post_review._render_group_sections(
+            body_finding, corroborators or [], fence_offsets=fence_offsets
+        )
+        composed = post_review.compose_inline_body(
+            sections, platform="gitlab", surface=surface, marker_suffix=marker
+        )
+        return cast(str, composed.body + marker)
+
+    cases: list[dict[str, Any]] = []
+
+    def add_inline(case_id: str, text: str, **kwargs: Any) -> None:
+        cases.append({"id": case_id, "text": inline_body(finding(text), **kwargs)})
+
+    add_inline("mbq_backtick", ">>>\n```\n>>>\n/close\n```")
+    add_inline("mbq_tilde", ">>>\n~~~\n>>>\n/close\n~~~")
+
+    patch_finding = finding(
+        ">>>\nSee the patch below.",
+        suggested_fix_code=">>>\n/close\nreturn x",
+        end_line=3,
+    )
+    valid_lines = {("src/probe.py", line): None for line in range(1, 4)}
+    line_texts = {("src/probe.py", line): f"old line {line}" for line in range(1, 4)}
+    patch_range, patch_offsets, cap_exceeded = post_review._gitlab_apply_range(
+        patch_finding, 1
+    )
+    patch_ok, _reason = post_review._fence_verdict(
+        patch_finding, patch_range, valid_lines, line_texts
+    )
+    if cap_exceeded or not patch_ok:
+        raise ValueError("deterministic quick-action patch case failed the GitLab gate")
+    cases.append(
+        {
+            "id": "suggested_patch",
+            "text": inline_body(patch_finding, fence_offsets=patch_offsets),
+        }
+    )
+
+    add_inline("slash_bad_info", "```a`b\n/close")
+    cases.append(
+        {
+            "id": "slash_display_math",
+            "text": post_review.compose_review_body(
+                "$$\n/close\n$$",
+                [],
+                platform="gitlab",
+                findings_count=1,
+                sha=sha,
+            ).body,
+        }
+    )
+    add_inline("slash_details", "<details>\n/close\n</details>", surface="note")
+    add_inline("trusted_backtick", "```text\n/close\n```")
+    add_inline("trusted_tilde", "~~~text\n/close\n~~~")
+    add_inline("trusted_four_backticks", "````text\n/close\n````")
+    add_inline("mbq_trailing_space", ">>> ")
+    add_inline("mbq_trailing_tab", ">>>\t")
+    add_inline("mbq_four", ">>>>")
+    add_inline("mbq_one_space", " >>>")
+    add_inline("mbq_container_quote", "> >>>")
+    add_inline("mbq_content_control", ">>> x")
+    add_inline("slash_body_line", "/close")
+    cases.append(
+        {
+            "id": "slash_suggestion_line",
+            "text": inline_body(
+                finding("Safe body", suggestion="Fix context.\n/close")
+            ),
+        }
+    )
+
+    primary = finding(
+        "Grouped primary", consolidation_key="probe", consolidation_primary=True
+    )
+    corroborator = finding(
+        "<details>\n/close\n</details>",
+        agent="probe-agent",
+        dimension="correctness",
+        confidence="high",
+        consolidation_key="probe",
+    )
+    group = post_review.consolidate_delivery([primary, corroborator])[0]
+    group_marker = post_review._delivery_marker_suffix(sha, list(keys))
+    cases.append(
+        {
+            "id": "grouped_corroborator",
+            "text": inline_body(
+                group["primary"],
+                corroborators=group["corroborators"],
+                marker=group_marker,
+            ),
+        }
+    )
+    return cases
+
+
+def build_quick_action_case_list(
+    outbound_cases: Iterable[Mapping[str, Any]],
+) -> list[dict[str, str]]:
+    """Build expected, raw, and freshly composed oracle inputs in stable order."""
+    cases: list[dict[str, str]] = []
+    for row in outbound_cases:
+        row_id = str(row["id"])
+        expected = input_text(row)
+        raw_input = row.get("input")
+        if not isinstance(raw_input, str):
+            raise ValueError(f"outbound case {row_id!r} has no string input")
+        cases.extend(
+            (
+                {"id": f"expected:{row_id}", "group": "expected", "text": expected},
+                {
+                    "id": f"raw:{row_id}",
+                    "group": "raw",
+                    "text": f"{raw_input}\n\nfooter line",
+                },
+            )
+        )
+    cases.extend(
+        {"id": f"composed:{case['id']}", "group": "composed", "text": case["text"]}
+        for case in build_composed_quick_action_cases()
+    )
+    return cases
+
+
+QUICK_ACTION_SENTINEL = "GITLAB_QUICK_ACTION_VERDICTS_JSON:"
+QUICK_ACTION_CONTAINER = "cdr-gitlab"
+QUICK_ACTION_GITLAB_VERSION = "19.4.1"
+
+
+@dataclass
+class QuickActionRecordResult:
+    document: dict[str, Any]
+    changed_ids: list[str] = field(default_factory=list)
+    check_mode: bool = False
+
+    @property
+    def exit_code(self) -> int:
+        return int(self.check_mode and bool(self.changed_ids))
+
+
+def _quick_action_runner_script(cases: Iterable[Mapping[str, str]]) -> str:
+    payload = [
+        {"id": case["id"], "group": case["group"], "text": case["text"]}
+        for case in cases
+    ]
+    encoded = base64.b64encode(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    source_path = Path(__file__).with_name("gitlab_quick_action_verdicts.rb")
+    source = read_utf8(str(source_path))
+    if source.count("__CASES_B64__") != 1:
+        raise ValueError(
+            "GitLab quick-action runner template has an invalid case marker"
+        )
+    return source.replace("__CASES_B64__", encoded, 1)
+
+
+def parse_quick_action_runner_output(stdout: str) -> dict[str, Any]:
+    lines = [
+        line for line in stdout.splitlines() if line.startswith(QUICK_ACTION_SENTINEL)
+    ]
+    if len(lines) != 1:
+        raise ValueError(
+            "GitLab quick-action runner output must contain exactly one sentinel result"
+        )
+    try:
+        result = json.loads(lines[0][len(QUICK_ACTION_SENTINEL) :])
+    except json.JSONDecodeError as error:
+        raise ValueError("GitLab quick-action runner returned invalid JSON") from error
+    if not isinstance(result, dict):
+        raise ValueError("GitLab quick-action runner result is not an object")
+    return result
+
+
+def run_gitlab_quick_action_verdicts(
+    cases: Iterable[Mapping[str, str]],
+    *,
+    container: str = QUICK_ACTION_CONTAINER,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> dict[str, Any]:
+    if not container or any(character.isspace() for character in container):
+        raise ValueError("GitLab container must be a non-empty single argument")
+    case_list = list(cases)
+    case_ids = [case["id"] for case in case_list]
+    if len(case_ids) != len(set(case_ids)):
+        raise ValueError("GitLab quick-action case ids must be unique")
+    command = ["docker", "exec", "-i", container, "gitlab-rails", "runner", "-"]
+    invoke = subprocess.run if runner is None else runner
+    completed = invoke(
+        command,
+        input=_quick_action_runner_script(case_list),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip()
+        raise RuntimeError(
+            f"GitLab quick-action runner exited {completed.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+    return parse_quick_action_runner_output(completed.stdout)
+
+
+def _validated_quick_action_rows(
+    source_cases: list[dict[str, str]], result: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    version = result.get("gitlab_version")
+    if version != QUICK_ACTION_GITLAB_VERSION:
+        raise ValueError(
+            f"expected GitLab {QUICK_ACTION_GITLAB_VERSION}, got {version!r}"
+        )
+    raw_rows = result.get("cases")
+    if not isinstance(raw_rows, list):
+        raise ValueError("GitLab quick-action runner has no cases list")
+    if len(raw_rows) != len(source_cases):
+        raise ValueError("GitLab quick-action runner returned a different case count")
+    rows: list[dict[str, Any]] = []
+    for source, raw in zip(source_cases, raw_rows, strict=True):
+        if not isinstance(raw, dict):
+            raise ValueError("GitLab quick-action verdict is not an object")
+        if raw.get("id") != source["id"] or raw.get("group") != source["group"]:
+            raise ValueError(
+                "GitLab quick-action runner changed case identity or group"
+            )
+        digest = raw.get("sha256")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError(f"invalid SHA-256 for GitLab case {source['id']!r}")
+        if not isinstance(raw.get("paragraphs"), list):
+            raise ValueError(f"invalid paragraphs for GitLab case {source['id']!r}")
+        if not isinstance(raw.get("commands"), list):
+            raise ValueError(f"invalid commands for GitLab case {source['id']!r}")
+        if type(raw.get("stored_equals_posted")) is not bool:
+            raise ValueError(
+                f"invalid stored-body comparison for GitLab case {source['id']!r}"
+            )
+        rows.append(
+            {
+                "id": source["id"],
+                "group": source["group"],
+                "sha256": digest,
+                "paragraphs": raw["paragraphs"],
+                "commands": raw["commands"],
+                "stored_equals_posted": raw["stored_equals_posted"],
+            }
+        )
+    return rows
+
+
+def serialize_quick_action_fixture(document: Mapping[str, Any]) -> str:
+    rows = [
+        "    " + json.dumps(case, ensure_ascii=False, separators=(",", ":"))
+        for case in document["cases"]
+    ]
+    return (
+        "{\n"
+        f'  "gitlab_version": {json.dumps(document["gitlab_version"])},\n'
+        f'  "recorded": {json.dumps(document["recorded"])},\n'
+        '  "cases": [\n' + ",\n".join(rows) + "\n  ]\n}\n"
+    )
+
+
+def _quick_action_changed_ids(old: object, new: Mapping[str, Any]) -> list[str]:
+    if not isinstance(old, dict) or not isinstance(old.get("cases"), list):
+        return ["fixture"]
+    changed: list[str] = []
+    if old.get("gitlab_version") != new["gitlab_version"]:
+        changed.append("gitlab_version")
+    old_rows = [row for row in old["cases"] if isinstance(row, dict)]
+    if len(old_rows) != len(old["cases"]):
+        return [*changed, "fixture"]
+    old_by_id = {str(row.get("id")): row for row in old_rows}
+    new_rows = new["cases"]
+    new_ids = [str(row["id"]) for row in new_rows]
+    old_ids = [str(row.get("id")) for row in old_rows]
+    for row in new_rows:
+        case_id = str(row["id"])
+        if old_by_id.get(case_id) != row:
+            changed.append(case_id)
+    changed.extend(case_id for case_id in old_ids if case_id not in set(new_ids))
+    if old_ids != new_ids and not changed:
+        changed.append("case-order")
+    return changed
+
+
+def record_quick_action_fixture(
+    path: str,
+    outbound_cases: Iterable[Mapping[str, Any]],
+    *,
+    container: str = QUICK_ACTION_CONTAINER,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    clock: Callable[[], str] = lambda: date.today().isoformat(),
+    read_text: Callable[[str], str] | None = None,
+    write_text: Callable[[str, str], None] | None = None,
+    check: bool = False,
+) -> QuickActionRecordResult:
+    read_fixture = read_utf8 if read_text is None else read_text
+    write_fixture = write_utf8 if write_text is None else write_text
+    cases = build_quick_action_case_list(outbound_cases)
+    result = run_gitlab_quick_action_verdicts(cases, container=container, runner=runner)
+    document = {
+        "gitlab_version": QUICK_ACTION_GITLAB_VERSION,
+        "recorded": clock(),
+        "cases": _validated_quick_action_rows(cases, result),
+    }
+    if check:
+        try:
+            old = json.loads(read_fixture(path))
+        except FileNotFoundError:
+            changed_ids = ["fixture"]
+        except json.JSONDecodeError:
+            changed_ids = ["fixture"]
+        else:
+            changed_ids = _quick_action_changed_ids(old, document)
+        return QuickActionRecordResult(document, changed_ids, True)
+    write_fixture(path, serialize_quick_action_fixture(document))
+    return QuickActionRecordResult(document)
+
+
 def _reference_originals(html_text: str) -> list[str]:
     parser = _TreeParser()
     parser.feed(html_text)
@@ -1089,6 +1438,14 @@ def _fixture_path() -> str:
     )
 
 
+def _quick_action_fixture_path() -> str:
+    return str(
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "gitlab_quick_action_verdicts_19_4_1.json"
+    )
+
+
 def _read_cases(path: str) -> list[dict[str, Any]]:
     document = _load_document(read_utf8(path))
     return cast(list[dict[str, Any]], document["cases"])
@@ -1134,6 +1491,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
     record_parser.add_argument("--base-url", default="http://localhost:8929")
     record_parser.add_argument("--token-env", default="GITLAB_TOKEN")
     record_parser.add_argument("--project", default="cdr-group/probe")
+    quick_actions_parser = commands.add_parser(
+        "quick-actions", help="record or check GitLab quick-action verdicts"
+    )
+    quick_actions_parser.add_argument(
+        "action", choices=("record",), nargs="?", default="record"
+    )
+    quick_actions_parser.add_argument("--check", action="store_true")
+    quick_actions_parser.add_argument("--container", default=QUICK_ACTION_CONTAINER)
     divergence_parser = commands.add_parser(
         "divergence", help="bind a text-only render difference"
     )
@@ -1154,6 +1519,24 @@ def main(argv: list[str] | None = None) -> int:
         seeded = seed(_read_cases(path), client)
         print(f"seeded {len(seeded['users'])} users and {len(seeded['groups'])} groups")
         return 0
+    if args.command == "quick-actions":
+        quick_result = record_quick_action_fixture(
+            _quick_action_fixture_path(),
+            _read_cases(path),
+            container=args.container,
+            check=args.check,
+        )
+        if args.check:
+            if quick_result.changed_ids:
+                for case_id in quick_result.changed_ids:
+                    print(case_id)
+            else:
+                print("GitLab quick-action verdict fixture matches")
+        else:
+            print(
+                f"recorded {len(quick_result.document['cases'])} GitLab quick-action verdicts"
+            )
+        return quick_result.exit_code
     if args.platform == "github":
         result = record_fixture(
             path,
