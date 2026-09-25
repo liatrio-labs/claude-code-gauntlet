@@ -33,6 +33,7 @@ import os
 import re
 import secrets
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -1644,4 +1645,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # The composed-case builder imports scripts.post_review from the repository root.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     raise SystemExit(main())
