@@ -167,6 +167,21 @@ HTML comment inside code is removed before fence or inline classification. Field
 containing only Unicode whitespace are absent; Markdown blank lines still use only
 spaces and tabs.
 
+GitLab (measured on CE 19.4.1) runs a quick action from a posted note when a raw line of a
+top-level paragraph starts with `/` at column zero followed by a command name. The action runs
+with the posting account's permissions, and GitLab deletes the command line from the stored
+note even when it refuses the action. Indented lines, fences, blockquotes, lists, tables and
+mid-line slashes do not run. A multiline quote opener (a line starting with `>>>`, including
+alert openers such as `>>> [!note]`) can close a fenced block early and expose its lines,
+committable suggestion lines included, as prose. So every prepared prose field, on both
+platforms and outside trusted fences, puts a backslash before a line's leading `/` and before
+a run of three or more `>` that starts a line's content after list, quote and indent prefixes.
+The rules run after normalization and redaction. Suggested-fix code inside its suggestion fence
+is unchanged, and single-line fields do not need the rules because they always follow a
+code-owned prefix or sit inside a code span. The backslash is a CommonMark escape, so both
+platforms display the line unchanged, except that nested-quote shorthand such as `>>> text`
+displays as the literal `>>> text`.
+
 - `review_body` — exactly the pipeline-rendered Summary section body: counts first, selected findings index,
   and any remainder with selection reasons. Whole index bullets fit within a 12,000-code-point
   limit; later units join the remainder. The change summary stays in the report's Change Context section. `post_review.py`
@@ -229,6 +244,14 @@ python3 {plugin_root}/scripts/post_review.py \
 
 - **GitHub:** Posts a single batched review with inline comments (event: COMMENT), then summary.
 - **GitLab:** Posts a summary note, then per-finding inline discussions with position metadata.
+- **GitLab posting token:** Use a dedicated Reporter-role token. On GitLab CE 19.4.1 it is the
+  lowest role that can read a private project's merge requests and post notes and inline
+  discussions (a Guest could post on a public project but could not read a private project's
+  merge requests). A Reporter can still run `react`
+  (alias `award`), `internal_note`, `submit_review`, `todo` and `unsubscribe` and the `shrug` and
+  `tableflip` substitutions, a Guest the same without `internal_note`, and a Developer 29
+  commands, including `approve`, `close`, `merge`, `label` and `rebase`. The prose escapes stay
+  on at every role, because GitLab deletes recognized command lines even when it refuses them.
 - **Delivery keys:** Keys hash prepared title and rendered sections. Findings whose posted text
   changes under this contract may post once more on an open MR, then deduplicate on the new key.
   A `null` title uses the absent-title key. Grouping, patch gating and folds do not change it.

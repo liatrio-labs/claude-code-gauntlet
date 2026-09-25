@@ -110,7 +110,7 @@ Every discovery agent sees the full diff with cross-file context rather than a s
 
 Findings are then triaged by origin as well as by content. Git blame separates issues in code you wrote from pre-existing issues your changes merely exposed; surfaced findings are downgraded and grouped separately so they do not drown out the new ones. Re-reviewing a PR after new commits offers to review only the delta since the last review.
 
-Code under review is untrusted input throughout: trust-boundary delimiters on the way in, and a deterministic text contract for every posted PR/MR comment field on the way out. Outside trusted fences, the contract contains raw HTML and visible mentions even inside inline code and quoted locations, and redacts known token prefixes. Checked suggestion code remains inside a code fence. The platform — GitHub or GitLab — is auto-detected from the git remote, and results can go to PR/MR comments, a markdown file, or a task board, in any combination.
+Code under review is untrusted input throughout: trust-boundary delimiters on the way in, and a deterministic text contract for every posted PR/MR comment field on the way out. Outside trusted fences, the contract contains raw HTML and visible mentions even inside inline code and quoted locations, and redacts known token prefixes. After normalization and redaction, prose lines starting with `/` and multiline quote openers starting with three or more `>` are escaped; checked suggestion code remains unchanged inside its fence. The platform — GitHub or GitLab — is auto-detected from the git remote, and results can go to PR/MR comments, a markdown file, or a task board, in any combination.
 
 ## Configuration: REVIEW.md
 
