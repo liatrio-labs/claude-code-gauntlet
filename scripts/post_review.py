@@ -752,9 +752,7 @@ _MARKER_OPEN_RE = re.compile(
     + r")\s*:"
 )
 _FENCE_SHAPE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*([`~])\1{2,}")
-_MULTILINE_QUOTE_RE = re.compile(
-    r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})[ \t]*$"
-)
+_MULTILINE_QUOTE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})")
 
 
 def _remove_comments(text):

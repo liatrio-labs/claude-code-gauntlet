@@ -40,7 +40,7 @@ _CONTAINMENT_RULES = (
 _DANGEROUS_LT = re.compile(r"<(?=[A-Za-z/!?])")
 _DANGEROUS_AT = re.compile(r"(?<![A-Za-z0-9])@")
 _MULTILINE_QUOTE_OPENER = re.compile(
-    r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})[ \t]*$"
+    r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})"
 )
 _MARKER_OPEN = re.compile(
     r"<!--\s*(?:"
@@ -71,7 +71,7 @@ def _assert_outbound_string_invariant(output, *, check_prose_rules=True):
         if check_prose_rules:
             for line in fragment.splitlines():
                 assert not line.startswith("/"), line
-                assert not _MULTILINE_QUOTE_OPENER.fullmatch(line), line
+                assert not _MULTILINE_QUOTE_OPENER.match(line), line
 
 
 def _run_node(script, value):
@@ -442,6 +442,12 @@ def test_prepare_prose_fixture_cases():
         assert (post_review._prepared_prose(case["input"], cap=True) or "") == case[
             "expected"
         ], case["id"]
+
+
+@pytest.mark.parametrize("case_id", ("mbq_backtick", "mbq_tilde"))
+def test_multiline_quote_escape_preserves_trusted_fence_openers_byte_exact(case_id):
+    case = next(case for case in CASES if case["id"] == case_id)
+    assert post_review.prepare_prose(case["input"]) == case["expected"], case_id
 
 
 def test_outbound_invariant_rejects_unescaped_slash_and_quote_openers():

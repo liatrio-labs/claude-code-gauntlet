@@ -659,6 +659,36 @@ class TestFoldAndGateContracts(unittest.TestCase):
                 self.assertTrue(prefix.endswith(line + "\n"), prefix[-80:])
                 _assert_outbound_string_invariant(folded)
 
+    def test_forced_composer_folds_keep_escaped_quote_prefixes(self):
+        for platform in ("github", "gitlab"):
+            with self.subTest(platform=platform):
+                review_limit = post_review._body_limit(platform, "summary")["bytes"]
+                surface = "inline" if platform == "github" else "discussion"
+                inline_limit = post_review._body_limit(platform, surface)["bytes"]
+                source = ">>>" + "x" * (max(review_limit, inline_limit) + 128)
+                prepared = post_review.prepare_prose(source)
+                review = post_review.compose_review_body(
+                    source,
+                    [],
+                    platform=platform,
+                    findings_count=0,
+                    sha=SHA,
+                )
+                inline = post_review.compose_inline_body(
+                    prepared, platform=platform, surface=surface
+                )
+                self.assertGreater(review.folded_bytes, 0)
+                self.assertGreater(inline.folded_bytes, 0)
+                for name, body in (("review", review.body), ("inline", inline.body)):
+                    with self.subTest(composer=name):
+                        self.assertTrue(
+                            any(line.startswith("\\>>>") for line in body.splitlines()),
+                            body[:100],
+                        )
+                        if name == "review":
+                            body = body.replace(review_marker.build_marker(SHA, 0), "")
+                        _assert_outbound_string_invariant(body)
+
     def test_midline_fold_retires_the_open_code_span_in_both_composers(self):
         text = "x" * 65213 + " `<table><tr><td>`" + "y" * 1000
         for name, fold in (

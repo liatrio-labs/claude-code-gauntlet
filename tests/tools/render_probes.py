@@ -759,7 +759,13 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
 
     def add_inline(case_id: str, text: str, **kwargs: Any) -> None:
-        cases.append({"id": case_id, "text": inline_body(finding(text), **kwargs)})
+        cases.append(
+            {
+                "id": case_id,
+                "text": inline_body(finding(text), **kwargs),
+                "route": kwargs.get("surface", "discussion"),
+            }
+        )
 
     add_inline("mbq_backtick", ">>>\n```\n>>>\n/close\n```")
     add_inline("mbq_tilde", ">>>\n~~~\n>>>\n/close\n~~~")
@@ -783,6 +789,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
         {
             "id": "suggested_patch",
             "text": inline_body(patch_finding, fence_offsets=patch_offsets),
+            "route": "discussion",
         }
     )
 
@@ -797,18 +804,59 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
                 findings_count=1,
                 sha=sha,
             ).body,
+            "route": "summary",
         }
     )
     add_inline("slash_details", "<details>\n/close\n</details>", surface="note")
     add_inline("trusted_backtick", "```text\n/close\n```")
     add_inline("trusted_tilde", "~~~text\n/close\n~~~")
     add_inline("trusted_four_backticks", "````text\n/close\n````")
-    add_inline("mbq_trailing_space", ">>> ")
-    add_inline("mbq_trailing_tab", ">>>\t")
-    add_inline("mbq_four", ">>>>")
-    add_inline("mbq_one_space", " >>>")
-    add_inline("mbq_container_quote", "> >>>")
-    add_inline("mbq_content_control", ">>> x")
+    fence = "`" * 3
+
+    def breakout(opener: str) -> str:
+        return f"{opener}\n{fence}\n>>>\n/close\n{fence}"
+
+    add_inline("mbq_trailing_space", breakout(">>> "))
+    add_inline("mbq_trailing_tab", breakout(">>>\t"))
+    add_inline("mbq_four", breakout(">>>>"))
+    add_inline("mbq_one_space", breakout(" >>>"))
+    add_inline("mbq_container_quote", breakout("> >>>"))
+    add_inline("mbq_content_text", ">>> x")
+    alert_breakout = breakout(">>> [!note]")
+    add_inline("mbq_alert_breakout_discussion", alert_breakout)
+    cases.append(
+        {
+            "id": "mbq_alert_breakout_summary",
+            "text": post_review.compose_review_body(
+                alert_breakout,
+                [],
+                platform="gitlab",
+                findings_count=1,
+                sha=sha,
+            ).body,
+            "route": "summary",
+        }
+    )
+    alert_patch_finding = finding(
+        ">>> [!note]\nSee the patch below.",
+        suggested_fix_code=">>>\n/label ~zz377nolabel\nreturn x\n",
+        end_line=3,
+    )
+    alert_patch_range, alert_patch_offsets, alert_cap_exceeded = (
+        post_review._gitlab_apply_range(alert_patch_finding, 1)
+    )
+    alert_patch_ok, _alert_patch_reason = post_review._fence_verdict(
+        alert_patch_finding, alert_patch_range, valid_lines, line_texts
+    )
+    if alert_cap_exceeded or not alert_patch_ok:
+        raise ValueError("deterministic alert patch case failed the GitLab gate")
+    cases.append(
+        {
+            "id": "suggestion_alert_payload",
+            "text": inline_body(alert_patch_finding, fence_offsets=alert_patch_offsets),
+            "route": "discussion",
+        }
+    )
     add_inline("slash_body_line", "/close")
     cases.append(
         {
@@ -816,6 +864,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
             "text": inline_body(
                 finding("Safe body", suggestion="Fix context.\n/close")
             ),
+            "route": "discussion",
         }
     )
 
@@ -839,6 +888,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
                 corroborators=group["corroborators"],
                 marker=group_marker,
             ),
+            "route": "discussion",
         }
     )
     return cases
@@ -868,6 +918,25 @@ def build_quick_action_case_list(
     cases.extend(
         {"id": f"composed:{case['id']}", "group": "composed", "text": case["text"]}
         for case in build_composed_quick_action_cases()
+    )
+    suggestion_fence = "`" * 3
+    cases.append(
+        {
+            "id": "raw:suggestion_alert_payload_breakout",
+            "group": "raw",
+            "text": "\n".join(
+                (
+                    ">>> [!note]",
+                    "See the patch below.",
+                    "",
+                    f"{suggestion_fence}suggestion",
+                    ">>>",
+                    "/label ~zz377nolabel",
+                    "return x",
+                    suggestion_fence,
+                )
+            ),
+        }
     )
     return cases
 

@@ -13,6 +13,7 @@ from typing import Any
 import pytest  # type: ignore[import-not-found]
 
 import scripts.post_review as post_review
+from tests.test_outbound_contract import _assert_outbound_string_invariant
 from tests.tools import render_probes
 from tests.tools.render_probes import (
     build_composed_quick_action_cases,
@@ -24,6 +25,29 @@ from tests.tools.render_probes import (
 )
 
 SENTINEL = render_probes.QUICK_ACTION_SENTINEL
+_REQUIRED_COMPOSED_CASE_IDS = {
+    "mbq_backtick",
+    "mbq_tilde",
+    "suggested_patch",
+    "slash_bad_info",
+    "slash_display_math",
+    "slash_details",
+    "trusted_backtick",
+    "trusted_tilde",
+    "trusted_four_backticks",
+    "mbq_trailing_space",
+    "mbq_trailing_tab",
+    "mbq_four",
+    "mbq_one_space",
+    "mbq_container_quote",
+    "mbq_content_text",
+    "mbq_alert_breakout_discussion",
+    "mbq_alert_breakout_summary",
+    "suggestion_alert_payload",
+    "slash_body_line",
+    "slash_suggestion_line",
+    "grouped_corroborator",
+}
 
 
 def _fake_rails_runner(
@@ -79,6 +103,12 @@ def test_case_list_builds_expected_raw_and_composed_texts() -> None:
     assert cases[3]["id"] == "raw:second"
     assert cases[4]["group"] == "composed"
     assert cases[4]["id"].startswith("composed:")
+    raw_suggestion = next(
+        case for case in cases if case["id"] == "raw:suggestion_alert_payload_breakout"
+    )
+    assert raw_suggestion["group"] == "raw"
+    assert raw_suggestion["text"].startswith(">>> [!note]\n")
+    assert "/label ~zz377nolabel" in raw_suggestion["text"]
 
 
 def test_composed_builder_is_deterministic_and_covers_delivery_shapes() -> None:
@@ -92,26 +122,7 @@ def test_composed_builder_is_deterministic_and_covers_delivery_shapes() -> None:
     assert fix_counts == post_review._FIX_COUNTS
     assert fix_reasons == post_review._FIX_REASON_COUNTS
     assert len(by_id) == len(first)
-    assert {
-        "mbq_backtick",
-        "mbq_tilde",
-        "suggested_patch",
-        "slash_bad_info",
-        "slash_display_math",
-        "slash_details",
-        "trusted_backtick",
-        "trusted_tilde",
-        "trusted_four_backticks",
-        "mbq_trailing_space",
-        "mbq_trailing_tab",
-        "mbq_four",
-        "mbq_one_space",
-        "mbq_container_quote",
-        "mbq_content_control",
-        "slash_body_line",
-        "slash_suggestion_line",
-        "grouped_corroborator",
-    } <= by_id.keys()
+    assert set(by_id) == _REQUIRED_COMPOSED_CASE_IDS
     assert ">>>\n/close\nreturn x" in by_id["suggested_patch"]
     assert "Suggested fix:" in by_id["slash_suggestion_line"]
     assert "Corroborating finding" in by_id["grouped_corroborator"]
@@ -119,6 +130,56 @@ def test_composed_builder_is_deterministic_and_covers_delivery_shapes() -> None:
     assert "code-gauntlet-finding-key" in by_id["mbq_backtick"]
     assert "code-gauntlet-finding-key" in by_id["slash_details"]
     assert "Reviewed up to:" in by_id["slash_display_math"]
+    assert "\\>>> [!note]" in by_id["suggestion_alert_payload"]
+    assert (
+        "suggestion:-0+2\n>>>\n/label ~zz377nolabel\nreturn x\n```"
+        in by_id["suggestion_alert_payload"]
+    )
+
+
+def test_composed_route_headers_and_trailers_are_outside_trusted_fences() -> None:
+    sha = "a" * 40
+    for case in build_composed_quick_action_cases():
+        body = case["text"]
+        fences: list[tuple[int, int]] = []
+        post_review._open_fence(body, strict=True, intervals=fences)
+        if case["route"] == "summary":
+            header = post_review.BRAND_SUMMARY_HEADER
+            trailer = post_review.build_prose_footer(sha)
+        else:
+            assert case["route"] in {"discussion", "note"}
+            header = body.splitlines()[0]
+            trailer = post_review.BRAND_TRAILER
+        owned_lines = [("header", header), ("trailer", trailer)]
+        owned_lines.extend(
+            ("marker trailer", line)
+            for line in body.splitlines()
+            if line.startswith("<!-- code-gauntlet-")
+        )
+        for label, line in owned_lines:
+            start = body.index(line)
+            end = start + len(line)
+            assert all(
+                end <= fence_start or start >= fence_end
+                for fence_start, fence_end in fences
+            ), (
+                case["id"],
+                label,
+            )
+
+
+def test_composed_body_invariant_rejects_injected_raw_action_lines() -> None:
+    body_with_marker = next(
+        case["text"]
+        for case in build_composed_quick_action_cases()
+        if case["id"] == "mbq_alert_breakout_discussion"
+    )
+    marker = post_review._delivery_marker_suffix("a" * 40, ["0123456789abcdef"])
+    body = body_with_marker.removesuffix(marker)
+    _assert_outbound_string_invariant(body)
+    for injected in ("/close", ">>> [!note]"):
+        with pytest.raises(AssertionError):
+            _assert_outbound_string_invariant(f"{body}\n{injected}")
 
 
 def test_sentinel_parser_ignores_rails_output_and_requires_one_result() -> None:
@@ -315,6 +376,16 @@ def test_fixture_raw_positive_cases_record_quick_action_verdicts() -> None:
         "raw:slash_uppercase": "close",
         "raw:slash_long_s": None,
         "raw:slash_substitution": "shrug",
+        "raw:mbq_backtick": "close",
+        "raw:mbq_tilde": "close",
+        "raw:mbq_trailing_space": "close",
+        "raw:mbq_trailing_tab": "close",
+        "raw:mbq_four": "close",
+        "raw:mbq_one_space": "close",
+        "raw:mbq_alert_note": "close",
+        "raw:mbq_alert_warning": "close",
+        "raw:mbq_alert_one_space": "close",
+        "raw:mbq_alert_suffix": "close",
     }
 
     for case_id, command_name in command_cases.items():
@@ -326,12 +397,26 @@ def test_fixture_raw_positive_cases_record_quick_action_verdicts() -> None:
             assert command_name in names, case_id
         assert row["stored_equals_posted"] is False, case_id
 
+    suggestion_breakout = verdicts["raw:suggestion_alert_payload_breakout"]
+    assert any(
+        command and command[0] == "label" for command in suggestion_breakout["commands"]
+    )
+    assert suggestion_breakout["stored_equals_posted"] is False
+
+
+def test_fixture_raw_container_breakout_is_a_no_action_control() -> None:
+    row = _verdicts_by_id(_load_real_fixture())["raw:mbq_container_quote"]
+    assert row["commands"] == []
+    assert row["stored_equals_posted"] is True
+
 
 def test_fixture_composed_verdicts_match_current_bodies_and_have_no_actions() -> None:
-    verdicts = _verdicts_by_id(_load_real_fixture())
-    composed = {
-        case["id"]: case["text"] for case in build_composed_quick_action_cases()
-    }
+    document = _load_real_fixture()
+    assert document["gitlab_version"] == "19.4.1"
+    verdicts = _verdicts_by_id(document)
+    composed_cases = build_composed_quick_action_cases()
+    composed = {case["id"]: case["text"] for case in composed_cases}
+    assert set(composed) == _REQUIRED_COMPOSED_CASE_IDS
 
     recorded_composed = {
         case_id.removeprefix("composed:"): row
