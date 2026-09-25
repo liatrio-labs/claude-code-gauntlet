@@ -176,20 +176,14 @@ def test_fixture_schema_and_rule_coverage():
         "gitlab_probe",
         "note",
     }
-    pending_probe_fields = required_fields - {"github_probe", "gitlab_probe"}
     assert len({case["id"] for case in CASES}) == len(CASES)
     for case in CASES:
-        assert set(case) in (required_fields, pending_probe_fields)
+        assert set(case) == required_fields
         assert case["field_class"] in {"single_line", "prose", "rule", "location"}
         assert case["kind"] in {"regression", "control"}
         assert isinstance(case["input"], str)
         assert isinstance(case["expected"], str)
         assert isinstance(case["rule_ids"], list)
-        if set(case) == pending_probe_fields:
-            assert {"prose.leading_slash", "prose.multiline_quote"}.intersection(
-                case["rule_ids"]
-            )
-            continue
         assert list(case).index("gitlab_probe") == list(case).index("github_probe") + 1
         github = case["github_probe"]
         gitlab = case["gitlab_probe"]
@@ -275,8 +269,6 @@ def test_fixture_schema_and_rule_coverage():
 def test_probe_input_hashes_are_fresh_and_name_rerecord_commands():
     stale = []
     for case in CASES:
-        if "github_probe" not in case:
-            continue
         expected_hash = input_sha256(input_text(case))
         for platform in ("github", "gitlab"):
             probe = case[f"{platform}_probe"]
@@ -290,8 +282,6 @@ def test_probe_input_hashes_are_fresh_and_name_rerecord_commands():
 
 def test_all_recorded_renders_pass_platform_containment_checks():
     for case in CASES:
-        if "github_probe" not in case:
-            continue
         for platform in ("github", "gitlab"):
             try:
                 check_render(platform, case[f"{platform}_probe"]["html"])
@@ -301,8 +291,6 @@ def test_all_recorded_renders_pass_platform_containment_checks():
 
 def test_divergences_are_text_only_and_bound_to_normalized_pairs():
     for case in CASES:
-        if "github_probe" not in case:
-            continue
         github = case["github_probe"]
         gitlab = case["gitlab_probe"]
         github_html = github["html"]
@@ -353,8 +341,6 @@ def test_fullwidth_expected_handles_are_covered_by_twin_references():
     required_handles = set()
     observed_handles = set()
     for case in CASES:
-        if "gitlab_probe" not in case:
-            continue
         required_handles.update(derive_handles([case], fullwidth_only=True))
         observed_handles.update(
             reference.removeprefix("@")

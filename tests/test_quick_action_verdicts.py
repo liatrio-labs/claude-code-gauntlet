@@ -359,6 +359,33 @@ def test_quick_action_interval_validation_rejects_corrupt_bounds() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "paragraph",
+    [
+        {"start_line": 0, "end_line": 0, "extra": 1},
+        {"start_line": 0},
+        {"start_line": "0", "end_line": 0},
+        {"start_line": 0, "end_line": True},
+    ],
+)
+def test_quick_action_interval_validation_rejects_malformed_shapes(
+    paragraph: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="invalid paragraph interval"):
+        render_probes._validate_quick_action_paragraphs("a\nb", [paragraph], "case")
+
+
+def test_candidate_interval_check_rejects_a_raw_slash_line() -> None:
+    text = "intro\n\\/escaped\n/close\nfooter"
+    _assert_no_raw_slash_in_candidate_paragraphs(
+        text, [{"start_line": 0, "end_line": 1}], "case"
+    )
+    with pytest.raises(AssertionError):
+        _assert_no_raw_slash_in_candidate_paragraphs(
+            text, [{"start_line": 1, "end_line": 2}], "case"
+        )
+
+
 def test_quick_action_freshness_rejects_a_stale_expected_row_hash() -> None:
     current = [{"id": "expected:sample", "group": "expected", "text": "safe\n\nfooter"}]
     recorded = [
