@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import io
 import json
@@ -8,6 +9,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, unquote
@@ -103,6 +105,78 @@ def test_contributing_probe_commands_parse_with_the_recorder() -> None:
             for prev, arg in zip(["", *args[:-1]], args, strict=True)
         ]
         parser.parse_args(args)
+
+
+def test_quick_actions_command_accepts_record_and_check_forms() -> None:
+    parser = build_argument_parser()
+
+    default = parser.parse_args(["quick-actions"])
+    direct = parser.parse_args(["quick-actions", "--check"])
+    explicit = parser.parse_args(
+        ["quick-actions", "record", "--check", "--container", "gitlab-test"]
+    )
+
+    assert default.container == "cdr-gitlab"
+    assert direct.command == "quick-actions"
+    assert direct.action == "record"
+    assert direct.check is True
+    assert explicit.container == "gitlab-test"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the fake docker is a shebang script, which CreateProcess cannot run",
+)
+def test_script_entrypoint_imports_composed_builder_from_outside_repo(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "tests" / "tools" / "render_probes.py"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    capture = tmp_path / "runner.rb"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        f"#!{sys.executable}\n"
+        "from pathlib import Path\n"
+        "import os\n"
+        "import sys\n"
+        "Path(os.environ['QUICK_ACTION_RUNNER_CAPTURE']).write_text(\n"
+        "    sys.stdin.read(), encoding='utf-8', newline='\\n'\n"
+        ")\n"
+        "sys.stderr.write('fake docker received runner\\n')\n"
+        "raise SystemExit(17)\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    fake_docker.chmod(0o755)
+
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+    env["QUICK_ACTION_RUNNER_CAPTURE"] = str(capture)
+    result = subprocess.run(
+        [sys.executable, str(script), "quick-actions", "--container", "offline-test"],
+        cwd=outside,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "fake docker received runner" in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr
+    runner_source = capture.read_text(encoding="utf-8")
+    encoded_cases = re.search(
+        r'^CASES_B64 = "([A-Za-z0-9+/=]+)"$', runner_source, re.MULTILINE
+    )
+    assert encoded_cases is not None
+    cases = json.loads(base64.b64decode(encoded_cases.group(1)).decode("utf-8"))
+    assert any(case["id"] == "composed:mbq_backtick" for case in cases)
 
 
 @pytest.mark.parametrize(

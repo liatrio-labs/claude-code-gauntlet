@@ -411,7 +411,13 @@ show fullwidth `＜` and `＠`, which paste differently; a wrong span guess may 
 `&lt;` or backslashes. URL text containing `/@` also shows fullwidth `＠`.
 Suggestions and cited rules use the same containment; the cited rule is capped before its
 blockquote markers. Trusted fences retain normalized and redacted bytes except for
-marker opening breaks across lines. The checked patch is the fenced exception. This contract also
-applies to corroborator sections, skipped findings and GitLab fallback notes.
+marker opening breaks across lines. After normalization and redaction, prose also escapes
+lines starting with `/` and multiline quote openers starting with three or more `>` outside
+trusted fences; the checked patch stays byte-exact inside its suggestion fence. Single-line
+fields carry neither escape. In ordinary prose, Markdown consumes the backslash and displays
+the punctuation as intended; on an indented-code line the backslash shows. GitLab CE 19.4.1
+passes a backslash inside `$$` display math to its math renderer. Nested-quote shorthand such
+as `>>> text` displays literally. This contract also applies to corroborator sections, skipped
+findings and GitLab fallback notes.
 
 **`suggested_fix_code` field:** Delivery gates this field on `scripts/post_review.py`'s deterministic apply-check (field must be a string, non-empty after redaction, free of `marker_shaped` text, ship a matching `line_end`, match a valid diff range, not have its finding path collide with its `a/`/`b/`-stripped form as two distinct real files in the diff (issue #229 — reported under the same no-oracle reason), land at this render site's actual apply range, differ from the current text, and stay within the size bound — on GitLab that render-site range is the discussion anchor plus the `-m+n` offsets the poster derives from it, capped by GitLab's own offset limit; any failure strips the field from the render and the finding falls back to the prose `suggestion` field, with the reason recorded via `warn_skip`). Delivery can also withhold a fence that passed every per-finding check when an earlier, higher-priority kept fence claims an overlapping apply range in the same file — the same downgrade path, reason `overlaps_kept_fence` (see `references/delivery-guide.md`). The renderer excludes this field and its two removal stamps through the registry-derived `reportExtraFields()` projection in `workflows/src/renderReport.js`, so there is no report-path render to gate. The report *path* instead renders the kept patches through a separate read-only apply-check, `scripts/report_patches.py`, into the sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — it reuses the same gate (`post_review._gated_finding`) over the pinned Phase 2 diff, including the `marker_shaped` downgrade, with no platform render-site constraints and no set-level overlap withholding applied, so a patch listed there is not a guarantee delivery will also keep it. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.

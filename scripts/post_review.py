@@ -752,6 +752,7 @@ _MARKER_OPEN_RE = re.compile(
     + r")\s*:"
 )
 _FENCE_SHAPE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*([`~])\1{2,}")
+_MULTILINE_QUOTE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})")
 
 
 def _remove_comments(text):
@@ -883,6 +884,13 @@ def _prepare_text(
         if shape and not protected:
             tick = shape.start(1)
             line = line[:tick] + "\\" + line[tick:]
+        if not protected and not single_line:
+            if line.startswith("/"):
+                line = "\\" + line
+            quote = _MULTILINE_QUOTE_RE.match(line)
+            if quote:
+                index = quote.start(1)
+                line = line[:index] + "\\" + line[index:]
         prepared.append(line if protected else _contain_line(line))
         protected_lines.append(protected)
         offset += original_length + 1

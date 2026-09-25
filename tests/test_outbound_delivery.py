@@ -88,7 +88,10 @@ def _capture_dry_run(platform, findings, review_body=""):
 def _poison(key):
     marker_key = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     marker = review_marker.build_finding_marker("b" * 40, marker_key)
-    return f"@zz363{key} <ins data-zz363{key}> {marker} ```` &#38;#64;zz363{key}"
+    return (
+        f"@zz363{key} <ins data-zz363{key}> {marker} ```` &#38;#64;zz363{key}"
+        f"\n/zz377{key}\n>>>\n```\n/zz377{key}\n```"
+    )
 
 
 class _RecordingFinding(dict):
@@ -443,6 +446,18 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
         )
         self.assertIn(f"\n```suggestion\n{patch_text}\n```", rendered)
 
+    def test_quote_opening_prose_keeps_suggested_patch_bytes_exact(self):
+        patch_text = ">>>\n/close\nreturn x"
+        rendered = post_review.render_comment_body(
+            _hostile_finding(
+                body=">>>\nSee the patch below.",
+                suggested_fix_code=patch_text,
+            )
+        )
+        self.assertIn("\\>>>\nSee the patch below.", rendered)
+        self.assertIn(f"\n```suggestion\n{patch_text}\n```", rendered)
+        _assert_outbound_string_invariant(rendered)
+
     def test_corroborator_header_and_body_use_the_same_text_contract(self):
         primary = {"severity": "high", "title": "Safe", "body": "Safe body"}
         corroborator = _hostile_finding(
@@ -464,13 +479,30 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
         self.assertIn("\uff20zz363sentinel", rendered)
 
     def test_legacy_review_body_is_guarded_before_composition(self):
-        incoming = f"@zz363sentinel <table><tr><td> legacy {FAKE_FINDING_MARKER}"
+        incoming = (
+            f"@zz363sentinel <table><tr><td> legacy {FAKE_FINDING_MARKER}\n/close\n>>>"
+        )
         composed = post_review.compose_review_body(
             incoming, [], platform="github", findings_count=0, sha=SHA
         )
         _assert_no_hostile_prose(self, composed.body)
+        invariant_body = composed.body.replace(review_marker.build_marker(SHA, 0), "")
+        _assert_outbound_string_invariant(invariant_body)
         self.assertIn("\uff20zz363sentinel", composed.body)
+        self.assertIn("\\/close\n\\>>>", composed.body)
         self.assertEqual(review_marker.find_marker(composed.body)["sha"], SHA)
+
+    def test_compose_review_body_escapes_untrusted_summary_prose(self):
+        composed = post_review.compose_review_body(
+            "Context\n/close\n>>>",
+            [],
+            platform="github",
+            findings_count=0,
+            sha=SHA,
+        )
+        body = composed.body.replace(review_marker.build_marker(SHA, 0), "")
+        _assert_outbound_string_invariant(body)
+        self.assertIn("\\/close\n\\>>>", body)
 
     def test_javascript_summary_index_contains_hostile_title_and_location(self):
         finding = {
@@ -564,7 +596,8 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
             )
             report_path.write_text(
                 "## Summary\n\n"
-                f"@zz363sentinel <table><tr><td> report {FAKE_FINDING_MARKER}\n\n"
+                f"@zz363sentinel <table><tr><td> report {FAKE_FINDING_MARKER}\n"
+                "/close\n>>>\n\n"
                 "## Findings\n\n",
                 encoding="utf-8",
             )
@@ -593,10 +626,86 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
             payload = json.loads(payload_path.read_text(encoding="utf-8"))
         review_body = payload["payload"]["body"]
         _assert_no_hostile_prose(self, review_body)
+        invariant_body = review_body.replace(review_marker.build_marker(SHA, 0), "")
+        _assert_outbound_string_invariant(invariant_body)
         self.assertIn("\uff20zz363sentinel", review_body)
+        self.assertIn("\\/close\n\\>>>", review_body)
 
 
 class TestFoldAndGateContracts(unittest.TestCase):
+    def test_forced_review_folds_keep_escaped_lines_at_the_cut(self):
+        limits = post_review._body_limit("github")
+        for line, source in (
+            ("\\/close", "context\n/close\n" + "tail " * 15000),
+            ("\\>>>", "context\n>>>\n" + "tail " * 15000),
+        ):
+            with self.subTest(line=line):
+                prepared = post_review.prepare_prose(source)
+                total = post_review._utf8_len(prepared)
+                folded_note = (
+                    f"_[folded: {total} more bytes; this {limits['surface']} reached the "
+                    f"{limits['bytes']}-byte {limits['label']} body limit]_"
+                )
+                reserve = post_review._utf8_len(
+                    f"\n\n{folded_note}\n{post_review._fence_closer('```')}"
+                )
+                cut = prepared.index(line) + len(line) + 1
+                allowance = post_review._utf8_len(prepared[:cut]) + reserve
+                folded, dropped = post_review._fold_review_body(
+                    prepared, allowance, "github"
+                )
+                self.assertGreater(dropped, 0)
+                prefix = folded.split("\n\n_[folded:", 1)[0]
+                self.assertTrue(prefix.endswith(line + "\n"), prefix[-80:])
+                _assert_outbound_string_invariant(folded)
+
+    def test_forced_composer_folds_keep_escaped_quote_prefixes(self):
+        for platform in ("github", "gitlab"):
+            with self.subTest(platform=platform):
+                review_limit = post_review._body_limit(platform, "summary")["bytes"]
+                surface = "inline" if platform == "github" else "discussion"
+                inline_limit = post_review._body_limit(platform, surface)["bytes"]
+                source = ">>>" + "x" * (max(review_limit, inline_limit) + 128)
+                prepared = post_review.prepare_prose(source)
+                review = post_review.compose_review_body(
+                    source,
+                    [],
+                    platform=platform,
+                    findings_count=0,
+                    sha=SHA,
+                )
+                inline = post_review.compose_inline_body(
+                    prepared, platform=platform, surface=surface
+                )
+                self.assertGreater(review.folded_bytes, 0)
+                self.assertGreater(inline.folded_bytes, 0)
+                for name, body in (("review", review.body), ("inline", inline.body)):
+                    with self.subTest(composer=name):
+                        self.assertTrue(
+                            any(line.startswith("\\>>>") for line in body.splitlines()),
+                            body[:100],
+                        )
+                        if name == "review":
+                            body = body.replace(review_marker.build_marker(SHA, 0), "")
+                        _assert_outbound_string_invariant(body)
+
+    def test_forced_inline_composer_folds_keep_escaped_slash_lines(self):
+        for platform, surface in (("github", "inline"), ("gitlab", "discussion")):
+            with self.subTest(platform=platform):
+                limit = post_review._body_limit(platform, surface)["bytes"]
+                source = "context\n/close\n" + "tail " * (limit // 5 + 1000)
+                prepared = post_review.prepare_prose(source)
+                composed = post_review.compose_inline_body(
+                    prepared, platform=platform, surface=surface
+                )
+                self.assertGreater(composed.folded_bytes, 0)
+                kept_lines = composed.body.split("\n\n_[folded:", 1)[0].splitlines()
+                self.assertTrue(
+                    any(line == "\\/close" for line in kept_lines),
+                    "prepared slash line was not kept",
+                )
+                _assert_outbound_string_invariant(composed.body)
+
     def test_midline_fold_retires_the_open_code_span_in_both_composers(self):
         text = "x" * 65213 + " `<table><tr><td>`" + "y" * 1000
         for name, fold in (
