@@ -14,6 +14,7 @@ cannot disturb the pytest session running it.
 from __future__ import annotations
 
 import copy
+import glob
 import os
 import shutil
 import sys
@@ -51,6 +52,12 @@ class TestConftestHermeticTeardown(unittest.TestCase):
     def _restore_live_state(self) -> None:
         root_conftest._STATE.__dict__.clear()
         root_conftest._STATE.__dict__.update(self._saved_live_state)
+
+    def test_temp_root_name_carries_a_glob_guard(self) -> None:
+        """The guard makes every temp-derived suite path prove literal handling."""
+        temp_root = tempfile.gettempdir()
+        self.assertTrue(glob.has_magic(os.path.basename(temp_root)))
+        self.assertEqual(glob.glob(temp_root), [])
 
     def test_configure_then_unconfigure_restores_exact_prior_state(self) -> None:
         # Arrange: a variable with a prior value to be restored exactly, and a

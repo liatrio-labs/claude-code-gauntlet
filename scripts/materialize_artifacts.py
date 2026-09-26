@@ -75,7 +75,6 @@ No external Python dependencies — stdlib only.
 """
 
 import argparse
-import glob
 import json
 import os
 import sys
@@ -97,8 +96,10 @@ from assemble_artifacts import (
     write_text_atomic,
 )
 from await_workflow import (
+    TASK_OUTPUT_DIR_GLOB,
     TASKS_DIR_ENV,
     find_terminal,
+    glob_under,
     read_text,
     resolve_target,
     task_roots,
@@ -146,18 +147,17 @@ def _sweep_paths(environ):
     exactly as await_workflow.py honours it: one documented escape hatch for an
     environment whose task directory cannot be derived, never a guess.
     """
-    patterns = []
+    roots_and_patterns = []
     override = environ.get(TASKS_DIR_ENV)
     if override:
-        patterns.append(os.path.join(override, "*.output"))
+        roots_and_patterns.append((override, "*.output"))
     for root in task_roots(environ):
-        patterns.append(os.path.join(root, "*", "*", "tasks", "*.output"))
+        roots_and_patterns.append(
+            (root, os.path.join(TASK_OUTPUT_DIR_GLOB, "*.output"))
+        )
     hits = []
-    for pattern in patterns:
-        try:
-            found = glob.glob(pattern)
-        except OSError:
-            continue
+    for root, pattern in roots_and_patterns:
+        found = glob_under(root, pattern)
         for path in found:
             try:
                 hits.append((os.path.getmtime(path), path))

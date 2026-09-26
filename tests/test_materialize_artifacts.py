@@ -41,7 +41,8 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
 from scripts.assemble_artifacts import plan_checksum  # noqa: E402
-from scripts.materialize_artifacts import main, materialize  # noqa: E402
+from scripts.await_workflow import task_roots  # noqa: E402
+from scripts.materialize_artifacts import _sweep_paths, main, materialize  # noqa: E402
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "materialize_artifacts.py")
 RECORDER = os.path.join(REPO_ROOT, "workflows", "test", "tools", "emit_task_output.mjs")
@@ -271,6 +272,33 @@ class TestResolution(MaterializeTestCase):
         self.assertFalse(receipt["ok"])
         self.assertEqual(receipt["materialized"], [])
         self.assertFalse(os.path.exists(self.artifact("findings")))
+
+
+class TestSweepPaths(unittest.TestCase):
+    def test_glob_metacharacters_in_sweep_roots_are_literal(self):
+        override = tempfile.mkdtemp(prefix="sweep-override-[g]-")
+        self.addCleanup(shutil.rmtree, override, ignore_errors=True)
+        override_path = os.path.join(override, "x.output")
+        with open(override_path, "w", encoding="utf-8") as fh:
+            fh.write("")
+        self.assertIn(
+            override_path,
+            _sweep_paths({"CODE_GAUNTLET_TASKS_DIR": override}),
+        )
+
+        base = tempfile.mkdtemp(prefix="sweep-root-[g]-")
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        env = {"TMPDIR": base}
+        root_name = os.path.basename(
+            next(root for root in task_roots(env) if os.path.dirname(root) == base)
+        )
+        root = os.path.join(base, root_name)
+        task_path = os.path.join(root, "slug", "session", "tasks", "y.output")
+        os.makedirs(os.path.dirname(task_path), exist_ok=True)
+        with open(task_path, "w", encoding="utf-8") as fh:
+            fh.write("")
+
+        self.assertIn(task_path, _sweep_paths(env))
 
 
 class TestResolutionWithoutARecordedRun(unittest.TestCase):
