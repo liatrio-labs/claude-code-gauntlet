@@ -226,6 +226,19 @@ class _Workspace:
         return path
 
 
+def _plant_task_output(test, prefix, name):
+    """Plant an empty task output beneath a temporary task root."""
+    base = tempfile.mkdtemp(prefix=prefix)
+    test.addCleanup(shutil.rmtree, base, ignore_errors=True)
+    env = {"TMPDIR": base}
+    root = next(root for root in task_roots(env) if os.path.dirname(root) == base)
+    path = os.path.join(root, "slug", "session", "tasks", name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("")
+    return base, path
+
+
 def run_main(argv, environ=None):
     """Call main() with captured streams. Returns ``(code, stdout, stderr)``."""
     out, err = io.StringIO(), io.StringIO()
@@ -937,16 +950,8 @@ class TestResolveTarget(unittest.TestCase):
             self.assertTrue(searched)
 
     def test_metacharacter_in_literal_task_root_is_not_globbed(self):
-        base = tempfile.mkdtemp(prefix="resolve-[g]-")
-        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        base, path = _plant_task_output(self, "resolve-[g]-", "wabc123.output")
         env = {"TMPDIR": base}
-        root_name = os.path.basename(
-            next(root for root in task_roots(env) if os.path.dirname(root) == base)
-        )
-        root = os.path.join(base, root_name)
-        path = os.path.join(root, "slug", "session", "tasks", "wabc123.output")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        Path(path).write_text("", encoding="utf-8")
 
         resolved, searched = resolve_target("wabc123", env)
 
@@ -957,17 +962,10 @@ class TestResolveTarget(unittest.TestCase):
 
     def test_glob_metacharacters_in_task_id_do_not_match_other_runs(self):
         """An unescaped id is a pattern that can return another run's file."""
-        base = tempfile.mkdtemp(prefix="resolve-plain-")
-        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        base, path = _plant_task_output(self, "resolve-plain-", "wabc123.output")
         env = {"TMPDIR": base}
-        root_name = os.path.basename(
-            next(root for root in task_roots(env) if os.path.dirname(root) == base)
-        )
-        root = os.path.join(base, root_name)
-        path = os.path.join(root, "slug", "session", "tasks", "wabc123.output")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        Path(path).write_text("", encoding="utf-8")
 
+        self.assertEqual(resolve_target("wabc123", env)[0], path)
         self.assertIsNone(resolve_target("w?bc123", env)[0])
         self.assertIsNone(resolve_target("*", env)[0])
 

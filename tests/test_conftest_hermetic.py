@@ -1,6 +1,7 @@
 """Direct coverage for the root conftest.py's pytest_configure/pytest_unconfigure
 pair, specifically the teardown side (pytest_unconfigure) that no other test
-exercises directly.
+exercises directly. It also checks that the private temp root's name carries a
+glob metacharacter.
 
 This drives the two hooks on an isolated snapshot of process-global state
 (os.environ and tempfile.tempdir), asserting the exact restore behavior:
@@ -29,6 +30,14 @@ if str(REPO_ROOT) not in sys.path:
 import conftest as root_conftest  # noqa: E402
 
 
+class TestConftestTempRootName(unittest.TestCase):
+    def test_temp_root_name_carries_a_glob_guard(self) -> None:
+        """The guard makes every temp-derived suite path prove literal handling."""
+        temp_root = tempfile.gettempdir()
+        self.assertTrue(glob.has_magic(os.path.basename(temp_root)))
+        self.assertEqual(glob.glob(temp_root), [])
+
+
 class TestConftestHermeticTeardown(unittest.TestCase):
     def setUp(self) -> None:
         # Snapshot the real environment and tempfile.tempdir so any mutation
@@ -52,12 +61,6 @@ class TestConftestHermeticTeardown(unittest.TestCase):
     def _restore_live_state(self) -> None:
         root_conftest._STATE.__dict__.clear()
         root_conftest._STATE.__dict__.update(self._saved_live_state)
-
-    def test_temp_root_name_carries_a_glob_guard(self) -> None:
-        """The guard makes every temp-derived suite path prove literal handling."""
-        temp_root = tempfile.gettempdir()
-        self.assertTrue(glob.has_magic(os.path.basename(temp_root)))
-        self.assertEqual(glob.glob(temp_root), [])
 
     def test_configure_then_unconfigure_restores_exact_prior_state(self) -> None:
         # Arrange: a variable with a prior value to be restored exactly, and a
