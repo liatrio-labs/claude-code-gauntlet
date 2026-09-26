@@ -106,9 +106,12 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
                     (outer / ".git" / "index").read_bytes()
                 ).hexdigest()
 
-            core_bare_before = _git(
-                outer, "config", "--local", "--get", "core.bare", check=False
-            ).stdout.strip()
+            def core_bare() -> str:
+                return _git(
+                    outer, "config", "--local", "--get", "core.bare", check=False
+                ).stdout.strip()
+
+            core_bare_before = core_bare()
             config_before = local_config()
             index_sha_before = index_sha256()
 
@@ -137,9 +140,7 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
             is_bare_after = _git(
                 outer, "rev-parse", "--is-bare-repository"
             ).stdout.strip()
-            core_bare_after = _git(
-                outer, "config", "--local", "--get", "core.bare", check=False
-            ).stdout.strip()
+            core_bare_after = core_bare()
             config_after = local_config()
             index_sha_after = index_sha256()
 

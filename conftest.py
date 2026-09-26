@@ -61,6 +61,7 @@ def _git_local_env_vars() -> list[str]:
         text=True,
         encoding="utf-8",
         capture_output=True,
+        timeout=30,
     )
     return [name for name in result.stdout.splitlines() if name]
 
