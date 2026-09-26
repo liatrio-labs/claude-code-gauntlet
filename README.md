@@ -187,3 +187,5 @@ Node 24 is a development-only dependency — the shipped bundle runs inside Clau
 ## License
 
 [Apache 2.0](LICENSE)
+
+<!-- u4 throwaway probe line -->
