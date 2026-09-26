@@ -37,6 +37,35 @@ NODE_IDS = (
 )
 
 
+def _git_env(**overrides: str) -> dict[str, str]:
+    """Env for a git invocation: hermetic against global/system config, with a
+    command-local commit identity so the seed commit never depends on the
+    invoking machine's git config."""
+    return {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_AUTHOR_NAME": "cg-hermetic-test",
+        "GIT_AUTHOR_EMAIL": "cg-hermetic-test@example.invalid",
+        "GIT_COMMITTER_NAME": "cg-hermetic-test",
+        "GIT_COMMITTER_EMAIL": "cg-hermetic-test@example.invalid",
+        **overrides,
+    }
+
+
+def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        env=_git_env(),
+        check=check,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=60,
+    )
+
+
 class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
     def test_suite_is_hermetic_to_a_temp_root_inside_a_work_tree(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -45,26 +74,8 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
             hostile_tmp = outer / "tmp"
             hostile_tmp.mkdir()
 
-            git_env = {
-                **os.environ,
-                "GIT_CONFIG_GLOBAL": os.devnull,
-                "GIT_CONFIG_SYSTEM": os.devnull,
-                "GIT_AUTHOR_NAME": "cg-hermetic-test",
-                "GIT_AUTHOR_EMAIL": "cg-hermetic-test@example.invalid",
-                "GIT_COMMITTER_NAME": "cg-hermetic-test",
-                "GIT_COMMITTER_EMAIL": "cg-hermetic-test@example.invalid",
-            }
-
             def run_git(*args: str) -> None:
-                subprocess.run(
-                    ["git", *args],
-                    cwd=outer,
-                    env=git_env,
-                    check=True,
-                    text=True,
-                    encoding="utf-8",
-                    capture_output=True,
-                )
+                _git(outer, *args)
 
             run_git("init", "-q")
             (outer / "committed.txt").write_text("hello\n", encoding="utf-8")
@@ -78,15 +89,7 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
                 "seed commit",
             )
 
-            head_before = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=outer,
-                env=git_env,
-                check=True,
-                text=True,
-                encoding="utf-8",
-                capture_output=True,
-            ).stdout.strip()
+            head_before = _git(outer, "rev-parse", "HEAD").stdout.strip()
 
             child_env = dict(os.environ)
             for name in ("TMPDIR", "TEMP", "TMP"):
@@ -96,28 +99,15 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
             child_env.pop("GIT_CEILING_DIRECTORIES", None)
 
             def local_config() -> str:
-                return subprocess.run(
-                    ["git", "config", "--local", "--list"],
-                    cwd=outer,
-                    env=git_env,
-                    check=True,
-                    text=True,
-                    encoding="utf-8",
-                    capture_output=True,
-                ).stdout
+                return _git(outer, "config", "--local", "--list").stdout
 
             def index_sha256() -> str:
                 return hashlib.sha256(
                     (outer / ".git" / "index").read_bytes()
                 ).hexdigest()
 
-            core_bare_before = subprocess.run(
-                ["git", "config", "--local", "--get", "core.bare"],
-                cwd=outer,
-                env=git_env,
-                text=True,
-                encoding="utf-8",
-                capture_output=True,
+            core_bare_before = _git(
+                outer, "config", "--local", "--get", "core.bare", check=False
             ).stdout.strip()
             config_before = local_config()
             index_sha_before = index_sha256()
@@ -143,31 +133,12 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
             # Snapshot every outer-repo fact BEFORE asserting on the child's
             # returncode, so a later assertion failure never leaves state
             # unchecked, and each check reports on its own via subTest.
-            head_after = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=outer,
-                env=git_env,
-                check=True,
-                text=True,
-                encoding="utf-8",
-                capture_output=True,
+            head_after = _git(outer, "rev-parse", "HEAD").stdout.strip()
+            is_bare_after = _git(
+                outer, "rev-parse", "--is-bare-repository"
             ).stdout.strip()
-            is_bare_after = subprocess.run(
-                ["git", "rev-parse", "--is-bare-repository"],
-                cwd=outer,
-                env=git_env,
-                check=True,
-                text=True,
-                encoding="utf-8",
-                capture_output=True,
-            ).stdout.strip()
-            core_bare_after = subprocess.run(
-                ["git", "config", "--local", "--get", "core.bare"],
-                cwd=outer,
-                env=git_env,
-                text=True,
-                encoding="utf-8",
-                capture_output=True,
+            core_bare_after = _git(
+                outer, "config", "--local", "--get", "core.bare", check=False
             ).stdout.strip()
             config_after = local_config()
             index_sha_after = index_sha256()
