@@ -90,6 +90,7 @@ import shlex
 import sys
 import tempfile
 import time
+from types import MappingProxyType
 
 # ---------------------------------------------------------------------------
 # Bounds and defaults
@@ -175,12 +176,14 @@ COMPACT_RETURN_KEYS = (
 #: `ARTIFACT_PATH_KEYS` and the `all` checkpoint name); tests/test_await_workflow.py
 #: pins the two in lockstep, because a rename on the JS side would otherwise leave
 #: this fallback silently blind forever.
-ARTIFACT_PATH_TEMPLATES = {
-    "findings": "code-gauntlet-findings-{sha}.json",
-    "report": "code-gauntlet-report-{sha}.md",
-    "postReview": "code-gauntlet-post-review-{sha}.json",
-    "checkpoints": "code-gauntlet-checkpoint-all-{sha}.json",
-}
+ARTIFACT_PATH_TEMPLATES = MappingProxyType(
+    {
+        "findings": "code-gauntlet-findings-{sha}.json",
+        "report": "code-gauntlet-report-{sha}.md",
+        "postReview": "code-gauntlet-post-review-{sha}.json",
+        "checkpoints": "code-gauntlet-checkpoint-all-{sha}.json",
+    }
+)
 ARTIFACT_BASENAMES = tuple(ARTIFACT_PATH_TEMPLATES.values())
 
 #: Escape hatch for an environment whose task directory this script cannot derive.

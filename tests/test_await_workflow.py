@@ -1275,9 +1275,9 @@ class TestExitCodeContract(unittest.TestCase):
 
 
 class TestArtifactsOnlyOutcome(unittest.TestCase):
-    def _write_all(self, ws, sha):
+    def _write_all(self, ws, sha, subdir=""):
         for template in ARTIFACT_BASENAMES:
-            ws.write(template.format(sha=sha), "content")
+            ws.write(os.path.join(subdir, template.format(sha=sha)), "content")
 
     def test_unresolvable_target_with_artifacts_present_exits_five(self):
         """Resolution has failed, so the fallback is all there will ever be —
@@ -1316,12 +1316,9 @@ class TestArtifactsOnlyOutcome(unittest.TestCase):
     def test_exit_five_paths_are_exact_under_bracketed_directory(self):
         sha = "abc12345"
         with _Workspace() as ws:
+            self._write_all(ws, sha, subdir="out[1]")
             artifacts_dir = os.path.join(ws.path, "out[1]")
-            os.makedirs(artifacts_dir)
             expected_paths = artifact_paths(artifacts_dir, sha)
-            for path in expected_paths.values():
-                with open(path, "w", encoding="utf-8") as fh:
-                    fh.write("content")
             code, out, _ = run_main(
                 [
                     "wnosuchtask000",
@@ -1685,6 +1682,10 @@ class TestArtifactNamingLockstep(unittest.TestCase):
             if assignment is None:
                 self.fail(f"{key} is not assigned in stages.js")
             self.assertIn(literal, assignment.group(1))
+
+    def test_mapping_is_read_only(self):
+        with self.assertRaises(TypeError):
+            ARTIFACT_PATH_TEMPLATES["findings"] = "elsewhere-{sha}.json"
 
     def test_mapping_keys_match_stages_js_artifact_path_keys(self):
         source = self._stages_js()
