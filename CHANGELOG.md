@@ -2,6 +2,51 @@
 
 <!-- version list -->
 
+## v3.42.2 (2026-09-26)
+
+### Bug Fixes
+
+- Glob task-output roots as literal directories
+  ([#391](https://github.com/liatrio-labs/claude-code-gauntlet/pull/391),
+  [`0ec8af9`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0ec8af9ae061d6457bd0b4b23b4b14d93c347d61))
+
+- Glob task-output roots as literal directories (#383)
+  ([#391](https://github.com/liatrio-labs/claude-code-gauntlet/pull/391),
+  [`0ec8af9`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0ec8af9ae061d6457bd0b4b23b4b14d93c347d61))
+
+### Refactoring
+
+- Build the task-id pattern once in resolve_target
+  ([#391](https://github.com/liatrio-labs/claude-code-gauntlet/pull/391),
+  [`0ec8af9`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0ec8af9ae061d6457bd0b4b23b4b14d93c347d61))
+
+### Testing
+
+- Address review findings on the hermetic temp and git env mechanism
+  ([#390](https://github.com/liatrio-labs/claude-code-gauntlet/pull/390),
+  [`7bab328`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7bab3286dbc85be29689ed389eabef1c661ced60))
+
+- Make both suites hermetic to the temp location and git env
+  ([#390](https://github.com/liatrio-labs/claude-code-gauntlet/pull/390),
+  [`7bab328`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7bab3286dbc85be29689ed389eabef1c661ced60))
+
+- Make both suites hermetic to the temp location and git env (#380)
+  ([#390](https://github.com/liatrio-labs/claude-code-gauntlet/pull/390),
+  [`7bab328`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7bab3286dbc85be29689ed389eabef1c661ced60))
+
+- Pin conftest teardown and bound its git call
+  ([#390](https://github.com/liatrio-labs/claude-code-gauntlet/pull/390),
+  [`7bab328`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7bab3286dbc85be29689ed389eabef1c661ced60))
+
+- Route the isolation guard's git calls through one helper
+  ([#390](https://github.com/liatrio-labs/claude-code-gauntlet/pull/390),
+  [`7bab328`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7bab3286dbc85be29689ed389eabef1c661ced60))
+
+- Share the task-output fixture and add a positive control
+  ([#391](https://github.com/liatrio-labs/claude-code-gauntlet/pull/391),
+  [`0ec8af9`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0ec8af9ae061d6457bd0b4b23b4b14d93c347d61))
+
+
 ## v3.42.1 (2026-09-25)
 
 ### Bug Fixes
