@@ -43,8 +43,10 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -822,6 +824,120 @@ _QUOTE_RE = re.compile(r"`([^`\n]+)`")
 
 def _read(rel_path):
     return (REPO / rel_path).read_text(encoding="utf-8")
+
+
+class TestOutputDirectoryGlobRegressions(unittest.TestCase):
+    """Issue #392: the output directory is a literal path, never a glob pattern."""
+
+    SKILL_REL = "skills/code-gauntlet/SKILL.md"
+    SHA = "a1b2c3d4"
+    CONTENTS: ClassVar[dict[str, bytes]] = {
+        f"code-gauntlet-findings-{SHA}.json": b"findings bytes",
+        f"code-gauntlet-report-{SHA}.md": b"report bytes",
+        "code-gauntlet-checkpoint-all-ffffffff.json": b"different sha",
+        f"other-report-{SHA}.md": b"no prefix",
+    }
+
+    def _stale_truncate_program(self):
+        skill = _read(self.SKILL_REL)
+        section = skill[skill.index('echo "=== stale_truncate ==="') :]
+        match = re.search(r'python3 -c "\n(.*?)\n"', section, re.DOTALL)
+        if match is None:
+            self.fail("stale_truncate Python program was not found")
+        program = match.group(1)
+        self.assertEqual(program.count("$HEAD_SHA_SHORT"), 1)
+        self.assertNotIn("$", program.replace("$HEAD_SHA_SHORT", ""))
+        self.assertNotIn("`", program)
+        self.assertNotIn('"', program)
+        return program
+
+    def _run_stale_truncate(self, output_dir, detector_json):
+        """Seed *output_dir* with CONTENTS and run the shipped program over it."""
+        output_dir.mkdir()
+        for name, content in self.CONTENTS.items():
+            (output_dir / name).write_bytes(content)
+        source = (
+            self._stale_truncate_program()
+            .replace("$HEAD_SHA_SHORT", self.SHA)
+            .replace("{output_dir}", output_dir.as_posix())
+        )
+        return subprocess.run(
+            [sys.executable, "-c", source],
+            input=json.dumps(detector_json),
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+
+    def test_stale_truncate_executes_shipped_program_under_bracketed_path(self):
+        matching = {
+            f"code-gauntlet-findings-{self.SHA}.json",
+            f"code-gauntlet-report-{self.SHA}.md",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "out[1]"
+            result = self._run_stale_truncate(
+                output_dir, {"previously_reviewed": False}
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "truncated 2 file(s)")
+            for name, content in self.CONTENTS.items():
+                expected = b"" if name in matching else content
+                self.assertEqual((output_dir / name).read_bytes(), expected, name)
+
+    def test_stale_truncate_defers_and_preserves_files_at_reviewed_head(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "out[1]"
+            result = self._run_stale_truncate(
+                output_dir,
+                {
+                    "previously_reviewed": True,
+                    "sha_resolvable": True,
+                    "last_reviewed_sha": self.SHA,
+                    "head_sha": self.SHA,
+                },
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(
+                result.stdout.startswith(
+                    "DEFERRED: previously reviewed at the current SHA"
+                )
+            )
+            self.assertEqual(
+                {name: (output_dir / name).read_bytes() for name in self.CONTENTS},
+                self.CONTENTS,
+            )
+
+    def test_skill_and_agent_paths_do_not_embed_globs_in_output_dir(self):
+        path_glob = re.compile(r"\{output_dir\}[\\/][^\s`\"')]*[*?\[]")
+        glob_call = re.compile(r"glob\.(?:glob|iglob)\s*\(")
+        offenders = []
+        for root_name in ("skills", "agents"):
+            root = REPO / root_name
+            for path in root.rglob("*.md"):
+                for line_number, line in enumerate(
+                    path.read_text(encoding="utf-8").splitlines(), start=1
+                ):
+                    if path_glob.search(line):
+                        offenders.append(
+                            f"{path.relative_to(REPO)}:{line_number}: "
+                            "output_dir glob path"
+                        )
+                    for match in glob_call.finditer(line):
+                        pattern_argument = line[match.end() :].split(",", 1)[0]
+                        if "{output_dir}" in pattern_argument:
+                            offenders.append(
+                                f"{path.relative_to(REPO)}:{line_number}: "
+                                "glob pattern uses output_dir"
+                            )
+        self.assertEqual(
+            offenders,
+            [],
+            "unsafe output_dir glob use:\n" + "\n".join(offenders),
+        )
 
 
 class TestDocContract(unittest.TestCase):

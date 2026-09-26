@@ -54,7 +54,8 @@ Output — exactly ONE compact JSON line on stdout for every WAIT outcome.
     artifacts, saw_ok_without_corroborator, scan_skipped, scan_stop_reason —
     plus `searched` only
     when resolution failed, `next_command` only on `pending`, and `gap`/`detail`
-    only on the two that declare one. `error` is deliberately a REDUCED shape
+    only on the two that declare one. `artifactPaths` appears only on
+    `artifacts_only`. `error` is deliberately a REDUCED shape
     (await, gap, message, target, attempt, max_attempts): it is emitted from the
     handler around the whole wait, so the failure may well have happened before
     the other fields were ever computed, and reporting a default for something
@@ -168,16 +169,19 @@ COMPACT_RETURN_KEYS = (
 )
 
 #: The four terminal artifacts the Persist stage puts on disk, as
-#: `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}`. Mirrors
-#: `workflows/src/stages.js` (`artifactPaths` and the `all` checkpoint name);
-#: tests/test_await_workflow.py pins the two in lockstep, because a rename on the
-#: JS side would otherwise leave this fallback silently blind forever.
-ARTIFACT_BASENAMES = (
-    "code-gauntlet-findings-{sha}.json",
-    "code-gauntlet-report-{sha}.md",
-    "code-gauntlet-post-review-{sha}.json",
-    "code-gauntlet-checkpoint-all-{sha}.json",
-)
+#: `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}`, keyed by the
+#: compact return's `artifactPaths` keys so the exit-5 marker hands Phase 8 the
+#: same shape. Mirrors `workflows/src/stages.js` (`plannedArtifactPaths`,
+#: `ARTIFACT_PATH_KEYS` and the `all` checkpoint name); tests/test_await_workflow.py
+#: pins the two in lockstep, because a rename on the JS side would otherwise leave
+#: this fallback silently blind forever.
+ARTIFACT_PATH_TEMPLATES = {
+    "findings": "code-gauntlet-findings-{sha}.json",
+    "report": "code-gauntlet-report-{sha}.md",
+    "postReview": "code-gauntlet-post-review-{sha}.json",
+    "checkpoints": "code-gauntlet-checkpoint-all-{sha}.json",
+}
+ARTIFACT_BASENAMES = tuple(ARTIFACT_PATH_TEMPLATES.values())
 
 #: Escape hatch for an environment whose task directory this script cannot derive.
 #: Mirrors $CODE_GAUNTLET_OUTPUT_DIR: one documented variable, no guessing.
@@ -665,8 +669,8 @@ def artifacts_state(artifacts_dir, head_sha, since_epoch):
     if not artifacts_dir or not head_sha:
         return state
     state["checked"] = True
-    for template in ARTIFACT_BASENAMES:
-        path = os.path.join(artifacts_dir, template.format(sha=head_sha))
+    paths = artifact_paths(artifacts_dir, head_sha)
+    for path in paths.values():
         try:
             stat = os.stat(path)
             # S_ISREG, not just a successful stat: a DIRECTORY named like an
@@ -687,6 +691,14 @@ def artifacts_state(artifacts_dir, head_sha, since_epoch):
             state["missing"].append(name)
     state["complete"] = not state["missing"]
     return state
+
+
+def artifact_paths(artifacts_dir, head_sha):
+    """Map each `artifactPaths` key to its artifact under *artifacts_dir*. Pure."""
+    return {
+        key: os.path.join(artifacts_dir, template.format(sha=head_sha))
+        for key, template in ARTIFACT_PATH_TEMPLATES.items()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -897,7 +909,10 @@ def await_terminal(args, environ=None):
                 marker["detail"] = (
                     "every persisted artifact is present and fresh, but the "
                     "workflow's compact return was never observed; deliver from "
-                    "the artifacts on disk and disclose the gap"
+                    "the marker's artifactPaths and disclose the gap"
+                )
+                marker["artifactPaths"] = artifact_paths(
+                    args.artifacts_dir, args.head_sha
                 )
                 return marker, 5
         else:

@@ -177,10 +177,10 @@ reviewed_at_current_head = (
 if reviewed_at_current_head:
     print('DEFERRED: previously reviewed at the current SHA -- truncation withheld until the Skip/Review-again answer is known (a Skip must preserve these files)')
 else:
-    pattern = os.path.join('{output_dir}', 'code-gauntlet-*-$HEAD_SHA_SHORT.*')
+    root = '{output_dir}'
     n = 0
-    for f in glob.glob(pattern):
-        open(f, 'w').close()
+    for name in glob.glob('code-gauntlet-*-$HEAD_SHA_SHORT.*', root_dir=root):
+        open(os.path.join(root, name), 'w').close()
         n += 1
     print('truncated ' + str(n) + ' file(s)')
 "
@@ -593,7 +593,7 @@ Branch on the **exit code**. Never on your own judgment about what the output "l
 |---|---|---|
 | **0** | stdout is the terminal compact `{ ok, ... }` return | Carry it into Phase 8. |
 | **3** | not terminal yet, attempts remain | Run stdout's `next_command` **verbatim** (same `timeout: 600000`). Do not edit it, do not add a wait of your own, do not end the turn. |
-| **5** | the persisted artifacts landed but the return was never observed | Declare a **`workflow-timeout`** gap quoting the marker's `detail`, then deliver from the artifacts on disk (`{output_dir}/code-gauntlet-*-{head_sha_short}.*`) per the Phase 8 rules. |
+| **5** | the persisted artifacts landed but the return was never observed | Declare a **`workflow-timeout`** gap quoting the marker's `detail`, then deliver from the marker's `artifactPaths` (`findings`, `report`, `postReview`, `checkpoints`, the same four keys Phase 8 reads from a compact return) per the Phase 8 rules. |
 | **4** | attempts exhausted, or the awaiter failed | Declare a **`workflow-timeout`** gap and deliver whatever partial artifacts exist per the Phase 8 degradation rules (resume-from-checkpoint if the last-seen state offers it, else partial report + gaps). |
 | **2** | the command itself is malformed — stdout is empty, argparse put the reason on stderr | Not a workflow outcome. Fix the command against the block above and re-run it; never treat this as a timeout. |
 
