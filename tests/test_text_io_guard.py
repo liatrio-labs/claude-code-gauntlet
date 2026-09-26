@@ -8,7 +8,14 @@ from pathlib import Path
 from typing import Any, TypeGuard
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCANNED_ROOTS = ("scripts/", "tests/", "bench/", ".github/", "workflows/test/tools/")
+SCANNED_ROOTS = (
+    "scripts/",
+    "tests/",
+    "bench/",
+    ".github/",
+    "workflows/test/tools/",
+    "conftest.py",
+)
 EXCLUDED_ROOTS = ("bench/vendor/", "bench/workspace/", "tests/fixtures/")
 NEWLINE_ROOTS = ("scripts/", "workflows/test/tools/", "tests/tools/")
 NON_TEXT_OPEN_RECEIVERS = frozenset({"os", "tarfile", "zipfile", "webbrowser"})
