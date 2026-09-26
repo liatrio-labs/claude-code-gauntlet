@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.42.3 (2026-09-26)
+
+### Bug Fixes
+
+- Glob the output directory as a literal root in the skill
+  ([#393](https://github.com/liatrio-labs/claude-code-gauntlet/pull/393),
+  [`c974ac7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c974ac7949e72016e0dbb5a4814ff2aaf4ebeb02))
+
+- Glob the output directory as a literal root in the skill (#392)
+  ([#393](https://github.com/liatrio-labs/claude-code-gauntlet/pull/393),
+  [`c974ac7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c974ac7949e72016e0dbb5a4814ff2aaf4ebeb02))
+
+### Refactoring
+
+- Make the artifact template mapping read-only
+  ([#393](https://github.com/liatrio-labs/claude-code-gauntlet/pull/393),
+  [`c974ac7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c974ac7949e72016e0dbb5a4814ff2aaf4ebeb02))
+
+### Testing
+
+- Catch the joined output_dir glob form and name exit 5's Phase 8 branch
+  ([#393](https://github.com/liatrio-labs/claude-code-gauntlet/pull/393),
+  [`c974ac7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c974ac7949e72016e0dbb5a4814ff2aaf4ebeb02))
+
+
 ## v3.42.2 (2026-09-26)
 
 ### Bug Fixes
