@@ -914,6 +914,11 @@ class TestOutputDirectoryGlobRegressions(unittest.TestCase):
     def test_skill_and_agent_paths_do_not_embed_globs_in_output_dir(self):
         path_glob = re.compile(r"\{output_dir\}[\\/][^\s`\"')]*[*?\[]")
         glob_call = re.compile(r"glob\.(?:glob|iglob)\s*\(")
+        # The #392 form: the pattern is joined onto the literal directory on one
+        # line and globbed through a variable on the next.
+        join_glob = re.compile(
+            r"os\.path\.join\(\s*['\"]\{output_dir\}['\"]\s*,[^)]*[*?\[]"
+        )
         offenders = []
         for root_name in ("skills", "agents"):
             root = REPO / root_name
@@ -921,7 +926,7 @@ class TestOutputDirectoryGlobRegressions(unittest.TestCase):
                 for line_number, line in enumerate(
                     path.read_text(encoding="utf-8").splitlines(), start=1
                 ):
-                    if path_glob.search(line):
+                    if path_glob.search(line) or join_glob.search(line):
                         offenders.append(
                             f"{path.relative_to(REPO)}:{line_number}: "
                             "output_dir glob path"

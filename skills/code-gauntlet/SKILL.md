@@ -560,7 +560,7 @@ Workflow(
 The workflow returns a **compact** result — counts, artifact paths, and gaps, never the raw findings bulk:
 
 ```
-{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, checkpoints, resolvedPolicy, gaps,
+{ ok, phaseReached, stats, artifactPaths: { findings, report, postReview, checkpoints }, checkpoints, resolvedPolicy, gaps,
   persistReturn }   // RETURN channel only: the artifacts themselves, for Phase 8 to materialize
 ```
 
@@ -593,7 +593,7 @@ Branch on the **exit code**. Never on your own judgment about what the output "l
 |---|---|---|
 | **0** | stdout is the terminal compact `{ ok, ... }` return | Carry it into Phase 8. |
 | **3** | not terminal yet, attempts remain | Run stdout's `next_command` **verbatim** (same `timeout: 600000`). Do not edit it, do not add a wait of your own, do not end the turn. |
-| **5** | the persisted artifacts landed but the return was never observed | Declare a **`workflow-timeout`** gap quoting the marker's `detail`, then deliver from the marker's `artifactPaths` (`findings`, `report`, `postReview`, `checkpoints`, the same four keys Phase 8 reads from a compact return) per the Phase 8 rules. |
+| **5** | the persisted artifacts landed but the return was never observed | Declare a **`workflow-timeout`** gap quoting the marker's `detail`, then deliver from the marker's `artifactPaths` (`findings`, `report`, `postReview`, `checkpoints`, the same four keys Phase 8 reads from a compact return) per Phase 8's `ok: true` collection rules. |
 | **4** | attempts exhausted, or the awaiter failed | Declare a **`workflow-timeout`** gap and deliver whatever partial artifacts exist per the Phase 8 degradation rules (resume-from-checkpoint if the last-seen state offers it, else partial report + gaps). |
 | **2** | the command itself is malformed — stdout is empty, argparse put the reason on stderr | Not a workflow outcome. Fix the command against the block above and re-run it; never treat this as a timeout. |
 
