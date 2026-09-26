@@ -12,6 +12,7 @@ risking a write against that repository's HEAD, config or index.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -45,8 +46,9 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
             hostile_tmp.mkdir()
 
             git_env = {
-                "GIT_CONFIG_GLOBAL": "/dev/null",
-                "GIT_CONFIG_SYSTEM": "/dev/null",
+                **os.environ,
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
                 "GIT_AUTHOR_NAME": "cg-hermetic-test",
                 "GIT_AUTHOR_EMAIL": "cg-hermetic-test@example.invalid",
                 "GIT_COMMITTER_NAME": "cg-hermetic-test",
@@ -93,6 +95,33 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
             child_env["GIT_WORK_TREE"] = str(outer)
             child_env.pop("GIT_CEILING_DIRECTORIES", None)
 
+            def local_config() -> str:
+                return subprocess.run(
+                    ["git", "config", "--local", "--list"],
+                    cwd=outer,
+                    env=git_env,
+                    check=True,
+                    text=True,
+                    encoding="utf-8",
+                    capture_output=True,
+                ).stdout
+
+            def index_sha256() -> str:
+                return hashlib.sha256(
+                    (outer / ".git" / "index").read_bytes()
+                ).hexdigest()
+
+            core_bare_before = subprocess.run(
+                ["git", "config", "--local", "--get", "core.bare"],
+                cwd=outer,
+                env=git_env,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+            ).stdout.strip()
+            config_before = local_config()
+            index_sha_before = index_sha256()
+
             result = subprocess.run(
                 [
                     sys.executable,
@@ -111,14 +140,9 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
                 timeout=CHILD_TIMEOUT_SECONDS,
             )
 
-            self.assertEqual(
-                result.returncode,
-                0,
-                "hermetic child run failed:\n"
-                f"stdout:\n{result.stdout}\n"
-                f"stderr:\n{result.stderr}",
-            )
-
+            # Snapshot every outer-repo fact BEFORE asserting on the child's
+            # returncode, so a later assertion failure never leaves state
+            # unchecked, and each check reports on its own via subTest.
             head_after = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 cwd=outer,
@@ -128,9 +152,7 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
                 encoding="utf-8",
                 capture_output=True,
             ).stdout.strip()
-            self.assertEqual(head_before, head_after)
-
-            is_bare = subprocess.run(
+            is_bare_after = subprocess.run(
                 ["git", "rev-parse", "--is-bare-repository"],
                 cwd=outer,
                 env=git_env,
@@ -139,7 +161,35 @@ class TestSuiteIsHermeticToATempRootInsideAWorkTree(unittest.TestCase):
                 encoding="utf-8",
                 capture_output=True,
             ).stdout.strip()
-            self.assertNotEqual(is_bare, "true")
+            core_bare_after = subprocess.run(
+                ["git", "config", "--local", "--get", "core.bare"],
+                cwd=outer,
+                env=git_env,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+            ).stdout.strip()
+            config_after = local_config()
+            index_sha_after = index_sha256()
+
+            with self.subTest("child exit code"):
+                self.assertEqual(
+                    result.returncode,
+                    0,
+                    "hermetic child run failed:\n"
+                    f"stdout:\n{result.stdout}\n"
+                    f"stderr:\n{result.stderr}",
+                )
+            with self.subTest("HEAD unchanged"):
+                self.assertEqual(head_before, head_after)
+            with self.subTest("not converted to a bare repository"):
+                self.assertNotEqual(is_bare_after, "true")
+            with self.subTest("core.bare unchanged"):
+                self.assertEqual(core_bare_before, core_bare_after)
+            with self.subTest("local config unchanged"):
+                self.assertEqual(config_before, config_after)
+            with self.subTest("index unchanged"):
+                self.assertEqual(index_sha_before, index_sha_after)
 
 
 if __name__ == "__main__":
