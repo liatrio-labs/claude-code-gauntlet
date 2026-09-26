@@ -12,7 +12,7 @@ questions of the run.
 The Phase 3 `Workflow` call returned a compact object that always includes a `checkpoints` field alongside `artifactPaths`:
 
 ```
-{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, resolvedPolicy, gaps, checkpoints,
+{ ok, phaseReached, stats, artifactPaths: { findings, report, postReview, checkpoints }, resolvedPolicy, gaps, checkpoints,
   persistReturn }   // RETURN channel only
 ```
 

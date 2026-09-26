@@ -38,11 +38,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.await_workflow import (
     ARTIFACT_BASENAMES,
+    ARTIFACT_PATH_TEMPLATES,
     COMPACT_RETURN_KEYS,
     DEFAULT_TIMEOUT_SECONDS,
     MIN_TIMEOUT_SECONDS,
     SCAN_MAX_CHARS,
     _newest,
+    artifact_paths,
     artifacts_state,
     build_next_command,
     build_parser,
@@ -1153,6 +1155,7 @@ class TestExitCodeContract(unittest.TestCase):
         self.assertEqual(marker["await"], "pending")
         self.assertIn("--attempt 2", marker["next_command"])
         self.assertNotIn("gap", marker)
+        self.assertNotIn("artifactPaths", marker)
 
     def test_exhausted_exits_four_with_the_workflow_timeout_gap(self):
         with _Workspace() as ws:
@@ -1173,6 +1176,7 @@ class TestExitCodeContract(unittest.TestCase):
         self.assertEqual(marker["await"], "timeout")
         self.assertEqual(marker["gap"], "workflow-timeout")
         self.assertNotIn("next_command", marker)
+        self.assertNotIn("artifactPaths", marker)
 
     def test_missing_file_is_pending_not_a_crash(self):
         code, out, _ = run_main(
@@ -1271,9 +1275,9 @@ class TestExitCodeContract(unittest.TestCase):
 
 
 class TestArtifactsOnlyOutcome(unittest.TestCase):
-    def _write_all(self, ws, sha):
+    def _write_all(self, ws, sha, subdir=""):
         for template in ARTIFACT_BASENAMES:
-            ws.write(template.format(sha=sha), "content")
+            ws.write(os.path.join(subdir, template.format(sha=sha)), "content")
 
     def test_unresolvable_target_with_artifacts_present_exits_five(self):
         """Resolution has failed, so the fallback is all there will ever be —
@@ -1295,11 +1299,48 @@ class TestArtifactsOnlyOutcome(unittest.TestCase):
                     str(time.time() - 60),
                 ]
             )
-        marker = sole_json_line(out)
-        self.assertEqual(code, 5)
-        self.assertEqual(marker["await"], "artifacts_only")
-        self.assertEqual(marker["gap"], "workflow-timeout")
-        self.assertTrue(marker["artifacts"]["complete"])
+            marker = sole_json_line(out)
+            self.assertEqual(code, 5)
+            self.assertEqual(marker["await"], "artifacts_only")
+            self.assertEqual(marker["gap"], "workflow-timeout")
+            self.assertTrue(marker["artifacts"]["complete"])
+            self.assertEqual(set(marker["artifactPaths"]), set(ARTIFACT_PATH_TEMPLATES))
+            self.assertEqual(
+                marker["artifactPaths"],
+                artifact_paths(ws.path, "abc12345"),
+            )
+            for path in marker["artifactPaths"].values():
+                self.assertTrue(os.path.isabs(path))
+                self.assertTrue(os.path.isfile(path))
+
+    def test_exit_five_paths_are_exact_under_bracketed_directory(self):
+        sha = "abc12345"
+        with _Workspace() as ws:
+            self._write_all(ws, sha, subdir="out[1]")
+            artifacts_dir = os.path.join(ws.path, "out[1]")
+            expected_paths = artifact_paths(artifacts_dir, sha)
+            code, out, _ = run_main(
+                [
+                    "wnosuchtask000",
+                    "--timeout-seconds",
+                    "0",
+                    "--artifacts-grace-seconds",
+                    "0",
+                    "--artifacts-dir",
+                    artifacts_dir,
+                    "--head-sha",
+                    sha,
+                    "--since-epoch",
+                    str(time.time() - 60),
+                ]
+            )
+            marker = sole_json_line(out)
+            self.assertEqual(code, 5)
+            self.assertEqual(marker["artifactPaths"], expected_paths)
+            self.assertEqual(set(marker["artifactPaths"]), set(ARTIFACT_PATH_TEMPLATES))
+            for path in marker["artifactPaths"].values():
+                self.assertTrue(os.path.isabs(path))
+                self.assertTrue(os.path.isfile(path))
 
     def test_a_terminal_return_beats_the_artifacts_signal(self):
         with _Workspace() as ws:
@@ -1628,11 +1669,31 @@ class TestArtifactNamingLockstep(unittest.TestCase):
     def test_directly_built_basenames_appear_in_stages_js(self):
         """The three artifactPaths entries are literal templates over there."""
         source = self._stages_js()
-        for template in ARTIFACT_BASENAMES:
-            if "checkpoint" in template:
+        body = source.split("export function plannedArtifactPaths", 1)[1].split(
+            "const ARTIFACT_PATH_KEYS", 1
+        )[0]
+        for key, template in ARTIFACT_PATH_TEMPLATES.items():
+            if key == "checkpoints":
                 continue  # composed via checkpointPath(); asserted below
             literal = template.replace("{sha}", "${sha}")
-            self.assertIn(literal, source, f"{template} is not produced by stages.js")
+            assignment = re.search(
+                rf"^\s*{re.escape(key)}:\s*([^,]+),?\s*$", body, re.MULTILINE
+            )
+            if assignment is None:
+                self.fail(f"{key} is not assigned in stages.js")
+            self.assertIn(literal, assignment.group(1))
+
+    def test_mapping_is_read_only(self):
+        with self.assertRaises(TypeError):
+            ARTIFACT_PATH_TEMPLATES["findings"] = "elsewhere-{sha}.json"
+
+    def test_mapping_keys_match_stages_js_artifact_path_keys(self):
+        source = self._stages_js()
+        match = re.search(r"const ARTIFACT_PATH_KEYS = \[(.*?)\];", source, re.DOTALL)
+        if match is None:
+            self.fail("ARTIFACT_PATH_KEYS was not found in stages.js")
+        keys = re.findall(r"'([^']+)'", match.group(1))
+        self.assertEqual(list(ARTIFACT_PATH_TEMPLATES), keys)
 
     def test_checkpoint_all_is_still_how_the_combined_checkpoint_is_named(self):
         """The checkpoint name is composed, so assert both halves of it."""
@@ -1641,7 +1702,10 @@ class TestArtifactNamingLockstep(unittest.TestCase):
             source, r"code-gauntlet-checkpoint-\$\{phase\}-\$\{sha\}\.json"
         )
         self.assertRegex(source, r"checkpointPath\(\s*'all'")
-        self.assertIn("code-gauntlet-checkpoint-all-{sha}.json", ARTIFACT_BASENAMES)
+        self.assertEqual(
+            ARTIFACT_PATH_TEMPLATES["checkpoints"],
+            "code-gauntlet-checkpoint-all-{sha}.json",
+        )
 
 
 class TestWaitProtocolAcceptance(unittest.TestCase):
