@@ -330,8 +330,8 @@ def resolve_target(target, environ=None):
         if os.path.exists(direct):
             return direct, searched
 
+    pattern = os.path.join(TASK_OUTPUT_DIR_GLOB, glob.escape(target) + ".output")
     for root in task_roots(environ):
-        pattern = os.path.join(TASK_OUTPUT_DIR_GLOB, glob.escape(target) + ".output")
         # Recorded whether or not the root exists — see task_roots on why.
         searched.append(os.path.join(root, pattern))
         if not os.path.isdir(root):
