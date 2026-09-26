@@ -53,6 +53,7 @@ from scripts.await_workflow import (
     looks_like_path,
     main,
     resolve_target,
+    task_roots,
     terminal_from,
 )
 
@@ -223,6 +224,19 @@ class _Workspace:
         if mtime is not None:
             os.utime(path, (mtime, mtime))
         return path
+
+
+def _plant_task_output(test, prefix, name):
+    """Plant an empty task output beneath a temporary task root."""
+    base = tempfile.mkdtemp(prefix=prefix)
+    test.addCleanup(shutil.rmtree, base, ignore_errors=True)
+    env = {"TMPDIR": base}
+    root = next(root for root in task_roots(env) if os.path.dirname(root) == base)
+    path = os.path.join(root, "slug", "session", "tasks", name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("")
+    return base, path
 
 
 def run_main(argv, environ=None):
@@ -934,6 +948,26 @@ class TestResolveTarget(unittest.TestCase):
             )
             self.assertEqual(path, os.path.join(ws.path, "wabc123.output"))
             self.assertTrue(searched)
+
+    def test_metacharacter_in_literal_task_root_is_not_globbed(self):
+        base, path = _plant_task_output(self, "resolve-[g]-", "wabc123.output")
+        env = {"TMPDIR": base}
+
+        resolved, searched = resolve_target("wabc123", env)
+
+        self.assertEqual(resolved, path)
+        self.assertTrue(
+            any(entry.startswith(os.path.join(base, "")) for entry in searched)
+        )
+
+    def test_glob_metacharacters_in_task_id_do_not_match_other_runs(self):
+        """An unescaped id is a pattern that can return another run's file."""
+        base, path = _plant_task_output(self, "resolve-plain-", "wabc123.output")
+        env = {"TMPDIR": base}
+
+        self.assertEqual(resolve_target("wabc123", env)[0], path)
+        self.assertIsNone(resolve_target("w?bc123", env)[0])
+        self.assertIsNone(resolve_target("*", env)[0])
 
     def test_unresolvable_id_returns_none_and_reports_what_it_tried(self):
         path, searched = resolve_target("wnosuchtask000", {})

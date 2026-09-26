@@ -75,7 +75,9 @@ def pytest_configure(config: Any) -> None:
     for name in names_to_clear:
         _STATE.saved_env[name] = os.environ.pop(name, None)
 
-    root = tempfile.mkdtemp(prefix="cg-pytest-")
+    # Temp-derived paths prove literal handling in every test that builds from them.
+    # Use [g]: Windows forbids * and ?, and glob treats an unclosed [ literally.
+    root = tempfile.mkdtemp(prefix="cg-pytest-[g]-")
     _STATE.root = root
 
     for name in _TEMP_VARS:

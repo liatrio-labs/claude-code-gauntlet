@@ -183,6 +183,9 @@ ARTIFACT_BASENAMES = (
 #: Mirrors $CODE_GAUNTLET_OUTPUT_DIR: one documented variable, no guessing.
 TASKS_DIR_ENV = "CODE_GAUNTLET_TASKS_DIR"
 
+#: Relative shape shared by target resolution and artifact discovery.
+TASK_OUTPUT_DIR_GLOB = os.path.join("*", "*", "tasks")
+
 
 def default_timeout_seconds(environ=None):
     """Return the per-invocation wait, bounded by BASH_MAX_TIMEOUT_MS if exported.
@@ -266,6 +269,18 @@ def task_roots(environ=None):
     return roots
 
 
+def glob_under(root, pattern):
+    """Return matches for a relative glob beneath the literal *root*.
+
+    The root is passed literally to glob and is never interpreted as a pattern.
+    Any literal name placed inside *pattern* must go through ``glob.escape``.
+    """
+    try:
+        return [os.path.join(root, path) for path in glob.glob(pattern, root_dir=root)]
+    except OSError:
+        return []
+
+
 def _newest(paths):
     """Return the most recently modified of *paths*, or None. Never raises.
 
@@ -296,9 +311,9 @@ def _newest(paths):
 def resolve_target(target, environ=None):
     """Return ``(path_or_None, searched)`` for *target*. Never raises.
 
-    *searched* is the list of patterns actually tried, and it is echoed in the
-    timeout marker: an environment this cannot resolve must say what it looked for,
-    so $CODE_GAUNTLET_TASKS_DIR is an actionable fix rather than a guess.
+    *searched* lists each literal root joined with the relative pattern tried;
+    only the relative part is a pattern. It is echoed in the timeout marker, so an
+    environment this cannot resolve says what it looked for and how to fix it.
 
     Resolution is retried on every poll tick, not once at startup — the harness
     may not have created the file at the instant the Workflow call returned.
@@ -315,16 +330,13 @@ def resolve_target(target, environ=None):
         if os.path.exists(direct):
             return direct, searched
 
+    pattern = os.path.join(TASK_OUTPUT_DIR_GLOB, glob.escape(target) + ".output")
     for root in task_roots(environ):
-        pattern = os.path.join(root, "*", "*", "tasks", target + ".output")
         # Recorded whether or not the root exists — see task_roots on why.
-        searched.append(pattern)
+        searched.append(os.path.join(root, pattern))
         if not os.path.isdir(root):
             continue
-        try:
-            hits = glob.glob(pattern)
-        except OSError:
-            hits = []
+        hits = glob_under(root, pattern)
         if hits:
             return _newest(hits) or sorted(hits)[0], searched
     return None, searched
