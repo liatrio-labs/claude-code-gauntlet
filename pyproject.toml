@@ -45,7 +45,7 @@ select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "BLE", "RUF"]
 
 [tool.mypy]
 python_version = "3.10"
-files = ["scripts", "tests", "bench", "workflows/test/tools"]
+files = ["conftest.py", "scripts", "tests", "bench", "workflows/test/tools"]
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_return_any = true

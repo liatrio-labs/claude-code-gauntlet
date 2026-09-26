@@ -967,12 +967,11 @@ class TestResolveTarget(unittest.TestCase):
         ):
             path, searched = resolve_target("wnosuchtask000", {})
         self.assertIsNone(path)
-        self.assertTrue(
-            any(os.path.join(sentinel, "claude") in pattern for pattern in searched)
-        )
-        self.assertFalse(
-            any(re.search(r"(?:^|[\\/])claude-\d+(?:[\\/]|$)", p) for p in searched)
-        )
+        # pattern is root/*/*/tasks/<id>.output (await_workflow.py:318-320), so
+        # the root is four levels up from the pattern string.
+        roots = {Path(pattern).parents[3] for pattern in searched}
+        self.assertIn(Path(sentinel) / "claude", roots)
+        self.assertFalse(any(re.fullmatch(r"claude-\d+", root.name) for root in roots))
 
     def test_altsep_marks_a_target_as_a_path(self):
         with patch.object(os, "altsep", "!", create=True):
