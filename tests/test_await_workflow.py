@@ -967,8 +967,8 @@ class TestResolveTarget(unittest.TestCase):
         ):
             path, searched = resolve_target("wnosuchtask000", {})
         self.assertIsNone(path)
-        # pattern is root/*/*/tasks/<id>.output (await_workflow.py:318-320), so
-        # the root is four levels up from the pattern string.
+        # pattern shape is root/*/*/tasks/<id>.output, so the root is four
+        # levels up from the pattern string.
         roots = {Path(pattern).parents[3] for pattern in searched}
         self.assertIn(Path(sentinel) / "claude", roots)
         self.assertFalse(any(re.fullmatch(r"claude-\d+", root.name) for root in roots))
