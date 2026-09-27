@@ -32,6 +32,29 @@ TRUNCATED = {
 }
 
 
+_QUOTED_PYTHON = re.compile(
+    r"""python3\s+-c\s+(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')""",
+    re.DOTALL,
+)
+_FENCED_PYTHON = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
+
+
+def _placeholder_program_lines(text: str) -> list[int]:
+    """Return the line of each Python program in *text* that embeds a path."""
+    programs: list[tuple[int, str]] = []
+    for match in _QUOTED_PYTHON.finditer(text):
+        group = 1 if match.group(1) is not None else 2
+        programs.append((match.start(group), match.group(group)))
+    programs.extend(
+        (match.start(1), match.group(1)) for match in _FENCED_PYTHON.finditer(text)
+    )
+    return [
+        text.count("\n", 0, start) + 1
+        for start, body in programs
+        if "{output_dir}" in body or "{plugin_root}" in body
+    ]
+
+
 def _seed_output_dir(output_dir: Path) -> None:
     output_dir.mkdir()
     for name, contents in ARTIFACTS.items():
@@ -299,6 +322,38 @@ class TestDiffNumstat(unittest.TestCase):
                     )
                     self.assertEqual(result.stderr, "")
 
+    def test_multi_file_glab_diff_counts_each_file_once(self):
+        # glab mr diff prints no `diff --git` lines, so a scan that leaves a hunk
+        # only there counts every later file's ---/+++ headers as changes.
+        fixtures = sorted((REPO / "tests" / "fixtures" / "glab_diff").glob("*.diff"))
+        self.assertGreater(len(fixtures), 1)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            patch_dir = Path(temp_dir) / "o'brien glab[1]"
+            patch_dir.mkdir()
+
+            def changed_lines(patch: bytes, name: str) -> int:
+                patch_path = patch_dir / name
+                patch_path.write_bytes(patch)
+                result = subprocess.run(
+                    [sys.executable, str(NUMSTAT_SCRIPT), str(patch_path)],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                first = result.stdout.splitlines()[0]
+                return int(first.removeprefix("changed_lines="))
+
+            parts = [path.read_bytes() for path in fixtures]
+            self.assertTrue(all(part.endswith(b"\n") for part in parts))
+            singles = [
+                changed_lines(part, f"single-{index}.patch")
+                for index, part in enumerate(parts)
+            ]
+            self.assertTrue(all(count > 0 for count in singles), singles)
+            self.assertEqual(changed_lines(b"".join(parts), "all.patch"), sum(singles))
+
     def test_missing_patch_fails_without_stdout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             missing = Path(temp_dir) / "o'brien diff[1]" / "missing.patch"
@@ -399,34 +454,32 @@ class TestShippedText(unittest.TestCase):
     def test_python_programs_in_skills_and_agents_do_not_embed_path_placeholders(
         self,
     ):
-        quoted_python = re.compile(
-            r"""python3\s+-c\s+(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')""",
-            re.DOTALL,
-        )
-        fenced_python = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
         offender_paths = []
         for root_name in ("skills", "agents"):
             for path in (REPO / root_name).rglob("*.md"):
                 text = path.read_text(encoding="utf-8")
-                programs: list[tuple[int, str]] = []
-                for match in quoted_python.finditer(text):
-                    body = match.group(1) or match.group(2)
-                    if body is None:
-                        continue
-                    body_start = (
-                        match.start(1) if match.group(1) is not None else match.start(2)
-                    )
-                    programs.append((body_start, body))
-                programs.extend(
-                    (match.start(1), match.group(1))
-                    for match in fenced_python.finditer(text)
+                offender_paths.extend(
+                    f"{path.relative_to(REPO)}:{line_number}"
+                    for line_number in _placeholder_program_lines(text)
                 )
-                for start, body in programs:
-                    if "{output_dir}" in body or "{plugin_root}" in body:
-                        line_number = text.count("\n", 0, start) + 1
-                        offender_paths.append(f"{path.relative_to(REPO)}:{line_number}")
 
         self.assertEqual(offender_paths, [])
+
+    def test_placeholder_scan_flags_program_text_and_spares_argv(self):
+        # Each value is the text and the line where its program body starts.
+        flagged = {
+            "multi-line double-quoted": (
+                'echo "$J" | python3 -c "\nimport glob\nroot = \'{output_dir}\'\n"\n',
+                1,
+            ),
+            "single-quoted": ("python3 -c 'print(\"{plugin_root}/x\")'\n", 1),
+            "python fence": ("```python\nopen('{output_dir}/a.md')\n```\n", 2),
+        }
+        for label, (text, line_number) in flagged.items():
+            with self.subTest(case=label):
+                self.assertEqual(_placeholder_program_lines(text), [line_number])
+        argv = 'python3 -c "\nimport sys\nopen(sys.argv[1])\n" "{output_dir}/a.json"\n'
+        self.assertEqual(_placeholder_program_lines(argv), [])
 
 
 if __name__ == "__main__":
