@@ -43,10 +43,8 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
-from typing import ClassVar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -830,86 +828,6 @@ class TestOutputDirectoryGlobRegressions(unittest.TestCase):
     """Issue #392: the output directory is a literal path, never a glob pattern."""
 
     SKILL_REL = "skills/code-gauntlet/SKILL.md"
-    SHA = "a1b2c3d4"
-    CONTENTS: ClassVar[dict[str, bytes]] = {
-        f"code-gauntlet-findings-{SHA}.json": b"findings bytes",
-        f"code-gauntlet-report-{SHA}.md": b"report bytes",
-        "code-gauntlet-checkpoint-all-ffffffff.json": b"different sha",
-        f"other-report-{SHA}.md": b"no prefix",
-    }
-
-    def _stale_truncate_program(self):
-        skill = _read(self.SKILL_REL)
-        section = skill[skill.index('echo "=== stale_truncate ==="') :]
-        match = re.search(r'python3 -c "\n(.*?)\n"', section, re.DOTALL)
-        if match is None:
-            self.fail("stale_truncate Python program was not found")
-        program = match.group(1)
-        self.assertEqual(program.count("$HEAD_SHA_SHORT"), 1)
-        self.assertNotIn("$", program.replace("$HEAD_SHA_SHORT", ""))
-        self.assertNotIn("`", program)
-        self.assertNotIn('"', program)
-        return program
-
-    def _run_stale_truncate(self, output_dir, detector_json):
-        """Seed *output_dir* with CONTENTS and run the shipped program over it."""
-        output_dir.mkdir()
-        for name, content in self.CONTENTS.items():
-            (output_dir / name).write_bytes(content)
-        source = (
-            self._stale_truncate_program()
-            .replace("$HEAD_SHA_SHORT", self.SHA)
-            .replace("{output_dir}", output_dir.as_posix())
-        )
-        return subprocess.run(
-            [sys.executable, "-c", source],
-            input=json.dumps(detector_json),
-            text=True,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-        )
-
-    def test_stale_truncate_executes_shipped_program_under_bracketed_path(self):
-        matching = {
-            f"code-gauntlet-findings-{self.SHA}.json",
-            f"code-gauntlet-report-{self.SHA}.md",
-        }
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_dir = Path(temp_dir) / "out[1]"
-            result = self._run_stale_truncate(
-                output_dir, {"previously_reviewed": False}
-            )
-
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), "truncated 2 file(s)")
-            for name, content in self.CONTENTS.items():
-                expected = b"" if name in matching else content
-                self.assertEqual((output_dir / name).read_bytes(), expected, name)
-
-    def test_stale_truncate_defers_and_preserves_files_at_reviewed_head(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_dir = Path(temp_dir) / "out[1]"
-            result = self._run_stale_truncate(
-                output_dir,
-                {
-                    "previously_reviewed": True,
-                    "sha_resolvable": True,
-                    "last_reviewed_sha": self.SHA,
-                    "head_sha": self.SHA,
-                },
-            )
-
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue(
-                result.stdout.startswith(
-                    "DEFERRED: previously reviewed at the current SHA"
-                )
-            )
-            self.assertEqual(
-                {name: (output_dir / name).read_bytes() for name in self.CONTENTS},
-                self.CONTENTS,
-            )
 
     def test_skill_and_agent_paths_do_not_embed_globs_in_output_dir(self):
         path_glob = re.compile(r"\{output_dir\}[\\/][^\s`\"')]*[*?\[]")
@@ -1115,14 +1033,8 @@ class TestDocContract(unittest.TestCase):
         call (issue #38 collapsed Phase 2's independent round trips), so the
         markers there are the section labels rather than headings; the ordering
         requirement is identical either way. Because the two steps now share a
-        single call, the gate can no longer withhold truncation just by running
-        first — so SKILL.md additionally guards the truncate branch on the
-        detector's own `previously_reviewed`/`sha_resolvable`/`last_reviewed_sha`/
-        `head_sha` facts (the exact-match test for "the reviewed commit IS the
-        current head" — `head_advanced` alone cannot distinguish that case from
-        an unresolvable SHA or rewritten history, both of which also read
-        `head_advanced: false` but must NOT defer truncation), and that guard is
-        pinned below."""
+        single call, the executable script owns the conditional gate. SKILL.md
+        must call it in gated mode with the detector JSON on stdin."""
         markers = {
             self.SKILL_REL: (
                 'echo "=== prior_review ==="',
@@ -1155,26 +1067,13 @@ class TestDocContract(unittest.TestCase):
                     "even offer to keep them",
                 )
 
-        # The in-composite guard: truncation must be conditional on the detector's
-        # facts, or running both steps in one Bash call would destroy exactly the
-        # artifacts the gate exists to protect, before the user is ever asked.
         skill = _read(self.SKILL_REL)
         truncate_block = skill[skill.find('echo "=== stale_truncate ==="') :]
         truncate_block = truncate_block[: truncate_block.find("```", 1)]
-        for fact in (
-            "previously_reviewed",
-            "sha_resolvable",
-            "last_reviewed_sha",
-            "head_sha",
-        ):
-            self.assertIn(
-                fact,
-                truncate_block,
-                f"{self.SKILL_REL}: the stale_truncate section must gate on the "
-                f"detector's `{fact}` fact. Running the gate and the truncation in "
-                "one composite Bash call means doc order alone no longer protects "
-                "the prior review's artifacts — only this guard does.",
-            )
+        self.assertIn('echo "$PRIOR_JSON" | python3 ', truncate_block)
+        self.assertIn('"{plugin_root}/scripts/stale_truncate.py"', truncate_block)
+        self.assertIn('--head-sha "$HEAD_SHA_SHORT"', truncate_block)
+        self.assertNotIn("--unconditional", truncate_block)
 
     def test_headless_skip_semantics_agree_between_skill_and_headless_mode(self):
         """D1 regression pin: SKILL.md's Phase 2 headless note and
