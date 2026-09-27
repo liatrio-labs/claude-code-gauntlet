@@ -9,27 +9,14 @@ reported separately so zero textual changes do not imply an empty diff.
 
 from __future__ import annotations
 
-import argparse
-import sys
-from typing import NoReturn
-
 from diff_lines import walk_diff
+from script_io import OneLineErrorParser, fail
 
-
-class _Parser(argparse.ArgumentParser):
-    def error(self, message: str) -> NoReturn:
-        detail = " ".join(message.splitlines())
-        print(f"diff_numstat: {detail}", file=sys.stderr)
-        raise SystemExit(2)
-
-
-def _fail(message: str) -> int:
-    print(f"diff_numstat: {message}", file=sys.stderr)
-    return 2
+PROG = "diff_numstat"
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = _Parser(description=__doc__)
+    parser = OneLineErrorParser(prog=PROG, description=__doc__)
     parser.add_argument("patch", help="saved unified diff patch")
     args = parser.parse_args(argv)
 
@@ -37,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
         with open(args.patch, encoding="utf-8", errors="replace", newline="") as fh:
             patch = fh.read()
     except OSError:
-        return _fail("cannot read patch")
+        fail(PROG, "cannot read patch")
 
     added = 0
     removed = 0

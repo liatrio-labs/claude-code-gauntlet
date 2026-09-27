@@ -225,7 +225,16 @@ class TestStaleTruncate(unittest.TestCase):
 
             self.assertEqual(result.returncode, 2)
             self.assertEqual(result.stdout, "")
-            self.assertTrue(result.stderr.startswith("stale_truncate: "))
+            self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
+            self.assertTrue(
+                result.stderr.startswith(
+                    f"stale_truncate: cannot truncate code-gauntlet-dir-{SHA}.d ("
+                ),
+                result.stderr,
+            )
+            self.assertIn(
+                "; 0 of 1 matching file(s) truncated before it", result.stderr
+            )
 
 
 def _git(repo: Path, *args: str) -> bytes:
