@@ -32,11 +32,17 @@ TRUNCATED = {
 }
 
 
+_PYTHON = r"\b(?:python3?|py)"
 _QUOTED_PYTHON = re.compile(
-    r"""python3\s+-c\s+(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')""",
+    _PYTHON
+    + r"""(?:\s+-[A-Za-z0-9]\S*)*\s+-c\s+(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')""",
     re.DOTALL,
 )
-_FENCED_PYTHON = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
+_HEREDOC_PYTHON = re.compile(
+    _PYTHON + r"\b[^\n]*<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n(.*?)^\s*\1\s*$",
+    re.DOTALL | re.MULTILINE,
+)
+_FENCED_PYTHON = re.compile(r"```(?:python3?|py)\b[^\n]*\n(.*?)```", re.DOTALL)
 
 
 def _placeholder_program_lines(text: str) -> list[int]:
@@ -45,6 +51,9 @@ def _placeholder_program_lines(text: str) -> list[int]:
     for match in _QUOTED_PYTHON.finditer(text):
         group = 1 if match.group(1) is not None else 2
         programs.append((match.start(group), match.group(group)))
+    programs.extend(
+        (match.start(2), match.group(2)) for match in _HEREDOC_PYTHON.finditer(text)
+    )
     programs.extend(
         (match.start(1), match.group(1)) for match in _FENCED_PYTHON.finditer(text)
     )
@@ -187,6 +196,36 @@ class TestStaleTruncate(unittest.TestCase):
                         _assert_seed_state(self, output_dir, set())
                     else:
                         self.assertFalse(output_dir.exists())
+
+    def test_argument_errors_exit_two_with_one_line(self):
+        for script, args in (
+            (STALE_SCRIPT, ["--output-dir", "."]),
+            (NUMSTAT_SCRIPT, []),
+        ):
+            with self.subTest(script=script.name):
+                result = subprocess.run(
+                    [sys.executable, str(script), *args],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
+                self.assertTrue(result.stderr.startswith(script.stem + ": "))
+
+    def test_unwritable_match_exits_two(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "o'brien out[1]"
+            output_dir.mkdir()
+            (output_dir / f"code-gauntlet-dir-{SHA}.d").mkdir()
+            result = _stale_result(output_dir, unconditional=True)
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.stdout, "")
+            self.assertTrue(result.stderr.startswith("stale_truncate: "))
 
 
 def _git(repo: Path, *args: str) -> bytes:
@@ -354,6 +393,27 @@ class TestDiffNumstat(unittest.TestCase):
             self.assertTrue(all(count > 0 for count in singles), singles)
             self.assertEqual(changed_lines(b"".join(parts), "all.patch"), sum(singles))
 
+    def test_crlf_patch_counts_binary_files(self):
+        patch = (
+            b"diff --git a/a.bin b/a.bin\r\nnew file mode 100644\r\n"
+            b"Binary files /dev/null and b/a.bin differ\r\n"
+            b"diff --git a/t.txt b/t.txt\r\n--- a/t.txt\r\n+++ b/t.txt\r\n"
+            b"@@ -1 +1 @@\r\n-old\r\n+new\r\n"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            patch_path = Path(temp_dir) / "crlf.patch"
+            patch_path.write_bytes(patch)
+            result = subprocess.run(
+                [sys.executable, str(NUMSTAT_SCRIPT), str(patch_path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "changed_lines=2\nbinary_files=1\n")
+
     def test_missing_patch_fails_without_stdout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             missing = Path(temp_dir) / "o'brien diff[1]" / "missing.patch"
@@ -451,6 +511,20 @@ class TestShippedText(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, "changed_lines=2\nbinary_files=0\n")
 
+    def test_local_branch_form_uses_the_sha_computed_in_the_same_call(self):
+        # The local/branch form replaces a line of Composite A, whose `sha`
+        # section sets $HEAD_SHA_SHORT; {head_sha_short} is not known yet there.
+        skill = (REPO / "skills" / "code-gauntlet" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        line = next(
+            line
+            for line in skill.splitlines()
+            if line.startswith("Local/branch targets: drop")
+        )
+        self.assertIn('--head-sha "$HEAD_SHA_SHORT" --unconditional', line)
+        self.assertNotIn("{head_sha_short}", line)
+
     def test_python_programs_in_skills_and_agents_do_not_embed_path_placeholders(
         self,
     ):
@@ -474,6 +548,11 @@ class TestShippedText(unittest.TestCase):
             ),
             "single-quoted": ("python3 -c 'print(\"{plugin_root}/x\")'\n", 1),
             "python fence": ("```python\nopen('{output_dir}/a.md')\n```\n", 2),
+            "py fence": ("```py\nopen('{output_dir}/a.md')\n```\n", 2),
+            "heredoc": ("python3 - <<'EOF'\nopen('{output_dir}/a')\nEOF\n", 2),
+            "python -c": ("python -c \"open('{output_dir}/a')\"\n", 1),
+            "py launcher": ("py -3 -c \"open('{output_dir}/a')\"\n", 1),
+            "flag before -c": ("python3 -I -c \"open('{plugin_root}/a')\"\n", 1),
         }
         for label, (text, line_number) in flagged.items():
             with self.subTest(case=label):

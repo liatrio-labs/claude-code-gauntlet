@@ -1070,7 +1070,7 @@ class TestDocContract(unittest.TestCase):
         skill = _read(self.SKILL_REL)
         truncate_block = skill[skill.find('echo "=== stale_truncate ==="') :]
         truncate_block = truncate_block[: truncate_block.find("```", 1)]
-        self.assertIn('echo "$PRIOR_JSON" | python3 ', truncate_block)
+        self.assertIn("printf '%s\\n' \"$PRIOR_JSON\" | python3 ", truncate_block)
         self.assertIn('"{plugin_root}/scripts/stale_truncate.py"', truncate_block)
         self.assertIn('--head-sha "$HEAD_SHA_SHORT"', truncate_block)
         self.assertNotIn("--unconditional", truncate_block)

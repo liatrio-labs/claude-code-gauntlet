@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
             removed += 1
 
     binary_files = sum(
-        line.startswith("Binary files ") and line.endswith(" differ")
+        line.startswith("Binary files ") and line.rstrip("\r").endswith(" differ")
         for line in patch.split("\n")
     )
     print(f"changed_lines={added + removed}")
