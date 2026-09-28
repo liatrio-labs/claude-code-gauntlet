@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import re
 import sys
 from typing import Any, NoReturn
 
@@ -70,6 +71,12 @@ def fail(prog: str, message: str) -> NoReturn:
     """Print one ``prog: message`` line to stderr and exit with status 2."""
     print(f"{prog}: {' '.join(message.splitlines())}", file=sys.stderr)
     raise SystemExit(2)
+
+
+def require_head_sha(prog: str, value: str) -> None:
+    """Reject values outside the lowercase abbreviated/full Git SHA shape."""
+    if re.fullmatch(r"[0-9a-f]{4,40}", value) is None:
+        fail(prog, "--head-sha must be 4 to 40 lowercase hexadecimal characters")
 
 
 class OneLineErrorParser(argparse.ArgumentParser):

@@ -15,6 +15,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 STALE_SCRIPT = REPO / "scripts" / "stale_truncate.py"
 NUMSTAT_SCRIPT = REPO / "scripts" / "diff_numstat.py"
+SHARED_CONTEXT_SCRIPT = REPO / "scripts" / "write_shared_context.py"
 SHA = "a1b2c3d4"
 DEFERRED = (
     "DEFERRED: previously reviewed at the current SHA -- truncation withheld "
@@ -39,14 +40,16 @@ _QUOTED_PYTHON = re.compile(
     re.DOTALL,
 )
 _HEREDOC_PYTHON = re.compile(
-    _PYTHON + r"\b[^\n]*<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n(.*?)^\s*\1\s*$",
+    _PYTHON
+    + r"(?:\s+-[A-Za-z0-9]\S*)*(?:\s+-)?\s+<<-?\s*['\"]?(\w+)['\"]?"
+    + r"[^\n]*\n(.*?)^\s*\1\s*$",
     re.DOTALL | re.MULTILINE,
 )
 _FENCED_PYTHON = re.compile(r"```(?:python3?|py)\b[^\n]*\n(.*?)```", re.DOTALL)
 
 
 def _placeholder_program_lines(text: str) -> list[int]:
-    """Return the line of each Python program in *text* that embeds a path."""
+    """Return lines of Python programs embedding paths or an elision."""
     programs: list[tuple[int, str]] = []
     for match in _QUOTED_PYTHON.finditer(text):
         group = 1 if match.group(1) is not None else 2
@@ -60,7 +63,12 @@ def _placeholder_program_lines(text: str) -> list[int]:
     return [
         text.count("\n", 0, start) + 1
         for start, body in programs
-        if "{output_dir}" in body or "{plugin_root}" in body
+        if (
+            "{output_dir}" in body
+            or "{plugin_root}" in body
+            or "..." in body
+            or "…" in body
+        )
     ]
 
 
@@ -100,6 +108,24 @@ def _stale_result(
         input=detector_json,
         text=True,
         encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+
+
+def _shared_context_result(
+    output_dir: Path, triage: bytes, *, head_sha: str = SHA
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SHARED_CONTEXT_SCRIPT),
+            "--output-dir",
+            str(output_dir),
+            "--head-sha",
+            head_sha,
+        ],
+        input=triage,
         capture_output=True,
         check=False,
     )
@@ -175,6 +201,7 @@ class TestStaleTruncate(unittest.TestCase):
             root = Path(temp_dir)
             cases = (
                 ("bad SHA", "not-a-sha", "{}", True),
+                ("uppercase SHA", "A1B2C3D4", "{}", True),
                 ("missing directory", SHA, "{}", False),
                 ("non-object JSON", SHA, "[]", True),
                 ("invalid JSON", SHA, "{", True),
@@ -192,6 +219,12 @@ class TestStaleTruncate(unittest.TestCase):
                     self.assertTrue(
                         result.stderr.startswith("stale_truncate: "), result.stderr
                     )
+                    if label in {"bad SHA", "uppercase SHA"}:
+                        self.assertEqual(
+                            result.stderr,
+                            "stale_truncate: --head-sha must be 4 to 40 lowercase "
+                            "hexadecimal characters\n",
+                        )
                     if make_dir:
                         _assert_seed_state(self, output_dir, set())
                     else:
@@ -235,6 +268,206 @@ class TestStaleTruncate(unittest.TestCase):
             self.assertIn(
                 "; 0 of 1 matching file(s) truncated before it", result.stderr
             )
+
+
+class TestWriteSharedContext(unittest.TestCase):
+    def test_content_bytes_and_measurements_cover_all_input_shapes(self):
+        cases = (
+            (
+                "missing final newlines and trimmed non-ASCII triage",
+                b"REVIEW RULES",
+                b"diff without final newline",
+                "\n\nRisk: élevé\nAI-generated code: none\n\n".encode(),
+            ),
+            (
+                "CRLF diff",
+                b"project rules\r\n",
+                b"diff --git a/a b/a\r\n-old\r\n+new\r\n",
+                b"Risk: medium\nAI-generated code: partial",
+            ),
+            (
+                "invalid UTF-8 diff",
+                b"project rules\n",
+                b"diff --git a/a b/a\nraw-\xff-byte",
+                b"Risk: high\nAI-generated code: generated",
+            ),
+        )
+        for label, rules, diff, triage in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp_dir:
+                output_dir = Path(temp_dir) / "o'brien out[1]"
+                output_dir.mkdir()
+                (output_dir / f"code-gauntlet-project-rules-{SHA}.md").write_bytes(
+                    rules
+                )
+                (output_dir / f"code-gauntlet-diff-{SHA}.patch").write_bytes(diff)
+                result = _shared_context_result(output_dir, triage)
+
+                expected = (
+                    rules
+                    + (b"" if rules.endswith(b"\n") else b"\n")
+                    + b"\n## Risk classification and AI-generated-code status\n\n"
+                    + triage.strip(b"\r\n")
+                    + b"\n\n## Diff\n\n<untrusted-code-content>\n"
+                    + diff
+                    + (b"" if diff.endswith(b"\n") else b"\n")
+                    + b"</untrusted-code-content>\n"
+                )
+                context_path = output_dir / f"code-gauntlet-context-{SHA}.md"
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, b"")
+                self.assertEqual(context_path.read_bytes(), expected)
+                self.assertTrue(expected.endswith(b"\n"))
+                lines = expected.count(b"\n") + (0 if expected.endswith(b"\n") else 1)
+                chars = len(expected.decode("utf-8", errors="replace"))
+                receipt = json.dumps({"contextLines": lines, "contextChars": chars})
+                self.assertEqual(result.stdout, (receipt + "\n").encode())
+                if label == "missing final newlines and trimmed non-ASCII triage":
+                    self.assertNotEqual(len(expected), chars)
+
+    def test_invalid_inputs_fail_closed_without_creating_context(self):
+        cases = (
+            ("bad SHA", "not-a-sha", b"rules", b"diff", b"triage", True),
+            ("uppercase SHA", "A1B2C3D4", b"rules", b"diff", b"triage", True),
+            ("missing output directory", SHA, b"rules", b"diff", b"triage", False),
+            ("missing rules", SHA, None, b"diff", b"triage", True),
+            ("empty rules", SHA, b"", b"diff", b"triage", True),
+            ("missing diff", SHA, b"rules", None, b"triage", True),
+            ("empty diff", SHA, b"rules", b"", b"triage", True),
+            ("empty stdin", SHA, b"rules", b"diff", b"", True),
+            (
+                "whitespace-only stdin",
+                SHA,
+                b"rules",
+                b"diff",
+                b" \t\n\r\v\f",
+                True,
+            ),
+        )
+        for label, sha, rules, diff, triage, make_dir in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp_dir:
+                output_dir = Path(temp_dir) / "o'brien out[1]"
+                if make_dir:
+                    output_dir.mkdir()
+                    if rules is not None:
+                        rules_path = (
+                            output_dir / f"code-gauntlet-project-rules-{sha}.md"
+                        )
+                        rules_path.write_bytes(rules)
+                    if diff is not None:
+                        (output_dir / f"code-gauntlet-diff-{sha}.patch").write_bytes(
+                            diff
+                        )
+
+                result = _shared_context_result(output_dir, triage, head_sha=sha)
+
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, b"")
+                self.assertEqual(len(result.stderr.splitlines()), 1)
+                self.assertTrue(
+                    result.stderr.startswith(b"write_shared_context: "), result.stderr
+                )
+                errors = {
+                    "bad SHA": (
+                        "--head-sha must be 4 to 40 lowercase hexadecimal characters"
+                    ),
+                    "uppercase SHA": (
+                        "--head-sha must be 4 to 40 lowercase hexadecimal characters"
+                    ),
+                    "missing output directory": (
+                        "--output-dir must be an existing directory"
+                    ),
+                    "missing rules": "cannot read project rules file",
+                    "empty rules": "project rules file is empty",
+                    "missing diff": "cannot read diff file",
+                    "empty diff": "diff file is empty",
+                    "empty stdin": (
+                        "stdin must contain risk classification and "
+                        "AI-generated-code status"
+                    ),
+                    "whitespace-only stdin": (
+                        "stdin must contain risk classification and "
+                        "AI-generated-code status"
+                    ),
+                }
+                self.assertEqual(
+                    result.stderr,
+                    f"write_shared_context: {errors[label]}\n".encode(),
+                )
+                self.assertFalse(
+                    (output_dir / f"code-gauntlet-context-{sha}.md").exists()
+                )
+
+    def test_paths_match_skill_collector_diff_and_workflow_template(self):
+        skill = (REPO / "skills" / "code-gauntlet" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        collector = re.search(r'collect_project_rules\.py"[^\n]*--out "([^"]+)"', skill)
+        self.assertIsNotNone(collector)
+        assert collector is not None
+        diff_start = skill.index('echo "=== diff ==="')
+        diff_end = skill.index('echo "=== numstat ==="', diff_start)
+        diff_section = skill[diff_start:diff_end]
+        diff_redirect = re.search(
+            r'^gh pr diff \{pr_number\} > "([^"]+)"$', diff_section, re.M
+        )
+        self.assertIsNotNone(diff_redirect)
+        assert diff_redirect is not None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "o'brien out[1]"
+            output_dir.mkdir()
+            replacements = {
+                "{output_dir}": output_dir.as_posix(),
+                "{head_sha_short}": SHA,
+            }
+            collector_path = collector.group(1)
+            diff_path = diff_redirect.group(1)
+            for placeholder, value in replacements.items():
+                collector_path = collector_path.replace(placeholder, value)
+                diff_path = diff_path.replace(placeholder, value)
+            self.assertEqual(
+                Path(collector_path),
+                output_dir / f"code-gauntlet-project-rules-{SHA}.md",
+            )
+            self.assertEqual(
+                Path(diff_path), output_dir / f"code-gauntlet-diff-{SHA}.patch"
+            )
+            Path(collector_path).write_bytes(b"collected rules\n")
+            Path(diff_path).write_bytes(b"saved diff\n")
+
+            result = _shared_context_result(output_dir, b"risk\nAI status\n")
+            context_path = output_dir / f"code-gauntlet-context-{SHA}.md"
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(context_path.is_file())
+            self.assertIn(
+                "const contextPath = `${A.outputDir}/code-gauntlet-context-"
+                "${A.headShaShort}.md`;",
+                (REPO / "workflows" / "src" / "stages.js").read_text(encoding="utf-8"),
+            )
+
+    def test_output_write_oserror_exits_two_with_one_line(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "o'brien out[1]"
+            output_dir.mkdir()
+            (output_dir / f"code-gauntlet-project-rules-{SHA}.md").write_bytes(
+                b"rules\n"
+            )
+            (output_dir / f"code-gauntlet-diff-{SHA}.patch").write_bytes(b"diff\n")
+            context_path = output_dir / f"code-gauntlet-context-{SHA}.md"
+            context_path.mkdir()
+
+            result = _shared_context_result(output_dir, b"triage\n")
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.stdout, b"")
+            self.assertEqual(len(result.stderr.splitlines()), 1)
+            self.assertTrue(
+                result.stderr.startswith(
+                    b"write_shared_context: cannot write context file ("
+                ),
+                result.stderr,
+            )
+            self.assertTrue(context_path.is_dir())
 
 
 def _git(repo: Path, *args: str) -> bytes:
@@ -443,6 +676,61 @@ class TestDiffNumstat(unittest.TestCase):
 class TestShippedText(unittest.TestCase):
     output_dir: Path
 
+    def test_write_shared_context_shipped_command_handles_quoted_path(self):
+        skill = (REPO / "skills" / "code-gauntlet" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        section_start = skill.index("### Write the shared agent context file")
+        section_end = skill.index("\n### ", section_start + 5)
+        section = skill[section_start:section_end]
+        fence_start = section.index("```bash") + len("```bash")
+        fence_end = section.index("```", fence_start)
+        block = section[fence_start:fence_end].strip("\n")
+        lines = block.splitlines()
+        self.assertTrue(lines[0].endswith("<<'CODE_GAUNTLET_TRIAGE'"), lines[0])
+        self.assertEqual(lines[-1], "CODE_GAUNTLET_TRIAGE")
+        command = lines[0].split("<<", 1)[0].rstrip()
+        self.assertNotIn("$", command)
+        self.assertNotIn("`", command)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.output_dir = Path(temp_dir) / "o'brien out[1]"
+            self.output_dir.mkdir()
+            (self.output_dir / f"code-gauntlet-project-rules-{SHA}.md").write_bytes(
+                b"rules\n"
+            )
+            (self.output_dir / f"code-gauntlet-diff-{SHA}.patch").write_bytes(b"diff\n")
+            expanded = (
+                command.replace("{plugin_root}", REPO.as_posix())
+                .replace("{output_dir}", self.output_dir.as_posix())
+                .replace("{head_sha_short}", SHA)
+            )
+            parts = shlex.split(expanded, posix=True)
+            self.assertTrue(parts and parts[0] == "python3", parts)
+            parts[0] = sys.executable
+            triage = b"Risk: low\nAI-generated-code status: none"
+            result = subprocess.run(
+                parts,
+                input=triage,
+                capture_output=True,
+                check=False,
+            )
+
+            expected = (
+                b"rules\n\n## Risk classification and AI-generated-code status\n\n"
+                + triage
+                + b"\n\n## Diff\n\n<untrusted-code-content>\ndiff\n"
+                b"</untrusted-code-content>\n"
+            )
+            context_path = self.output_dir / f"code-gauntlet-context-{SHA}.md"
+            lines_count = expected.count(b"\n") + (0 if expected.endswith(b"\n") else 1)
+            chars = len(expected.decode("utf-8", errors="replace"))
+            receipt = json.dumps({"contextLines": lines_count, "contextChars": chars})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, (receipt + "\n").encode())
+            self.assertEqual(result.stderr, b"")
+            self.assertEqual(context_path.read_bytes(), expected)
+
     def _command_after_section(self, label: str, *, pipe: bool) -> str:
         skill = (REPO / "skills" / "code-gauntlet" / "SKILL.md").read_text(
             encoding="utf-8"
@@ -562,12 +850,21 @@ class TestShippedText(unittest.TestCase):
             "python -c": ("python -c \"open('{output_dir}/a')\"\n", 1),
             "py launcher": ("py -3 -c \"open('{output_dir}/a')\"\n", 1),
             "flag before -c": ("python3 -I -c \"open('{plugin_root}/a')\"\n", 1),
+            "elided inline python": ('`python3 -c "import json; ..."`\n', 1),
+            "elided python fence": ("```python\n...\n```\n", 2),
+            "unicode elision": ("```python\n…\n```\n", 2),
         }
         for label, (text, line_number) in flagged.items():
             with self.subTest(case=label):
                 self.assertEqual(_placeholder_program_lines(text), [line_number])
         argv = 'python3 -c "\nimport sys\nopen(sys.argv[1])\n" "{output_dir}/a.json"\n'
         self.assertEqual(_placeholder_program_lines(argv), [])
+        script_with_stdin = (
+            'python3 "{plugin_root}/scripts/write_shared_context.py" '
+            '--output-dir "{output_dir}" --head-sha abcdef01 '
+            "<<'CODE_GAUNTLET_TRIAGE'\nRisk: low\nCODE_GAUNTLET_TRIAGE\n"
+        )
+        self.assertEqual(_placeholder_program_lines(script_with_stdin), [])
 
 
 if __name__ == "__main__":

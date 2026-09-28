@@ -196,7 +196,7 @@ The renderer derives the fallback explanation from retained detector facts.
 
 > Headless mode still runs the `prior_review` section. Detection is read-only and safe under any resolved post mode. Apply `configResult.resolved.reviewed_policy` instead of asking. `skip` stops the run only when `previously_reviewed` is true AND `sha_is_ancestor` is true. An `incremental` policy uses `incremental_safe`; otherwise it degrades to `full` and discloses the reason. Rewritten history has `sha_is_ancestor` false, so `skip` proceeds as a full review with the degradation disclosed. A `DEFERRED` truncation resolves the same way it does interactively. Run `python3 "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --unconditional` for every policy outcome except a `skip` that stops the run. See `references/headless-mode.md`.
 
-All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see "Assemble the args object" below). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
+All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (REVIEW.md provenance and CLAUDE.md/AGENTS.md/QODO.md import resolution from `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` by `scripts/write_shared_context.py` before measurement and writing). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see "Assemble the args object" below). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. `scripts/stale_truncate.py` covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
 
 ### Phase 2 Composite B — independent-gather (diff, changed-files, line count, misc)
 
@@ -267,31 +267,21 @@ pre-parsed form for the same axis (single authority).
 
 ### Write the shared agent context file
 
-Write the shared context to `{output_dir}/code-gauntlet-context-{head_sha_short}.md` using `python3 -c "import json; ..."`. Contents, concatenated in this order into one `content` string:
+Run this after 2d, 2e and 2k:
 
-1. REVIEW.md and CLAUDE.md/AGENTS.md/QODO.md rules from `scripts/collect_project_rules.py` (2d step 2), folded into `content` with `open(path).read()` on its `--out` file inside this same `python3 -c` invocation. The file already contains review-rules blocks before project-rules blocks; never retype it.
-2. Risk classification (2e) and AI-generated-code status (2k).
-3. The full diff inside `<untrusted-code-content>` tags. Use raw diff lines; never substitute a summary for changed content.
-
-The workflow's discovery, validate, and summarize agents Read this file at `{output_dir}/code-gauntlet-context-{head_sha_short}.md` — the workflow threads exactly this path to them, so the filename must match. (The change **summary** is no longer written here — the workflow's Summarize stage produces it internally.)
-
-**Do not guard the read in item 1.** The `open(path).read()` of the collector's `--out` must be unconditional: no existence check, try/except, or empty-string fallback. A missing file must fail the context write. A successful collection with neither source kind writes `project rules: none collected (REVIEW.md, CLAUDE.md, AGENTS.md, QODO.md)`, not an empty file. A failed collection is reported by its receipt and must not proceed as successful discovery.
-**Build all three items into `content` before measuring and writing it.** `contextLines` and `contextChars` must describe that complete string, including every collected rule block. Never append a block after measurement. The measurement fields may degrade to a disclosed gap; a missing collector artifact cannot silently become a rules-free context.
-The existing transcription evidence for model-copied project rules also applies to REVIEW.md text. The shared-context fold reads the collector's text from disk; the raw workflow waist still passes text by value. No static wording pin proves a model invoked the collector or copied the waist faithfully.
-
-**Measure the file in the same command that writes it, and stamp the measurement into args as `contextLines` / `contextChars`.** This is not bookkeeping — it is the whole read-completeness mechanism. A `Read` of a file this size returns only part of it and emits **no truncation notice**; the workflow has no disk and cannot measure the file itself, so this stamp is the only way `contextReadPlan` can compute the exact `Read` calls the agent prompts enumerate. Print both from the string you just wrote, so the numbers describe the bytes on disk rather than a re-read:
-
-```python
-# ... inside the same python3 -c that writes `content` to the context path:
-# lines counts as the Read tool's `cat -n` numbering does — a file with no trailing
-# newline still shows its final partial line, so it counts.
-lines = content.count("\n") + (0 if content.endswith("\n") else 1)
-print(json.dumps({"contextLines": lines, "contextChars": len(content)}))
+```bash
+python3 "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} <<'CODE_GAUNTLET_TRIAGE'
+{risk classification (2e) and AI-generated-code status (2k)}
+CODE_GAUNTLET_TRIAGE
 ```
 
-Stamp both values verbatim. Never estimate them, never carry them over from an earlier run, and never re-derive them from a later `wc -l` — `wc -l` counts newline *terminators*, so it reports one fewer than `cat -n` numbers for a file with no trailing newline, and an undercount by one silently drops the file's last line from every agent's read plan. If the file came out **empty** (`not content` — note the formula above returns `1`, not `0`, for empty content, so test the content, never the line count), omit both fields rather than stamping `{"contextLines": 1, "contextChars": 0}`: that pair would tell every agent the shared context is one line long and it would stop after one read. An empty shared context is a Phase 2 bug to fix, not a value to pass on.
+The quoted delimiter passes the text verbatim. Never pipe it through `echo` or unquote the delimiter.
+The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text and saved diff, in that order.
+Stamp the printed `contextLines` and `contextChars` into the args waist verbatim, never estimated, carried over or re-derived.
+An exit 2 wrote no usable context; stop and report its one-line error.
+The script docstring holds the content and measurement rules.
 
-> **Why this exists (issue #48).** On run `wf_cef39739-577`, all 7 discovery agents' first `Read` of a 95,057-byte / 2,028-line context file returned 58,145 chars ending at line 1083, with no truncation notice in any of the 7 tool results. Six agents inferred the cutoff and paginated on; `security-reviewer` did not, and reviewed roughly the first half of the diff while returning `complete: true`. No artifact, report, or transcript distinguished that from a clean empty result.
+The change **summary** is no longer written here — the workflow's Summarize stage produces it internally.
 
 > **NDJSON emission has been removed from discovery agents (v3).** Discovery agents return findings only through structured output (`agent()`/`parallel()` schema) — the `printf`-NDJSON emission prose was stripped from all 7 `.md` bodies and Bash was dropped from their tool grants (it existed solely for emission). `references/ndjson-emission-contract.md` and `scripts/validate_ndjson.py` remain shipped as retained v2-compat/bench surface, not consumed by discovery agents.
 
@@ -364,10 +354,8 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   // by-value inputs the in-memory stages need (the workflow has no disk):
   changedFiles, changedLines, baseBranch, reviewMd, exclusionsText,
 
-  // the shared context file's own measured size, from the write step above. Feeds
-  // contextReadPlan, which turns it into the exact Read calls the discovery/validate/
-  // summarize prompts enumerate. Omit BOTH if the file came out empty; contextChars
-  // may not be stamped without contextLines.
+  // the shared context file's measured size, from write_shared_context.py's receipt,
+  // verbatim. contextChars may not be stamped without contextLines.
   contextLines, contextChars,
 
   // how the run's artifacts reach disk. `returnPrimaries: true` is the default and the

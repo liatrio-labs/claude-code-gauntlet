@@ -79,8 +79,8 @@ Should emission return, update this file first, then propagate to every file car
   truncated descriptions). Catching the bug while the agent is still
   in scope, with the original strings still in memory, is strictly
   cheaper than reconstructing later.
-- **`python3 path/script.py args` is AST-safe** — unlike `python3 -c
-  "..."`, a plain script invocation is just three word tokens to the
+- **`python3 path/script.py args` is AST-safe** — unlike an inline `python3 -c`
+  program, a plain script invocation is just three word tokens to the
   tree-sitter-bash parser. No unrecognized AST nodes, so the subagent
   sandbox auto-approves the call.
 
