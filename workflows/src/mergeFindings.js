@@ -30,8 +30,8 @@ export function parseNdjson(text, agent) {
     let obj;
     try {
       obj = JSON.parse(line);
-    } catch (exc) {
-      warnings.push(`[${agent}] NDJSON line ${lineno}: invalid JSON — ${exc.message}`);
+    } catch {
+      warnings.push(`[${agent}] NDJSON line ${lineno}: invalid JSON`);
       continue;
     }
     if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {

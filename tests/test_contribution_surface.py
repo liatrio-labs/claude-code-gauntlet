@@ -954,10 +954,18 @@ class TestContributingDocs(unittest.TestCase):
             "node --test workflows/test/*.test.js",
             "python3 workflows/test/tools/biome_check.py",
             "node workflows/build.js",
+            "UPDATE_GOLDENS=1 node --test workflows/test/goldens.test.js",
             "workflows/test/tools/record_parity.py",
         ):
             with self.subTest(gate=gate):
                 self.assertIn(gate, text)
+        self.assertIn(
+            "Transform goldens updated with "
+            "`UPDATE_GOLDENS=1 node --test workflows/test/goldens.test.js` "
+            "in a reviewed diff; verify-wire fixtures updated with "
+            "`workflows/test/tools/record_parity.py`",
+            text,
+        )
 
     def test_maintainer_issue_standard_has_the_required_sections(self):
         text = _read("docs/maintainer-issues.md")

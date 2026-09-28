@@ -76,6 +76,25 @@ def test_recorder_output_matches_verify_wire_committed_goldens():
     )
 
 
+@pytest.mark.parametrize("mode", [[], ["--check"]], ids=["record", "check"])
+def test_recorder_rejects_unknown_family(mode):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "workflows/test/tools/record_parity.py"),
+            *mode,
+            "filter_findings",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.splitlines() == ["unknown recorder family: filter_findings"]
+
+
 def test_check_reports_stale_and_never_writes_into_fixture_tree(tmp_path, monkeypatch):
     import importlib
     import shutil

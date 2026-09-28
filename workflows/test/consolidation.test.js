@@ -40,17 +40,22 @@ for (const c of CONSOLIDATION_CASES) test(`consolidate: ${c.name}`, () => {
   assert.equal(out.findings.filter((row) => Object.hasOwn(row, 'consolidation_key')).length, c.count);
 });
 
-const CONSOLIDATION_STATS_CASES = [
-  { name: 'tagging returns consolidated count', run: (rows) => tagFindings(rows), count: (out) => out.consolidatedCount },
-  { name: 'filter pipeline reports consolidated count', run: (rows) => applyFilterPipeline(rows, { confidence_threshold: 70 }, [], '2026-01-01T00:00:00Z'), count: (out) => out.stats.cross_agent_consolidated },
-];
-for (const c of CONSOLIDATION_STATS_CASES) test(`consolidation stats: ${c.name}`, () => {
-  const rows = [f({ id: 'bug-1', description: 'A real wrong result in this function.' }), f({ id: 'test-1', line_start: 12, agent: 'test-analyzer', dimension: 'test_coverage', confidence: 80, description: 'Missing a test for a specific edge case.' })];
-  const out = c.run(rows);
-  assert.equal(c.count(out), 2);
-  const active = out.tagged ?? out.filtered;
-  assert.deepEqual(active.map((row) => row.id).sort(), ['bug-1', 'test-1']);
-  assert.equal(active.some((row) => row.eliminated_by === 'dedup:cross-agent'), false);
+function consolidationStatsRows() {
+  return [f({ id: 'bug-1', description: 'A real wrong result in this function.' }), f({ id: 'test-1', line_start: 12, agent: 'test-analyzer', dimension: 'test_coverage', confidence: 80, description: 'Missing a test for a specific edge case.' })];
+}
+
+test('consolidation stats: tagging returns consolidated count', () => {
+  const out = tagFindings(consolidationStatsRows());
+  assert.equal(out.consolidatedCount, 2);
+  assert.deepEqual(out.tagged.map((row) => row.id).sort(), ['bug-1', 'test-1']);
+  assert.equal(out.tagged.some((row) => row.eliminated_by === 'dedup:cross-agent'), false);
+});
+
+test('consolidation stats: filter pipeline reports consolidated count', () => {
+  const out = applyFilterPipeline(consolidationStatsRows(), { confidence_threshold: 70 }, [], '2026-01-01T00:00:00Z');
+  assert.equal(out.stats.cross_agent_consolidated, 2);
+  assert.deepEqual(out.filtered.map((row) => row.id).sort(), ['bug-1', 'test-1']);
+  assert.equal(out.filtered.some((row) => row.eliminated_by === 'dedup:cross-agent'), false);
 });
 
 // --- #73 req 4: mixed-origin array (A degraded, B/C verified) ---------------

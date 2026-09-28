@@ -12,6 +12,7 @@ words:
   - frontmatter
   - glab
   - gitleaks
+  - goldens
   - liatrio
   - markdownlint
   - merkle
@@ -63,7 +64,6 @@ overrides:
     words:
       - autoupdate
       - commitlint
-      - GOLDENS
       - markdownlint
       # Load-bearing: the ignoreRegExpList inline-code pattern loses backtick pairing
       # after a fenced block, so `queueMicrotask` in the workflow-runtime section is

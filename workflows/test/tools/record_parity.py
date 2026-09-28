@@ -135,6 +135,10 @@ def main(argv):
     only_script = positional[0] if len(positional) > 0 else None
     only_case = positional[1] if len(positional) > 1 else None
 
+    if only_script is not None and only_script not in RECORDERS:
+        print(f"unknown recorder family: {only_script}", file=sys.stderr)
+        return 2
+
     if check_mode:
         mismatches = check(only_script, only_case)
         if mismatches:

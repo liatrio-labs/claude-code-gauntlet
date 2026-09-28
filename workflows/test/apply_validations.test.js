@@ -25,12 +25,9 @@ for (const c of VALIDATION_CASES) test(`validation: ${c.name}`, () => {
   if (c.absent) assert.equal(Object.hasOwn(findings[0], c.absent), false);
 });
 
-const VALIDATE_STAGE_CASES = [
-  { name: 'validations envelope adjusts matching finding', result: { validations: [{ id: 'f1', confidence: 85 }] }, expected: 85 },
-];
-for (const c of VALIDATE_STAGE_CASES) test(`validation stage: ${c.name}`, async () => {
-  const ctx = { agent: async () => c.result, parallel: async (thunks) => Promise.all(thunks.map((thunk) => thunk())) };
+test('validation stage: validations envelope adjusts matching finding', async () => {
+  const ctx = { agent: async () => ({ validations: [{ id: 'f1', confidence: 85 }] }), parallel: async (thunks) => Promise.all(thunks.map((thunk) => thunk())) };
   const out = await validateStage(ctx, { findings: [finding({ confidence: 40 })] });
-  assert.equal(out.findings[0].confidence, c.expected);
+  assert.equal(out.findings[0].confidence, 85);
   assert.equal(out.stats.adjusted, 1);
 });

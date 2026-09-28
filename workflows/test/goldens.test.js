@@ -57,41 +57,37 @@ function runApplyValidations(input) {
   return { findings, adjusted_count: adjustedCount, unmatched_ids: unmatchedIds };
 }
 
-function runFilterFindings(input) {
-  if (input.fn === 'normalize_field_names') {
+const FILTER_HANDLERS = {
+  normalize_field_names: (input) => {
     normalizeFieldNames(input.findings);
     return { findings: input.findings };
-  }
-  if (input.fn === 'parse_review_md') return { config: parseReviewMd(input.markdown) };
-  if (input.fn === 'build_review_config') return { config: buildReviewConfig(input.entries) };
-  if (input.fn === 'config_for_file') return { config: configForFile(input.config, input.file) };
-  if (input.fn === 'load_exclusions') return { patterns: loadExclusions(input.markdown) };
-  if (input.fn === 'apply_threshold_filter') {
+  },
+  parse_review_md: (input) => ({ config: parseReviewMd(input.markdown) }),
+  build_review_config: (input) => ({ config: buildReviewConfig(input.entries) }),
+  config_for_file: (input) => ({ config: configForFile(input.config, input.file) }),
+  load_exclusions: (input) => ({ patterns: loadExclusions(input.markdown) }),
+  apply_threshold_filter: (input) => {
     const { kept, eliminated, contestedCount } = applyThresholdFilter(input.findings, input.config);
     return { kept, eliminated, contested_count: contestedCount };
-  }
-  if (input.fn === 'apply_reachability_demotion') {
+  },
+  apply_reachability_demotion: (input) => {
     const { findings, demotedCount } = applyReachabilityDemotion(input.findings);
     return { findings, demoted_count: demotedCount };
-  }
-  if (input.fn === 'apply_injection_filter') return applyInjectionFilter(input.findings);
-  if (input.fn === 'apply_replay_injection_scan') return applyReplayInjectionScan(input.findings);
-  if (input.fn === 'apply_exclusions') {
-    return applyExclusions(input.findings, input.exclusion_patterns, input.config ?? null);
-  }
-  if (input.fn === 'apply_filter_pipeline') {
-    return applyFilterPipeline(input.findings, input.config, input.exclusion_patterns, input.generated_at);
-  }
-  if (input.fn === 'detect_disagreement') {
+  },
+  apply_injection_filter: (input) => applyInjectionFilter(input.findings),
+  apply_replay_injection_scan: (input) => applyReplayInjectionScan(input.findings),
+  apply_exclusions: (input) => applyExclusions(input.findings, input.exclusion_patterns, input.config ?? null),
+  apply_filter_pipeline: (input) => applyFilterPipeline(input.findings, input.config, input.exclusion_patterns, input.generated_at),
+  detect_disagreement: (input) => {
     const { active, suppressed, boostedCount } = detectDisagreement(input.findings);
     return { active, suppressed, boosted_count: boostedCount };
-  }
-  if (input.fn === '_route_by_dimension') return { route: routeByDimension(input.finding) };
-  if (input.fn === 'consolidate_cross_agent') {
+  },
+  _route_by_dimension: (input) => ({ route: routeByDimension(input.finding) }),
+  consolidate_cross_agent: (input) => {
     const { findings, consolidatedCount } = consolidateCrossAgent(input.findings);
     return { findings, consolidated_count: consolidatedCount };
-  }
-  if (input.fn === 'tag_findings') {
+  },
+  tag_findings: (input) => {
     const { tagged, consolidatedCount, mainCount, suggestionCount } = tagFindings(input.findings);
     return {
       tagged,
@@ -99,8 +95,12 @@ function runFilterFindings(input) {
       main_count: mainCount,
       suggestion_count: suggestionCount,
     };
-  }
-  throw new Error(`unhandled fn: ${input.fn}`);
+  },
+};
+
+function runFilterFindings(input) {
+  if (!Object.hasOwn(FILTER_HANDLERS, input.fn)) throw new Error(`unhandled fn: ${input.fn}`);
+  return FILTER_HANDLERS[input.fn](input);
 }
 
 function runApplyChallenges(input) {

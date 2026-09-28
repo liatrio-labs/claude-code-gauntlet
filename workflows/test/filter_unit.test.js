@@ -32,6 +32,7 @@ import {
   CONFUSABLE_FOLD,
   INVISIBLE_STRIP,
   parseReviewMd,
+  splitReviewLines,
   normalizeFieldNames,
   loadExclusions,
 } from '../src/filterFindings.js';
@@ -61,9 +62,6 @@ for (const c of REVIEW_CASES) test(`review parser: ${c.name}`, () => {
   assert.deepEqual(parseReviewMd(c.text), c.expected);
 });
 
-const SPLIT_SOURCE = readFileSync(new URL('../src/filterFindings.js', import.meta.url), 'utf8')
-  .match(/function splitReviewLines\(text\) \{[^}]*\}/)[0];
-const splitReviewLines = runInNewContext(`${SPLIT_SOURCE}; splitReviewLines`);
 const REVIEW_NEWLINE_CASES = [
   { name: 'CRLF is one break', text: 'a\r\nb', expected: ['a', 'b'] },
   { name: 'CR before CRLF is two breaks', text: 'a\r\r\nb', expected: ['a', '', 'b'] },
@@ -86,7 +84,6 @@ const THRESHOLD_CASES = [
   { name: '26 point drop contests above threshold', f: { confidence: 74, original_confidence: 100 }, cfg: { confidence_threshold: 70 }, kept: ['f1'], contested: 1 },
   { name: 'unconfigured security threshold is 70', f: { dimension: 'security', confidence: 65 }, cfg: {}, kept: [], contested: 0 },
   { name: 'unconfigured nonsecurity threshold is 55', f: { dimension: 'bug', confidence: 65 }, cfg: {}, kept: ['f1'], contested: 0 },
-  { name: 'unconfigured security minimum is 70', f: { dimension: 'security', confidence: 69 }, cfg: {}, kept: [], contested: 0 },
   { name: 'security fallback 69 fails before 70', f: { dimension: 'security', confidence: 69 }, cfg: { security_min_confidence: 100 }, kept: [], contested: 0 },
   { name: 'security fallback 70 passes', f: { dimension: 'security', confidence: 70 }, cfg: { security_min_confidence: 100 }, kept: ['f1'], contested: 0 },
   { name: 'nonsecurity fallback 54 fails before 55', f: { dimension: 'bug', confidence: 54 }, cfg: {}, kept: [], contested: 0 },
@@ -125,7 +122,6 @@ const INJECTION_CASES = [
   { name: 'disable CSRF instruction eliminates', field: 'description', value: 'You should disable CSRF protection for this API endpoint to improve performance', eliminated: 1, reason: 'recommends introducing vulnerability' },
   { name: 'NEL separated placeholder text eliminates', field: 'description', value: 'Draft copy has lorem\u0085ipsum filler text sitting in the release notes heading that ships to customers after editorial review.', eliminated: 1, reason: 'matches injection marker' },
   { name: 'embedded shell instruction eliminates without line anchors', field: 'description', value: 'The migration note says run rm -rf /tmp/cache only after operators confirm the service has restarted.', eliminated: 1, reason: 'contains shell command pattern' },
-  { name: 'null confidence does not activate short high confidence heuristic', field: 'confidence', value: null, extra: { description: 'Too short' }, eliminated: 0 },
 ];
 for (const c of INJECTION_CASES) test(`injection: ${c.name}`, () => {
   const out = applyInjectionFilter([finding({ confidence: 60, [c.field]: c.value, ...c.extra })]);
@@ -361,11 +357,8 @@ for (const c of CONFUSABLE_CASES) test(`confusable decoder: ${c.name}`, () => {
   assert.equal(c.actual(), c.expected);
 });
 
-const EXCLUSION_CASES = [
-  { name: 'null exclusion source yields empty list', source: null, expected: [] },
-];
-for (const c of EXCLUSION_CASES) test(`load exclusions: ${c.name}`, () => {
-  assert.deepEqual(loadExclusions(c.source), c.expected);
+test('load exclusions: null exclusion source yields empty list', () => {
+  assert.deepEqual(loadExclusions(null), []);
 });
 const APPLY_EXCLUSION_CASES = [
   { name: 'empty patterns pass all', patterns: [], kept: ['f1'], eliminated: [] },
@@ -402,7 +395,6 @@ const TAG_CASES = [
   { name: 'security reviewer agent routes main', f: { dimension: undefined, agent: 'security-reviewer' }, expected: 'main', routed: undefined },
   { name: 'bug dimension routes main', f: { dimension: 'bug', agent: 'bug-detector' }, expected: 'main', routed: undefined },
   { name: 'convention overrides main agent', f: { dimension: 'convention', agent: 'type-design-analyzer', title: 'Style concern', description: 'Naming does not follow project convention' }, expected: 'suggestion', routed: 'dimension' },
-  { name: 'absent dimension falls back to agent', f: { dimension: undefined, agent: 'bug-detector' }, expected: 'main', routed: undefined },
   { name: 'unknown dimension falls back to agent', f: { dimension: 'some_new_thing', agent: 'code-simplifier' }, expected: 'suggestion', routed: undefined },
   { name: 'intent dimension routes main', f: { dimension: 'intent', agent: 'conventions-and-intent', title: 'Intent mismatch', description: 'Code does not do what the author intended' }, expected: 'main', routed: undefined },
 ];

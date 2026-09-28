@@ -37,7 +37,7 @@
     },
     "truncation_warnings": [],
     "validation_warnings": [
-      "[bug-detector] NDJSON line 2: invalid JSON \u2014 Unexpected token 'x', \"xxx not va\"... is not valid JSON"
+      "[bug-detector] NDJSON line 2: invalid JSON"
     ]
   },
   "owner": "o",

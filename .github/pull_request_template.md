@@ -29,6 +29,6 @@ The PR title will be validated automatically.
 - [ ] JS lint passes: `python3 workflows/test/tools/biome_check.py` (downloads the pinned Biome once)
 - [ ] Bundle rebuilt and byte-exact: `node workflows/build.js` then `git diff --exit-code workflows/pipeline.js`
 - [ ] Plugin manifests valid: `claude plugin validate .` (needs the Claude Code CLI; CI runs it regardless)
-- [ ] Parity fixtures regenerated with `workflows/test/tools/record_parity.py` if a deterministic transform changed
+- [ ] Transform goldens updated with `UPDATE_GOLDENS=1 node --test workflows/test/goldens.test.js` in a reviewed diff; verify-wire fixtures updated with `workflows/test/tools/record_parity.py`
 - [ ] Linters/hooks pass: `pre-commit run --all-files`
 - [ ] Docs, skill references, and agent contracts updated if behavior changed

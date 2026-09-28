@@ -57,7 +57,7 @@ function stripMatchingQuotes(item) {
 }
 
 // Split all three newline spellings, treating CRLF as one break.
-function splitReviewLines(text) {
+export function splitReviewLines(text) {
   return text.split(/\r\n|\r|\n/);
 }
 
@@ -89,7 +89,7 @@ export function parseReviewMd(text) {
 
   if (text === undefined || text === null) return config;
 
-  // Try fenced, comment, then bare config blocks in order.
+  // Prefer code-gauntlet fenced and comment blocks, then legacy deep-review blocks.
   let blockText = '';
   for (const pattern of REVIEW_BLOCK_PATTERNS) {
     const m = pattern.exec(text);

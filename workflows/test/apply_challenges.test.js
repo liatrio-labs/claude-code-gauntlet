@@ -56,11 +56,8 @@ for (const c of RANK_CASES) test(`rank: ${c.name}`, () => {
   assert.deepEqual(rankFindings(rows).map((f) => f.id), c.expected);
 });
 
-const CHALLENGE_STAGE_CASES = [
-  { name: 'stage returns challenge envelope and timestamp', score: 80 },
-];
-for (const c of CHALLENGE_STAGE_CASES) test(`challenge stage: ${c.name}`, async () => {
-  const ctx = { agent: async () => ({ score: c.score }), parallel: async (thunks) => Promise.all(thunks.map((thunk) => thunk())) };
+test('challenge stage: stage returns challenge envelope and timestamp', async () => {
+  const ctx = { agent: async () => ({ score: 80 }), parallel: async (thunks) => Promise.all(thunks.map((thunk) => thunk())) };
   const out = await challengeStage(ctx, { findings: [finding()], generatedAt: 't' });
   assert.deepEqual(Object.keys(out).sort(), ['eliminated', 'findings', 'gaps', 'generated_at', 'stats', 'unverified']);
   assert.equal(out.findings[0].id, 'f1');

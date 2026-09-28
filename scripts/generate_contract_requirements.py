@@ -492,7 +492,7 @@ def rewrite_required_column(text, registry):
 # --- identity fences ---------------------------------------------------------
 #
 # Product identity comes from `workflows/src/registry.js`. Each generated symbol
-# has a paired marker fence, validated by `_MARKER_RE` and `find_marker_pairs`.
+# has a paired marker fence, validated by `_IDENTITY_MARKER_RE` and `find_identity_pairs`.
 # A file may carry several symbols, so a whole-file marker count is insufficient.
 
 
