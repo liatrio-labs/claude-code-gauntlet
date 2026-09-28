@@ -13,11 +13,10 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 
 from await_workflow import glob_under
-from script_io import OneLineErrorParser, fail
+from script_io import OneLineErrorParser, fail, require_head_sha
 
 PROG = "stale_truncate"
 
@@ -51,8 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--unconditional", action="store_true")
     args = parser.parse_args(argv)
 
-    if re.fullmatch(r"[0-9a-f]{4,40}", args.head_sha) is None:
-        fail(PROG, "--head-sha must be 4 to 40 lowercase hexadecimal characters")
+    require_head_sha(PROG, args.head_sha)
     if not os.path.isdir(args.output_dir):
         fail(PROG, "--output-dir must be an existing directory")
 

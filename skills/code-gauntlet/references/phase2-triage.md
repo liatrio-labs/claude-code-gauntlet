@@ -286,34 +286,13 @@ The default discovery model policy uses Sonnet except security-reviewer, which u
 
 The workflow's **summarize, discovery, and validate** agents Read a shared context file. The workflow threads exactly this path to them: `{output_dir}/code-gauntlet-context-{head_sha_short}.md`. The skill must write it there before the Phase 3 `Workflow` call, or the agents' "Read the shared context" step hits a missing file. The **challenger** is not in that list and never has been — it is structurally blind (it receives only a finding's title, description, and location and opens the code itself), so the Challenge stage is given no context path at all.
 
-Write it with `python3 -c "import json; ..."`. Contents, concatenated in this order into one `content` string:
-
-1. REVIEW.md and CLAUDE.md/AGENTS.md/QODO.md rules from `scripts/collect_project_rules.py` (2d step 2), folded into `content` with `open(path).read()` on its `--out` file inside this same `python3 -c` invocation. The file already contains review-rules blocks before project-rules blocks; never retype it.
-2. Risk classification (2e) and AI-generated-code status (2k).
-3. The full diff inside `<untrusted-code-content>` tags. Use raw diff lines; never substitute a summary for changed content.
-
-**Do not guard the read in item 1.** The `open(path).read()` of the collector's `--out` must be unconditional: no existence check, try/except, or empty-string fallback. A missing file must fail the context write. A successful collection with neither source kind writes `project rules: none collected (REVIEW.md, CLAUDE.md, AGENTS.md, QODO.md)`, not an empty file. A failed collection is reported by its receipt and must not proceed as successful discovery.
-**Build all three items into `content` before measuring and writing it.** `contextLines` and `contextChars` must describe that complete string, including every collected rule block. Never append a block after measurement. The measurement fields may degrade to a disclosed gap; a missing collector artifact cannot silently become a rules-free context.
-The existing transcription evidence for model-copied project rules also applies to REVIEW.md text. The shared-context fold reads the collector's text from disk; the raw workflow waist still passes text by value. No static wording pin proves a model invoked the collector or copied the waist faithfully.
+Use the command in `SKILL.md` under "Write the shared agent context file" and `scripts/write_shared_context.py`; pass the 2e risk classification and 2k AI-generated-code status as Markdown on stdin.
 
 The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to `renderReport()` for its Change Context section. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record. (The emission machinery still ships — its removal is the deferred S8 migration.)
 
 ### Measure it (issue #48)
 
-A single `Read` of this file returns only **part** of it and carries **no truncation notice** — the partial result is indistinguishable from a complete one. Measured on run `wf_cef39739-577`: all 7 discovery agents' first `Read` of a 95,057-byte / 2,028-line context file came back as 58,145 chars ending at line 1083. Six agents inferred the cutoff and paginated to the end; `security-reviewer` did not, and reviewed roughly the first half of the diff while returning `complete: true`.
-
-The workflow has no disk, so it cannot measure the file. The skill must, **in the same `python3 -c` invocation that writes it**, and stamp the result into the args waist as `contextLines` / `contextChars`:
-
-```python
-lines = content.count("\n") + (0 if content.endswith("\n") else 1)
-print(json.dumps({"contextLines": lines, "contextChars": len(content)}))
-```
-
-`contextLines` counts as the Read tool's `cat -n` numbering does: a file with no trailing newline still displays its final partial line, so it counts. Do **not** substitute `wc -l`, which counts newline *terminators* and therefore reports one fewer for exactly that case — an undercount by one drops the file's last line from every agent's read plan, silently. `contextChars` is `len(content)` and is advisory: it only narrows the per-call chunk size when lines are long, so a small code-point-vs-UTF-16 divergence between the runtimes is harmless.
-
-If the file came out **empty**, omit both fields — test `not content`, not `lines == 0`: the formula returns `1` for empty content (`"".count("\n") + 1`), so a naive zero-check never fires and the waist would happily accept `{"contextLines": 1, "contextChars": 0}`, telling every agent the shared context is a single line. An empty shared context is a Phase 2 bug to fix, not a value to pass on.
-
-`contextReadPlan` (`workflows/src/stages.js`) turns the pair into the exact `Read(offset, limit)` calls covering the file, and `sharedContextLine` enumerates them in the Summarize, Discover, and Validate prompts. **Both fields are optional**: stamp neither and every prompt degrades to fixed 750-line stepping with no known terminus, and the run reports a `context_unmeasured` gap. That is a real degradation — it puts end-detection back in the agent's hands — so it is disclosed, never silent. Optionality exists because this step is model-executed and can be skipped; it is not a licence to skip it. Stamping `contextChars` without `contextLines` is rejected at the waist (chars alone cannot size a line-offset plan), as is any non-positive or fractional value.
+Stamp the script receipt verbatim. Both waist fields are optional only so a skipped step degrades to a disclosed `context_unmeasured` gap, never a licence to skip; `contextChars` without `contextLines` is refused at the waist. `contextReadPlan` and `sharedContextLine` (`workflows/src/stages.js`) turn the pair into the Read calls.
 
 ---
 
@@ -388,7 +367,7 @@ The Challenge stage applies the receipt-backed tier and cap before Phase 8 posts
 **Other inputs (optional unless noted):**
 
 - `scopeAnswer` — `"light"` or `"full"`, the 2e trivial-scope gate's answer, stamped ONLY when that gate actually asked (every changed file low-risk and `changedLines < 50`; see 2e). Omit otherwise — the workflow refuses a `scopeAnswer` incoherent with `riskTable`/`changedLines` (any present `scopeAnswer` when the riskTable is not light-eligible, or a light-eligible riskTable with no `scopeAnswer` at all).
-- `contextLines` / `contextChars` — the shared context file's measured size, from the write step above. **Not provenance — consumed.** `contextReadPlan` turns them into the exact `Read` calls the Summarize/Discover/Validate prompts enumerate, so the agent is told which calls to make instead of having to notice an unannounced truncation. Both optional (absent ⇒ count-free read-to-end wording); `contextChars` requires `contextLines`; both must be positive integers.
+- `contextLines` / `contextChars` — the shared context file's measured size from `write_shared_context.py`'s receipt. **Not provenance — consumed.** `contextReadPlan` turns them into the exact `Read` calls the Summarize/Discover/Validate prompts enumerate, so the agent is told which calls to make instead of having to notice an unannounced truncation. Both optional (absent ⇒ count-free read-to-end wording); `contextChars` requires `contextLines`; both must be positive integers.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
 - `reviewMd` - `[{ path, text }, ...]` in collector receipt order (2d step 3), the raw text of every REVIEW.md listed by the receipt. Never hand-parse it here: the workflow's `resolveReviewConfig` (`workflows/src/args.js`) builds root and subtree layers before the Filter stage selects settings by finding file. An empty array is a legal, authoritative "discovered nothing."
