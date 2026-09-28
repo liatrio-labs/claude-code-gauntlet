@@ -53,8 +53,9 @@ obvious from the diff alone; the full engineering rules live in `AGENTS.md`.
 - **A rule stated in prose that could be enforced by code is a finding.** Prompt text, agent
   contracts and instruction files are the fallback for what cannot be made structural, not the
   first fix.
-- **Cross-runtime lists must change together.** `_DELTA_FIELDS` and `DELTA_KEYS` are one list in
-  two runtimes. A change to one side only is a defect even though both files still pass their own
+- **Cross-runtime lists must change together.** Python `_DELTA_FIELDS` maps to JS
+  `DELTA_VALUE_KEYS`; `DELTA_KEYS` also includes structural `id` and `verified`. A change to
+  one value list only is a defect even though both files still pass their own
   tests.
 - **One implementation per mechanism.** A second copy of a mechanism that already has a home is a
   finding.

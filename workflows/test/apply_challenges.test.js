@@ -49,7 +49,6 @@ const RANK_CASES = [
   { name: 'severity order', rows: [['low', 'low', 90], ['critical', 'critical', 70], ['high', 'high', 80], ['medium', 'medium', 85]], expected: ['critical', 'high', 'medium', 'low'] },
   { name: 'longer description breaks a tie', rows: [['short', 'high', 80, 'Short.'], ['long', 'high', 80, 'A much longer description with more detail.']], expected: ['long', 'short'] },
   { name: 'higher risk level breaks a tie', rows: [['low-risk', 'high', 80, 'Same', 2], ['high-risk', 'high', 80, 'Same', 8]], expected: ['high-risk', 'low-risk'] },
-  { name: 'absent risk falls back to description length', rows: [['short', 'high', 80, 'Short.'], ['long', 'high', 80, 'A much longer description with more detail.']], expected: ['long', 'short'] },
   { name: 'risk level beats description length', rows: [['low-risk-long', 'high', 80, 'A very long description indeed for this finding.', 1], ['high-risk-short', 'high', 80, 'Short.', 9]], expected: ['high-risk-short', 'low-risk-long'] },
 ];
 for (const c of RANK_CASES) test(`rank: ${c.name}`, () => {

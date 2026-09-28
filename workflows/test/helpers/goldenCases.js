@@ -23,7 +23,9 @@ export function loadCases(script) {
       name: relative(base, caseDir),
       expectedPath: join(caseDir, 'expected.json'),
       input: JSON.parse(readFileSync(join(caseDir, 'input.json'), 'utf8')),
-      expected: JSON.parse(readFileSync(join(caseDir, 'expected.json'), 'utf8')),
+      expected: existsSync(join(caseDir, 'expected.json'))
+        ? JSON.parse(readFileSync(join(caseDir, 'expected.json'), 'utf8'))
+        : undefined,
     }));
 }
 
@@ -38,20 +40,8 @@ function pythonString(value) {
     else if (code === 0x0a) out += '\\n';
     else if (code === 0x0c) out += '\\f';
     else if (code === 0x0d) out += '\\r';
-    else if (code >= 0x20 && code <= 0x7f) out += value[i];
-    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length) {
-      const low = value.charCodeAt(i + 1);
-      if (low >= 0xdc00 && low <= 0xdfff) {
-        out += `\\u${code.toString(16).padStart(4, '0')}\\u${low.toString(16).padStart(4, '0')}`;
-        i += 1;
-      } else {
-        out += `\\u${code.toString(16).padStart(4, '0')}`;
-      }
-    } else if (code >= 0xd800 && code <= 0xdfff) {
-      out += `\\u${code.toString(16).padStart(4, '0')}`;
-    } else {
-      out += `\\u${code.toString(16).padStart(4, '0')}`;
-    }
+    else if (code >= 0x20 && code < 0x7f) out += value[i];
+    else out += `\\u${code.toString(16).padStart(4, '0')}`;
   }
   return `${out}\"`;
 }

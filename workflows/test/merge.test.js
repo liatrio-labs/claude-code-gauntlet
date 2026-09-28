@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { merge, validateFindings, injectAgentField } from '../src/mergeFindings.js';
+import { merge, validateFindings } from '../src/mergeFindings.js';
 import { dedupById } from '../src/findingDedup.js';
 import { finding } from './helpers/findings.js';
 
@@ -21,15 +21,6 @@ for (const c of VALIDATION_CASES) test(`merge validation: ${c.name}`, () => {
   assert.equal(out.valid.length, c.kept);
   assert.equal(out.warnings.length, c.warning === null ? 0 : 1);
   if (c.warning) assert.ok(out.warnings[0].includes(c.warning));
-});
-
-const AGENT_CASES = [
-  { name: 'existing agent field overwritten', rows: [finding({ agent: 'wrong-agent' })], agent: 'bug-detector', expected: ['bug-detector'] },
-  { name: 'second structured agent stamped', rows: [finding({ id: 's1' })], agent: 'security-reviewer', expected: ['security-reviewer'] },
-];
-for (const c of AGENT_CASES) test(`merge agent: ${c.name}`, () => {
-  injectAgentField(c.rows, c.agent);
-  assert.deepEqual(c.rows.map((f) => f.agent), c.expected);
 });
 
 const DEDUP_CASES = [

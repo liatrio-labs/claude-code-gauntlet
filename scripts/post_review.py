@@ -1073,7 +1073,7 @@ _FIX_REASONS = frozenset(
 # unconditionally. The same two numbers bound the field upstream in
 # workflows/src/filterFindings.js; change both sites together.
 #
-# ONE definition of both measures, in all three homes: they are taken on the
+# ONE definition of both measures, in both homes: they are taken on the
 # NORMALIZED text (`_fix_code_text` — the single terminating newline removed).
 # Lines are the elements of that text's `split("\n")`; chars are its length in
 # CODE POINTS. Measuring the raw string instead makes a 100-line patch count 101.

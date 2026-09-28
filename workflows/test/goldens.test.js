@@ -109,6 +109,7 @@ function runApplyChallenges(input) {
 
 function assertOrWrite(testCase, result) {
   if (UPDATE_GOLDENS) writeGolden(testCase, result);
+  else if (testCase.expected === undefined) assert.fail(`missing golden: ${testCase.expectedPath}`);
   else assert.deepEqual(result, testCase.expected);
 }
 

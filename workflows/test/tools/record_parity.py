@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record verify-wire goldens from the live Python verifier.
+"""Record verify-wire goldens with Python and the JS encoder for slice_inline.
 
 Usage: python3 workflows/test/tools/record_parity.py [--check] [<script>] [<case>]
 """

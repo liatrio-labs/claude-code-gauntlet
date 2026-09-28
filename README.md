@@ -142,7 +142,7 @@ A review runs in eight phases. Phases 1–2 happen in your session; phases 3–8
 7. **Blind challenge** — gauntlet stage 5
 8. **Report & deliver** — the workflow renders the report, persists all artifacts, and selects the delivery set deterministically (gauntlet stage 6); `post_review.py` prepares and posts the selected text
 
-Every merge, filter, and ranking decision inside that program is a pure function, not a model reconstructing JSON. The JS transforms are held at parity with their retained Python twins by frozen golden fixtures, and `workflows/pipeline.js` is a generated, dependency-free bundle byte-verified against a fresh build in CI. Each phase persists its own output, so an interrupted run resumes from the last completed phase instead of starting over, and a failed agent nulls out without taking its siblings down.
+Every merge, filter, and ranking decision inside that program is a pure function, not a model reconstructing JSON. The JS transforms are pinned by JavaScript-owned goldens; the verify wire retains cross-runtime parity fixtures. `workflows/pipeline.js` is a generated, dependency-free bundle byte-verified against a fresh build in CI. Each phase persists its own output, so an interrupted run resumes from the last completed phase instead of starting over, and a failed agent nulls out without taking its siblings down.
 
 The rationale behind these choices — concern decomposition, blind challenge, context-pulling, hierarchical config, injection defense, actionability filtering — is documented per-decision in [`docs/research/`](docs/research/README.md).
 
@@ -157,9 +157,9 @@ claude-code-gauntlet/
 │                              #   pipeline.js (generated bundle), test/ (node --test)
 ├── scripts/                   # Stdlib-only Python: verify_findings.py and
 │                              #   post_review.py are invoked by the pipeline; the
-│                              #   transform scripts are parity twins of the JS stages
-├── tests/                     # pytest: scripts, JS/Python parity (frozen fixtures),
-│                              #   bundle freshness
+│                              #   verify-wire logic retains JS/Python parity
+├── tests/                     # pytest: scripts, verify-wire parity fixtures,
+│                              #   bundle freshness; JS transform goldens live under tests/fixtures/
 ├── bench/                     # Benchmark harness: golden PRs, pinned judge, anchors,
 │                              #   ledger, report generation
 ├── skills/

@@ -33,7 +33,7 @@ export const REVIEW_SETTING_KEYS = [
   'security_min_confidence',
   'severity_threshold',
 ];
-// An absent confidence setting uses 55 for non-security findings and 70 for security findings; explicit settings apply to both.
+// An absent confidence setting uses 55 for non-security findings and 70 for security findings; explicit confidence_threshold applies to both, while security_min_confidence applies only to security.
 const DEFAULT_CONFIDENCE_THRESHOLD = 70;
 const DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55;
 const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
@@ -1012,19 +1012,16 @@ const SUGGESTION_DIMENSIONS = new Set(['comment_accuracy', 'comment-accuracy']);
 const MAIN_DIMENSIONS = new Set(['bug', 'security', 'cross_file_impact', 'intent']);
 const CONDITIONAL_SUGGESTION_DIMENSIONS = new Set(['test_coverage', 'convention', 'type_design']);
 
-// Keywords that promote convention/type_design findings from suggestion to
-// main. Ported verbatim from _FUNCTIONAL_VIOLATION_KEYWORDS.
+// Keywords that promote convention/type_design findings from suggestion to main.
 const FUNCTIONAL_VIOLATION_KEYWORDS =
   /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
 
-// Keywords that promote type_design findings specifically. Ported verbatim
-// from _TYPE_SAFETY_BUG_KEYWORDS.
+// Keywords that promote type_design findings specifically.
 const TYPE_SAFETY_BUG_KEYWORDS =
   /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
 
 // Keyword patterns indicating a test-analyzer finding describes a functional
-// correctness bug that EXISTS TODAY (vs. a coverage gap). Ported verbatim,
-// in order, from _TEST_CORRECTNESS_PATTERNS -- shared by routeByDimension's
+// correctness bug that EXISTS TODAY (vs. a coverage gap). Shared by routeByDimension's
 // test_coverage branch and isTestCorrectnessFinding's promotion check.
 const TEST_CORRECTNESS_PATTERNS = [
   /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,

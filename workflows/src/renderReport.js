@@ -216,7 +216,7 @@ export function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
   return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
 }
 
-// Fold report prose under the same fence and length constraints as posted review text.
+// Twin of `_fold_review_body` in `scripts/post_review.py`.
 export function openProseFence(text) {
   const value = reportAsText(text);
   let state = null;

@@ -10,7 +10,7 @@ scripts (`scripts/`) for verification, posting, and parity. Contributions genera
 
 - Review pipeline stages in the workflow bundle source (`workflows/src/`) — see
   [The v3 workflow pipeline](#the-v3-workflow-pipeline-js)
-- Bug fixes in the retained Python scripts (`scripts/`), including the parity twins of the JS stages
+- Bug fixes in the retained Python scripts (`scripts/`)
 - New or improved review agents (`agents/`)
 - Skill orchestration improvements (`skills/`)
 - Benchmark harness, golden set, and measurement tooling (`bench/`)

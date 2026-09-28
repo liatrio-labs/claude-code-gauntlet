@@ -738,7 +738,7 @@ class TestDocsRegistry(unittest.TestCase):
             ("agents/*.md", None),
             ("workflows/AGENTS.md#The verify boundary", None),
             (
-                'workflows/test/filter_unit.test.js::"#244/coerce-table: pyIntOrNull/lineBucket shared cross-twin table"',
+                'workflows/test/filter_unit.test.js::"#244/coerce-table: pyIntOrNull/lineBucket behavioral table"',
                 None,
             ),
             (

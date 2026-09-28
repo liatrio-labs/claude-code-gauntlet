@@ -43,8 +43,8 @@ takes coordinated edits across N files, fix the shape rather than documenting th
 - **Shape of new and touched code.** A JSON wire shape is a `TypedDict`; an internal record is a
   frozen slotted dataclass; a closed vocabulary is a `Literal`. A function unless state or
   polymorphism earns a class. One implementation per mechanism.
-- **Tests are pytest functions**: fixtures, `parametrize` tables, builders that produce inputs
-  only. Prove a behaviour once, at the boundary callers use.
+- **New and rewritten tests are pytest functions**: fixtures, `parametrize` tables, builders that
+  produce inputs only. Prove a behaviour once, at the boundary callers use.
 - **Comments say why:** a constraint, a measurement and how it was taken, or a twin. No history
   or issue numbers in code.
 

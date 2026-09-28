@@ -6,4 +6,5 @@ with `UPDATE_GOLDENS=1 node --test workflows/test/goldens.test.js` and review th
 resulting diff.
 
 `verify_deltas`, `slice_input_proof`, and `slice_inline` are verify-wire fixtures
-recorded by `workflows/test/tools/record_parity.py` from the live Python verifier.
+recorded by `workflows/test/tools/record_parity.py`. The Python recorder uses
+the JavaScript encoder for `slice_inline`.

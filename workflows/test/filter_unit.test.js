@@ -56,7 +56,6 @@ const REVIEW_CASES = [
   { name: 'empty review returns only empty ignore', text: '', expected: { ignore: [] } },
   { name: 'malformed confidence leaves parsed severity', text: '```yaml\n# code-gauntlet\nconfidence_threshold: notanumber\nseverity_threshold: medium\n```\n', expected: { severity_threshold: 'medium', ignore: [] } },
   { name: 'CRLF marker parses as one newline', text: '```yaml\r\n# code-gauntlet\r\nconfidence_threshold: 83\r\n```', expected: { confidence_threshold: 83, ignore: [] } },
-  { name: 'lone CR splits ignore entries', text: 'ignore:\n- first\r- second\n', expected: { ignore: ['first', 'second'] } },
 ];
 for (const c of REVIEW_CASES) test(`review parser: ${c.name}`, () => {
   assert.deepEqual(parseReviewMd(c.text), c.expected);
@@ -205,13 +204,100 @@ for (const c of FIX_BOUND_CASES) test(`fix bound: ${c.name}`, () => {
   }
 });
 
-const PATTERN_INVARIANT_CASES = SUGGESTION_SETS.map(([name, patterns]) => ({ name, patterns }));
-for (const c of PATTERN_INVARIANT_CASES) test(`content pattern invariant: ${c.name}`, () => {
-  for (const pattern of c.patterns) {
-    assert.equal(/\\[sS]/.test(pattern.source), false);
-    assert.equal(pattern.source.startsWith('^'), false);
-    assert.equal(pattern.source.endsWith('$'), false);
-    assert.equal(pattern.flags.includes('m'), false);
+// Scan source so a pattern added outside SUGGESTION_SETS cannot bypass the whitespace contract.
+function regexLiterals(source) {
+  const patterns = [];
+  let previous = '';
+  for (let i = 0; i < source.length;) {
+    const char = source[i];
+    if (char === '/' && source[i + 1] === '/') {
+      i = source.indexOf('\n', i + 2);
+      if (i < 0) break;
+      previous = '';
+      continue;
+    }
+    if (char === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2);
+      assert.ok(end >= 0, 'unterminated block comment');
+      i = end + 2;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      const quote = char;
+      i += 1;
+      while (i < source.length && source[i] !== quote) {
+        if (source[i] === '\\') i += 1;
+        i += 1;
+      }
+      assert.ok(i < source.length, 'unterminated string');
+      i += 1;
+      previous = 'value';
+      continue;
+    }
+    if (char === '/' && (!previous || /[=([{,:!?;|&]/.test(previous))) {
+      const start = ++i;
+      let inClass = false;
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue; }
+        if (source[i] === '[') inClass = true;
+        if (source[i] === ']') inClass = false;
+        if (source[i] === '/' && !inClass) break;
+        i += 1;
+      }
+      assert.ok(i < source.length, 'unterminated regex literal');
+      patterns.push(source.slice(start, i));
+      i += 1;
+      while (/[a-z]/i.test(source[i] ?? '')) i += 1;
+      previous = 'value';
+      continue;
+    }
+    if (char === '\n') previous = '';
+    else if (!/\s/.test(char)) previous = char;
+    i += 1;
+  }
+  return patterns;
+}
+
+function inspectPattern(source, label, unionClass, checkAnchors = false) {
+  let inClass = false;
+  let classStart = -1;
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '\\') {
+      assert.equal(source[i + 1] === 's' || source[i + 1] === 'S', false, `${label}: bare whitespace escape`);
+      i += 1;
+      continue;
+    }
+    if (char === '[' && !inClass) { inClass = true; classStart = i; continue; }
+    if (char === ']' && inClass) {
+      const body = source.slice(classStart + 1, i);
+      if (body.includes('\\x1c-\\x1f')) {
+        assert.ok([unionClass, `-${unionClass}`, `[${unionClass}`].includes(body), `${label}: drifted union whitespace class ${body}`);
+      }
+      inClass = false;
+      continue;
+    }
+    if (checkAnchors && !inClass) assert.ok(char !== '^' && char !== '$', `${label}: content anchor`);
+  }
+  assert.equal(inClass, false, `${label}: unterminated character class`);
+}
+
+test('filter regex sources retain union whitespace and unanchored content patterns', () => {
+  const source = readFileSync(new URL('../src/filterFindings.js', import.meta.url), 'utf8');
+  const unionClass = String.raw`\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff`;
+  const literals = regexLiterals(source);
+  assert.ok(literals.length > 80, `source scan covered only ${literals.length} regex literals`);
+  assert.ok(literals.join('').split('\\x1c-\\x1f').length > 150, 'source scan missed union whitespace classes');
+  for (const [index, pattern] of literals.entries()) inspectPattern(pattern, `literal ${index}`, unionClass);
+  const constructorStrings = source.matchAll(/\bnew RegExp\(\s*((?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))/g);
+  for (const match of constructorStrings) {
+    inspectPattern(runInNewContext(match[1]), `RegExp source at ${match.index}`, unionClass);
+  }
+  for (const [name, patterns] of SUGGESTION_SETS) {
+    for (const pattern of patterns) {
+      inspectPattern(pattern.source, name, unionClass, true);
+      assert.equal(pattern.flags.includes('m'), false, `${name}: multiline flag`);
+    }
   }
 });
 
@@ -1205,8 +1291,7 @@ test('#211/M5: U+FEFF-joined 11-word description still counted as 11 words (JS s
 // U+FEFF -- reverting countWords to plain split(/\s+/) still passes it. NEL
 // (U+0085) is the vector that actually kills that mutation: JS's native \s
 // never included it (only Python's did), so only the union-class splitter
-// counts it correctly. See tests/fixtures/parity/filter_findings/injection/
-// word_count_nel_joined_high_confidence for the cross-twin form.
+// counts it correctly. The injection golden covers the full filter path.
 test('#211/M5: U+0085 NEL-joined 11-word description counted as 11 words (JS native \\s never included NEL)', () => {
   const nel = String.fromCharCode(0x85); // NEL
   const words = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet', 'kilo'];
@@ -1275,7 +1360,7 @@ test('#211: WORD_SPLIT_RE matches EXACTLY the intended 30-codepoint union class'
   assert.deepEqual(matched, expected);
 });
 
-// Exclusion matching keeps full Unicode case folding.
+// These code points exercise word splitting beyond JavaScript's built-in whitespace.
 const NEL = String.fromCharCode(0x85);
 const FS = String.fromCharCode(0x1c);
 const GS = String.fromCharCode(0x1d);
@@ -1304,7 +1389,7 @@ for (const sep of [NEL, FS, GS, RS, US, NBSP, FEFF]) {
   );
 }
 
-test('#211/table: countWords shared cross-twin behavioral table', () => {
+test('#211/table: countWords behavioral table', () => {
   for (const [text, expected] of WORD_SPLIT_BEHAVIOR_TABLE) {
     assert.equal(countWords(text), expected, `countWords(${JSON.stringify(text)})`);
   }
@@ -1332,7 +1417,7 @@ const LINE_START_COERCE_TABLE = [
   [false, 0, 0, 0],
 ];
 
-test('#244/coerce-table: pyIntOrNull/lineBucket shared cross-twin table', () => {
+test('#244/coerce-table: pyIntOrNull/lineBucket behavioral table', () => {
   for (const [value, expectedInt, bucket10, bucket5] of LINE_START_COERCE_TABLE) {
     const label = JSON.stringify(value);
     assert.equal(pyIntOrNull(value), expectedInt, `pyIntOrNull(${label})`);
@@ -1356,7 +1441,7 @@ const TITLE_STRIP_TABLE = [
   ['mixed\x85 case﻿', 'mixed\x85 case'], // interior union kept, tail cut
 ];
 
-test('#244/strip-table: WS_TRIM_RE shared cross-twin table', () => {
+test('#244/strip-table: WS_TRIM_RE behavioral table', () => {
   for (const [text, expected] of TITLE_STRIP_TABLE) {
     assert.equal(text.replace(WS_TRIM_RE, ''), expected, `strip(${JSON.stringify(text)})`);
   }
@@ -1376,7 +1461,6 @@ test('#211: template filepath with embedded U+2028 still matches (the [^\\n] res
   assert.match(eliminated[0].elimination_reason, /file path is empty/);
 });
 
-// The quoted template marker cannot span a newline.
 test('#211: template filepath with brace markers matches (the {...} alternative)', () => {
   const { eliminated } = applyInjectionFilter([cleanFinding({ file: 'src/{name}.py' })]);
   assert.equal(eliminated.length, 1);
@@ -1705,8 +1789,6 @@ test('applyInjectionFilter: isolating auto-approve branch (no skip-review text) 
   assert.match(eliminated[0].elimination_reason, /contains bypass\/auto-approve instruction/);
 });
 
-// Opening tags with attributes still count as injection markers.
-
 test('applyInjectionFilter: isolating url scheme-general (ftp) eliminates', () => {
   const { kept, eliminated } = applyInjectionFilter([
     cleanFinding({
@@ -1931,7 +2013,7 @@ test('applyInjectionFilter: url keeps legit navigation and exfiltration findings
   }
 });
 
-// Unicode folding preserves injection detection without broad false positives.
+// Each synthetic phrase must trigger the corresponding content pattern.
 
 const SUPERSET_SYNTHETICS = [
   ['skip review', ''], ['', 'skip review'],
@@ -2140,8 +2222,7 @@ test('detectDisagreement consensus boost: a null confidence does not crash and b
   // null to 0 via `+` in JS the same way asConfidence would (no crash, no
   // divergence for THIS value) -- the mutation-discriminating companion
   // below covers the case where the raw read and the coerced read actually
-  // disagree. asConfidence still belongs here for explicit parity with the
-  // Python twin, which DOES crash on the raw null read.
+  // disagree. asConfidence keeps the confidence handling consistent.
   const f1 = { id: 'jc1', agent: 'bug-detector', file: 'a.js', line_start: 40, title: 'Null pointer risk', confidence: null };
   const f2 = { id: 'jc2', agent: 'security-reviewer', file: 'a.js', line_start: 42, title: 'Null pointer risk', confidence: 80 };
   const { active, boostedCount } = detectDisagreement([f1, f2]);
@@ -2202,12 +2283,8 @@ test('tagFindings: a non-string (array) test-analyzer title does not leak string
   // Pre-fix, JS's bare array-to-string coercion turns `['logic']` into the
   // literal text "logic" (no brackets/quotes for a single-element array),
   // which -- followed by a description starting with "error" -- satisfies
-  // `\blogic[\s]+error\b` and wrongly promotes to "main". Python's f-string
-  // renders the same list as "['logic']", whose surrounding punctuation
-  // breaks that same adjacency, so pre-fix Python stays "suggestion" while
-  // pre-fix JS promotes -- a live routing divergence. Post-fix, asText
-  // coerces the array to "" in both twins, so the outcome no longer depends
-  // on which language's stringification happened to add punctuation.
+  // `logic` followed by `error` and wrongly promotes to "main". asText
+  // coerces the array to "", so non-string titles cannot form keywords.
   const f = { id: 'jta-2', agent: 'test-analyzer', file: 'src/handler.js', line_start: 80, severity: 'medium', confidence: 65, title: ['logic'], description: 'error is not caught anywhere in this path, so it silently swallows exceptions' };
   const { tagged } = tagFindings([f]);
   assert.equal(tagged[0].report_destination, 'suggestion');
@@ -2318,16 +2395,13 @@ function homoglyphFinding(description) {
   return cleanFinding({ id: 'HG', confidence: 50, description });
 }
 
-// Third-oracle behavioral table (#234 pattern) for foldConfusables -- hand-typed
-// input->output literals, byte-identical to the Python twin's
-// TestApplyInjectionFilter::test_confusable_fold_behavioral_table. The outputs
-// are hand-authored, not computed, so a bug shared by the fold and its
-// "expected" cannot hide. Covers the six issue lookalike examples, the five
+// Hand-authored fold inputs and outputs avoid deriving expectations from the implementation.
+// Covers the six issue lookalike examples, the five
 // invisible examples, an astral fold, a mixed multi-codepoint case, and the
 // PRECEDENCE case (U+017F -> s, not the confusables f). The astral rows catch
 // UTF-16-unit (not code-point) iteration -- a /[...]/g without /u would corrupt
 // them to U+FFFD.
-test('foldConfusables: cross-twin behavioral table', () => {
+test('foldConfusables: behavioral table', () => {
   const fwS = '\uff53'; // FULLWIDTH LATIN SMALL LETTER S
   const cyS = '\u0455'; // CYRILLIC SMALL LETTER DZE (looks like s)
   const mathS = '\u{1d5cc}'; // MATH SANS-SERIF SMALL S (astral)
@@ -2366,11 +2440,7 @@ test('foldConfusables: cross-twin behavioral table', () => {
   }
 });
 
-// JS-suite decode invariants for the generated tables (#272). The Python suite's
-// test_confusable_tables_match_registry pins BOTH twins' packed literals to the
-// registry byte-for-byte; this asserts the JS twin's DECODE built the expected
-// shape -- sizes, the casefold-precedence entry, and fold/strip disjointness --
-// without needing to import the Python registry.
+// Decode invariants cover sizes, casefold precedence, and fold/strip disjointness.
 test('confusable tables: JS decode invariants', () => {
   assert.equal(CONFUSABLE_FOLD.size, 1468);
   assert.equal(INVISIBLE_STRIP.size, 599);

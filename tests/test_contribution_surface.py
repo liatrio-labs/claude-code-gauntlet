@@ -1387,8 +1387,6 @@ def _copy_tracked_tree(destination: Path) -> None:
         if not relative:
             continue
         source = REPO / relative
-        if not source.is_file():
-            continue
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)

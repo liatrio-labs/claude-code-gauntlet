@@ -130,7 +130,7 @@ def _tracked_bootstrap_modules():
         if not raw_path:
             continue
         relpath = raw_path.decode("utf-8")
-        if relpath.startswith(BOOTSTRAP_ROOTS) and (REPO / relpath).is_file():
+        if relpath.startswith(BOOTSTRAP_ROOTS):
             yield relpath
 
 
