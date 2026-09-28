@@ -1659,7 +1659,7 @@ const STAGE_DEFAULTS = {
   validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 };
-const MODEL_IDS = { sonnet: 'claude-sonnet-5', opus: 'claude-opus-4-8', haiku: 'claude-haiku-4-5-20251001' };
+const MODEL_IDS = { sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' };
 const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
 const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
 const conditionalSchemaActive = (policy) => {

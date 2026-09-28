@@ -307,7 +307,7 @@ export const STAGE_DEFAULTS = {
 // deployment mapping (ANTHROPIC_DEFAULT_*_MODEL). The [1m]-cascade the pin exists to stop
 // was measured on first-party variants; on a third-party provider alias resolution is the
 // correct behavior, not the bug. So: pin full IDs first-party, emit bare aliases elsewhere.
-const MODEL_IDS = { sonnet: 'claude-sonnet-5', opus: 'claude-opus-4-8', haiku: 'claude-haiku-4-5-20251001' };
+const MODEL_IDS = { sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' };
 // policy.provider === 'firstParty' (or absent — older waists predate the field) pins;
 // ANY other value emits the alias untouched. Unknown values are deliberately not an error
 // here: the alias is the one spelling that resolves on every provider, so alias-through is

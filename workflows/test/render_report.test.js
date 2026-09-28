@@ -798,7 +798,7 @@ test('T-METH-MODELS: per-stage models pin first-party IDs and use provider alias
   const firstPartyPolicy = { tier: 'optimized', provider: 'firstParty', gateway: false };
   const firstPartyRow = `| Per-stage models | ${expectedPerStageModels(firstPartyPolicy.provider)} |`;
   assert.equal(methodologyRow(rendered({ policy: firstPartyPolicy }), 'Per-stage models'), firstPartyRow);
-  assert.ok(firstPartyRow.includes('bug-detector=claude-sonnet-5'));
+  assert.ok(firstPartyRow.includes('bug-detector=claude-sonnet-5-5'));
 
   const bedrockPolicy = { tier: 'optimized', provider: 'bedrock', gateway: false };
   assert.equal(

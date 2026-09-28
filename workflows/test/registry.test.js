@@ -10,15 +10,15 @@ test('conventions-and-intent covers 3 dimensions', () => {
   assert.deepEqual(dims.sort(), ['comment_accuracy', 'convention', 'intent']);
 });
 test('security-reviewer default is opus (S5 deviation)', () => {
-  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', {}).model, 'claude-opus-4-8');
+  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', {}).model, 'claude-opus-5-5');
 });
 test('discovery default is sonnet', () => {
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', {}).model, 'claude-sonnet-5');
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', {}).model, 'claude-sonnet-5-5');
 });
 test('challenger resolves sonnet — the single benchmarked policy; no mode flag changes it (fable mode is roadmap #17 V3.2)', () => {
-  assert.equal(resolvePolicy('code-gauntlet:challenger', {}).model, 'claude-sonnet-5');
+  assert.equal(resolvePolicy('code-gauntlet:challenger', {}).model, 'claude-sonnet-5-5');
   // A stray legacy frontier flag in opts must be ignored, not resurrect an upgrade path.
-  assert.equal(resolvePolicy('code-gauntlet:challenger', { frontier: true, frontierModelId: 'claude-fable-5' }).model, 'claude-sonnet-5');
+  assert.equal(resolvePolicy('code-gauntlet:challenger', { frontier: true, frontierModelId: 'claude-fable-5' }).model, 'claude-sonnet-5-5');
 });
 test('CLAUDE_CODE_SUBAGENT_MODEL overrides everything', () => {
   const r = resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5' });
@@ -85,20 +85,20 @@ test('PR identity registry pins platform permalink templates and scalar patterns
 // session pinned to 'sonnet[1m]' cascaded the [1m] variant into every agent whose policy
 // said the bare alias 'sonnet' — zero plain-sonnet rows in the per-model usage table).
 test('resolvePolicy pins full model IDs — no bare aliases can cascade a session variant', () => {
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector').model, 'claude-sonnet-5');
-  assert.equal(resolvePolicy('code-gauntlet:security-reviewer').model, 'claude-opus-4-8');
-  assert.equal(resolvePolicy('code-gauntlet:executor').model, 'claude-sonnet-5');
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector').model, 'claude-sonnet-5-5');
+  assert.equal(resolvePolicy('code-gauntlet:security-reviewer').model, 'claude-opus-5-5');
+  assert.equal(resolvePolicy('code-gauntlet:executor').model, 'claude-sonnet-5-5');
 });
 test('subagentModelEnv override maps through the same full-ID pin', () => {
   // A bare alias in CLAUDE_CODE_SUBAGENT_MODEL now pins the plain full ID instead of
   // inheriting the session variant (intended behavior change, documented in headless-mode);
   // an explicit full/dated ID passes through untouched.
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'sonnet' }).model, 'claude-sonnet-5');
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'sonnet' }).model, 'claude-sonnet-5-5');
   assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5-20251001' }).model, 'claude-haiku-4-5-20251001');
 });
 
 // Bedrock live failure (2026-08-11 transcript): third-party providers use deployment-
-// specific model IDs and pass first-party names (claude-sonnet-5, claude-opus-4-8) through
+// specific model IDs and pass first-party names (claude-sonnet-5-5, claude-opus-5-5) through
 // UNCHECKED to the provider, which 400s them — every discovery agent degraded in one 2s
 // run. On any provider other than firstParty the bare alias is the only spelling the
 // harness's deployment mapping resolves, so resolvePolicy must emit it untouched.
@@ -111,9 +111,9 @@ test('non-firstParty provider dispatches bare aliases, never first-party full ID
   assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: 'someday-provider' }).model, 'sonnet');
 });
 test('firstParty / absent / null provider keeps the full-ID pin (the [1m]-cascade guard)', () => {
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: 'firstParty' }).model, 'claude-sonnet-5');
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: null }).model, 'claude-sonnet-5');
-  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', {}).model, 'claude-opus-4-8');
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: 'firstParty' }).model, 'claude-sonnet-5-5');
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: null }).model, 'claude-sonnet-5-5');
+  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', {}).model, 'claude-opus-5-5');
 });
 test('subagentModelEnv passes through unmapped on a third-party provider', () => {
   // An operator's explicit deployment ID (the Bedrock escape hatch) must survive verbatim,
@@ -127,8 +127,8 @@ test('subagentModelEnv passes through unmapped on a third-party provider', () =>
 // discovery agent bumped off the sonnet default (the deviation Task 8 review confirmed).
 test('S7: resolvePolicy routes security-reviewer to opus, the sole opus discovery agent', () => {
   assert.equal(DIMENSIONS.find((d) => d.dimension === 'security').modelOverride, 'opus');
-  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', {}).model, 'claude-opus-4-8');
-  const opusAgents = AGENTS.filter((a) => resolvePolicy(a, {}).model === 'claude-opus-4-8');
+  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', {}).model, 'claude-opus-5-5');
+  const opusAgents = AGENTS.filter((a) => resolvePolicy(a, {}).model === 'claude-opus-5-5');
   assert.deepEqual(opusAgents, ['code-gauntlet:security-reviewer']);
 });
 
