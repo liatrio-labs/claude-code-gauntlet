@@ -270,12 +270,13 @@ pre-parsed form for the same axis (single authority).
 Run this after 2d, 2e and 2k:
 
 ```bash
-python3 "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} <<'CODE_GAUNTLET_TRIAGE'
+python3 "{plugin_root}/scripts/write_shared_context.py" --output-dir "{output_dir}" --head-sha {head_sha_short} <<'CODE_GAUNTLET_TRIAGE_{nonce}'
 {risk classification (2e) and AI-generated-code status (2k)}
-CODE_GAUNTLET_TRIAGE
+CODE_GAUNTLET_TRIAGE_{nonce}
 ```
 
 The quoted delimiter passes the text verbatim. Never pipe it through `echo` or unquote the delimiter.
+The nonce in the delimiter keeps any line of the text from ending it.
 The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text and saved diff, in that order.
 Stamp the printed `contextLines` and `contextChars` into the args waist verbatim, never estimated, carried over or re-derived.
 An exit 2 wrote no usable context; stop and report its one-line error.

@@ -11,10 +11,10 @@ Content bytes are rules (adding LF only if needed), a blank line and
 plus LF, a blank line and ``## Diff`` with the opening untrusted-content tag,
 the saved diff (adding LF only if needed), then the closing tag and LF. A single
 large Read can return only part of a file without notice; the workflow has no
-disk and needs the receipt's line count to plan exact Reads. It is newline-byte
-count plus one only when content lacks a final LF, so an unterminated final line
-counts unlike ``wc -l``. ``contextChars`` counts decoded code points with
-replacement and is advisory; it only narrows the Read chunk size.
+disk and needs the receipt's line count to plan exact Reads. The content always
+ends with LF, so the newline count equals the Read tool's line numbering.
+``contextChars`` counts decoded code points with replacement and is advisory;
+it only narrows the Read chunk size.
 """
 
 from __future__ import annotations
@@ -62,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     diff = _read_input(diff_path, "diff file")
 
     try:
+        if sys.stdin is None:
+            raise OSError
         triage = sys.stdin.buffer.read()
     except OSError:
         fail(PROG, "cannot read stdin")
@@ -91,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         fail(PROG, f"cannot write context file ({exc.strerror or exc})")
 
-    lines = content.count(b"\n") + (0 if content.endswith(b"\n") else 1)
+    lines = content.count(b"\n")
     chars = len(content.decode("utf-8", errors="replace"))
     print(json.dumps({"contextLines": lines, "contextChars": chars}))
     return 0
