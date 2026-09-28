@@ -43,9 +43,9 @@ import uuid
 from typing import Any
 
 from gauntlet.cli import Command
-from gauntlet.paths import PLUGIN_ROOT
+from gauntlet.paths import ENTRY_ROOT
 
-REPO_ROOT = PLUGIN_ROOT
+REPO_ROOT = ENTRY_ROOT
 
 MARKER_OPEN = (
     "<!-- generated-from-registry: do not edit; "

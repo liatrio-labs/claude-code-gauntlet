@@ -14,9 +14,9 @@ import json
 import os
 
 from gauntlet.cli import Command
-from gauntlet.paths import PLUGIN_ROOT
+from gauntlet.paths import ENTRY_ROOT
 
-REPO_ROOT = PLUGIN_ROOT
+REPO_ROOT = ENTRY_ROOT
 CARRIER = os.path.join(REPO_ROOT, "docs", "style", "session-context.md")
 
 

@@ -1,20 +1,12 @@
-#!/usr/bin/env python3
 """Count textual changes in a saved unified diff.
 
-Use ``walk_diff`` instead of ``git apply`` (which refuses valid diffs and can
-leave a piped count silently at zero) or a bare ``+``/``-`` prefix test (which
-misreads content such as ``--- `` and ``+++ `` as headers). Binary files are
-reported separately so zero textual changes do not imply an empty diff.
+Binary files count separately so zero textual changes do not imply an empty diff.
 """
-
-from __future__ import annotations
 
 import argparse
 
 from gauntlet.cli import CliError, Command, Parser
 from gauntlet.diff import walk_diff
-
-PROG = "diff_numstat"
 
 
 def _execute(args: argparse.Namespace) -> int:
@@ -43,6 +35,6 @@ def _execute(args: argparse.Namespace) -> int:
     return 0
 
 
-parser = Parser(prog=PROG, description=__doc__)
+parser = Parser(prog="diff_numstat", description=__doc__)
 parser.add_argument("patch", help="saved unified diff patch")
 CLI = Command(parser=parser, main=_execute)

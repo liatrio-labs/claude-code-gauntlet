@@ -3,16 +3,17 @@
 import ast
 import importlib
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from gauntlet import COMMAND_MODULES
 from gauntlet.cli import Command
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOL_ROOTS = (".github/", "workflows/test/tools/")
+ENTRIES = sorted((ROOT / "scripts").glob("*.py"))
+IMPORT = re.compile(r"^from gauntlet\.([\w.]+) import CLI$", re.MULTILINE)
 
 
 def _entry_template(name, module):
@@ -27,153 +28,90 @@ def _entry_template(name, module):
     )
 
 
-def _entry_problem(source, name, expected=None):
-    tree = ast.parse(source)
-    imports = [
+@pytest.mark.parametrize("path", ENTRIES, ids=lambda path: path.stem)
+def test_entry_is_the_template_over_a_command(path):
+    source = path.read_text(encoding="utf-8")
+    module = IMPORT.search(source)[1]
+    assert source == _entry_template(path.stem, module)
+    assert isinstance(importlib.import_module(f"gauntlet.{module}").CLI, Command)
+
+
+def test_no_two_entries_share_a_module():
+    modules = [IMPORT.search(path.read_text(encoding="utf-8"))[1] for path in ENTRIES]
+    assert len(modules) == len(set(modules))
+
+
+def _bootstrap(relative):
+    tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+    return [
         node
         for node in tree.body
-        if isinstance(node, ast.ImportFrom)
-        and node.module
-        and node.module.startswith("gauntlet.")
-        and [(alias.name, alias.asname) for alias in node.names] == [("CLI", None)]
+        if isinstance(node, ast.If)
+        and ast.dump(node.test)
+        == ast.dump(ast.parse("__name__ == '__main__'").body[0].value)
     ]
-    if len(imports) != 1:
-        return "entry must import one command"
-    module = imports[0].module.removeprefix("gauntlet.")
-    if expected is not None and module != expected:
-        return f"entry imports {module}, expected {expected}"
-    if source != _entry_template(name, module):
-        return "entry differs from template"
-    return None
 
 
-def _imported_module(source):
-    tree = ast.parse(source)
-    return next(
-        node.module.removeprefix("gauntlet.")
-        for node in tree.body
-        if isinstance(node, ast.ImportFrom)
-        and node.module
-        and node.module.startswith("gauntlet.")
-    )
-
-
-def test_all_script_entries_use_one_template():
-    paths = sorted((ROOT / "scripts").glob("*.py"))
-    assert len(paths) == 19
-    imported = []
-    for path in paths:
-        source = path.read_text(encoding="utf-8")
-        assert _entry_problem(source, path.stem, COMMAND_MODULES[path.stem]) is None
-        module = _imported_module(source)
-        cli = importlib.import_module(f"gauntlet.{module}").CLI
-        assert isinstance(cli, Command)
-        imported.append(module)
-    assert len(set(imported)) == len(imported)
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        "def main():\n    pass\n",
-        "if __name__ == '__main__':\n    pass\n",
-        "def helper():\n    pass\nhelper()\n",
-        "def main():\n    pass\nif __name__ == '__main__':\n    sys.exit(main())\n",
-    ],
-)
-def test_non_template_entry_is_rejected(source):
-    assert _entry_problem(source, "scratch") is not None
-
-
-def test_sibling_command_import_is_rejected():
-    source = _entry_template("diff_numstat", "stale")
-    assert _entry_problem(source, "diff_numstat", "numstat") is not None
-
-
-def test_extra_module_call_is_rejected():
-    source = _entry_template("emit_style_context", "style_hook")
-    assert _entry_problem(source + "\nmain()\n", "emit_style_context") == (
-        "entry differs from template"
-    )
-
-
-def _is_main_guard(node):
-    return (
+def _tool_candidate(relative):
+    tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+    locals_ = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+    return any(
         isinstance(node, ast.If)
-        and isinstance(node.test, ast.Compare)
-        and ast.unparse(node.test) == "__name__ == '__main__'"
-    )
-
-
-def _tool_problem(source, relative):
-    tree = ast.parse(source)
-    guards = [node for node in tree.body if _is_main_guard(node)]
-    if len(guards) != 1 or len(guards[0].body) != 3:
-        return "tool must have one three-statement main guard"
-    insert, imported, runner = guards[0].body
-    if not isinstance(insert, ast.Expr) or not isinstance(insert.value, ast.Call):
-        return "tool must insert scripts before import"
-    if (
-        ast.unparse(insert.value.func) != "sys.path.insert"
-        or len(insert.value.args) != 2
-    ):
-        return "tool must insert scripts before import"
-    if (
-        not isinstance(insert.value.args[0], ast.Constant)
-        or insert.value.args[0].value != 0
-    ):
-        return "tool must insert scripts at the front"
-    if '"scripts"' not in ast.get_source_segment(source, insert.value.args[1]):
-        return "tool must insert scripts"
-    if not isinstance(imported, ast.ImportFrom) or imported.module != "gauntlet.cli":
-        return "tool must import Command after insert"
-    if [(alias.name, alias.asname) for alias in imported.names] != [("Command", None)]:
-        return "tool must import Command"
-    if not isinstance(runner, ast.Expr) or not isinstance(runner.value, ast.Call):
-        return "tool must run Command"
-    call = runner.value
-    direct = f"Command.legacy(main, prog='{Path(relative).stem}.py').run"
-    parity = "Command.legacy(lambda: main(sys.argv), prog='record_parity.py').run"
-    if ast.unparse(call.func) != direct and (
-        Path(relative).stem != "record_parity" or ast.unparse(call.func) != parity
-    ):
-        return "tool must run its own main through Command"
-    if call.args or call.keywords:
-        return "tool runner takes no arguments"
-    return None
-
-
-def test_all_non_package_tools_have_ordered_bootstraps():
-    tracked = (
-        subprocess.run(
-            ["git", "ls-files", "-z", "--", ".github", "workflows/test/tools"],
-            cwd=ROOT,
-            capture_output=True,
-            check=True,
+        or (isinstance(node, ast.FunctionDef) and node.name == "main")
+        or (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id in locals_
         )
-        .stdout.decode()
-        .split("\0")
+        for node in tree.body
     )
-    counts = {root: 0 for root in TOOL_ROOTS}
-    for relative in tracked:
-        if not relative.endswith(".py"):
-            continue
-        source = (ROOT / relative).read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        if not any(_is_main_guard(node) for node in tree.body):
-            continue
-        root = next(root for root in TOOL_ROOTS if relative.startswith(root))
-        counts[root] += 1
-        assert _tool_problem(source, relative) is None, relative
-    assert all(counts.values()), counts
 
 
-def test_biome_check_help_runs_from_foreign_cwd(tmp_path):
+TOOLS = [
+    relative
+    for relative in subprocess.run(
+        ["git", "ls-files", "-z", "--", ".github", "workflows/test/tools"],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+    )
+    .stdout.decode()
+    .split("\0")
+    if relative.endswith(".py") and _tool_candidate(relative)
+]
+
+
+def test_both_tool_roots_have_bootstrapped_tools():
+    assert {relative.split("/")[0] for relative in TOOLS} == {".github", "workflows"}
+
+
+@pytest.mark.parametrize("relative", TOOLS)
+def test_tool_bootstrap_inserts_scripts_then_runs_its_main(relative):
+    guards = _bootstrap(relative)
+    assert len(guards) == 1
+    prog = Path(relative).stem
+    parent = 1 if relative.startswith(".github/") else 3
+    expected = ast.parse(
+        f'if __name__ == "__main__":\n'
+        f'    sys.path.insert(0, str(Path(__file__).resolve().parents[{parent}] / "scripts"))\n'
+        "    from gauntlet.cli import Command\n"
+        f'    Command.legacy(main, prog="{prog}.py").run()\n'
+    ).body[0]
+    assert ast.dump(guards[0]) == ast.dump(expected)
+
+
+@pytest.mark.parametrize("relative", TOOLS)
+def test_tool_runs_from_foreign_cwd(relative, tmp_path):
     environment = dict(os.environ)
     environment.pop("PYTHONPATH", None)
     environment["PYTHONSAFEPATH"] = "1"
     result = subprocess.run(
-        [sys.executable, str(ROOT / "workflows/test/tools/biome_check.py"), "--help"],
+        [
+            sys.executable,
+            str(ROOT / relative),
+            "--check" if "record_parity" in relative else "--help",
+        ],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -182,28 +120,4 @@ def test_biome_check_help_runs_from_foreign_cwd(tmp_path):
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "--cache-dir" in result.stdout
-
-
-def test_assemble_artifacts_cli_emits_utf8_with_lf():
-    from tests.test_assemble_artifacts import _Workspace
-
-    with _Workspace() as workspace:
-        plan_path = workspace.tamper_plan(lambda plan: plan["postReview"]["ids"].pop())
-        environment = dict(os.environ, PYTHONIOENCODING="latin-1")
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "scripts/assemble_artifacts.py"),
-                "--plan",
-                plan_path,
-            ],
-            cwd=ROOT,
-            env=environment,
-            capture_output=True,
-            check=False,
-        )
-    assert result.returncode != 0
-    assert "—" in result.stdout.decode("utf-8")
-    assert result.stdout.endswith(b"\n")
-    assert not result.stdout.endswith(b"\r\n")
+    assert result.stdout

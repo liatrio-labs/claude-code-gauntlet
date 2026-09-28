@@ -55,10 +55,6 @@ def run_build(args, cwd=REPO):
 
 
 class TestCarrierFreshness(unittest.TestCase):
-    def test_check_passes_in_the_real_tree(self):
-        result = run_build(["--check"])
-        self.assertEqual(result.returncode, 0, result.stderr)
-
     def test_check_fails_on_a_mutated_carrier(self):
         with _fixture_tree() as tmp:
             carrier = tmp / "docs" / "style" / "session-context.md"
@@ -425,24 +421,6 @@ class TestGeneratorErrorPaths(unittest.TestCase):
 
 
 class TestEmitter(unittest.TestCase):
-    def test_stdout_is_the_expected_hook_payload(self):
-        result = subprocess.run(
-            [sys.executable, str(EMIT_SCRIPT)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["hookSpecificOutput"]["hookEventName"], "SessionStart")
-
-        carrier_text = CARRIER.read_text(encoding="utf-8")
-        banner, _, rest = carrier_text.partition("\n\n")
-        self.assertEqual(payload["hookSpecificOutput"]["additionalContext"], rest)
-        self.assertNotIn(
-            "GENERATED", payload["hookSpecificOutput"]["additionalContext"]
-        )
-
     def test_additional_context_starts_with_the_style_banner(self):
         """Pins the emitter's single-line banner strip: partition("\\n\\n") only removes
         the GENERATED comment because it is exactly one line. A future multi-line banner

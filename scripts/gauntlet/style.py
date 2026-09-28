@@ -17,9 +17,9 @@ import os
 import sys
 
 from gauntlet.cli import Command
-from gauntlet.paths import PLUGIN_ROOT
+from gauntlet.paths import ENTRY_ROOT
 
-REPO_ROOT = PLUGIN_ROOT
+REPO_ROOT = ENTRY_ROOT
 
 WORDING_SOURCE = os.path.join("docs", "style", "wording-rules.md")
 CADENCE_SOURCE = os.path.join("docs", "style", "cadence-rules.md")

@@ -25,6 +25,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from gauntlet.awaiting import (
     ARTIFACT_BASENAMES,
     ARTIFACT_PATH_TEMPLATES,
@@ -62,7 +64,10 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def test_next_command_keeps_symlinked_plugin_root(tmp_path):
     link = tmp_path / "plugin-link"
-    link.symlink_to(REPO_ROOT, target_is_directory=True)
+    try:
+        link.symlink_to(REPO_ROOT, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
     target = tmp_path / "pending-task"
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
@@ -87,7 +92,10 @@ def test_next_command_keeps_symlinked_plugin_root(tmp_path):
         check=False,
     )
     assert result.returncode == 3, result.stderr
-    assert str(link / "scripts/await_workflow.py") in result.stdout
+    marker = json.loads(result.stdout)
+    assert shlex.split(marker["next_command"])[1] == str(
+        link / "scripts" / "await_workflow.py"
+    )
 
 
 def _find_posix_shell():

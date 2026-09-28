@@ -86,7 +86,3 @@ disallow_untyped_decorators = true
 no_implicit_reexport = true
 strict_equality = true
 extra_checks = true
-
-[[tool.mypy.overrides]]
-module = ["gauntlet.awaiting"]
-follow_imports = "skip"

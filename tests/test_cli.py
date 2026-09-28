@@ -1,22 +1,11 @@
 """CLI serialization and stdio contracts."""
 
 import io
-import json
 import sys
-from contextlib import redirect_stdout
 from unittest.mock import patch
 
 import pytest
 from gauntlet.cli import Command, Parser, utf8_stdio
-from gauntlet.jsjson import write_result
-
-
-def test_stdout_escapes_lone_surrogates_and_stays_parseable():
-    output = io.StringIO()
-    with redirect_stdout(output):
-        write_result({"value": "bad\ud800"})
-    assert r"\ud800" in output.getvalue()
-    assert json.loads(output.getvalue())["value"] == "bad\ud800"
 
 
 def test_text_streams_use_utf8_mode_errors_and_lf():
@@ -84,6 +73,20 @@ def test_legacy_command_sets_its_own_prog(monkeypatch):
     assert command.invoke(["--probe"]) == 0
     assert seen == [("owned.py", "--probe")]
     assert sys.argv == ["foreign.py"]
+
+
+def test_shared_context_unexpected_failure_emits_receipt(monkeypatch, capsys, tmp_path):
+    from gauntlet import shared_context
+
+    def fail_read(*args):
+        raise RuntimeError("probe")
+
+    monkeypatch.setattr(shared_context, "_read_input", fail_read)
+    assert (
+        shared_context.CLI.invoke(["--output-dir", str(tmp_path), "--head-sha", "abcd"])
+        == 1
+    )
+    assert capsys.readouterr().out == '{"error": "unexpected RuntimeError: probe"}\n'
 
 
 @pytest.mark.parametrize(

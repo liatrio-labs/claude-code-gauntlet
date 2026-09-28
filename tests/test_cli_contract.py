@@ -1,364 +1,318 @@
 """Parent-recorded stdout bytes and exit codes for every script entry."""
 
-import base64
-import difflib
 import importlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from gauntlet.paths import ENTRY_ROOT
 
 ROOT = Path(__file__).resolve().parents[1]
-RECORDING = Path(__file__).with_name("fixtures") / "cli_contract.json"
-NAMES = (
-    "assemble_artifacts",
-    "await_workflow",
-    "build_style_artifacts",
-    "collect_project_rules",
-    "detect_prior_review",
-    "diff_numstat",
-    "emit_style_context",
-    "ensure_output_dir",
-    "generate_contract_requirements",
-    "materialize_artifacts",
-    "post_review",
-    "render_fix_tasks",
-    "report_patches",
-    "resolve_config",
-    "resolve_pr_identity",
-    "stale_truncate",
-    "sync_agent_rules",
-    "verify_findings",
-    "write_shared_context",
+RECORDED = json.loads(
+    (Path(__file__).with_name("fixtures") / "cli_contract.json").read_text(
+        encoding="utf-8"
+    )
 )
-MISSING = "{missing}"
-INVALID = "{invalid}"
+SHA = "abc1234"
+FULL = "a" * 40
+PATCH = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
+# argv strings split on spaces before placeholders expand, so paths may hold spaces.
 MAIN_FAILURE = {
-    "assemble_artifacts": ("--plan", MISSING),
-    "await_workflow": (
-        MISSING,
-        "--timeout-seconds",
-        "0",
-        "--since-epoch",
-        "0",
-        "--max-attempts",
-        "1",
-    ),
-    "build_style_artifacts": ("--repo-root", MISSING, "--check"),
-    "collect_project_rules": ("--repo-root", MISSING, "--out", MISSING),
-    "detect_prior_review": ("--platform", "github", "--bodies-file", MISSING),
-    "diff_numstat": (MISSING,),
-    "emit_style_context": (),
-    "ensure_output_dir": ("--cwd", MISSING),
-    "generate_contract_requirements": ("--repo-root", MISSING, "--check"),
-    "materialize_artifacts": ("--output-dir", MISSING, "--task", MISSING),
-    "post_review": (MISSING,),
-    "render_fix_tasks": (MISSING, "--repo-root", MISSING),
-    "report_patches": ("--output-dir", MISSING, "--head-sha", "abcd"),
-    "resolve_config": ("--target", "local", "--cwd", MISSING),
-    "resolve_pr_identity": (
-        "--platform",
-        "github",
-        "--url",
-        MISSING,
-        "--sha",
-        "a" * 40,
-    ),
-    "stale_truncate": ("--output-dir", MISSING, "--head-sha", "abcd"),
-    "sync_agent_rules": ("--repo-root", MISSING, "--check"),
-    "verify_findings": ("--input", MISSING, "--output", MISSING),
-    "write_shared_context": ("--output-dir", MISSING, "--head-sha", "abcd"),
+    "assemble_artifacts": "--plan {missing}",
+    "await_workflow": "{missing} --timeout-seconds 0 --since-epoch 0 --max-attempts 1",
+    "build_style_artifacts": "--repo-root {missing} --check",
+    "collect_project_rules": "--repo-root {missing} --out {missing}",
+    "detect_prior_review": "--platform github --bodies-file {missing}",
+    "diff_numstat": "{missing}",
+    "emit_style_context": "",
+    "ensure_output_dir": "--cwd {missing}",
+    "generate_contract_requirements": "--repo-root {missing} --check",
+    "materialize_artifacts": "--output-dir {missing} --task {missing}",
+    "post_review": "{missing}",
+    "render_fix_tasks": "{missing} --repo-root {missing}",
+    "report_patches": "--output-dir {missing} --head-sha abcd",
+    "resolve_config": "--target local --cwd {missing}",
+    "resolve_pr_identity": f"--platform github --url {{missing}} --sha {FULL}",
+    "stale_truncate": "--output-dir {missing} --head-sha abcd",
+    "sync_agent_rules": "--repo-root {missing} --check",
+    "verify_findings": "--input {missing} --output {missing}",
+    "write_shared_context": "--output-dir {missing} --head-sha abcd",
 }
+# diff_numstat, emit_style_context and ensure_output_dir have no malformed-input
+# branch beyond the failure row.
 BAD_INPUT = {
-    "assemble_artifacts": ("--plan", INVALID),
-    "await_workflow": (MISSING, "--attempt", "invalid"),
-    "build_style_artifacts": ("--repo-root", INVALID, "--check"),
-    "collect_project_rules": ("--repo-root", INVALID, "--out", MISSING),
-    "detect_prior_review": ("--platform", "bitbucket"),
-    "emit_style_context": ("--invalid",),
-    "generate_contract_requirements": ("--repo-root", INVALID, "--check"),
-    "materialize_artifacts": ("--output-dir", MISSING),
-    "post_review": ("--platform", "bitbucket"),
-    "render_fix_tasks": (INVALID, "--repo-root", "{root}"),
-    "report_patches": ("--output-dir", MISSING, "--head-sha", "invalid"),
-    "resolve_config": ("--target", "bitbucket"),
-    "resolve_pr_identity": ("--platform", "bitbucket"),
-    "stale_truncate": ("--output-dir", MISSING, "--head-sha", "invalid"),
-    "sync_agent_rules": ("--repo-root", INVALID, "--check"),
-    "verify_findings": ("--input", INVALID, "--output", MISSING),
-    "write_shared_context": ("--output-dir", MISSING, "--head-sha", "invalid"),
+    "assemble_artifacts": "--plan {invalid}",
+    "await_workflow": "{missing} --attempt invalid",
+    "build_style_artifacts": "--repo-root {invalid} --check",
+    "collect_project_rules": "--repo-root {invalid} --out {missing}",
+    "detect_prior_review": "--platform bitbucket",
+    "generate_contract_requirements": "--repo-root {invalid} --check",
+    "materialize_artifacts": "--output-dir {missing}",
+    "post_review": "--platform bitbucket",
+    "render_fix_tasks": "{invalid} --repo-root {root}",
+    "report_patches": "--output-dir {missing} --head-sha invalid",
+    "resolve_config": "--target bitbucket",
+    "resolve_pr_identity": "--platform bitbucket",
+    "stale_truncate": "--output-dir {missing} --head-sha invalid",
+    "sync_agent_rules": "--repo-root {invalid} --check",
+    "verify_findings": "--input {invalid} --output {missing}",
+    "write_shared_context": "--output-dir {missing} --head-sha invalid",
 }
-# These commands have no second malformed-input branch beyond the failure row.
-PATH_BEARING = set(NAMES) - {"diff_numstat", "resolve_pr_identity"}
+POST = {"platform": "github", "owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
+# Each success row is (files written under the case directory, argv).
+SUCCESS = {
+    "build_style_artifacts": ({}, "--repo-root {root} --check"),
+    "collect_project_rules": ({}, "--repo-root {dir} --out {dir}/rules.md"),
+    "detect_prior_review": (
+        {"bodies.json": "[]"},
+        f"--platform github --bodies-file {{dir}}/bodies.json --head-sha {FULL}",
+    ),
+    "diff_numstat": ({"change.patch": PATCH}, "{dir}/change.patch"),
+    "emit_style_context": ({}, ""),
+    "ensure_output_dir": ({}, "--cwd {root}"),
+    "generate_contract_requirements": ({}, "--repo-root {root} --check"),
+    "post_review": (
+        {"post.json": json.dumps({**POST, "findings": []})},
+        "{dir}/post.json --dry-run",
+    ),
+    "render_fix_tasks": ({"p.json": "[]"}, "{dir}/p.json --repo-root {dir}"),
+    "report_patches": (
+        {
+            f"code-gauntlet-findings-{SHA}.json": "[]",
+            f"code-gauntlet-diff-{SHA}.patch": PATCH,
+        },
+        f"--output-dir {{dir}} --head-sha {SHA}",
+    ),
+    "resolve_config": ({}, "--target local --cwd {root} --plugin-root {root}"),
+    "resolve_pr_identity": (
+        {},
+        f"--platform github --url https://github.com/o/r/pull/5 --sha {FULL}",
+    ),
+    "stale_truncate": (
+        {f"code-gauntlet-report-{SHA}.md": "stale"},
+        f"--output-dir {{dir}} --head-sha {SHA} --unconditional",
+    ),
+    "sync_agent_rules": ({}, "--repo-root {root} --check"),
+    "verify_findings": (
+        {"findings.json": '{"findings": []}', "diff.patch": PATCH},
+        "{dir}/findings.json --diff-file {dir}/diff.patch",
+    ),
+    "write_shared_context": (
+        {
+            f"code-gauntlet-project-rules-{SHA}.md": "rules\n",
+            f"code-gauntlet-diff-{SHA}.patch": "diff\n",
+        },
+        f"--output-dir {{dir}} --head-sha {SHA}",
+    ),
+}
+AWAIT = "--timeout-seconds 0 --since-epoch 0 --max-attempts 2"
+REQUIRED_ONLY = {
+    "diff_numstat": "",
+    "materialize_artifacts": "--output-dir {dir}",
+    "stale_truncate": "--output-dir {dir}",
+}
+PATH_BEARING = set(MAIN_FAILURE) - {"diff_numstat", "resolve_pr_identity"}
+WINDOWS_PATHS = "the parent POSIX path receipts cannot be compared with Windows paths"
 
 
-def _success(name, directory, root):
-    sha = "abc1234"
+def _built_success(name, directory):
     if name == "assemble_artifacts":
         from tests.test_assemble_artifacts import _Workspace
 
         workspace = _Workspace()
         with patch("tempfile.mkdtemp", return_value=str(directory)):
             workspace.__enter__()
-        return ("--plan", workspace.write_plan(workspace.plan()))
+        return ["--plan", workspace.write_plan(workspace.plan())]
     if name == "await_workflow":
         from tests.test_await_workflow import SUCCESS_RETURN, envelope
 
         task = directory / "task.output"
         task.write_text(json.dumps(envelope(SUCCESS_RETURN)), encoding="utf-8")
-        return (str(task), "--timeout-seconds", "0")
-    if name == "build_style_artifacts":
-        return ("--repo-root", str(root), "--check")
-    if name == "collect_project_rules":
-        return ("--repo-root", str(directory), "--out", str(directory / "rules.md"))
-    if name == "detect_prior_review":
-        bodies = directory / "bodies.json"
-        bodies.write_text("[]", encoding="utf-8")
-        return (
-            "--platform",
-            "github",
-            "--bodies-file",
-            str(bodies),
-            "--head-sha",
-            "a" * 40,
-        )
-    if name == "diff_numstat":
-        patch_file = directory / "change.patch"
-        patch_file.write_text(
-            "--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n", encoding="utf-8"
-        )
-        return (str(patch_file),)
-    if name == "emit_style_context":
-        return ()
-    if name == "ensure_output_dir":
-        return ("--cwd", str(ROOT))
-    if name == "generate_contract_requirements":
-        return ("--repo-root", str(root), "--check")
-    if name == "materialize_artifacts":
-        from tests.test_materialize_artifacts import record_task_output
+        return [str(task), "--timeout-seconds", "0"]
+    from tests.test_materialize_artifacts import record_task_output
 
-        task, output = record_task_output(str(directory))
-        return ("--output-dir", output, "--task", task)
-    if name == "post_review":
-        findings = directory / "post.json"
-        findings.write_text(
-            json.dumps(
-                {
-                    "platform": "github",
-                    "owner": "o",
-                    "repo": "r",
-                    "pr_number": 5,
-                    "sha": "a" * 40,
-                    "findings": [],
-                }
-            ),
-            encoding="utf-8",
-        )
-        return (str(findings), "--dry-run")
-    if name == "render_fix_tasks":
-        findings = directory / "post-review.json"
-        findings.write_text("[]", encoding="utf-8")
-        return (str(findings), "--repo-root", str(directory))
-    if name == "report_patches":
-        (directory / f"code-gauntlet-findings-{sha}.json").write_text(
-            "[]", encoding="utf-8"
-        )
-        (directory / f"code-gauntlet-diff-{sha}.patch").write_text(
-            "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n", encoding="utf-8"
-        )
-        return ("--output-dir", str(directory), "--head-sha", sha)
-    if name == "resolve_config":
-        return ("--target", "local", "--cwd", str(ROOT), "--plugin-root", str(root))
-    if name == "resolve_pr_identity":
-        return (
-            "--platform",
-            "github",
-            "--url",
-            "https://github.com/o/r/pull/5",
-            "--sha",
-            "a" * 40,
-        )
-    if name == "stale_truncate":
-        (directory / f"code-gauntlet-report-{sha}.md").write_text(
-            "stale", encoding="utf-8"
-        )
-        return ("--output-dir", str(directory), "--head-sha", sha, "--unconditional")
-    if name == "sync_agent_rules":
-        return ("--repo-root", str(root), "--check")
-    if name == "verify_findings":
-        findings = directory / "findings.json"
-        diff = directory / "diff.patch"
-        findings.write_text('{"findings": []}', encoding="utf-8")
-        diff.write_text("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n", encoding="utf-8")
-        return (str(findings), "--diff-file", str(diff))
-    if name == "write_shared_context":
-        (directory / f"code-gauntlet-project-rules-{sha}.md").write_text(
-            "rules\n", encoding="utf-8"
-        )
-        (directory / f"code-gauntlet-diff-{sha}.patch").write_text(
-            "diff\n", encoding="utf-8"
-        )
-        return ("--output-dir", str(directory), "--head-sha", sha)
-    raise AssertionError(name)
+    task, output = record_task_output(str(directory))
+    return ["--output-dir", output, "--task", task]
 
 
-def scenario(name, case, tmp_path, root=ROOT):
+def _command_line(name, case, directory):
+    if case == "success":
+        files, command_line = SUCCESS[name]
+        for relative, text in files.items():
+            (directory / relative).write_text(text, encoding="utf-8")
+        return command_line
+    if case == "artifacts_only":
+        from gauntlet.awaiting import ARTIFACT_BASENAMES
+
+        for template in ARTIFACT_BASENAMES:
+            (directory / template.format(sha="abc12345")).write_text(
+                "x", encoding="utf-8"
+            )
+        return f"wnosuchtask000 {AWAIT} --artifacts-dir {{dir}} --head-sha abc12345 --artifacts-grace-seconds 0"
+    return {
+        "usage": "--unknown",
+        "failure": MAIN_FAILURE.get(name),
+        "bad_input": BAD_INPUT.get(name),
+        "required_only": REQUIRED_ONLY.get(name),
+        "pending": f"{{dir}}/pending.output {AWAIT}",
+    }[case]
+
+
+def scenario(name, case, tmp_path):
     directory = tmp_path / name / case
     directory.mkdir(parents=True, exist_ok=True)
-    invalid = directory / "invalid.json"
-    invalid.write_text("not json", encoding="utf-8")
-    if name == "emit_style_context" and case == "failure":
-        carrier = directory / "unreadable-carrier"
-        carrier.write_text("x", encoding="utf-8")
-        carrier.chmod(0)
+    (directory / "invalid.json").write_text("not json", encoding="utf-8")
     fake_bin = directory / "bin"
     fake_bin.mkdir(exist_ok=True)
-    gh = fake_bin / "gh"
-    gh.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    gh.chmod(0o755)
-    if case == "success":
-        argv = _success(name, directory, root)
-    elif case == "usage":
-        argv = ("--unknown",)
-    elif case == "failure":
-        argv = MAIN_FAILURE[name]
-    elif case == "bad_input":
-        argv = BAD_INPUT[name]
-    elif case in ("pending", "artifacts_only"):
-        argv = (
-            str(directory / "pending.output"),
-            "--timeout-seconds",
-            "0",
-            "--since-epoch",
-            "0",
-            "--max-attempts",
-            "2",
-        )
-        if case == "artifacts_only":
-            argv = ("wnosuchtask000", *argv[1:])
-            from gauntlet.awaiting import ARTIFACT_BASENAMES
-
-            for template in ARTIFACT_BASENAMES:
-                (directory / template.format(sha="abc12345")).write_text(
-                    "content", encoding="utf-8"
-                )
-            argv += (
-                "--artifacts-dir",
-                str(directory),
-                "--head-sha",
-                "abc12345",
-                "--artifacts-grace-seconds",
-                "0",
-            )
+    (fake_bin / "gh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (fake_bin / "gh").chmod(0o755)
+    if case == "success" and name not in SUCCESS:
+        argv = _built_success(name, directory)
     else:
-        raise AssertionError(case)
-    argv = tuple(
-        str(directory / "missing")
-        if arg == MISSING
-        else str(invalid)
-        if arg == INVALID
-        else str(root)
-        if arg == "{root}"
-        else arg
-        for arg in argv
-    )
-    return (
-        directory,
-        argv,
-        b"triage\n"
-        if name == "write_shared_context" and case == "success"
-        else b"{}\n",
-        fake_bin,
-    )
+        places = {"dir": directory, "root": ROOT, "missing": directory / "missing"}
+        places["invalid"] = directory / "invalid.json"
+        argv = [
+            arg.format(**places) for arg in _command_line(name, case, directory).split()
+        ]
+    triage = (name, case) == ("write_shared_context", "success")
+    return directory, argv, b"triage\n" if triage else b"{}\n", fake_bin
 
 
-def normalize(data, tmp_path, root):
+def normalize(data, tmp_path, root=ROOT):
     text = data.decode("utf-8", errors="surrogateescape")
-    paths = (
-        (os.path.realpath(tmp_path), "<TMP>"),
-        (str(tmp_path), "<TMP>"),
-        (os.path.realpath(root), "<ROOT>"),
-        (str(root), "<ROOT>"),
-        (os.path.realpath(ROOT), "<ROOT>"),
-        (str(ROOT), "<ROOT>"),
-    )
+    carrier = (ROOT / "docs/style/session-context.md").read_text(encoding="utf-8")
+    text = text.replace(json.dumps(carrier.partition("\n\n")[2])[1:-1], "<CARRIER>")
+    paths = {
+        os.path.realpath(tmp_path): "<TMP>",
+        str(tmp_path): "<TMP>",
+        os.path.realpath(root): "<ROOT>",
+        str(root): "<ROOT>",
+        ENTRY_ROOT: "<ROOT>",
+        str(Path(__file__).absolute().parents[1]): "<ROOT>",
+    }
     for source, replacement in sorted(
-        paths, key=lambda item: len(item[0]), reverse=True
+        paths.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
     ):
-        text = text.replace(source.replace("\\", "\\\\"), replacement).replace(
-            source, replacement
-        )
-    text = re.sub(r"3\.\d+\.\d+", "<BUNDLE_VERSION>", text)
-    text = re.sub(r"fnv1a32:0x[0-9a-f]{8}", "<CHECKSUM>", text)
-    text = re.sub(r'("chars"\s*:\s*)\d+', r"\1<CHARS>", text)
-    text = re.sub(r'("expected_chars"\s*:\s*)\d+', r"\1<CHARS>", text)
-    text = re.sub(r'("waited_seconds"\s*:\s*)[0-9.]+', r"\1<ELAPSED>", text)
-    text = re.sub(r'("searched"\s*:\s*)\[[^\n]*(?=,"gap")', r"\1<SEARCH_ROOTS>", text)
-    text = re.sub(r"'<TMP>([^']*)'", r"<TMP>\1", text)
-    return base64.b64encode(text.encode("utf-8", errors="surrogateescape")).decode(
-        "ascii"
+        for spelling in (source.replace("\\", "\\\\"), source):
+            text = re.sub(
+                re.escape(spelling) + r"(?=$|[/\\'\"\s])",
+                lambda match, value=replacement: value,
+                text,
+            )
+    for pattern, replacement in (
+        (r"3\.\d+\.\d+", "<BUNDLE_VERSION>"),
+        (r"fnv1a32:0x[0-9a-f]{8}", "<CHECKSUM>"),
+        (r'("(?:expected_)?chars"\s*:\s*)\d+', r"\1<CHARS>"),
+        (r'("waited_seconds"\s*:\s*)[0-9.]+', r"\1<ELAPSED>"),
+        (r'("searched"\s*:\s*)\[[^\n]*(?=,"gap")', r"\1<SEARCH_ROOTS>"),
+        (r"'(<(?:TMP|ROOT)>[^']*)'", r"\1"),
+    ):
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
+@pytest.mark.parametrize("suffix", ("-link", " space[1]"))
+def test_normalize_path_boundaries_and_shell_quotes(tmp_path, suffix):
+    root = tmp_path / f"checkout{suffix}"
+    data = f"python3 '{root}/scripts/await_workflow.py' {root}x".encode()
+    assert normalize(data, tmp_path, root) == (
+        f"python3 <ROOT>/scripts/await_workflow.py <TMP>{os.sep}checkout{suffix}x"
     )
+
+
+@pytest.mark.parametrize("kind", ("symlink", "space"))
+def test_pending_receipt_normalizes_noncanonical_root(
+    kind, tmp_path, invoke, monkeypatch
+):
+    from gauntlet import paths
+
+    alias = tmp_path / ("plugin-link" if kind == "symlink" else "plugin space[1]")
+    if kind == "symlink":
+        try:
+            alias.symlink_to(ROOT, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"directory symlinks are unavailable: {exc}")
+    else:
+        alias.mkdir()
+    monkeypatch.setattr(paths, "ENTRY_ROOT", str(alias))
+    directory, argv, stdin, _ = scenario("await_workflow", "pending", tmp_path)
+    result = invoke("await_workflow", argv, directory, stdin)
+    assert result.returncode == 3
+    if os.name == "nt":
+        marker = json.loads(result.stdout)
+        assert shlex.split(marker["next_command"])[1] == str(
+            alias / "scripts" / "await_workflow.py"
+        )
+    else:
+        assert (
+            normalize(result.stdout, tmp_path, alias)
+            == RECORDED["await_workflow/pending"][1]
+        )
 
 
 def rows():
-    for name in NAMES:
-        for case in ("success", "usage", "failure", "bad_input"):
-            if case == "bad_input" and name not in BAD_INPUT:
-                continue
-            yield name, case
+    for name in MAIN_FAILURE:
+        yield from ((name, case) for case in ("success", "usage", "failure"))
+        if name in BAD_INPUT:
+            yield name, "bad_input"
     yield "await_workflow", "pending"
     yield "await_workflow", "artifacts_only"
+    yield from ((name, "required_only") for name in REQUIRED_ONLY)
+
+
+def _assert_recorded(name, case, returncode, stdout, tmp_path):
+    code, expected = RECORDED[f"{name}/{case}"]
+    assert (returncode, normalize(stdout, tmp_path)) == (code, expected)
 
 
 @pytest.mark.parametrize(("name", "case"), list(rows()))
 def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch):
-    if os.name == "nt" and name in PATH_BEARING and case != "usage":
-        pytest.skip(
-            "the parent POSIX path receipts cannot be compared with Windows paths"
-        )
+    if (
+        os.name == "nt"
+        and name in PATH_BEARING
+        and case not in {"usage", "required_only"}
+    ):
+        pytest.skip(WINDOWS_PATHS)
     directory, argv, stdin, fake_bin = scenario(name, case, tmp_path)
     monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("CODE_GAUNTLET_OUTPUT_DIR", str(directory / "output"))
     if name == "emit_style_context" and case == "failure":
+        carrier = directory / "unreadable-carrier"
+        carrier.write_text("x", encoding="utf-8")
+        carrier.chmod(0)
         module = importlib.import_module("gauntlet.style_hook")
-        monkeypatch.setattr(module, "CARRIER", str(directory / "unreadable-carrier"))
+        monkeypatch.setattr(module, "CARRIER", str(carrier))
     result = invoke(name, argv, directory, stdin)
-    expected = json.loads(RECORDING.read_text(encoding="utf-8"))[name][case]
-    assert result.returncode == expected["code"]
-    actual = normalize(result.stdout, tmp_path, ROOT)
-    assert actual == expected["stdout"], "".join(
-        difflib.unified_diff(
-            base64.b64decode(expected["stdout"]).decode().splitlines(True),
-            base64.b64decode(actual).decode().splitlines(True),
-        )
-    )
-    if result.returncode and not result.stdout:
+    _assert_recorded(name, case, result.returncode, result.stdout, tmp_path)
+    if result.returncode and not result.stdout and result.converted:
+        assert re.fullmatch(rf"{name}: [^\n]+\n", result.stderr.decode())
+    elif result.returncode and not result.stdout:
         assert result.stderr
 
 
 def test_recording_covers_all_entry_files():
-    assert set(NAMES) == {path.stem for path in (ROOT / "scripts").glob("*.py")}
-    assert set(MAIN_FAILURE) == set(NAMES)
-    assert set(BAD_INPUT) <= set(NAMES)
-    assert len(list(rows())) == len(set(rows()))
+    assert set(MAIN_FAILURE) == {path.stem for path in (ROOT / "scripts").glob("*.py")}
+    assert set(BAD_INPUT) | set(SUCCESS) <= set(MAIN_FAILURE)
+    assert sorted(f"{name}/{case}" for name, case in rows()) == sorted(RECORDED)
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", MAIN_FAILURE)
 def test_entry_runs_from_foreign_cwd(name, tmp_path):
     if os.name == "nt" and name in PATH_BEARING:
-        pytest.skip(
-            "the parent POSIX path receipts cannot be compared with Windows paths"
-        )
+        pytest.skip(WINDOWS_PATHS)
     directory, argv, stdin, fake_bin = scenario(name, "success", tmp_path)
-    env = dict(os.environ)
-    env.pop("PYTHONPATH", None)
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     env.update(
         PYTHONSAFEPATH="1",
+        PYTHONIOENCODING="latin-1",
         CODE_GAUNTLET_OUTPUT_DIR=str(directory / "output"),
         PATH=str(fake_bin) + os.pathsep + env["PATH"],
     )
@@ -371,10 +325,4 @@ def test_entry_runs_from_foreign_cwd(name, tmp_path):
         check=False,
         timeout=30,
     )
-    expected = json.loads(RECORDING.read_text(encoding="utf-8"))[name]["success"]
-    assert result.returncode == expected["code"], result.stderr
-    actual = normalize(result.stdout, tmp_path, ROOT)
-    assert actual == expected["stdout"], (
-        base64.b64decode(actual),
-        base64.b64decode(expected["stdout"]),
-    )
+    _assert_recorded(name, "success", result.returncode, result.stdout, tmp_path)

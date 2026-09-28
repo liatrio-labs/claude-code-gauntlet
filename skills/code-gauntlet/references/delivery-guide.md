@@ -272,7 +272,7 @@ The header the script prepends, verbatim:
 
 ### Findings metadata footer
 
-`scripts/post_review.py` appends this to `review_body` — never hand-type it. `<!-- Canonical source: scripts/gauntlet/marker.py -->`. What the code writes (for reference):
+`scripts/gauntlet/delivery/post.py` appends this to `review_body` — never hand-type it. `<!-- Canonical source: scripts/gauntlet/marker.py -->`. What the code writes (for reference):
 
 ```html
 ---

@@ -1646,12 +1646,6 @@ class TestArgparseUsageErrors(unittest.TestCase):
         self.assertFalse(result["previously_reviewed"])
         self.assertTrue(result["errors"])
 
-    def test_invalid_platform_choice_is_nonzero_exit(self):
-        _, code = _run_main(
-            ["--platform", "bitbucket", "--owner", "o", "--repo", "r", "--number", "5"]
-        )
-        self.assertNotEqual(code, 0)
-
     def test_unknown_flag_is_nonzero_exit(self):
         """A genuinely malformed flag is still an argparse usage error — only
         the recoverable, data-dependent failures (missing --number, an

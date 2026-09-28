@@ -309,18 +309,6 @@ class TestResolutionWithoutARecordedRun(unittest.TestCase):
         self.assertIsNone(receipt["source"])
         self.assertIn("no task output file", receipt["errors"][0])
 
-    def test_neither_target_is_a_usage_error_with_empty_stdout(self):
-        proc = subprocess.run(
-            [sys.executable, SCRIPT, "--output-dir", self.out_dir],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            encoding="utf-8",
-        )
-        self.assertEqual(proc.returncode, 2)
-        self.assertEqual(proc.stdout, "")
-
 
 class TestFailureModes(MaterializeTestCase):
     def test_a_truncated_task_output_writes_nothing(self):

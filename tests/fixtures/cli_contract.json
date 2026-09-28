@@ -1,344 +1,80 @@
 {
-  "assemble_artifacts": {
-    "bad_input": {
-      "code": 1,
-      "stdout": "eyJvayI6IGZhbHNlLCAicGxhblZlcnNpb24iOiBudWxsLCAicGxhbkNoZWNrc3VtIjogbnVsbCwgInZlcmlmaWVkIjogW10sICJ3cml0dGVuIjogW10sICJlcnJvcnMiOiBbInBsYW4gaXMgbm90IHZhbGlkIEpTT046IDxUTVA+L2Fzc2VtYmxlX2FydGlmYWN0cy9iYWRfaW5wdXQvaW52YWxpZC5qc29uIChFeHBlY3RpbmcgdmFsdWU6IGxpbmUgMSBjb2x1bW4gMSAoY2hhciAwKSkiXX0K"
-    },
-    "failure": {
-      "code": 1,
-      "stdout": "eyJvayI6IGZhbHNlLCAicGxhblZlcnNpb24iOiBudWxsLCAicGxhbkNoZWNrc3VtIjogbnVsbCwgInZlcmlmaWVkIjogW10sICJ3cml0dGVuIjogW10sICJlcnJvcnMiOiBbInBsYW4gbm90IGZvdW5kIG9yIHVucmVhZGFibGU6IDxUTVA+L2Fzc2VtYmxlX2FydGlmYWN0cy9mYWlsdXJlL21pc3NpbmcgKFtFcnJubyAyXSBObyBzdWNoIGZpbGUgb3IgZGlyZWN0b3J5OiA8VE1QPi9hc3NlbWJsZV9hcnRpZmFjdHMvZmFpbHVyZS9taXNzaW5nKSJdfQo="
-    },
-    "success": {
-      "code": 0,
-      "stdout": "eyJvayI6IHRydWUsICJwbGFuVmVyc2lvbiI6IDIsICJwbGFuQ2hlY2tzdW0iOiAiPENIRUNLU1VNPiIsICJ2ZXJpZmllZCI6IFt7InBhdGgiOiAiPFRNUD4vYXNzZW1ibGVfYXJ0aWZhY3RzL3N1Y2Nlc3MvY29kZS1nYXVudGxldC1maW5kaW5ncy1hYmMxMjM0Lmpzb24iLCAiY2hhcnMiOiA8Q0hBUlM+LCAiZXhwZWN0ZWRfY2hhcnMiOiA8Q0hBUlM+LCAiY2hlY2tzdW0iOiAiPENIRUNLU1VNPiIsICJleHBlY3RlZF9jaGVja3N1bSI6ICI8Q0hFQ0tTVU0+IiwgImNvbnRlbnRfcHJvb2YiOiAibWF0Y2gifSwgeyJwYXRoIjogIjxUTVA+L2Fzc2VtYmxlX2FydGlmYWN0cy9zdWNjZXNzL2NvZGUtZ2F1bnRsZXQtcmVwb3J0LWFiYzEyMzQubWQiLCAiY2hhcnMiOiA8Q0hBUlM+LCAiZXhwZWN0ZWRfY2hhcnMiOiA8Q0hBUlM+LCAiY2hlY2tzdW0iOiAiPENIRUNLU1VNPiIsICJleHBlY3RlZF9jaGVja3N1bSI6ICI8Q0hFQ0tTVU0+IiwgImNvbnRlbnRfcHJvb2YiOiAibWF0Y2gifV0sICJ3cml0dGVuIjogW3sicGF0aCI6ICI8VE1QPi9hc3NlbWJsZV9hcnRpZmFjdHMvc3VjY2Vzcy9jb2RlLWdhdW50bGV0LXBvc3QtcmV2aWV3LWFiYzEyMzQuanNvbiIsICJjaGFycyI6IDxDSEFSUz4sICJjaGVja3N1bSI6ICI8Q0hFQ0tTVU0+In0sIHsicGF0aCI6ICI8VE1QPi9hc3NlbWJsZV9hcnRpZmFjdHMvc3VjY2Vzcy9jb2RlLWdhdW50bGV0LWNoZWNrcG9pbnQtYWxsLWFiYzEyMzQuanNvbiIsICJjaGFycyI6IDxDSEFSUz4sICJjaGVja3N1bSI6ICI8Q0hFQ0tTVU0+In1dLCAiZXJyb3JzIjogW119Cg=="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "await_workflow": {
-    "artifacts_only": {
-      "code": 5,
-      "stdout": "eyJhd2FpdCI6ImFydGlmYWN0c19vbmx5IiwiYXR0ZW1wdCI6MSwibWF4X2F0dGVtcHRzIjoyLCJ3YWl0ZWRfc2Vjb25kcyI6PEVMQVBTRUQ+LCJ0YXJnZXQiOiJ3bm9zdWNodGFzazAwMCIsInJlc29sdmVkX3BhdGgiOm51bGwsImZpbGVfYnl0ZXMiOm51bGwsInNpbmNlX2Vwb2NoIjowLjAsImFydGlmYWN0cyI6eyJjaGVja2VkIjp0cnVlLCJjb21wbGV0ZSI6dHJ1ZSwicHJlc2VudCI6WyJjb2RlLWdhdW50bGV0LWZpbmRpbmdzLWFiYzEyMzQ1Lmpzb24iLCJjb2RlLWdhdW50bGV0LXJlcG9ydC1hYmMxMjM0NS5tZCIsImNvZGUtZ2F1bnRsZXQtcG9zdC1yZXZpZXctYWJjMTIzNDUuanNvbiIsImNvZGUtZ2F1bnRsZXQtY2hlY2twb2ludC1hbGwtYWJjMTIzNDUuanNvbiJdLCJtaXNzaW5nIjpbXX0sInNhd19va193aXRob3V0X2NvcnJvYm9yYXRvciI6ZmFsc2UsInNjYW5fc2tpcHBlZCI6ZmFsc2UsInNjYW5fc3RvcF9yZWFzb24iOm51bGwsInNlYXJjaGVkIjo8U0VBUkNIX1JPT1RTPiwiZ2FwIjoid29ya2Zsb3ctdGltZW91dCIsImRldGFpbCI6ImV2ZXJ5IHBlcnNpc3RlZCBhcnRpZmFjdCBpcyBwcmVzZW50IGFuZCBmcmVzaCwgYnV0IHRoZSB3b3JrZmxvdydzIGNvbXBhY3QgcmV0dXJuIHdhcyBuZXZlciBvYnNlcnZlZDsgZGVsaXZlciBmcm9tIHRoZSBtYXJrZXIncyBhcnRpZmFjdFBhdGhzIGFuZCBkaXNjbG9zZSB0aGUgZ2FwIiwiYXJ0aWZhY3RQYXRocyI6eyJmaW5kaW5ncyI6IjxUTVA+L2F3YWl0X3dvcmtmbG93L2FydGlmYWN0c19vbmx5L2NvZGUtZ2F1bnRsZXQtZmluZGluZ3MtYWJjMTIzNDUuanNvbiIsInJlcG9ydCI6IjxUTVA+L2F3YWl0X3dvcmtmbG93L2FydGlmYWN0c19vbmx5L2NvZGUtZ2F1bnRsZXQtcmVwb3J0LWFiYzEyMzQ1Lm1kIiwicG9zdFJldmlldyI6IjxUTVA+L2F3YWl0X3dvcmtmbG93L2FydGlmYWN0c19vbmx5L2NvZGUtZ2F1bnRsZXQtcG9zdC1yZXZpZXctYWJjMTIzNDUuanNvbiIsImNoZWNrcG9pbnRzIjoiPFRNUD4vYXdhaXRfd29ya2Zsb3cvYXJ0aWZhY3RzX29ubHkvY29kZS1nYXVudGxldC1jaGVja3BvaW50LWFsbC1hYmMxMjM0NS5qc29uIn19Cg=="
-    },
-    "bad_input": {
-      "code": 2,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 4,
-      "stdout": "eyJhd2FpdCI6InRpbWVvdXQiLCJhdHRlbXB0IjoxLCJtYXhfYXR0ZW1wdHMiOjEsIndhaXRlZF9zZWNvbmRzIjo8RUxBUFNFRD4sInRhcmdldCI6IjxUTVA+L2F3YWl0X3dvcmtmbG93L2ZhaWx1cmUvbWlzc2luZyIsInJlc29sdmVkX3BhdGgiOiI8VE1QPi9hd2FpdF93b3JrZmxvdy9mYWlsdXJlL21pc3NpbmciLCJmaWxlX2J5dGVzIjpudWxsLCJzaW5jZV9lcG9jaCI6MC4wLCJhcnRpZmFjdHMiOnsiY2hlY2tlZCI6ZmFsc2UsImNvbXBsZXRlIjpmYWxzZSwicHJlc2VudCI6W10sIm1pc3NpbmciOltdfSwic2F3X29rX3dpdGhvdXRfY29ycm9ib3JhdG9yIjpmYWxzZSwic2Nhbl9za2lwcGVkIjpmYWxzZSwic2Nhbl9zdG9wX3JlYXNvbiI6bnVsbCwiZ2FwIjoid29ya2Zsb3ctdGltZW91dCIsImRldGFpbCI6Im5vIHRlcm1pbmFsIHdvcmtmbG93IHJlc3VsdCBhZnRlciAxIGF0dGVtcHRzOyBkZWNsYXJlIHRoZSBnYXAgYW5kIGRlbGl2ZXIgd2hhdGV2ZXIgcGFydGlhbCBhcnRpZmFjdHMgZXhpc3QifQo="
-    },
-    "pending": {
-      "code": 3,
-      "stdout": "eyJhd2FpdCI6InBlbmRpbmciLCJhdHRlbXB0IjoxLCJtYXhfYXR0ZW1wdHMiOjIsIndhaXRlZF9zZWNvbmRzIjo8RUxBUFNFRD4sInRhcmdldCI6IjxUTVA+L2F3YWl0X3dvcmtmbG93L3BlbmRpbmcvcGVuZGluZy5vdXRwdXQiLCJyZXNvbHZlZF9wYXRoIjoiPFRNUD4vYXdhaXRfd29ya2Zsb3cvcGVuZGluZy9wZW5kaW5nLm91dHB1dCIsImZpbGVfYnl0ZXMiOm51bGwsInNpbmNlX2Vwb2NoIjowLjAsImFydGlmYWN0cyI6eyJjaGVja2VkIjpmYWxzZSwiY29tcGxldGUiOmZhbHNlLCJwcmVzZW50IjpbXSwibWlzc2luZyI6W119LCJzYXdfb2tfd2l0aG91dF9jb3Jyb2JvcmF0b3IiOmZhbHNlLCJzY2FuX3NraXBwZWQiOmZhbHNlLCJzY2FuX3N0b3BfcmVhc29uIjpudWxsLCJuZXh0X2NvbW1hbmQiOiJweXRob24zIDxST09UPi9zY3JpcHRzL2F3YWl0X3dvcmtmbG93LnB5IC0tYXR0ZW1wdCAyIC0tbWF4LWF0dGVtcHRzIDIgLS10aW1lb3V0LXNlY29uZHMgMC4wIC0tcG9sbC1pbnRlcnZhbCAyIC0tc2luY2UtZXBvY2ggMC4wIC0tIDxUTVA+L2F3YWl0X3dvcmtmbG93L3BlbmRpbmcvcGVuZGluZy5vdXRwdXQifQo="
-    },
-    "success": {
-      "code": 0,
-      "stdout": "eyJvayI6dHJ1ZSwicGhhc2VSZWFjaGVkIjoicmVwb3J0Iiwic3RhdHMiOnsiZGlzY292ZXJlZCI6OSwibWVyZ2VkIjo5LCJ2ZXJpZmllZCI6dHJ1ZX0sImFydGlmYWN0UGF0aHMiOnsiZmluZGluZ3MiOiIvb3V0L2NvZGUtZ2F1bnRsZXQtZmluZGluZ3MtZGEwOWJjMDguanNvbiIsInJlcG9ydCI6Ii9vdXQvY29kZS1nYXVudGxldC1yZXBvcnQtZGEwOWJjMDgubWQifSwicmVzb2x2ZWRQb2xpY3kiOnsic3ViYWdlbnRNb2RlbCI6bnVsbH0sImNoZWNrcG9pbnRzIjp7ImNvbXBsZXRlZCI6WyJzdW1tYXJpemUiLCJyZXBvcnQiXX0sImdhcHMiOltdfQo="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "build_style_artifacts": {
-    "bad_input": {
-      "code": 1,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 1,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "c3R5bGUgc2Vzc2lvbi1jb250ZXh0IGNhcnJpZXIgaXMgY3VycmVudAo="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "collect_project_rules": {
-    "bad_input": {
-      "code": 1,
-      "stdout": "eyJvayI6IGZhbHNlLCAic291cmNlcyI6IFtdLCAicmV2aWV3X21kIjogW10sICJyZXZpZXdfbWRfZGlycyI6IFtdLCAic2tpcHBlZCI6IFtdLCAidG90YWxfYnl0ZXMiOiAwLCAidHJ1bmNhdGVkIjogZmFsc2UsICJvdXQiOiAiPFRNUD4vY29sbGVjdF9wcm9qZWN0X3J1bGVzL2JhZF9pbnB1dC9taXNzaW5nIiwgImdhcHMiOiBbInByb2plY3RfcnVsZXNfZmFpbGVkOiAtLXJlcG8tcm9vdCBpcyBub3QgYSBkaXJlY3RvcnkiXX0K"
-    },
-    "failure": {
-      "code": 1,
-      "stdout": "eyJvayI6IGZhbHNlLCAic291cmNlcyI6IFtdLCAicmV2aWV3X21kIjogW10sICJyZXZpZXdfbWRfZGlycyI6IFtdLCAic2tpcHBlZCI6IFtdLCAidG90YWxfYnl0ZXMiOiAwLCAidHJ1bmNhdGVkIjogZmFsc2UsICJvdXQiOiAiPFRNUD4vY29sbGVjdF9wcm9qZWN0X3J1bGVzL2ZhaWx1cmUvbWlzc2luZyIsICJnYXBzIjogWyJwcm9qZWN0X3J1bGVzX2ZhaWxlZDogLS1yZXBvLXJvb3QgaXMgbm90IGEgZGlyZWN0b3J5Il19Cg=="
-    },
-    "success": {
-      "code": 0,
-      "stdout": "eyJvayI6IHRydWUsICJzb3VyY2VzIjogW10sICJyZXZpZXdfbWQiOiBbXSwgInJldmlld19tZF9kaXJzIjogWyIuIl0sICJza2lwcGVkIjogW10sICJ0b3RhbF9ieXRlcyI6IDAsICJ0cnVuY2F0ZWQiOiBmYWxzZSwgIm91dCI6ICI8VE1QPi9jb2xsZWN0X3Byb2plY3RfcnVsZXMvc3VjY2Vzcy9ydWxlcy5tZCIsICJnYXBzIjogWyJwcm9qZWN0X3J1bGVzX2Fic2VudDogbm8gQ0xBVURFLm1kL0FHRU5UUy5tZC9RT0RPLm1kIGZvdW5kOyBhZ2VudHMgcmVjZWl2ZSBubyBwcm9qZWN0IHJ1bGVzIGZvciB0aGlzIHJlcG9zaXRvcnkiXX0K"
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "detect_prior_review": {
-    "bad_input": {
-      "code": 2,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 0,
-      "stdout": "ewogICJwcmV2aW91c2x5X3Jldmlld2VkIjogZmFsc2UsCiAgInNpZ25hbCI6IG51bGwsCiAgInNvdXJjZSI6IG51bGwsCiAgImxlZ2FjeSI6IGZhbHNlLAogICJsYXN0X3Jldmlld2VkX3NoYSI6IG51bGwsCiAgImxhc3RfcmV2aWV3ZWRfc2hhX3Nob3J0IjogbnVsbCwKICAic2hhX3Jlc29sdmFibGUiOiBmYWxzZSwKICAic2hhX2lzX2FuY2VzdG9yIjogZmFsc2UsCiAgImhlYWRfc2hhIjogInVua25vd24iLAogICJoZWFkX2FkdmFuY2VkIjogZmFsc2UsCiAgIm5ld19jb21taXRfY291bnQiOiBudWxsLAogICJpbmNyZW1lbnRhbF9zYWZlIjogZmFsc2UsCiAgIm1hcmtlciI6IG51bGwsCiAgInNjYW5uZWQiOiB7fSwKICAiZXJyb3JzIjogWwogICAgImJvZGllcy1maWxlOiBjb3VsZCBub3QgcmVhZCA8VE1QPi9kZXRlY3RfcHJpb3JfcmV2aWV3L2ZhaWx1cmUvbWlzc2luZyAoW0Vycm5vIDJdIE5vIHN1Y2ggZmlsZSBvciBkaXJlY3Rvcnk6IDxUTVA+L2RldGVjdF9wcmlvcl9yZXZpZXcvZmFpbHVyZS9taXNzaW5nKSIsCiAgICAiZ2l0OiBjb3VsZCBub3QgcmVzb2x2ZSB0aGUgaGVhZCBjb21taXQgKG5vdCBhIGdpdCByZXBvc2l0b3J5LCBhbiB1bmJvcm4gYnJhbmNoLCBvciBnaXQgaXMgdW5hdmFpbGFibGUpIgogIF0KfQo="
-    },
-    "success": {
-      "code": 0,
-      "stdout": "ewogICJwcmV2aW91c2x5X3Jldmlld2VkIjogZmFsc2UsCiAgInNpZ25hbCI6IG51bGwsCiAgInNvdXJjZSI6IG51bGwsCiAgImxlZ2FjeSI6IGZhbHNlLAogICJsYXN0X3Jldmlld2VkX3NoYSI6IG51bGwsCiAgImxhc3RfcmV2aWV3ZWRfc2hhX3Nob3J0IjogbnVsbCwKICAic2hhX3Jlc29sdmFibGUiOiBmYWxzZSwKICAic2hhX2lzX2FuY2VzdG9yIjogZmFsc2UsCiAgImhlYWRfc2hhIjogImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLAogICJoZWFkX2FkdmFuY2VkIjogZmFsc2UsCiAgIm5ld19jb21taXRfY291bnQiOiBudWxsLAogICJpbmNyZW1lbnRhbF9zYWZlIjogZmFsc2UsCiAgIm1hcmtlciI6IG51bGwsCiAgInNjYW5uZWQiOiB7fSwKICAiZXJyb3JzIjogWwogICAgImdpdDogLS1oZWFkLXNoYSBhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIGNvdWxkIG5vdCBiZSByZXNvbHZlZCBpbiB0aGlzIGNsb25lOyBjb21wYXJpc29ucyBhZ2FpbnN0IGl0IGFyZSB1bnJlbGlhYmxlIgogIF0KfQo="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "diff_numstat": {
-    "failure": {
-      "code": 2,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "Y2hhbmdlZF9saW5lcz0yCmJpbmFyeV9maWxlcz0wCg=="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "emit_style_context": {
-    "bad_input": {
-      "code": 0,
-      "stdout": "eyJob29rU3BlY2lmaWNPdXRwdXQiOiB7Imhvb2tFdmVudE5hbWUiOiAiU2Vzc2lvblN0YXJ0IiwgImFkZGl0aW9uYWxDb250ZXh0IjogIiMgU2Vzc2lvbiBvdXRwdXQgc3R5bGVcblxuVGhlc2UgcnVsZXMgZ292ZXJuIENsYXVkZSdzIHNlc3Npb24gb3V0cHV0IGluIHRoaXMgcmVwb3NpdG9yeS5cblxuIyMgV29yZGluZ1xuXG4tIEN1dCBlbSBkYXNoZXMgZnJvbSB5b3VyIG93biBvdXRwdXQsIHJlcGxhY2luZyBlYWNoIHdpdGggYSBjb21tYSwgYSBwZXJpb2QsIG9yIFwiYW5kXCIgb3IgXCJidXRcIi5cbi0gRGVzY3JpYmUgd2hhdCBhIHRoaW5nIGRvZXMsIGFuZCBuZXZlciBhc3NlcnQgdGhhdCBpdCBpcyBpbXBvcnRhbnQsIGNyaXRpY2FsLCBvciBhIG1pbGVzdG9uZS5cbi0gQXZvaWQgY29tcHJlaGVuc2l2ZSwgcm9idXN0LCBzZWFtbGVzcywgY3J1Y2lhbCwgdml0YWwsIGtleSwgcG93ZXJmdWwsIHNpZ25pZmljYW50LCBkZWVwLCBhbmQgZW5oYW5jZWQgYXMgYm9vc3RlcnMsIGFuZCBcImxldmVyYWdlXCIgYXMgYSB2ZXJiLlxuLSBXcml0ZSBhIGJ1bGxldCBhcyBhIGZ1bGwgc2VudGVuY2UsIG5ldmVyIGFzIGEgYm9sZGVkIGxhYmVsIGZvbGxvd2VkIGJ5IGEgY29sb24gYW5kIGEgZnJhZ21lbnQuXG4tIExpc3QgZXhhY3RseSB0aGUgaXRlbXMgdGhhdCBleGlzdCwgYW5kIHdyaXRlIG9uZSBvciB0d28gaXRlbXMgYXMgcHJvc2UgaW5zdGVhZCBvZiBhIGxpc3QuXG4tIEtlZXAgZXZlcnkgc2VudGVuY2UgdW5kZXIgMjUgd29yZHMgYW5kIGdpdmUgZWFjaCBzZW50ZW5jZSBvbmUgaWRlYS5cbi0gVmFyeSBzZW50ZW5jZSBsZW5ndGggYmVuZWF0aCB0aGUgd29yZCBjYXAsIGJlY2F1c2UgdGhlIGNhcCBpcyBhIGNlaWxpbmcgYW5kIG5vdCBhIHRhcmdldC5cbi0gVXNlIGEgdmVyYiB3aGVyZSBhIG5vdW4gcGhyYXNlIGhpZGVzIGFuIGFjdGlvbiwgd3JpdGluZyBcInRoZSBwYXJzZXIgdmFsaWRhdGVzXCIgb3ZlciBcInZhbGlkYXRpb24gaXMgcGVyZm9ybWVkXCIuXG4tIFByZWZlciB0aGUgcGxhaW4gd29yZDogdXNlIG92ZXIgdXRpbGl6ZSwgc3RhcnQgb3ZlciBjb21tZW5jZSwgYWJvdXQgb3ZlciByZWdhcmRpbmcsIHNvIG92ZXIgYWNjb3JkaW5nbHkuXG4tIEV4cGxhaW4gY29ubmVjdGVkIHJlYXNvbmluZyBpbiBwcm9zZSwgYW5kIHVzZSBidWxsZXRzIG9ubHkgZm9yIGdlbnVpbmVseSBwYXJhbGxlbCBpdGVtcy5cbi0gU3RvcCBhdCB0aGUgbGFzdCBmYWN0LCBhZGRpbmcgbm8gc3VtbWFyeSBvZiB3aGF0IHdhcyBhbHJlYWR5IHNhaWQgYW5kIG5vIG9mZmVyIG9mIG5leHQgc3RlcHMuXG4tIE5hbWUgd2hhdCB5b3UgZGlkIG5vdCBjaGVjayBpbiBvbmUgcGxhaW4gc2VudGVuY2UsIHdpdGhvdXQgaGVkZ2luZyBsYW5ndWFnZSBhcm91bmQgaXQuXG4tIERlZmluZSBhbiB1bmZhbWlsaWFyIHRlcm0gdGhlIGZpcnN0IHRpbWUgeW91IHVzZSBpdCwgdGhlbiB1c2UgaXQgYmFyZSBmb3IgdGhlIHJlc3Qgb2YgdGhlIHJlcGx5LlxuXG4jIyBDYWRlbmNlXG5cbi0gQW5zd2VyIGEgb25lLWZhY3QgcXVlc3Rpb24gaW4gb25lIG9yIHR3byBzZW50ZW5jZXMsIHdpdGggbm8gcHJlYW1ibGUgYW5kIG5vIHJlc3RhdGVtZW50IG9mIHRoZSBxdWVzdGlvbi5cbi0gR2l2ZSB0aGUgY29uY2x1c2lvbiBhbmQgdGhlIHJlYXNvbmluZyB0aGF0IGNoYW5nZXMgaXQsIGFuZCBob2xkIHRoZSBmdWxsIHRyYWNlIHVudGlsIHNvbWVvbmUgYXNrcy5cbi0gU2F5IGluIG9uZSBzZW50ZW5jZSB3aGF0IHlvdSBhcmUgYWJvdXQgdG8gZG8gYmVmb3JlIHRoZSBmaXJzdCB0b29sIGNhbGwsIGFuZCBzYXkgbm90aGluZyBmb3IgYSB0cml2aWFsIGxvb2t1cC5cbi0gRGVzY3JpYmUgdGhlIGdvYWwgaW4gb25lIHNlbnRlbmNlIHJhdGhlciB0aGFuIG5hcnJhdGluZyB0aGUgc2VxdWVuY2Ugb2Ygc3RlcHMgeW91IHBsYW4gdG8gdGFrZS5cbi0gU3BlYWsgYmV0d2VlbiB0b29sIGNhbGxzIG9ubHkgd2hlbiB5b3UgZm91bmQgc29tZXRoaW5nIGxvYWQtYmVhcmluZyBvciBjaGFuZ2VkIGRpcmVjdGlvbi5cbi0gRW5kIHRoZSB0dXJuIHdpdGggd2hhdCBoYXBwZW5lZCBvciB3aGF0IHlvdSBmb3VuZCwgbm90IHdpdGggYSByZWNhcCBvZiB0aGUgcHJvY2VzcyB0aGF0IHByb2R1Y2VkIGl0LlxuLSBDb3JyZWN0IHlvdXIgb3duIG1pc3Rha2Ugd2l0aG91dCBuYXJyYXRpbmcgaXQsIHVubGVzcyB0aGUgbWlzdGFrZSBjaGFuZ2VzIGEgZGVjaXNpb24gdGhlIHJlYWRlciBoYXMgYWxyZWFkeSBtYWRlLlxuIn19Cg=="
-    },
-    "failure": {
-      "code": 1,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "eyJob29rU3BlY2lmaWNPdXRwdXQiOiB7Imhvb2tFdmVudE5hbWUiOiAiU2Vzc2lvblN0YXJ0IiwgImFkZGl0aW9uYWxDb250ZXh0IjogIiMgU2Vzc2lvbiBvdXRwdXQgc3R5bGVcblxuVGhlc2UgcnVsZXMgZ292ZXJuIENsYXVkZSdzIHNlc3Npb24gb3V0cHV0IGluIHRoaXMgcmVwb3NpdG9yeS5cblxuIyMgV29yZGluZ1xuXG4tIEN1dCBlbSBkYXNoZXMgZnJvbSB5b3VyIG93biBvdXRwdXQsIHJlcGxhY2luZyBlYWNoIHdpdGggYSBjb21tYSwgYSBwZXJpb2QsIG9yIFwiYW5kXCIgb3IgXCJidXRcIi5cbi0gRGVzY3JpYmUgd2hhdCBhIHRoaW5nIGRvZXMsIGFuZCBuZXZlciBhc3NlcnQgdGhhdCBpdCBpcyBpbXBvcnRhbnQsIGNyaXRpY2FsLCBvciBhIG1pbGVzdG9uZS5cbi0gQXZvaWQgY29tcHJlaGVuc2l2ZSwgcm9idXN0LCBzZWFtbGVzcywgY3J1Y2lhbCwgdml0YWwsIGtleSwgcG93ZXJmdWwsIHNpZ25pZmljYW50LCBkZWVwLCBhbmQgZW5oYW5jZWQgYXMgYm9vc3RlcnMsIGFuZCBcImxldmVyYWdlXCIgYXMgYSB2ZXJiLlxuLSBXcml0ZSBhIGJ1bGxldCBhcyBhIGZ1bGwgc2VudGVuY2UsIG5ldmVyIGFzIGEgYm9sZGVkIGxhYmVsIGZvbGxvd2VkIGJ5IGEgY29sb24gYW5kIGEgZnJhZ21lbnQuXG4tIExpc3QgZXhhY3RseSB0aGUgaXRlbXMgdGhhdCBleGlzdCwgYW5kIHdyaXRlIG9uZSBvciB0d28gaXRlbXMgYXMgcHJvc2UgaW5zdGVhZCBvZiBhIGxpc3QuXG4tIEtlZXAgZXZlcnkgc2VudGVuY2UgdW5kZXIgMjUgd29yZHMgYW5kIGdpdmUgZWFjaCBzZW50ZW5jZSBvbmUgaWRlYS5cbi0gVmFyeSBzZW50ZW5jZSBsZW5ndGggYmVuZWF0aCB0aGUgd29yZCBjYXAsIGJlY2F1c2UgdGhlIGNhcCBpcyBhIGNlaWxpbmcgYW5kIG5vdCBhIHRhcmdldC5cbi0gVXNlIGEgdmVyYiB3aGVyZSBhIG5vdW4gcGhyYXNlIGhpZGVzIGFuIGFjdGlvbiwgd3JpdGluZyBcInRoZSBwYXJzZXIgdmFsaWRhdGVzXCIgb3ZlciBcInZhbGlkYXRpb24gaXMgcGVyZm9ybWVkXCIuXG4tIFByZWZlciB0aGUgcGxhaW4gd29yZDogdXNlIG92ZXIgdXRpbGl6ZSwgc3RhcnQgb3ZlciBjb21tZW5jZSwgYWJvdXQgb3ZlciByZWdhcmRpbmcsIHNvIG92ZXIgYWNjb3JkaW5nbHkuXG4tIEV4cGxhaW4gY29ubmVjdGVkIHJlYXNvbmluZyBpbiBwcm9zZSwgYW5kIHVzZSBidWxsZXRzIG9ubHkgZm9yIGdlbnVpbmVseSBwYXJhbGxlbCBpdGVtcy5cbi0gU3RvcCBhdCB0aGUgbGFzdCBmYWN0LCBhZGRpbmcgbm8gc3VtbWFyeSBvZiB3aGF0IHdhcyBhbHJlYWR5IHNhaWQgYW5kIG5vIG9mZmVyIG9mIG5leHQgc3RlcHMuXG4tIE5hbWUgd2hhdCB5b3UgZGlkIG5vdCBjaGVjayBpbiBvbmUgcGxhaW4gc2VudGVuY2UsIHdpdGhvdXQgaGVkZ2luZyBsYW5ndWFnZSBhcm91bmQgaXQuXG4tIERlZmluZSBhbiB1bmZhbWlsaWFyIHRlcm0gdGhlIGZpcnN0IHRpbWUgeW91IHVzZSBpdCwgdGhlbiB1c2UgaXQgYmFyZSBmb3IgdGhlIHJlc3Qgb2YgdGhlIHJlcGx5LlxuXG4jIyBDYWRlbmNlXG5cbi0gQW5zd2VyIGEgb25lLWZhY3QgcXVlc3Rpb24gaW4gb25lIG9yIHR3byBzZW50ZW5jZXMsIHdpdGggbm8gcHJlYW1ibGUgYW5kIG5vIHJlc3RhdGVtZW50IG9mIHRoZSBxdWVzdGlvbi5cbi0gR2l2ZSB0aGUgY29uY2x1c2lvbiBhbmQgdGhlIHJlYXNvbmluZyB0aGF0IGNoYW5nZXMgaXQsIGFuZCBob2xkIHRoZSBmdWxsIHRyYWNlIHVudGlsIHNvbWVvbmUgYXNrcy5cbi0gU2F5IGluIG9uZSBzZW50ZW5jZSB3aGF0IHlvdSBhcmUgYWJvdXQgdG8gZG8gYmVmb3JlIHRoZSBmaXJzdCB0b29sIGNhbGwsIGFuZCBzYXkgbm90aGluZyBmb3IgYSB0cml2aWFsIGxvb2t1cC5cbi0gRGVzY3JpYmUgdGhlIGdvYWwgaW4gb25lIHNlbnRlbmNlIHJhdGhlciB0aGFuIG5hcnJhdGluZyB0aGUgc2VxdWVuY2Ugb2Ygc3RlcHMgeW91IHBsYW4gdG8gdGFrZS5cbi0gU3BlYWsgYmV0d2VlbiB0b29sIGNhbGxzIG9ubHkgd2hlbiB5b3UgZm91bmQgc29tZXRoaW5nIGxvYWQtYmVhcmluZyBvciBjaGFuZ2VkIGRpcmVjdGlvbi5cbi0gRW5kIHRoZSB0dXJuIHdpdGggd2hhdCBoYXBwZW5lZCBvciB3aGF0IHlvdSBmb3VuZCwgbm90IHdpdGggYSByZWNhcCBvZiB0aGUgcHJvY2VzcyB0aGF0IHByb2R1Y2VkIGl0LlxuLSBDb3JyZWN0IHlvdXIgb3duIG1pc3Rha2Ugd2l0aG91dCBuYXJyYXRpbmcgaXQsIHVubGVzcyB0aGUgbWlzdGFrZSBjaGFuZ2VzIGEgZGVjaXNpb24gdGhlIHJlYWRlciBoYXMgYWxyZWFkeSBtYWRlLlxuIn19Cg=="
-    },
-    "usage": {
-      "code": 0,
-      "stdout": "eyJob29rU3BlY2lmaWNPdXRwdXQiOiB7Imhvb2tFdmVudE5hbWUiOiAiU2Vzc2lvblN0YXJ0IiwgImFkZGl0aW9uYWxDb250ZXh0IjogIiMgU2Vzc2lvbiBvdXRwdXQgc3R5bGVcblxuVGhlc2UgcnVsZXMgZ292ZXJuIENsYXVkZSdzIHNlc3Npb24gb3V0cHV0IGluIHRoaXMgcmVwb3NpdG9yeS5cblxuIyMgV29yZGluZ1xuXG4tIEN1dCBlbSBkYXNoZXMgZnJvbSB5b3VyIG93biBvdXRwdXQsIHJlcGxhY2luZyBlYWNoIHdpdGggYSBjb21tYSwgYSBwZXJpb2QsIG9yIFwiYW5kXCIgb3IgXCJidXRcIi5cbi0gRGVzY3JpYmUgd2hhdCBhIHRoaW5nIGRvZXMsIGFuZCBuZXZlciBhc3NlcnQgdGhhdCBpdCBpcyBpbXBvcnRhbnQsIGNyaXRpY2FsLCBvciBhIG1pbGVzdG9uZS5cbi0gQXZvaWQgY29tcHJlaGVuc2l2ZSwgcm9idXN0LCBzZWFtbGVzcywgY3J1Y2lhbCwgdml0YWwsIGtleSwgcG93ZXJmdWwsIHNpZ25pZmljYW50LCBkZWVwLCBhbmQgZW5oYW5jZWQgYXMgYm9vc3RlcnMsIGFuZCBcImxldmVyYWdlXCIgYXMgYSB2ZXJiLlxuLSBXcml0ZSBhIGJ1bGxldCBhcyBhIGZ1bGwgc2VudGVuY2UsIG5ldmVyIGFzIGEgYm9sZGVkIGxhYmVsIGZvbGxvd2VkIGJ5IGEgY29sb24gYW5kIGEgZnJhZ21lbnQuXG4tIExpc3QgZXhhY3RseSB0aGUgaXRlbXMgdGhhdCBleGlzdCwgYW5kIHdyaXRlIG9uZSBvciB0d28gaXRlbXMgYXMgcHJvc2UgaW5zdGVhZCBvZiBhIGxpc3QuXG4tIEtlZXAgZXZlcnkgc2VudGVuY2UgdW5kZXIgMjUgd29yZHMgYW5kIGdpdmUgZWFjaCBzZW50ZW5jZSBvbmUgaWRlYS5cbi0gVmFyeSBzZW50ZW5jZSBsZW5ndGggYmVuZWF0aCB0aGUgd29yZCBjYXAsIGJlY2F1c2UgdGhlIGNhcCBpcyBhIGNlaWxpbmcgYW5kIG5vdCBhIHRhcmdldC5cbi0gVXNlIGEgdmVyYiB3aGVyZSBhIG5vdW4gcGhyYXNlIGhpZGVzIGFuIGFjdGlvbiwgd3JpdGluZyBcInRoZSBwYXJzZXIgdmFsaWRhdGVzXCIgb3ZlciBcInZhbGlkYXRpb24gaXMgcGVyZm9ybWVkXCIuXG4tIFByZWZlciB0aGUgcGxhaW4gd29yZDogdXNlIG92ZXIgdXRpbGl6ZSwgc3RhcnQgb3ZlciBjb21tZW5jZSwgYWJvdXQgb3ZlciByZWdhcmRpbmcsIHNvIG92ZXIgYWNjb3JkaW5nbHkuXG4tIEV4cGxhaW4gY29ubmVjdGVkIHJlYXNvbmluZyBpbiBwcm9zZSwgYW5kIHVzZSBidWxsZXRzIG9ubHkgZm9yIGdlbnVpbmVseSBwYXJhbGxlbCBpdGVtcy5cbi0gU3RvcCBhdCB0aGUgbGFzdCBmYWN0LCBhZGRpbmcgbm8gc3VtbWFyeSBvZiB3aGF0IHdhcyBhbHJlYWR5IHNhaWQgYW5kIG5vIG9mZmVyIG9mIG5leHQgc3RlcHMuXG4tIE5hbWUgd2hhdCB5b3UgZGlkIG5vdCBjaGVjayBpbiBvbmUgcGxhaW4gc2VudGVuY2UsIHdpdGhvdXQgaGVkZ2luZyBsYW5ndWFnZSBhcm91bmQgaXQuXG4tIERlZmluZSBhbiB1bmZhbWlsaWFyIHRlcm0gdGhlIGZpcnN0IHRpbWUgeW91IHVzZSBpdCwgdGhlbiB1c2UgaXQgYmFyZSBmb3IgdGhlIHJlc3Qgb2YgdGhlIHJlcGx5LlxuXG4jIyBDYWRlbmNlXG5cbi0gQW5zd2VyIGEgb25lLWZhY3QgcXVlc3Rpb24gaW4gb25lIG9yIHR3byBzZW50ZW5jZXMsIHdpdGggbm8gcHJlYW1ibGUgYW5kIG5vIHJlc3RhdGVtZW50IG9mIHRoZSBxdWVzdGlvbi5cbi0gR2l2ZSB0aGUgY29uY2x1c2lvbiBhbmQgdGhlIHJlYXNvbmluZyB0aGF0IGNoYW5nZXMgaXQsIGFuZCBob2xkIHRoZSBmdWxsIHRyYWNlIHVudGlsIHNvbWVvbmUgYXNrcy5cbi0gU2F5IGluIG9uZSBzZW50ZW5jZSB3aGF0IHlvdSBhcmUgYWJvdXQgdG8gZG8gYmVmb3JlIHRoZSBmaXJzdCB0b29sIGNhbGwsIGFuZCBzYXkgbm90aGluZyBmb3IgYSB0cml2aWFsIGxvb2t1cC5cbi0gRGVzY3JpYmUgdGhlIGdvYWwgaW4gb25lIHNlbnRlbmNlIHJhdGhlciB0aGFuIG5hcnJhdGluZyB0aGUgc2VxdWVuY2Ugb2Ygc3RlcHMgeW91IHBsYW4gdG8gdGFrZS5cbi0gU3BlYWsgYmV0d2VlbiB0b29sIGNhbGxzIG9ubHkgd2hlbiB5b3UgZm91bmQgc29tZXRoaW5nIGxvYWQtYmVhcmluZyBvciBjaGFuZ2VkIGRpcmVjdGlvbi5cbi0gRW5kIHRoZSB0dXJuIHdpdGggd2hhdCBoYXBwZW5lZCBvciB3aGF0IHlvdSBmb3VuZCwgbm90IHdpdGggYSByZWNhcCBvZiB0aGUgcHJvY2VzcyB0aGF0IHByb2R1Y2VkIGl0LlxuLSBDb3JyZWN0IHlvdXIgb3duIG1pc3Rha2Ugd2l0aG91dCBuYXJyYXRpbmcgaXQsIHVubGVzcyB0aGUgbWlzdGFrZSBjaGFuZ2VzIGEgZGVjaXNpb24gdGhlIHJlYWRlciBoYXMgYWxyZWFkeSBtYWRlLlxuIn19Cg=="
-    }
-  },
-  "ensure_output_dir": {
-    "failure": {
-      "code": 1,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "PFRNUD4vZW5zdXJlX291dHB1dF9kaXIvc3VjY2Vzcy9vdXRwdXQK"
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "generate_contract_requirements": {
-    "bad_input": {
-      "code": 1,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 1,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "Z2VuZXJhdGVkIHJlZ2lzdHJ5IGJsb2NrcyBhcmUgY3VycmVudAo="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "materialize_artifacts": {
-    "bad_input": {
-      "code": 2,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 1,
-      "stdout": "eyJvayI6IGZhbHNlLCAiY2hhbm5lbCI6ICJyZXR1cm4iLCAic291cmNlIjogbnVsbCwgInNjYW5uZWQiOiAxLCAibWF0ZXJpYWxpemVkIjogW10sICJhc3NlbWJsZSI6IG51bGwsICJnYXBzIjogW10sICJlcnJvcnMiOiBbIm5vIHRhc2sgb3V0cHV0IGZpbGUgY2FycnlpbmcgdGhpcyBydW4ncyByZXR1cm5lZCBhcnRpZmFjdHMgd2FzIGZvdW5kIChsb29rZWQgYXQgMSBjYW5kaWRhdGUgZmlsZShzKSBmb3IgdGFyZ2V0IDxUTVA+L21hdGVyaWFsaXplX2FydGlmYWN0cy9mYWlsdXJlL21pc3NpbmcgLyBub25jZSBOb25lKSJdfQo="
-    },
-    "success": {
-      "code": 0,
-      "stdout": "eyJvayI6IHRydWUsICJjaGFubmVsIjogInJldHVybiIsICJzb3VyY2UiOiAiPFRNUD4vbWF0ZXJpYWxpemVfYXJ0aWZhY3RzL3N1Y2Nlc3MvdGFza3MvdGFzay1hYmMxMjMub3V0cHV0IiwgInNjYW5uZWQiOiAxLCAibWF0ZXJpYWxpemVkIjogW3sicGF0aCI6ICI8VE1QPi9tYXRlcmlhbGl6ZV9hcnRpZmFjdHMvc3VjY2Vzcy8uY29kZS1nYXVudGxldC9jb2RlLWdhdW50bGV0LWZpbmRpbmdzLWFiYzEyMzQuanNvbiIsICJjaGFycyI6IDxDSEFSUz4sICJjaGVja3N1bSI6ICI8Q0hFQ0tTVU0+In0sIHsicGF0aCI6ICI8VE1QPi9tYXRlcmlhbGl6ZV9hcnRpZmFjdHMvc3VjY2Vzcy8uY29kZS1nYXVudGxldC9jb2RlLWdhdW50bGV0LXJlcG9ydC1hYmMxMjM0Lm1kIiwgImNoYXJzIjogPENIQVJTPiwgImNoZWNrc3VtIjogIjxDSEVDS1NVTT4ifSwgeyJwYXRoIjogIjxUTVA+L21hdGVyaWFsaXplX2FydGlmYWN0cy9zdWNjZXNzLy5jb2RlLWdhdW50bGV0L2NvZGUtZ2F1bnRsZXQtcGVyc2lzdC1wbGFuLWFiYzEyMzQuanNvbiIsICJjaGFycyI6IDxDSEFSUz4sICJjaGVja3N1bSI6ICI8Q0hFQ0tTVU0+In1dLCAiYXNzZW1ibGUiOiB7Im9rIjogdHJ1ZSwgInBsYW5WZXJzaW9uIjogMiwgInBsYW5DaGVja3N1bSI6ICI8Q0hFQ0tTVU0+IiwgInZlcmlmaWVkIjogW3sicGF0aCI6ICI8VE1QPi9tYXRlcmlhbGl6ZV9hcnRpZmFjdHMvc3VjY2Vzcy8uY29kZS1nYXVudGxldC9jb2RlLWdhdW50bGV0LWZpbmRpbmdzLWFiYzEyMzQuanNvbiIsICJjaGFycyI6IDxDSEFSUz4sICJleHBlY3RlZF9jaGFycyI6IDxDSEFSUz4sICJjaGVja3N1bSI6ICI8Q0hFQ0tTVU0+IiwgImV4cGVjdGVkX2NoZWNrc3VtIjogIjxDSEVDS1NVTT4iLCAiY29udGVudF9wcm9vZiI6ICJtYXRjaCJ9LCB7InBhdGgiOiAiPFRNUD4vbWF0ZXJpYWxpemVfYXJ0aWZhY3RzL3N1Y2Nlc3MvLmNvZGUtZ2F1bnRsZXQvY29kZS1nYXVudGxldC1yZXBvcnQtYWJjMTIzNC5tZCIsICJjaGFycyI6IDxDSEFSUz4sICJleHBlY3RlZF9jaGFycyI6IDxDSEFSUz4sICJjaGVja3N1bSI6ICI8Q0hFQ0tTVU0+IiwgImV4cGVjdGVkX2NoZWNrc3VtIjogIjxDSEVDS1NVTT4iLCAiY29udGVudF9wcm9vZiI6ICJtYXRjaCJ9XSwgIndyaXR0ZW4iOiBbeyJwYXRoIjogIjxUTVA+L21hdGVyaWFsaXplX2FydGlmYWN0cy9zdWNjZXNzLy5jb2RlLWdhdW50bGV0L2NvZGUtZ2F1bnRsZXQtcG9zdC1yZXZpZXctYWJjMTIzNC5qc29uIiwgImNoYXJzIjogPENIQVJTPiwgImNoZWNrc3VtIjogIjxDSEVDS1NVTT4ifSwgeyJwYXRoIjogIjxUTVA+L21hdGVyaWFsaXplX2FydGlmYWN0cy9zdWNjZXNzLy5jb2RlLWdhdW50bGV0L2NvZGUtZ2F1bnRsZXQtY2hlY2twb2ludC1hbGwtYWJjMTIzNC5qc29uIiwgImNoYXJzIjogPENIQVJTPiwgImNoZWNrc3VtIjogIjxDSEVDS1NVTT4ifV0sICJlcnJvcnMiOiBbXX0sICJnYXBzIjogW10sICJlcnJvcnMiOiBbXX0K"
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "post_review": {
-    "bad_input": {
-      "code": 2,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 1,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "UmV2aWV3IGNhcHR1cmVkIChkcnktcnVuKS4KICAwIGlubGluZSBjb21tZW50KHMpIGNhcHR1cmVkLgpEcnkgcnVuIOKAlCBubyBjb21tZW50cyBwb3N0ZWQuIFBheWxvYWQgd3JpdHRlbiB0bzogPFRNUD4vcG9zdF9yZXZpZXcvc3VjY2Vzcy9wb3N0LXJldmlldy1wYXlsb2FkLmpzb24K"
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "render_fix_tasks": {
-    "bad_input": {
-      "code": 1,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 1,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "W10K"
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "report_patches": {
-    "bad_input": {
-      "code": 1,
-      "stdout": "eyJvayI6IGZhbHNlLCAicGF0aCI6ICI8VE1QPi9yZXBvcnRfcGF0Y2hlcy9iYWRfaW5wdXQvbWlzc2luZy9jb2RlLWdhdW50bGV0LXBhdGNoZXMtaW52YWxpZC5tZCIsICJvcmFjbGUiOiAidW5hdHRlbXB0ZWQiLCAiY2FuZGlkYXRlcyI6IDAsICJrZXB0IjogMCwgImRvd25ncmFkZWQiOiAwLCAicmVhc29ucyI6IHt9LCAiZmlsdGVyZWRfZWFybGllciI6IDAsICJmaW5kaW5ncyI6IDAsICJ3YXJuaW5ncyI6IFtdLCAiZXJyb3JzIjogWyJjb3VsZCBub3QgcmVhZCBmaW5kaW5ncyBmaWxlIDxUTVA+L3JlcG9ydF9wYXRjaGVzL2JhZF9pbnB1dC9taXNzaW5nL2NvZGUtZ2F1bnRsZXQtZmluZGluZ3MtaW52YWxpZC5qc29uOiBbRXJybm8gMl0gTm8gc3VjaCBmaWxlIG9yIGRpcmVjdG9yeTogPFRNUD4vcmVwb3J0X3BhdGNoZXMvYmFkX2lucHV0L21pc3NpbmcvY29kZS1nYXVudGxldC1maW5kaW5ncy1pbnZhbGlkLmpzb24iXX0K"
-    },
-    "failure": {
-      "code": 1,
-      "stdout": "eyJvayI6IGZhbHNlLCAicGF0aCI6ICI8VE1QPi9yZXBvcnRfcGF0Y2hlcy9mYWlsdXJlL21pc3NpbmcvY29kZS1nYXVudGxldC1wYXRjaGVzLWFiY2QubWQiLCAib3JhY2xlIjogInVuYXR0ZW1wdGVkIiwgImNhbmRpZGF0ZXMiOiAwLCAia2VwdCI6IDAsICJkb3duZ3JhZGVkIjogMCwgInJlYXNvbnMiOiB7fSwgImZpbHRlcmVkX2VhcmxpZXIiOiAwLCAiZmluZGluZ3MiOiAwLCAid2FybmluZ3MiOiBbXSwgImVycm9ycyI6IFsiY291bGQgbm90IHJlYWQgZmluZGluZ3MgZmlsZSA8VE1QPi9yZXBvcnRfcGF0Y2hlcy9mYWlsdXJlL21pc3NpbmcvY29kZS1nYXVudGxldC1maW5kaW5ncy1hYmNkLmpzb246IFtFcnJubyAyXSBObyBzdWNoIGZpbGUgb3IgZGlyZWN0b3J5OiA8VE1QPi9yZXBvcnRfcGF0Y2hlcy9mYWlsdXJlL21pc3NpbmcvY29kZS1nYXVudGxldC1maW5kaW5ncy1hYmNkLmpzb24iXX0K"
-    },
-    "success": {
-      "code": 0,
-      "stdout": "eyJvayI6IHRydWUsICJwYXRoIjogIjxUTVA+L3JlcG9ydF9wYXRjaGVzL3N1Y2Nlc3MvY29kZS1nYXVudGxldC1wYXRjaGVzLWFiYzEyMzQubWQiLCAib3JhY2xlIjogIm9rIiwgImNhbmRpZGF0ZXMiOiAwLCAia2VwdCI6IDAsICJkb3duZ3JhZGVkIjogMCwgInJlYXNvbnMiOiB7fSwgImZpbHRlcmVkX2VhcmxpZXIiOiAwLCAiZmluZGluZ3MiOiAwLCAid2FybmluZ3MiOiBbXSwgImVycm9ycyI6IFtdfQo="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "resolve_config": {
-    "bad_input": {
-      "code": 2,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 2,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "ewogICJtb2RlIjogImludGVyYWN0aXZlIiwKICAidGFyZ2V0IjogImxvY2FsIiwKICAiYmxvY2siOiAiUmVzb2x2ZWQgY29uZmlnOlxuICBtb2RlbF90aWVyPW9wdGltaXplZCAoZml4ZWQpXG4gIHByX2NvbW1lbnRfY2FwPW51bGwgKGRlZmF1bHQpXG4gIGRlbGl2ZXJ5X3RpZXI9YWxsIChkZWZhdWx0KVxuICBwaXBlbGluZV92ZXJzaW9uPTxCVU5ETEVfVkVSU0lPTj4gKGJ1bmRsZSlcbiAgcGx1Z2luX3Jvb3Q9PFJPT1Q+IChyZXNvbHZlZCkiLAogICJ3YWlzdCI6IHsKICAgICJjb25maWdFY2hvIjogewogICAgICAibW9kZWxfdGllciI6IHsKICAgICAgICAidmFsdWUiOiAib3B0aW1pemVkIiwKICAgICAgICAic291cmNlIjogImZpeGVkIgogICAgICB9LAogICAgICAicHJfY29tbWVudF9jYXAiOiB7CiAgICAgICAgInZhbHVlIjogIm51bGwiLAogICAgICAgICJzb3VyY2UiOiAiZGVmYXVsdCIKICAgICAgfSwKICAgICAgImRlbGl2ZXJ5X3RpZXIiOiB7CiAgICAgICAgInZhbHVlIjogImFsbCIsCiAgICAgICAgInNvdXJjZSI6ICJkZWZhdWx0IgogICAgICB9CiAgICB9CiAgfSwKICAicmVzb2x2ZWQiOiB7CiAgICAibW9kZWxfdGllciI6ICJvcHRpbWl6ZWQiCiAgfSwKICAiaWRlbnRpdHkiOiB7CiAgICAicGlwZWxpbmVfdmVyc2lvbiI6ICI8QlVORExFX1ZFUlNJT04+IiwKICAgICJwbHVnaW5fcm9vdCI6ICI8Uk9PVD4iCiAgfQp9Cg=="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "resolve_pr_identity": {
-    "bad_input": {
-      "code": 2,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 2,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "eyJvd25lciI6ICJvIiwgInJlcG8iOiAiciIsICJwcl9udW1iZXIiOiA1LCAic2hhX2Z1bGwiOiAiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsICJwbGF0Zm9ybSI6ICJnaXRodWIiLCAid2ViX29yaWdpbiI6ICJodHRwczovL2dpdGh1Yi5jb20ifQo="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "stale_truncate": {
-    "bad_input": {
-      "code": 2,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 2,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "dHJ1bmNhdGVkIDEgZmlsZShzKQo="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "sync_agent_rules": {
-    "bad_input": {
-      "code": 1,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 1,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "YWdlbnQgcnVsZSB0d2lucyBhcmUgY3VycmVudAo="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "verify_findings": {
-    "bad_input": {
-      "code": 2,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 2,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "ewogICJ2ZXJpZmllZCI6IFtdLAogICJlbGltaW5hdGVkIjogW10sCiAgImJhdGNoZXMiOiBbXSwKICAic3RhdHMiOiB7CiAgICAidG90YWwiOiAwLAogICAgIm5ldyI6IDAsCiAgICAic3VyZmFjZWQiOiAwLAogICAgImVsaW1pbmF0ZWQiOiAwCiAgfQp9Cg=="
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  },
-  "write_shared_context": {
-    "bad_input": {
-      "code": 2,
-      "stdout": ""
-    },
-    "failure": {
-      "code": 2,
-      "stdout": ""
-    },
-    "success": {
-      "code": 0,
-      "stdout": "eyJjb250ZXh0TGluZXMiOiAxMSwgImNvbnRleHRDaGFycyI6IDEzM30K"
-    },
-    "usage": {
-      "code": 2,
-      "stdout": ""
-    }
-  }
+  "assemble_artifacts/bad_input": [1, "{\"ok\": false, \"planVersion\": null, \"planChecksum\": null, \"verified\": [], \"written\": [], \"errors\": [\"plan is not valid JSON: <TMP>/assemble_artifacts/bad_input/invalid.json (Expecting value: line 1 column 1 (char 0))\"]}\n"],
+  "assemble_artifacts/failure": [1, "{\"ok\": false, \"planVersion\": null, \"planChecksum\": null, \"verified\": [], \"written\": [], \"errors\": [\"plan not found or unreadable: <TMP>/assemble_artifacts/failure/missing ([Errno 2] No such file or directory: <TMP>/assemble_artifacts/failure/missing)\"]}\n"],
+  "assemble_artifacts/success": [0, "{\"ok\": true, \"planVersion\": 2, \"planChecksum\": \"<CHECKSUM>\", \"verified\": [{\"path\": \"<TMP>/assemble_artifacts/success/code-gauntlet-findings-abc1234.json\", \"chars\": <CHARS>, \"expected_chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\", \"expected_checksum\": \"<CHECKSUM>\", \"content_proof\": \"match\"}, {\"path\": \"<TMP>/assemble_artifacts/success/code-gauntlet-report-abc1234.md\", \"chars\": <CHARS>, \"expected_chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\", \"expected_checksum\": \"<CHECKSUM>\", \"content_proof\": \"match\"}], \"written\": [{\"path\": \"<TMP>/assemble_artifacts/success/code-gauntlet-post-review-abc1234.json\", \"chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\"}, {\"path\": \"<TMP>/assemble_artifacts/success/code-gauntlet-checkpoint-all-abc1234.json\", \"chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\"}], \"errors\": []}\n"],
+  "assemble_artifacts/usage": [2, ""],
+  "await_workflow/artifacts_only": [5, "{\"await\":\"artifacts_only\",\"attempt\":1,\"max_attempts\":2,\"waited_seconds\":<ELAPSED>,\"target\":\"wnosuchtask000\",\"resolved_path\":null,\"file_bytes\":null,\"since_epoch\":0.0,\"artifacts\":{\"checked\":true,\"complete\":true,\"present\":[\"code-gauntlet-findings-abc12345.json\",\"code-gauntlet-report-abc12345.md\",\"code-gauntlet-post-review-abc12345.json\",\"code-gauntlet-checkpoint-all-abc12345.json\"],\"missing\":[]},\"saw_ok_without_corroborator\":false,\"scan_skipped\":false,\"scan_stop_reason\":null,\"searched\":<SEARCH_ROOTS>,\"gap\":\"workflow-timeout\",\"detail\":\"every persisted artifact is present and fresh, but the workflow's compact return was never observed; deliver from the marker's artifactPaths and disclose the gap\",\"artifactPaths\":{\"findings\":\"<TMP>/await_workflow/artifacts_only/code-gauntlet-findings-abc12345.json\",\"report\":\"<TMP>/await_workflow/artifacts_only/code-gauntlet-report-abc12345.md\",\"postReview\":\"<TMP>/await_workflow/artifacts_only/code-gauntlet-post-review-abc12345.json\",\"checkpoints\":\"<TMP>/await_workflow/artifacts_only/code-gauntlet-checkpoint-all-abc12345.json\"}}\n"],
+  "await_workflow/bad_input": [2, ""],
+  "await_workflow/failure": [4, "{\"await\":\"timeout\",\"attempt\":1,\"max_attempts\":1,\"waited_seconds\":<ELAPSED>,\"target\":\"<TMP>/await_workflow/failure/missing\",\"resolved_path\":\"<TMP>/await_workflow/failure/missing\",\"file_bytes\":null,\"since_epoch\":0.0,\"artifacts\":{\"checked\":false,\"complete\":false,\"present\":[],\"missing\":[]},\"saw_ok_without_corroborator\":false,\"scan_skipped\":false,\"scan_stop_reason\":null,\"gap\":\"workflow-timeout\",\"detail\":\"no terminal workflow result after 1 attempts; declare the gap and deliver whatever partial artifacts exist\"}\n"],
+  "await_workflow/pending": [3, "{\"await\":\"pending\",\"attempt\":1,\"max_attempts\":2,\"waited_seconds\":<ELAPSED>,\"target\":\"<TMP>/await_workflow/pending/pending.output\",\"resolved_path\":\"<TMP>/await_workflow/pending/pending.output\",\"file_bytes\":null,\"since_epoch\":0.0,\"artifacts\":{\"checked\":false,\"complete\":false,\"present\":[],\"missing\":[]},\"saw_ok_without_corroborator\":false,\"scan_skipped\":false,\"scan_stop_reason\":null,\"next_command\":\"python3 <ROOT>/scripts/await_workflow.py --attempt 2 --max-attempts 2 --timeout-seconds 0.0 --poll-interval 2 --since-epoch 0.0 -- <TMP>/await_workflow/pending/pending.output\"}\n"],
+  "await_workflow/success": [0, "{\"ok\":true,\"phaseReached\":\"report\",\"stats\":{\"discovered\":9,\"merged\":9,\"verified\":true},\"artifactPaths\":{\"findings\":\"/out/code-gauntlet-findings-da09bc08.json\",\"report\":\"/out/code-gauntlet-report-da09bc08.md\"},\"resolvedPolicy\":{\"subagentModel\":null},\"checkpoints\":{\"completed\":[\"summarize\",\"report\"]},\"gaps\":[]}\n"],
+  "await_workflow/usage": [2, ""],
+  "build_style_artifacts/bad_input": [1, ""],
+  "build_style_artifacts/failure": [1, ""],
+  "build_style_artifacts/success": [0, "style session-context carrier is current\n"],
+  "build_style_artifacts/usage": [2, ""],
+  "collect_project_rules/bad_input": [1, "{\"ok\": false, \"sources\": [], \"review_md\": [], \"review_md_dirs\": [], \"skipped\": [], \"total_bytes\": 0, \"truncated\": false, \"out\": \"<TMP>/collect_project_rules/bad_input/missing\", \"gaps\": [\"project_rules_failed: --repo-root is not a directory\"]}\n"],
+  "collect_project_rules/failure": [1, "{\"ok\": false, \"sources\": [], \"review_md\": [], \"review_md_dirs\": [], \"skipped\": [], \"total_bytes\": 0, \"truncated\": false, \"out\": \"<TMP>/collect_project_rules/failure/missing\", \"gaps\": [\"project_rules_failed: --repo-root is not a directory\"]}\n"],
+  "collect_project_rules/success": [0, "{\"ok\": true, \"sources\": [], \"review_md\": [], \"review_md_dirs\": [\".\"], \"skipped\": [], \"total_bytes\": 0, \"truncated\": false, \"out\": \"<TMP>/collect_project_rules/success/rules.md\", \"gaps\": [\"project_rules_absent: no CLAUDE.md/AGENTS.md/QODO.md found; agents receive no project rules for this repository\"]}\n"],
+  "collect_project_rules/usage": [2, ""],
+  "detect_prior_review/bad_input": [2, ""],
+  "detect_prior_review/failure": [0, "{\n  \"previously_reviewed\": false,\n  \"signal\": null,\n  \"source\": null,\n  \"legacy\": false,\n  \"last_reviewed_sha\": null,\n  \"last_reviewed_sha_short\": null,\n  \"sha_resolvable\": false,\n  \"sha_is_ancestor\": false,\n  \"head_sha\": \"unknown\",\n  \"head_advanced\": false,\n  \"new_commit_count\": null,\n  \"incremental_safe\": false,\n  \"marker\": null,\n  \"scanned\": {},\n  \"errors\": [\n    \"bodies-file: could not read <TMP>/detect_prior_review/failure/missing ([Errno 2] No such file or directory: <TMP>/detect_prior_review/failure/missing)\",\n    \"git: could not resolve the head commit (not a git repository, an unborn branch, or git is unavailable)\"\n  ]\n}\n"],
+  "detect_prior_review/success": [0, "{\n  \"previously_reviewed\": false,\n  \"signal\": null,\n  \"source\": null,\n  \"legacy\": false,\n  \"last_reviewed_sha\": null,\n  \"last_reviewed_sha_short\": null,\n  \"sha_resolvable\": false,\n  \"sha_is_ancestor\": false,\n  \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"head_advanced\": false,\n  \"new_commit_count\": null,\n  \"incremental_safe\": false,\n  \"marker\": null,\n  \"scanned\": {},\n  \"errors\": [\n    \"git: --head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa could not be resolved in this clone; comparisons against it are unreliable\"\n  ]\n}\n"],
+  "detect_prior_review/usage": [2, ""],
+  "diff_numstat/failure": [2, ""],
+  "diff_numstat/required_only": [2, ""],
+  "diff_numstat/success": [0, "changed_lines=2\nbinary_files=0\n"],
+  "diff_numstat/usage": [2, ""],
+  "emit_style_context/failure": [1, ""],
+  "emit_style_context/success": [0, "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"<CARRIER>\"}}\n"],
+  "emit_style_context/usage": [0, "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"<CARRIER>\"}}\n"],
+  "ensure_output_dir/failure": [1, ""],
+  "ensure_output_dir/success": [0, "<TMP>/ensure_output_dir/success/output\n"],
+  "ensure_output_dir/usage": [2, ""],
+  "generate_contract_requirements/bad_input": [1, ""],
+  "generate_contract_requirements/failure": [1, ""],
+  "generate_contract_requirements/success": [0, "generated registry blocks are current\n"],
+  "generate_contract_requirements/usage": [2, ""],
+  "materialize_artifacts/bad_input": [2, ""],
+  "materialize_artifacts/failure": [1, "{\"ok\": false, \"channel\": \"return\", \"source\": null, \"scanned\": 1, \"materialized\": [], \"assemble\": null, \"gaps\": [], \"errors\": [\"no task output file carrying this run's returned artifacts was found (looked at 1 candidate file(s) for target <TMP>/materialize_artifacts/failure/missing / nonce None)\"]}\n"],
+  "materialize_artifacts/required_only": [2, ""],
+  "materialize_artifacts/success": [0, "{\"ok\": true, \"channel\": \"return\", \"source\": \"<TMP>/materialize_artifacts/success/tasks/task-abc123.output\", \"scanned\": 1, \"materialized\": [{\"path\": \"<TMP>/materialize_artifacts/success/.code-gauntlet/code-gauntlet-findings-abc1234.json\", \"chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\"}, {\"path\": \"<TMP>/materialize_artifacts/success/.code-gauntlet/code-gauntlet-report-abc1234.md\", \"chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\"}, {\"path\": \"<TMP>/materialize_artifacts/success/.code-gauntlet/code-gauntlet-persist-plan-abc1234.json\", \"chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\"}], \"assemble\": {\"ok\": true, \"planVersion\": 2, \"planChecksum\": \"<CHECKSUM>\", \"verified\": [{\"path\": \"<TMP>/materialize_artifacts/success/.code-gauntlet/code-gauntlet-findings-abc1234.json\", \"chars\": <CHARS>, \"expected_chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\", \"expected_checksum\": \"<CHECKSUM>\", \"content_proof\": \"match\"}, {\"path\": \"<TMP>/materialize_artifacts/success/.code-gauntlet/code-gauntlet-report-abc1234.md\", \"chars\": <CHARS>, \"expected_chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\", \"expected_checksum\": \"<CHECKSUM>\", \"content_proof\": \"match\"}], \"written\": [{\"path\": \"<TMP>/materialize_artifacts/success/.code-gauntlet/code-gauntlet-post-review-abc1234.json\", \"chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\"}, {\"path\": \"<TMP>/materialize_artifacts/success/.code-gauntlet/code-gauntlet-checkpoint-all-abc1234.json\", \"chars\": <CHARS>, \"checksum\": \"<CHECKSUM>\"}], \"errors\": []}, \"gaps\": [], \"errors\": []}\n"],
+  "materialize_artifacts/usage": [2, ""],
+  "post_review/bad_input": [2, ""],
+  "post_review/failure": [1, ""],
+  "post_review/success": [0, "Review captured (dry-run).\n  0 inline comment(s) captured.\nDry run — no comments posted. Payload written to: <TMP>/post_review/success/post-review-payload.json\n"],
+  "post_review/usage": [2, ""],
+  "render_fix_tasks/bad_input": [1, ""],
+  "render_fix_tasks/failure": [1, ""],
+  "render_fix_tasks/success": [0, "[]\n"],
+  "render_fix_tasks/usage": [2, ""],
+  "report_patches/bad_input": [1, "{\"ok\": false, \"path\": \"<TMP>/report_patches/bad_input/missing/code-gauntlet-patches-invalid.md\", \"oracle\": \"unattempted\", \"candidates\": 0, \"kept\": 0, \"downgraded\": 0, \"reasons\": {}, \"filtered_earlier\": 0, \"findings\": 0, \"warnings\": [], \"errors\": [\"could not read findings file <TMP>/report_patches/bad_input/missing/code-gauntlet-findings-invalid.json: [Errno 2] No such file or directory: <TMP>/report_patches/bad_input/missing/code-gauntlet-findings-invalid.json\"]}\n"],
+  "report_patches/failure": [1, "{\"ok\": false, \"path\": \"<TMP>/report_patches/failure/missing/code-gauntlet-patches-abcd.md\", \"oracle\": \"unattempted\", \"candidates\": 0, \"kept\": 0, \"downgraded\": 0, \"reasons\": {}, \"filtered_earlier\": 0, \"findings\": 0, \"warnings\": [], \"errors\": [\"could not read findings file <TMP>/report_patches/failure/missing/code-gauntlet-findings-abcd.json: [Errno 2] No such file or directory: <TMP>/report_patches/failure/missing/code-gauntlet-findings-abcd.json\"]}\n"],
+  "report_patches/success": [0, "{\"ok\": true, \"path\": \"<TMP>/report_patches/success/code-gauntlet-patches-abc1234.md\", \"oracle\": \"ok\", \"candidates\": 0, \"kept\": 0, \"downgraded\": 0, \"reasons\": {}, \"filtered_earlier\": 0, \"findings\": 0, \"warnings\": [], \"errors\": []}\n"],
+  "report_patches/usage": [2, ""],
+  "resolve_config/bad_input": [2, ""],
+  "resolve_config/failure": [2, ""],
+  "resolve_config/success": [0, "{\n  \"mode\": \"interactive\",\n  \"target\": \"local\",\n  \"block\": \"Resolved config:\\n  model_tier=optimized (fixed)\\n  pr_comment_cap=null (default)\\n  delivery_tier=all (default)\\n  pipeline_version=<BUNDLE_VERSION> (bundle)\\n  plugin_root=<ROOT> (resolved)\",\n  \"waist\": {\n    \"configEcho\": {\n      \"model_tier\": {\n        \"value\": \"optimized\",\n        \"source\": \"fixed\"\n      },\n      \"pr_comment_cap\": {\n        \"value\": \"null\",\n        \"source\": \"default\"\n      },\n      \"delivery_tier\": {\n        \"value\": \"all\",\n        \"source\": \"default\"\n      }\n    }\n  },\n  \"resolved\": {\n    \"model_tier\": \"optimized\"\n  },\n  \"identity\": {\n    \"pipeline_version\": \"<BUNDLE_VERSION>\",\n    \"plugin_root\": \"<ROOT>\"\n  }\n}\n"],
+  "resolve_config/usage": [2, ""],
+  "resolve_pr_identity/bad_input": [2, ""],
+  "resolve_pr_identity/failure": [2, ""],
+  "resolve_pr_identity/success": [0, "{\"owner\": \"o\", \"repo\": \"r\", \"pr_number\": 5, \"sha_full\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"platform\": \"github\", \"web_origin\": \"https://github.com\"}\n"],
+  "resolve_pr_identity/usage": [2, ""],
+  "stale_truncate/bad_input": [2, ""],
+  "stale_truncate/failure": [2, ""],
+  "stale_truncate/required_only": [2, ""],
+  "stale_truncate/success": [0, "truncated 1 file(s)\n"],
+  "stale_truncate/usage": [2, ""],
+  "sync_agent_rules/bad_input": [1, ""],
+  "sync_agent_rules/failure": [1, ""],
+  "sync_agent_rules/success": [0, "agent rule twins are current\n"],
+  "sync_agent_rules/usage": [2, ""],
+  "verify_findings/bad_input": [2, ""],
+  "verify_findings/failure": [2, ""],
+  "verify_findings/success": [0, "{\n  \"verified\": [],\n  \"eliminated\": [],\n  \"batches\": [],\n  \"stats\": {\n    \"total\": 0,\n    \"new\": 0,\n    \"surfaced\": 0,\n    \"eliminated\": 0\n  }\n}\n"],
+  "verify_findings/usage": [2, ""],
+  "write_shared_context/bad_input": [2, ""],
+  "write_shared_context/failure": [2, ""],
+  "write_shared_context/success": [0, "{\"contextLines\": 11, \"contextChars\": 133}\n"],
+  "write_shared_context/usage": [2, ""]
 }

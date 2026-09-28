@@ -32,9 +32,9 @@ import os
 import sys
 
 from gauntlet.cli import Command
-from gauntlet.paths import PLUGIN_ROOT
+from gauntlet.paths import ENTRY_ROOT
 
-REPO_ROOT = PLUGIN_ROOT
+REPO_ROOT = ENTRY_ROOT
 
 BANNER = (
     "<!-- GENERATED from AGENTS.md by scripts/sync_agent_rules.py — do not edit.\n"

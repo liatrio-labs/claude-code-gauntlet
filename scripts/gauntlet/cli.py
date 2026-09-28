@@ -107,12 +107,12 @@ class Command:
         try:
             print(dumps(receipt, ascii=self.ascii, compact=self.compact))
         except Exception as exc:  # noqa: BLE001 - receipt serialization must have a fallback
-            if self.fallback_receipt is not None:
-                try:
-                    print(dumps(self.fallback_receipt(exc), ascii=True))
-                except Exception:  # noqa: BLE001 - constant is the final receipt
-                    print(self.fallback_line)
-            else:
-                print(self.fallback_line)
+            line = self.fallback_line
+            try:
+                if self.fallback_receipt is not None:
+                    line = dumps(self.fallback_receipt(exc), ascii=True)
+            except Exception:  # noqa: BLE001 - constant is the final receipt
+                pass
+            print(line)
             return self.fallback_code
         return code

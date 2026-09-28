@@ -127,8 +127,8 @@ def check(only_script=None, only_case=None):
     return mismatches
 
 
-def main(argv):
-    args = argv[1:]
+def main(argv=None):
+    args = (sys.argv if argv is None else argv)[1:]
     check_mode = "--check" in args
     positional = [a for a in args if a != "--check"]
     only_script = positional[0] if len(positional) > 0 else None
@@ -155,7 +155,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(REPO / "scripts"))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
     from gauntlet.cli import Command
 
-    Command.legacy(lambda: main(sys.argv), prog="record_parity.py").run()
+    Command.legacy(main, prog="record_parity.py").run()

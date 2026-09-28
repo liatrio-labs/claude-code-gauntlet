@@ -81,7 +81,7 @@ transcription.**
   `charCodeAt` + `Math.imul`; Python reads `utf-16-le` pairs. `tests/test_assemble_artifacts.py`
   pins the parity over surrogates and control characters.
 - The checkpoint-skeleton guards must stay in lockstep: `persistPlan` empties
-  `phases.challenge.findings` only when it holds an array, and `assemble_artifacts.py` refills it
+  `phases.challenge.findings` only when it holds an array, and `gauntlet.artifacts` refills it
   under the identical predicate. A looser Python predicate fabricates an array.
 - Structural failures (missing file, unparseable JSON, duplicate id, bad plan checksum) hard-fail.
   A *primary* content mismatch does not — it still derives from on-disk truth and raises a gap.
@@ -113,7 +113,7 @@ decodes it and writes the destination path before verification.
 - The slice input is a projection, not a full finding copy: `VERIFY_SLICE_FIELDS` (JS) and
   `_SLICE_INPUT_FIELDS` (Python) are one list in two runtimes, walked in the same order. Every
   field the script consults on dispatched slices must be listed there — a lockstep test pins the
-  JS/Python pair, and a read-site scan over `verify_findings.py`'s own source (both in
+  JS/Python pair, and a read-site scan over `gauntlet.verify.decide`'s own source (both in
   `tests/test_verify_findings.py`) enforces the list against the script, exempting its own writes
   (`_SCRIPT_WRITTEN_FIELDS`), legacy-CLI-only reads (`_LEGACY_CLI_FIELDS`), and the `line`/`end_line`
   numeric-coercion loop (`_NUMERIC_FIELDS`).
