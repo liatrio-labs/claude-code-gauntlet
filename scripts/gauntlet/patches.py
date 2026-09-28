@@ -46,7 +46,7 @@ reads ``diff --git foo.py foo.py``), and ``diff.mnemonicPrefix`` swaps them
 for ``i/``/``w/`` instead. So the check anchors on the one shape every git
 producer's default config writes — a first line matching ``diff --git "?a/``
 (the optional quote covers a C-quoted first file) — and only THAT shape is
-keyed by stripping ``a/``/``b/``, via ``post_review.parse_diff_text``, the
+keyed by stripping ``a/``/``b/``, via ``gauntlet.delivery.post.parse_diff_text``, the
 same parser ``gauntlet.delivery.post`` runs live, with no alias keys and no second
 keying implementation. Neither non-default config matches the anchor, so both
 fall to verbatim keying: under ``diff.noprefix`` that is exactly right (every
@@ -59,7 +59,7 @@ is keyed git-style while live delivery keys glab-style — the finding's path
 spelling is the same real path under both, so a kept patch here may still be
 downgraded live for render-site reasons or withheld for the delivery-side
 set-level overlap reason (``overlaps_kept_fence`` — see
-``post_review._overlap_losers``); both are already disclosed in the
+``gauntlet.delivery.post._overlap_losers``); both are already disclosed in the
 artifact.
 
 Usage:
@@ -72,7 +72,7 @@ import os
 import re
 import sys
 
-# NEVER import verify_findings here — it resolves the repo root via
+# NEVER import gauntlet.verify.decide here — it resolves the repo root via
 # `git rev-parse --show-toplevel` at import time, which this script has no
 # business triggering for a read-only render step.
 from gauntlet.artifacts import write_text_atomic
@@ -186,7 +186,7 @@ def _load_findings(path, errors):
 
 def _diff_oracle(diff_text):
     """Return ``(valid_lines, line_texts)`` from *diff_text*, keyed by
-    ``post_review.parse_diff_text`` after detecting the producer from the bytes —
+    ``gauntlet.delivery.post.parse_diff_text`` after detecting the producer from the bytes —
     see the "Producer detection" module docstring section."""
     platform = "github" if _GIT_SHAPED_RE.search(diff_text) else "gitlab"
     valid_lines, _new_files, _old_paths, line_texts = parse_diff_text(

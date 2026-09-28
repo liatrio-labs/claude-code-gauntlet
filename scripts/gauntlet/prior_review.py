@@ -172,7 +172,7 @@ def git_rev_parse(rev):
 
 
 def gitlab_project_id(owner, repo):
-    """Return the URL-encoded project path (mirrors post_review.gitlab_project_id)."""
+    """Return the URL-encoded project path (mirrors gauntlet.delivery.post.gitlab_project_id)."""
     return f"{owner}/{repo}".replace("/", "%2F")
 
 
@@ -181,7 +181,7 @@ def remote_slug():
 
     Lets the caller pass only ``--platform`` and ``--number``: composing an
     owner/repo lookup was one more CLI incantation for the orchestrator to get
-    wrong, and this is the same remote parse ``post_review.detect_platform``
+    wrong, and this is the same remote parse ``gauntlet.delivery.post.detect_platform``
     performs (SSH ``git@host:path`` and http(s) ``host/path``, ``.git`` stripped).
     A namespaced GitLab path keeps its subgroups in *repo*, which is correct —
     ``gitlab_project_id`` re-joins and encodes the whole path.
@@ -252,7 +252,7 @@ def gitlab_prior_delivery_state(owner, repo, number, sha):
     """Return ``(summary_posted, finding_keys, legacy_group_keys, error)`` — what *sha*'s
     review left here.
 
-    ``post_review.post_gitlab`` asks three questions before delivering: is my summary
+    ``gauntlet.delivery.post.post_gitlab`` asks three questions before delivering: is my summary
     note already on the MR (issue #127), which of my inline discussions did a
     partially-failed delivery already place (issue #132), and — of those — which stand
     for a WHOLE consolidation group because they are a pre-#208 group body that rendered
@@ -385,7 +385,7 @@ def finding_keys_for_sha(entries, sha):
 
 
 # A consolidation group's body renders one of these per corroborator, verbatim from
-# post_review._render_corroboration — the only place this string is emitted.
+# gauntlet.delivery.post._render_corroboration — the only place this string is emitted.
 _CORROBORATION_HEADER = "Corroborating finding — "
 
 
