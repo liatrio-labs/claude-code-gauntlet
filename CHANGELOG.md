@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v3.42.8 (2026-09-28)
+
+### Bug Fixes
+
+- Make the CLI contract host-independent and harden the slice 2 guards
+  ([#430](https://github.com/liatrio-labs/claude-code-gauntlet/pull/430),
+  [`863e2be`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/863e2bef636d6e02ba1d82ff5a3111cce4506f6d))
+
+- Portable slice 2 guards, a compact contract table and fewer duplicate tests
+  ([#430](https://github.com/liatrio-labs/claude-code-gauntlet/pull/430),
+  [`863e2be`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/863e2bef636d6e02ba1d82ff5a3111cce4506f6d))
+
+- Restore converted-command docstrings and fix stale path references
+  ([#430](https://github.com/liatrio-labs/claude-code-gauntlet/pull/430),
+  [`863e2be`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/863e2bef636d6e02ba1d82ff5a3111cce4506f6d))
+
+- Retarget remaining moved-symbol references and check TID251 is selected
+  ([#430](https://github.com/liatrio-labs/claude-code-gauntlet/pull/430),
+  [`863e2be`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/863e2bef636d6e02ba1d82ff5a3111cce4506f6d))
+
+### Refactoring
+
+- Move the scripts into one gauntlet package behind entry files
+  ([#430](https://github.com/liatrio-labs/claude-code-gauntlet/pull/430),
+  [`863e2be`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/863e2bef636d6e02ba1d82ff5a3111cce4506f6d))
+
+
 ## v3.42.7 (2026-09-28)
 
 ### Bug Fixes
