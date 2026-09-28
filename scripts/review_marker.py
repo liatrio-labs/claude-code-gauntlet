@@ -33,9 +33,7 @@ whatever plugin version they happened to run):
   SHA-shaped value under key ``sha``. Every other key is optional and unknown
   keys are preserved verbatim in the returned payload, so future producers need
   no parser change.
-* Both token generations are recognized, mirroring the repo's existing legacy
-  fallbacks (``merge_findings.py`` filename fallback, ``filter_findings.py``
-  config-marker fallback).
+* Both token generations are recognized to preserve existing review markers.
 
 A SECOND, separate wire format lives here too: the per-finding delivery marker
 ``post_review.py`` appends to every inline GitLab discussion it posts on the live
@@ -250,9 +248,7 @@ def _scan_json_at(text, start):
 
     Balanced-brace scan from *start* (which must index a ``{``) that respects
     string literals and backslash escapes, so a ``}`` — or a ``-->`` — inside a
-    JSON string value cannot terminate the object early. Same idiom as
-    ``merge_findings.py::_try_parse_json_at``; deliberately duplicated rather
-    than imported across scripts.
+    JSON string value cannot terminate the object early.
     """
     depth = 0
     in_string = False

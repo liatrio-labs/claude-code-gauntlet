@@ -6,7 +6,7 @@
       "description": "dd",
       "dimension": "bug",
       "eliminated_by": "injection",
-      "elimination_reason": "duplicate of finding 'S1'",
+      "elimination_reason": "duplicate of finding \"S1\"",
       "file": "n.py",
       "id": "S2",
       "line_start": 10,

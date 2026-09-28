@@ -6,12 +6,57 @@
 // finding shapes are asserted directly here, mirroring the brief's TDD list verbatim).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { consolidateCrossAgent, detectDisagreement } from '../src/filterFindings.js';
+import { consolidateCrossAgent, detectDisagreement, groupByProximity, tagFindings, applyFilterPipeline } from '../src/filterFindings.js';
 import { applyChallenges, rankFindings } from '../src/applyChallenges.js';
 
 function f(over) {
   return { id: 'x', file: 'a.py', line_start: 10, agent: 'bug-detector', dimension: 'bug', severity: 'high', confidence: 70, title: 't', description: 'd', ...over };
 }
+
+const PROXIMITY_CASES = [
+  { name: 'same file distant lines separate', rows: [f({ id: 'a', line_start: 10 }), f({ id: 'b', line_start: 100 })], groups: 2 },
+  { name: 'different files separate', rows: [f({ id: 'a', file: 'a.py' }), f({ id: 'b', file: 'b.py' })], groups: 2 },
+  { name: 'empty input has no groups', rows: [], groups: 0 },
+  { name: 'lines 12 and 13 straddle a bucket', rows: [f({ id: 'a', line_start: 12 }), f({ id: 'b', line_start: 13 })], groups: 2 },
+];
+for (const c of PROXIMITY_CASES) test(`proximity: ${c.name}`, () => {
+  assert.equal(groupByProximity(c.rows).size, c.groups);
+});
+
+const CONSOLIDATION_CASES = [
+  { name: 'different files do not consolidate', rows: [f({ id: 'f1', file: 'a.py' }), f({ id: 'f2', file: 'b.py', agent: 'test-analyzer' })], count: 0, primary: [] },
+  { name: 'distant lines do not consolidate', rows: [f({ id: 'f1', line_start: 10 }), f({ id: 'f2', line_start: 100, agent: 'test-analyzer' })], count: 0, primary: [] },
+  { name: 'null confidence loses to sixty', rows: [f({ id: 'f1', line_start: 20, dimension: 'test_coverage', agent: 'test-analyzer', confidence: null }), f({ id: 'f2', line_start: 21, dimension: 'simplification', agent: 'code-simplifier', confidence: 60 })], count: 2, primary: ['f2'] },
+  { name: 'three agents retain all and core confidence wins', rows: [f({ id: 'sec-1', line_start: 20, dimension: 'security', agent: 'security-reviewer', confidence: 75 }), f({ id: 'bug-1', line_start: 21, confidence: 80 }), f({ id: 'test-1', line_start: 22, dimension: 'test_coverage', agent: 'test-analyzer', confidence: 95 })], count: 3, primary: ['bug-1'] },
+  { name: 'intent core beats higher confidence noncore', rows: [f({ id: 'conv-1', line_start: 20, dimension: 'intent', agent: 'conventions-and-intent', confidence: 75 }), f({ id: 'test-1', line_start: 21, dimension: 'test_coverage', agent: 'test-analyzer', confidence: 90 })], count: 2, primary: ['conv-1'] },
+  { name: 'different report routes still consolidate', rows: [f({ id: 'bug-2', file: 'AssertEvents.java', line_start: 483, report_destination: 'main', confidence: 95 }), f({ id: 'conv-2', file: 'AssertEvents.java', line_start: 483, dimension: 'comment_accuracy', agent: 'conventions-and-intent', report_destination: 'suggestion', confidence: 97 })], count: 2, primary: ['bug-2'] },
+  { name: 'empty input has zero consolidated', rows: [], count: 0, primary: [] },
+];
+for (const c of CONSOLIDATION_CASES) test(`consolidate: ${c.name}`, () => {
+  const out = consolidateCrossAgent(c.rows.map((row) => ({ ...row })));
+  assert.equal(out.findings.length, c.rows.length);
+  assert.equal(out.consolidatedCount, c.count);
+  assert.deepEqual(out.findings.filter((row) => row.consolidation_primary).map((row) => row.id), c.primary);
+  assert.equal(out.findings.filter((row) => Object.hasOwn(row, 'consolidation_key')).length, c.count);
+});
+
+function consolidationStatsRows() {
+  return [f({ id: 'bug-1', description: 'A real wrong result in this function.' }), f({ id: 'test-1', line_start: 12, agent: 'test-analyzer', dimension: 'test_coverage', confidence: 80, description: 'Missing a test for a specific edge case.' })];
+}
+
+test('consolidation stats: tagging returns consolidated count', () => {
+  const out = tagFindings(consolidationStatsRows());
+  assert.equal(out.consolidatedCount, 2);
+  assert.deepEqual(out.tagged.map((row) => row.id).sort(), ['bug-1', 'test-1']);
+  assert.equal(out.tagged.some((row) => row.eliminated_by === 'dedup:cross-agent'), false);
+});
+
+test('consolidation stats: filter pipeline reports consolidated count', () => {
+  const out = applyFilterPipeline(consolidationStatsRows(), { confidence_threshold: 70 }, [], '2026-01-01T00:00:00Z');
+  assert.equal(out.stats.cross_agent_consolidated, 2);
+  assert.deepEqual(out.filtered.map((row) => row.id).sort(), ['bug-1', 'test-1']);
+  assert.equal(out.filtered.some((row) => row.eliminated_by === 'dedup:cross-agent'), false);
+});
 
 // --- #73 req 4: mixed-origin array (A degraded, B/C verified) ---------------
 

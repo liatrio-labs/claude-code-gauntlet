@@ -590,7 +590,7 @@ def main(argv=None):
         findings = _load_findings(args.post_review)
         notes = []
         tasks, rejected_count = build_tasks(findings, root, notes)
-        write_result(None, tasks)
+        write_result(tasks)
     except Exception as exc:  # noqa: BLE001 - no content failure may leak a payload
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

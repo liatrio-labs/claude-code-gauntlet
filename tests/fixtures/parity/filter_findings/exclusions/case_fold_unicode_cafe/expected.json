@@ -4,7 +4,7 @@
       "confidence": 55,
       "description": "The kiosk endpoint caches the menu for too long and serves stale prices to customers.",
       "eliminated_by": "exclusion",
-      "elimination_reason": "matched exclusion pattern: 'caf\u00e9'",
+      "elimination_reason": "matched exclusion pattern: \"caf\u00e9\"",
       "file": "src/kiosk.py",
       "id": "EX1",
       "line_start": 14,

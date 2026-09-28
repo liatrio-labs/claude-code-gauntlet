@@ -284,7 +284,7 @@ The script docstring holds the content and measurement rules.
 
 The change **summary** is no longer written here — the workflow's Summarize stage produces it internally.
 
-> **NDJSON emission has been removed from discovery agents (v3).** Discovery agents return findings only through structured output (`agent()`/`parallel()` schema) — the `printf`-NDJSON emission prose was stripped from all 7 `.md` bodies and Bash was dropped from their tool grants (it existed solely for emission). `references/ndjson-emission-contract.md` and `scripts/validate_ndjson.py` remain shipped as retained v2-compat/bench surface, not consumed by discovery agents.
+Discovery agents return findings through structured output (`agent()`/`parallel()` schema).
 
 ### Assemble the args object and record environment overrides
 

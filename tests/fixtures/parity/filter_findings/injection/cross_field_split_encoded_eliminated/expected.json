@@ -4,7 +4,7 @@
       "confidence": 50,
       "description": "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc=",
       "eliminated_by": "injection",
-      "elimination_reason": "contains encoded payload pattern: '\\\\b(?:decode|base64|atob|b64decode)\\\\b[^\\\\x00]{0,40}[A-Za-z0-9+/]{40,}={0,2}\\\\b'",
+      "elimination_reason": "contains encoded payload pattern: \"\\\\b(?:decode|base64|atob|b64decode)\\\\b[^\\\\x00]{0,40}[A-Za-z0-9+\\\\/]{40,}={0,2}\\\\b\"",
       "file": "src/handler.py",
       "id": "T-split-1",
       "line_start": 15,

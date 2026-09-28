@@ -53,9 +53,17 @@ obvious from the diff alone; the full engineering rules live in `AGENTS.md`.
 - **A rule stated in prose that could be enforced by code is a finding.** Prompt text, agent
   contracts and instruction files are the fallback for what cannot be made structural, not the
   first fix.
-- **Cross-runtime lists must change together.** `_DELTA_FIELDS` and `DELTA_KEYS` are one list in
-  two runtimes. A change to one side only is a defect even though both files still pass their own
+- **Cross-runtime lists must change together.** Python `_DELTA_FIELDS` maps to JS
+  `DELTA_VALUE_KEYS`; `DELTA_KEYS` also includes structural `id` and `verified`. A change to
+  one value list only is a defect even though both files still pass their own
   tests.
+- **One implementation per mechanism.** A second copy of a mechanism that already has a home is a
+  finding.
+- **A test that re-proves what another layer proves is a finding**, as is a near-copy a
+  `parametrize` table would replace, a builder that computes an expected value, or a fixed-shape
+  record passed as a loose dict or tuple.
+- **Shipped code carries no history.** An issue number, date or incident narrative in a comment
+  or docstring is a finding; it belongs in the PR.
 - **`workflows/src/` must not reference host globals.** `structuredClone`, `Buffer`,
   `TextEncoder`, `URL`, `setTimeout`, `process` and `console` exist under `node --test` but not in
   the workflow sandbox, so a reference passes every test and throws on first live dispatch.

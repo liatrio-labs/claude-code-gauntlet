@@ -1,17 +1,9 @@
-// renderReport.js — deterministic report.md renderer (issues #36, #67).
-// Keep every import on ONE line: workflows/build.js deliberately rejects imports its
-// line-based bundle stripper cannot remove safely.
 import { SEVERITY_ORDER } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
 import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, CODE_OWNED_HEADINGS, resolvePolicy, conditionalSchemaActive } from './registry.js';
 import { KNOB_REGISTRY } from './args.js';
 
-// Fields the report renderer never emits. suggested_fix_code itself (no apply-check oracle
-// exists at report time) plus the two stamps filterFindings.js/filter_findings.py leave
-// behind when IT stripped suggested_fix_code earlier in the pipeline
-// (suggested_fix_code_removed_by / _removal_reason) are dangling metadata for a field the
-// report renderer never sees either way (#220 review). A list, not a single field check, so
-// adding a future report-excluded field is a one-line edit here.
+// Omit fields that the report renderer cannot present safely.
 export const REPORT_EXCLUDED_FIELDS = [
   'suggested_fix_code',
   'suggested_fix_code_removed_by',
@@ -29,29 +21,6 @@ export const REPORT_FOLD_LIMITS = {
   inlineChars: 512,
 };
 
-// dimensionsSummaryTable({ dispatched, degraded, findings, unverified }) -> markdown string
-//
-// Computes the Review Dimensions Summary table (report-format.md) in CODE, as a pure
-// function of pipeline stats, instead of asking a model to classify each dimension
-// itself (issue #89). Before this, the table was never rendered at all: report inputs
-// did not carry discoverOut.degraded / discoverOut.dispatched. One row per DISCOVERY AGENT (registry AGENTS order), not per
-// dimension — a multi-dimension agent (conventions-and-intent) aggregates all of its
-// dimensions' findings into one row. Output starts at the header row (no leading
-// `## Review Dimensions Summary` heading) — heading placement is the caller's concern.
-//
-// Row classification (N = high-confidence finding count for the agent, M = unverified
-// count, evaluated in this fixed priority order so at most one rule ever fires):
-//   1. not dispatched (scope-skipped, e.g. light-scope agentFlags.deep=false) -> Skipped
-//   2. degraded (one of its dimensions is in `degraded`) with N+M==0 -> agent never
-//      returned usable coverage
-//   3. degraded with N+M>0 -> partial coverage
-//   4. dispatched, not degraded, N+M==0 -> clean run, genuinely zero findings
-//   5. N>0, not degraded -> the normal case; Notes carries a severity breakdown
-//   6. N==0, M>0, not degraded -> every finding this agent produced was routed to the
-//      unverified/pipeline-degraded bucket
-//
-// SEVERITY_ORDER is imported from filterFindings.js (its single owner, per that file's
-// own note — a second top-level declaration collides at bundle time).
 
 // Findings with a missing/unknown `dimension` are silently excluded from every row's
 // count: the discovery contracts pin `dimension` to one of the nine registry names, so
@@ -152,12 +121,6 @@ export function dimensionsSummaryTable(input) {
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
 
-// Groups findings by `consolidation_key` before they reach the report renderer — #22 D2,
-// same grouping rule `consolidate_delivery` applies to the posted comment payload,
-// applied here to the report's findings list instead: non-primary group members are
-// folded into the primary's `corroborations` array rather than listed as separate
-// top-level findings. A finding with no (falsy) `consolidation_key` passes through
-// unchanged — older artifacts / pre-consolidation findings render exactly as before.
 function consolidateForReport(findings) {
   const list = findings || [];
   const groups = [];

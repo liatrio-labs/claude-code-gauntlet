@@ -16,13 +16,8 @@ points import siblings by bare name.
 - **`review_marker.py` owns the prior-review marker:** it builds what `post_review.py` writes and
   parses what `detect_prior_review.py` reads. Readers never branch on `version`: both token
   generations carry `"version":"3.0"` with different wire shapes. `TestRoundTrip` guards parity.
-- **Twins must stay at parity.** `merge_findings.py`, `finding_dedup.py`, `filter_findings.py`,
-  `apply_validations.py` and `apply_challenges.py` each have a JS twin proven against frozen golden
-  fixtures in `tests/fixtures/parity/`. Change one, change both, re-record the fixture.
 - **Numbers crossing to JS must be JS-reproducible.** Both runtimes refuse non-integer or
   out-of-safe-range values rather than write an artifact whose float spelling differs by language.
-- One exception: `render_fix_tasks.py`'s module docstring documents its build-system table carve-out
-  from this rule.
 - **Always emit exactly one receipt line.** `assemble_artifacts.py`'s, `materialize_artifacts.py`'s
   and `report_patches.py`'s `main()` fall back to a hand-built minimal receipt if the real one
   will not serialize: an empty stdout is indistinguishable from a dead executor.
@@ -35,6 +30,5 @@ points import siblings by bare name.
   the orchestrator's context, and the whole point is that those bytes reach disk without passing
   through a model. The replacement key is deliberately named differently so a consumer wanting the
   bytes fails loudly instead of writing empty files.
-- **Stdout carries the payload or nothing.** Human-facing status lines
-  (`Output written…`, `Done:…`) go to stderr. `script_io.write_result` is the
-  shared write path for the transform CLIs and `render_fix_tasks.py`.
+- **Stdout carries the payload or nothing.** Human-facing status lines go to stderr;
+  `render_fix_tasks.py` calls `script_io.write_result(obj)`.

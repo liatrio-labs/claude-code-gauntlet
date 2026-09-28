@@ -4,7 +4,7 @@
       "confidence": 60,
       "description": "This handler issues a fresh database query inside a loop instead of batching the lookups together.",
       "eliminated_by": "exclusion",
-      "elimination_reason": "matched exclusion pattern: 'caching layer'",
+      "elimination_reason": "matched exclusion pattern: \"caching layer\"",
       "file": "src/db/loop.py",
       "id": "E3",
       "line_start": 15,

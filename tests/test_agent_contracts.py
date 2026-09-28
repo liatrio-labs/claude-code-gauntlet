@@ -68,13 +68,13 @@ def _agent_injection_artifacts_block(name):
 
 
 # Emission-mechanics markers that must never reappear in any tracked rules file.
-EMISSION_RESIDUE = re.compile(r"printf|ndjson|validate_ndjson", re.IGNORECASE)
+EMISSION_RESIDUE = re.compile(r"printf|ndjson", re.IGNORECASE)
 
 # 'Bash' is forbidden in discovery agents and agents/ rules: the tool was granted
 # solely for NDJSON emission ("Bash is available ONLY for writing findings"), so
 # its grant goes with it. Other directory rules may legitimately discuss shells.
 BASH_RESIDUE = re.compile(r"Bash", re.IGNORECASE)
-RESIDUE = re.compile(r"printf|ndjson|validate_ndjson|Bash", re.IGNORECASE)
+RESIDUE = re.compile(r"printf|ndjson|Bash", re.IGNORECASE)
 
 
 # The agents/ directory rules load alongside every contract in the directory, so emission
@@ -275,7 +275,7 @@ class TestCompleteReadContract(unittest.TestCase):
         self.assertIn("offset", block)
 
     def test_the_block_trips_no_existing_discovery_agent_guard(self):
-        # The scrub guard above forbids printf/ndjson/validate_ndjson/Bash in a discovery
+        # The scrub guard above forbids printf/ndjson/Bash in a discovery
         # agent contract. A new block that reintroduced any of them would pass its own
         # test and fail the scrub — assert the two contracts are compatible directly.
         self.assertEqual(

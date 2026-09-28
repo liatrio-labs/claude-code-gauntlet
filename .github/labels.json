@@ -4,7 +4,7 @@
     {"name": "area:bench", "color": "9fc7ef", "description": "Changes landing in bench/: harness, goldens, ledger", "category": "area"},
     {"name": "area:ci", "color": "8ab6e8", "description": "Changes landing in .github/workflows or the pre-commit config", "category": "area"},
     {"name": "area:docs", "color": "dbe9fb", "description": "Changes landing in README, CONTRIBUTING, or docs/", "category": "area"},
-    {"name": "area:scripts", "color": "b0d0f4", "description": "Changes landing in scripts/: retained stdlib Python twins", "category": "area"},
+    {"name": "area:scripts", "color": "b0d0f4", "description": "Changes landing in scripts/: stdlib Python verification and artifact tooling", "category": "area"},
     {"name": "area:skills", "color": "cddcf6", "description": "Changes landing in skills/: SKILL.md and phase references", "category": "area"},
     {"name": "area:workflows", "color": "bfd4f2", "description": "Changes landing in workflows/: JS pipeline source and bundle", "category": "area"},
     {"name": "bench", "color": "1a7f37", "description": "Benchmark harness machinery: runner, goldens, mirrors, ledger plumbing", "category": "topic"},

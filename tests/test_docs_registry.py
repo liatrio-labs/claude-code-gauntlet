@@ -26,12 +26,11 @@ from scripts import generate_contract_requirements as contract_generator
 REPO = Path(__file__).resolve().parents[1]
 
 # Spelled-out number words for the duplication register's row-count sentence
-# ("Fifty-one rows: ..."). The table has never held fewer than thirty rows or
-# more than sixty; extend the range here if it ever does.
+# ("Twenty-six rows: ..."). Extend the range if the table grows beyond sixty.
 _ONES = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
-_TENS = {30: "thirty", 40: "forty", 50: "fifty", 60: "sixty"}
+_TENS = {20: "twenty", 30: "thirty", 40: "forty", 50: "fifty", 60: "sixty"}
 _NUMBER_WORDS = {60: _TENS[60]}
-for _tens in (30, 40, 50):
+for _tens in (20, 30, 40, 50):
     _NUMBER_WORDS[_tens] = _TENS[_tens]
     for _i in range(1, 10):
         _NUMBER_WORDS[_tens + _i] = f"{_TENS[_tens]}-{_ONES[_i]}"
@@ -686,7 +685,7 @@ class TestDocsRegistry(unittest.TestCase):
             ("title.lower()", False),
             ("^[ab]/", False),
             ("{20,}", False),
-            ("filter_findings.py", True),
+            ("missing_legacy.py", True),
             ("/tmp/file.py", True),
             ("::Name", True),
             ("#frag", True),
@@ -739,7 +738,7 @@ class TestDocsRegistry(unittest.TestCase):
             ("agents/*.md", None),
             ("workflows/AGENTS.md#The verify boundary", None),
             (
-                'workflows/test/filter_unit.test.js::"#244/coerce-table: pyIntOrNull/lineBucket shared cross-twin table"',
+                'workflows/test/filter_unit.test.js::"#244/coerce-table: pyIntOrNull/lineBucket behavioral table"',
                 None,
             ),
             (
@@ -783,7 +782,7 @@ class TestDocsRegistry(unittest.TestCase):
             ("#frag", "same-file shorthand forbidden"),
             ("scripts/missing.py", "untracked path"),
             ("scripts/a spaced file.py", "whitespace in location"),
-            ("filter_findings.py", "untracked path"),
+            ("missing_legacy.py", "untracked path"),
             ("UNRESOLVED:foo.py", "UNRESOLVED requires orchestrator ruling"),
             ("scripts/./verify_findings.py", "dot path component forbidden"),
             ("scripts//verify_findings.py", "empty path component forbidden"),
@@ -799,7 +798,7 @@ class TestDocsRegistry(unittest.TestCase):
             ),
             ('workflows/test/*.test.js::"x"', "titles require an exact tracked file"),
             ('scripts/verify_findings.py::"x"', "titles require a JS test source"),
-            ('workflows/test/parity.test.js::"no such title"', "title not found"),
+            ('workflows/test/goldens.test.js::"no such title"', "title not found"),
             ('scripts/verify_findings.py::"unterminated', "invalid citation syntax"),
             ("a::b#c", "invalid citation syntax"),
             ("CLAUDE.md#", "empty heading forbidden"),

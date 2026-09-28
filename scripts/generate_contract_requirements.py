@@ -491,11 +491,9 @@ def rewrite_required_column(text, registry):
 
 # --- identity fences ---------------------------------------------------------
 #
-# The per-symbol marker-fence idiom of `scripts/generate_filter_patterns.py`
-# (`_MARKER_RE` / `find_marker_pairs` / `fill_fences`), applied to the product
-# identity declared once in `workflows/src/registry.js`. One file may carry several
-# fences, so the pairs are validated per symbol rather than by a whole-file marker
-# count.
+# Product identity comes from `workflows/src/registry.js`. Each generated symbol
+# has a paired marker fence, validated by `_IDENTITY_MARKER_RE` and `find_identity_pairs`.
+# A file may carry several symbols, so a whole-file marker count is insufficient.
 
 
 def identity_marker_lines(symbol, rel_path):

@@ -1,12 +1,4 @@
-// mergeFindings.js — JS twin of scripts/merge_findings.py (Phase 3->4 merge).
-// Faithful port: parse two channels (NDJSON primary, text fallback), inject the
-// agent field, validate dimension + required fields, dedup by id (NDJSON wins),
-// detect truncation, assemble the Phase 4 envelope with methodology diagnostics.
-//
-// The Python original is disk-based (reads files under findings_dir/text_dir).
-// This twin is fed the raw file CONTENTS keyed by agent instead, so an absent
-// key mirrors a non-existent file (empty parse, no warning). Everything after
-// the read boundary is a line-for-line port.
+// Merge structured and text-channel findings into the Phase 4 envelope.
 import { dedupById } from './findingDedup.js';
 
 const KNOWN_DIMENSIONS = new Set([
@@ -21,16 +13,10 @@ const KNOWN_DIMENSIONS = new Set([
   'simplification',
 ]);
 
-// Fixed array (Object.keys-deterministic). Python is a set; JS iteration order is
-// irrelevant here — only "a missing-field warning exists per rejected finding" is
-// asserted, and rejection breaks on the first missing field regardless of order.
 export const REQUIRED_FIELDS = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence'];
 
 // --- Channel 1: NDJSON parsing ---------------------------------------------
 
-// Port of parse_ndjson_file: one JSON object per non-blank line; a malformed line
-// or a non-object becomes a warning, never a throw. `text === undefined/null`
-// mirrors the Python `os.path.exists` false branch (no file -> empty, no warning).
 export function parseNdjson(text, agent) {
   const findings = [];
   const warnings = [];
@@ -44,8 +30,8 @@ export function parseNdjson(text, agent) {
     let obj;
     try {
       obj = JSON.parse(line);
-    } catch (exc) {
-      warnings.push(`[${agent}] NDJSON line ${lineno}: invalid JSON — ${exc.message}`);
+    } catch {
+      warnings.push(`[${agent}] NDJSON line ${lineno}: invalid JSON`);
       continue;
     }
     if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
@@ -65,16 +51,6 @@ function jsonTypeName(v) {
 
 // --- Channel 2: text fallback parsing --------------------------------------
 
-// Port of _extract_json_blocks + _try_parse_json_at + _find_end_of_json: an
-// escape-aware, balanced-brace char scanner (NOT a regex). Walks the text; at
-// each '{' it tries to parse a balanced object and captures it only when the
-// parse succeeds AND the object has an 'id' key, then skips past its end.
-//
-// UTF-16 note: JS indexes/`.length` by code unit (astral chars are surrogate
-// pairs) where Python indexes by code point. The scanner only branches on the
-// ASCII chars { } " \ — none of which a surrogate code unit can equal — and
-// slices at ASCII brace boundaries, so the structural parse is identical across
-// runtimes even with emoji/CJK inside string values.
 export function extractJsonBlocks(text) {
   const results = [];
   let i = 0;
@@ -147,10 +123,6 @@ function findEndOfJson(text, start) {
   return end;
 }
 
-// Port of parse_text_file. Returns id-bearing JSON blocks plus prose/skip flags.
-// The brace-stripping regex below is deliberately NOT unified with the balanced-brace
-// scanner above: stripping uses the LOOSER one-level-nested pattern (the Python
-// `re.DOTALL` flag is a no-op there because [^{}] already matches newlines).
 export function parseTextFile(text, agent) {
   const findings = [];
   const warnings = [];
@@ -169,9 +141,6 @@ export function parseTextFile(text, agent) {
   let stripped = text.replace(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, '');
   stripped = stripped.replace(/^\s*SKIP\s*:.*$/gim, '');
   stripped = stripped.trim();
-  // .length counts UTF-16 units where Python len() counts code points, so an astral
-  // char shifts this threshold by one vs Python. Accepted: has_prose is diagnostics
-  // only (truncation heuristic), and parity fixtures keep prose ASCII where it is load-bearing.
   if (stripped.replace(/\s+/g, '').length > 20) hasProse = true;
 
   return { findings, warnings, hasProse, hasSkip };
@@ -179,19 +148,12 @@ export function parseTextFile(text, agent) {
 
 // --- Agent field injection --------------------------------------------------
 
-// Port of the per-list slice of inject_agent_field: sets f.agent on each finding.
-// The pipeline calls this text-first then ndjson-second (matching the Python
-// ordering), though the two channels hold distinct objects so no real overwrite
-// occurs.
 export function injectAgentField(findings, agent) {
   for (const f of findings) f.agent = agent;
 }
 
 // --- Validation -------------------------------------------------------------
 
-// Port of validate_findings: reject on the first missing required field (===''
-// mirrors Python's `== ""`, which — unlike JS `==` — never coerces 0/false);
-// warn-but-keep on a missing or unknown dimension.
 export function validateFindings(findings) {
   const valid = [];
   const warnings = [];
@@ -226,11 +188,6 @@ export function validateFindings(findings) {
 
 // --- Truncation detection ---------------------------------------------------
 
-// Port of detect_truncation. Reads PRE-validation NDJSON raw counts and
-// PRE-validation text findings so validation-rejected findings (M4) and
-// text-fallback JSON blocks (M5) do not produce false positives. Iterating the
-// ndjsonRaw keys mirrors Python's iteration over `agents` (same set + order,
-// since the caller builds ndjsonRaw by iterating agents).
 export function detectTruncation(ndjsonRaw, textPre, hasProse, hasSkip) {
   const warnings = [];
   for (const agent of Object.keys(ndjsonRaw)) {
@@ -288,9 +245,6 @@ function assembleOutput(
 
 // --- Main merge pipeline ----------------------------------------------------
 
-// Port of merge(). `ndjsonContents`/`textContents` are {agent: rawFileString};
-// `meta` = {base_branch, head_sha, pr_number, owner, repo, agents}. Runs the
-// sub-functions in the Python main() order and returns the Phase 4 envelope.
 export function merge(ndjsonContents, textContents, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
@@ -322,7 +276,6 @@ export function merge(ndjsonContents, textContents, meta) {
   const ndjsonRawCounts = {};
   for (const agent of Object.keys(ndjsonFindings)) ndjsonRawCounts[agent] = ndjsonFindings[agent].length;
 
-  // Inject agent fields (text first, ndjson second — matches Python ordering).
   for (const [agent, findings] of Object.entries(textFindings)) injectAgentField(findings, agent);
   for (const [agent, findings] of Object.entries(ndjsonFindings)) injectAgentField(findings, agent);
 
@@ -331,9 +284,6 @@ export function merge(ndjsonContents, textContents, meta) {
   const allTextFlat = Object.values(textFindings).flat();
   const { warnings: preValWarnings } = validateFindings(allNdjsonFlat.concat(allTextFlat));
 
-  // Real dropped_no_id: PRE-validation, per-occurrence (id-less findings are
-  // stripped before dedup, so the production count must come from here). Matches
-  // Python's `f.get("id") in (None, "")` — absent, null, or empty-string id.
   let droppedNoId = 0;
   for (const f of allNdjsonFlat.concat(allTextFlat)) {
     const fid = f.id;

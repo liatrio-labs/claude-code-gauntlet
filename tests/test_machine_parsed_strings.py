@@ -7,7 +7,7 @@ changing output. Presence/byte checks only; no semantic shape equality.
 
 EVERY listed path must contain the bytes, producers and parsers alike. Requiring
 only one parser to match let four rows name files that never held the string
-(`detect_prior_review.py`, `tests/test_validate_ndjson.py`, `bench/runner/invoke.py`),
+(`detect_prior_review.py`, `bench/runner/invoke.py`),
 because the producer was also listed and satisfied the check on its own. A row
 with no byte-level reader writes `—` and explains itself in the notes.
 """
@@ -172,7 +172,6 @@ class TestMachineParsedStrings(unittest.TestCase):
             "HEADLESS CONFIG ERROR:",
             "HEADLESS INPUT ERROR:",
             "code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.",
-            "[validate_ndjson]",
             "the deltas carry a checksum",
             "PAYLOAD_JSON:",
             'PRODUCT = "code-gauntlet"',

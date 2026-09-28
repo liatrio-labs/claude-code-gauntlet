@@ -1,10 +1,10 @@
 # Validation Pipeline (internal workflow stages)
 
-In v3 the validation pipeline runs **inside** `workflows/pipeline.js` — the main session does not invoke `verify_findings.py`, `apply_validations.py`, `filter_findings.py`, or `apply_challenges.py` between agent rounds. Those five deterministic transforms are now JS twins compiled into the bundle (`workflows/src/{mergeFindings,applyValidations,filterFindings,applyChallenges,findingDedup}.js`), and the stages that orchestrate them live in `workflows/src/stages.js`. This reference documents what each stage does — for understanding a `gaps` entry or debugging a persisted artifact, not for running anything by hand.
+The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic transforms live in `workflows/src/{mergeFindings,applyValidations,filterFindings,applyChallenges,findingDedup}.js`, and the stages that orchestrate them live in `workflows/src/stages.js`. The retained `verify_findings.py` executor handles the verify boundary. This reference documents what each stage does for interpreting gaps and persisted artifacts.
 
 **Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Challenge** → Report.
 
-The Python scripts are still shipped and still pass their suites (parity is proven against frozen golden fixtures), but they are exercised only by the retained `verify_findings.py` executor path and by tests — not by the skill.
+The five transform golden families under `tests/fixtures/parity/` are JavaScript-owned.
 
 ---
 

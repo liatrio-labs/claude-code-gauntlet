@@ -1,38 +1,10 @@
-# JS/Python parity fixtures
+# Parity fixtures
 
-Each case is a directory `<script>/<case>/` with:
+`finding_dedup`, `merge_findings`, `apply_validations`, `filter_findings`, and
+`apply_challenges` are JavaScript-owned. Change their `expected.json` files only
+with `UPDATE_GOLDENS=1 node --test workflows/test/goldens.test.js` and review the
+resulting diff.
 
-- `input.json` — a single object whose keys are the twin function's parameter names.
-- `expected.json` — the full return value as a named-key object (tuples become
-  `{name: value}`). Generated FROM the authoritative Python twin by
-  `workflows/test/tools/record_parity.py`; never hand-edit.
-
-Both runtimes assert against `expected.json`:
-
-- Python: `tests/test_parity_fixtures.py` (Python twin == expected; also asserts
-  `record_parity.py` output is unchanged — golden freshness).
-- JS: `workflows/test/parity.test.js` (JS twin == expected).
-
-Assertion rule: decision outcomes and integer counts/stats are asserted EXACTLY.
-Free-text fields (`elimination_reason`, warning bodies, `escalation_note`,
-`corroborated_by` ordering of equal keys) are asserted for substring/prefix
-presence only — Python f-string formatting need not match JS template
-strings. `{field}_removal_reason` for every field in
-`INJECTION_STRIPPED_PROSE_FIELDS` (`suggestion`, `claude_md_rule`,
-`spec_text` — filter_findings' `apply_injection_filter`) is the one exception
-with a byte-exact slice: the "{field} <noun phrase>: " prefix up to and
-including the ": " separator is identical across runtimes by construction
-(both runtimes read it from the same set-label strings), so `parity.test.js`
-compares that prefix exactly and leaves only the pattern-spelling tail
-presence-only; the non-string reason ("{field} is not a string") has no tail
-and is compared byte-exactly in full. A single kept finding can carry more
-than one of these keys at once (every matching field strips independently),
-so `parity.test.js` peels each one off in turn before comparing what remains
-structurally.
-
-Authoring caveat (`merge_findings`): a fixture finding must not be missing more
-than ONE required field. `validate_findings` iterates the `REQUIRED_FIELDS`
-**set** and reports the first missing field it hits; Python randomizes str-set
-iteration order (`PYTHONHASHSEED`), so a finding missing ≥2 fields yields a
-nondeterministic warning body and flakes golden-freshness (which byte-compares
-`expected.json`). With exactly one bad field the reported field is fixed.
+`verify_deltas`, `slice_input_proof`, and `slice_inline` are verify-wire fixtures
+recorded by `workflows/test/tools/record_parity.py`. The Python recorder uses
+the JavaScript encoder for `slice_inline`.

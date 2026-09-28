@@ -12,6 +12,7 @@ words:
   - frontmatter
   - glab
   - gitleaks
+  - goldens
   - liatrio
   - markdownlint
   - merkle

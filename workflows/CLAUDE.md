@@ -55,6 +55,8 @@ stay off so a later re-evaluation need not re-derive them:
   Neither lint nor the bundle-fresh check sees either — inline the value into `src/`.
 - Rebuild after any source change: `node workflows/build.js`. `tests/test_bundle_fresh.py` requires
   the committed bundle to be byte-identical to a fresh build, and import-free.
+- The five transform families under `tests/fixtures/parity/` are JavaScript-owned and change only
+  through `UPDATE_GOLDENS=1` in a reviewed diff. The three verify-wire families stay Python-recorded.
 - **`meta.name` must never equal the skill's name.** Both are registered by this plugin; an
   identical name makes `/code-gauntlet:code-gauntlet` resolve to the workflow, which then receives a
   raw user string instead of the args waist.

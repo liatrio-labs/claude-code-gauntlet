@@ -33,15 +33,20 @@ takes coordinated edits across N files, fix the shape rather than documenting th
 - This does not forbid npm on the CI runner (`validate.yml` already installs the
   Claude Code CLI globally).
 
-## Scripts
+## Python
 
-- **stdlib-only Python.** No pip dependencies in shipped `scripts/` runtime —
-  nothing under `scripts/` may import a non-stdlib module. Pinned CI tooling in
-  `pyproject.toml` `[dependency-groups]` (pytest, pytest-cov, coverage) is exempt
-  and never runs inside the plugin.
-- **Language-agnostic.** Scripts must not assume a language in the reviewed codebase. Use
-  `--exclude-dir` for non-source directories, never `--include=*.py`-style filters. One exception:
-  `render_fix_tasks.py`'s module docstring documents its build-system table carve-out from this rule.
+- **stdlib only, Python 3.10.** Nothing under `scripts/` imports a non-stdlib module;
+  `[dependency-groups]` CI tooling is exempt.
+- **Language-agnostic.** Never assume the reviewed codebase's language: `--exclude-dir` for
+  non-source directories, never `--include=*.py`. `render_fix_tasks.py` documents the one
+  exception, its build-system table.
+- **Shape of new and touched code.** A JSON wire shape is a `TypedDict`; an internal record is a
+  frozen slotted dataclass; a closed vocabulary is a `Literal`. A function unless state or
+  polymorphism earns a class. One implementation per mechanism.
+- **New and rewritten tests are pytest functions**: fixtures, `parametrize` tables, builders that
+  produce inputs only. Prove a behaviour once, at the boundary callers use.
+- **Comments say why:** a constraint, a measurement and how it was taken, or a twin. No history
+  or issue numbers in code.
 
 ## Tests
 
@@ -67,18 +72,16 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
   --test-coverage-include='workflows/src/*.js' \
   --test-coverage-include='workflows/build.js' \
   --test-coverage-lines=98.2 \
-  --test-coverage-branches=90.0 \
-  --test-coverage-functions=97.7 \
+  --test-coverage-branches=90.7 \
+  --test-coverage-functions=97.9 \
   --test-reporter=spec --test-reporter-destination=stdout \
   --test-reporter=lcov --test-reporter-destination="$LCOV" \
   workflows/test/*.test.js \
   && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
 ```
 
-Floors: Python 93.8 / 88.5, JS 98.2 / 90.0 / 97.7. Each floor is pinned from a PR's CI
-measurement, latest 2026-09-14 from #337 (JS functions 98.62); bench and JS branches from #331
-(89.45; 90.93), scripts from #288 (94.74), JS lines from #271 (99.11). The ratchet
-history is in git. Policy: a floor sits no more than 1.0 pp below the CI
+Floors: Python 93.8 / 88.5, JS 98.2 / 90.7 / 97.9, each pinned from a PR's CI measurement;
+the ratchet history is in git. Policy: a floor sits no more than 1.0 pp below the CI
 measurement for that gate; lower a floor only in the PR that causes the drop, with
 the reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
 multi-point JS drop usually means a deleted fixture group or an unloaded

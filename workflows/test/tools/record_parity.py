@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
-"""Regenerate expected.json golden files from the authoritative Python twins.
+"""Record verify-wire goldens with Python and the JS encoder for slice_inline.
 
 Usage: python3 workflows/test/tools/record_parity.py [--check] [<script>] [<case>]
-Reads each case's input.json, dispatches to the Python function, writes expected.json.
-
---check records into a TEMP tree and diffs against the committed goldens instead
-of writing; it never touches tests/fixtures/parity. Use it to verify goldens are
-fresh (this is what TestGoldenFreshness runs); use the in-place form (no --check)
-only as the explicit authoring command when a golden genuinely needs updating.
 """
 
 import json
@@ -20,153 +14,23 @@ sys.path.insert(0, str(REPO / "scripts"))
 FIXTURES = REPO / "tests" / "fixtures" / "parity"
 
 
-def _finding_dedup(inp):
-    from finding_dedup import dedup_by_id
+def _verify_deltas(inp):
+    from verify_findings import build_deltas, deltas_checksum
 
-    merged, dupes, dropped = dedup_by_id(inp["ndjson_findings"], inp["text_findings"])
-    return {"merged": merged, "duplicates_resolved": dupes, "dropped_no_id": dropped}
-
-
-def _merge_findings(inp):
-    import tempfile
-
-    from merge_findings import merge
-
-    args = inp["args"]
-    with tempfile.TemporaryDirectory() as fd, tempfile.TemporaryDirectory() as td:
-        for name, text in inp.get("findings_dir_files", {}).items():
-            (Path(fd) / name).write_text(text, encoding="utf-8", newline="")
-        for name, text in inp.get("text_dir_files", {}).items():
-            (Path(td) / name).write_text(text, encoding="utf-8", newline="")
-        env = merge(
-            findings_dir=fd,
-            session_sha=args["session_sha"],
-            agents=args["agents"],
-            text_dir=td,
-            base_branch=args["base_branch"],
-            head_sha=args["head_sha"],
-            pr_number=args["pr_number"],
-            owner=args["owner"],
-            repo=args["repo"],
-        )
-    return env
+    verified_by_id = {f["id"]: f for f in inp["result"]["verified"]}
+    post_by_id = dict(verified_by_id)
+    post_by_id.update({f["id"]: f for f in inp["result"]["eliminated"]})
+    ordered = [post_by_id[f["id"]] for f in inp["dispatched"]]
+    deltas = build_deltas(ordered, inp["result"]["verified"])
+    checksum = deltas_checksum(deltas)
+    joined = [
+        _project_verify_delta(post_by_id[f["id"]])
+        for f in inp["dispatched"]
+        if f["id"] in verified_by_id
+    ]
+    return {"deltas": deltas, "checksum": checksum, "joined": joined}
 
 
-def _filter_findings(inp):
-    import tempfile
-
-    import filter_findings as ff
-
-    fn = inp["fn"]
-    if fn == "normalize_field_names":
-        findings = inp["findings"]
-        ff.normalize_field_names(findings)
-        return {"findings": findings}
-    if fn == "parse_review_md":
-        with tempfile.NamedTemporaryFile(
-            "w", suffix=".md", delete=False, encoding="utf-8", newline=""
-        ) as t:
-            t.write(inp["markdown"])
-            path = t.name
-        return {"config": ff.parse_review_md(path)}
-    if fn == "build_review_config":
-        return {"config": ff.build_review_config(inp["entries"])}
-    if fn == "config_for_file":
-        return {"config": ff.config_for_file(inp["config"], inp["file"])}
-    if fn == "load_exclusions":
-        # Not in the Task 4 brief's Step 1 skeleton — added because loadExclusions
-        # is a Produced part-1 function (brief interfaces list) and the exclusions/
-        # fixture case names (fenced_block_match, bullet_list_fallback) describe
-        # load_exclusions's two parse paths, not apply_exclusions's matching.
-        with tempfile.NamedTemporaryFile(
-            "w", suffix=".md", delete=False, encoding="utf-8", newline=""
-        ) as t:
-            t.write(inp["markdown"])
-            path = t.name
-        return {"patterns": ff.load_exclusions(path)}
-    if fn == "apply_threshold_filter":
-        # apply_threshold_filter returns a 3-tuple (passed, eliminated, contested_count),
-        # not the 2-tuple the brief's Step 1 skeleton unpacks -- corrected per the
-        # brief's own instruction to confirm arity against scripts/filter_findings.py.
-        passed, eliminated, contested_count = ff.apply_threshold_filter(
-            inp["findings"], inp["config"]
-        )
-        return {
-            "kept": passed,
-            "eliminated": eliminated,
-            "contested_count": contested_count,
-        }
-    if fn == "apply_reachability_demotion":
-        findings, demoted_count = ff.apply_reachability_demotion(inp["findings"])
-        return {"findings": findings, "demoted_count": demoted_count}
-    if fn == "apply_injection_filter":
-        kept, eliminated = ff.apply_injection_filter(inp["findings"])
-        return {"kept": kept, "eliminated": eliminated}
-    if fn == "apply_replay_injection_scan":
-        # #253: the replay belt's callable unit (heuristic 4 excluded) -- see
-        # filter_findings.apply_replay_injection_scan's docstring.
-        kept, eliminated = ff.apply_replay_injection_scan(inp["findings"])
-        return {"kept": kept, "eliminated": eliminated}
-    if fn == "apply_exclusions":
-        kept, eliminated = ff.apply_exclusions(
-            inp["findings"], inp["exclusion_patterns"], inp.get("config")
-        )
-        return {"kept": kept, "eliminated": eliminated}
-    if fn == "apply_filter_pipeline":
-        return ff.apply_filter_pipeline(
-            inp["findings"],
-            inp["config"],
-            inp["exclusion_patterns"],
-            inp["generated_at"],
-        )
-    if fn == "detect_disagreement":
-        active, suppressed, boosted_count = ff.detect_disagreement(inp["findings"])
-        return {
-            "active": active,
-            "suppressed": suppressed,
-            "boosted_count": boosted_count,
-        }
-    if fn == "_route_by_dimension":
-        # Single-finding-in, route-out -- no list plumbing needed.
-        return {"route": ff._route_by_dimension(inp["finding"])}
-    if fn == "consolidate_cross_agent":
-        findings, consolidated_count = ff.consolidate_cross_agent(inp["findings"])
-        return {"findings": findings, "consolidated_count": consolidated_count}
-    if fn == "tag_findings":
-        tagged, consolidated_count, main_count, suggestion_count = ff.tag_findings(
-            inp["findings"]
-        )
-        return {
-            "tagged": tagged,
-            "consolidated_count": consolidated_count,
-            "main_count": main_count,
-            "suggestion_count": suggestion_count,
-        }
-    raise ValueError(fn)
-
-
-def _apply_validations(inp):
-    import copy
-
-    from apply_validations import apply_validations
-
-    findings = copy.deepcopy(inp["findings"])
-    adjusted_count, unmatched_ids = apply_validations(findings, inp["validations"])
-    return {
-        "findings": findings,
-        "adjusted_count": adjusted_count,
-        "unmatched_ids": unmatched_ids,
-    }
-
-
-# The script's own audit trail (blame_metadata / factual_verification / diff_validation
-# -- see verify_findings.py's "DELIBERATELY EXCLUDED" comment above its _DELTA_FIELDS
-# constant). No workflow schema declares any of these, and joinVerifyDeltas (stages.js)
-# only ever writes DELTA_VALUE_KEYS onto the finding it already holds -- it never carries
-# any of these across the join either -- so a golden "joined" finding must not either.
-# `agent` is DELIBERATELY NOT in this drop list as of #22: the join now keeps it
-# deterministically on both the trusted and degraded paths (see stages.js
-# joinVerifyDeltas and its doc comment).
 _VERIFY_DELTA_DROP = (
     "blame_metadata",
     "factual_verification",
@@ -178,85 +42,13 @@ def _project_verify_delta(finding):
     return {k: v for k, v in finding.items() if k not in _VERIFY_DELTA_DROP}
 
 
-def _verify_deltas(inp):
-    # Pins issue #25 requirement 1's equivalence claim: the findings the workflow
-    # rebuilds by joining the delta onto the dispatched slice must equal, for every
-    # field any downstream stage consumes, what verify_findings.py itself left on the
-    # finding (minus its own audit trail and the withheld `agent` -- see
-    # _VERIFY_DELTA_DROP above). Python (this function, via the real build_deltas/
-    # deltas_checksum) owns the producing half; the JS twin (joinVerifyDeltas/
-    # deltaContentProof, asserted in workflows/test/parity.test.js) owns the
-    # reconstructing half; this golden is what sits between them.
-    from verify_findings import build_deltas, deltas_checksum
-
-    verified_by_id = {f["id"]: f for f in inp["result"]["verified"]}
-    post_by_id = dict(verified_by_id)
-    post_by_id.update({f["id"]: f for f in inp["result"]["eliminated"]})
-
-    # Reorder to DISPATCH order using the SAME dict objects as result["verified"] /
-    # result["eliminated"] (looked up from post_by_id, not re-serialized) -- build_deltas
-    # decides membership by object identity (id(finding) in {id(f) for f in verified}),
-    # exactly mirroring how verify_findings.py's own findings/verified pair are the same
-    # mutated-in-place objects. Passing the DISPATCHED (pre-verification) objects instead
-    # would make every finding look eliminated, since none of them is literally one of the
-    # objects in result["verified"].
-    ordered = [post_by_id[f["id"]] for f in inp["dispatched"]]
-
-    deltas = build_deltas(ordered, inp["result"]["verified"])
-    checksum = deltas_checksum(deltas)
-    joined = [
-        _project_verify_delta(post_by_id[f["id"]])
-        for f in inp["dispatched"]
-        if f["id"] in verified_by_id
-    ]
-    return {"deltas": deltas, "checksum": checksum, "joined": joined}
-
-
-def _apply_challenges(inp):
-    # Mirrors apply_challenges.py main()'s bridge composition (:444-480) --
-    # apply_challenges() -> consolidate_cross_agent() re-run -> rank_findings() --
-    # minus the file I/O (load_filtered/load_challenges) and prior_eliminated
-    # concatenation, which belong to the skill/stage layer, not this pure
-    # transform. Matches the JS twin's applyChallenges() return shape.
-    import copy
-
-    from apply_challenges import apply_challenges, rank_findings
-    from filter_findings import consolidate_cross_agent
-
-    findings = copy.deepcopy(inp["findings"])
-    challenges = inp["challenges"]
-    total_input = len(findings)
-    active, challenge_eliminated, challenge_stats = apply_challenges(
-        findings, challenges
-    )
-    active, cross_agent_consolidated = consolidate_cross_agent(active)
-    active = rank_findings(active)
-    stats = {
-        "total_input": total_input,
-        "challenge_removed": challenge_stats["challenge_removed"],
-        "challenge_downgraded": challenge_stats["challenge_downgraded"],
-        "challenge_contested": challenge_stats["challenge_contested"],
-        "challenge_survived": challenge_stats["challenge_survived"],
-        "unchallenged": challenge_stats["unchallenged"],
-        "cross_agent_consolidated": cross_agent_consolidated,
-        "final_count": len(active),
-    }
-    return {
-        "findings": active,
-        "eliminated": challenge_eliminated,
-        "stats": stats,
-    }
-
-
 def _slice_input_proof(inp):
-    # The legacy file proof remains for the persisted JSON boundary.
     from verify_findings import _input_checksum
 
     return {"checksum": _input_checksum(inp["doc"])}
 
 
 def _slice_inline(inp):
-    """Record the exact JS inline token and its receipt checksum."""
     from assemble_artifacts import fnv1a32
     from verify_findings import _input_checksum
 
@@ -277,19 +69,11 @@ def _slice_inline(inp):
     return {
         "encoded": encoded,
         "checksum": _input_checksum(inp["doc"]),
-        # The token proof: fnv1a32 over the encoded token itself, recorded so both
-        # runtimes are pinned against the same bytes the executor is asked to copy.
         "token_checksum": fnv1a32(encoded),
     }
 
 
-# Registered per-script recorders. Later tasks append entries here.
 RECORDERS = {
-    "finding_dedup": _finding_dedup,
-    "merge_findings": _merge_findings,
-    "filter_findings": _filter_findings,
-    "apply_validations": _apply_validations,
-    "apply_challenges": _apply_challenges,
     "verify_deltas": _verify_deltas,
     "slice_input_proof": _slice_input_proof,
     "slice_inline": _slice_inline,
@@ -312,16 +96,10 @@ def record(script, case_dir):
 
 
 def _iter_cases(only_script, only_case):
-    """Yield (script, case_dir, case_label) for every input.json under FIXTURES,
-    scoped by the optional script/case filters. Shared by in-place recording and
-    --check so the two modes see exactly the same case set."""
     for script in RECORDERS:
         if only_script and script != only_script:
             continue
         script_dir = FIXTURES / script
-        # rglob (not iterdir) so both flat (<script>/<case>/) and grouped
-        # (<script>/<group>/<case>/, e.g. filter_findings/threshold/<case>/) fixture
-        # layouts are found uniformly, at whatever depth input.json actually lives.
         for input_path in sorted(script_dir.rglob("input.json")):
             case_dir = input_path.parent
             case_label = str(case_dir.relative_to(script_dir))
@@ -331,22 +109,10 @@ def _iter_cases(only_script, only_case):
 
 
 def check(only_script=None, only_case=None):
-    """Compute every in-scope case's fresh golden bytes in memory (never
-    writing to disk) and diff them against the committed goldens.
-
-    Returns a list of human-readable mismatch lines (empty = fresh). Covers
-    both directions -- a case whose committed expected.json disagrees with a
-    fresh recording, AND a case with input.json but no committed expected.json
-    at all (a brand-new fixture that was never authored/recorded; #214's
-    TestGoldenFreshness could not see this direction at all, since it only
-    ever compared bytes for expected.json paths that already existed on disk
-    -- issue #211 review F7).
-    """
     mismatches = []
     for script, case_dir, _case_label in _iter_cases(only_script, only_case):
         rel = case_dir.relative_to(FIXTURES)
         fresh_bytes = _serialize(_compute(script, case_dir))
-
         committed_path = case_dir / "expected.json"
         if not committed_path.exists():
             mismatches.append(
@@ -368,6 +134,10 @@ def main(argv):
     positional = [a for a in args if a != "--check"]
     only_script = positional[0] if len(positional) > 0 else None
     only_case = positional[1] if len(positional) > 1 else None
+
+    if only_script is not None and only_script not in RECORDERS:
+        print(f"unknown recorder family: {only_script}", file=sys.stderr)
+        return 2
 
     if check_mode:
         mismatches = check(only_script, only_case)

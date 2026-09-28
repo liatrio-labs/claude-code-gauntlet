@@ -17,7 +17,7 @@
       "description": "real issue",
       "dimension": "bug",
       "eliminated_by": "exclusion",
-      "elimination_reason": "matched exclusion pattern: 'web-only'",
+      "elimination_reason": "matched exclusion pattern: \"web-only\"",
       "file": "web/x.py",
       "id": "web-drop",
       "line_start": 3,

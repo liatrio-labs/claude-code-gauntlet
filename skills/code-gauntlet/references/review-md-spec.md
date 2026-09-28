@@ -21,9 +21,8 @@ free markdown and is never parsed; the collector copies the whole file, includin
 <!-- code-gauntlet-defaults -->
 Built-in defaults, applied whenever a key is absent from the config block: `confidence_threshold`
 **55** for non-security dimensions, `security_min_confidence` **70**, `severity_threshold`
-**low** (show everything). `scripts/filter_findings.py` and `workflows/src/filterFindings.js`
-both define these as constants; `tests/test_review_md_contract.py` asserts this paragraph's three
-numbers match both files.
+**low** (show everything). `workflows/src/filterFindings.js` defines these as constants;
+`tests/test_review_md_contract.py` asserts this paragraph's three values match.
 <!-- /code-gauntlet-defaults -->
 
 ````markdown
