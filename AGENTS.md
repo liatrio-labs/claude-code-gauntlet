@@ -38,7 +38,7 @@ takes coordinated edits across N files, fix the shape rather than documenting th
 - **stdlib only, Python 3.10.** Nothing under `scripts/` imports a non-stdlib module;
   `[dependency-groups]` CI tooling is exempt.
 - **Language-agnostic.** Never assume the reviewed codebase's language: `--exclude-dir` for
-  non-source directories, never `--include=*.py`. `render_fix_tasks.py` documents the one
+  non-source directories, never `--include=*.py`. `scripts/gauntlet/fix_tasks.py` documents the one
   exception, its build-system table.
 - **Shape of new and touched code.** A JSON wire shape is a `TypedDict`; an internal record is a
   frozen slotted dataclass; a closed vocabulary is a `Literal`. A function unless state or
@@ -159,4 +159,4 @@ after a merge:
 
 ## Session output style
 
-Canonical rules and the regeneration mechanism are documented in `scripts/build_style_artifacts.py`.
+Canonical rules and the regeneration mechanism are documented in `scripts/gauntlet/style.py`.

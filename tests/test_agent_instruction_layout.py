@@ -52,7 +52,7 @@ CODEX_CAP_BYTES = 32_768
 # belongs in a code comment. If both are yes, raise the number in the same commit and say
 # what the addition buys.
 #
-AGENTS_SET_BUDGET_BYTES = 22_646
+AGENTS_SET_BUDGET_BYTES = 22_323
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
@@ -211,7 +211,7 @@ class TestCollectorDedup(unittest.TestCase):
             return json.loads(result.stdout)
 
     def test_each_rule_set_is_collected_exactly_once(self):
-        from scripts.collect_project_rules import _effective
+        from gauntlet.project_rules import _effective
 
         report = self.collect()
         seen = {}

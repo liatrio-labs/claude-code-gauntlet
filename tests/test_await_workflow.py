@@ -25,6 +25,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -34,9 +35,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from scripts.await_workflow import (
+import pytest
+from gauntlet.awaiting import (
     ARTIFACT_BASENAMES,
     ARTIFACT_PATH_TEMPLATES,
     COMPACT_RETURN_KEYS,
@@ -60,6 +60,42 @@ from scripts.await_workflow import (
 )
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def test_next_command_keeps_symlinked_plugin_root(tmp_path):
+    link = tmp_path / "plugin-link"
+    try:
+        link.symlink_to(REPO_ROOT, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
+    target = tmp_path / "pending-task"
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["PYTHONSAFEPATH"] = "1"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(link / "scripts/await_workflow.py"),
+            str(target),
+            "--timeout-seconds",
+            "0",
+            "--max-attempts",
+            "2",
+            "--since-epoch",
+            "0",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 3, result.stderr
+    marker = json.loads(result.stdout)
+    assert shlex.split(marker["next_command"])[1] == str(
+        link / "scripts" / "await_workflow.py"
+    )
 
 
 def _find_posix_shell():
@@ -999,7 +1035,7 @@ class TestResolveTarget(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as sentinel,
             patch.object(os, "getuid", None, create=True),
-            patch("scripts.await_workflow.tempfile.gettempdir", return_value=sentinel),
+            patch("gauntlet.awaiting.tempfile.gettempdir", return_value=sentinel),
         ):
             path, searched = resolve_target("wnosuchtask000", {})
         self.assertIsNone(path)
@@ -1210,7 +1246,7 @@ class TestExitCodeContract(unittest.TestCase):
 
     def test_unexpected_failure_still_prints_one_line_and_degrades(self):
         with patch(
-            "scripts.await_workflow.await_terminal", side_effect=RuntimeError("boom")
+            "gauntlet.awaiting.await_terminal", side_effect=RuntimeError("boom")
         ):
             code, out, _ = run_main(["w1", "--timeout-seconds", "0"])
         marker = sole_json_line(out)
@@ -1221,9 +1257,7 @@ class TestExitCodeContract(unittest.TestCase):
 
     def test_keyboard_interrupt_prints_interrupted_marker(self):
         """KeyboardInterrupt is not an Exception subclass — its branch is distinct."""
-        with patch(
-            "scripts.await_workflow.await_terminal", side_effect=KeyboardInterrupt()
-        ):
+        with patch("gauntlet.awaiting.await_terminal", side_effect=KeyboardInterrupt()):
             code, out, _ = run_main(["w1", "--timeout-seconds", "0"])
         marker = sole_json_line(out)
         self.assertEqual(code, 4)
@@ -1235,7 +1269,8 @@ class TestExitCodeContract(unittest.TestCase):
         """Error-path emit must share the happy-path OSError degrade, not exit 1."""
         with (
             patch(
-                "scripts.await_workflow.await_terminal", side_effect=KeyboardInterrupt()
+                "gauntlet.awaiting.await_terminal",
+                side_effect=KeyboardInterrupt(),
             ),
             patch("builtins.print", side_effect=BrokenPipeError()),
         ):
@@ -1626,7 +1661,7 @@ class TestWaitLoop(unittest.TestCase):
                         fh.write(json.dumps(envelope(SUCCESS_RETURN)))
                 real_sleep(0)
 
-            with patch("scripts.await_workflow.time.sleep", side_effect=fake_sleep):
+            with patch("gauntlet.awaiting.time.sleep", side_effect=fake_sleep):
                 code, out, _ = run_main(
                     [path, "--timeout-seconds", "5", "--poll-interval", "1"]
                 )

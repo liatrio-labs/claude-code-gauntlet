@@ -87,7 +87,7 @@ This runs **here, not in Phase 1**: the gate compares the last-reviewed commit a
 
 If the gate resolves to **Incremental**, store `last_reviewed_sha` — section 2c's incremental branch consumes it. If it resolves to **Skip**, stop the run here. Otherwise continue as a full review.
 
-**4. Truncate stale files** with `scripts/stale_truncate.py` so a re-run does not blend old artifacts with new. If it prints `DEFERRED`, run the `--unconditional` form only after a "Yes — review again" answer; a "No — skip" answer stops with the files intact. The gate rationale and outcomes live in the script docstring.
+**4. Truncate stale files** with `scripts/stale_truncate.py` so a re-run does not blend old artifacts with new. If it prints `DEFERRED`, run the `--unconditional` form only after a "Yes — review again" answer; a "No — skip" answer stops with the files intact. The gate rationale and outcomes live in `scripts/gauntlet/stale.py`'s docstring.
 
 ---
 
@@ -109,7 +109,7 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 
 **These saves run as SKILL.md's "Phase 2 Composite B — independent-gather"** — one Bash call whose `files`/`diff`/`numstat`/`misc` sections are mutually independent on the default path (`files` runs first specifically so the incremental path's bounded diff has a file list to read). See SKILL.md for the exact script.
 
-`changedLines` (threaded into `args.changedLines`, Args Preparation below) is counted from the diff actually saved above — the incremental diff on the incremental path, never branch 1's full-PR diff. The `numstat` section runs `scripts/diff_numstat.py` against that saved patch; its docstring holds the counting rules. Check `binary_files > 0` before treating a low count as no diff. Never run a second `gh pr diff`; the 2k scan reads the same saved patch, never a fresh diff fetch.
+`changedLines` (threaded into `args.changedLines`, Args Preparation below) is counted from the diff actually saved above — the incremental diff on the incremental path, never branch 1's full-PR diff. The `numstat` section runs `scripts/diff_numstat.py` against that saved patch; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules. Check `binary_files > 0` before treating a low count as no diff. Never run a second `gh pr diff`; the 2k scan reads the same saved patch, never a fresh diff fetch.
 
 Validate the saved diff before relying on it:
 

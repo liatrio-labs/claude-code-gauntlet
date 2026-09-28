@@ -2,7 +2,7 @@
 
 `workflows/src/registry.js` is the ONE hand-authored copy of the brand mark, the
 display name and the severity emoji map. Every other copy — the Python constants in
-`scripts/post_review.py`, the legends in `references/report-format.md` and
+`scripts/gauntlet/delivery/post.py`, the legends in `references/report-format.md` and
 `references/delivery-guide.md`, the chat-identity sentence in `SKILL.md` — is emitted
 from it by `scripts/generate_contract_requirements.py` into a hand-placed
 `generated-from-registry-identity` marker fence.
@@ -20,14 +20,12 @@ variation selector, and the test would then pin the wrong bytes without anyone s
 
 import os
 import subprocess
-import sys
 import unittest
 from typing import ClassVar
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from gauntlet import contract_gen as gen
+from gauntlet.delivery import post as post_review
 
-from scripts import generate_contract_requirements as gen
-from scripts import post_review
 from tests import test_machine_parsed_strings as registry_doc
 from tests.support.js_values import js_values
 
@@ -86,7 +84,7 @@ def _tracked_files():
         check=True,
         encoding="utf-8",
     ).stdout
-    return [line for line in out.splitlines() if line]
+    return sorted(line for line in out.splitlines() if line)
 
 
 def _read_text(rel_path):

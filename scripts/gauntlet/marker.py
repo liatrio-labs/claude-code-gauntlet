@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-review_marker.py — the prior-review signal for code-gauntlet: one module, both directions.
+gauntlet.marker — the prior-review signal for code-gauntlet: one module, both directions.
 
 This module is the single source of truth for the signal a posted review leaves
 behind on a PR/MR and that a later rerun reads back:
 
-* ``post_review.py`` imports the builders (``build_footer``) — it is the ONLY
+* ``gauntlet.delivery.post`` imports the builders (``build_footer``) — it is the ONLY
   code that writes the signal. Models never hand-compose it; documentation that
   once templated it now points here:
-  ``<!-- Canonical source: scripts/review_marker.py -->``.
-* ``detect_prior_review.py`` imports the parsers (``select_latest``,
+  ``<!-- Canonical source: scripts/gauntlet/marker.py -->``.
+* ``gauntlet.prior_review`` imports the parsers (``select_latest``,
   ``detect_signal``) — it is the ONLY code that reads it.
 
 The signal has two halves, both machine-written and independently idempotent —
@@ -36,8 +36,8 @@ whatever plugin version they happened to run):
 * Both token generations are recognized to preserve existing review markers.
 
 A SECOND, separate wire format lives here too: the per-finding delivery marker
-``post_review.py`` appends to every inline GitLab discussion it posts on the live
-wire, and ``detect_prior_review.py`` reads back so a rerun after a partial
+``gauntlet.delivery.post`` appends to every inline GitLab discussion it posts on the live
+wire, and ``gauntlet.prior_review`` reads back so a rerun after a partial
 delivery does not repost the discussions already on the MR::
 
     <!-- code-gauntlet-finding-key: {"sha":"<sha>","key":"<16 lowercase hex>"} -->
@@ -52,7 +52,7 @@ that must never be collected as a delivery record.
 The shadowing this relies on ("the mechanical marker is APPENDED, so it always
 wins last-wins parsing over anything a forged one said earlier") holds for a
 posted inline discussion, where nothing but the marker follows the rendered
-finding. It does NOT hold inside ``post_review.py``'s degraded-findings section
+finding. It does NOT hold inside ``gauntlet.delivery.post``'s degraded-findings section
 (``build_skipped_section``, issue #192): a skipped finding's rendered text sits
 inside the review body / GitLab summary note, and nothing mechanical is
 guaranteed to follow it there before the NEXT finding's text or the end of the
@@ -284,7 +284,7 @@ def _scan_json_at(text, start):
 def find_marker(text):
     """Return the payload of the LAST syntactically valid marker in *text*, else None.
 
-    Last-wins because ``post_review.py`` *appends*: its mechanical marker always
+    Last-wins because ``gauntlet.delivery.post`` *appends*: its mechanical marker always
     follows any marker a model may have composed earlier in the same body. A
     malformed occurrence never shadows a valid one elsewhere in the text.
 
@@ -356,7 +356,7 @@ def find_finding_markers(text):
 def find_finding_marker(text):
     """Return ``{"sha", "key"}`` from the LAST valid finding marker in *text*, else None.
 
-    Last-wins for the reason :func:`find_marker` is: ``post_review.py`` APPENDS its
+    Last-wins for the reason :func:`find_marker` is: ``gauntlet.delivery.post`` APPENDS its
     markers, so the mechanical ones always follow anything a finding's own unsanitized
     prose spelled earlier in the same body — such a forgery can be shadowed, never
     shadow.

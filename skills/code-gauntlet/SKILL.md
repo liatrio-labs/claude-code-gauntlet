@@ -177,7 +177,7 @@ GitLab MR mode: swap `gh pr view`/`gh pr checkout` for `glab mr view`/`glab mr c
 
 Local/branch targets: drop the `owner_repo`/`prior_review` sections entirely (no PR/MR ⇒ no previously-reviewed signal), and replace the `stale_truncate` line with `python3 "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha "$HEAD_SHA_SHORT" --unconditional` — there is no prior-review artifact to protect.
 
-**`DEFERRED`:** the current SHA is the one a prior review covered. Run `python3 "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --unconditional` only after a "Yes — review again" answer; a "No — skip" answer stops with the files intact. An exit 2 truncated nothing; resolve it the same way. The gate's rationale and its four outcomes are in the script's docstring.
+**`DEFERRED`:** the current SHA is the one a prior review covered. Run `python3 "{plugin_root}/scripts/stale_truncate.py" --output-dir "{output_dir}" --head-sha {head_sha_short} --unconditional` only after a "Yes — review again" answer; a "No — skip" answer stops with the files intact. An exit 2 truncated nothing; resolve it the same way. The gate's rationale and its four outcomes are in `scripts/gauntlet/stale.py`'s docstring.
 
 After this call: interpret `prior_review`'s JSON per `references/phase1-preflight.md` → "Previously-Reviewed Gate" (branch order, question templates, degradations — unchanged). **Incremental** stores `last_reviewed_sha` for Composite B's incremental diff branch below. **Skip** stops the run here.
 
@@ -222,7 +222,7 @@ python3 -c "import secrets; print(secrets.token_hex(8))"
 
 - **Files** → this path becomes `args.changedFilesPath`; keep the same array inline for `args.changedFiles` (the Summarize stage reads it by value — the workflow cannot open the file).
 - **Diff** → this path becomes `args.diffPath`, passed to the verify executor as `--diff-file`.
-- **`numstat` counts the patch saved by the `diff` section with `scripts/diff_numstat.py`; its docstring holds the counting rules.** Check `binary_files > 0` before treating a low count as no diff. This feeds `changedLines`, and the 2k scan reads the same saved patch, never a fresh diff fetch. Never run a second `gh pr diff` to re-fetch it.
+- **`numstat` counts the patch saved by the `diff` section with `scripts/diff_numstat.py`; `scripts/gauntlet/numstat.py`'s docstring holds the counting rules.** Check `binary_files > 0` before treating a low count as no diff. This feeds `changedLines`, and the 2k scan reads the same saved patch, never a fresh diff fetch. Never run a second `gh pr diff` to re-fetch it.
 - **`misc`** gives `repoRoot`, a `generatedAt` candidate (re-stamp at args-assembly time if Phase 3 dispatch isn't immediate — `generatedAt` must reflect the actual assembly moment), and a `nonce` candidate matching `^[A-Za-z0-9._-]+$`.
 - **Risk classification (2e)** and **AI-generated-code detection (2k)** — classify changed files by risk as in `references/phase2-triage.md`; this feeds the context file. Neither runs here.
 
@@ -280,7 +280,7 @@ The nonce in the delimiter keeps any line of the text from ending it.
 The script writes the context file threaded to the discovery, validate and summarize agents from the collector's `--out` file, stdin text and saved diff, in that order.
 Stamp the printed `contextLines` and `contextChars` into the args waist verbatim, never estimated, carried over or re-derived.
 An exit 2 wrote no usable context; stop and report its one-line error.
-The script docstring holds the content and measurement rules.
+`scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
 
 The change **summary** is no longer written here — the workflow's Summarize stage produces it internally.
 

@@ -192,7 +192,7 @@ const FIX_BOUND_CASES = [
 ];
 for (const c of FIX_BOUND_CASES) test(`fix bound: ${c.name}`, () => {
   const js = readFileSync(new URL('../src/filterFindings.js', import.meta.url), 'utf8');
-  const py = readFileSync(new URL('../../scripts/post_review.py', import.meta.url), 'utf8');
+  const py = readFileSync(new URL('../../scripts/gauntlet/delivery/post.py', import.meta.url), 'utf8');
   for (const source of [js, py]) {
     const match = source.match(new RegExp(`^\\s*(?:const\\s+)?_?${c.key}\\s*=\\s*(\\d+)`, 'm'));
     assert.ok(match);

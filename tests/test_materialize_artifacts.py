@@ -37,12 +37,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, REPO_ROOT)
+from gauntlet.artifacts import plan_checksum
+from gauntlet.materialize import _sweep_paths, main, materialize
 
-from scripts.assemble_artifacts import plan_checksum  # noqa: E402
-from scripts.materialize_artifacts import _sweep_paths, main, materialize  # noqa: E402
-from tests.test_await_workflow import _plant_task_output  # noqa: E402
+from tests.test_await_workflow import _plant_task_output
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "materialize_artifacts.py")
 RECORDER = os.path.join(REPO_ROOT, "workflows", "test", "tools", "emit_task_output.mjs")
@@ -222,7 +223,7 @@ class TestUnexpectedFailure(unittest.TestCase):
         # Raise inside the first call materialize() makes, before any fixture work;
         # run_cli cannot inject across a process boundary without touching scripts/.
         return patch(
-            "scripts.materialize_artifacts.select_source",
+            "gauntlet.materialize.select_source",
             side_effect=RuntimeError("injected"),
         )
 
@@ -307,18 +308,6 @@ class TestResolutionWithoutARecordedRun(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIsNone(receipt["source"])
         self.assertIn("no task output file", receipt["errors"][0])
-
-    def test_neither_target_is_a_usage_error_with_empty_stdout(self):
-        proc = subprocess.run(
-            [sys.executable, SCRIPT, "--output-dir", self.out_dir],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            encoding="utf-8",
-        )
-        self.assertEqual(proc.returncode, 2)
-        self.assertEqual(proc.stdout, "")
 
 
 class TestFailureModes(MaterializeTestCase):

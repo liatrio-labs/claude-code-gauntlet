@@ -1,5 +1,5 @@
 """
-Tests for scripts/verify_findings.py
+Tests for scripts/gauntlet/verify/decide.py
 
 Covers:
   - parse_diff_lines: context, added, removed lines; multi-file diffs; edge cases;
@@ -26,13 +26,10 @@ import unittest
 from typing import ClassVar
 from unittest.mock import patch
 
-# Add project root to path so we can import scripts as a module
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 # JS_MAX_SAFE_INTEGER is the same constant _delta_confidence refuses to exceed --
 # imported from the sibling module rather than re-hardcoded so the two never drift.
-from scripts.assemble_artifacts import JS_MAX_SAFE_INTEGER
-from scripts.verify_findings import (
+from gauntlet.artifacts import JS_MAX_SAFE_INTEGER
+from gauntlet.verify.decide import (
     _DELTA_FIELDS,
     _LEGACY_CLI_FIELDS,
     _NUMERIC_FIELDS,
@@ -596,7 +593,7 @@ class TestClassifyBlame(unittest.TestCase):
         classify_blame(finding, "main")
         self.assertEqual(finding["severity"], "low")
 
-    @patch("scripts.verify_findings.os.path.exists", return_value=False)
+    @patch("gauntlet.verify.decide.os.path.exists", return_value=False)
     def test_file_not_found_returns_new(self, _mock_exists):
         finding = {
             "file": "nonexistent.py",
@@ -607,8 +604,8 @@ class TestClassifyBlame(unittest.TestCase):
         self.assertEqual(result, "new")
         self.assertEqual(finding["blame_metadata"]["classification"], "new")
 
-    @patch("scripts.verify_findings.os.path.exists", return_value=True)
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.os.path.exists", return_value=True)
+    @patch("gauntlet.verify.decide.run")
     def test_git_log_failure_returns_new(self, mock_run, _mock_exists):
         mock_run.return_value = ("", "fatal: unknown revision", 128)
         finding = {
@@ -619,8 +616,8 @@ class TestClassifyBlame(unittest.TestCase):
         result = classify_blame(finding, "nonexistent-branch")
         self.assertEqual(result, "new")
 
-    @patch("scripts.verify_findings.os.path.exists", return_value=True)
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.os.path.exists", return_value=True)
+    @patch("gauntlet.verify.decide.run")
     def test_new_classification_when_blame_sha_in_pr(self, mock_run, _mock_exists):
         # First call: git log (PR commits)
         # Second call: git blame
@@ -646,8 +643,8 @@ class TestClassifyBlame(unittest.TestCase):
         self.assertEqual(result, "new")
         self.assertEqual(finding["severity"], "high")  # no downgrade
 
-    @patch("scripts.verify_findings.os.path.exists", return_value=True)
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.os.path.exists", return_value=True)
+    @patch("gauntlet.verify.decide.run")
     def test_surfaced_classification_when_blame_sha_not_in_pr(
         self, mock_run, _mock_exists
     ):
@@ -673,8 +670,8 @@ class TestClassifyBlame(unittest.TestCase):
         self.assertEqual(result, "surfaced")
         self.assertEqual(finding["severity"], "medium")  # downgraded
 
-    @patch("scripts.verify_findings.os.path.exists", return_value=True)
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.os.path.exists", return_value=True)
+    @patch("gauntlet.verify.decide.run")
     def test_blame_failure_returns_new(self, mock_run, _mock_exists):
         def run_side_effect(cmd, check=False):
             if cmd[0] == "git" and cmd[1] == "log":
@@ -692,8 +689,8 @@ class TestClassifyBlame(unittest.TestCase):
         result = classify_blame(finding, "main")
         self.assertEqual(result, "new")
 
-    @patch("scripts.verify_findings.os.path.exists", return_value=True)
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.os.path.exists", return_value=True)
+    @patch("gauntlet.verify.decide.run")
     def test_blame_binary_file_returns_new(self, mock_run, _mock_exists):
         def run_side_effect(cmd, check=False):
             if cmd[0] == "git" and cmd[1] == "log":
@@ -911,7 +908,7 @@ class TestVerifyFactual(unittest.TestCase):
             tmppath = f.name
         try:
             # Patch grep to simulate symbol found
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
                 mock_run.return_value = ("found.py:1:hello\n", "", 0)
                 finding = {
                     "file": tmppath,
@@ -940,7 +937,7 @@ class TestVerifyFactual(unittest.TestCase):
                 captured.append({"cmd": cmd, "cwd": cwd})
                 return ("match.py:1:found\n", "", 0)
 
-            with patch("scripts.verify_findings.run", side_effect=mock_run):
+            with patch("gauntlet.verify.decide.run", side_effect=mock_run):
                 finding = {
                     "file": tmppath,
                     "line_start": 1,
@@ -970,7 +967,7 @@ class TestVerifyFactual(unittest.TestCase):
             f.write("def hello():\n    pass\n")
             tmppath = f.name
         try:
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
                 # grep returns no match for every call
                 mock_run.return_value = ("", "", 1)
                 finding = {
@@ -1048,7 +1045,7 @@ class TestVerifyFactual(unittest.TestCase):
             tmppath = f.name
         try:
             # Case: 1 of 2 symbols missing → 50% miss ratio → reduction ~35
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
 
                 def grep_side_effect(cmd, check=False, timeout=None, cwd=None):
                     # func_a is in the code_at_lines (fast path), so only func_d is grepped
@@ -1080,7 +1077,7 @@ class TestVerifyFactual(unittest.TestCase):
             f.write("x = 1\n")
             tmppath = f.name
         try:
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
                 mock_run.return_value = ("", "", 1)
                 finding = {
                     "file": tmppath,
@@ -1105,7 +1102,7 @@ class TestVerifyFactual(unittest.TestCase):
             f.write("x = 1\n")
             tmppath = f.name
         try:
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
                 mock_run.return_value = ("", "", 1)
                 finding = {
                     "file": tmppath,
@@ -1130,7 +1127,7 @@ class TestVerifyFactual(unittest.TestCase):
             f.write("def real_function():\n    return real_value\n")
             tmppath = f.name
         try:
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
                 # grep finds the symbol
                 mock_run.return_value = ("found.py:1:match\n", "", 0)
                 finding = {
@@ -1339,7 +1336,7 @@ class TestRepoRoot(unittest.TestCase):
                 captured_kwargs.append({"cmd": cmd, "cwd": cwd})
                 return ("", "", 1)  # symbol not found
 
-            with patch("scripts.verify_findings.run", side_effect=mock_run):
+            with patch("gauntlet.verify.decide.run", side_effect=mock_run):
                 finding = {
                     "file": tmppath,
                     "line_start": 1,
@@ -1378,7 +1375,7 @@ class TestVerifyFactualGrepError(unittest.TestCase):
             f.write("def my_func():\n    pass\n")
             tmppath = f.name
         try:
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
                 # rc=2 simulates an I/O error from grep
                 mock_run.return_value = ("", "grep: permission denied", 2)
                 finding = {
@@ -1406,7 +1403,7 @@ class TestVerifyFactualGrepError(unittest.TestCase):
             f.write("def my_func():\n    pass\n")
             tmppath = f.name
         try:
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
                 # rc=1 means grep ran successfully but found no match
                 mock_run.return_value = ("", "", 1)
                 finding = {
@@ -1444,7 +1441,7 @@ class TestVerifyFactualGitGrep(unittest.TestCase):
             f.write("def my_func():\n    pass\n")
             tmppath = f.name
         try:
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
                 mock_run.return_value = ("", "", -1)
                 finding = {
                     "file": tmppath,
@@ -1469,9 +1466,9 @@ class TestVerifyFactualGitGrep(unittest.TestCase):
             f.write("x = 1\n")
             tmppath = f.name
         try:
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
                 mock_run.return_value = ("", "", 1)
-                with patch("scripts.verify_findings.REPO_ROOT", "/fake/root"):
+                with patch("gauntlet.verify.decide.REPO_ROOT", "/fake/root"):
                     finding = {
                         "file": tmppath,
                         "line_start": 1,
@@ -1499,7 +1496,7 @@ class TestVerifyFactualGitGrep(unittest.TestCase):
             f.write("x = 1\n")
             tmppath = f.name
         try:
-            with patch("scripts.verify_findings.run") as mock_run:
+            with patch("gauntlet.verify.decide.run") as mock_run:
                 mock_run.return_value = ("", "fatal: not a git repository", 128)
                 finding = {
                     "file": tmppath,
@@ -1524,8 +1521,8 @@ class TestVerifyFactualGitGrep(unittest.TestCase):
 class TestShaInPrDeadBranch(unittest.TestCase):
     """RF-05: classify_blame must correctly match blamed (short) SHA against PR full SHAs."""
 
-    @patch("scripts.verify_findings.os.path.exists", return_value=True)
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.os.path.exists", return_value=True)
+    @patch("gauntlet.verify.decide.run")
     def test_short_blamed_sha_matches_full_pr_sha(self, mock_run, _mock_exists):
         """A 7-char blamed SHA should match when a full PR SHA starts with it."""
 
@@ -1542,8 +1539,8 @@ class TestShaInPrDeadBranch(unittest.TestCase):
         # abc1234 is a prefix of the PR commit — should be "new"
         self.assertEqual(result, "new")
 
-    @patch("scripts.verify_findings.os.path.exists", return_value=True)
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.os.path.exists", return_value=True)
+    @patch("gauntlet.verify.decide.run")
     def test_full_blamed_sha_does_not_match_short_pr_sha(self, mock_run, _mock_exists):
         """A full blamed SHA should NOT match a shorter PR SHA (removed dead branch).
 
@@ -1600,7 +1597,7 @@ class TestGetDiff(unittest.TestCase):
         result = get_diff("main", diff_file="/nonexistent/path/diff.txt")
         self.assertIsNone(result)
 
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.run")
     def test_three_dot_success_returns_diff(self, mock_run):
         """Three-dot success path: returns stdout directly."""
         mock_run.return_value = ("diff content\n", "", 0)
@@ -1608,7 +1605,7 @@ class TestGetDiff(unittest.TestCase):
         self.assertEqual(result, "diff content\n")
         mock_run.assert_called_once_with(["git", "diff", "main...HEAD"])
 
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.run")
     def test_two_dot_fallback_when_three_dot_fails(self, mock_run):
         """R01.2: Two-dot fallback triggered when three-dot diff fails."""
 
@@ -1627,14 +1624,14 @@ class TestGetDiff(unittest.TestCase):
         self.assertIn(["git", "diff", "main...HEAD"], calls)
         self.assertIn(["git", "diff", "main", "HEAD"], calls)
 
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.run")
     def test_none_returned_when_both_diffs_fail(self, mock_run):
         """R01.3: Returns None when both three-dot and two-dot diffs fail."""
         mock_run.return_value = ("", "fatal: bad revision", 128)
         result = get_diff("main")
         self.assertIsNone(result)
 
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.run")
     def test_git_diff_head_not_called(self, mock_run):
         """R01.5: git diff HEAD fallback is removed entirely."""
         mock_run.return_value = ("", "fatal: bad revision", 128)
@@ -1646,7 +1643,7 @@ class TestGetDiff(unittest.TestCase):
                 cmd, ["git", "diff", "HEAD"], msg="git diff HEAD must not be called"
             )
 
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.run")
     def test_diff_source_logging_three_dot(self, mock_run):
         """R01.4: Logs diff source on stderr for three-dot success."""
         mock_run.return_value = ("diff data\n", "", 0)
@@ -1659,7 +1656,7 @@ class TestGetDiff(unittest.TestCase):
         self.assertIn("three-dot", stderr_output)
         self.assertIn("bytes", stderr_output)
 
-    @patch("scripts.verify_findings.run")
+    @patch("gauntlet.verify.decide.run")
     def test_diff_source_logging_two_dot(self, mock_run):
         """R01.4: Logs diff source on stderr for two-dot fallback."""
 
@@ -1827,7 +1824,7 @@ class TestReceipt(unittest.TestCase):
         """Invoke main() with a controlled argv, stderr suppressed."""
         import io
 
-        from scripts.verify_findings import main
+        from gauntlet.verify.decide import main
 
         with (
             patch.object(sys, "argv", argv),
@@ -1939,7 +1936,7 @@ class TestReceipt(unittest.TestCase):
             # Force run_verification to blow up after loading, exercising the wrapper.
             with (
                 patch(
-                    "scripts.verify_findings.run_verification",
+                    "gauntlet.verify.decide.run_verification",
                     side_effect=RuntimeError("boom"),
                 ),
                 patch("sys.stderr", new_callable=io.StringIO),
@@ -1960,7 +1957,7 @@ class TestReceipt(unittest.TestCase):
                     ],
                 ),
             ):
-                from scripts.verify_findings import main
+                from gauntlet.verify.decide import main
 
                 main()  # must NOT raise; must print the failed envelope
                 printed = out.getvalue()
@@ -2002,7 +1999,7 @@ class TestReceipt(unittest.TestCase):
                     ],
                 ),
             ):
-                from scripts.verify_findings import main
+                from gauntlet.verify.decide import main
 
                 main()
             with open(out_path, encoding="utf-8") as fh:
@@ -2035,7 +2032,7 @@ class TestReceipt(unittest.TestCase):
                 patch("sys.stdout", new_callable=io.StringIO) as out,
                 patch.object(sys, "argv", ["verify_findings.py", corrupt_path]),
             ):
-                from scripts.verify_findings import main
+                from gauntlet.verify.decide import main
 
                 main()  # must NOT raise SystemExit any more
             self.assertIn("RECOVERED: ", err.getvalue())
@@ -2062,7 +2059,7 @@ class TestReceipt(unittest.TestCase):
                 patch("sys.stdout", new_callable=io.StringIO) as out,
                 patch.object(sys, "argv", ["verify_findings.py", corrupt_path]),
             ):
-                from scripts.verify_findings import main
+                from gauntlet.verify.decide import main
 
                 with self.assertRaises(SystemExit) as ctx:
                     main()
@@ -2472,13 +2469,7 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
                 os.unlink(p)
 
     def test_runs_as_subprocess_from_an_unrelated_cwd(self):
-        # Regression this guards: "the one failure mode that would break every verify
-        # slice of every run" per the comment above the sys.path.append in
-        # verify_findings.py -- the sibling `from assemble_artifacts import ...` must
-        # resolve via os.path.dirname(os.path.abspath(__file__)), which must NOT
-        # depend on the interpreter's cwd. Run from a tempdir that is neither the
-        # repo root nor scripts/, with every path passed absolute so this test
-        # isolates the import concern from ordinary path-resolution concerns.
+        # Package imports must resolve when the entry runs from an unrelated cwd.
         import json
 
         findings = self._findings()
@@ -2679,7 +2670,7 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
     def _run_main(self, argv):
         import io
 
-        from scripts.verify_findings import main
+        from gauntlet.verify.decide import main
 
         with (
             patch.object(sys, "argv", argv),
@@ -2771,7 +2762,7 @@ class TestEliminationReasonStamp(unittest.TestCase):
     """
 
     def test_every_eliminated_finding_carries_elimination_reason_stamp(self):
-        from scripts.verify_findings import run_verification
+        from gauntlet.verify.decide import run_verification
 
         # Nonexistent file -> classify_blame short-circuits on os.path.exists and
         # verify_factual eliminates deterministically (no git subprocess dependency).
@@ -2981,7 +2972,7 @@ class TestSliceInputRecovery(unittest.TestCase):
                 ],
             ),
         ):
-            from scripts.verify_findings import main
+            from gauntlet.verify.decide import main
 
             main()
         with open(out_path, encoding="utf-8") as fh:
@@ -2993,7 +2984,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         # that reached disk. Recomputed here from the shared pair rather than pinned as
         # a literal, so this test proves the wiring and the parity fixture (Task 4)
         # proves the cross-runtime agreement.
-        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
 
         doc = {"findings": [{"id": "b1", "title": "t"}], "base_branch": "main"}
         path = self._write(json.dumps(doc))
@@ -3006,7 +2997,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         # would hash the same. The workflow dispatched the NUMBER (pinNumericFields runs
         # before the slice input is written), so a quoted value on disk is a real
         # divergence and must fail the proof.
-        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
 
         quoted = {"findings": [{"id": "b1", "line_start": "10"}], "base_branch": "main"}
         pinned = {"findings": [{"id": "b1", "line_start": 10}], "base_branch": "main"}
@@ -3045,7 +3036,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         self.assertNotIn("input_recovery", envelope)
 
     def test_receipt_carries_the_token_proof_over_the_bytes_as_received(self):
-        from scripts.assemble_artifacts import fnv1a32
+        from gauntlet.artifacts import fnv1a32
 
         doc = {"findings": self._receipt_findings(), "base_branch": "main"}
         token = js_encode_inline(doc)
@@ -3062,7 +3053,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         JS values, so the value proof cannot separate them. The decoder rejects the
         escaped spelling by name, while the token proof still distinguishes the tokens.
         """
-        from scripts.assemble_artifacts import fnv1a32
+        from gauntlet.artifacts import fnv1a32
 
         astral_file = "\U0001f600.js"
         escaped_file = chr(0xD83D) + chr(0xDE00) + ".js"
@@ -3098,7 +3089,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         self.assertNotEqual(fnv1a32(astral), fnv1a32(escaped))
 
     def test_receipt_writes_the_decoded_inline_document_before_coercion(self):
-        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
 
         doc = {"findings": self._receipt_findings(), "base_branch": "main"}
         envelope = self._run_receipt_over(doc)
@@ -3150,7 +3141,7 @@ class TestSliceInputRecovery(unittest.TestCase):
             self.assertEqual(fh.read(), expected)
 
     def test_receipt_checksum_is_before_numeric_coercion(self):
-        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
 
         finding = self._receipt_findings()[0]
         finding["line_start"] = "10"
@@ -3185,7 +3176,7 @@ class TestSliceInputRecovery(unittest.TestCase):
                 )
 
     def test_receipt_round_trips_lone_surrogates_and_escapes_receipt_output(self):
-        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
 
         cases = {
             "leading": "\ud800leading",
@@ -3238,7 +3229,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         try:
             with (
                 patch(
-                    "scripts.assemble_artifacts.os.replace",
+                    "gauntlet.artifacts.os.replace",
                     side_effect=OSError("injected write failure"),
                 ),
                 patch("sys.stderr", new_callable=io.StringIO),
@@ -3256,7 +3247,7 @@ class TestSliceInputRecovery(unittest.TestCase):
                     ],
                 ),
             ):
-                from scripts.verify_findings import main
+                from gauntlet.verify.decide import main
 
                 main()
             with open(input_path, encoding="utf-8") as fh:
@@ -3318,7 +3309,7 @@ class TestInlineSliceDecoder(unittest.TestCase):
                 with open(os.path.join(root, "input.json"), encoding="utf-8") as fh:
                     cases.append((root, json.load(fh)))
         self.assertEqual(len(cases), 10)
-        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
 
         for root, doc in sorted(cases):
             with self.subTest(case=os.path.basename(root)):
@@ -3385,7 +3376,7 @@ class TestInlineSliceDecoder(unittest.TestCase):
             ("%F0%9F%98%80", "\U0001f600"),
             ("%F4%8F%BF%BF", "\U0010ffff"),
         ]
-        from scripts.verify_findings import _decode_inline_string
+        from gauntlet.verify.decide import _decode_inline_string
 
         for token, expected in cases:
             with self.subTest(token=token):
@@ -3449,7 +3440,7 @@ class TestInlineSliceDecoder(unittest.TestCase):
         duplicates are rejected by _inline_pairs, and no code point has two accepted
         spellings as JS values, so distinct raw keys stay distinct after decoding.
         """
-        from scripts.verify_findings import _decode_inline_string
+        from gauntlet.verify.decide import _decode_inline_string
 
         def normalize_js_value(value):
             return value.encode("utf-16-le", "surrogatepass").decode(
@@ -3549,7 +3540,7 @@ class TestInlineSliceDecoder(unittest.TestCase):
                 ),
                 patch("sys.stderr", new_callable=io.StringIO),
             ):
-                from scripts.verify_findings import main
+                from gauntlet.verify.decide import main
 
                 main()
             with open(output_path, encoding="utf-8") as fh:
@@ -3672,7 +3663,7 @@ class TestSliceInputFieldsReadSiteScan(unittest.TestCase):
     real read path this regex-based scan cannot see).
     """
 
-    SCRIPT_PATH = os.path.join(REPO_ROOT, "scripts", "verify_findings.py")
+    SCRIPT_PATH = os.path.join(REPO_ROOT, "scripts", "gauntlet", "verify", "decide.py")
     _ALLOWED: ClassVar[set] = (
         set(_SLICE_INPUT_FIELDS)
         | set(_SCRIPT_WRITTEN_FIELDS)

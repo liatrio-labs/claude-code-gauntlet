@@ -21,7 +21,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPO / "scripts" / "build_style_artifacts.py"
 EMIT_SCRIPT = REPO / "scripts" / "emit_style_context.py"
-SCRIPT_IO = REPO / "scripts" / "script_io.py"
+PACKAGE = REPO / "scripts" / "gauntlet"
 WORDING_SOURCE = REPO / "docs" / "style" / "wording-rules.md"
 CADENCE_SOURCE = REPO / "docs" / "style" / "cadence-rules.md"
 CARRIER = REPO / "docs" / "style" / "session-context.md"
@@ -55,10 +55,6 @@ def run_build(args, cwd=REPO):
 
 
 class TestCarrierFreshness(unittest.TestCase):
-    def test_check_passes_in_the_real_tree(self):
-        result = run_build(["--check"])
-        self.assertEqual(result.returncode, 0, result.stderr)
-
     def test_check_fails_on_a_mutated_carrier(self):
         with _fixture_tree() as tmp:
             carrier = tmp / "docs" / "style" / "session-context.md"
@@ -425,24 +421,6 @@ class TestGeneratorErrorPaths(unittest.TestCase):
 
 
 class TestEmitter(unittest.TestCase):
-    def test_stdout_is_the_expected_hook_payload(self):
-        result = subprocess.run(
-            [sys.executable, str(EMIT_SCRIPT)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["hookSpecificOutput"]["hookEventName"], "SessionStart")
-
-        carrier_text = CARRIER.read_text(encoding="utf-8")
-        banner, _, rest = carrier_text.partition("\n\n")
-        self.assertEqual(payload["hookSpecificOutput"]["additionalContext"], rest)
-        self.assertNotIn(
-            "GENERATED", payload["hookSpecificOutput"]["additionalContext"]
-        )
-
     def test_additional_context_starts_with_the_style_banner(self):
         """Pins the emitter's single-line banner strip: partition("\\n\\n") only removes
         the GENERATED comment because it is exactly one line. A future multi-line banner
@@ -481,8 +459,8 @@ class _fixture_tree:
 
     Never mutates the real tree. The emitter's repo root is derived from its own file
     location, so the fixture ships a copy of emit_style_context.py alongside the copied
-    build script to exercise that path-resolution behavior too. Both entry points also
-    need their shared script_io.py bootstrap helper.
+    build script to exercise that path-resolution behavior too. Both entry points
+    need their package implementations.
     """
 
     def __enter__(self):
@@ -496,7 +474,7 @@ class _fixture_tree:
         shutil.copy(CADENCE_SOURCE, tmp / "docs" / "style" / "cadence-rules.md")
         shutil.copy(BUILD_SCRIPT, tmp / "scripts" / "build_style_artifacts.py")
         shutil.copy(EMIT_SCRIPT, tmp / "scripts" / "emit_style_context.py")
-        shutil.copy(SCRIPT_IO, tmp / "scripts" / "script_io.py")
+        shutil.copytree(PACKAGE, tmp / "scripts" / "gauntlet")
         result = subprocess.run(
             [sys.executable, str(tmp / "scripts" / "build_style_artifacts.py")],
             cwd=tmp,

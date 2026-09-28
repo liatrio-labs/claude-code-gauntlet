@@ -675,7 +675,7 @@ test('runWith replay belt (RETURN persist channel): the projected post-review do
   // Drives the SAME pre-#213 replay scenario through a PRODUCTION persist path
   // (args.persist.returnPrimaries) instead of the legacy artifact-writer dispatch T6
   // above exercises. This is the path the round-1 review reproduced the bug on:
-  // scripts/assemble_artifacts.py's DERIVED projection reads findings.json bytes off
+  // scripts/gauntlet/artifacts.py's DERIVED projection reads findings.json bytes off
   // disk (here: the `findings` entry in persistReturn.entries, which the harness would
   // write verbatim) and reconstructs post-review.json BY FINDING ID — it never reads
   // the in-memory `postReview` array runWith computed. If challengeOut.findings itself
@@ -708,7 +708,7 @@ test('runWith replay belt (RETURN persist channel): the projected post-review do
   assert.equal(persistedFinding.claude_md_rule, undefined, 'claude_md_rule stripped in the on-disk findings.json bytes');
   assert.equal(persistedFinding.suggested_fix_code, undefined, 'suggested_fix_code propagation-stripped in the on-disk bytes too');
 
-  // Independently re-derive post-review.json THE WAY scripts/assemble_artifacts.py does
+  // Independently re-derive post-review.json THE WAY scripts/gauntlet/artifacts.py does
   // (project by id out of findings.json, never out of the in-memory postReview array),
   // and assert the projected document itself carries no trace of the payload.
   const plan = JSON.parse(planEntry.text);

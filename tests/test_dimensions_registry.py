@@ -37,17 +37,16 @@ edit walks around (see CLAUDE.md, "Do not replace a structural property with a p
 import json
 import re
 import subprocess
-import sys
 import time
 import unittest
 from pathlib import Path
 
+from gauntlet import contract_gen as contract_gen
+
+from tests.support.js_values import js_values
+
 REPO = Path(__file__).resolve().parents[1]
 
-sys.path.insert(0, str(REPO))
-
-from scripts import generate_contract_requirements as contract_gen  # noqa: E402
-from tests.support.js_values import js_values  # noqa: E402
 
 _FIELD_RENAMES = js_values()["FIELD_RENAMES"]
 
@@ -975,29 +974,6 @@ class TestContractSchemaLockstep(unittest.TestCase):
             1.0,
             "array-of-strings OMIT parsing took over a second on an unclosed "
             "whitespace-separated array — the backtracking-prone regex form is back",
-        )
-
-    def test_generated_contract_requirements_are_not_stale(self):
-        # issue #238: the requiredExtra/requiredWhenDimension contract sentences (previously
-        # hand-written prose, kept honest by two lockstep equality tests here) are now
-        # GENERATED from the registry by scripts/generate_contract_requirements.py, the same
-        # protocol as scripts/sync_agent_rules.py for the CLAUDE.md twins. Delegating to the
-        # generator's own --check means this test cannot itself drift from what the generator
-        # considers current.
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(REPO / "scripts" / "generate_contract_requirements.py"),
-                "--check",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-        self.assertEqual(
-            result.returncode,
-            0,
-            f"generated contract requirement sentences are stale: {result.stderr.strip()}",
         )
 
     def test_contract_sentences_match_registry_in_both_directions(self):

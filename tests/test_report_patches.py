@@ -23,10 +23,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-import scripts.post_review as post_review
-import scripts.report_patches as report_patches
+import gauntlet.delivery.post as post_review
+import gauntlet.patches as report_patches
 
 
 class ReportPatchesTestBase(unittest.TestCase):
@@ -42,13 +40,6 @@ class ReportPatchesTestBase(unittest.TestCase):
         # that pokes the gate directly (TestResetRunState below) must not leak
         # into a later test in the same process.
         self.addCleanup(post_review.reset_run_state)
-        # report_patches.py bare-imports post_review's helpers (``from post_review
-        # import ...``), which — because tests also do ``import scripts.post_review``
-        # — makes bare "post_review" and "scripts.post_review" TWO SEPARATE module
-        # objects with independent module-level state. reset_run_state on ONE does
-        # not touch the other's counters; report_patches.main() reads/writes its own
-        # bare-imported copy, so that one needs its own cleanup too.
-        self.addCleanup(report_patches.reset_run_state)
 
     def _findings_path(self, sha=None):
         return os.path.join(self.tmp, f"code-gauntlet-findings-{sha or self.SHA}.json")
@@ -1807,7 +1798,7 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         )
 
         with patch(
-            "scripts.report_patches.write_text_atomic",
+            "gauntlet.patches.write_text_atomic",
             wraps=report_patches.write_text_atomic,
         ) as mock_write:
             exit_code, receipt, *_ = self._run()
@@ -2113,12 +2104,7 @@ class TestResetRunState(ReportPatchesTestBase):
     ``report_patches.main``: the poisoned ``downgraded``/``reasons`` state from
     the pre-dirtying call below would still be present in this run's receipt.
 
-    Dirties the gate through ``report_patches._gated_finding`` — the SAME
-    bare-imported name ``report_patches.main()`` itself calls — not
-    ``post_review._gated_finding``: bare ``post_review`` (report_patches.py's
-    import) and ``scripts.post_review`` (this test module's import) are two
-    separate module objects with independent state, so poisoning the latter
-    would silently miss the counters the run under test actually reads.
+    Dirties the gate through the same helper that ``report_patches.main`` calls.
     """
 
     def test_stale_state_from_a_prior_gate_call_does_not_leak_into_the_receipt(self):

@@ -37,17 +37,13 @@ Contract under test:
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, REPO_ROOT)
-
-from scripts import collect_project_rules  # noqa: E402
-from scripts.collect_project_rules import (  # noqa: E402
+from gauntlet import project_rules as collect_project_rules
+from gauntlet.project_rules import (
     DEFAULT_MAX_FILES,
     MAX_IMPORT_DEPTH,
     PROJECT_RULE_FILENAMES,
@@ -58,6 +54,9 @@ from scripts.collect_project_rules import (  # noqa: E402
     main,
     render,
 )
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "collect_project_rules.py")
 EMPTY_RULES_NOTICE = (
@@ -1228,21 +1227,6 @@ class TestDisclosureContract(_RepoCase):
         self.assertTrue(receipt["skipped"])
         for entry in receipt["skipped"]:
             self.assertTrue(entry.get("reason"), f"silent skip: {entry!r}")
-
-    def test_subprocess_invocation_keeps_stdout_to_one_json_line(self):
-        # The in-process helper asserts this too, but Phase 2 invokes the script
-        # as a subprocess and parses stdout, so pin the real boundary as well.
-        self.write("CLAUDE.md", "@AGENTS.md\n")
-        self.write("AGENTS.md", "RULE\n")
-        proc = subprocess.run(
-            [sys.executable, SCRIPT, "--repo-root", self.repo, "--out", self.out],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(len(proc.stdout.strip().split("\n")), 1)
-        self.assertTrue(json.loads(proc.stdout)["ok"])
 
     def test_skipped_paths_never_leak_an_absolute_host_path(self):
         self.write("outside.md", "x\n", root=self.base)

@@ -27,15 +27,18 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from bench.runner.costs import parse_costs
-from bench.runner.ledger import API_AUTH_MODE, AUTH_MODES, SUBSCRIPTION_AUTH_MODE
-from scripts.resolve_config import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+from gauntlet.config import (
     KNOB_REGISTRY,
     ResolverError,
     ResolverSetupError,
     matches_rule,
     resolve,
 )
+
+from bench.runner.costs import parse_costs
+from bench.runner.ledger import API_AUTH_MODE, AUTH_MODES, SUBSCRIPTION_AUTH_MODE
 
 __all__ = [
     "BENCH_ENV",

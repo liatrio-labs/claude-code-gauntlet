@@ -13,8 +13,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import scripts.post_review as post_review
-import scripts.review_marker as review_marker
+import gauntlet.delivery.post as post_review
+import gauntlet.marker as review_marker
+
 from tests.test_outbound_contract import _assert_outbound_string_invariant
 
 REPO = Path(__file__).resolve().parents[1]
@@ -63,13 +64,13 @@ def _capture_dry_run(platform, findings, review_body=""):
     post_review._SKIP_WARNINGS.clear()
     with (
         patch.object(post_review, "DRY_RUN", True),
-        patch("scripts.post_review.check_tool"),
+        patch("gauntlet.delivery.post.check_tool"),
         patch(
-            "scripts.post_review.fetch_gitlab_shas",
+            "gauntlet.delivery.post.fetch_gitlab_shas",
             return_value=("base", "head", "start"),
         ),
         patch(
-            "scripts.post_review.gitlab_prior_delivery",
+            "gauntlet.delivery.post.gitlab_prior_delivery",
             return_value=(False, set(), set()),
         ),
         contextlib.redirect_stdout(io.StringIO()),
@@ -614,9 +615,9 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
                         str(report_path),
                     ],
                 ),
-                patch("scripts.post_review.check_tool"),
+                patch("gauntlet.delivery.post.check_tool"),
                 patch(
-                    "scripts.post_review.parse_diff_lines",
+                    "gauntlet.delivery.post.parse_diff_lines",
                     return_value=({}, set(), {}, {}),
                 ),
                 contextlib.redirect_stdout(io.StringIO()),
@@ -806,16 +807,18 @@ class TestDeliveryTitleKeys(unittest.TestCase):
 
         with (
             patch.object(post_review, "DRY_RUN", False),
-            patch("scripts.post_review.check_tool"),
+            patch("gauntlet.delivery.post.check_tool"),
             patch(
-                "scripts.post_review.fetch_gitlab_shas",
+                "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
             ),
             patch(
-                "scripts.post_review.gitlab_prior_delivery",
+                "gauntlet.delivery.post.gitlab_prior_delivery",
                 return_value=(False, set(), set()),
             ),
-            patch("scripts.post_review.try_post_json", side_effect=fake_try_post_json),
+            patch(
+                "gauntlet.delivery.post.try_post_json", side_effect=fake_try_post_json
+            ),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
@@ -929,15 +932,17 @@ class TestGitlabLiveFallbackContracts(unittest.TestCase):
         post_review._CAPTURED.clear()
         with (
             patch.object(post_review, "DRY_RUN", False),
-            patch("scripts.post_review.check_tool"),
+            patch("gauntlet.delivery.post.check_tool"),
             patch(
-                "scripts.post_review.fetch_gitlab_shas",
+                "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
             ),
             patch(
-                "scripts.post_review.gitlab_prior_delivery", return_value=prior
+                "gauntlet.delivery.post.gitlab_prior_delivery", return_value=prior
             ) as lookup,
-            patch("scripts.post_review.try_post_json", side_effect=fake_try_post_json),
+            patch(
+                "gauntlet.delivery.post.try_post_json", side_effect=fake_try_post_json
+            ),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
@@ -1077,16 +1082,16 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
         post_review._SKIP_WARNINGS.clear()
         with (
             patch.object(post_review, "DRY_RUN", True),
-            patch("scripts.post_review.check_tool"),
+            patch("gauntlet.delivery.post.check_tool"),
             patch(
-                "scripts.post_review.fetch_gitlab_shas",
+                "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
             ),
             patch(
-                "scripts.post_review.gitlab_prior_delivery",
+                "gauntlet.delivery.post.gitlab_prior_delivery",
                 return_value=(False, set(), set()),
             ),
-            patch("scripts.post_review.validate_position", return_value=[]),
+            patch("gauntlet.delivery.post.validate_position", return_value=[]),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
@@ -1125,14 +1130,16 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
         post_review._CAPTURED.clear()
         with (
             patch.object(post_review, "DRY_RUN", False),
-            patch("scripts.post_review.check_tool"),
+            patch("gauntlet.delivery.post.check_tool"),
             patch(
-                "scripts.post_review.fetch_gitlab_shas",
+                "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
             ),
-            patch("scripts.post_review.gitlab_prior_delivery", return_value=prior),
-            patch("scripts.post_review.validate_position", return_value=[]),
-            patch("scripts.post_review.try_post_json", side_effect=fake_try_post_json),
+            patch("gauntlet.delivery.post.gitlab_prior_delivery", return_value=prior),
+            patch("gauntlet.delivery.post.validate_position", return_value=[]),
+            patch(
+                "gauntlet.delivery.post.try_post_json", side_effect=fake_try_post_json
+            ),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
@@ -1325,7 +1332,7 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
         corroborator["consolidation_key"] = "poison-group"
         corroborator["line"] = None
         with patch(
-            "scripts.post_review.finding_key",
+            "gauntlet.delivery.post.finding_key",
             side_effect=lambda _file, member_line, _title, _body: (
                 "1" * 16 if member_line is not None else "2" * 16
             ),

@@ -10,12 +10,11 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "scripts"))
 FIXTURES = REPO / "tests" / "fixtures" / "parity"
 
 
 def _verify_deltas(inp):
-    from verify_findings import build_deltas, deltas_checksum
+    from gauntlet.verify.decide import build_deltas, deltas_checksum
 
     verified_by_id = {f["id"]: f for f in inp["result"]["verified"]}
     post_by_id = dict(verified_by_id)
@@ -43,14 +42,14 @@ def _project_verify_delta(finding):
 
 
 def _slice_input_proof(inp):
-    from verify_findings import _input_checksum
+    from gauntlet.verify.decide import _input_checksum
 
     return {"checksum": _input_checksum(inp["doc"])}
 
 
 def _slice_inline(inp):
-    from assemble_artifacts import fnv1a32
-    from verify_findings import _input_checksum
+    from gauntlet.artifacts import fnv1a32
+    from gauntlet.verify.decide import _input_checksum
 
     source = (
         "import { encodeSliceInline } from './workflows/src/stages.js'; "
@@ -128,8 +127,8 @@ def check(only_script=None, only_case=None):
     return mismatches
 
 
-def main(argv):
-    args = argv[1:]
+def main(argv=None):
+    args = (sys.argv if argv is None else argv)[1:]
     check_mode = "--check" in args
     positional = [a for a in args if a != "--check"]
     only_script = positional[0] if len(positional) > 0 else None
@@ -156,6 +155,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    from script_io import run_entrypoint
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+    from gauntlet.cli import Command
 
-    run_entrypoint(main, sys.argv)
+    Command.legacy(main, prog="record_parity.py").run()

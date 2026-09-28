@@ -518,11 +518,12 @@ def _tracked_python_paths() -> list[str]:
         check=True,
     )
     tracked = result.stdout.decode("utf-8").split("\0")
-    return [
+    paths = [
         path
         for path in tracked
         if path.startswith(SCANNED_ROOTS) and not path.startswith(EXCLUDED_ROOTS)
     ]
+    return sorted(paths)
 
 
 def _tracked_offenders() -> list[str]:

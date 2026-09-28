@@ -33,8 +33,14 @@ omit = [
 target-version = "py310"
 extend-exclude = ["bench/vendor", "bench/workspace", "tests/fixtures/citation_resolver"]
 
+[tool.pytest.ini_options]
+pythonpath = ["scripts"]
+
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "BLE", "RUF"]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "BLE", "RUF", "TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"scripts".msg = "Import gauntlet modules from gauntlet.* instead."
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["RUF059"]
@@ -51,21 +57,32 @@ warn_redundant_casts = true
 warn_return_any = true
 no_implicit_optional = true
 explicit_package_bases = true
+mypy_path = "scripts"
 exclude = "(?x)(^(bench/vendor|bench/workspace|tests/fixtures/citation_resolver)/)"
 
 [[tool.mypy.overrides]]
 module = [
-  "assemble_artifacts",
-  "await_workflow",
-  "detect_prior_review",
-  "diff_lines",
-  "ensure_output_dir",
-  "post_review",
   "profile_run",
-  "report_severity",
-  "review_marker",
   "runner.*",
-  "script_io",
-  "verify_findings",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+  "gauntlet.cli",
+  "gauntlet.paths",
+  "gauntlet.jsjson",
+  "gauntlet.numstat",
+  "gauntlet.stale",
+  "gauntlet.shared_context",
+]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true

@@ -36,7 +36,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts import generate_contract_requirements as contract_gen
+from gauntlet import contract_gen as contract_gen
 
 REPO = Path(__file__).resolve().parents[1]
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
@@ -1391,9 +1391,8 @@ def _copy_tracked_tree(destination: Path) -> None:
         check=True,
         capture_output=True,
     )
-    for relative in result.stdout.decode().split("\0"):
-        if not relative:
-            continue
+    relatives = {path for path in result.stdout.decode().split("\0") if path}
+    for relative in sorted(relatives):
         source = REPO / relative
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1454,9 +1453,9 @@ class TestContractFenceHook(unittest.TestCase):
         declared_inputs = contract_gen.declared_inputs(str(REPO))
         self.assertTrue(
             {
-                "scripts/post_review.py",
-                "scripts/resolve_config.py",
-                "scripts/review_marker.py",
+                "scripts/gauntlet/delivery/post.py",
+                "scripts/gauntlet/config.py",
+                "scripts/gauntlet/marker.py",
             }.issubset(declared_inputs),
             declared_inputs,
         )

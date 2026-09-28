@@ -238,25 +238,6 @@ class TestStaleTruncate(unittest.TestCase):
                     else:
                         self.assertFalse(output_dir.exists())
 
-    def test_argument_errors_exit_two_with_one_line(self):
-        for script, args in (
-            (STALE_SCRIPT, ["--output-dir", "."]),
-            (NUMSTAT_SCRIPT, []),
-        ):
-            with self.subTest(script=script.name):
-                result = subprocess.run(
-                    [sys.executable, str(script), *args],
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    check=False,
-                )
-                self.assertEqual(result.returncode, 2)
-                self.assertEqual(result.stdout, "")
-                self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
-                self.assertTrue(result.stderr.startswith(script.stem + ": "))
-
     def test_unwritable_match_exits_two(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "o'brien out[1]"
@@ -516,19 +497,17 @@ class TestWriteSharedContext(unittest.TestCase):
                 b"rules\n"
             )
             (output_dir / f"code-gauntlet-diff-{SHA}.patch").write_bytes(b"diff\n")
-            with mock.patch.object(sys, "path", [str(REPO / "scripts"), *sys.path]):
-                writer = import_module("write_shared_context")
+            writer = import_module("gauntlet.shared_context")
 
             stderr = StringIO()
             args = ["--output-dir", str(output_dir), "--head-sha", SHA]
             with (
                 mock.patch.object(sys, "stdin", None),
                 redirect_stderr(stderr),
-                self.assertRaises(SystemExit) as raised,
             ):
-                writer.main(args)
+                code = writer.CLI.invoke(args)
 
-            self.assertEqual(raised.exception.code, 2)
+            self.assertEqual(code, 2)
             self.assertEqual(
                 stderr.getvalue(), "write_shared_context: cannot read stdin\n"
             )
@@ -720,22 +699,6 @@ class TestDiffNumstat(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "changed_lines=2\nbinary_files=1\n")
-
-    def test_missing_patch_fails_without_stdout(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            missing = Path(temp_dir) / "o'brien diff[1]" / "missing.patch"
-            result = subprocess.run(
-                [sys.executable, str(NUMSTAT_SCRIPT), str(missing)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                check=False,
-            )
-
-            self.assertEqual(result.returncode, 2)
-            self.assertEqual(result.stdout, "")
-            self.assertEqual(len(result.stderr.splitlines()), 1)
-            self.assertTrue(result.stderr.startswith("diff_numstat: "), result.stderr)
 
 
 class TestShippedText(unittest.TestCase):

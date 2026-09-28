@@ -1,5 +1,5 @@
 """
-Tests for scripts/diff_lines.py
+Tests for scripts/gauntlet/diff.py
 
 Every case asserts the WHOLE event stream, not a membership sample: the defects this
 walk exists to prevent (a body line read as a header, a budget drained one line early,
@@ -17,14 +17,9 @@ Covers:
     header/hunk events carry none
 """
 
-import os
-import sys
 import unittest
 
-# Add project root to path so we can import scripts as a module
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from scripts.diff_lines import DiffEvent, walk_diff
+from gauntlet.diff import DiffEvent, walk_diff
 
 
 def events(diff_text):

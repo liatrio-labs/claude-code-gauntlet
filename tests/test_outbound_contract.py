@@ -7,10 +7,10 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
-import pytest  # type: ignore[import-not-found]
+import gauntlet.delivery.post as post_review
+import pytest
+from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 
-import scripts.post_review as post_review
-from scripts.review_marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 from tests.tools.render_probes import (
     _skeleton,
     check_render,
