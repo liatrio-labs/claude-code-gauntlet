@@ -11,12 +11,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from gauntlet import generate_contract_requirements as contract_generator
-from gauntlet import render_fix_tasks as renderer
+from gauntlet import contract_gen as contract_generator
+from gauntlet import fix_tasks as renderer
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "render_fix_tasks.py"
-SOURCE = REPO / "scripts" / "gauntlet" / "render_fix_tasks.py"
+SOURCE = REPO / "scripts" / "gauntlet" / "fix_tasks.py"
 
 
 class RenderFixTasksTest(unittest.TestCase):
@@ -792,7 +792,7 @@ class RenderFixTasksTest(unittest.TestCase):
         actual_fence = source[start:end].rstrip()
         expected_fence = "\n".join(
             contract_generator.identity_body(
-                "scripts/gauntlet/render_fix_tasks.py",
+                "scripts/gauntlet/fix_tasks.py",
                 "detail_fields",
                 identity,
                 str(REPO),
@@ -968,7 +968,7 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertIn("(1 path rejected)", result.stderr)
 
     def test_renderer_imports_only_stdlib_or_local_helpers(self):
-        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
         allowed = set(sys.stdlib_module_names) | {"gauntlet"}
         imports = []
         for node in ast.walk(tree):

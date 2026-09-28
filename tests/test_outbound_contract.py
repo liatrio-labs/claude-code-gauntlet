@@ -7,7 +7,7 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
-import gauntlet.post_review as post_review
+import gauntlet.delivery.post as post_review
 import pytest
 from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 

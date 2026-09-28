@@ -75,9 +75,9 @@ import sys
 # NEVER import verify_findings here — it resolves the repo root via
 # `git rev-parse --show-toplevel` at import time, which this script has no
 # business triggering for a read-only render step.
-from gauntlet.assemble_artifacts import write_text_atomic
+from gauntlet.artifacts import write_text_atomic
 from gauntlet.cli import Command
-from gauntlet.post_review import (
+from gauntlet.delivery.post import (
     _FIX_COUNTS,
     _FIX_REASON_COUNTS,
     _SKIP_WARNINGS,
@@ -532,4 +532,4 @@ def main(argv=None):
     return 0
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="report_patches.py")

@@ -65,9 +65,9 @@ _IDENTITY_MARKER_RE = re.compile(
 
 # {rel_path: [symbol, ...]} — the fences this file must carry, exactly once each.
 IDENTITY_FENCES = {
-    "scripts/gauntlet/post_review.py": ["constants"],
-    "scripts/gauntlet/render_fix_tasks.py": ["constants", "detail_fields"],
-    "scripts/gauntlet/resolve_config.py": ["knob_registry"],
+    "scripts/gauntlet/delivery/post.py": ["constants"],
+    "scripts/gauntlet/fix_tasks.py": ["constants", "detail_fields"],
+    "scripts/gauntlet/config.py": ["knob_registry"],
     REPORT_FORMAT_REL: [
         "severity_legend",
         "permalink_formats",
@@ -155,13 +155,11 @@ def _python_imported_script_paths(source, repo_root):
     for match in _PYTHON_FROM_IMPORT_RE.finditer(source):
         module = match.group("module")
         names = [part.strip().split()[0] for part in match.group("names").split(",")]
-        if module == "gauntlet":
-            for name in names:
-                path = _script_module_path(f"gauntlet.{name}", repo_root)
-                if path:
-                    imported.add(path)
-        else:
-            path = _script_module_path(module, repo_root)
+        path = _script_module_path(module, repo_root)
+        if path:
+            imported.add(path)
+        for name in names:
+            path = _script_module_path(f"{module}.{name}", repo_root)
             if path:
                 imported.add(path)
     for match in _PYTHON_IMPORT_RE.finditer(source):
@@ -182,7 +180,7 @@ def _python_imported_script_paths(source, repo_root):
 
 def _python_import_closure(repo_root):
     """Return the generator and every local Python module in its import closure."""
-    pending = ["scripts/gauntlet/generate_contract_requirements.py"]
+    pending = ["scripts/gauntlet/contract_gen.py"]
     seen = set()
     while pending:
         rel_path = pending.pop()
@@ -569,7 +567,7 @@ def _python_literal(value, indent=0):
 
 def _load_resolver(repo_root):
     """Load resolve_config.py by path under a unique module name."""
-    path = os.path.join(repo_root, "scripts", "gauntlet", "resolve_config.py")
+    path = os.path.join(repo_root, "scripts", "gauntlet", "config.py")
     module_name = f"_contract_resolver_{uuid.uuid4().hex}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
@@ -824,10 +822,7 @@ def render_inline_comment_sample(identity):
     the reference docs; it therefore cannot make generator control comments part of
     the sample a reader copies.
     """
-    source_root = os.path.join(REPO_ROOT, "scripts")
-    if source_root not in sys.path:
-        sys.path.insert(0, source_root)
-    from gauntlet import post_review
+    from gauntlet.delivery import post as post_review
 
     saved = {
         name: getattr(post_review, name, None)
@@ -1016,7 +1011,7 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
             "}",
             f'RULE_SOURCE_LABEL_FALLBACK = "{identity["ruleSourceLabelFallback"]}"',
         ]
-        if rel_path == "scripts/gauntlet/post_review.py":
+        if rel_path == "scripts/gauntlet/delivery/post.py":
             lines += [
                 "CODE_OWNED_HEADINGS = [",
                 *[f'    "{heading}",' for heading in identity["codeOwnedHeadings"]],
@@ -1322,4 +1317,4 @@ def main(argv=None):
     return 0
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="generate_contract_requirements.py")

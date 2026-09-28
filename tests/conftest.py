@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from gauntlet import COMMAND_MODULES
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,19 +21,18 @@ class Invocation:
 
 @pytest.fixture
 def invoke(monkeypatch, capsys):
-    def call(name, arguments, cwd):
-        module = importlib.import_module(f"gauntlet.{name}")
+    def call(name, arguments, cwd, stdin=b"{}\n"):
+        module = importlib.import_module(f"gauntlet.{COMMAND_MODULES[name]}")
         monkeypatch.chdir(cwd)
-        monkeypatch.setattr(sys, "argv", [str(ROOT / "scripts" / f"{name}.py")])
         monkeypatch.setattr(
-            sys, "stdin", io.TextIOWrapper(io.BytesIO(b"{}\n"), encoding="utf-8")
+            sys, "stdin", io.TextIOWrapper(io.BytesIO(stdin), encoding="utf-8")
         )
-        if name == "ensure_output_dir":
-            monkeypatch.setenv(
-                "CODE_GAUNTLET_OUTPUT_DIR", "/private/tmp/s407-cli-contract-output"
-            )
         capsys.readouterr()
-        code = module.CLI.invoke(arguments)
+        try:
+            code = module.CLI.invoke(arguments)
+        except Exception as exc:  # noqa: BLE001 - the wrapper exits one on an uncaught exception
+            print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+            code = 1
         captured = capsys.readouterr()
         return Invocation(
             code,

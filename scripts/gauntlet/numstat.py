@@ -9,7 +9,7 @@ reported separately so zero textual changes do not imply an empty diff.
 
 from __future__ import annotations
 
-import sys
+import argparse
 
 from gauntlet.cli import CliError, Command, Parser
 from gauntlet.diff import walk_diff
@@ -17,7 +17,7 @@ from gauntlet.diff import walk_diff
 PROG = "diff_numstat"
 
 
-def _execute(args):
+def _execute(args: argparse.Namespace) -> int:
     try:
         with open(args.patch, encoding="utf-8", errors="replace", newline="") as fh:
             patch = fh.read()
@@ -41,13 +41,6 @@ def _execute(args):
     print(f"changed_lines={added + removed}")
     print(f"binary_files={binary_files}")
     return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    code = CLI.invoke(sys.argv[1:] if argv is None else argv)
-    if code:
-        raise SystemExit(code)
-    return code
 
 
 parser = Parser(prog=PROG, description=__doc__)

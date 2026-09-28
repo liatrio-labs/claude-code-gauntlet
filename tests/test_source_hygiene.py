@@ -11,33 +11,45 @@ ISSUE = re.compile(r"(?:\bissue\s*#?\d+|#\d+)", re.IGNORECASE)
 
 # These bodies moved unchanged; each mechanism slice removes its own entry.
 MIGRATING_PYTHON = {
-    "assemble_artifacts.py",
-    "await_workflow.py",
-    "build_style_artifacts.py",
-    "collect_project_rules.py",
-    "detect_prior_review.py",
+    "artifacts.py",
+    "awaiting.py",
+    "style.py",
+    "project_rules.py",
+    "prior_review.py",
     "diff.py",
-    "diff_numstat.py",
-    "emit_style_context.py",
-    "ensure_output_dir.py",
-    "generate_contract_requirements.py",
+    "numstat.py",
+    "style_hook.py",
+    "output_dir.py",
+    "contract_gen.py",
     "marker.py",
-    "materialize_artifacts.py",
-    "post_review.py",
-    "render_fix_tasks.py",
-    "report_patches.py",
-    "resolve_config.py",
-    "resolve_pr_identity.py",
-    "stale_truncate.py",
-    "sync_agent_rules.py",
+    "materialize.py",
+    "delivery/post.py",
+    "fix_tasks.py",
+    "patches.py",
+    "config.py",
+    "pr_identity.py",
+    "stale.py",
+    "agent_rules.py",
     "text.py",
-    "verify_findings.py",
-    "write_shared_context.py",
+    "verify/decide.py",
+    "shared_context.py",
 }
 MIGRATING_JS = {
     "args.js",
     "pipeline_entry.js",
     "registry.js",
+    "stages.js",
+}
+ALL_JS = {
+    "applyChallenges.js",
+    "applyValidations.js",
+    "args.js",
+    "filterFindings.js",
+    "findingDedup.js",
+    "mergeFindings.js",
+    "pipeline_entry.js",
+    "registry.js",
+    "renderReport.js",
     "stages.js",
 }
 
@@ -74,18 +86,31 @@ def _js_violations(source):
     ]
 
 
-def test_migration_lists_cover_only_existing_sources():
-    assert {
-        path.name for path in (ROOT / "scripts/gauntlet").glob("*.py")
-    } >= MIGRATING_PYTHON
-    assert {path.name for path in (ROOT / "workflows/src").glob("*.js")} >= MIGRATING_JS
+def test_migration_lists_cover_only_current_violations():
+    python = {
+        str(path.relative_to(ROOT / "scripts/gauntlet"))
+        for path in (ROOT / "scripts/gauntlet").rglob("*.py")
+        if _python_violations(path.read_text(encoding="utf-8"))
+    }
+    js = {path.name for path in (ROOT / "workflows/src").glob("*.js")}
+    violating_js = {
+        path.name
+        for path in (ROOT / "workflows/src").glob("*.js")
+        if _js_violations(path.read_text(encoding="utf-8"))
+    }
+    assert js == ALL_JS
+    assert python == MIGRATING_PYTHON
+    assert violating_js == MIGRATING_JS
 
 
 def test_no_new_source_hygiene_violations():
     problems = {}
-    for path in (ROOT / "scripts/gauntlet").glob("*.py"):
+    for path in (ROOT / "scripts/gauntlet").rglob("*.py"):
         found = _python_violations(path.read_text(encoding="utf-8"))
-        if found and path.name not in MIGRATING_PYTHON:
+        if (
+            found
+            and str(path.relative_to(ROOT / "scripts/gauntlet")) not in MIGRATING_PYTHON
+        ):
             problems[str(path.relative_to(ROOT))] = found
     for path in (ROOT / "workflows/src").glob("*.js"):
         found = _js_violations(path.read_text(encoding="utf-8"))

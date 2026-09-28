@@ -1,4 +1,4 @@
-"""Shared CLI result-write helpers for retained scripts (stdlib-only)."""
+"""Shared command boundary for retained scripts."""
 
 from __future__ import annotations
 
@@ -10,8 +10,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import NoReturn
 
+from gauntlet.jsjson import dumps
 
-def require_head_sha(prog: str, value: str) -> None:
+
+def require_head_sha(value: str) -> None:
     """Reject values outside the lowercase abbreviated/full Git SHA shape."""
     if re.fullmatch(r"[0-9a-f]{4,40}", value) is None:
         raise CliError("--head-sha must be 4 to 40 lowercase hexadecimal characters", 2)
@@ -27,12 +29,6 @@ def utf8_stdio() -> None:
         )
     if isinstance(sys.stdin, io.TextIOWrapper):
         sys.stdin.reconfigure(encoding="utf-8", errors="surrogateescape")
-
-
-def run_entrypoint(main, *args) -> None:
-    """Apply the shared stdio contract, then propagate the CLI's exit status."""
-    utf8_stdio()
-    raise SystemExit(main(*args))
 
 
 class CliError(Exception):
@@ -52,6 +48,7 @@ class Parser(argparse.ArgumentParser):
 
 @dataclass(frozen=True, slots=True)
 class Command:
+    prog: str | None = None
     parser: Parser | None = None
     main: (
         Callable[[argparse.Namespace], int | tuple[Mapping[str, object], int]] | None
@@ -62,11 +59,11 @@ class Command:
     fallback_receipt: Callable[[Exception], Mapping[str, object]] | None = None
     fallback_line: str = '{"ok": false, "errors": ["receipt serialization failed"]}'
     fallback_code: int = 1
-    _legacy: Callable[[], int] | None = None
+    _legacy: Callable[[], int | None] | None = None
 
     @classmethod
-    def legacy(cls, main: Callable[[], int]) -> Command:
-        return cls(_legacy=main)
+    def legacy(cls, main: Callable[[], int | None], *, prog: str) -> Command:
+        return cls(prog=prog, _legacy=main)
 
     def run(self) -> NoReturn:
         utf8_stdio()
@@ -75,9 +72,10 @@ class Command:
     def invoke(self, argv: Sequence[str]) -> int:
         if self._legacy is not None:
             saved = sys.argv
-            sys.argv = [saved[0], *argv]
+            sys.argv = [self.prog or saved[0], *argv]
             try:
-                return self._legacy()
+                result = self._legacy()
+                return 0 if result is None else result
             except SystemExit as exc:
                 if isinstance(exc.code, int):
                     return exc.code
@@ -107,8 +105,6 @@ class Command:
             return outcome
         receipt, code = outcome
         try:
-            from gauntlet.jsjson import dumps
-
             print(dumps(receipt, ascii=self.ascii, compact=self.compact))
         except Exception as exc:  # noqa: BLE001 - receipt serialization must have a fallback
             if self.fallback_receipt is not None:

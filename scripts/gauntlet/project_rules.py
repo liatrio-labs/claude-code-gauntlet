@@ -768,4 +768,4 @@ def main(argv=None):
         return 1
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="collect_project_rules.py")

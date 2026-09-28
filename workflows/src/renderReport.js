@@ -216,7 +216,7 @@ export function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
   return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
 }
 
-// Twin of `_fold_review_body` in `scripts/gauntlet/post_review.py`.
+// Twin of `_fold_review_body` in `scripts/gauntlet/delivery/post.py`.
 export function openProseFence(text) {
   const value = reportAsText(text);
   let state = null;

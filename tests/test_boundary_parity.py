@@ -37,14 +37,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import gauntlet.delivery.post as post_review
+import gauntlet.patches as report_patches
+from gauntlet import config as resolve_config
+from gauntlet import contract_gen as generate_contract_requirements
+
+from bench.runner import invoke
+
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO))
 
-import gauntlet.post_review as post_review  # noqa: E402
-import gauntlet.report_patches as report_patches  # noqa: E402
-from gauntlet import generate_contract_requirements, resolve_config  # noqa: E402
-
-from bench.runner import invoke  # noqa: E402
 
 RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
 IDENTITY_SCRIPT = REPO / "scripts" / "resolve_pr_identity.py"
@@ -424,7 +425,8 @@ class TestPostReviewBoundary(unittest.TestCase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run", side_effect=_fake_run(diff=diff)
+                "gauntlet.delivery.post.subprocess.run",
+                side_effect=_fake_run(diff=diff),
             ),
         ):
             post_review.main()  # must not raise: every field it reads is present
@@ -451,7 +453,8 @@ class TestPostReviewBoundary(unittest.TestCase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run", side_effect=_fake_run(diff=diff)
+                "gauntlet.delivery.post.subprocess.run",
+                side_effect=_fake_run(diff=diff),
             ),
         ):
             post_review.main()
@@ -496,7 +499,8 @@ class TestPostReviewBoundary(unittest.TestCase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run", side_effect=_fake_run(diff=diff)
+                "gauntlet.delivery.post.subprocess.run",
+                side_effect=_fake_run(diff=diff),
             ),
         ):
             post_review.main()
@@ -524,7 +528,7 @@ class TestPostReviewBoundary(unittest.TestCase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS)),
             ),
             self.assertRaises(KeyError),
@@ -547,7 +551,7 @@ class TestPostReviewBoundary(unittest.TestCase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS)),
             ),
         ):
@@ -573,13 +577,7 @@ class TestReportPatchesBoundary(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
-        # bare "post_review" (report_patches.py's own import) and "gauntlet.post_review"
-        # (this test module's import) are two SEPARATE module objects with independent
-        # state — see ReportPatchesTestBase's docstring in tests/test_report_patches.py.
-        # This class's own gate-driving tests dirty the bare-imported one; other classes
-        # in this file dirty gauntlet.post_review directly. Both need resetting.
         post_review.reset_run_state()
-        report_patches.reset_run_state()
 
     def test_report_patches_consumes_pipeline_findings_without_error(self):
         sha = "abc1234"

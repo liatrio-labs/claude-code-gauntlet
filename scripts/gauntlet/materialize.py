@@ -79,15 +79,14 @@ import json
 import os
 import sys
 
-# Reuse task resolution from the awaiter and derivation from the assembler.
-from gauntlet.assemble_artifacts import (
+from gauntlet.artifacts import (
     assemble,
     escape_lone_surrogates,
     fnv1a32,
     utf16_len,
     write_text_atomic,
 )
-from gauntlet.await_workflow import (
+from gauntlet.awaiting import (
     TASK_OUTPUT_DIR_GLOB,
     TASKS_DIR_ENV,
     find_terminal,
@@ -493,4 +492,4 @@ def main(argv=None, environ=None):
     return 0 if ok else 1
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="materialize_artifacts.py")

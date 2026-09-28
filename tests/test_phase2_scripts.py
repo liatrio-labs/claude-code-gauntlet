@@ -516,19 +516,17 @@ class TestWriteSharedContext(unittest.TestCase):
                 b"rules\n"
             )
             (output_dir / f"code-gauntlet-diff-{SHA}.patch").write_bytes(b"diff\n")
-            with mock.patch.object(sys, "path", [str(REPO / "scripts"), *sys.path]):
-                writer = import_module("gauntlet.write_shared_context")
+            writer = import_module("gauntlet.shared_context")
 
             stderr = StringIO()
             args = ["--output-dir", str(output_dir), "--head-sha", SHA]
             with (
                 mock.patch.object(sys, "stdin", None),
                 redirect_stderr(stderr),
-                self.assertRaises(SystemExit) as raised,
             ):
-                writer.main(args)
+                code = writer.CLI.invoke(args)
 
-            self.assertEqual(raised.exception.code, 2)
+            self.assertEqual(code, 2)
             self.assertEqual(
                 stderr.getvalue(), "write_shared_context: cannot read stdin\n"
             )

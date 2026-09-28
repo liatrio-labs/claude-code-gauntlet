@@ -1,6 +1,6 @@
 # `glab mr diff` fixtures
 
-The output shape `scripts/post_review.py::parse_diff_lines` must read on GitLab. It is
+The output shape `scripts/gauntlet/delivery/post.py::parse_diff_lines` must read on GitLab. It is
 load-bearing — every inline MR comment's `position` is computed from it (issues #127
 and #130) — and it is **not** git's unified diff, which is how both defects got in.
 

@@ -128,8 +128,6 @@ repos:
       - id: ruff-check
         # Report-only: a rewriting linter can change semantics; format is the only auto-writer.
       - id: ruff-format
-        # The fixed ten-line script entry template is intentionally outside formatting.
-        exclude: ^scripts/[^/]+\.py$
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v2.3.0

@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from gauntlet.await_workflow import ARTIFACT_BASENAMES  # noqa: E402
+from gauntlet.awaiting import ARTIFACT_BASENAMES  # noqa: E402
 
 from bench import run  # noqa: E402
 from bench.runner import check, citations, invoke  # noqa: E402

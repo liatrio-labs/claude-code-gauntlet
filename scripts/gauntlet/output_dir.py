@@ -279,4 +279,4 @@ def main(argv: list[str] | None = None) -> int:
     return code
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="ensure_output_dir.py")

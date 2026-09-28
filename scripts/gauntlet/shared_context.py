@@ -19,6 +19,7 @@ it only narrows the Read chunk size.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -39,8 +40,8 @@ def _read_input(path: str, label: str) -> bytes:
     return content
 
 
-def _execute(args):
-    require_head_sha(PROG, args.head_sha)
+def _execute(args: argparse.Namespace) -> int:
+    require_head_sha(args.head_sha)
     if not os.path.isdir(args.output_dir):
         raise CliError("--output-dir must be an existing directory", 2)
 
@@ -92,13 +93,6 @@ def _execute(args):
     chars = len(content.decode("utf-8", errors="replace"))
     print(json.dumps({"contextLines": lines, "contextChars": chars}))
     return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    code = CLI.invoke(sys.argv[1:] if argv is None else argv)
-    if code:
-        raise SystemExit(code)
-    return code
 
 
 parser = Parser(prog=PROG, description=__doc__)

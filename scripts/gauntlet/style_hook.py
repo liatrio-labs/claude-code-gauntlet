@@ -45,4 +45,4 @@ def main(argv=None):
     return 0
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="emit_style_context.py")

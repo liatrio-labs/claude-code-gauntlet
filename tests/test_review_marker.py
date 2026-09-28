@@ -2,7 +2,7 @@
 Tests for scripts/gauntlet/marker.py (Issue #39).
 
 This module is written FROM THE DESIGN SPEC ALONE (issue #39), not by reading
-scripts/gauntlet/marker.py or scripts/gauntlet/detect_prior_review.py — those land from a
+scripts/gauntlet/marker.py or scripts/gauntlet/prior_review.py — those land from a
 concurrent implementation and this file is the independent, double-entry check
 against the settled contract. Where this file and the implementation disagree,
 that disagreement is the signal the split was designed to produce.
@@ -45,8 +45,6 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import gauntlet.marker as review_marker
 from gauntlet.marker import (
@@ -595,6 +593,7 @@ class TestFindingMarker(unittest.TestCase):
         )
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env["PYTHONPATH"] = str(REPO / "scripts")
         try:
             completed = subprocess.run(
                 [sys.executable, "-c", child],
@@ -870,7 +869,7 @@ class TestDocContract(unittest.TestCase):
     HEADLESS_MODE_REL = "skills/code-gauntlet/references/headless-mode.md"
     REPORT_FORMAT_REL = "skills/code-gauntlet/references/report-format.md"
     DELIVERY_GUIDE_REL = "skills/code-gauntlet/references/delivery-guide.md"
-    POST_REVIEW_REL = "scripts/gauntlet/post_review.py"
+    POST_REVIEW_REL = "scripts/gauntlet/delivery/post.py"
 
     # The docs that may quote a raw signal string. phase1-preflight.md / SKILL.md
     # are the read path (spec Deliverable 5); report-format.md / delivery-guide.md

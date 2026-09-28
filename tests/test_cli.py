@@ -72,6 +72,20 @@ def test_command_invoke(argv, status, expected, capsys):
         )
 
 
+def test_legacy_command_sets_its_own_prog(monkeypatch):
+    seen = []
+
+    def legacy_main():
+        seen.append(tuple(sys.argv))
+        return 0
+
+    monkeypatch.setattr(sys, "argv", ["foreign.py"])
+    command = Command.legacy(legacy_main, prog="owned.py")
+    assert command.invoke(["--probe"]) == 0
+    assert seen == [("owned.py", "--probe")]
+    assert sys.argv == ["foreign.py"]
+
+
 @pytest.mark.parametrize(
     ("fallback", "expected"),
     [

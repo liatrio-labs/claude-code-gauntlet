@@ -13,13 +13,10 @@ with no byte-level reader writes `—` and explains itself in the notes.
 """
 
 import re
-import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from gauntlet import generate_contract_requirements as contract_gen
+from gauntlet import contract_gen as contract_gen
 
 REPO = Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "docs" / "machine-parsed-strings.md"
@@ -228,7 +225,7 @@ class TestMachineParsedStrings(unittest.TestCase):
             row["parsers"],
             [
                 "workflows/src/renderReport.js",
-                "scripts/gauntlet/post_review.py",
+                "scripts/gauntlet/delivery/post.py",
                 "bench/runner/citations.py",
             ],
         )

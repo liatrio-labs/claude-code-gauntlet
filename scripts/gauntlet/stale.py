@@ -11,11 +11,12 @@ the Skip/Review-again answer is known.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
 
-from gauntlet.await_workflow import glob_under
+from gauntlet.awaiting import glob_under
 from gauntlet.cli import CliError, Command, Parser, require_head_sha
 
 PROG = "stale_truncate"
@@ -28,7 +29,7 @@ DEFERRED = (
 
 def _truncate(output_dir: str, head_sha: str) -> int:
     pattern = f"code-gauntlet-*-{head_sha}.*"
-    paths = glob_under(output_dir, pattern)
+    paths = glob_under(output_dir, pattern)  # type: ignore[no-untyped-call]
     for done, path in enumerate(paths):
         try:
             with open(path, "wb"):
@@ -43,8 +44,8 @@ def _truncate(output_dir: str, head_sha: str) -> int:
     return 0
 
 
-def _execute(args):
-    require_head_sha(PROG, args.head_sha)
+def _execute(args: argparse.Namespace) -> int:
+    require_head_sha(args.head_sha)
     if not os.path.isdir(args.output_dir):
         raise CliError("--output-dir must be an existing directory", 2)
 
@@ -67,13 +68,6 @@ def _execute(args):
         print(DEFERRED)
         return 0
     return _truncate(args.output_dir, args.head_sha)
-
-
-def main(argv: list[str] | None = None) -> int:
-    code = CLI.invoke(sys.argv[1:] if argv is None else argv)
-    if code:
-        raise SystemExit(code)
-    return code
 
 
 parser = Parser(prog=PROG, description=__doc__)

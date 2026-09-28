@@ -211,7 +211,7 @@ class TestCollectorDedup(unittest.TestCase):
             return json.loads(result.stdout)
 
     def test_each_rule_set_is_collected_exactly_once(self):
-        from gauntlet.collect_project_rules import _effective
+        from gauntlet.project_rules import _effective
 
         report = self.collect()
         seen = {}

@@ -1,5 +1,5 @@
 """
-Tests for scripts/gauntlet/post_review.py
+Tests for scripts/gauntlet/delivery/post.py
 
 Covers:
   - detect_platform: GitHub SSH, GitHub HTTPS, GitLab SSH, GitLab HTTPS,
@@ -37,12 +37,10 @@ from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-import gauntlet.detect_prior_review as detect_prior_review
+import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
-import gauntlet.post_review as post_review
-from gauntlet.post_review import (
+import gauntlet.prior_review as detect_prior_review
+from gauntlet.delivery.post import (
     _blockquote,
     _cap_rule_text,
     _delivery_marker_suffix,
@@ -153,33 +151,33 @@ def _severity_matrix():
 
 
 class TestDetectPlatform(unittest.TestCase):
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_github_ssh(self, mock_run):
         mock_run.return_value = ("git@github.com:myorg/myrepo.git\n", "", 0)
         platform, host = detect_platform()
         self.assertEqual(platform, "github")
         self.assertEqual(host, "github.com")
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_github_https(self, mock_run):
         mock_run.return_value = ("https://github.com/myorg/myrepo.git\n", "", 0)
         platform, host = detect_platform()
         self.assertEqual(platform, "github")
         self.assertIn("github.com", host)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_gitlab_ssh(self, mock_run):
         mock_run.return_value = ("git@gitlab.com:team/project.git\n", "", 0)
         platform, host = detect_platform()
         self.assertEqual(platform, "gitlab")
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_gitlab_https(self, mock_run):
         mock_run.return_value = ("https://gitlab.com/team/project.git\n", "", 0)
         platform, host = detect_platform()
         self.assertEqual(platform, "gitlab")
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_self_hosted_gitlab(self, mock_run):
         mock_run.return_value = (
             "git@gitlab.internal.company.com:team/project.git\n",
@@ -190,34 +188,34 @@ class TestDetectPlatform(unittest.TestCase):
         self.assertEqual(platform, "gitlab")
         self.assertEqual(host, "gitlab.internal.company.com")
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_unknown_host(self, mock_run):
         mock_run.return_value = ("https://bitbucket.org/team/repo.git\n", "", 0)
         platform, host = detect_platform()
         self.assertIsNone(platform)
         self.assertEqual(host, "bitbucket.org")
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_git_remote_failure(self, mock_run):
         mock_run.return_value = ("", "fatal: not a git repository", 128)
         platform, host = detect_platform()
         self.assertIsNone(platform)
         self.assertIsNone(host)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_malformed_url(self, mock_run):
         mock_run.return_value = ("not-a-url\n", "", 0)
         platform, host = detect_platform()
         self.assertIsNone(platform)
         self.assertIsNone(host)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_github_ssh_without_git_suffix(self, mock_run):
         mock_run.return_value = ("git@github.com:myorg/myrepo\n", "", 0)
         platform, host = detect_platform()
         self.assertEqual(platform, "github")
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_github_https_without_git_suffix(self, mock_run):
         mock_run.return_value = ("https://github.com/myorg/myrepo\n", "", 0)
         platform, host = detect_platform()
@@ -232,7 +230,7 @@ class TestDetectPlatform(unittest.TestCase):
 class TestParseDiffLinesPostReview(unittest.TestCase):
     """Tests for parse_diff_lines in post_review, which dispatches via run_api."""
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_github_dispatches_to_gh_pr_diff(self, mock_run):
         """platform='github' must call gh pr diff."""
         diff = (
@@ -252,7 +250,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertEqual(call_args[1], "pr")
         self.assertEqual(call_args[2], "diff")
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_gitlab_dispatches_to_glab_mr_diff(self, mock_run):
         """platform='gitlab' must call glab mr diff."""
         # glab-faithful: an unconditional `---`/`+++` pair, paths verbatim, no `a/`/`b/`.
@@ -271,7 +269,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "streams git's diff instead, reintroducing a/ b/ prefixes and /dev/null",
         )
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_glab_no_prefix_headers_are_parsed(self, mock_run):
         """`glab mr diff` emits headers without the `a/` / `b/` prefix.
 
@@ -293,7 +291,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertIn(("src/app.py", 2), valid_lines)
         self.assertEqual(new_files, set())
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_github_diff_prefixes_are_still_stripped(self, mock_run):
         """`gh pr diff` writes git's synthetic `a/` / `b/`: those ARE diff syntax.
 
@@ -316,7 +314,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertEqual(old_paths, {"src/app.py": "src/app.py"})
         self.assertEqual({fp for fp, _ in valid_lines}, {"src/app.py"})
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_new_file_detected_via_dev_null_old_header(self, mock_run):
         """The ``/dev/null`` branch, exercised by header-shaped input with no hunk.
 
@@ -340,7 +338,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         _, new_files, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(new_files, {"empty_new.py"})
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_new_file_detected_from_hunk_header_glab_style(self, mock_run):
         """`glab mr diff` never writes `--- /dev/null` — it repeats the path on both
         sides, so `@@ -0,0` is the only added-file signal.
@@ -354,7 +352,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         _, new_files, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(new_files, {"src/added.py"})
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_added_file_detected_end_of_multi_file_glab_diff(self, mock_run):
         """The added file is the SECOND file in the diff, and the modified one that
         precedes it must not be swept into new_files with it."""
@@ -362,7 +360,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         _, new_files, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(new_files, {"src/app/clients/api/__init__.py"})
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_deleted_file_does_not_add_dev_null_to_valid_lines(self, mock_run):
         """``+++ /dev/null`` (deleted file) must not produce phantom entries.
 
@@ -376,7 +374,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertEqual(valid_lines, {})
         self.assertEqual(new_files, set())
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_empty_file_gaining_content_is_treated_as_added_a_known_limitation(
         self, mock_run
     ):
@@ -392,7 +390,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         _, new_files, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(new_files, {"empty.py"})
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_omitted_hunk_counts_default_to_one(self, mock_run):
         """``@@ -0,0 +1 @@`` — a one-line added file, as real git writes it.
 
@@ -409,7 +407,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertIsNone(valid_lines[("oneline.txt", 1)])
         self.assertIn("oneline.txt", new_files)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_deleted_file_body_drains_budgets_so_the_next_file_parses(self, mock_run):
         """A deleted file's body must consume its budgets even though it records nothing.
 
@@ -440,7 +438,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertIsNone(valid_lines[("next.py", 6)])
         self.assertEqual([k for k in valid_lines if k[0] == "gone.py"], [])
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_gitlab_deleted_file_records_no_targets_of_its_own(self, mock_run):
         """`glab mr diff` has no `+++ /dev/null`: a deletion repeats the path on BOTH
         headers, so ``current_file`` stays LIVE through the deleted file's body.
@@ -466,7 +464,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
 
     # -- hunk-body budget tracking (headers are body content too) -----------
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_form_feed_line_content_does_not_split_the_hunk(self, mock_run):
         """A form feed is diff CONTENT; it must not invent a line boundary.
 
@@ -485,7 +483,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertIsNone(valid_lines[("ff.py", 3)])
         self.assertEqual(valid_lines[("ff.py", 2)], 2)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_removed_line_content_starting_with_dashes_is_not_a_file_header(
         self, mock_run
     ):
@@ -514,7 +512,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertEqual(valid_lines[("db/schema.sql", 11)], 12)
         self.assertEqual(valid_lines[("db/schema.sql", 12)], 13)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_added_line_content_starting_with_pluses_is_not_a_file_header(
         self, mock_run
     ):
@@ -538,7 +536,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertEqual(valid_lines[("src/app.c", 22)], 21)
         self.assertEqual({fp for fp, _ in valid_lines}, {"src/app.c"})
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_binary_file_prose_is_not_admitted_as_a_valid_line(self, mock_run):
         """`Binary files … differ` carries no hunk; it must not become a context line."""
         diff = (
@@ -551,7 +549,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         valid_lines, _, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual([k for k in valid_lines if k[0] == "img.png"], [])
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_between_hunk_lines_are_not_admitted(self, mock_run):
         """Between-hunk lines are not commentable lines: the key set is EXACTLY the
         hunk bodies' addressable lines, with nothing admitted from around them.
@@ -577,19 +575,19 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
 
     # -- old-side tracking (issue #127 D1) ---------------------------------
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_valid_lines_is_a_mapping_of_new_line_to_old_line(self, mock_run):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
         valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIsInstance(valid_lines, dict)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_context_line_maps_to_its_old_side_number(self, mock_run):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
         valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(valid_lines[("src/edited.py", 61)], 50)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_added_line_maps_to_none(self, mock_run):
         """An added line exists only on the new side — present as a key, valued None."""
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
@@ -597,14 +595,14 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertIn(("src/edited.py", 62), valid_lines)
         self.assertIsNone(valid_lines[("src/edited.py", 62)])
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_removed_line_advances_the_old_side_only(self, mock_run):
         """52, not 51: the ``-removed`` line consumed an OLD number and no new one."""
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
         valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(valid_lines[("src/edited.py", 63)], 52)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_old_side_counter_resets_between_files(self, mock_run):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
         valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
@@ -623,7 +621,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "an added file's lines must carry no old-side leftovers from the file before",
         )
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_no_newline_marker_advances_neither_counter(self, mock_run):
         diff = (
             "--- a/f.py\n"
@@ -637,7 +635,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         valid_lines, _, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(valid_lines[("f.py", 2)], 2)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_renamed_file_old_side_path_is_captured(self, mock_run):
         """A rename's `---` path must survive parsing keyed by the NEW path.
 
@@ -655,7 +653,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         # A BLANK context line is a lone space, and is addressable like any other.
         self.assertEqual(valid_lines[("new_name.py", 6)], 6)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_added_file_absent_from_old_paths(self, mock_run):
         """`--- /dev/null` means there is no old side — record no mapping at all."""
         diff = (
@@ -671,7 +669,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertEqual(new_files, {"added.py"})
         self.assertNotIn("added.py", old_paths)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_unrenamed_file_old_path_maps_to_itself(self, mock_run):
         """For a plain modified file both sides name the same path — pin the coincide
         case, so the mapping is provably a no-op there rather than accidentally right."""
@@ -679,7 +677,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         _, _, old_paths, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(old_paths["src/edited.py"], "src/edited.py")
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_nonzero_rc_returns_none(self, mock_run):
         """A non-zero exit code from the CLI tool must return (None, None, None)."""
         mock_run.return_value = ("", "fatal: not a git repository", 128)
@@ -699,7 +697,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertIsNone(new_files)
         self.assertIsNone(old_paths)
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_delegates_to_parse_diff_text_for_a_github_diff(self, mock_run):
         """A successful CLI fetch must hand the SAME bytes to
         ``parse_diff_text(platform, stdout)`` and return exactly what it returns —
@@ -716,7 +714,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         got = parse_diff_lines("github", "myorg", "myrepo", 42)
         self.assertEqual(got, parse_diff_text("github", diff))
 
-    @patch("gauntlet.post_review.run_api")
+    @patch("gauntlet.delivery.post.run_api")
     def test_delegates_to_parse_diff_text_for_a_glab_fixture(self, mock_run):
         """Same guarantee, for a real ``glab mr diff`` fixture (no ``diff --git``
         line, unprefixed headers)."""
@@ -1686,36 +1684,36 @@ class TestResolveMarkerSha(unittest.TestCase):
     against) is preferred over a freshly re-resolved HEAD, so a HEAD that moved
     between the workflow run and the post cannot mislabel the marker."""
 
-    @patch("gauntlet.post_review.get_head_sha", return_value="deadbeef")
+    @patch("gauntlet.delivery.post.get_head_sha", return_value="deadbeef")
     def test_prefers_data_sha_when_sha_shaped(self, mock_head):
         data = {"sha": "0f1e2d3c4b5a69788716253413121110090807a"}
         self.assertEqual(resolve_marker_sha(data), data["sha"])
         mock_head.assert_not_called()
 
-    @patch("gauntlet.post_review.get_head_sha", return_value="deadbeef")
+    @patch("gauntlet.delivery.post.get_head_sha", return_value="deadbeef")
     def test_falls_back_to_head_when_sha_absent(self, mock_head):
         self.assertEqual(resolve_marker_sha({}), "deadbeef")
         mock_head.assert_called_once()
 
-    @patch("gauntlet.post_review.get_head_sha", return_value="deadbeef")
+    @patch("gauntlet.delivery.post.get_head_sha", return_value="deadbeef")
     def test_falls_back_to_head_when_sha_none(self, mock_head):
         self.assertEqual(resolve_marker_sha({"sha": None}), "deadbeef")
 
-    @patch("gauntlet.post_review.get_head_sha", return_value="deadbeef")
+    @patch("gauntlet.delivery.post.get_head_sha", return_value="deadbeef")
     def test_rejects_non_sha_shaped_value_and_falls_back(self, mock_head):
         self.assertEqual(resolve_marker_sha({"sha": "not-a-real-sha!!"}), "deadbeef")
 
-    @patch("gauntlet.post_review.get_head_sha", return_value="deadbeef")
+    @patch("gauntlet.delivery.post.get_head_sha", return_value="deadbeef")
     def test_rejects_non_string_sha_and_falls_back(self, mock_head):
         self.assertEqual(resolve_marker_sha({"sha": 12345}), "deadbeef")
 
-    @patch("gauntlet.post_review.get_head_sha", return_value="deadbeef")
+    @patch("gauntlet.delivery.post.get_head_sha", return_value="deadbeef")
     def test_accepts_short_sha_shaped_value(self, mock_head):
         self.assertEqual(resolve_marker_sha({"sha": "abc1234"}), "abc1234")
         mock_head.assert_not_called()
 
-    @patch("gauntlet.post_review.warn")
-    @patch("gauntlet.post_review.get_head_sha", return_value="unknown")
+    @patch("gauntlet.delivery.post.warn")
+    @patch("gauntlet.delivery.post.get_head_sha", return_value="unknown")
     def test_degraded_fallback_when_head_sha_itself_unresolvable(
         self, mock_head, mock_warn
     ):
@@ -1770,7 +1768,7 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
         post_review._CAPTURED.clear()
         post_review._SKIP_WARNINGS.clear()
 
-    @patch("gauntlet.post_review.check_tool")
+    @patch("gauntlet.delivery.post.check_tool")
     def test_github_empty_review_body(self, _tool):
         sha = "a" * 40
         data = {
@@ -1787,7 +1785,7 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
         self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
         self.assertEqual(signal["sha"], sha)
 
-    @patch("gauntlet.post_review.check_tool")
+    @patch("gauntlet.delivery.post.check_tool")
     def test_github_non_empty_review_body(self, _tool):
         sha = "b" * 40
         data = {
@@ -1804,9 +1802,10 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
         self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
         self.assertEqual(signal["sha"], sha)
 
-    @patch("gauntlet.post_review.check_tool")
+    @patch("gauntlet.delivery.post.check_tool")
     @patch(
-        "gauntlet.post_review.fetch_gitlab_shas", return_value=("base", "head", "start")
+        "gauntlet.delivery.post.fetch_gitlab_shas",
+        return_value=("base", "head", "start"),
     )
     def test_gitlab_empty_review_body(self, _shas, _tool):
         sha = "c" * 40
@@ -1826,9 +1825,10 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
         self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
         self.assertEqual(signal["sha"], sha)
 
-    @patch("gauntlet.post_review.check_tool")
+    @patch("gauntlet.delivery.post.check_tool")
     @patch(
-        "gauntlet.post_review.fetch_gitlab_shas", return_value=("base", "head", "start")
+        "gauntlet.delivery.post.fetch_gitlab_shas",
+        return_value=("base", "head", "start"),
     )
     def test_gitlab_non_empty_review_body(self, _shas, _tool):
         sha = "d" * 40
@@ -1910,17 +1910,17 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
     """Verify that skip warnings include valid-line diagnostics."""
 
     @patch(
-        "gauntlet.post_review.get_head_sha",
+        "gauntlet.delivery.post.get_head_sha",
         return_value="abc1234def5678abc1234def5678abc1234def56",
     )
-    @patch("gauntlet.post_review.check_tool")
+    @patch("gauntlet.delivery.post.check_tool")
     @patch(
-        "gauntlet.post_review.post_json",
+        "gauntlet.delivery.post.post_json",
         return_value={"html_url": "http://example.com"},
     )
-    @patch("gauntlet.post_review.warn")
+    @patch("gauntlet.delivery.post.warn")
     def test_github_skip_includes_valid_lines(self, mock_warn, _post, _tool, _sha):
-        from gauntlet.post_review import post_github
+        from gauntlet.delivery.post import post_github
 
         valid_lines = {("src/app.py", 10): 10, ("src/app.py", 20): None}
         data = {
@@ -1937,19 +1937,19 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
         self.assertIn("20", msg)
 
     @patch(
-        "gauntlet.post_review.get_head_sha",
+        "gauntlet.delivery.post.get_head_sha",
         return_value="abc1234def5678abc1234def5678abc1234def56",
     )
-    @patch("gauntlet.post_review.check_tool")
+    @patch("gauntlet.delivery.post.check_tool")
     @patch(
-        "gauntlet.post_review.post_json",
+        "gauntlet.delivery.post.post_json",
         return_value={"html_url": "http://example.com"},
     )
-    @patch("gauntlet.post_review.warn")
+    @patch("gauntlet.delivery.post.warn")
     def test_github_skip_empty_valid_lines_reports_an_empty_diag_list(
         self, mock_warn, _post, _tool, _sha
     ):
-        from gauntlet.post_review import post_github
+        from gauntlet.delivery.post import post_github
 
         data = {
             "owner": "o",
@@ -1965,19 +1965,19 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
         self.assertIn("Valid lines for this file: []", msg)
 
     @patch(
-        "gauntlet.post_review.get_head_sha",
+        "gauntlet.delivery.post.get_head_sha",
         return_value="abc1234def5678abc1234def5678abc1234def56",
     )
-    @patch("gauntlet.post_review.check_tool")
+    @patch("gauntlet.delivery.post.check_tool")
     @patch(
-        "gauntlet.post_review.post_json",
+        "gauntlet.delivery.post.post_json",
         return_value={"html_url": "http://example.com"},
     )
-    @patch("gauntlet.post_review.warn")
+    @patch("gauntlet.delivery.post.warn")
     def test_github_skip_no_diag_when_valid_lines_none(
         self, mock_warn, mock_post, _tool, _sha
     ):
-        from gauntlet.post_review import post_github
+        from gauntlet.delivery.post import post_github
 
         data = {
             "owner": "o",
@@ -2000,24 +2000,24 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
             )
 
     @patch(
-        "gauntlet.post_review.get_head_sha",
+        "gauntlet.delivery.post.get_head_sha",
         return_value="abc1234def5678abc1234def5678abc1234def56",
     )
-    @patch("gauntlet.post_review.check_tool")
-    @patch("gauntlet.post_review.post_json", return_value={})
-    @patch("gauntlet.post_review.fetch_gitlab_shas", return_value=("b", "h", "s"))
+    @patch("gauntlet.delivery.post.check_tool")
+    @patch("gauntlet.delivery.post.post_json", return_value={})
+    @patch("gauntlet.delivery.post.fetch_gitlab_shas", return_value=("b", "h", "s"))
     # The live path now asks detect_prior_review what the MR already carries; that read
     # shells out to `glab`, so it is stubbed here rather than left to reach a real forge
     # from a unit test.
     @patch(
-        "gauntlet.post_review.gitlab_prior_delivery_state",
+        "gauntlet.delivery.post.gitlab_prior_delivery_state",
         return_value=(False, set(), frozenset(), None),
     )
-    @patch("gauntlet.post_review.warn")
+    @patch("gauntlet.delivery.post.warn")
     def test_gitlab_skip_includes_valid_lines(
         self, mock_warn, _prior, _shas, _post, _tool, _sha
     ):
-        from gauntlet.post_review import post_gitlab
+        from gauntlet.delivery.post import post_gitlab
 
         valid_lines = {("src/app.py", 5): 5, ("src/app.py", 15): None}
         data = {
@@ -2045,17 +2045,17 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
 
 class TestIsNewFile(unittest.TestCase):
     def test_none_new_files_returns_false(self):
-        from gauntlet.post_review import is_new_file
+        from gauntlet.delivery.post import is_new_file
 
         self.assertFalse(is_new_file(None, "any.py"))
 
     def test_empty_new_files_returns_false(self):
-        from gauntlet.post_review import is_new_file
+        from gauntlet.delivery.post import is_new_file
 
         self.assertFalse(is_new_file(set(), "any.py"))
 
     def test_exact_match(self):
-        from gauntlet.post_review import is_new_file
+        from gauntlet.delivery.post import is_new_file
 
         self.assertTrue(is_new_file({"src/added.py"}, "src/added.py"))
 
@@ -2064,13 +2064,13 @@ class TestIsNewFile(unittest.TestCase):
         is_new_file itself does exact-match only. A raw synthetic-prefixed path that
         was never resolved is correctly NOT treated as a match.
         """
-        from gauntlet.post_review import is_new_file
+        from gauntlet.delivery.post import is_new_file
 
         self.assertFalse(is_new_file({"src/added.py"}, "b/src/added.py"))
         self.assertFalse(is_new_file({"src/added.py"}, "a/src/added.py"))
 
     def test_no_match_returns_false(self):
-        from gauntlet.post_review import is_new_file
+        from gauntlet.delivery.post import is_new_file
 
         self.assertFalse(is_new_file({"src/added.py"}, "src/other.py"))
 
@@ -2078,7 +2078,7 @@ class TestIsNewFile(unittest.TestCase):
         """A modified file under a real top-level `a/` directory must not be mistaken
         for an unrelated new file that happens to share its stripped basename.
         """
-        from gauntlet.post_review import is_new_file
+        from gauntlet.delivery.post import is_new_file
 
         # "a/foo.py" (modified, real a/ directory) is itself absent from new_files;
         # only the unrelated new top-level "foo.py" is present. A stripped-prefix
@@ -2098,7 +2098,7 @@ def _parse_fixture(diff, platform="gitlab"):
     hand-written ``valid_lines`` would let the gate be tested against the answer the test
     wanted rather than the one the pipeline produces.
     """
-    with patch("gauntlet.post_review.run_api", return_value=(diff, "", 0)):
+    with patch("gauntlet.delivery.post.run_api", return_value=(diff, "", 0)):
         return parse_diff_lines(platform, "o", "r", 1)
 
 
@@ -2412,7 +2412,7 @@ class TestGitlabPositionPayload(unittest.TestCase):
 
     def _capture_position(self, data, valid_lines, new_files):
         """Run post_gitlab and return the position dict from the discussion call."""
-        from gauntlet.post_review import post_gitlab
+        from gauntlet.delivery.post import post_gitlab
 
         captured = []
 
@@ -2429,18 +2429,20 @@ class TestGitlabPositionPayload(unittest.TestCase):
         # the same class of fidelity bug flagged elsewhere in this change (a
         # get_head_sha mock only 6 hex chars long).
         with (
-            patch("gauntlet.post_review.get_head_sha", return_value="deadbeef" * 5),
-            patch("gauntlet.post_review.check_tool"),
+            patch("gauntlet.delivery.post.get_head_sha", return_value="deadbeef" * 5),
+            patch("gauntlet.delivery.post.check_tool"),
             patch(
-                "gauntlet.post_review.fetch_gitlab_shas",
+                "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
             ),
-            patch("gauntlet.post_review.try_post_json", side_effect=fake_try_post_json),
+            patch(
+                "gauntlet.delivery.post.try_post_json", side_effect=fake_try_post_json
+            ),
             # The live path asks detect_prior_review what the MR already carries;
             # that read shells out to `glab`, so it is stubbed rather than left to
             # reach a real forge from a unit test.
             patch(
-                "gauntlet.post_review.gitlab_prior_delivery_state",
+                "gauntlet.delivery.post.gitlab_prior_delivery_state",
                 return_value=(False, set(), frozenset(), None),
             ),
         ):
@@ -2954,7 +2956,7 @@ class TestDryRunGitHub(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -3013,7 +3015,7 @@ class TestDryRunGitHub(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -3060,7 +3062,7 @@ class TestDryRunGitLab(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GL_DIFF, versions=versions),
             ) as mock_run,
         ):
@@ -3157,7 +3159,7 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=diff, versions=versions),
             ),
         ):
@@ -3308,11 +3310,11 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.gitlab_prior_delivery",
+                "gauntlet.delivery.post.gitlab_prior_delivery",
                 return_value=prior,
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
                 ),
@@ -3388,10 +3390,10 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 {"bytes": 20},
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
-            patch("gauntlet.post_review.post_json") as post,
+            patch("gauntlet.delivery.post.post_json") as post,
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
             self.assertRaises(SystemExit) as raised,
@@ -3461,7 +3463,7 @@ class TestSummaryBodyBrandHeader(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF if gitlab else GH_DIFF, versions=versions
                 ),
@@ -3927,7 +3929,7 @@ class TestGitHubDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
             ),
         ):
@@ -3961,7 +3963,7 @@ class TestGitHubDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
             ),
         ):
@@ -3997,7 +3999,7 @@ class TestGitHubDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
             ),
         ):
@@ -4065,7 +4067,7 @@ class TestGitLabDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
             ),
         ):
@@ -4096,7 +4098,7 @@ class TestGitLabDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
             ),
         ):
@@ -4130,7 +4132,7 @@ class TestGitLabDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
             ),
         ):
@@ -4170,7 +4172,7 @@ class TestLivePathUnchanged(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -4199,7 +4201,7 @@ class TestDryRunStdout(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=diff, versions=versions),
             ),
             contextlib.redirect_stdout(stdout),
@@ -4289,7 +4291,7 @@ class TestLivePathStdout(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
             contextlib.redirect_stdout(stdout),
@@ -4352,7 +4354,7 @@ class TestPostModeEnv(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "dry-run"}),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -4371,7 +4373,7 @@ class TestPostModeEnv(_DryRunTestBase):
             ),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -4386,7 +4388,7 @@ class TestPostModeEnv(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -4403,7 +4405,7 @@ class TestPostModeEnv(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "live"}),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -4452,7 +4454,7 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -4512,7 +4514,7 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(remote="https://code.example/o/r.git\n"),
             ),
             contextlib.redirect_stderr(stderr),
@@ -4530,7 +4532,7 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=GH_DIFF, remote="https://code.example/o/r.git\n"
                 ),
@@ -4571,7 +4573,7 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -4613,7 +4615,7 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GL_DIFF, versions=versions),
             ),
         ):
@@ -4654,7 +4656,7 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -4697,7 +4699,7 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -4746,7 +4748,7 @@ class TestGitlabPositionContract(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
                 ),
@@ -4815,7 +4817,7 @@ class TestGitlabRenamedFilePositionContract(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_RENAME, versions=GL_CONTRACT_VERSIONS
                 ),
@@ -4854,7 +4856,7 @@ class TestGitlabRealADirectoryPath(_DryRunTestBase):
 
     def test_gitlab_real_a_directory_path_is_preserved(self):
         with patch(
-            "gauntlet.post_review.run_api", return_value=(GL_DIFF_REAL_A_DIR, "", 0)
+            "gauntlet.delivery.post.run_api", return_value=(GL_DIFF_REAL_A_DIR, "", 0)
         ):
             valid_lines, new_files, old_paths, _ = parse_diff_lines(
                 "gitlab", "o", "r", 1
@@ -4886,7 +4888,7 @@ class TestGitlabRealADirectoryPath(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_REAL_A_DIR, versions=GL_CONTRACT_VERSIONS
                 ),
@@ -4937,7 +4939,7 @@ class TestGitlabFindingPathNormalization(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
                 ),
@@ -4998,13 +5000,13 @@ class _GitlabLiveRunBase(_DryRunTestBase):
             # reaches the per-finding loop; TestGitlabInlineDiscussionIdempotency
             # steers it to exercise the dedup gate.
             patch(
-                "gauntlet.post_review.gitlab_prior_delivery_state",
+                "gauntlet.delivery.post.gitlab_prior_delivery_state",
                 return_value=(False, set(), frozenset(), None)
                 if prior is None
                 else _normalize_prior(prior),
             ) as mock_prior,
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_CONTRACT,
                     versions=GL_CONTRACT_VERSIONS if versions is None else versions,
@@ -5042,7 +5044,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
             calls.append(args)
             return real(*args)
 
-        with patch("gauntlet.post_review.validate_position", side_effect=spy):
+        with patch("gauntlet.delivery.post.validate_position", side_effect=spy):
             run = self._run_main(dry_run=True)
         self.assertIsNone(run.exit_code)
         self.assertEqual(len(calls), len(GL_CONTRACT_FINDINGS))
@@ -5243,7 +5245,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
 
         entries = [{"body": payload["body"]} for payload in payloads]
         with patch(
-            "gauntlet.detect_prior_review.fetch_entries_gitlab",
+            "gauntlet.prior_review.fetch_entries_gitlab",
             return_value=(entries, []),
         ):
             state = detect_prior_review.gitlab_prior_delivery_state(
@@ -5644,11 +5646,7 @@ class TestGitlabFaultTolerance(_GitlabLiveRunBase):
 class TestGitlabSummaryIdempotency(_DryRunTestBase):
     """A rerun after a partial delivery must not stack a second summary note.
 
-    ``gauntlet.post_review.gitlab_prior_delivery_state`` — the name bound INTO this
-    module — is what these tests patch. ``post_review`` imports the bare
-    ``detect_prior_review`` while ``tests/test_detect_prior_review.py`` imports
-    ``gauntlet.detect_prior_review``: two distinct module objects in one pytest process,
-    so patching the other one would not be seen here.
+    These tests patch the state reader as bound by the delivery module.
     """
 
     def _run_main(self, prior, data=None, dry_run=False, head_sha="deadbeefcafe\n"):
@@ -5673,11 +5671,11 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
             patch.object(sys, "argv", argv),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "gauntlet.post_review.gitlab_prior_delivery_state",
+                "gauntlet.delivery.post.gitlab_prior_delivery_state",
                 return_value=_normalize_prior(prior),
             ) as mock_prior,
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_CONTRACT,
                     versions=GL_CONTRACT_VERSIONS,
@@ -5758,7 +5756,7 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
         """post_review must not grow its own parse of the signals it writes."""
         self.assertEqual(
             post_review.gitlab_prior_delivery_state.__module__,
-            "gauntlet.detect_prior_review",
+            "gauntlet.prior_review",
         )
 
 
@@ -5995,7 +5993,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
                 )
                 with (
                     patch(
-                        "gauntlet.post_review.gitlab_prior_delivery",
+                        "gauntlet.delivery.post.gitlab_prior_delivery",
                         return_value=dry_prior,
                     ),
                     patch.dict(
@@ -6538,7 +6536,7 @@ class TestInlineBodyBudget(unittest.TestCase):
             {"bytes": 20},
         ):
             composed = compose_inline_body("x", platform="gitlab", surface="note")
-            with patch("gauntlet.post_review.warn") as mock_warn:
+            with patch("gauntlet.delivery.post.warn") as mock_warn:
                 self.assertTrue(_inline_body_over_limit(composed, "", "gitlab", "note"))
             mock_warn.assert_called_once()
 
@@ -6594,13 +6592,13 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF if gitlab else GH_DIFF, versions=versions
                 ),
             ),
             patch(
-                "gauntlet.post_review.gitlab_prior_delivery",
+                "gauntlet.delivery.post.gitlab_prior_delivery",
                 return_value=(prior, set(), frozenset()),
             ),
             contextlib.redirect_stdout(stdout),
@@ -7368,12 +7366,12 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         # GitHub: 21846 code points are 65538 UTF-8 bytes, over 65536.
         oversized_github = post_review.ComposedBody("界" * 21846, 0, 0, 0, ())
         with (
-            patch("gauntlet.post_review.check_tool"),
+            patch("gauntlet.delivery.post.check_tool"),
             patch(
-                "gauntlet.post_review.compose_review_body",
+                "gauntlet.delivery.post.compose_review_body",
                 return_value=oversized_github,
             ),
-            patch("gauntlet.post_review.post_json") as github_post,
+            patch("gauntlet.delivery.post.post_json") as github_post,
             self.assertRaises(SystemExit) as github_exit,
         ):
             post_review.post_github(
@@ -7390,19 +7388,19 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         # GitLab: 333334 code points are 1000002 UTF-8 bytes, over 1000000.
         oversized_gitlab = post_review.ComposedBody("界" * 333334, 0, 0, 0, ())
         with (
-            patch("gauntlet.post_review.check_tool"),
+            patch("gauntlet.delivery.post.check_tool"),
             patch(
-                "gauntlet.post_review.fetch_gitlab_shas", return_value=("b", "h", "s")
+                "gauntlet.delivery.post.fetch_gitlab_shas", return_value=("b", "h", "s")
             ),
             patch(
-                "gauntlet.post_review.gitlab_prior_delivery_state",
+                "gauntlet.delivery.post.gitlab_prior_delivery_state",
                 return_value=(False, set(), frozenset(), None),
             ),
             patch(
-                "gauntlet.post_review.compose_review_body",
+                "gauntlet.delivery.post.compose_review_body",
                 return_value=oversized_gitlab,
             ),
-            patch("gauntlet.post_review.post_json") as gitlab_post,
+            patch("gauntlet.delivery.post.post_json") as gitlab_post,
             self.assertRaises(SystemExit) as gitlab_exit,
         ):
             post_review.post_gitlab(
@@ -7639,7 +7637,7 @@ class TestSummaryPluralContract(unittest.TestCase):
                         else "x" * 70000
                     )
 
-                with patch("gauntlet.post_review._skipped_piece", side_effect=piece):
+                with patch("gauntlet.delivery.post._skipped_piece", side_effect=piece):
                     composed = post_review.compose_review_body(
                         "Summary",
                         groups,
@@ -7786,7 +7784,7 @@ class TestSummaryBodyDelivery(_DryRunTestBase):
                 ],
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -7821,10 +7819,10 @@ class TestSummaryBodyDelivery(_DryRunTestBase):
                 ],
             ),
             patch(
-                "gauntlet.post_review.parse_diff_lines",
+                "gauntlet.delivery.post.parse_diff_lines",
                 return_value=(None, None, None, None),
             ),
-            patch("gauntlet.post_review.post_github", return_value=0) as mock_post,
+            patch("gauntlet.delivery.post.post_github", return_value=0) as mock_post,
         ):
             post_review.main()
         data = mock_post.call_args.args[0]
@@ -7880,7 +7878,7 @@ class TestSummaryBodyDelivery(_DryRunTestBase):
                 ],
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -7894,9 +7892,10 @@ class TestSummaryBodyDelivery(_DryRunTestBase):
         self.assertLess(body.index(fold), body.index(marker))
         self.assertTrue(body.endswith(post_review.build_footer(0, "a" * 40, body="")))
 
-    @patch("gauntlet.post_review.check_tool")
+    @patch("gauntlet.delivery.post.check_tool")
     @patch(
-        "gauntlet.post_review.fetch_gitlab_shas", return_value=("base", "head", "start")
+        "gauntlet.delivery.post.fetch_gitlab_shas",
+        return_value=("base", "head", "start"),
     )
     def test_summary_borne_marker_is_escaped_and_real_footer_wins(self, _shas, _tool):
         # Mutation: remove renderer marker neutralization or let the authored marker
@@ -7977,7 +7976,7 @@ class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8014,7 +8013,7 @@ class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8044,7 +8043,7 @@ class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8075,7 +8074,7 @@ class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8132,7 +8131,7 @@ class TestGitHubMultiLineRangeValidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
             ),
         ):
@@ -8167,11 +8166,11 @@ class TestGitHubMultiLineRangeValidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.parse_diff_lines",
+                "gauntlet.delivery.post.parse_diff_lines",
                 return_value=(None, None, None, None),
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
             ),
         ):
@@ -8255,7 +8254,7 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8312,7 +8311,7 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8368,7 +8367,7 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8411,15 +8410,15 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
         with (
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch(
-                "gauntlet.post_review.parse_diff_lines",
+                "gauntlet.delivery.post.parse_diff_lines",
                 return_value=(None, None, None, None),
             ),
             patch(
-                "gauntlet.post_review.gitlab_prior_delivery_state",
+                "gauntlet.delivery.post.gitlab_prior_delivery_state",
                 return_value=(False, set(), frozenset(), None),
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(versions=GL_CONTRACT_VERSIONS, payloads=payloads),
             ),
         ):
@@ -8706,7 +8705,7 @@ class TestParseDiffLinesLineTexts(unittest.TestCase):
     """
 
     def _parse(self, diff, platform="gitlab"):
-        with patch("gauntlet.post_review.run_api", return_value=(diff, "", 0)):
+        with patch("gauntlet.delivery.post.run_api", return_value=(diff, "", 0)):
             return parse_diff_lines(platform, "o", "r", 1)
 
     def test_line_texts_is_a_dict_parallel_to_valid_lines(self):
@@ -8788,7 +8787,7 @@ class TestParseDiffLinesHeaderDecoding(unittest.TestCase):
     """
 
     def _parse(self, diff, platform="github"):
-        with patch("gauntlet.post_review.run_api", return_value=(diff, "", 0)):
+        with patch("gauntlet.delivery.post.run_api", return_value=(diff, "", 0)):
             return parse_diff_lines(platform, "o", "r", 1)
 
     def test_github_path_with_a_space_decodes_past_the_tab_terminator(self):
@@ -9420,7 +9419,7 @@ class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
         finding = {"file": "foo.py", "line": 2, "suggested_fix_code": "x"}
         with (
             patch(
-                "gauntlet.post_review._suggested_fix_gate",
+                "gauntlet.delivery.post._suggested_fix_gate",
                 return_value=(False, "bogus"),
             ),
             self.assertRaises(ValueError) as ctx,
@@ -9434,7 +9433,7 @@ class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
         finding = {"file": "foo.py", "line": 2, "suggested_fix_code": "x"}
         with (
             patch(
-                "gauntlet.post_review._suggested_fix_gate",
+                "gauntlet.delivery.post._suggested_fix_gate",
                 return_value=(False, "anchor_mismatch"),
             ),
             self.assertRaises(ValueError) as ctx,
@@ -9448,7 +9447,7 @@ class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
         finding = {"file": "foo.py", "line": 2, "suggested_fix_code": "x"}
         with (
             patch(
-                "gauntlet.post_review._suggested_fix_gate",
+                "gauntlet.delivery.post._suggested_fix_gate",
                 return_value=(True, None),
             ),
             self.assertRaises(ValueError) as ctx,
@@ -9478,7 +9477,7 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
     def test_demote_reason_none_is_a_no_op_when_the_gate_passes(self):
         """The default keeps every pre-#223 caller byte-identical."""
         finding = self._finding()
-        with patch("gauntlet.post_review._fence_verdict", return_value=(True, None)):
+        with patch("gauntlet.delivery.post._fence_verdict", return_value=(True, None)):
             result = post_review._gated_finding(finding, (2, 3), {}, {})
         self.assertIs(result, finding)
         self.assertEqual(post_review._FIX_COUNTS["kept"], 1)
@@ -9487,8 +9486,8 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
     def test_a_set_demote_reason_downgrades_a_gate_pass(self):
         finding = self._finding()
         with (
-            patch("gauntlet.post_review._fence_verdict", return_value=(True, None)),
-            patch("gauntlet.post_review.warn_skip") as mock_warn,
+            patch("gauntlet.delivery.post._fence_verdict", return_value=(True, None)),
+            patch("gauntlet.delivery.post.warn_skip") as mock_warn,
         ):
             result = post_review._gated_finding(
                 finding,
@@ -9516,10 +9515,10 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
         finding = self._finding()
         with (
             patch(
-                "gauntlet.post_review._fence_verdict",
+                "gauntlet.delivery.post._fence_verdict",
                 return_value=(False, "missing_end_line"),
             ),
-            patch("gauntlet.post_review.warn_skip") as mock_warn,
+            patch("gauntlet.delivery.post.warn_skip") as mock_warn,
         ):
             post_review._gated_finding(
                 finding,
@@ -9848,13 +9847,13 @@ class _FixGateRunBase(_DryRunTestBase):
             patch.object(sys, "argv", argv),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "gauntlet.post_review.gitlab_prior_delivery_state",
+                "gauntlet.delivery.post.gitlab_prior_delivery_state",
                 return_value=(False, set(), frozenset(), None)
                 if prior is None
                 else prior,
             ),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(
                     diff=self.DIFF if diff is None else diff,
                     versions=versions,
@@ -9953,7 +9952,7 @@ class TestGitHubSuggestedFixGate(_FixGateRunBase):
             seen.append(kwargs["apply_range"])
             return real(finding, **kwargs)
 
-        with patch("gauntlet.post_review._suggested_fix_gate", side_effect=spy):
+        with patch("gauntlet.delivery.post._suggested_fix_gate", side_effect=spy):
             run = self._run([self._finding(), self._finding(end_line=940)])
         anchors = [
             (c.get("start_line", c["line"]), c["line"])
@@ -11380,7 +11379,7 @@ class TestResetRunState(unittest.TestCase):
         with (
             patch.object(sys, "argv", ["post_review.py", findings_path, "--dry-run"]),
             patch(
-                "gauntlet.post_review.subprocess.run",
+                "gauntlet.delivery.post.subprocess.run",
                 side_effect=_fake_run(diff=""),
             ),
         ):
@@ -11409,12 +11408,12 @@ class TestGatedFindingWarnLabel(unittest.TestCase):
         }
 
     def test_default_label_matches_delivery_bytes_exactly(self):
-        with patch("gauntlet.post_review.warn_skip") as mock_warn:
+        with patch("gauntlet.delivery.post.warn_skip") as mock_warn:
             post_review._gated_finding(self._finding(), (3, 3), {}, {})
         mock_warn.assert_called_once_with("suggested-fix downgraded: f.py:3 (empty)")
 
     def test_custom_label_replaces_only_the_leading_word(self):
-        with patch("gauntlet.post_review.warn_skip") as mock_warn:
+        with patch("gauntlet.delivery.post.warn_skip") as mock_warn:
             post_review._gated_finding(
                 self._finding(), (3, 3), {}, {}, warn_label="report-patch"
             )

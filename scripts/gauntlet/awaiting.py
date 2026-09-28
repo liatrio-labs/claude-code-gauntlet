@@ -1063,4 +1063,4 @@ def main(argv=None, environ=None):
     return code
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="await_workflow.py")

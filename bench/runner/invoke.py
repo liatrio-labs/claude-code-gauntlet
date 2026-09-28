@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-from gauntlet.resolve_config import (
+from gauntlet.config import (
     KNOB_REGISTRY,
     ResolverError,
     ResolverSetupError,

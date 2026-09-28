@@ -87,8 +87,7 @@ import re
 import subprocess
 import sys
 
-# Reuse the assembler's JavaScript-compatible checksum and serialization pair.
-from gauntlet.assemble_artifacts import (
+from gauntlet.artifacts import (
     JS_MAX_SAFE_INTEGER,
     JsSerializationError,
     fnv1a32,
@@ -1789,4 +1788,4 @@ def _run_legacy(args, parser):
     )
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="verify_findings.py")

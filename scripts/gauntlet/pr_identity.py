@@ -106,4 +106,4 @@ def main(argv=None):
     return 0
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="resolve_pr_identity.py")

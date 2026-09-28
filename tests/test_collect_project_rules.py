@@ -43,11 +43,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, REPO_ROOT)
-
-from gauntlet import collect_project_rules  # noqa: E402
-from gauntlet.collect_project_rules import (  # noqa: E402
+from gauntlet import project_rules as collect_project_rules
+from gauntlet.project_rules import (
     DEFAULT_MAX_FILES,
     MAX_IMPORT_DEPTH,
     PROJECT_RULE_FILENAMES,
@@ -58,6 +55,9 @@ from gauntlet.collect_project_rules import (  # noqa: E402
     main,
     render,
 )
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "collect_project_rules.py")
 EMPTY_RULES_NOTICE = (

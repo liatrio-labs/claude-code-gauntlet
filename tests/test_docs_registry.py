@@ -21,7 +21,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from gauntlet import generate_contract_requirements as contract_generator
+from gauntlet import contract_gen as contract_generator
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -241,14 +241,7 @@ def _tracked_files():
         output = subprocess.run(
             ["git", "ls-files", "-z"], cwd=REPO, capture_output=True, check=True
         ).stdout.decode()
-        paths = {
-            path for path in output.split("\0") if path and (REPO / path).is_file()
-        }
-        paths.update(
-            str(path.relative_to(REPO))
-            for path in (REPO / "scripts/gauntlet").glob("*.py")
-        )
-        _TRACKED_FILES = tuple(sorted(paths))
+        _TRACKED_FILES = tuple(sorted(path for path in output.split("\0") if path))
     return _TRACKED_FILES
 
 

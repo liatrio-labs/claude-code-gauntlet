@@ -864,4 +864,4 @@ def main() -> int:
     return code
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="resolve_config.py")

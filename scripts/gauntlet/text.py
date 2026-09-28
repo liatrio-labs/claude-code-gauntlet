@@ -1,12 +1,15 @@
-"""Normalize severity with the JavaScript trim alphabet.
+"""Shared report severity normalization and JavaScript-compatible trim alphabet.
 
-The alphabet is shared with gauntlet.resolve_config and the JavaScript renderer.
+This stdlib-only library mirrors renderReport.js::normalizeReportSeverity.
+JS_TRIM_CHARS is the single shipped Python twin of JS String.prototype.trim,
+used by normalize_report_severity and scripts/resolve_config.py::one_line.
+It has no CLI and emits no receipt.
 """
 
 from collections.abc import Mapping
 
 # One hand-written alphabet mirrors JS String.prototype.trim.
-# Shared by normalize_report_severity and gauntlet.resolve_config.one_line.
+# Shared by normalize_report_severity and gauntlet.config.one_line.
 JS_TRIM_CHARS = (
     "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005"
     "\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"

@@ -97,9 +97,6 @@ import tempfile
 from typing import NamedTuple
 
 from gauntlet.cli import Command
-
-# Marker parsing remains in the reader; delivery imports only its prior-state helper.
-from gauntlet.detect_prior_review import gitlab_prior_delivery_state
 from gauntlet.diff import walk_diff
 from gauntlet.marker import (
     FINDING_MARKER_TOKEN,
@@ -111,6 +108,7 @@ from gauntlet.marker import (
     build_prose_footer,
     is_sha_shaped,
 )
+from gauntlet.prior_review import gitlab_prior_delivery_state
 from gauntlet.text import normalize_report_severity
 
 # ---------------------------------------------------------------------------
@@ -3705,4 +3703,4 @@ def main():
         sys.exit(status)
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="post_review.py")

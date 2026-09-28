@@ -17,12 +17,7 @@ Covers:
     header/hunk events carry none
 """
 
-import os
-import sys
 import unittest
-
-# Add project root to path so we can import scripts as a module
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from gauntlet.diff import DiffEvent, walk_diff
 

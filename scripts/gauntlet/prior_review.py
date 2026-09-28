@@ -775,4 +775,4 @@ def main():
     print(json.dumps(result, indent=2))
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="detect_prior_review.py")

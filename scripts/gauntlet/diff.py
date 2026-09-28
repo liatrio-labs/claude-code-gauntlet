@@ -1,6 +1,33 @@
-"""Walk unified diffs for the retained parsers.
+"""
+diff_lines.py — the one unified-diff walk the retained diff parsers share.
 
-Callers own GitHub and GitLab header-path semantics; this module owns diff syntax.
+SCOPE SPLIT, and the whole reason this module is thin: THE WALK lives here —
+header zone vs. hunk-body zone, the per-hunk budgets that separate them, the
+old/new line-number advance, and the wire spelling of a header path (git's TAB
+terminator and C-quoting, which mean the same thing everywhere). HEADER SEMANTICS
+stay in the callers. What a path spelling means (git's synthetic ``a/``/``b/``
+prefixes are diff syntax under ``gh pr diff`` and a real top-level directory under
+``glab mr diff``, which writes paths verbatim), what ``/dev/null`` implies, and
+which lines are worth recording at all are decisions the two callers answer
+differently — folding them in here would need a platform flag and would put one
+caller's answer on the other's path.
+
+The event vocabulary is the UNION of what both retained parsers need. The poster
+(``scripts/post_review.py::parse_diff_lines``) is a live reader of all three shapes: it
+keys its GitLab position fields off ``---``/``+++`` headers, reads a hunk's old count to
+recognise an added file (``@@ -0,0 +N,M @@``, the only added-file signal a verbatim-path
+diff carries), and reads a line's ``text`` as the content oracle its suggested-fix
+apply-check needs. A hunk event's ``new_count`` and ``new_line`` are still carried for
+symmetry with the old side but are read only by this module's own tests — the poster has
+no use for them. HEADER SEMANTICS still stay in the callers, per the scope split above.
+
+No external dependencies. stdlib only.
+
+Usage:
+    # Standalone / SKILL.md script invocation (scripts/ is on sys.path):
+    from diff_lines import walk_diff
+    # From pytest run at the repo root (repo root is on sys.path):
+    from scripts.diff_lines import walk_diff
 """
 
 from __future__ import annotations

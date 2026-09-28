@@ -708,4 +708,4 @@ def main(argv=None):
     return 0 if ok else 1
 
 
-CLI = Command.legacy(main)
+CLI = Command.legacy(main, prog="assemble_artifacts.py")

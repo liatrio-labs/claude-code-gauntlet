@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-from gauntlet.await_workflow import ARTIFACT_BASENAMES
+from gauntlet.awaiting import ARTIFACT_BASENAMES
 
 from bench.runner import citations
 from bench.runner.invoke import (

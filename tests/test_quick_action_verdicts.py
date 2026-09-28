@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import gauntlet.post_review as post_review
+import gauntlet.delivery.post as post_review
 import pytest
 
 from tests.test_outbound_contract import _assert_outbound_string_invariant

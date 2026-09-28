@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from gauntlet import generate_contract_requirements as generator
-from gauntlet import resolve_config as resolver
+from gauntlet import config as resolver
+from gauntlet import contract_gen as generator
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "resolve_config.py"
@@ -778,17 +778,17 @@ class TestGeneratedDataContracts(unittest.TestCase):
                 "skills/code-gauntlet/references/report-format.md",
                 "skills/code-gauntlet/references/headless-mode.md",
                 "skills/code-gauntlet/SKILL.md",
-                "scripts/gauntlet/resolve_config.py",
+                "scripts/gauntlet/config.py",
             },
             "Resolved config:": {
                 "workflows/src/renderReport.js",
                 "skills/code-gauntlet/references/report-format.md",
                 "skills/code-gauntlet/SKILL.md",
-                "scripts/gauntlet/resolve_config.py",
+                "scripts/gauntlet/config.py",
             },
             "HEADLESS CONFIG ERROR:": {
                 "skills/code-gauntlet/references/headless-mode.md",
-                "scripts/gauntlet/resolve_config.py",
+                "scripts/gauntlet/config.py",
             },
         }
         for token, paths in expected.items():

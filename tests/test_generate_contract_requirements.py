@@ -16,10 +16,9 @@ from copy import deepcopy
 from pathlib import Path
 from typing import ClassVar
 
-REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO))
+from gauntlet import contract_gen as gen
 
-from gauntlet import generate_contract_requirements as gen  # noqa: E402
+REPO = Path(__file__).resolve().parents[1]
 
 
 class TestDispatchRequiredSentence(unittest.TestCase):
@@ -561,7 +560,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
     # (rel_path, symbol) pair `identity_body` dispatches on, and the key set is
     # asserted equal to IDENTITY_FENCES below, so a new fence cannot ship unpinned.
     EXPECTED_BODIES: ClassVar[dict] = {
-        ("scripts/gauntlet/post_review.py", "constants"): (
+        ("scripts/gauntlet/delivery/post.py", "constants"): (
             'BRAND_MARK = "MARK"\n'
             'BRAND_NAME = "NAME"\n'
             "SEVERITY_EMOJI = {\n"
@@ -584,7 +583,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             '    "## Review Methodology",\n'
             "]"
         ),
-        ("scripts/gauntlet/render_fix_tasks.py", "constants"): (
+        ("scripts/gauntlet/fix_tasks.py", "constants"): (
             'BRAND_MARK = "MARK"\n'
             'BRAND_NAME = "NAME"\n'
             "SEVERITY_EMOJI = {\n"
@@ -600,7 +599,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "}\n"
             'RULE_SOURCE_LABEL_FALLBACK = "RF"'
         ),
-        ("scripts/gauntlet/render_fix_tasks.py", "detail_fields"): (
+        ("scripts/gauntlet/fix_tasks.py", "detail_fields"): (
             "_DETAIL_FIELDS_BY_DIMENSION = {\n"
             '    "bug": ("hidden_errors",),\n'
             '    "convention": ("claude_md_rule",),\n'
@@ -846,7 +845,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "\n"
             "- `configEcho.delta` (interactive runs): the delta source is present."
         ),
-        ("scripts/gauntlet/resolve_config.py", "knob_registry"): (
+        ("scripts/gauntlet/config.py", "knob_registry"): (
             "KNOB_REGISTRY = [\n"
             "    {\n"
             '        "key": "alpha",\n'
@@ -1384,7 +1383,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
     def test_resolver_fence_is_a_ruff_format_fixed_point(self):
         gen.apply_targets(str(self.root), check_only=False)
         ruff = shutil.which("ruff")
-        resolver_path = str(self.root / "scripts" / "gauntlet" / "resolve_config.py")
+        resolver_path = str(self.root / "scripts" / "gauntlet" / "config.py")
         results = []
         for command in (
             [ruff, "format", resolver_path],
@@ -1402,7 +1401,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
 
     def test_stale_resolver_fence_does_not_change_the_skill_receipt(self):
         gen.apply_targets(str(self.root), check_only=False)
-        resolver_path = self.root / "scripts" / "gauntlet" / "resolve_config.py"
+        resolver_path = self.root / "scripts" / "gauntlet" / "config.py"
         skill_path = self.root / "skills" / "code-gauntlet" / "SKILL.md"
         stale_skill = skill_path.read_bytes().replace(
             b"  model_tier=optimized (fixed)", b"  model_tier=STALE (fixed)", 1
@@ -1435,7 +1434,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             with self.subTest(corruption=label):
                 resolver_path.write_text(corrupted, encoding="utf-8")
                 stale = gen.apply_targets(str(self.root), check_only=True)
-                self.assertEqual(stale, ["scripts/gauntlet/resolve_config.py"])
+                self.assertEqual(stale, ["scripts/gauntlet/config.py"])
                 self.assertEqual(skill_path.read_bytes(), skill_before)
                 resolver_path.write_text(resolver_before, encoding="utf-8")
 
@@ -1470,7 +1469,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         self.assertEqual(
             stale,
             [
-                "scripts/gauntlet/resolve_config.py",
+                "scripts/gauntlet/config.py",
                 "skills/code-gauntlet/SKILL.md",
                 "skills/code-gauntlet/references/phase2-triage.md",
                 "skills/code-gauntlet/references/phase1-preflight.md",
@@ -1492,13 +1491,13 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
 
         # Keep the resolver mirror current for this isolated semantic change. The receipt
         # fixture has no waistPath, so only the three derived-waist mirrors should drift.
-        resolver_path = self.root / "scripts" / "gauntlet" / "resolve_config.py"
+        resolver_path = self.root / "scripts" / "gauntlet" / "config.py"
         resolver_identity = gen.load_registry(str(self.root))
         resolver_text = resolver_path.read_text(encoding="utf-8")
         resolver_path.write_text(
             gen.fill_identity_fences(
                 resolver_text,
-                "scripts/gauntlet/resolve_config.py",
+                "scripts/gauntlet/config.py",
                 resolver_identity,
                 str(self.root),
             ),
