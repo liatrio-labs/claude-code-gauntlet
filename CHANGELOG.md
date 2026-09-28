@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v3.42.5 (2026-09-28)
+
+### Bug Fixes
+
+- Address the gauntlet's two below-threshold notes
+  ([#402](https://github.com/liatrio-labs/claude-code-gauntlet/pull/402),
+  [`e73876c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e73876c342bb0e9a194f440be244d5f117e36ffa))
+
+- Carry the run nonce in the triage heredoc delimiter
+  ([#402](https://github.com/liatrio-labs/claude-code-gauntlet/pull/402),
+  [`e73876c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e73876c342bb0e9a194f440be244d5f117e36ffa))
+
+- Write the shared agent context with a script
+  ([#402](https://github.com/liatrio-labs/claude-code-gauntlet/pull/402),
+  [`e73876c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e73876c342bb0e9a194f440be244d5f117e36ffa))
+
+- Write the shared agent context with a script (#395)
+  ([#402](https://github.com/liatrio-labs/claude-code-gauntlet/pull/402),
+  [`e73876c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e73876c342bb0e9a194f440be244d5f117e36ffa))
+
+### Testing
+
+- Pin the triage bytes in the heredoc delimiter test
+  ([#402](https://github.com/liatrio-labs/claude-code-gauntlet/pull/402),
+  [`e73876c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e73876c342bb0e9a194f440be244d5f117e36ffa))
+
+
 ## v3.42.4 (2026-09-28)
 
 ### Bug Fixes
