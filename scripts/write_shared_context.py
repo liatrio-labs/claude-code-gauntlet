@@ -61,9 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     rules = _read_input(rules_path, "project rules file")
     diff = _read_input(diff_path, "diff file")
 
+    if sys.stdin is None:
+        fail(PROG, "cannot read stdin")
     try:
-        if sys.stdin is None:
-            raise OSError
         triage = sys.stdin.buffer.read()
     except OSError:
         fail(PROG, "cannot read stdin")

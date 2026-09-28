@@ -123,6 +123,3 @@ computes the exact offsets from `contextLines`/`contextChars` stamped by the ski
 arithmetic, not an instruction to paginate. Stages receive a prebuilt sentence, never the context
 path, so they cannot construct a read instruction of their own. Do not re-thread `contextPath` into
 a stage input, and never replace that structural property with a phrase check.
-
-`contextLines` counts as `cat -n` does, not `wc -l` (which reports one fewer without a trailing
-newline). It is `1` for an empty file.
