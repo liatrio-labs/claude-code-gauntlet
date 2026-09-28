@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v3.42.4 (2026-09-28)
+
+### Bug Fixes
+
+- Pass the output directory to Phase 2 scripts as argv
+  ([#397](https://github.com/liatrio-labs/claude-code-gauntlet/pull/397),
+  [`4da9cdc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4da9cdcea5286e23093e0fe10e9287f9ca6b0edd))
+
+- Pass the output directory to Phase 2 scripts as argv (#394)
+  ([#397](https://github.com/liatrio-labs/claude-code-gauntlet/pull/397),
+  [`4da9cdc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4da9cdcea5286e23093e0fe10e9287f9ca6b0edd))
+
+- Use the in-call SHA for local truncation and harden the checks
+  ([#397](https://github.com/liatrio-labs/claude-code-gauntlet/pull/397),
+  [`4da9cdc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4da9cdcea5286e23093e0fe10e9287f9ca6b0edd))
+
+### Refactoring
+
+- Share the one-line CLI error path and report partial truncation
+  ([#397](https://github.com/liatrio-labs/claude-code-gauntlet/pull/397),
+  [`4da9cdc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4da9cdcea5286e23093e0fe10e9287f9ca6b0edd))
+
+### Testing
+
+- Self-test the placeholder guard and pin GitLab multi-file counts
+  ([#397](https://github.com/liatrio-labs/claude-code-gauntlet/pull/397),
+  [`4da9cdc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4da9cdcea5286e23093e0fe10e9287f9ca6b0edd))
+
+
 ## v3.42.3 (2026-09-26)
 
 ### Bug Fixes
