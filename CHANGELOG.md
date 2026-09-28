@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v3.42.7 (2026-09-28)
+
+### Bug Fixes
+
+- Pin gauntlet agents to Opus 5.5 and Sonnet 5.5
+  ([#429](https://github.com/liatrio-labs/claude-code-gauntlet/pull/429),
+  [`18d497a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/18d497a4873b31c1096a67f3f0e69c50d7f2f2fe))
+
+### Chores
+
+- **deps**: Bump the actions group with 2 updates
+  ([#405](https://github.com/liatrio-labs/claude-code-gauntlet/pull/405),
+  [`f3946f7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f3946f73e18eeecd2bae0c24a678cb8e1c48b886))
+
+### Continuous Integration
+
+- Lower the Python coverage floor to 93.7
+  ([#429](https://github.com/liatrio-labs/claude-code-gauntlet/pull/429),
+  [`18d497a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/18d497a4873b31c1096a67f3f0e69c50d7f2f2fe))
+
+
 ## v3.42.6 (2026-09-28)
 
 ### Bug Fixes
