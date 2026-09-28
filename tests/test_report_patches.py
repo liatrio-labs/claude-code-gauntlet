@@ -2086,7 +2086,7 @@ class TestFilteredEarlier(ReportPatchesTestBase):
                     "line": 1,
                     "end_line": 1,
                     "title": "Filtered",
-                    "suggested_fix_code_removed_by": "filter_findings.py",
+                    "suggested_fix_code_removed_by": "injection_filter",
                 }
             ]
         )

@@ -1070,9 +1070,8 @@ _FIX_REASONS = frozenset(
 
 # Delivery bound on fence content. `suggestion` prose is deliberately uncapped —
 # a human reads it — but a fence is committed by one click, so it is bounded here
-# unconditionally. The SAME two numbers bound the field upstream in the filter
-# twins (scripts/filter_findings.py and workflows/src/filterFindings.js); change
-# all three together.
+# unconditionally. The same two numbers bound the field upstream in
+# workflows/src/filterFindings.js; change both sites together.
 #
 # ONE definition of both measures, in all three homes: they are taken on the
 # NORMALIZED text (`_fix_code_text` — the single terminating newline removed).
@@ -1894,8 +1893,8 @@ def consolidate_delivery(findings):
                 group["corroborators"].append(f)
         else:
             group["corroborators"].append(f)
-    # Reachable only for hand-assembled payloads: filter_findings.py /
-    # filterFindings.js always stamp exactly one consolidation_primary per
+    # Reachable only for hand-assembled payloads: filterFindings.js stamps
+    # exactly one consolidation_primary per
     # group. If a caller's data has none, don't drop the group's first-seen
     # member — treat it as the primary rather than surface `None`.
     for group in groups:

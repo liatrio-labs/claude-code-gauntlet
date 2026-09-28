@@ -127,22 +127,16 @@ git diff --exit-code workflows/pipeline.js
 
 ### Parity fixtures
 
-Five deterministic transforms (`mergeFindings`, `findingDedup`, `filterFindings`, `applyValidations`,
-`applyChallenges`) exist twice: as JS stages in the bundle and as the authoritative Python twins under `scripts/`.
-They are held at parity by frozen golden fixtures at
-`tests/fixtures/parity/<script>/[<group>/]<case>/{input,expected}.json`, which both runtimes replay. Four of the
-five scripts keep their cases directly under `<script>/`; `filter_findings` groups every one of its cases a level
-deeper (for example `tests/fixtures/parity/filter_findings/consolidate_cross_agent/core_wins/`), which is why the
-recorder walks the whole tree instead of listing a single level.
-
-Never hand-edit a fixture to make a test pass — a fixture that no longer matches recorded behavior is exactly the
-drift the fixtures exist to catch. When a transform's intended behavior genuinely changes, change the Python twin
-and the JS stage together, then regenerate with the recorder and review the resulting diff:
+The five transform families (`merge_findings`, `finding_dedup`, `filter_findings`,
+`apply_validations`, `apply_challenges`) are JavaScript-owned. Their golden fixtures live at
+`tests/fixtures/parity/<family>/[<group>/]<case>/{input,expected}.json`.
+When intended behavior changes, update the JavaScript transform and regenerate its goldens with
+`UPDATE_GOLDENS=1` in a reviewed diff. Do not hand-edit expected files to make a test pass.
+The three verify-wire families remain Python-recorded.
 
 ```bash
-python3 workflows/test/tools/record_parity.py                  # every case
-python3 workflows/test/tools/record_parity.py filter_findings  # one script
-python3 workflows/test/tools/record_parity.py --check           # verify goldens are fresh, writes nothing
+UPDATE_GOLDENS=1 node --test workflows/test/goldens.test.js
+python3 workflows/test/tools/record_parity.py --check
 ```
 
 ### Outbound render probes

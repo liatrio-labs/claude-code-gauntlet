@@ -113,31 +113,31 @@ function assertOrWrite(testCase, result) {
 }
 
 for (const c of loadCases('finding_dedup')) {
-  test(`finding_dedup parity: ${c.name}`, () => {
+  test(`finding_dedup golden: ${c.name}`, () => {
     assertOrWrite(c, runFindingDedup(c.input));
   });
 }
 
 for (const c of loadCases('merge_findings')) {
-  test(`merge_findings parity: ${c.name}`, () => {
+  test(`merge_findings golden: ${c.name}`, () => {
     assertOrWrite(c, runMergeFindings(c.input));
   });
 }
 
 for (const c of loadCases('apply_validations')) {
-  test(`apply_validations parity: ${c.name}`, () => {
+  test(`apply_validations golden: ${c.name}`, () => {
     assertOrWrite(c, runApplyValidations(c.input));
   });
 }
 
 for (const c of loadCases('filter_findings')) {
-  test(`filter_findings parity: ${c.name} (${c.input.fn})`, () => {
+  test(`filter_findings golden: ${c.name} (${c.input.fn})`, () => {
     assertOrWrite(c, runFilterFindings(c.input));
   });
 }
 
 for (const c of loadCases('apply_challenges')) {
-  test(`apply_challenges parity: ${c.name}`, () => {
+  test(`apply_challenges golden: ${c.name}`, () => {
     const snapshot = c.name === 'deep_copy_no_mutation_of_input'
       ? structuredClone(c.input.findings)
       : null;

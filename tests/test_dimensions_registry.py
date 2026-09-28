@@ -47,7 +47,9 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from scripts import generate_contract_requirements as contract_gen  # noqa: E402
-from scripts.filter_findings import _FIELD_RENAMES  # noqa: E402
+from tests.support.js_values import js_values  # noqa: E402
+
+_FIELD_RENAMES = js_values()["FIELD_RENAMES"]
 
 DELIVERY_GUIDE = REPO / "skills/code-gauntlet/references/delivery-guide.md"
 
@@ -772,8 +774,8 @@ class TestContractSchemaLockstep(unittest.TestCase):
         # apostrophes that way — so a contract edit made with that rule in context puts it
         # back, which is exactly how the residue #68 removes got there. Pinned as a class,
         # not as one spelling: any printable ASCII character written as an escape is the
-        # same mistake. Scoped to the discovery contracts, so the deliberate `\u0027` in
-        # tests/test_validate_ndjson.py and in test_agent_contracts.py's comment stay clear.
+        # same mistake. Scoped to discovery contracts; test examples may deliberately
+        # contain escapes.
         offenders = {}
         for agent_type in declared_by_agent():
             name = agent_name(agent_type)
@@ -1242,10 +1244,8 @@ class TestReportFormatFieldTables(unittest.TestCase):
 class TestDeliveryVocabularySurfaces(unittest.TestCase):
     """Pin report vs delivery field vocabulary to `_FIELD_RENAMES`.
 
-    `_FIELD_RENAMES` is underscore-private on `scripts.filter_findings`; this
-    import is deliberate — same pattern as other parity pins that reach private
-    script surfaces — so a rename-map change fails this guard for the right
-    reason instead of both docs drifting together away from code.
+    The JavaScript filter owns this map, so a rename-map change fails this
+    guard instead of both docs drifting together away from code.
 
     Report markdown uses the canonical name; delivery-guide examples document
     the post_review *read* surface (aliases). The persisted findings.json is a

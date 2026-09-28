@@ -130,7 +130,7 @@ def _tracked_bootstrap_modules():
         if not raw_path:
             continue
         relpath = raw_path.decode("utf-8")
-        if relpath.startswith(BOOTSTRAP_ROOTS):
+        if relpath.startswith(BOOTSTRAP_ROOTS) and (REPO / relpath).is_file():
             yield relpath
 
 
@@ -138,18 +138,9 @@ class TestWriteResult(unittest.TestCase):
     def test_stdout_escapes_lone_surrogates_and_stays_parseable(self):
         output = io.StringIO()
         with redirect_stdout(output):
-            write_result(None, {"value": "bad\ud800"})
+            write_result({"value": "bad\ud800"})
         self.assertIn(r"\ud800", output.getvalue())
         self.assertEqual(json.loads(output.getvalue())["value"], "bad\ud800")
-
-    def test_file_escapes_lone_surrogates(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "result.json"
-            write_result(str(path), {"value": "bad\udfff"})
-            self.assertIn(r"\udfff", path.read_text(encoding="utf-8"))
-            self.assertEqual(
-                json.loads(path.read_text(encoding="utf-8"))["value"], "bad\udfff"
-            )
 
 
 class TestUtf8Stdio(unittest.TestCase):

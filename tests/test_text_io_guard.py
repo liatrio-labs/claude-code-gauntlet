@@ -521,7 +521,9 @@ def _tracked_python_paths() -> list[str]:
     return [
         path
         for path in tracked
-        if path.startswith(SCANNED_ROOTS) and not path.startswith(EXCLUDED_ROOTS)
+        if path.startswith(SCANNED_ROOTS)
+        and not path.startswith(EXCLUDED_ROOTS)
+        and (REPO_ROOT / path).is_file()
     ]
 
 

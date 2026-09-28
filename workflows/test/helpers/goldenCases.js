@@ -5,8 +5,7 @@ import { dirname, join, relative } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, '..', '..', '..', 'tests', 'fixtures', 'parity');
 
-// Recursively find fixture cases: filter_findings groups cases one level deeper
-// than finding_dedup and merge_findings, so descend until input.json is found.
+// Find fixture cases at any depth; each case directory contains input.json.
 function findCaseDirs(dir) {
   if (existsSync(join(dir, 'input.json'))) return [dir];
   const out = [];

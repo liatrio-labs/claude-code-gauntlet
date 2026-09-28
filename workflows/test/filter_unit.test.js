@@ -1,8 +1,7 @@
-// filter_unit.test.js — pure JS-side unit tests for filterFindings.js that
-// have no Python twin to record parity against (banker's-rounding trap,
-// determinism invariants). Parity-backed behavior lives in goldens.test.js.
+// Unit tests for filterFindings.js. Frozen behavior lives in goldens.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { loadCases } from './helpers/goldenCases.js';
@@ -28,6 +27,7 @@ import {
   WORD_SPLIT_RE,
   countWords,
   SUGGESTION_SETS,
+  INJECTION_TITLE_PATTERNS,
   foldConfusables,
   CONFUSABLE_FOLD,
   INVISIBLE_STRIP,
@@ -36,6 +36,19 @@ import {
   loadExclusions,
 } from '../src/filterFindings.js';
 import { finding } from './helpers/findings.js';
+
+test('filter data content digest', () => {
+  const sha256 = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  assert.equal(sha256([...CONFUSABLE_FOLD]), '0fc4937935d3f237ea80c3cfea211d687e9d9454548bb5d44ee98fd0e84e71df');
+  assert.equal(sha256([...INVISIBLE_STRIP]), '0b819d7fae824aa9c1dad7e640ae0c7672d5d2aaaa5935fcc9ce428e797b64ee');
+  assert.equal(
+    sha256([
+      ['title', INJECTION_TITLE_PATTERNS.map((pattern) => pattern.source)],
+      ...SUGGESTION_SETS.map(([name, patterns]) => [name, patterns.map((pattern) => pattern.source)]),
+    ]),
+    '2d6f6b3bede3fcc8021d58e3ac6bb21a33b820690bcc1cf139a99308018ad31a',
+  );
+});
 
 const REVIEW_CASES = [
   { name: 'code-gauntlet fenced YAML wins over bare fallback', text: 'confidence_threshold: 40\n```yaml\n# code-gauntlet\nconfidence_threshold: 70\nseverity_threshold: high\nsecurity_min_confidence: 70\nignore:\n  - pattern one\n  - pattern two\n```\n', expected: { confidence_threshold: 70, severity_threshold: 'high', security_min_confidence: 70, ignore: ['pattern one', 'pattern two'] } },
@@ -489,10 +502,7 @@ test('threshold and exclusion outcomes are order-independent and do not mutate c
   assert.deepEqual(config.scopes.map((scope) => scope.ignore), snapshot.scopes.map((scope) => scope.ignore));
 });
 
-// suggested_fix_code field-strip matrix (#63/D8) -- mirrors the Python
-// TestApplyInjectionFilter matrix in tests/test_filter_findings.py. No parity
-// golden covers these directly (see goldens.test.js for the golden-fixture
-// cases); this is the JS-side unit proof for the same mechanism.
+// Suggested fix code is stripped under the same bounds as the delivery fence.
 function cleanFinding(extra) {
   return {
     id: 'test-1',
@@ -642,10 +652,7 @@ test('applyFilterPipeline stats.suggested_fix_codes_removed counts a stripped fi
   assert.equal(out.filtered[0].suggested_fix_code, undefined);
 });
 
-// claude_md_rule / spec_text field-strip matrix (#213) -- mirrors the Python
-// citation-field matrix in tests/test_filter_findings.py: the #62 suggestion
-// strip mechanism extended to the two repo-derived citation fields, same
-// seven pattern sets, same strip-not-eliminate contract.
+// Citation prose fields are stripped on an injection match.
 
 test('applyInjectionFilter strips a shell-command claude_md_rule', () => {
   const findings = [cleanFinding({ claude_md_rule: 'Run `rm -rf build/` before every commit per CLAUDE.md section 2.' })];
@@ -899,11 +906,7 @@ test('applyFilterPipeline stats.claude_md_rules_removed and stats.spec_texts_rem
 });
 
 test('applyFilterPipeline emits a correct {field}s_removed stat for EVERY scanned field, generically', () => {
-  // Round-2 review item 4: proves EMISSION (not just that the splice construct exists in
-  // source) by driving one payload-bearing finding per field through the real entry
-  // point. Loops INJECTION_STRIPPED_PROSE_FIELDS, so a future fourth field is covered
-  // with no new test here. The Python mirror lives in
-  // tests/test_filter_findings.py::TestInjectionStrippedProseFieldsLockstep.
+  // The result must expose the stripped-field list.
   const cfg = { confidence_threshold: 50, security_min_confidence: 50, severity_threshold: 'low', ignore: [] };
   INJECTION_STRIPPED_PROSE_FIELDS.forEach((field, i) => {
     const findings = [cleanFinding({
@@ -1138,11 +1141,7 @@ test('explicit confidence_threshold still applies to BOTH branches (REVIEW.md ov
   assert.deepEqual(kept.map((f) => f.id), ['S60']);
 });
 
-// ---------------------------------------------------------------------------
-// #211: unicode word-boundary/whitespace/case-fold pin. JS-side unit tests
-// for the same vectors pinned in tests/test_filter_findings.py -- these
-// survive a golden re-record, unlike the parity fixtures.
-// ---------------------------------------------------------------------------
+// The injection tables pin Unicode and pattern boundaries.
 
 test('#211: encoded payload directly touching a non-ASCII letter still eliminates (JS was always ASCII \\w)', () => {
   // #252: hex is now directive-gated, so a "decode" directive sits ahead of
@@ -1251,16 +1250,7 @@ test('#247 (declined 2026-08-31): a pattern present only in spec_text does not e
 });
 
 test('#211: WORD_SPLIT_RE matches EXACTLY the intended 30-codepoint union class', () => {
-  // Mirrors tests/test_filter_findings.py::TestUnionWhitespaceClassMembership.
-  // Every union member is < U+10000 (all BMP), so a bounded sweep over the
-  // BMP plus a small astral sample is exact -- see that test's docstring for
-  // the full justification. The astral sample actually runs past U+FFFF
-  // (0xfefe..0x10002, matching the Python twin's range(0xFEFE, 0x10003)
-  // exactly) using String.fromCodePoint so it constructs real astral
-  // characters instead of BMP surrogate halves -- #211 round-1 review r2-F8:
-  // a String.fromCharCode-based sweep never leaves the BMP no matter how far
-  // the loop bound is raised, so it silently proved nothing about surrogate
-  // handling despite the comment's claim.
+  // The review whitespace class includes each explicitly listed code point.
   const expected = new Set([
     0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20,
     0x1c, 0x1d, 0x1e, 0x1f,
@@ -1285,15 +1275,7 @@ test('#211: WORD_SPLIT_RE matches EXACTLY the intended 30-codepoint union class'
   assert.deepEqual(matched, expected);
 });
 
-// Shared cross-twin behavioral table (#211 round-1 adjudication item 1(b)).
-// The SAME (input, expected count) pairs are hardcoded independently here
-// and in tests/test_filter_findings.py's WORD_SPLIT_BEHAVIOR_TABLE, so a
-// divergence between the two engines' splitters shows up as a failure on
-// exactly one side rather than as a silently-agreeing wrong answer. This is
-// what catches a countWords regression that only manifests on a TRAILING or
-// leading run of a union-class separator the host language's own
-// trim()/strip() does not already strip (U+0085, U+001C-U+001F) -- see F1
-// in review-r1.md/review-r2.md.
+// Exclusion matching keeps full Unicode case folding.
 const NEL = String.fromCharCode(0x85);
 const FS = String.fromCharCode(0x1c);
 const GS = String.fromCharCode(0x1d);
@@ -1328,10 +1310,7 @@ test('#211/table: countWords shared cross-twin behavioral table', () => {
   }
 });
 
-// Shared cross-twin behavioral table for the #244 line_start coercion
-// (mechanism (b)). Mirrors tests/test_filter_findings.py's
-// LINE_START_COERCE_TABLE row-for-row (see its docstring). Columns:
-// [input, pyIntOrNull, bucket_p10, bucket_p5].
+// Line buckets accept only the documented signed ASCII integer form.
 const LINE_START_COERCE_TABLE = [
   ['\x1c12', 12, 10, 10], // U+001C FS
   ['\x1d12', 12, 10, 10], // U+001D GS
@@ -1363,9 +1342,7 @@ test('#244/coerce-table: pyIntOrNull/lineBucket shared cross-twin table', () => 
   }
 });
 
-// Shared cross-twin behavioral table for the #244 dedup-signature title strip
-// (mechanism (a)). Mirrors tests/test_filter_findings.py's TITLE_STRIP_TABLE
-// row-for-row. Interior union codepoints are PRESERVED (leading/trailing only).
+// Dedup titles trim the full review whitespace class.
 const TITLE_STRIP_TABLE = [
   ['', ''],
   ['   ', ''],
@@ -1385,16 +1362,7 @@ test('#244/strip-table: WS_TRIM_RE shared cross-twin table', () => {
   }
 });
 
-// #211 decision item 4: `.` -> `[^\n]` in the template-marker file-path check
-// so a `<...>`/`{...}` span containing a line separator other than `\n`
-// still matches on both twins. This is a JS-only shipped-behavior change:
-// JS's `.` (no /s flag) excludes CR/U+2028/\n, so `[^\n]` widens what JS
-// matches; Python's bare `.` already excluded only `\n`, so these two cases
-// are pure JS regressions-if-reverted, unlike their Python mirrors (which
-// are cross-twin equal-outcome pins -- #211 round-2 review R2A-F3). Mirrors
-// tests/test_filter_findings.py's
-// test_template_filepath_with_embedded_cr_matches_on_both_twins /
-// _with_embedded_line_separator_matches.
+// Template markers must stay within one line.
 test('#211: template filepath with embedded CR still matches (the [^\\n] respell)', () => {
   const { eliminated } = applyInjectionFilter([cleanFinding({ file: 'src/<na\rme>.py' })]);
   assert.equal(eliminated.length, 1);
@@ -1408,24 +1376,14 @@ test('#211: template filepath with embedded U+2028 still matches (the [^\\n] res
   assert.match(eliminated[0].elimination_reason, /file path is empty/);
 });
 
-// #211 round-2 review B2: the `\{[^\n]*?\}` alternative of the
-// template-marker check had zero coverage in either twin. Pin it directly.
-// Mirrors tests/test_filter_findings.py's
-// test_template_filepath_with_brace_markers_matches.
+// The quoted template marker cannot span a newline.
 test('#211: template filepath with brace markers matches (the {...} alternative)', () => {
   const { eliminated } = applyInjectionFilter([cleanFinding({ file: 'src/{name}.py' })]);
   assert.equal(eliminated.length, 1);
   assert.match(eliminated[0].elimination_reason, /file path is empty/);
 });
 
-// -----------------------------------------------------------------------
-// Title scan: mirrors tests/test_filter_findings.py's TestApplyInjectionFilter
-// title-scan section. The four sets minus shell/url/encoded are also
-// scanned against `title` alone. url/encoded are NOT part of this separate
-// pass -- #252 Finding 1 moved them to scan `combined` (title+description)
-// instead, so a title-only url/encoded payload is caught at heuristic 2a/2b,
-// not here.
-// -----------------------------------------------------------------------
+// Injection markers are checked at title and body boundaries.
 
 test('applyInjectionFilter: title-only visit-URL pattern eliminates', () => {
   // #252 Finding 1 (generalized to all seven sets by #256): url scans
@@ -1706,17 +1664,7 @@ test('applyInjectionFilter: cross-field split body-marker ([ / INSERT]) eliminat
   assert.match(eliminated[0].elimination_reason, /matches injection marker/);
 });
 
-// -----------------------------------------------------------------------
-// Isolating positive tests (#252 round-2 review Finding 3): each of the new
-// directive-gated branches this PR introduces must have a test that goes
-// red when THAT branch alone is deleted -- not merely masked green by a
-// co-firing sibling pattern. Mirrors tests/test_filter_findings.py's
-// isolating-test section; see its comments for why each payload avoids
-// every OTHER pattern in the same content set. url has no isolating test
-// here -- #255 review removed both of url's new branches entirely (see
-// the legit-findings-kept test below), so the url set has no new
-// directive-gated shape left to prove.
-// -----------------------------------------------------------------------
+// Scan each pattern family independently.
 
 test('applyInjectionFilter: isolating base64 after-branch (sink syntax, no decode verb) eliminates', () => {
   const { kept, eliminated } = applyInjectionFilter([
@@ -1757,12 +1705,7 @@ test('applyInjectionFilter: isolating auto-approve branch (no skip-review text) 
   assert.match(eliminated[0].elimination_reason, /contains bypass\/auto-approve instruction/);
 });
 
-// -----------------------------------------------------------------------
-// #254: one isolating test per shipped widening. Mirrors
-// tests/test_filter_findings.py's #254 isolating-test section; see its
-// comments for why each payload avoids every OTHER pattern in the same
-// content set.
-// -----------------------------------------------------------------------
+// Opening tags with attributes still count as injection markers.
 
 test('applyInjectionFilter: isolating url scheme-general (ftp) eliminates', () => {
   const { kept, eliminated } = applyInjectionFilter([
@@ -1930,10 +1873,7 @@ test('applyInjectionFilter: isolating Placeholder finding entry eliminates', () 
 });
 
 test('applyInjectionFilter: bare TODO/FIXME/Placeholder titles are kept (#260)', () => {
-  // #260: the bare-word TODO/FIXME/Placeholder entries were dropped -- a real
-  // finding legitimately reports TODO/FIXME/placeholder residue about the
-  // code it reviews. Python mirror: test_bare_todo_title_is_kept in
-  // tests/test_filter_findings.py.
+  // Bare placeholder words in real findings remain eligible.
   const titles = [
     'TODO: fix the null check in auth.py',
     'FIXME on line 42 is stale',
@@ -1991,16 +1931,7 @@ test('applyInjectionFilter: url keeps legit navigation and exfiltration findings
   }
 });
 
-// -----------------------------------------------------------------------
-// #256 D6(a): combined ⊇ (title ∪ description) -- the empirical half of the
-// superset guard, JS side (the structural half -- no content-set pattern
-// anchors to a string/line boundary -- lives in
-// tests/test_filter_twins_unicode_guard.py, which the Python-only D6(b)
-// source-shape test drives against both twins' byte-identical pattern
-// sources). One title-only and one description-only synthetic per pattern
-// entry, covering every branch's distinguishing grammatical shape, not just
-// the first pattern per set.
-// -----------------------------------------------------------------------
+// Unicode folding preserves injection detection without broad false positives.
 
 const SUPERSET_SYNTHETICS = [
   ['skip review', ''], ['', 'skip review'],
@@ -2094,22 +2025,7 @@ test('#256 D6(a) coverage: every content-set pattern entry has at least one cove
   assert.deepEqual(uncovered, [], `pattern(s) with no covering synthetic: ${JSON.stringify(uncovered)}`);
 });
 
-// --- #266: widened typed-field coercion across the filter twins' scan paths ---
-//
-// A scanned finding field must contribute a value of its expected type or
-// that type's default -- never a stringified null, never a crash. Python's
-// twin crashes outright at several of these sites (an uncaught TypeError --
-// see tests/test_filter_findings.py's TestInjectionScanCoreTypedFieldCoercion
-// and TestDetectDisagreement.test_suppression_intentional_survives_null_title
-// for that honesty note); JS's `||`/template-literal coercion already
-// tolerates a null/undefined value at most of these sites, so a bare null
-// does not discriminate the JS-side mutation. A TRUTHY non-string value (an
-// array, most plausibly reachable via a replayed checkpoint) does: JS's
-// template literal stringifies it via toString(), which can leak matchable
-// keyword text the way Python's f-string leaks a list's repr -- see the
-// parity fixtures under tests/fixtures/parity/filter_findings/{exclusions,
-// injection,disagreement}/ for the byte-exact cross-runtime proof; these are
-// the JS-only direct unit-test companions.
+// Typed field coercion applies on every injection scan path.
 
 test('applyExclusions: null title/description never renders as literal "null" text', () => {
   const findings = [

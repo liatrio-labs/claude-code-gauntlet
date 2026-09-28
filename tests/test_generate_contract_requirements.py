@@ -307,9 +307,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
 
     None of these is reachable from the real tree — it is well formed — so without
     direct cases the whole guard block deletes green, and `--check` would then call a
-    file carrying real marker debris current. Mirrors
-    tests/test_generate_filter_patterns.py's TestMarkerPairs, the precedent this idiom
-    is lifted from.
+    file carrying real marker debris current. These cases pin marker pairs directly.
     """
 
     # Bodies are a pure function of this dict, so the guards can be driven without

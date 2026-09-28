@@ -26,9 +26,10 @@ from typing import ClassVar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from scripts import apply_challenges, post_review
 from scripts import generate_contract_requirements as gen
+from scripts import post_review
 from tests import test_machine_parsed_strings as registry_doc
+from tests.support.js_values import js_values
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -299,11 +300,10 @@ class TestIdentitySurface(unittest.TestCase):
         decides which severities render their own emoji instead of the fallback bulb.
         Both ride on an object literal's undeclared order unless they are pinned to
         the list that already owns severity ordering repo-wide
-        (`scripts/apply_challenges.py`'s SEVERITY_ORDER, twin of
-        `workflows/src/filterFindings.js`'s).
+        (`workflows/src/filterFindings.js`'s SEVERITY_ORDER).
         """
         self.assertEqual(
-            list(post_review.SEVERITY_EMOJI), apply_challenges.SEVERITY_ORDER
+            list(post_review.SEVERITY_EMOJI), js_values()["SEVERITY_ORDER"]
         )
 
     def test_the_declaring_sources_carry_no_literal_mark_bytes(self):
