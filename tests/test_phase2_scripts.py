@@ -1,4 +1,4 @@
-"""Regression tests for the Phase 2 path-safe helper gauntlet."""
+"""Regression tests for the Phase 2 path-safe helper scripts."""
 
 from __future__ import annotations
 

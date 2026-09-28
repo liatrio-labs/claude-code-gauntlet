@@ -569,7 +569,7 @@ def render(sources, review_sources=()):
 
 def write_text_atomic(path, text):
     """Write via a temp file in the same directory, then rename (mirrors
-    assemble_artifacts.py's write_text_atomic). Opening the destination
+    gauntlet.artifacts' write_text_atomic). Opening the destination
     directly would truncate it before the encode, leaving a zero-byte file at
     a planned path on any failure; os.replace() is atomic within a
     filesystem, so the destination is always either its old content or the

@@ -16,7 +16,9 @@ from gauntlet.jsjson import dumps
 def require_head_sha(value: str) -> None:
     """Reject values outside the lowercase abbreviated/full Git SHA shape."""
     if re.fullmatch(r"[0-9a-f]{4,40}", value) is None:
-        raise CliError("--head-sha must be 4 to 40 lowercase hexadecimal characters", 2)
+        raise UsageError(
+            "--head-sha must be 4 to 40 lowercase hexadecimal characters", 2
+        )
 
 
 def utf8_stdio() -> None:

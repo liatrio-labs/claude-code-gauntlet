@@ -622,7 +622,7 @@ def elide_persist_return(terminal, resolved_path):
     whole point of the channel, and it is also why this stdout must not carry
     them: the documented caller is a Bash tool call, so every byte printed here
     lands in the orchestrator's context. Fine at 1.5 KB, wasteful at 60 KB, and
-    pointless either way — `scripts/materialize_artifacts.py` reads the same
+    pointless either way — `gauntlet.materialize` reads the same
     payload out of the file, which is the copy nothing has retyped.
 
     So `entries` is replaced by `paths` — deliberately a DIFFERENT key, not an
@@ -772,7 +772,7 @@ def _wait_error_payload(args, message):
 def emit(payload):
     """Print *payload* as exactly one compact JSON line.
 
-    Compact, never indent=2: this is `assemble_artifacts.py`'s rule and it holds
+    Compact, never indent=2: this is `gauntlet.artifacts`' rule and it holds
     for the same reason — a pretty-printer's embedded newlines would split the one
     line the caller is told to read. If the payload will not serialize, a
     hand-built minimal line goes out instead, because printing nothing is the one

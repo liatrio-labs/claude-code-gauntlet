@@ -117,8 +117,50 @@ REQUIRED_ONLY = {
     "materialize_artifacts": "--output-dir {dir}",
     "stale_truncate": "--output-dir {dir}",
 }
-PATH_BEARING = set(MAIN_FAILURE) - {"diff_numstat", "resolve_pr_identity"}
 WINDOWS_PATHS = "the parent POSIX path receipts cannot be compared with Windows paths"
+WINDOWS_EXCEPTIONS = {
+    ("emit_style_context", "failure"): "chmod 0 does not deny reads on Windows",
+    (
+        "write_shared_context",
+        "success",
+    ): "the parent write_text input uses CRLF on Windows",
+}
+
+
+def _windows_skip(name, case, *, platform=None):
+    if (os.name if platform is None else platform) != "nt":
+        return None
+    if (name, case) in WINDOWS_EXCEPTIONS:
+        return WINDOWS_EXCEPTIONS[name, case]
+    recorded_stdout = RECORDED[f"{name}/{case}"][1]
+    if "<TMP>" in recorded_stdout or "<ROOT>" in recorded_stdout:
+        return WINDOWS_PATHS
+    return None
+
+
+@pytest.mark.parametrize(
+    ("name", "case"),
+    (
+        ("build_style_artifacts", "success"),
+        ("emit_style_context", "success"),
+        ("generate_contract_requirements", "success"),
+        ("detect_prior_review", "bad_input"),
+    ),
+)
+def test_windows_keeps_path_free_contract_rows(name, case):
+    assert _windows_skip(name, case, platform="nt") is None
+
+
+@pytest.mark.parametrize(
+    ("name", "case"),
+    (
+        ("emit_style_context", "failure"),
+        ("write_shared_context", "success"),
+        ("await_workflow", "pending"),
+    ),
+)
+def test_windows_skips_only_named_exceptions_or_path_receipts(name, case):
+    assert _windows_skip(name, case, platform="nt")
 
 
 def _built_success(name, directory):
@@ -156,6 +198,7 @@ def _command_line(name, case, directory):
             )
         return f"wnosuchtask000 {AWAIT} --artifacts-dir {{dir}} --head-sha abc12345 --artifacts-grace-seconds 0"
     return {
+        "help": "--help",
         "usage": "--unknown",
         "failure": MAIN_FAILURE.get(name),
         "bad_input": BAD_INPUT.get(name),
@@ -208,7 +251,10 @@ def normalize(data, tmp_path, root=ROOT):
                 text,
             )
     for pattern, replacement in (
-        (r"3\.\d+\.\d+", "<BUNDLE_VERSION>"),
+        (
+            r'(pipeline_version=|"pipeline_version"\s*:\s*")3\.\d+\.\d+',
+            r"\1<BUNDLE_VERSION>",
+        ),
         (r"fnv1a32:0x[0-9a-f]{8}", "<CHECKSUM>"),
         (r'("(?:expected_)?chars"\s*:\s*)\d+', r"\1<CHARS>"),
         (r'("waited_seconds"\s*:\s*)[0-9.]+', r"\1<ELAPSED>"),
@@ -263,6 +309,10 @@ def rows():
         yield from ((name, case) for case in ("success", "usage", "failure"))
         if name in BAD_INPUT:
             yield name, "bad_input"
+    yield from (
+        (name, "help")
+        for name in ("diff_numstat", "stale_truncate", "write_shared_context")
+    )
     yield "await_workflow", "pending"
     yield "await_workflow", "artifacts_only"
     yield from ((name, "required_only") for name in REQUIRED_ONLY)
@@ -275,12 +325,9 @@ def _assert_recorded(name, case, returncode, stdout, tmp_path):
 
 @pytest.mark.parametrize(("name", "case"), list(rows()))
 def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch):
-    if (
-        os.name == "nt"
-        and name in PATH_BEARING
-        and case not in {"usage", "required_only"}
-    ):
-        pytest.skip(WINDOWS_PATHS)
+    if reason := _windows_skip(name, case):
+        pytest.skip(reason)
+    monkeypatch.setenv("COLUMNS", "100")
     directory, argv, stdin, fake_bin = scenario(name, case, tmp_path)
     monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("CODE_GAUNTLET_OUTPUT_DIR", str(directory / "output"))
@@ -306,8 +353,8 @@ def test_recording_covers_all_entry_files():
 
 @pytest.mark.parametrize("name", MAIN_FAILURE)
 def test_entry_runs_from_foreign_cwd(name, tmp_path):
-    if os.name == "nt" and name in PATH_BEARING:
-        pytest.skip(WINDOWS_PATHS)
+    if reason := _windows_skip(name, "success"):
+        pytest.skip(reason)
     directory, argv, stdin, fake_bin = scenario(name, "success", tmp_path)
     env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     env.update(

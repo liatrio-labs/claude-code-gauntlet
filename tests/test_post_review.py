@@ -5,7 +5,7 @@ Covers:
   - detect_platform: GitHub SSH, GitHub HTTPS, GitLab SSH, GitLab HTTPS,
     unknown host, malformed URL
   - parse_diff_lines: (post_review version) platform header semantics over the shared
-    diff_lines.walk_diff
+    gauntlet.diff.walk_diff
   - is_line_valid: exact match, stripped path, None valid_lines
   - render_comment_body: all severity emojis, with/without suggestion block
   - build_footer: metadata JSON in HTML comment
@@ -8766,7 +8766,7 @@ class TestParseDiffLinesLineTexts(unittest.TestCase):
 
 
 class TestParseDiffLinesHeaderDecoding(unittest.TestCase):
-    """``parse_diff_lines`` now walks headers through ``diff_lines.walk_diff``, which
+    """``parse_diff_lines`` now walks headers through ``gauntlet.diff.walk_diff``, which
     undoes git's wire spelling of a header path (the TAB terminator after a path
     containing a space, and C-quoting of control/non-ASCII bytes) BEFORE this module's
     platform-specific ``a/``/``b/`` prefix strip runs.
@@ -8856,7 +8856,7 @@ class TestParseDiffLinesHeaderDecoding(unittest.TestCase):
 
     def test_gitlab_quoted_path_is_decoded_like_gits_wire_spelling(self):
         """This pins a documented choice, not a requirement: the header decode in
-        ``diff_lines._decode_header_path`` runs on every producer, including GitLab's
+        ``gauntlet.diff._decode_header_path`` runs on every producer, including GitLab's
         verbatim-path ``glab mr diff`` output. So a literal quote-wrapped name in a
         GitLab diff — which ``glab`` would never itself need to quote, but which this
         walk cannot distinguish from git's own C-quoting — is decoded the same way a

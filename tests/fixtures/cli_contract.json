@@ -22,6 +22,7 @@
   "detect_prior_review/success": [0, "{\n  \"previously_reviewed\": false,\n  \"signal\": null,\n  \"source\": null,\n  \"legacy\": false,\n  \"last_reviewed_sha\": null,\n  \"last_reviewed_sha_short\": null,\n  \"sha_resolvable\": false,\n  \"sha_is_ancestor\": false,\n  \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"head_advanced\": false,\n  \"new_commit_count\": null,\n  \"incremental_safe\": false,\n  \"marker\": null,\n  \"scanned\": {},\n  \"errors\": [\n    \"git: --head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa could not be resolved in this clone; comparisons against it are unreliable\"\n  ]\n}\n"],
   "detect_prior_review/usage": [2, ""],
   "diff_numstat/failure": [2, ""],
+  "diff_numstat/help": [0, "usage: diff_numstat [-h] patch\n\nCount textual changes in a saved unified diff. Use ``walk_diff`` instead of ``git apply`` (which\nrefuses valid diffs and can leave a piped count silently at zero) or a bare ``+``/``-`` prefix\ntest (which misreads content such as ``--- `` and ``+++ `` as headers). Binary files are reported\nseparately so zero textual changes do not imply an empty diff.\n\npositional arguments:\n  patch       saved unified diff patch\n\noptions:\n  -h, --help  show this help message and exit\n"],
   "diff_numstat/required_only": [2, ""],
   "diff_numstat/success": [0, "changed_lines=2\nbinary_files=0\n"],
   "diff_numstat/usage": [2, ""],
@@ -62,6 +63,7 @@
   "resolve_pr_identity/usage": [2, ""],
   "stale_truncate/bad_input": [2, ""],
   "stale_truncate/failure": [2, ""],
+  "stale_truncate/help": [0, "usage: stale_truncate [-h] --output-dir OUTPUT_DIR --head-sha HEAD_SHA [--unconditional]\n\nTruncate stale artifacts for a SHA without embedding paths in code. The gate is conditional\nbecause a Skip at the already-reviewed current SHA must preserve its artifacts. ``head_advanced``\ncannot decide this: it is also false for an unresolvable recorded SHA and rewritten history, which\nmust truncate. The four outcomes are: no prior review, unresolvable prior SHA, and a different\nresolvable SHA all truncate; a resolvable prior review at this SHA defers until the Skip/Review-\nagain answer is known.\n\noptions:\n  -h, --help            show this help message and exit\n  --output-dir OUTPUT_DIR\n  --head-sha HEAD_SHA\n  --unconditional\n"],
   "stale_truncate/required_only": [2, ""],
   "stale_truncate/success": [0, "truncated 1 file(s)\n"],
   "stale_truncate/usage": [2, ""],
@@ -75,6 +77,7 @@
   "verify_findings/usage": [2, ""],
   "write_shared_context/bad_input": [2, ""],
   "write_shared_context/failure": [2, ""],
+  "write_shared_context/help": [0, "usage: write_shared_context [-h] --output-dir OUTPUT_DIR --head-sha HEAD_SHA\n\nWrite the shared agent context from paths and triage text supplied as data. Paths belong in argv\nand artifact names are derived here so output-directory characters cannot become Python source.\nThe collector's rules file is always read and an empty file is refused: its successful no-rules\nresult is a message, while empty means stale or failed collection. Content bytes are rules (adding\nLF only if needed), a blank line and ``## Risk classification and AI-generated-code status``,\nCR/LF-trimmed stdin plus LF, a blank line and ``## Diff`` with the opening untrusted-content tag,\nthe saved diff (adding LF only if needed), then the closing tag and LF. A single large Read can\nreturn only part of a file without notice; the workflow has no disk and needs the receipt's line\ncount to plan exact Reads. The content always ends with LF, so the newline count equals the Read\ntool's line numbering. ``contextChars`` counts decoded code points with replacement and is\nadvisory; it only narrows the Read chunk size.\n\noptions:\n  -h, --help            show this help message and exit\n  --output-dir OUTPUT_DIR\n  --head-sha HEAD_SHA\n"],
   "write_shared_context/success": [0, "{\"contextLines\": 11, \"contextChars\": 133}\n"],
   "write_shared_context/usage": [2, ""]
 }

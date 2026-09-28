@@ -44,7 +44,7 @@ The plan file
     }
 
 `wrapper: null` writes the post-review artifact as a bare array (the local-diff
-shape); a present wrapper writes the post_review.py-ready envelope with the
+shape); a present wrapper writes the gauntlet.delivery.post-ready envelope with the
 projected findings appended.
 
 `expect` describes the PRIMARIES this script reads; `derive` describes the two

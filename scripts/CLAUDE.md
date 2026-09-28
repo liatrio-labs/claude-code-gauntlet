@@ -7,7 +7,7 @@
 Retained Python is **stdlib only**; CI tooling in `pyproject.toml` `[dependency-groups]` is
 exempt. Scripts are **language-agnostic**: never assume the reviewed codebase's language.
 
-Run entry points as files (`python3 scripts/<name>.py`). Each entry uses the ten-line template
+Run entry points as files (`python3 scripts/<name>.py`). Each entry uses the 11-line template
 and imports one `gauntlet.<module>.CLI`; implementation and tests import `gauntlet.*`, never an
 entry file. `gauntlet.cli.Command` owns the CLI boundary and adapts unconverted mains.
 

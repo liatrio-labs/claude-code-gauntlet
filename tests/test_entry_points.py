@@ -88,6 +88,17 @@ def test_both_tool_roots_have_bootstrapped_tools():
 
 @pytest.mark.parametrize("relative", TOOLS)
 def test_tool_bootstrap_inserts_scripts_then_runs_its_main(relative):
+    tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+    local_functions = {
+        node.name for node in tree.body if isinstance(node, ast.FunctionDef)
+    }
+    assert not any(
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id in local_functions
+        for node in tree.body
+    )
     guards = _bootstrap(relative)
     assert len(guards) == 1
     prog = Path(relative).stem

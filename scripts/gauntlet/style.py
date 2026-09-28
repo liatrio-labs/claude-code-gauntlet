@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate docs/style/session-context.md from the wording and cadence rule sources.
 
-Mirrors the shape of scripts/sync_agent_rules.py: two hand-maintained sources
+Mirrors the shape of gauntlet.agent_rules: two hand-maintained sources
 (docs/style/wording-rules.md, docs/style/cadence-rules.md) carry the rules for a human
 maintainer, and this script extracts every `RULE: ` line verbatim into one generated
 carrier a SessionStart hook can inject whole. Editing the carrier directly is the mistake

@@ -7,8 +7,8 @@ Usage:
                                    [--owner O] [--repo R] [--head-sha SHA]
                                    [--bodies-file PATH]
 
-Reads the prior-review signal that ``post_review.py`` leaves on a PR/MR summary —
-both halves are parsed by ``review_marker.py``, which is the single source of truth
+Reads the prior-review signal that ``gauntlet.delivery.post`` leaves on a PR/MR summary —
+both halves are parsed by ``gauntlet.marker``, which is the single source of truth
 for the format. Nothing here branches on the marker's ``version`` field.
 
     --platform     REQUIRED. The orchestrator has already resolved the PR with
@@ -22,11 +22,11 @@ for the format. Nothing here branches on the marker's ``version`` field.
                    network fetch. Makes the CLI end-to-end testable with no network
                    and gives self-hosted users an escape hatch.
 
-Surfaces scanned (read-only; these are exactly the surfaces post_review.py writes to):
+Surfaces scanned (read-only; these are exactly the surfaces gauntlet.delivery.post writes to):
     github — repos/{owner}/{repo}/pulls/{n}/reviews      (source "review")
     gitlab — projects/{id}/merge_requests/{n}/notes      (source "note")
 
-Only the surfaces post_review.py actually writes to are scanned. A surface we
+Only the surfaces gauntlet.delivery.post actually writes to are scanned. A surface we
 never write to can yield no true positive, but anyone with read access can post
 to it — and since the newest signal wins, that is a way to aim a rerun at an
 attacker-chosen SHA. Note the residual risk: both scanned surfaces are still
@@ -212,7 +212,7 @@ def remote_slug():
 def fetch_entries_github(owner, repo, number):
     """Return ``(entries, errors)`` for the GitHub PR-reviews surface.
 
-    Only ``pulls/{n}/reviews`` is scanned — the exact endpoint ``post_review.py``
+    Only ``pulls/{n}/reviews`` is scanned — the exact endpoint ``gauntlet.delivery.post``
     POSTs to. ``issues/{n}/comments`` was deliberately dropped: nothing has ever
     written the signal there, so it could contribute no true positive, while any
     user with read access can post an issue comment carrying a forged marker.
@@ -259,7 +259,7 @@ def gitlab_prior_delivery_state(owner, repo, number, sha):
     a corroborator without ever giving it its own key (issue: unanchored corroborators
     lost on rerun). ONE fetch answers all three — a second round trip would also be a
     second, possibly inconsistent view of the MR. The read lives here because this
-    module is the only reader; post_review.py writes the signal and never parses it.
+    module is the only reader; gauntlet.delivery.post writes the signal and never parses it.
 
     Goes through :func:`fetch_entries_gitlab`, so the ``--paginate`` requirement
     documented there applies unchanged, and so does its endpoint: the flat
@@ -288,7 +288,7 @@ def gitlab_prior_delivery_state(owner, repo, number, sha):
 
 
 def _entries_from(payload, source, timestamp_key):
-    """Map an API array into the entry shape review_marker.select_latest consumes."""
+    """Map an API array into the entry shape gauntlet.marker.select_latest consumes."""
     entries = []
     if not isinstance(payload, list):
         return entries

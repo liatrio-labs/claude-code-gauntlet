@@ -566,7 +566,7 @@ def _python_literal(value, indent=0):
 
 
 def _load_resolver(repo_root):
-    """Load resolve_config.py by path under a unique module name."""
+    """Load gauntlet/config.py by path under a unique module name."""
     path = os.path.join(repo_root, "scripts", "gauntlet", "config.py")
     module_name = f"_contract_resolver_{uuid.uuid4().hex}"
     spec = importlib.util.spec_from_file_location(module_name, path)

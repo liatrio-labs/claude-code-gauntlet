@@ -285,7 +285,7 @@ def parse_diff_lines(diff_text):
     - ``""``    → diff retrieved successfully but is empty (e.g. no changes);
                   callers should treat every finding as "surfaced" (not in diff).
 
-    The walk is ``diff_lines.walk_diff``; what lives here is this parser's own header
+    The walk is ``gauntlet.diff.walk_diff``; what lives here is this parser's own header
     semantics — which spellings of a path enter the set, and that a deleted file's
     ``+++ /dev/null`` contributes nothing.
     """

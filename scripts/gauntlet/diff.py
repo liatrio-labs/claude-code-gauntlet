@@ -1,5 +1,5 @@
 """
-diff_lines.py — the one unified-diff walk the retained diff parsers share.
+gauntlet.diff — the one unified-diff walk the retained diff parsers share.
 
 SCOPE SPLIT, and the whole reason this module is thin: THE WALK lives here —
 header zone vs. hunk-body zone, the per-hunk budgets that separate them, the
@@ -13,7 +13,7 @@ differently — folding them in here would need a platform flag and would put on
 caller's answer on the other's path.
 
 The event vocabulary is the UNION of what both retained parsers need. The poster
-(``scripts/post_review.py::parse_diff_lines``) is a live reader of all three shapes: it
+(``gauntlet.delivery.post.parse_diff_lines``) is a live reader of all three shapes: it
 keys its GitLab position fields off ``---``/``+++`` headers, reads a hunk's old count to
 recognise an added file (``@@ -0,0 +N,M @@``, the only added-file signal a verbatim-path
 diff carries), and reads a line's ``text`` as the content oracle its suggested-fix
@@ -24,10 +24,8 @@ no use for them. HEADER SEMANTICS still stay in the callers, per the scope split
 No external dependencies. stdlib only.
 
 Usage:
-    # Standalone / SKILL.md script invocation (scripts/ is on sys.path):
-    from diff_lines import walk_diff
-    # From pytest run at the repo root (repo root is on sys.path):
-    from scripts.diff_lines import walk_diff
+    # The scripts/ directory is on sys.path for entry files and pytest:
+    from gauntlet.diff import walk_diff
 """
 
 from __future__ import annotations

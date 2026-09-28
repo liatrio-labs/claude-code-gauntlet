@@ -63,7 +63,7 @@ GitHub path:
 
 GitLab path:
     Fetches MR version SHAs (GET /projects/{id}/merge_requests/{iid}/versions).
-    Asks detect_prior_review.py — the only reader — what this SHA's review already left on
+    Asks gauntlet.prior_review — the only reader — what this SHA's review already left on
     the MR, so a rerun after a partial delivery duplicates neither the summary note nor the
     inline discussions that did land. Posts per-finding discussions with a position object,
     via glab api --input; a rejected position warns and skips that finding rather than
@@ -320,7 +320,7 @@ def parse_diff_text(platform, diff_text):
       no object to show, and it desyncs from GitLab's versions-API head_sha.
 
     The unified-diff walk itself — header/hunk-body zone tracking, the old/new line
-    advance, and the wire spelling of a header path — is ``diff_lines.walk_diff``; this
+    advance, and the wire spelling of a header path — is ``gauntlet.diff.walk_diff``; this
     function reads its events and keeps only what is local to this platform pair: which
     prefix a header's decoded path carries (``a/``/``b/`` stripped for GitHub, kept
     verbatim for GitLab, since there a leading ``a/`` is a real top-level directory), what
@@ -336,7 +336,7 @@ def parse_diff_text(platform, diff_text):
        ``valid_lines`` (the raw, still-encoded spelling was the key); it now matches its
        diff line like any other path. The decode also runs on ``glab mr diff``'s verbatim
        paths, where it has nothing of git's to undo and only mis-reads a TAB-bearing or
-       quote-wrapped name — an accepted limitation, see ``diff_lines._decode_header_path``.
+       quote-wrapped name — an accepted limitation, see ``gauntlet.diff._decode_header_path``.
     2. A newline-terminated diff whose last hunk is cut short no longer mints a phantom
        final line. The old hand-rolled loop walked the trailing empty string left by
        splitting on the terminating newline as a context line — a key for a line the file
@@ -971,7 +971,7 @@ def _fence_run(payload):
     GitLab documents four-backtick suggestion nesting.
 
     Factored out of ``_suggestion_fence`` so a second renderer
-    (``scripts/report_patches.py``, the report-side read-only apply-check) computes
+    (``gauntlet.patches``, the report-side read-only apply-check) computes
     the identical length from the identical rule rather than a second copy of it.
     """
     runs = re.findall(r"`+", payload)
@@ -1029,7 +1029,7 @@ _FIX_OVERLAPS_KEPT_FENCE = "overlaps_kept_fence"
 # The vocabulary is CLOSED: every downgrade names exactly one of these, in the
 # stable warning `{warn_label} downgraded: {file}:{line} ({reason})` — the label
 # is the caller's (`suggested-fix` for delivery, `report-patch` for the report
-# path's read-only gate in scripts/report_patches.py); everything after it never
+# path's read-only gate in gauntlet.patches); everything after it never
 # changes shape. Adding a reason is a deliberate act — a free-text reason would
 # make the record unreadable in aggregate.
 #
@@ -1085,7 +1085,7 @@ _GITLAB_SUGGESTION_OFFSET_CAP = 100
 _FIX_COUNTS = {"kept": 0, "downgraded": 0}
 # Per-reason downgrade tally, reset alongside _FIX_COUNTS. Delivery's own
 # stdout readout (_print_fix_summary) does not consult this — it exists for a
-# second gate caller (scripts/report_patches.py, the report-side apply-check)
+# second gate caller (gauntlet.patches, the report-side apply-check)
 # that renders a reason breakdown from it.
 _FIX_REASON_COUNTS: dict[str, int] = {}
 
@@ -1094,7 +1094,7 @@ def reset_run_state():
     """Clear every module-level counter/log a run accumulates.
 
     One entry point for both gate callers: main() (delivery) calls this in
-    place of its old inline three-statement reset, and report_patches.py
+    place of its old inline three-statement reset, and gauntlet.patches
     (the report-side apply-check, which never calls main()) calls it too —
     so a second caller of _gated_finding cannot start from state a prior
     caller in the same process left behind.
@@ -1151,7 +1151,7 @@ def _fence_path_is_ambiguous(valid_lines, raw_file):
     stated line happens to validate against.
 
     Reads only ``valid_lines`` KEYS — no platform, no alias map, no second keying
-    implementation — so delivery and ``scripts/report_patches.py``'s payload
+    implementation — so delivery and ``gauntlet.patches``' payload
     mirror (both routing through :func:`_suggested_fix_gate`) get identical
     semantics for free. *valid_lines* must already be known to be a dict; the
     caller checks that first.
@@ -1359,7 +1359,7 @@ def _gated_finding(
 
     *warn_label* names the CALLER in the downgrade warning line (default
     ``"suggested-fix"``, delivery's own spelling — unchanged bytes for every
-    existing reader). ``scripts/report_patches.py``, the report-side read-only
+    existing reader). ``gauntlet.patches``, the report-side read-only
     apply-check, passes ``"report-patch"`` so its downgrades stay distinguishable
     from delivery's in a run's combined stderr.
     """
@@ -2026,8 +2026,8 @@ def build_skipped_section(skipped, inline_count=None):
     summary note posts before the per-finding loop, so the landed count is not yet
     known. Entries are unbranded and use the shared frame and piece renderers. Each
     piece neutralizes its own ``<!--`` markers before fitting; that neutralization
-    lives in ``_skipped_piece``. ``scripts/report_patches.py`` and
-    ``scripts/review_marker.py`` cite ``build_skipped_section`` as the precedent.
+    lives in ``_skipped_piece``. ``gauntlet.patches`` and
+    ``gauntlet.marker`` cite ``build_skipped_section`` as the precedent.
     Returns ``""`` for an empty *skipped* list (issue #192).
     """
     if not skipped:
@@ -2627,8 +2627,8 @@ def finding_key(filepath, line, title, body):
 # ---------------------------------------------------------------------------
 # Metadata footer
 # ---------------------------------------------------------------------------
-# ``build_footer`` is imported from review_marker (see the bootstrap at the top of
-# this file) and re-exported here, so this module has no second definition of the
+# ``build_footer`` is imported from gauntlet.marker and re-exported here,
+# so this module has no second definition of the
 # signal it writes.
 
 
@@ -2900,7 +2900,7 @@ def gitlab_prior_delivery(owner, repo, mr_iid, sha):
     not reposted (issue #132), and a pre-#208 group body that rendered a corroborator's
     content without ever keying it is recognized as already carrying that member too (see
     :func:`detect_prior_review.legacy_group_keys_for_sha`) rather than posted a second
-    time. ONE fetch serves all three, in detect_prior_review.py — the only reader of the
+    time. ONE fetch serves all three, in gauntlet.prior_review — the only reader of the
     signals — so this module stays write-only.
 
     Never blocks delivery. Dry-run does not fetch AT ALL: dry-run's invariant is that it

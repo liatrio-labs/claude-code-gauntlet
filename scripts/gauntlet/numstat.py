@@ -1,6 +1,9 @@
 """Count textual changes in a saved unified diff.
 
-Binary files count separately so zero textual changes do not imply an empty diff.
+Use ``walk_diff`` instead of ``git apply`` (which refuses valid diffs and can
+leave a piped count silently at zero) or a bare ``+``/``-`` prefix test (which
+misreads content such as ``--- `` and ``+++ `` as headers). Binary files are
+reported separately so zero textual changes do not imply an empty diff.
 """
 
 import argparse

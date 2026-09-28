@@ -1,6 +1,11 @@
-"""Truncate stale artifacts for a SHA.
+"""Truncate stale artifacts for a SHA without embedding paths in code.
 
-A Skip at an already-reviewed, resolvable current SHA must preserve its artifacts.
+The gate is conditional because a Skip at the already-reviewed current SHA must
+preserve its artifacts. ``head_advanced`` cannot decide this: it is also false
+for an unresolvable recorded SHA and rewritten history, which must truncate.
+The four outcomes are: no prior review, unresolvable prior SHA, and a different
+resolvable SHA all truncate; a resolvable prior review at this SHA defers until
+the Skip/Review-again answer is known.
 """
 
 import argparse

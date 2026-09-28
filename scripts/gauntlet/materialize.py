@@ -20,7 +20,7 @@ one fails: a 47 KB findings.json with 104 backslashes came back byte-perfect, a
 summarization (one checkpoint lost 29,132 chars because the writer dropped 11
 fields from every finding; another lost 13,008 with its schema intact and its
 prose simply rewritten shorter), which no encoding or format prevents — and both
-parse cleanly. When findings.json is the casualty, assemble_artifacts.py
+parse cleanly. When findings.json is the casualty, gauntlet.artifacts
 correctly refuses to derive anything, post-review.json is never produced, and no
 PR comment can be posted.
 
@@ -37,18 +37,18 @@ What it does
 ------------
 1. Finds the task output file (by id/path, by the run's ``nonce``, or both) and
    pulls the compact return's ``persistReturn`` payload out of it, reusing
-   await_workflow.py's resolution and terminal-detection rather than a second
+   gauntlet.awaiting's resolution and terminal-detection rather than a second
    copy of either.
 2. Writes every ``{ path, text }`` entry it carries — findings.json, report.md
    and the persist plan — verbatim, atomically, and only inside --output-dir.
-3. Runs assemble_artifacts.py's assembler on the plan to derive post-review.json
+3. Runs gauntlet.artifacts' assembler on the plan to derive post-review.json
    and checkpoint-all.json from what actually landed, exactly as the executor
    agent does on the writer path.
 
 THE CONTENT PROOF IS THE POINT, and it is not reimplemented here. The plan's
 ``expect[]`` proves the two primaries, its ``planChecksum`` proves itself, and
 its ``derive[]`` proves the two projections. The first two gradings are
-assemble_artifacts.py's own; the derive[] comparison is done here, in
+gauntlet.artifacts' own; the derive[] comparison is done here, in
 proof_gaps(), against the assembler's own reported numbers — aimed at a
 harness-written copy rather than a model-written one. Assume truncation, if it
 ever happens, is SILENT: the proof is what would catch it.
@@ -60,7 +60,7 @@ including an unexpected internal error:
 
     { "ok": bool, "channel": "return", "source": path|null, "scanned": N,
       "materialized": [ { path, chars, checksum } ],
-      "assemble": { ...assemble_artifacts.py's receipt... }|null,
+      "assemble": { ...gauntlet.artifacts' receipt... }|null,
       "gaps": [ ... ], "errors": [ ... ] }
 
 Exit codes
@@ -104,7 +104,7 @@ CHANNEL = "return"
 #: How many task-output files a nonce sweep will read before giving up. The sweep
 #: exists for the case where no task id is in hand (a fast run returns inline),
 #: and a session directory accumulates one file per background task, so it has to
-#: be bounded — the same reason await_workflow.py bounds its embedded-object scan.
+#: be bounded — the same reason gauntlet.awaiting bounds its embedded-object scan.
 #: Newest-first ordering means the run that just finished is the first file read.
 MAX_SCANNED_FILES = 200
 
@@ -118,7 +118,7 @@ def persist_return_of(path):
     """Return the ``persistReturn`` payload carried by *path*, or None.
 
     Never raises: an absent, half-written or unrelated file is simply not a
-    source. `find_terminal` is await_workflow.py's — it already knows the
+    source. `find_terminal` is gauntlet.awaiting's — it already knows the
     Workflow tool's `{summary, ..., result}` envelope, the stringified-result
     variant, and the bare return, and it already refuses to accept a nested agent
     receipt as the pipeline's return.
@@ -136,7 +136,7 @@ def _sweep_paths(environ):
     """Every task-output file that may hold this session's runs, newest first.
 
     Bounded to MAX_SCANNED_FILES. $CODE_GAUNTLET_TASKS_DIR is honoured first and
-    exactly as await_workflow.py honours it: one documented escape hatch for an
+    exactly as gauntlet.awaiting honours it: one documented escape hatch for an
     environment whose task directory cannot be derived, never a guess.
     """
     roots_and_patterns = []
@@ -260,7 +260,7 @@ def plan_entries(payload, output_root, errors):
 def write_entries(entries, materialized, errors):
     """Write every entry verbatim. Returns True when all of them landed.
 
-    write_text_atomic is assemble_artifacts.py's: a sibling temp file plus
+    write_text_atomic is gauntlet.artifacts': a sibling temp file plus
     os.replace, so a failure mid-write leaves the destination as it was rather
     than as a truncated file that a later stage would read as real.
     """
@@ -401,7 +401,7 @@ def _materialize(task, nonce, output_dir, environ=None):
 def materialize(task, nonce, output_dir, environ=None):
     """_materialize, with a last-resort guard so the caller ALWAYS gets a receipt.
 
-    Same shape and same reason as assemble_artifacts.py's assemble(): the guard
+    Same shape and same reason as gauntlet.artifacts' assemble(): the guard
     belongs to the function that promises a receipt, not to one caller of it, so
     every caller — main(), a test, a future importer — gets the promise. Every
     expected failure is already a receipt above; this catches the unexpected one
@@ -424,7 +424,7 @@ def materialize(task, nonce, output_dir, environ=None):
 def _minimal_receipt_line(exc):
     """A hand-built one-line receipt for when the real one will not serialize.
 
-    Same last hop as assemble_artifacts.py's: an empty stdout is
+    Same last hop as gauntlet.artifacts': an empty stdout is
     indistinguishable from a dead process, and this one is read by a model that
     branches on it.
     """
@@ -463,7 +463,7 @@ def build_parser():
         "--task",
         metavar="TASK_ID_OR_PATH",
         help="The Task ID printed by the Workflow tool, or the task output file's "
-        "path (resolved exactly as await_workflow.py resolves it).",
+        "path (resolved exactly as gauntlet.awaiting resolves it).",
     )
     parser.add_argument(
         "--nonce",

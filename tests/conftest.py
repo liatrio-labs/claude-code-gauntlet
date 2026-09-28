@@ -33,6 +33,8 @@ def invoke(monkeypatch, capsys):
         capsys.readouterr()
         try:
             code = cli.invoke(arguments)
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
         except Exception as exc:  # noqa: BLE001 - the wrapper exits one on an uncaught exception
             print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
             code = 1

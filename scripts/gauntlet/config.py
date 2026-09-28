@@ -33,7 +33,6 @@ from gauntlet.text import JS_TRIM_CHARS
 
 MAX_SAFE_INTEGER = 9007199254740991
 
-_SCRIPT_ROOT = PLUGIN_ROOT
 _CONTROL_RE = re.compile(r"[\u0000-\u001f\u007f]")
 _CANDIDATE_RE = re.compile(r"^[a-z_]+(,[a-z_]+)*$")
 _PIPELINE_VERSION_RE = re.compile(
@@ -830,8 +829,8 @@ def run(
     env = environ if environ is not None else os.environ
     try:
         cwd = os.path.realpath(args.cwd or os.getcwd())
-        plugin_root = os.path.realpath(args.plugin_root or _SCRIPT_ROOT)
-        if args.plugin_root is not None and plugin_root != _SCRIPT_ROOT:
+        plugin_root = os.path.realpath(args.plugin_root or PLUGIN_ROOT)
+        if args.plugin_root is not None and plugin_root != PLUGIN_ROOT:
             raise ResolverSetupError("plugin root mismatch")
         repo_root = _git_repo_root(cwd)
         version = read_pipeline_version(plugin_root)

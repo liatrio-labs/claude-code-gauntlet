@@ -260,7 +260,7 @@ export const AGENT_LABELS = {
 // scripts/gauntlet/delivery/post.py and the legends in references/report-format.md and
 // references/delivery-guide.md. Do not hand-edit a mirror.
 //
-// PRODUCT ("code-gauntlet", scripts/gauntlet/marker.py:89) is deliberately NOT here and is
+// PRODUCT ("code-gauntlet", scripts/gauntlet/marker.py:83) is deliberately NOT here and is
 // NOT a mirror of BRAND_NAME: that is a machine-parsed wire slug pinned by
 // docs/machine-parsed-strings.md; this is presentation. A product rename moves both,
 // separately, on purpose.

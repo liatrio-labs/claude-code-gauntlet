@@ -7,7 +7,7 @@ sibling artifact.
 What it does
 ------------
 Runs the diff-only subset of delivery's deterministic apply-check
-(``scripts/post_review.py``'s ``_gated_finding`` / ``_suggested_fix_gate``)
+(``gauntlet.delivery.post``'s ``_gated_finding`` / ``_suggested_fix_gate``)
 against the PINNED review diff captured at Phase 2, and renders every patch
 that passes into ``{output_dir}/code-gauntlet-patches-{head_sha_short}.md`` —
 a heading and fenced code block per kept patch, preceded by a summary of how
@@ -19,19 +19,19 @@ change what a PR/MR comment posts.
 Why a SIBLING artifact, not an edit to the report
 --------------------------------------------------
 ``code-gauntlet-report-{sha}.md`` is a persist-plan ``expect[]`` primary: its
-bytes are checksum-proven by ``assemble_artifacts.py`` on every re-run, and a
-``materialize_artifacts.py`` re-run self-heals the file straight from
+bytes are checksum-proven by ``gauntlet.artifacts`` on every re-run, and a
+``gauntlet.materialize`` re-run self-heals the file straight from
 ``persistReturn``, silently reverting any in-place edit made after the fact.
 Writing a NEW file sidesteps both problems — it has no plan entry to disagree
 with and nothing to self-heal away.
 
-Why a SEPARATE script, not a `post_review.py` mode
+Why a SEPARATE script, not a `gauntlet.delivery.post` mode
 ----------------------------------------------------
-``post_review.py``'s ``main()`` owns ``DRY_RUN``/``CODE_GAUNTLET_POST_MODE``
+``gauntlet.delivery.post``'s ``main()`` owns ``DRY_RUN``/``CODE_GAUNTLET_POST_MODE``
 and writes ``post-review-payload.json`` next to the findings file — the file
 bench scores as the delivery candidate set. A sub-mode squeezed into that
 ``main()`` risks either mode leaking into the other's write path. This script
-never calls ``post_review.main()``; it imports only the pure gate helpers.
+never calls ``gauntlet.delivery.post.main()``; it imports only the pure gate helpers.
 
 Producer detection (read this before touching the oracle)
 ------------------------------------------------------------
@@ -47,7 +47,7 @@ for ``i/``/``w/`` instead. So the check anchors on the one shape every git
 producer's default config writes — a first line matching ``diff --git "?a/``
 (the optional quote covers a C-quoted first file) — and only THAT shape is
 keyed by stripping ``a/``/``b/``, via ``post_review.parse_diff_text``, the
-same parser ``post_review.py`` runs live, with no alias keys and no second
+same parser ``gauntlet.delivery.post`` runs live, with no alias keys and no second
 keying implementation. Neither non-default config matches the anchor, so both
 fall to verbatim keying: under ``diff.noprefix`` that is exactly right (every
 path keys as itself), and under ``diff.mnemonicPrefix`` it fails closed on
@@ -145,7 +145,7 @@ def _confined(path, output_root):
     regex-validated --head-sha (no `/` can appear in the sha, so no filename
     built from it can smuggle a path separator) — so this can only ever fire
     on a pathological --output-dir. Kept anyway as the same typo/symlink guard
-    materialize_artifacts.py's own ``_confined`` applies: a wrong flag refuses
+    gauntlet.materialize's own ``_confined`` applies: a wrong flag refuses
     loudly instead of writing somewhere nothing reads.
     """
     try:
@@ -237,7 +237,7 @@ def _neutralize(text):
     A finding's title or file path reaches this artifact raw. Left alone, a
     stray ``<!--`` in either would open an HTML comment that swallows
     everything rendered after it for the rest of the document — the same
-    class of defect ``post_review.py``'s ``build_skipped_section`` guards
+    class of defect ``gauntlet.delivery.post``'s ``build_skipped_section`` guards
     against for the PR/MR body. Applied to every non-fence line; a kept
     patch's fence payload bypasses it (see the fence-building loop below) —
     the payload already passed the gate's redaction check, and rewriting
@@ -439,7 +439,7 @@ def main(argv=None):
         return _pre_oracle_failure(out_path, errors)
 
     # Universal newlines (default text mode) and errors="replace" are
-    # deliberate: the live apply-check oracle post_review.py drives is
+    # deliberate: the live apply-check oracle gauntlet.delivery.post drives is
     # subprocess text=True output, which already normalizes \r\n, and a
     # byte this repo cannot decode must not crash a read-only render step —
     # it degrades that one line's oracle, not the whole run.
