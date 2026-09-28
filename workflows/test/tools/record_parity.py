@@ -185,7 +185,7 @@ def _verify_deltas(inp):
     # finding (minus its own audit trail and the withheld `agent` -- see
     # _VERIFY_DELTA_DROP above). Python (this function, via the real build_deltas/
     # deltas_checksum) owns the producing half; the JS twin (joinVerifyDeltas/
-    # deltaContentProof, asserted in workflows/test/parity.test.js) owns the
+    # deltaContentProof, asserted in workflows/test/verify_wire.test.js) owns the
     # reconstructing half; this golden is what sits between them.
     from verify_findings import build_deltas, deltas_checksum
 

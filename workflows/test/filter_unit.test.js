@@ -1,6 +1,6 @@
 // filter_unit.test.js — pure JS-side unit tests for filterFindings.js that
 // have no Python twin to record parity against (banker's-rounding trap,
-// determinism invariants). Parity-backed behavior lives in parity.test.js.
+// determinism invariants). Parity-backed behavior lives in goldens.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -179,7 +179,7 @@ test('threshold and exclusion outcomes are order-independent and do not mutate c
 
 // suggested_fix_code field-strip matrix (#63/D8) -- mirrors the Python
 // TestApplyInjectionFilter matrix in tests/test_filter_findings.py. No parity
-// golden covers these directly (see parity.test.js for the golden-fixture
+// golden covers these directly (see goldens.test.js for the golden-fixture
 // cases); this is the JS-side unit proof for the same mechanism.
 function cleanFinding(extra) {
   return {

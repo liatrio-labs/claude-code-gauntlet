@@ -799,7 +799,7 @@ class TestDocsRegistry(unittest.TestCase):
             ),
             ('workflows/test/*.test.js::"x"', "titles require an exact tracked file"),
             ('scripts/verify_findings.py::"x"', "titles require a JS test source"),
-            ('workflows/test/parity.test.js::"no such title"', "title not found"),
+            ('workflows/test/goldens.test.js::"no such title"', "title not found"),
             ('scripts/verify_findings.py::"unterminated', "invalid citation syntax"),
             ("a::b#c", "invalid citation syntax"),
             ("CLAUDE.md#", "empty heading forbidden"),

@@ -11,7 +11,8 @@ Both runtimes assert against `expected.json`:
 
 - Python: `tests/test_parity_fixtures.py` (Python twin == expected; also asserts
   `record_parity.py` output is unchanged — golden freshness).
-- JS: `workflows/test/parity.test.js` (JS twin == expected).
+- JS finding transforms: `workflows/test/goldens.test.js` (JS twin == expected).
+- JS verify wire: `workflows/test/verify_wire.test.js` (JS twin == expected).
 
 Assertion rule: decision outcomes and integer counts/stats are asserted EXACTLY.
 Free-text fields (`elimination_reason`, warning bodies, `escalation_note`,
@@ -22,12 +23,12 @@ strings. `{field}_removal_reason` for every field in
 `spec_text` — filter_findings' `apply_injection_filter`) is the one exception
 with a byte-exact slice: the "{field} <noun phrase>: " prefix up to and
 including the ": " separator is identical across runtimes by construction
-(both runtimes read it from the same set-label strings), so `parity.test.js`
+(both runtimes read it from the same set-label strings), so `goldens.test.js`
 compares that prefix exactly and leaves only the pattern-spelling tail
 presence-only; the non-string reason ("{field} is not a string") has no tail
 and is compared byte-exactly in full. A single kept finding can carry more
 than one of these keys at once (every matching field strips independently),
-so `parity.test.js` peels each one off in turn before comparing what remains
+so `goldens.test.js` peels each one off in turn before comparing what remains
 structurally.
 
 Authoring caveat (`merge_findings`): a fixture finding must not be missing more

@@ -1,8 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join, relative } from 'node:path';
 import { dedupById } from '../src/findingDedup.js';
 import { merge } from '../src/mergeFindings.js';
 import { applyValidations } from '../src/applyValidations.js';
@@ -25,40 +22,7 @@ import {
   INJECTION_STRIPPED_PROSE_FIELDS,
 } from '../src/filterFindings.js';
 import { applyChallenges } from '../src/applyChallenges.js';
-import {
-  joinVerifyDeltas,
-  deltaContentProof,
-  fnv1a32,
-  encodeSliceInline,
-  sliceTokenChecksum,
-} from '../src/stages.js';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(HERE, '..', '..', 'tests', 'fixtures', 'parity');
-
-// Recursive walk (not a flat readdir): finding_dedup/merge_findings use a flat
-// <script>/<case>/ layout, but filter_findings groups cases one level deeper
-// (<script>/<group>/<case>/, e.g. filter_findings/threshold/<case>/). Both are
-// found uniformly by descending until a directory holds input.json.
-function findCaseDirs(dir) {
-  if (existsSync(join(dir, 'input.json'))) return [dir];
-  const out = [];
-  for (const d of readdirSync(dir, { withFileTypes: true })) {
-    if (d.isDirectory()) out.push(...findCaseDirs(join(dir, d.name)));
-  }
-  return out;
-}
-
-export function loadCases(script) {
-  const base = join(FIXTURES, script);
-  return findCaseDirs(base)
-    .sort()
-    .map((caseDir) => ({
-      name: relative(base, caseDir),
-      input: JSON.parse(readFileSync(join(caseDir, 'input.json'), 'utf8')),
-      expected: JSON.parse(readFileSync(join(caseDir, 'expected.json'), 'utf8')),
-    }));
-}
+import { loadCases } from './helpers/goldenCases.js';
 
 for (const c of loadCases('finding_dedup')) {
   test(`finding_dedup parity: ${c.name}`, () => {
@@ -116,14 +80,13 @@ function mapByAgent(files) {
 
 const idsOf = (list) => list.map((f) => f.id);
 
-// Extracted (#215 round-1 parity-F1/hostile-F4) so the fixture loop below and
-// the seeded-divergence meta-test that follows it exercise the SAME
-// comparator, not two copies that could silently drift apart. Free-text JOIN
+// The fixture loop and seeded-divergence meta-test exercise the SAME
+// comparator, so the checks cannot silently drift apart. Free-text JOIN
 // format ('; '-separated) is not load-bearing, but each individual reason
 // SEGMENT is not free -- the "<phrase>: " prefix up to and including the ": "
 // separator is built from the same SUGGESTION_SETS phrase strings in both
-// runtimes (bare, no "title "/"description " field-attribution prefix since
-// #256), so it is byte-exact across twins; only the trailing
+// runtimes (bare, with no field-attribution prefix), so it is byte-exact
+// across twins; only the trailing
 // pattern-spelling tail (Python `!r` vs JS `rx.source` + JSON.stringify) is
 // free. A segment with no ': ' separator (the word-count and
 // duplicate-signature heuristics, whose text is NOT built from a shared
@@ -152,12 +115,12 @@ function assertEliminationReasonSegmentsMatch(gotReason, expReason, label) {
   });
 }
 
-// Seeded-divergence meta-test (#215 round-1 parity-F1/hostile-F4): proves the
+// Seeded-divergence meta-test proves the
 // helper above actually discriminates, rather than trusting its logic by
 // inspection. (a) a prefix divergence and (b) a dropped segment must both
 // throw; (c) a tail-only difference (the free pattern-spelling suffix) must
 // NOT throw. Mutating either half of the helper (the length check or the
-// prefix check) must turn this red -- verified by doing so and restoring.
+// prefix check) must be detected by this test.
 test('assertEliminationReasonSegmentsMatch: seeded divergence cases', () => {
   // (a) prefix divergence: same segment count, but segment 0's phrase prefix disagrees.
   assert.throws(() =>
@@ -188,7 +151,7 @@ test('assertEliminationReasonSegmentsMatch: seeded divergence cases', () => {
   );
 });
 
-// Shared by the apply_injection_filter and apply_replay_injection_scan (#253)
+// Shared by the apply_injection_filter and apply_replay_injection_scan
 // branches below -- both twins return the identical { kept, eliminated }
 // shape, so one comparator covers both callers of injectionScanCore.
 function assertInjectionScanParity({ kept, eliminated }, expected) {
@@ -207,7 +170,7 @@ function assertInjectionScanParity({ kept, eliminated }, expected) {
   // prefix up to and including the ": " separator is identical across
   // runtimes by construction (both read it from the same SUGGESTION_SETS
   // phrase strings) -- compare that prefix byte-exactly, for EVERY field
-  // in INJECTION_STRIPPED_PROSE_FIELDS (#213: suggestion, claude_md_rule,
+  // in INJECTION_STRIPPED_PROSE_FIELDS (suggestion, claude_md_rule,
   // spec_text), so renaming any of the 7 set labels OR adding/renaming a
   // scanned field goes red here, and leave only the pattern-spelling tail
   // (after the ": ") presence-only. The non-string reason
@@ -285,7 +248,7 @@ for (const c of loadCases('filter_findings')) {
       return;
     }
     if (fn === 'apply_replay_injection_scan') {
-      // #253: same shape/assertions as apply_injection_filter above (both
+      // Same shape/assertions as apply_injection_filter above (both
       // return { kept, eliminated }) -- the only behavioral difference
       // (heuristic 4 excluded) is exercised by the fixture content itself
       // (tests/fixtures/parity/filter_findings/injection_replay/), not by a
@@ -333,7 +296,7 @@ for (const c of loadCases('filter_findings')) {
     }
     if (fn === 'consolidate_cross_agent') {
       const { findings, consolidatedCount } = consolidateCrossAgent(c.input.findings);
-      // Nothing is dropped (#22 D1) -- full structural equality, including the
+      // Nothing is dropped -- full structural equality, including the
       // stamped consolidation_key/consolidation_primary fields.
       assert.deepEqual(findings, c.expected.findings);
       assert.equal(consolidatedCount, c.expected.consolidated_count);
@@ -378,57 +341,5 @@ for (const c of loadCases('apply_challenges')) {
     );
     for (const e of eliminated) assert.ok(e.elimination_reason && e.elimination_reason.length > 0);
     assert.deepEqual(stats, c.expected.stats);
-  });
-}
-
-// --- verify_deltas: issue #25 requirement 1's equivalence claim -----------
-//
-// Python (verify_findings.py's build_deltas/deltas_checksum, run by the recorder) owns
-// the producing half; this block owns the reconstructing half (joinVerifyDeltas/
-// deltaContentProof, the same functions verifyStage actually calls). One golden fixture
-// sits between them, so a change to either side that breaks the join is caught here
-// rather than only by the two runtimes agreeing with themselves.
-for (const c of loadCases('verify_deltas')) {
-  test(`verify_deltas parity: ${c.name}`, () => {
-    // (1) THE join reproduces, for every field any downstream stage consumes, what
-    // verify_findings.py itself left on the finding (minus its own audit trail -- the
-    // recorder's project() drops exactly those three; `agent` is no longer among them,
-    // #22). This is the equivalence claim itself, not a proxy for it.
-    const joined = joinVerifyDeltas(c.input.dispatched, c.expected.deltas);
-    assert.deepEqual(joined, c.expected.joined);
-
-    // (2) The two runtimes compute the SAME content proof over the SAME deltas --
-    // Python's deltas_checksum(deltas) (over the deltas in dispatch order) against JS's
-    // deltaContentProof (which re-keys by id before stringifying), so an order-dependent
-    // divergence between the two canonicalisations would fail here even though each
-    // runtime's own deltas array already carries the checksum that produced it.
-    const ids = c.input.dispatched.map((f) => f.id);
-    assert.equal(deltaContentProof(ids, c.expected.deltas), c.expected.checksum);
-
-    // (3) #22 re-lands deterministic `agent` on the trusted path: every dispatched
-    // finding that carried an `agent` still carries the SAME `agent` after the join.
-    const agentById = new Map(c.input.dispatched.map((f) => [f.id, f.agent]));
-    for (const f of joined) {
-      if (agentById.get(f.id) !== undefined) assert.equal(f.agent, agentById.get(f.id));
-    }
-  });
-}
-
-// --- slice_input_proof: the persisted JSON content proof's cross-runtime agreement -
-//
-// The legacy writer path remains covered by this golden. The inline path below additionally
-// pins the exact percent-encoded token, including its receipt proof.
-for (const c of loadCases('slice_input_proof')) {
-  test(`slice_input_proof parity: ${c.name}`, () => {
-    assert.equal(fnv1a32(JSON.stringify(c.input.doc, null, 2)), c.expected.checksum);
-  });
-}
-
-for (const c of loadCases('slice_inline')) {
-  test(`slice_inline parity: ${c.name}`, () => {
-    assert.equal(encodeSliceInline(c.input.doc), c.expected.encoded);
-    assert.equal(fnv1a32(JSON.stringify(c.input.doc, null, 2)), c.expected.checksum);
-    // The token proof, over the same bytes Python hashes in _run_receipt.
-    assert.equal(sliceTokenChecksum(c.expected.encoded), c.expected.token_checksum);
   });
 }
