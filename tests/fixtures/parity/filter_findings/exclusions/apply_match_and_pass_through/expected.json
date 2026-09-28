@@ -4,7 +4,7 @@
       "confidence": 60,
       "description": "This file still contains a console.log debug statement left over from development.",
       "eliminated_by": "exclusion",
-      "elimination_reason": "matched exclusion pattern: 'console.log'",
+      "elimination_reason": "matched exclusion pattern: \"console.log\"",
       "file": "src/x.js",
       "id": "E1",
       "line_start": 5,

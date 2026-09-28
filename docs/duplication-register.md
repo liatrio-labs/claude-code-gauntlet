@@ -42,7 +42,7 @@ reconcile to 116 pairs plus the ten tool-invisible relationships.
 
 ## Individually classified rows
 
-Fifty-two rows: 41 `intentional-and-documented`, 11 `intentional-but-undocumented`.
+Fifty-one rows: 41 `intentional-and-documented`, 10 `intentional-but-undocumented`.
 
 | Pair | Classification | Reason | Doc ref |
 | --- | --- | --- | --- |
@@ -84,7 +84,6 @@ Fifty-two rows: 41 `intentional-and-documented`, 11 `intentional-but-undocumente
 | `bench/golden/benchmark_data.min.json` (discourse-graphite pull request 4 record) ↔ `bench/golden/golden_comments/discourse.json` | intentional-but-undocumented | The per-repo golden files are upstream provenance for the aggregate; only the aggregate is read by first-party code (`bench/run.py`, `bench/runner/score.py::VENDOR_DIR`). | — |
 | `bench/golden/anchors/candidates.json` (Keycloak pull request 36880 record) ↔ `bench/golden/anchors/candidates.json` (Keycloak pull request 37634 record) | intentional-but-undocumented | Text content is entirely different; jscpd is matching the JSON record shape of a data file, not duplicated content. Nothing actionable. | — |
 | `bench/tests/test_check.py::CheckRunTest::test_missing_checkpoint_runs_g3_too` ↔ `bench/tests/test_check.py::CheckRunTest::test_wf_script_field_bundle_literals_with_genuine_gap_fails_g3` | intentional-but-undocumented | Two upstream triggers for one G3 failure; the second copy's extra `script` key is the variable under test and is legible only because the surrounding literal is present. | — |
-| `tests/test_parity_fixtures.py::TestApplyChallengesParity::test_all_cases` ↔ `workflows/test/tools/record_parity.py::_apply_challenges` | intentional-but-undocumented | Load-bearing and must not be consolidated: `workflows/test/tools/record_parity.py` generates `tests/fixtures/parity/*/*/expected.json`, so importing it into the test would compare the recorder to its own output. | — |
 | `scripts/post_review.py` — the GitLab position assembly ↔ `scripts/post_review.py::validate_position`'s expected position | intentional-and-documented | Load-bearing mirror, same shape as the row above: the gate must recompute every field independently, because one that derives its answer through the assembly moves with the assembly's bug and passes it. Below the 60-token threshold, so jscpd cannot see it. | `scripts/post_review.py::validate_position` |
 | `tests/test_boundary_parity.py` ↔ `tests/test_post_review.py` | intentional-but-undocumented | Trimmed local `_fake_run` plus setUp and tearDown. The alternative is test modules importing each other, which lets an unrelated suite's refactor break this one. | — |
 | `workflows/src/mergeFindings.js::tryParseJsonAt` ↔ `workflows/src/mergeFindings.js::findEndOfJson` | intentional-and-documented | Consolidated behind `scanJsonObject` in #110; the thin wrappers retain their distinct parse and end-index contracts. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |

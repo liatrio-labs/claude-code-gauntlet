@@ -4,7 +4,7 @@
       "confidence": 40,
       "description": "Same issue appears again here in this duplicate detection test case for parity fixtures now.",
       "eliminated_by": "injection",
-      "elimination_reason": "duplicate of finding 'I6a'",
+      "elimination_reason": "duplicate of finding \"I6a\"",
       "file": "src/util.py",
       "id": "I6b",
       "line_start": 20,

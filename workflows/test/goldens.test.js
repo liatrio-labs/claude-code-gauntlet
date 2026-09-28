@@ -19,53 +19,11 @@ import {
   routeByDimension,
   consolidateCrossAgent,
   tagFindings,
-  INJECTION_STRIPPED_PROSE_FIELDS,
 } from '../src/filterFindings.js';
 import { applyChallenges } from '../src/applyChallenges.js';
-import { loadCases } from './helpers/goldenCases.js';
+import { loadCases, writeGolden } from './helpers/goldenCases.js';
 
-for (const c of loadCases('finding_dedup')) {
-  test(`finding_dedup parity: ${c.name}`, () => {
-    const got = dedupById(c.input.ndjson_findings, c.input.text_findings);
-    assert.deepEqual(
-      { merged: got.merged, duplicates_resolved: got.duplicatesResolved, dropped_no_id: got.droppedNoId },
-      c.expected,
-    );
-  });
-}
-
-const sortedIds = (env) => env.findings.map((f) => f.id).sort();
-
-for (const c of loadCases('merge_findings')) {
-  test(`merge_findings parity: ${c.name}`, () => {
-    // Feed raw file strings keyed by agent; the merge twin accepts {agent: rawString}.
-    const got = merge(mapByAgent(c.input.findings_dir_files), mapByAgent(c.input.text_dir_files), c.input.args);
-    const m = got.methodology, em = c.expected.methodology;
-    // Full finding set by id + every numeric methodology count (not just 3 scalars).
-    assert.deepEqual(sortedIds(got), c.expected.findings.map((f) => f.id).sort());
-    // agents_dispatched is an array; strict `equal` compares by reference, so deepEqual.
-    assert.deepEqual(m.agents_dispatched, em.agents_dispatched);
-    assert.deepEqual(m.findings_per_channel, em.findings_per_channel);
-    assert.equal(m.duplicates_resolved, em.duplicates_resolved);
-    assert.equal(m.dropped_no_id, em.dropped_no_id);
-    // Warning ARRAY LENGTHS only — bodies are free-text (substring rule), so not byte-compared.
-    assert.equal(m.truncation_warnings.length, em.truncation_warnings.length);
-    assert.equal(m.validation_warnings.length, em.validation_warnings.length);
-  });
-}
-
-for (const c of loadCases('apply_validations')) {
-  test(`apply_validations parity: ${c.name}`, () => {
-    // applyValidations mutates findings in place -- clone so the fixture's
-    // input.json (re-read by every test run) is never mutated across cases.
-    const findings = structuredClone(c.input.findings);
-    const { adjustedCount, unmatchedIds } = applyValidations(findings, c.input.validations);
-    assert.deepEqual(
-      { findings, adjusted_count: adjustedCount, unmatched_ids: unmatchedIds },
-      c.expected,
-    );
-  });
-}
+const UPDATE_GOLDENS = process.env.UPDATE_GOLDENS === '1';
 
 function mapByAgent(files) {
   const out = {};
@@ -76,270 +34,115 @@ function mapByAgent(files) {
   return out;
 }
 
-// --- filterFindings part 1: normalize / review_md / threshold / injection / exclusions ---
+function runFindingDedup(input) {
+  const got = dedupById(input.ndjson_findings, input.text_findings);
+  return {
+    merged: got.merged,
+    duplicates_resolved: got.duplicatesResolved,
+    dropped_no_id: got.droppedNoId,
+  };
+}
 
-const idsOf = (list) => list.map((f) => f.id);
-
-// The fixture loop and seeded-divergence meta-test exercise the SAME
-// comparator, so the checks cannot silently drift apart. Free-text JOIN
-// format ('; '-separated) is not load-bearing, but each individual reason
-// SEGMENT is not free -- the "<phrase>: " prefix up to and including the ": "
-// separator is built from the same SUGGESTION_SETS phrase strings in both
-// runtimes (bare, with no field-attribution prefix), so it is byte-exact
-// across twins; only the trailing
-// pattern-spelling tail (Python `!r` vs JS `rx.source` + JSON.stringify) is
-// free. A segment with no ': ' separator (the word-count and
-// duplicate-signature heuristics, whose text is NOT built from a shared
-// phrase table) is presence-only. Segment COUNT must match too, so a reason
-// silently dropped (or a spurious extra one added) on either twin is caught
-// even when the eliminated ID sets already agree. Throws (via `assert`) on a
-// segment-count mismatch or a prefix divergence; does NOT throw on a
-// tail-only difference (the free pattern-spelling suffix).
-function assertEliminationReasonSegmentsMatch(gotReason, expReason, label) {
-  const gotSegs = gotReason.split('; ');
-  const expSegs = expReason.split('; ');
-  assert.equal(
-    gotSegs.length,
-    expSegs.length,
-    `elimination_reason segment count${label ? ` for ${label}` : ''}: got ${JSON.stringify(gotSegs)} vs expected ${JSON.stringify(expSegs)}`,
+function runMergeFindings(input) {
+  return merge(
+    mapByAgent(input.findings_dir_files),
+    mapByAgent(input.text_dir_files),
+    input.args,
   );
-  expSegs.forEach((expSeg, j) => {
-    const sepIdx = expSeg.indexOf(': ');
-    if (sepIdx === -1) return; // presence-only segment, already asserted above
-    const expPrefix = expSeg.slice(0, sepIdx + 2);
-    assert.equal(
-      gotSegs[j].slice(0, expPrefix.length),
-      expPrefix,
-      `elimination_reason segment ${j} prefix${label ? ` for ${label}` : ''}`,
-    );
+}
+
+function runApplyValidations(input) {
+  const findings = structuredClone(input.findings);
+  const { adjustedCount, unmatchedIds } = applyValidations(findings, input.validations);
+  return { findings, adjusted_count: adjustedCount, unmatched_ids: unmatchedIds };
+}
+
+function runFilterFindings(input) {
+  if (input.fn === 'normalize_field_names') {
+    normalizeFieldNames(input.findings);
+    return { findings: input.findings };
+  }
+  if (input.fn === 'parse_review_md') return { config: parseReviewMd(input.markdown) };
+  if (input.fn === 'build_review_config') return { config: buildReviewConfig(input.entries) };
+  if (input.fn === 'config_for_file') return { config: configForFile(input.config, input.file) };
+  if (input.fn === 'load_exclusions') return { patterns: loadExclusions(input.markdown) };
+  if (input.fn === 'apply_threshold_filter') {
+    const { kept, eliminated, contestedCount } = applyThresholdFilter(input.findings, input.config);
+    return { kept, eliminated, contested_count: contestedCount };
+  }
+  if (input.fn === 'apply_reachability_demotion') {
+    const { findings, demotedCount } = applyReachabilityDemotion(input.findings);
+    return { findings, demoted_count: demotedCount };
+  }
+  if (input.fn === 'apply_injection_filter') return applyInjectionFilter(input.findings);
+  if (input.fn === 'apply_replay_injection_scan') return applyReplayInjectionScan(input.findings);
+  if (input.fn === 'apply_exclusions') {
+    return applyExclusions(input.findings, input.exclusion_patterns, input.config ?? null);
+  }
+  if (input.fn === 'apply_filter_pipeline') {
+    return applyFilterPipeline(input.findings, input.config, input.exclusion_patterns, input.generated_at);
+  }
+  if (input.fn === 'detect_disagreement') {
+    const { active, suppressed, boostedCount } = detectDisagreement(input.findings);
+    return { active, suppressed, boosted_count: boostedCount };
+  }
+  if (input.fn === '_route_by_dimension') return { route: routeByDimension(input.finding) };
+  if (input.fn === 'consolidate_cross_agent') {
+    const { findings, consolidatedCount } = consolidateCrossAgent(input.findings);
+    return { findings, consolidated_count: consolidatedCount };
+  }
+  if (input.fn === 'tag_findings') {
+    const { tagged, consolidatedCount, mainCount, suggestionCount } = tagFindings(input.findings);
+    return {
+      tagged,
+      consolidated_count: consolidatedCount,
+      main_count: mainCount,
+      suggestion_count: suggestionCount,
+    };
+  }
+  throw new Error(`unhandled fn: ${input.fn}`);
+}
+
+function runApplyChallenges(input) {
+  return applyChallenges(input.findings, input.challenges);
+}
+
+function assertOrWrite(testCase, result) {
+  if (UPDATE_GOLDENS) writeGolden(testCase, result);
+  else assert.deepEqual(result, testCase.expected);
+}
+
+for (const c of loadCases('finding_dedup')) {
+  test(`finding_dedup parity: ${c.name}`, () => {
+    assertOrWrite(c, runFindingDedup(c.input));
   });
 }
 
-// Seeded-divergence meta-test proves the
-// helper above actually discriminates, rather than trusting its logic by
-// inspection. (a) a prefix divergence and (b) a dropped segment must both
-// throw; (c) a tail-only difference (the free pattern-spelling suffix) must
-// NOT throw. Mutating either half of the helper (the length check or the
-// prefix check) must be detected by this test.
-test('assertEliminationReasonSegmentsMatch: seeded divergence cases', () => {
-  // (a) prefix divergence: same segment count, but segment 0's phrase prefix disagrees.
-  assert.throws(() =>
-    assertEliminationReasonSegmentsMatch(
-      "contains shell command pattern: 'rm -rf'",
-      "uses instructional tone: 'rm -rf'",
-    ),
-  );
-  // (b) dropped segment: got carries a spurious extra segment expected does
-  // not have (one twin silently added/dropped a reason relative to the
-  // other) -- both sides still share the segment 0 prefix, so ONLY the
-  // length check catches this; deliberately NOT the got=1/expected=2 shape,
-  // which would throw a TypeError on out-of-bounds access regardless of
-  // whether the length check ran, masking whether it actually fired.
-  assert.throws(() =>
-    assertEliminationReasonSegmentsMatch(
-      "contains shell command pattern: 'rm -rf'; contains visit-URL pattern: 'https://x'",
-      "contains shell command pattern: 'rm -rf'",
-    ),
-  );
-  // (c) tail-only difference: same segment count, same prefixes, only the
-  // free pattern-spelling suffix (Python !r vs JS source+JSON.stringify) differs.
-  assert.doesNotThrow(() =>
-    assertEliminationReasonSegmentsMatch(
-      "contains shell command pattern: '\\\\brm[\\\\t\\\\n]+-[rf]'",
-      'contains shell command pattern: "\\\\brm[\\\\t\\\\n]+-[rf]"',
-    ),
-  );
-});
-
-// Shared by the apply_injection_filter and apply_replay_injection_scan
-// branches below -- both twins return the identical { kept, eliminated }
-// shape, so one comparator covers both callers of injectionScanCore.
-function assertInjectionScanParity({ kept, eliminated }, expected) {
-  assert.deepEqual(idsOf(kept), idsOf(expected.kept));
-  assert.deepEqual(idsOf(eliminated), idsOf(expected.eliminated));
-  // Uses the extracted assertEliminationReasonSegmentsMatch helper (defined
-  // above, proven by its own seeded-divergence meta-test) -- see that
-  // helper's comment for what is byte-exact vs free text here.
-  eliminated.forEach((got, i) => {
-    const exp = expected.eliminated[i];
-    assert.ok(got.elimination_reason && got.elimination_reason.length > 0);
-    assertEliminationReasonSegmentsMatch(got.elimination_reason, exp.elimination_reason, exp.id);
+for (const c of loadCases('merge_findings')) {
+  test(`merge_findings parity: ${c.name}`, () => {
+    assertOrWrite(c, runMergeFindings(c.input));
   });
-  // `{field}_removal_reason` is MOSTLY free text (Python !r vs JS
-  // pattern-source quoting differ), but the "{field} <noun phrase>: "
-  // prefix up to and including the ": " separator is identical across
-  // runtimes by construction (both read it from the same SUGGESTION_SETS
-  // phrase strings) -- compare that prefix byte-exactly, for EVERY field
-  // in INJECTION_STRIPPED_PROSE_FIELDS (suggestion, claude_md_rule,
-  // spec_text), so renaming any of the 7 set labels OR adding/renaming a
-  // scanned field goes red here, and leave only the pattern-spelling tail
-  // (after the ": ") presence-only. The non-string reason
-  // ("{field} is not a string") carries no pattern tail and no colon
-  // separator, so it gets its own byte-exact branch instead. A single
-  // kept finding can carry MORE THAN ONE of these keys at once (D7: every
-  // matching field strips independently), so each is peeled off in turn
-  // before the remainder is compared structurally.
-  kept.forEach((got, i) => {
-    const exp = expected.kept[i];
-    let gotRest = got;
-    let expRest = exp;
-    for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
-      const key = `${field}_removal_reason`;
-      if (!(key in exp)) continue;
-      const expReason = exp[key];
-      const gotReason = got[key];
-      assert.ok(gotReason && gotReason.length > 0);
-      if (expReason === `${field} is not a string`) {
-        assert.equal(gotReason, expReason);
-      } else {
-        const sepIdx = expReason.indexOf(': ');
-        assert.ok(sepIdx !== -1, `golden reason missing ': ' separator: ${expReason}`);
-        const expPrefix = expReason.slice(0, sepIdx + 2);
-        assert.equal(gotReason.slice(0, expPrefix.length), expPrefix);
-      }
-      const { [key]: _g, ...gotWithout } = gotRest;
-      const { [key]: _e, ...expWithout } = expRest;
-      gotRest = gotWithout;
-      expRest = expWithout;
-    }
-    assert.deepEqual(gotRest, expRest);
+}
+
+for (const c of loadCases('apply_validations')) {
+  test(`apply_validations parity: ${c.name}`, () => {
+    assertOrWrite(c, runApplyValidations(c.input));
   });
 }
 
 for (const c of loadCases('filter_findings')) {
-  const fn = c.input.fn;
-  test(`filter_findings parity: ${c.name} (${fn})`, () => {
-    if (fn === 'normalize_field_names') {
-      const findings = c.input.findings;
-      normalizeFieldNames(findings);
-      assert.deepEqual({ findings }, c.expected);
-      return;
-    }
-    if (fn === 'parse_review_md') {
-      assert.deepEqual(parseReviewMd(c.input.markdown), c.expected.config);
-      return;
-    }
-    if (fn === 'build_review_config') {
-      assert.deepEqual(buildReviewConfig(c.input.entries), c.expected.config);
-      return;
-    }
-    if (fn === 'config_for_file') {
-      assert.deepEqual(configForFile(c.input.config, c.input.file), c.expected.config);
-      return;
-    }
-    if (fn === 'load_exclusions') {
-      assert.deepEqual(loadExclusions(c.input.markdown), c.expected.patterns);
-      return;
-    }
-    if (fn === 'apply_threshold_filter') {
-      const { kept, eliminated, contestedCount } = applyThresholdFilter(c.input.findings, c.input.config);
-      assert.deepEqual(idsOf(kept), idsOf(c.expected.kept));
-      assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
-      assert.equal(contestedCount, c.expected.contested_count);
-      return;
-    }
-    if (fn === 'apply_reachability_demotion') {
-      const { findings, demotedCount } = applyReachabilityDemotion(c.input.findings);
-      assert.deepEqual({ findings, demoted_count: demotedCount }, c.expected);
-      return;
-    }
-    if (fn === 'apply_injection_filter') {
-      assertInjectionScanParity(applyInjectionFilter(c.input.findings), c.expected);
-      return;
-    }
-    if (fn === 'apply_replay_injection_scan') {
-      // Same shape/assertions as apply_injection_filter above (both
-      // return { kept, eliminated }) -- the only behavioral difference
-      // (heuristic 4 excluded) is exercised by the fixture content itself
-      // (tests/fixtures/parity/filter_findings/injection_replay/), not by a
-      // different comparator here.
-      assertInjectionScanParity(applyReplayInjectionScan(c.input.findings), c.expected);
-      return;
-    }
-    if (fn === 'apply_exclusions') {
-      const { kept, eliminated } = applyExclusions(
-        c.input.findings,
-        c.input.exclusion_patterns,
-        c.input.config ?? null,
-      );
-      assert.deepEqual(idsOf(kept), idsOf(c.expected.kept));
-      assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
-      return;
-    }
-    if (fn === 'apply_filter_pipeline') {
-      const out = applyFilterPipeline(
-        c.input.findings,
-        c.input.config,
-        c.input.exclusion_patterns,
-        c.input.generated_at,
-      );
-      assert.deepEqual(idsOf(out.filtered), idsOf(c.expected.filtered));
-      assert.deepEqual(idsOf(out.eliminated), idsOf(c.expected.eliminated));
-      assert.deepEqual(out.stats, c.expected.stats);
-      assert.equal(out.generated_at, c.expected.generated_at);
-      return;
-    }
-    // --- part 2: disagreement / dimension routing / cross-agent dedup / tag ---
-    if (fn === 'detect_disagreement') {
-      const { active, suppressed, boostedCount } = detectDisagreement(c.input.findings);
-      // `active` carries no elimination_reason (free text) -- full structural
-      // equality is meaningful and safe here, unlike the eliminated lists below.
-      assert.deepEqual(active, c.expected.active);
-      assert.deepEqual(idsOf(suppressed), idsOf(c.expected.suppressed));
-      for (const s of suppressed) assert.ok(s.elimination_reason && s.elimination_reason.length > 0);
-      assert.equal(boostedCount, c.expected.boosted_count);
-      return;
-    }
-    if (fn === '_route_by_dimension') {
-      assert.equal(routeByDimension(c.input.finding), c.expected.route);
-      return;
-    }
-    if (fn === 'consolidate_cross_agent') {
-      const { findings, consolidatedCount } = consolidateCrossAgent(c.input.findings);
-      // Nothing is dropped -- full structural equality, including the
-      // stamped consolidation_key/consolidation_primary fields.
-      assert.deepEqual(findings, c.expected.findings);
-      assert.equal(consolidatedCount, c.expected.consolidated_count);
-      return;
-    }
-    if (fn === 'tag_findings') {
-      const { tagged, consolidatedCount, mainCount, suggestionCount } = tagFindings(c.input.findings);
-      assert.deepEqual(tagged, c.expected.tagged);
-      assert.equal(consolidatedCount, c.expected.consolidated_count);
-      assert.equal(mainCount, c.expected.main_count);
-      assert.equal(suggestionCount, c.expected.suggestion_count);
-      return;
-    }
-    throw new Error(`unhandled fn: ${fn}`);
+  test(`filter_findings parity: ${c.name} (${c.input.fn})`, () => {
+    assertOrWrite(c, runFilterFindings(c.input));
   });
 }
 
-// --- applyChallenges: composite comparator / deep-clone / dedup reuse ------
-
 for (const c of loadCases('apply_challenges')) {
   test(`apply_challenges parity: ${c.name}`, () => {
-    // deep_copy_no_mutation_of_input additionally asserts that calling
-    // applyChallenges never mutates the caller's input findings array/objects
-    // -- snapshot BEFORE the call, compare AFTER (applyChallenges itself is
-    // called on c.input.findings directly, not cloned by the test, precisely
-    // so a real aliasing bug would be caught here).
-    const inputSnapshot = c.name === 'deep_copy_no_mutation_of_input' ? structuredClone(c.input.findings) : null;
-
-    const { findings, eliminated, stats } = applyChallenges(c.input.findings, c.input.challenges);
-
-    if (inputSnapshot) assert.deepEqual(c.input.findings, inputSnapshot);
-
-    // `findings` (post-consolidation, post-rank, ranked order and the
-    // stamped consolidation fields matter) and `stats` are fully structural
-    // -- no free-text fields. `eliminated` carries elimination_reason
-    // (free text, e.g. injection/threshold reasons) -- compared by
-    // id + eliminated_by only.
-    assert.deepEqual(findings, c.expected.findings);
-    assert.deepEqual(
-      eliminated.map((f) => ({ id: f.id, eliminated_by: f.eliminated_by })),
-      c.expected.eliminated.map((f) => ({ id: f.id, eliminated_by: f.eliminated_by })),
-    );
-    for (const e of eliminated) assert.ok(e.elimination_reason && e.elimination_reason.length > 0);
-    assert.deepEqual(stats, c.expected.stats);
+    const snapshot = c.name === 'deep_copy_no_mutation_of_input'
+      ? structuredClone(c.input.findings)
+      : null;
+    const result = runApplyChallenges(c.input);
+    if (snapshot) assert.deepEqual(c.input.findings, snapshot);
+    assertOrWrite(c, result);
   });
 }

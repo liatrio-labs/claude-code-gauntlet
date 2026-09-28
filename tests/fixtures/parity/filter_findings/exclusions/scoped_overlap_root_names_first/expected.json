@@ -3,7 +3,7 @@
     {
       "description": "real",
       "eliminated_by": "exclusion",
-      "elimination_reason": "matched exclusion pattern: 'root-overlap'",
+      "elimination_reason": "matched exclusion pattern: \"root-overlap\"",
       "file": "api/x.py",
       "id": "overlap",
       "title": "root-overlap subtree-overlap external-overlap"
