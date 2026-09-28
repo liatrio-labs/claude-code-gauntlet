@@ -30,7 +30,12 @@ Stdlib-only (CLAUDE.md).
 
 import json
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+from gauntlet.await_workflow import ARTIFACT_BASENAMES
 
 from bench.runner import citations
 from bench.runner.invoke import (
@@ -44,7 +49,6 @@ from bench.runner.invoke import (
     workflow_record_fields,
     workflow_record_identity_reason,
 )
-from scripts.await_workflow import ARTIFACT_BASENAMES
 
 # Union-schema surface the persist boundary writes (canonical + v2 aliases).
 # A findings file may use either naming; we accept either for each pair.

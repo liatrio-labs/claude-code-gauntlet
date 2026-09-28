@@ -1,7 +1,7 @@
 // deriveFromPlan.js — an INDEPENDENT reimplementation of a persistPlan's derivation
 // rules, deliberately not shared with production code (workflows/src/stages.js), so a
 // test using it proves the derivation RULES themselves, not that one function equals
-// itself. Mirrors scripts/assemble_artifacts.py's projection-by-id exactly: given the
+// itself. Mirrors scripts/gauntlet/assemble_artifacts.py's projection-by-id exactly: given the
 // bytes that actually landed in findings.json, reconstruct the post-review delivery
 // document and the resume checkpoint the SAME way the real assembler would, so a test
 // can assert `plan.derive[]`'s pre-computed chars/checksum agree with what an honest

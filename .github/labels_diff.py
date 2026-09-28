@@ -257,6 +257,6 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-    from script_io import run_entrypoint
+    from gauntlet.cli import run_entrypoint
 
     run_entrypoint(main)

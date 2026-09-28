@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts import generate_contract_requirements as generator
-from scripts import resolve_config as resolver
+from gauntlet import generate_contract_requirements as generator
+from gauntlet import resolve_config as resolver
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "resolve_config.py"
@@ -140,7 +140,7 @@ class TestDefaultDeliveryParser(unittest.TestCase):
 
 class TestResolvePureFunctions(unittest.TestCase):
     def test_one_line_uses_shared_js_trim_chars_at_call_time(self):
-        import report_severity
+        import gauntlet.text as report_severity
 
         self.assertIs(resolver.JS_TRIM_CHARS, report_severity.JS_TRIM_CHARS)
         with mock.patch.object(resolver, "JS_TRIM_CHARS", "!@"):
@@ -778,17 +778,17 @@ class TestGeneratedDataContracts(unittest.TestCase):
                 "skills/code-gauntlet/references/report-format.md",
                 "skills/code-gauntlet/references/headless-mode.md",
                 "skills/code-gauntlet/SKILL.md",
-                "scripts/resolve_config.py",
+                "scripts/gauntlet/resolve_config.py",
             },
             "Resolved config:": {
                 "workflows/src/renderReport.js",
                 "skills/code-gauntlet/references/report-format.md",
                 "skills/code-gauntlet/SKILL.md",
-                "scripts/resolve_config.py",
+                "scripts/gauntlet/resolve_config.py",
             },
             "HEADLESS CONFIG ERROR:": {
                 "skills/code-gauntlet/references/headless-mode.md",
-                "scripts/resolve_config.py",
+                "scripts/gauntlet/resolve_config.py",
             },
         }
         for token, paths in expected.items():

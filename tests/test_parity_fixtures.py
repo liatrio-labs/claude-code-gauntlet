@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest  # type: ignore[import-not-found]
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURES = REPO / "tests" / "fixtures" / "parity"
@@ -25,7 +25,7 @@ def _case_dirs(family):
     "case_dir", _case_dirs("verify_deltas"), ids=lambda path: path.name
 )
 def test_verify_deltas_parity(case_dir):
-    from verify_findings import build_deltas, deltas_checksum
+    from gauntlet.verify_findings import build_deltas, deltas_checksum
 
     verify_delta_drop = {
         "blame_metadata",
@@ -51,8 +51,8 @@ def test_verify_deltas_parity(case_dir):
     "case_dir", _case_dirs("slice_input_proof"), ids=lambda path: path.name
 )
 def test_slice_input_proof_parity(case_dir):
-    from assemble_artifacts import fnv1a32, js_stringify_pretty
-    from verify_findings import _input_checksum
+    from gauntlet.assemble_artifacts import fnv1a32, js_stringify_pretty
+    from gauntlet.verify_findings import _input_checksum
 
     inp, expected = _load(case_dir)
     assert fnv1a32(js_stringify_pretty(inp["doc"])) == expected["checksum"]

@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import scripts.ensure_output_dir as eod
+import gauntlet.ensure_output_dir as eod
 
 
 def _git(cwd: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:

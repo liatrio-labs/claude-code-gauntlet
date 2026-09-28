@@ -114,13 +114,13 @@ export const FINDING_PROP_TYPES = {
   // Instructed by all 7 discovery contracts (issue #63). OPTIONAL and NOT nullable, same
   // OMIT-not-null discipline as suggestion/claude_md_rule above: a not-applicable value is
   // omitted, never null. Declaring it here is only half the story — delivery
-  // (scripts/post_review.py) runs a deterministic apply-check before ever rendering it as a
+  // (scripts/gauntlet/post_review.py) runs a deterministic apply-check before ever rendering it as a
   // committable ```suggestion fence, and downgrades to the prose `suggestion` on any failure
   // (non-string, stale/no-op, wrong range, wrong anchor, oversized, ...). A finding surviving
   // to delivery with this field set is not a guarantee the fence ships. The pipeline also
   // excludes the field itself through reportExtraFields in renderReport.js, so delivery
   // is the only surface it is ever rendered on. The read-only
-  // report-side apply-check (scripts/report_patches.py) renders the KEPT patches into a
+  // report-side apply-check (scripts/gauntlet/report_patches.py) renders the KEPT patches into a
   // sibling artifact instead — see report-format.md.
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string' } },
@@ -256,11 +256,11 @@ export const AGENT_LABELS = {
 // --- Product identity -------------------------------------------------------
 // The ONE hand-authored copy of the brand mark, the display name, the severity emoji map,
 // and the rule-source label map. Every other copy is GENERATED from here by
-// scripts/generate_contract_requirements.py (--check in CI): the Python mirror in
-// scripts/post_review.py and the legends in references/report-format.md and
+// scripts/gauntlet/generate_contract_requirements.py (--check in CI): the Python mirror in
+// scripts/gauntlet/post_review.py and the legends in references/report-format.md and
 // references/delivery-guide.md. Do not hand-edit a mirror.
 //
-// PRODUCT ("code-gauntlet", scripts/review_marker.py:89) is deliberately NOT here and is
+// PRODUCT ("code-gauntlet", scripts/gauntlet/marker.py:89) is deliberately NOT here and is
 // NOT a mirror of BRAND_NAME: that is a machine-parsed wire slug pinned by
 // docs/machine-parsed-strings.md; this is presentation. A product rename moves both,
 // separately, on purpose.

@@ -36,7 +36,7 @@ from typing import ClassVar
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
-from scripts.assemble_artifacts import (  # noqa: E402
+from gauntlet.assemble_artifacts import (  # noqa: E402
     JsSerializationError,
     assemble,
     fnv1a32,
@@ -1292,7 +1292,7 @@ class TestStdoutIsNeverEmpty(unittest.TestCase):
             self.assertFalse(json.loads(proc.stdout)["ok"])
 
     def test_the_minimal_line_is_well_formed_and_self_describing(self):
-        from scripts.assemble_artifacts import _minimal_receipt_line
+        from gauntlet.assemble_artifacts import _minimal_receipt_line
 
         receipt = json.loads(_minimal_receipt_line(ValueError("out of range float")))
         self.assertEqual(receipt["ok"], False)
@@ -1306,7 +1306,7 @@ class TestStdoutIsNeverEmpty(unittest.TestCase):
         )
 
     def test_the_minimal_line_survives_an_exception_it_cannot_render(self):
-        from scripts.assemble_artifacts import _minimal_receipt_line
+        from gauntlet.assemble_artifacts import _minimal_receipt_line
 
         class Hostile(Exception):
             def __str__(self):

@@ -1,8 +1,8 @@
 """
-Tests for scripts/review_marker.py (Issue #39).
+Tests for scripts/gauntlet/marker.py (Issue #39).
 
 This module is written FROM THE DESIGN SPEC ALONE (issue #39), not by reading
-scripts/review_marker.py or scripts/detect_prior_review.py — those land from a
+scripts/gauntlet/marker.py or scripts/gauntlet/detect_prior_review.py — those land from a
 concurrent implementation and this file is the independent, double-entry check
 against the settled contract. Where this file and the implementation disagree,
 that disagreement is the signal the split was designed to produce.
@@ -48,8 +48,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import scripts.review_marker as review_marker
-from scripts.review_marker import (
+import gauntlet.marker as review_marker
+from gauntlet.marker import (
     FINDING_MARKER_TOKEN,
     LEGACY_MARKER_TOKEN,
     LEGACY_PRODUCT,
@@ -573,7 +573,7 @@ class TestFindingMarker(unittest.TestCase):
         """Malformed finding candidates must not hide a complete valid marker tail."""
         child = "\n".join(
             [
-                "from scripts.review_marker import build_finding_marker, find_finding_marker, find_finding_markers",
+                "from gauntlet.marker import build_finding_marker, find_finding_marker, find_finding_markers",
                 "n = 40  # a literal: the finding reader has no scan cap to derive from",
                 "sha = 'a' * 40",
                 "keys = [f'{i:016x}' for i in range(n)]",
@@ -870,7 +870,7 @@ class TestDocContract(unittest.TestCase):
     HEADLESS_MODE_REL = "skills/code-gauntlet/references/headless-mode.md"
     REPORT_FORMAT_REL = "skills/code-gauntlet/references/report-format.md"
     DELIVERY_GUIDE_REL = "skills/code-gauntlet/references/delivery-guide.md"
-    POST_REVIEW_REL = "scripts/post_review.py"
+    POST_REVIEW_REL = "scripts/gauntlet/post_review.py"
 
     # The docs that may quote a raw signal string. phase1-preflight.md / SKILL.md
     # are the read path (spec Deliverable 5); report-format.md / delivery-guide.md

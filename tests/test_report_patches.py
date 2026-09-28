@@ -25,8 +25,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import scripts.post_review as post_review
-import scripts.report_patches as report_patches
+import gauntlet.post_review as post_review
+import gauntlet.report_patches as report_patches
 
 
 class ReportPatchesTestBase(unittest.TestCase):
@@ -43,8 +43,8 @@ class ReportPatchesTestBase(unittest.TestCase):
         # into a later test in the same process.
         self.addCleanup(post_review.reset_run_state)
         # report_patches.py bare-imports post_review's helpers (``from post_review
-        # import ...``), which — because tests also do ``import scripts.post_review``
-        # — makes bare "post_review" and "scripts.post_review" TWO SEPARATE module
+        # import ...``), which — because tests also do ``import gauntlet.post_review``
+        # — makes bare "post_review" and "gauntlet.post_review" TWO SEPARATE module
         # objects with independent module-level state. reset_run_state on ONE does
         # not touch the other's counters; report_patches.main() reads/writes its own
         # bare-imported copy, so that one needs its own cleanup too.
@@ -1807,7 +1807,7 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         )
 
         with patch(
-            "scripts.report_patches.write_text_atomic",
+            "gauntlet.report_patches.write_text_atomic",
             wraps=report_patches.write_text_atomic,
         ) as mock_write:
             exit_code, receipt, *_ = self._run()
@@ -2116,7 +2116,7 @@ class TestResetRunState(ReportPatchesTestBase):
     Dirties the gate through ``report_patches._gated_finding`` — the SAME
     bare-imported name ``report_patches.main()`` itself calls — not
     ``post_review._gated_finding``: bare ``post_review`` (report_patches.py's
-    import) and ``scripts.post_review`` (this test module's import) are two
+    import) and ``gauntlet.post_review`` (this test module's import) are two
     separate module objects with independent state, so poisoning the latter
     would silently miss the counters the run under test actually reads.
     """

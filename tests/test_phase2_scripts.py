@@ -1,4 +1,4 @@
-"""Regression tests for the Phase 2 path-safe helper scripts."""
+"""Regression tests for the Phase 2 path-safe helper gauntlet."""
 
 from __future__ import annotations
 
@@ -517,7 +517,7 @@ class TestWriteSharedContext(unittest.TestCase):
             )
             (output_dir / f"code-gauntlet-diff-{SHA}.patch").write_bytes(b"diff\n")
             with mock.patch.object(sys, "path", [str(REPO / "scripts"), *sys.path]):
-                writer = import_module("write_shared_context")
+                writer = import_module("gauntlet.write_shared_context")
 
             stderr = StringIO()
             args = ["--output-dir", str(output_dir), "--head-sha", SHA]

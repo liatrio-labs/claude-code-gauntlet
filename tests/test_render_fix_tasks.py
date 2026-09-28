@@ -11,11 +11,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts import generate_contract_requirements as contract_generator
-from scripts import render_fix_tasks as renderer
+from gauntlet import generate_contract_requirements as contract_generator
+from gauntlet import render_fix_tasks as renderer
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "render_fix_tasks.py"
+SOURCE = REPO / "scripts" / "gauntlet" / "render_fix_tasks.py"
 
 
 class RenderFixTasksTest(unittest.TestCase):
@@ -784,14 +785,17 @@ class RenderFixTasksTest(unittest.TestCase):
 
     def test_every_generated_detail_field_renders_and_matches_registry(self):
         identity = contract_generator.load_registry(str(REPO))
-        source = SCRIPT.read_text(encoding="utf-8")
+        source = SOURCE.read_text(encoding="utf-8")
         marker = "# generated-from-registry-identity:detail_fields"
         start = source.index("_DETAIL_FIELDS_BY_DIMENSION = {", source.index(marker))
         end = source.index("# /generated-from-registry-identity:detail_fields", start)
         actual_fence = source[start:end].rstrip()
         expected_fence = "\n".join(
             contract_generator.identity_body(
-                "scripts/render_fix_tasks.py", "detail_fields", identity, str(REPO)
+                "scripts/gauntlet/render_fix_tasks.py",
+                "detail_fields",
+                identity,
+                str(REPO),
             )
         )
         self.assertEqual(actual_fence, expected_fence)
@@ -965,7 +969,7 @@ class RenderFixTasksTest(unittest.TestCase):
 
     def test_renderer_imports_only_stdlib_or_local_helpers(self):
         tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
-        allowed = set(sys.stdlib_module_names) | {"script_io", "report_severity"}
+        allowed = set(sys.stdlib_module_names) | {"gauntlet"}
         imports = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):

@@ -2,13 +2,13 @@
 //
 // The artifact-writer now persists only the UNIQUE content (findings.json,
 // report.md, the persist plan); the two PROJECTIONS (post-review delivery set,
-// resume checkpoint) are derived on disk by scripts/assemble_artifacts.py, run
+// resume checkpoint) are derived on disk by scripts/gauntlet/assemble_artifacts.py, run
 // by the executor, which returns a content-proof receipt.
 //
 // What these tests pin:
 //   1. persistPlan is a pure, directly-testable projection description.
 //   2. The fnv1a32-over-UTF-16-code-units checksum matches the Python twin
-//      (the constants below were produced by scripts/assemble_artifacts.py;
+//      (the constants below were produced by scripts/gauntlet/assemble_artifacts.py;
 //      tests/test_assemble_artifacts.py runs the live node-vs-python parity).
 //   3. writeArtifacts' PUBLIC contract is unchanged: same return shape, the same
 //      four artifactPaths keys, the same partial-artifacts degradation.
@@ -168,7 +168,7 @@ const labels = (ctx) => ctx.calls.map((c) => c.label);
 
 // --- Checksum ---------------------------------------------------------------
 
-// Vectors produced by scripts/assemble_artifacts.py's fnv1a32 (the Python twin).
+// Vectors produced by scripts/gauntlet/assemble_artifacts.py's fnv1a32 (the Python twin).
 // tests/test_assemble_artifacts.py::TestCrossRuntimeChecksumParity runs the live
 // node-vs-python comparison over the same class of inputs; these constants make a
 // drift on EITHER side fail here too, without a subprocess.
@@ -344,7 +344,7 @@ test('the derived expectation costs the dispatch only a checksum, never the docu
 });
 
 test('the derived expectation matches what an INDEPENDENT derivation produces', () => {
-  // deriveFromPlan mirrors scripts/assemble_artifacts.py. If the plan's own expectation did
+  // deriveFromPlan mirrors scripts/gauntlet/assemble_artifacts.py. If the plan's own expectation did
   // not agree with it, every honest run would degrade — this is the guard against a proof
   // that is precise but wrong.
   const inp = persistInput({ prIdentity: { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' } });
@@ -422,7 +422,7 @@ test('persistPlanPath matches the Phase 2 stale-file glob code-gauntlet-*-<sha>.
 // stages_delivery.test.js's #213 replay-belt regression) — an INDEPENDENT
 // reimplementation of the plan's derivation rules, deliberately not shared with the
 // production code, so this test proves the rules themselves, not that one function
-// equals itself. Mirrors scripts/assemble_artifacts.py exactly.
+// equals itself. Mirrors scripts/gauntlet/assemble_artifacts.py exactly.
 
 test('in-run byte identity: the derived artifacts EQUAL the strings the pipeline holds', () => {
   const inp = persistInput();
@@ -1272,7 +1272,7 @@ test('provenPrimaryPaths salvages NOTHING from a receipt that cannot be trusted'
 // --- The RETURN persist channel ----------------------------------------------
 //
 // The primaries ride home in the workflow's own return value, which the HARNESS
-// serializes to tasks/<taskid>.output, and scripts/materialize_artifacts.py writes them
+// serializes to tasks/<taskid>.output, and scripts/gauntlet/materialize_artifacts.py writes them
 // from there. No agent transcribes them. tests/test_materialize_artifacts.py owns the
 // disk half (against a task output file this pipeline actually produced); these pin the
 // workflow half: that nothing is dispatched, that the bytes carried are the SAME bytes

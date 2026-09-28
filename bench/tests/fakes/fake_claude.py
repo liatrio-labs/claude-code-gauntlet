@@ -48,6 +48,7 @@ import os
 import re
 import sys
 import time
+from pathlib import Path
 
 
 def _plugin_dir_from_argv():
@@ -110,8 +111,12 @@ def _session_workflow_script_path(config_dir):
 
 def echo_lines(plugin_root=None, pipeline_version=None):
     plugin_root_from_argv = _plugin_dir_from_argv()
-    if plugin_root_from_argv and plugin_root_from_argv not in sys.path:
-        sys.path.insert(0, plugin_root_from_argv)
+    if plugin_root_from_argv:
+        if plugin_root_from_argv not in sys.path:
+            sys.path.insert(0, plugin_root_from_argv)
+        scripts_root = str(Path(plugin_root_from_argv) / "scripts")
+        if scripts_root not in sys.path:
+            sys.path.insert(0, scripts_root)
     from bench.runner import invoke
 
     root = plugin_root if plugin_root is not None else plugin_root_from_argv

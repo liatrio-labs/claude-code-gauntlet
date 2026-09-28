@@ -40,8 +40,9 @@ from unittest.mock import patch
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
-from scripts.assemble_artifacts import plan_checksum  # noqa: E402
-from scripts.materialize_artifacts import _sweep_paths, main, materialize  # noqa: E402
+from gauntlet.assemble_artifacts import plan_checksum  # noqa: E402
+from gauntlet.materialize_artifacts import _sweep_paths, main, materialize  # noqa: E402
+
 from tests.test_await_workflow import _plant_task_output  # noqa: E402
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "materialize_artifacts.py")
@@ -222,7 +223,7 @@ class TestUnexpectedFailure(unittest.TestCase):
         # Raise inside the first call materialize() makes, before any fixture work;
         # run_cli cannot inject across a process boundary without touching scripts/.
         return patch(
-            "scripts.materialize_artifacts.select_source",
+            "gauntlet.materialize_artifacts.select_source",
             side_effect=RuntimeError("injected"),
         )
 

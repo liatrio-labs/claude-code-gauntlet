@@ -1368,7 +1368,7 @@ function pinNumericFields(finding) {
 // dispatched slice, walked in this fixed order so the serialized key order is
 // deterministic — NOT the order the script reads them in (classify_blame's reads come
 // first there and don't match this order). One list in two runtimes with
-// `_SLICE_INPUT_FIELDS` in scripts/verify_findings.py — `tests/test_verify_findings.py`
+// `_SLICE_INPUT_FIELDS` in scripts/gauntlet/verify_findings.py — `tests/test_verify_findings.py`
 // pins the pair in lockstep and scans the script's own source to enforce the list against
 // it. `origin` is listed as tolerated forward-compat even though the script never actually
 // reads the dispatched value: classify_blame overwrites `origin` before every read site.
@@ -2284,7 +2284,7 @@ function writerEchoCoversPaths(echoed, paths) {
 //     independent of assembleScriptPath, which only the writer path's executor needs).
 //     No agent is dispatched at all. The three primaries ride home in the workflow's
 //     own return value, which the HARNESS serializes; Phase 8 materializes them with
-//     scripts/materialize_artifacts.py and derives the projections from disk. See
+//     scripts/gauntlet/materialize_artifacts.py and derives the projections from disk. See
 //     returnChannelPersist for the measurement and the failure mode it removes.
 //
 //   DERIVED (issue #38, D3; taken when args.persist.assembleScriptPath is present and
@@ -2294,7 +2294,7 @@ function writerEchoCoversPaths(echoed, paths) {
 //     phases.challenge.findings was the alias-stripped twin of the same array, and the
 //     genuine residual was 383 B. So the writer now persists ONLY the unique content
 //     (findings.json, report.md, the persist plan) and the executor runs the pinned
-//     scripts/assemble_artifacts.py to DERIVE the two projections from what actually
+//     scripts/gauntlet/assemble_artifacts.py to DERIVE the two projections from what actually
 //     landed on disk, returning a content-proof receipt.
 //
 //   LEGACY (no persist waist, or the id-integrity guard refused). One artifact-writer
@@ -2465,7 +2465,7 @@ function persistEntries(inp, paths, outputDir, sha) {
 //
 // The persist path that dispatches NOTHING. It hands the three primaries — findings.json,
 // report.md, the persist plan — back to the caller inside the workflow's own return value,
-// and Phase 8 (which has Bash) materializes them with scripts/materialize_artifacts.py.
+// and Phase 8 (which has Bash) materializes them with scripts/gauntlet/materialize_artifacts.py.
 //
 // WHY. Every other path puts the bytes on disk through an artifact-writer agent: a
 // language model asked to reproduce ~50 KB of escape-dense JSON verbatim. Measured across
@@ -2896,7 +2896,7 @@ function stripPersistAliases(f) {
 //
 // It must be computable IDENTICALLY here and in Python. The workflow sandbox has no
 // TextEncoder and no Buffer, so the only byte source available is String#charCodeAt —
-// i.e. UTF-16 code units. scripts/assemble_artifacts.py reproduces this exactly by
+// i.e. UTF-16 code units. scripts/gauntlet/assemble_artifacts.py reproduces this exactly by
 // unpacking the string's utf-16-le encoding, including surrogate pairs (an emoji
 // contributes TWO units on both sides). Math.imul is a language builtin, NOT a host
 // global, so it is available in the sandbox.
@@ -2995,7 +2995,7 @@ export function persistPrimaries(inp) {
   };
 }
 
-// persistPlan(inp, paths) -> the plan scripts/assemble_artifacts.py consumes.
+// persistPlan(inp, paths) -> the plan scripts/gauntlet/assemble_artifacts.py consumes.
 // PURE (deep-clones the checkpoint before emptying the challenge findings), and
 // exported so the projection rules are directly unit-testable — the in-run
 // byte-identity test applies them to the primaries and asserts the result equals
@@ -3105,7 +3105,7 @@ export function persistPlan(inp, paths) {
 //
 // JS numbers are doubles and Number#toString has its own spelling rules; Python's
 // repr(float) does not share them (1e-7 vs 1e-07, 0.000001 vs 1e-06, 90 vs 90.0, 0 vs
-// -0.0, null vs NaN). scripts/assemble_artifacts.py deliberately does NOT reimplement
+// -0.0, null vs NaN). scripts/gauntlet/assemble_artifacts.py deliberately does NOT reimplement
 // Number#toString — a port whose own bugs would be invisible is worse than a
 // precondition — so it refuses any number it cannot round-trip and this guard applies
 // the SAME rule one step earlier, where refusing is free: the run falls back to the
@@ -3211,7 +3211,7 @@ function finalArtifactsWriterPrompt(entries) {
   return `Persist these code-gauntlet artifacts to disk exactly as given (the workflow has no disk access). For every entry in the payload, write its "text" VERBATIM to its "path" — byte for byte, nothing before it and NOTHING AFTER THE FINAL BYTE (no trailing commentary, no tool-call markup). Do not reformat, re-indent, or re-serialize. Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
-// The assemble receipt shape (scripts/assemble_artifacts.py's single stdout line).
+// The assemble receipt shape (scripts/gauntlet/assemble_artifacts.py's single stdout line).
 const ASSEMBLE_RECEIPT_SCHEMA = {
   type: 'object',
   properties: {
@@ -4492,7 +4492,7 @@ export async function runWith(ctx, rawArgs) {
       // The RETURN persist channel's payload — the three primaries, verbatim, for Phase 8
       // to materialize (absent on every other path). It rides LAST on purpose: it is the
       // one field measured in tens of KB, and a reader that truncates gets the counts,
-      // paths and gaps before it rather than after. scripts/await_workflow.py elides its
+      // paths and gaps before it rather than after. scripts/gauntlet/await_workflow.py elides its
       // `entries[].text` so the bulk never enters the orchestrator's context at all.
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
     };

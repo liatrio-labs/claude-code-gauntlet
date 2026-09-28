@@ -36,7 +36,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from scripts.await_workflow import (
+from gauntlet.await_workflow import (
     ARTIFACT_BASENAMES,
     ARTIFACT_PATH_TEMPLATES,
     COMPACT_RETURN_KEYS,
@@ -999,7 +999,7 @@ class TestResolveTarget(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as sentinel,
             patch.object(os, "getuid", None, create=True),
-            patch("scripts.await_workflow.tempfile.gettempdir", return_value=sentinel),
+            patch("gauntlet.await_workflow.tempfile.gettempdir", return_value=sentinel),
         ):
             path, searched = resolve_target("wnosuchtask000", {})
         self.assertIsNone(path)
@@ -1210,7 +1210,7 @@ class TestExitCodeContract(unittest.TestCase):
 
     def test_unexpected_failure_still_prints_one_line_and_degrades(self):
         with patch(
-            "scripts.await_workflow.await_terminal", side_effect=RuntimeError("boom")
+            "gauntlet.await_workflow.await_terminal", side_effect=RuntimeError("boom")
         ):
             code, out, _ = run_main(["w1", "--timeout-seconds", "0"])
         marker = sole_json_line(out)
@@ -1222,7 +1222,7 @@ class TestExitCodeContract(unittest.TestCase):
     def test_keyboard_interrupt_prints_interrupted_marker(self):
         """KeyboardInterrupt is not an Exception subclass — its branch is distinct."""
         with patch(
-            "scripts.await_workflow.await_terminal", side_effect=KeyboardInterrupt()
+            "gauntlet.await_workflow.await_terminal", side_effect=KeyboardInterrupt()
         ):
             code, out, _ = run_main(["w1", "--timeout-seconds", "0"])
         marker = sole_json_line(out)
@@ -1235,7 +1235,8 @@ class TestExitCodeContract(unittest.TestCase):
         """Error-path emit must share the happy-path OSError degrade, not exit 1."""
         with (
             patch(
-                "scripts.await_workflow.await_terminal", side_effect=KeyboardInterrupt()
+                "gauntlet.await_workflow.await_terminal",
+                side_effect=KeyboardInterrupt(),
             ),
             patch("builtins.print", side_effect=BrokenPipeError()),
         ):
@@ -1626,7 +1627,7 @@ class TestWaitLoop(unittest.TestCase):
                         fh.write(json.dumps(envelope(SUCCESS_RETURN)))
                 real_sleep(0)
 
-            with patch("scripts.await_workflow.time.sleep", side_effect=fake_sleep):
+            with patch("gauntlet.await_workflow.time.sleep", side_effect=fake_sleep):
                 code, out, _ = run_main(
                     [path, "--timeout-seconds", "5", "--poll-interval", "1"]
                 )

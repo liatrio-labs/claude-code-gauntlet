@@ -10,9 +10,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import pytest  # type: ignore[import-not-found]
+import gauntlet.post_review as post_review
+import pytest
 
-import scripts.post_review as post_review
 from tests.test_outbound_contract import _assert_outbound_string_invariant
 from tests.tools import render_probes
 from tests.tools.render_probes import (

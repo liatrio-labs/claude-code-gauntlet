@@ -724,7 +724,7 @@ def input_sha256(text: str) -> str:
 
 def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     """Compose deterministic complete GitLab bodies through delivery composers."""
-    import scripts.post_review as post_review
+    import gauntlet.post_review as post_review
 
     sha = "a" * 40
     keys = ("0123456789abcdef", "fedcba9876543210")
@@ -1690,6 +1690,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    # The composed-case builder imports scripts.post_review from the repository root.
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    # The composed-case builder imports gauntlet.post_review from the repository root.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     raise SystemExit(main())

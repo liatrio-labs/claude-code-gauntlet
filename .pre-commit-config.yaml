@@ -94,12 +94,12 @@ repos:
       # on every `pre-commit run --all-files` there. unittest is always available.
       - id: agent-instruction-layout
         name: agent instruction layout stays within budget and its pointers resolve
-        entry: python -m unittest tests.test_agent_instruction_layout
+        entry: env PYTHONPATH=scripts python -m unittest tests.test_agent_instruction_layout
         language: system
         # Any file in the layout can break it: a rule pointer can go stale when its target
         # is renamed, and the Codex size cap is a property of the AGENTS.md set as a whole,
         # not of whichever file happens to be edited.
-        files: ^(CLAUDE\.md|AGENTS\.md|[^/]+/(AGENTS|CLAUDE)\.md|scripts/sync_agent_rules\.py)$
+        files: ^(CLAUDE\.md|AGENTS\.md|[^/]+/(AGENTS|CLAUDE)\.md|scripts/(gauntlet/)?sync_agent_rules\.py)$
         pass_filenames: false
 
       # This checks generated contract fences and tables against the registry and renderer.
@@ -128,6 +128,8 @@ repos:
       - id: ruff-check
         # Report-only: a rewriting linter can change semantics; format is the only auto-writer.
       - id: ruff-format
+        # The fixed ten-line script entry template is intentionally outside formatting.
+        exclude: ^scripts/[^/]+\.py$
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v2.3.0
@@ -135,4 +137,4 @@ repos:
       - id: mypy
         pass_filenames: false
         args: ["--config-file", "pyproject.toml"]
-        additional_dependencies: []
+        additional_dependencies: ["pytest==9.1.1"]

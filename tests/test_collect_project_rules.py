@@ -46,8 +46,8 @@ from unittest import mock
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
-from scripts import collect_project_rules  # noqa: E402
-from scripts.collect_project_rules import (  # noqa: E402
+from gauntlet import collect_project_rules  # noqa: E402
+from gauntlet.collect_project_rules import (  # noqa: E402
     DEFAULT_MAX_FILES,
     MAX_IMPORT_DEPTH,
     PROJECT_RULE_FILENAMES,

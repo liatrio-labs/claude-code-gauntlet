@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, unquote
 
-import pytest  # type: ignore[import-not-found]
+import pytest
 
 from tests.tools.render_probes import (
     INHERENTLY_PLAIN,

@@ -1,0 +1,78 @@
+{
+  "assemble_artifacts": {
+    "code": 1,
+    "stdout": "eyJvayI6IGZhbHNlLCAicGxhblZlcnNpb24iOiBudWxsLCAicGxhbkNoZWNrc3VtIjogbnVsbCwgInZlcmlmaWVkIjogW10sICJ3cml0dGVuIjogW10sICJlcnJvcnMiOiBbInBsYW4gbm90IGZvdW5kIG9yIHVucmVhZGFibGU6IC9ub25leGlzdGVudC1nYXVudGxldC1jb250cmFjdC1pbnB1dCAoW0Vycm5vIDJdIE5vIHN1Y2ggZmlsZSBvciBkaXJlY3Rvcnk6ICcvbm9uZXhpc3RlbnQtZ2F1bnRsZXQtY29udHJhY3QtaW5wdXQnKSJdfQo="
+  },
+  "await_workflow": {
+    "code": 4,
+    "stdout": "eyJhd2FpdCI6InRpbWVvdXQiLCJhdHRlbXB0IjoxLCJtYXhfYXR0ZW1wdHMiOjEsIndhaXRlZF9zZWNvbmRzIjowLjAsInRhcmdldCI6Ii9ub25leGlzdGVudC1nYXVudGxldC1jb250cmFjdC1pbnB1dCIsInJlc29sdmVkX3BhdGgiOiIvbm9uZXhpc3RlbnQtZ2F1bnRsZXQtY29udHJhY3QtaW5wdXQiLCJmaWxlX2J5dGVzIjpudWxsLCJzaW5jZV9lcG9jaCI6MC4wLCJhcnRpZmFjdHMiOnsiY2hlY2tlZCI6ZmFsc2UsImNvbXBsZXRlIjpmYWxzZSwicHJlc2VudCI6W10sIm1pc3NpbmciOltdfSwic2F3X29rX3dpdGhvdXRfY29ycm9ib3JhdG9yIjpmYWxzZSwic2Nhbl9za2lwcGVkIjpmYWxzZSwic2Nhbl9zdG9wX3JlYXNvbiI6bnVsbCwiZ2FwIjoid29ya2Zsb3ctdGltZW91dCIsImRldGFpbCI6Im5vIHRlcm1pbmFsIHdvcmtmbG93IHJlc3VsdCBhZnRlciAxIGF0dGVtcHRzOyBkZWNsYXJlIHRoZSBnYXAgYW5kIGRlbGl2ZXIgd2hhdGV2ZXIgcGFydGlhbCBhcnRpZmFjdHMgZXhpc3QifQo="
+  },
+  "build_style_artifacts": {
+    "code": 1,
+    "stdout": ""
+  },
+  "collect_project_rules": {
+    "code": 1,
+    "stdout": "eyJvayI6IGZhbHNlLCAic291cmNlcyI6IFtdLCAicmV2aWV3X21kIjogW10sICJyZXZpZXdfbWRfZGlycyI6IFtdLCAic2tpcHBlZCI6IFtdLCAidG90YWxfYnl0ZXMiOiAwLCAidHJ1bmNhdGVkIjogZmFsc2UsICJvdXQiOiAiL25vbmV4aXN0ZW50LWdhdW50bGV0LWNvbnRyYWN0LWlucHV0IiwgImdhcHMiOiBbInByb2plY3RfcnVsZXNfZmFpbGVkOiAtLXJlcG8tcm9vdCBpcyBub3QgYSBkaXJlY3RvcnkiXX0K"
+  },
+  "detect_prior_review": {
+    "code": 0,
+    "stdout": "ewogICJwcmV2aW91c2x5X3Jldmlld2VkIjogZmFsc2UsCiAgInNpZ25hbCI6IG51bGwsCiAgInNvdXJjZSI6IG51bGwsCiAgImxlZ2FjeSI6IGZhbHNlLAogICJsYXN0X3Jldmlld2VkX3NoYSI6IG51bGwsCiAgImxhc3RfcmV2aWV3ZWRfc2hhX3Nob3J0IjogbnVsbCwKICAic2hhX3Jlc29sdmFibGUiOiBmYWxzZSwKICAic2hhX2lzX2FuY2VzdG9yIjogZmFsc2UsCiAgImhlYWRfc2hhIjogInVua25vd24iLAogICJoZWFkX2FkdmFuY2VkIjogZmFsc2UsCiAgIm5ld19jb21taXRfY291bnQiOiBudWxsLAogICJpbmNyZW1lbnRhbF9zYWZlIjogZmFsc2UsCiAgIm1hcmtlciI6IG51bGwsCiAgInNjYW5uZWQiOiB7fSwKICAiZXJyb3JzIjogWwogICAgImJvZGllcy1maWxlOiBjb3VsZCBub3QgcmVhZCAvbm9uZXhpc3RlbnQtZ2F1bnRsZXQtY29udHJhY3QtaW5wdXQgKFtFcnJubyAyXSBObyBzdWNoIGZpbGUgb3IgZGlyZWN0b3J5OiAnL25vbmV4aXN0ZW50LWdhdW50bGV0LWNvbnRyYWN0LWlucHV0JykiLAogICAgImdpdDogY291bGQgbm90IHJlc29sdmUgdGhlIGhlYWQgY29tbWl0IChub3QgYSBnaXQgcmVwb3NpdG9yeSwgYW4gdW5ib3JuIGJyYW5jaCwgb3IgZ2l0IGlzIHVuYXZhaWxhYmxlKSIKICBdCn0K"
+  },
+  "diff_numstat": {
+    "code": 2,
+    "stdout": ""
+  },
+  "emit_style_context": {
+    "code": 0,
+    "stdout": ""
+  },
+  "ensure_output_dir": {
+    "code": 1,
+    "stdout": ""
+  },
+  "generate_contract_requirements": {
+    "code": 1,
+    "stdout": ""
+  },
+  "materialize_artifacts": {
+    "code": 1,
+    "stdout": "eyJvayI6IGZhbHNlLCAiY2hhbm5lbCI6ICJyZXR1cm4iLCAic291cmNlIjogbnVsbCwgInNjYW5uZWQiOiAxLCAibWF0ZXJpYWxpemVkIjogW10sICJhc3NlbWJsZSI6IG51bGwsICJnYXBzIjogW10sICJlcnJvcnMiOiBbIm5vIHRhc2sgb3V0cHV0IGZpbGUgY2FycnlpbmcgdGhpcyBydW4ncyByZXR1cm5lZCBhcnRpZmFjdHMgd2FzIGZvdW5kIChsb29rZWQgYXQgMSBjYW5kaWRhdGUgZmlsZShzKSBmb3IgdGFyZ2V0ICcvbm9uZXhpc3RlbnQtZ2F1bnRsZXQtY29udHJhY3QtaW5wdXQnIC8gbm9uY2UgTm9uZSkiXX0K"
+  },
+  "post_review": {
+    "code": 1,
+    "stdout": ""
+  },
+  "render_fix_tasks": {
+    "code": 1,
+    "stdout": ""
+  },
+  "report_patches": {
+    "code": 1,
+    "stdout": "eyJvayI6IGZhbHNlLCAicGF0aCI6ICIvbm9uZXhpc3RlbnQtZ2F1bnRsZXQtY29udHJhY3QtaW5wdXQvY29kZS1nYXVudGxldC1wYXRjaGVzLWFiY2QubWQiLCAib3JhY2xlIjogInVuYXR0ZW1wdGVkIiwgImNhbmRpZGF0ZXMiOiAwLCAia2VwdCI6IDAsICJkb3duZ3JhZGVkIjogMCwgInJlYXNvbnMiOiB7fSwgImZpbHRlcmVkX2VhcmxpZXIiOiAwLCAiZmluZGluZ3MiOiAwLCAid2FybmluZ3MiOiBbXSwgImVycm9ycyI6IFsiY291bGQgbm90IHJlYWQgZmluZGluZ3MgZmlsZSAvbm9uZXhpc3RlbnQtZ2F1bnRsZXQtY29udHJhY3QtaW5wdXQvY29kZS1nYXVudGxldC1maW5kaW5ncy1hYmNkLmpzb246IFtFcnJubyAyXSBObyBzdWNoIGZpbGUgb3IgZGlyZWN0b3J5OiAnL25vbmV4aXN0ZW50LWdhdW50bGV0LWNvbnRyYWN0LWlucHV0L2NvZGUtZ2F1bnRsZXQtZmluZGluZ3MtYWJjZC5qc29uJyJdfQo="
+  },
+  "resolve_config": {
+    "code": 2,
+    "stdout": ""
+  },
+  "resolve_pr_identity": {
+    "code": 2,
+    "stdout": ""
+  },
+  "stale_truncate": {
+    "code": 2,
+    "stdout": ""
+  },
+  "sync_agent_rules": {
+    "code": 1,
+    "stdout": ""
+  },
+  "verify_findings": {
+    "code": 2,
+    "stdout": ""
+  },
+  "write_shared_context": {
+    "code": 2,
+    "stdout": ""
+  }
+}

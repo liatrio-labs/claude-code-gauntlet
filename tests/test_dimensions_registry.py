@@ -46,7 +46,8 @@ REPO = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(REPO))
 
-from scripts import generate_contract_requirements as contract_gen  # noqa: E402
+from gauntlet import generate_contract_requirements as contract_gen  # noqa: E402
+
 from tests.support.js_values import js_values  # noqa: E402
 
 _FIELD_RENAMES = js_values()["FIELD_RENAMES"]

@@ -8,7 +8,7 @@ behind on a PR/MR and that a later rerun reads back:
 * ``post_review.py`` imports the builders (``build_footer``) — it is the ONLY
   code that writes the signal. Models never hand-compose it; documentation that
   once templated it now points here:
-  ``<!-- Canonical source: scripts/review_marker.py -->``.
+  ``<!-- Canonical source: scripts/gauntlet/marker.py -->``.
 * ``detect_prior_review.py`` imports the parsers (``select_latest``,
   ``detect_signal``) — it is the ONLY code that reads it.
 

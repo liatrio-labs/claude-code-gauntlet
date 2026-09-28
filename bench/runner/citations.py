@@ -3,9 +3,12 @@
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
-from scripts.await_workflow import ARTIFACT_BASENAMES
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+from gauntlet.await_workflow import ARTIFACT_BASENAMES
 
 # This is a lower-bound heuristic because agents can phrase the same absence many ways.
 # Each alternative is one absence phrasing; the tuple exists so a test can rebuild the

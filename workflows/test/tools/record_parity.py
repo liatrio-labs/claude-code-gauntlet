@@ -15,7 +15,7 @@ FIXTURES = REPO / "tests" / "fixtures" / "parity"
 
 
 def _verify_deltas(inp):
-    from verify_findings import build_deltas, deltas_checksum
+    from gauntlet.verify_findings import build_deltas, deltas_checksum
 
     verified_by_id = {f["id"]: f for f in inp["result"]["verified"]}
     post_by_id = dict(verified_by_id)
@@ -43,14 +43,14 @@ def _project_verify_delta(finding):
 
 
 def _slice_input_proof(inp):
-    from verify_findings import _input_checksum
+    from gauntlet.verify_findings import _input_checksum
 
     return {"checksum": _input_checksum(inp["doc"])}
 
 
 def _slice_inline(inp):
-    from assemble_artifacts import fnv1a32
-    from verify_findings import _input_checksum
+    from gauntlet.assemble_artifacts import fnv1a32
+    from gauntlet.verify_findings import _input_checksum
 
     source = (
         "import { encodeSliceInline } from './workflows/src/stages.js'; "
@@ -156,6 +156,6 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    from script_io import run_entrypoint
+    from gauntlet.cli import run_entrypoint
 
     run_entrypoint(main, sys.argv)

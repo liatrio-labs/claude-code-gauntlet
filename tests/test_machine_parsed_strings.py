@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts import generate_contract_requirements as contract_gen
+from gauntlet import generate_contract_requirements as contract_gen
 
 REPO = Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "docs" / "machine-parsed-strings.md"
@@ -228,7 +228,7 @@ class TestMachineParsedStrings(unittest.TestCase):
             row["parsers"],
             [
                 "workflows/src/renderReport.js",
-                "scripts/post_review.py",
+                "scripts/gauntlet/post_review.py",
                 "bench/runner/citations.py",
             ],
         )
