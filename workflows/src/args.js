@@ -15,7 +15,7 @@ import { PR_IDENTITY_FIELDS } from './registry.js';
 //     capture is the only path). resolvePolicy pins full first-party model IDs only for
 //     'firstParty'/absent; any other provider dispatches bare aliases, which the harness
 //     resolves through the provider's deployment mapping — first-party IDs like
-//     claude-sonnet-5 are passed through unchecked on Bedrock/Vertex/Foundry and 400.
+//     claude-sonnet-5-5 are passed through unchecked on Bedrock/Vertex/Foundry and 400.
 //   - policy.gateway (optional boolean; issue #218) is the skill's Phase 2 capture of
 //     whether ANTHROPIC_BASE_URL is set — an LLM gateway proxies the Anthropic API, so it
 //     does not change policy.provider (see POLICY_PROVIDERS below), but it DOES gate off

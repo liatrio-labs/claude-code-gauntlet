@@ -240,7 +240,7 @@ Resolved config:
 |--------|---------|
 | Version | {pipeline_version} (plugin and pipeline) |
 | Provider | provider=firstParty; gateway=false; conditional schema active=true |
-| Per-stage models | change-summarizer=claude-sonnet-5, bug-detector=claude-sonnet-5, security-reviewer=claude-opus-4-8, cross-file-impact=claude-sonnet-5, test-analyzer=claude-sonnet-5, conventions-and-intent=claude-sonnet-5, type-design-analyzer=claude-sonnet-5, code-simplifier=claude-sonnet-5, validator=claude-sonnet-5, challenger=claude-sonnet-5, executor=claude-sonnet-5, artifact-writer=claude-sonnet-5 |
+| Per-stage models | change-summarizer=claude-sonnet-5-5, bug-detector=claude-sonnet-5-5, security-reviewer=claude-opus-5-5, cross-file-impact=claude-sonnet-5-5, test-analyzer=claude-sonnet-5-5, conventions-and-intent=claude-sonnet-5-5, type-design-analyzer=claude-sonnet-5-5, code-simplifier=claude-sonnet-5-5, validator=claude-sonnet-5-5, challenger=claude-sonnet-5-5, executor=claude-sonnet-5-5, artifact-writer=claude-sonnet-5-5 |
 | Delivery selection | selection policy: tier=all, cap=uncapped |
 | Review scope | Full |
 | Findings pipeline | discovered={stats.discovered}; validate: accepted={stats.validate.accepted}, rejected={stats.validate.rejected}; filter: accepted={stats.filter.accepted}, rejected={stats.filter.rejected}; challenge: accepted={stats.challenge.accepted}, rejected={stats.challenge.rejected}; merge: per-channel: ndjson={stats.merge.ndjson}, text_fallback={stats.merge.text_fallback}; duplicates resolved={stats.merge.duplicates_resolved}; dropped-no-id={stats.merge.dropped_no_id}; truncation warnings={stats.merge.truncation_warnings}; validation warnings={stats.merge.validation_warnings} |
