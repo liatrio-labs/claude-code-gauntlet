@@ -850,10 +850,15 @@ class TestShippedText(unittest.TestCase):
             )
 
             self.assertFalse((cwd / "injected-marker").exists())
-            context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
-            self.assertIn(b"CODE_GAUNTLET_TRIAGE\n", context)
-            self.assertIn(b"touch injected-marker\n", context)
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, b"")
+            context = (output_dir / f"code-gauntlet-context-{SHA}.md").read_bytes()
+            self.assertIn(
+                b"\n## Risk classification and AI-generated-code status\n\n"
+                + triage.encode("utf-8")
+                + b"\n\n## Diff\n",
+                context,
+            )
 
     def _command_after_section(self, label: str, *, pipe: bool) -> str:
         skill = (REPO / "skills" / "code-gauntlet" / "SKILL.md").read_text(
