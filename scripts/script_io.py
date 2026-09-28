@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import sys
-from typing import Any
+from typing import Any, NoReturn
 
 
 def escape_lone_surrogates(s):
@@ -63,6 +64,19 @@ def write_result(
             print(line, file=sys.stderr)
     else:
         print(output_text)
+
+
+def fail(prog: str, message: str) -> NoReturn:
+    """Print one ``prog: message`` line to stderr and exit with status 2."""
+    print(f"{prog}: {' '.join(message.splitlines())}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+class OneLineErrorParser(argparse.ArgumentParser):
+    """An argument parser whose usage errors are one ``prog: message`` line, exit 2."""
+
+    def error(self, message: str) -> NoReturn:
+        fail(self.prog, message)
 
 
 def utf8_stdio() -> None:
