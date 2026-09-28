@@ -2,6 +2,65 @@
 
 <!-- version list -->
 
+## v3.42.6 (2026-09-28)
+
+### Bug Fixes
+
+- Address review round 1 on the twin retirement
+  ([#427](https://github.com/liatrio-labs/claude-code-gauntlet/pull/427),
+  [`66ebafe`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66ebafebd1ec7ab5cbaeb43e2515e69619d5e5c0))
+
+- Address the gauntlet review of #427
+  ([#427](https://github.com/liatrio-labs/claude-code-gauntlet/pull/427),
+  [`66ebafe`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66ebafebd1ec7ab5cbaeb43e2515e69619d5e5c0))
+
+### Chores
+
+- Group related roadmap items and clean touched files in /next-issue
+  ([#403](https://github.com/liatrio-labs/claude-code-gauntlet/pull/403),
+  [`a9963c4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a9963c431379893cb2eee6ad549d8fc417188d09))
+
+- Let /next-issue cleanup move logic and consolidate tests
+  ([#403](https://github.com/liatrio-labs/claude-code-gauntlet/pull/403),
+  [`a9963c4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a9963c431379893cb2eee6ad549d8fc417188d09))
+
+- Raise the JS coverage floors from the #427 CI measurement
+  ([#427](https://github.com/liatrio-labs/claude-code-gauntlet/pull/427),
+  [`66ebafe`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66ebafebd1ec7ab5cbaeb43e2515e69619d5e5c0))
+
+- Route oversized cleanup through the out-of-scope rule
+  ([#403](https://github.com/liatrio-labs/claude-code-gauntlet/pull/403),
+  [`a9963c4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a9963c431379893cb2eee6ad549d8fc417188d09))
+
+### Refactoring
+
+- Retire the Python twins of the JavaScript finding transforms
+  ([#427](https://github.com/liatrio-labs/claude-code-gauntlet/pull/427),
+  [`66ebafe`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66ebafebd1ec7ab5cbaeb43e2515e69619d5e5c0))
+
+- Retire the Python twins of the JavaScript finding transforms (#406)
+  ([#427](https://github.com/liatrio-labs/claude-code-gauntlet/pull/427),
+  [`66ebafe`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66ebafebd1ec7ab5cbaeb43e2515e69619d5e5c0))
+
+### Testing
+
+- Make the finding-transform goldens JavaScript-owned
+  ([#427](https://github.com/liatrio-labs/claude-code-gauntlet/pull/427),
+  [`66ebafe`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66ebafebd1ec7ab5cbaeb43e2515e69619d5e5c0))
+
+- Port the Python twin tests' behaviour into JavaScript tables
+  ([#427](https://github.com/liatrio-labs/claude-code-gauntlet/pull/427),
+  [`66ebafe`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66ebafebd1ec7ab5cbaeb43e2515e69619d5e5c0))
+
+- Scan regex literals after arrows and prefix keywords
+  ([#427](https://github.com/liatrio-labs/claude-code-gauntlet/pull/427),
+  [`66ebafe`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66ebafebd1ec7ab5cbaeb43e2515e69619d5e5c0))
+
+- Split the parity harness into goldens and verify-wire tests
+  ([#427](https://github.com/liatrio-labs/claude-code-gauntlet/pull/427),
+  [`66ebafe`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66ebafebd1ec7ab5cbaeb43e2515e69619d5e5c0))
+
+
 ## v3.42.5 (2026-09-28)
 
 ### Bug Fixes
