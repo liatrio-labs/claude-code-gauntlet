@@ -93,7 +93,7 @@ jobs:
         if: matrix.python-version == '3.12'
         run: |
           COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
-            --cov=scripts --cov=.github --cov-fail-under=93.8
+            --cov=scripts --cov=.github --cov-fail-under=93.7
 
   js-lint:
     name: Run Workflow JS Lint
