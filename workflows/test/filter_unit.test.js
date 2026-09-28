@@ -207,6 +207,10 @@ for (const c of FIX_BOUND_CASES) test(`fix bound: ${c.name}`, () => {
 // Scan source so a pattern added outside SUGGESTION_SETS cannot bypass the whitespace contract.
 function regexLiterals(source) {
   const patterns = [];
+  const expressionStartKeywords = new Set([
+    'return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new', 'delete',
+    'void', 'throw', 'yield', 'await',
+  ]);
   let previous = '';
   for (let i = 0; i < source.length;) {
     const char = source[i];
@@ -234,7 +238,23 @@ function regexLiterals(source) {
       previous = 'value';
       continue;
     }
-    if (char === '/' && (!previous || /[=([{,:!?;|&]/.test(previous))) {
+    if (char === '=' && source[i + 1] === '>') {
+      previous = '=>';
+      i += 2;
+      continue;
+    }
+    if (/[A-Za-z_$]/.test(char)) {
+      const start = i;
+      i += 1;
+      while (/[\w$]/.test(source[i] ?? '')) i += 1;
+      const token = source.slice(start, i);
+      previous = expressionStartKeywords.has(token) && previous !== '.' ? token : 'value';
+      continue;
+    }
+    if (
+      char === '/' &&
+      (!previous || /[=([{,:!?;|&]/.test(previous) || previous === '=>' || expressionStartKeywords.has(previous))
+    ) {
       const start = ++i;
       let inClass = false;
       while (i < source.length) {
@@ -257,6 +277,18 @@ function regexLiterals(source) {
   }
   return patterns;
 }
+
+test('regexLiterals recognizes expression starts without treating division as a regex', () => {
+  const cases = [
+    { source: 'const f = () => /arrow/;', expected: ['arrow'] },
+    { source: 'function f() { return /returned/; }', expected: ['returned'] },
+    { source: 'const value = (/parenthesized/);', expected: ['parenthesized'] },
+    { source: 'const value = a / b / c;', expected: [] },
+  ];
+  for (const { source, expected } of cases) {
+    assert.deepEqual(regexLiterals(source), expected, source);
+  }
+});
 
 function inspectPattern(source, label, unionClass, checkAnchors = false) {
   let inClass = false;
