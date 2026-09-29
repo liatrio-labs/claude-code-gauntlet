@@ -1,15 +1,7 @@
 #!/usr/bin/env node
-// build.js — dependency-free bundler. Concatenates the workflows/src/*.js files named
-// in ORDER (below) into the single self-contained workflows/pipeline.js — ORDER is a
-// pinned dependency order, so a src file absent from it is silently left out of the
-// bundle rather than appended. The bundle MUST begin with
-// `export const meta` (hoisted from pipeline_entry.js — the ONLY `export` the
-// workflow runtime permits in the bundle; any other `export`, including
-// `export default`, is a runtime SyntaxError) followed by the plain
-// `const PIPELINE_VERSION` declaration. All import lines are dropped; `export X`
-// -> `X` for every other declaration. pipeline_entry.js is emitted LAST: its body
-// ends with a top-level `return await run(...)`, which the runtime executes after
-// every sibling definition above it, reading the runtime-injected `args` global.
+// Emit modules in depth-first post-order from pipeline_entry.js, following imports
+// in source order, so its top-level return runs after its dependencies. The runtime
+// requires exported `meta` and plain `PIPELINE_VERSION` at the bundle's start.
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -17,14 +9,6 @@ import { dirname, join } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, 'src');
 const OUT = join(HERE, 'pipeline.js');
-
-// Pinned concat order. consolidateCrossAgent (filterFindings) must precede applyChallenges.
-// pipeline_entry.js is emitted LAST (its run() references everything above).
-const ORDER = [
-  'findingDedup.js', 'filterFindings.js', 'mergeFindings.js',
-  'applyValidations.js', 'applyChallenges.js', 'registry.js', 'renderReport.js', 'args.js',
-  'stages.js', 'pipeline_entry.js',
-];
 
 // `meta` is the only declaration the runtime allows the `export` keyword on;
 // `PIPELINE_VERSION` is a plain const (no `export`) hoisted alongside it.
@@ -37,74 +21,71 @@ export const BUNDLE_HEADROOM = 65_536;
 export const BUNDLE_MAX_BYTES = WORKFLOW_SCRIPT_CAP - BUNDLE_HEADROOM;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-// ORDER must name every workflows/src/*.js file exactly once. present() used to
-// silently intersect ORDER with disk, so a new module left out of ORDER shipped
-// as an incomplete bundle while unit tests importing ../src/<file>.js stayed green.
-// Set equality alone cannot see a name listed TWICE — the repeat collapses into
-// the set, present() then emits that module twice, and the only failure left is
-// the collision detector naming duplicated identifiers instead of the repeated
-// file. Count duplicates here so the guard enforces the "exactly once" it claims.
-export function orderMismatches(order, onDisk) {
-  const inOrder = new Set(order);
-  const onDiskSet = new Set(onDisk);
-  const missingFromOrder = [...onDiskSet].filter((f) => !inOrder.has(f)).sort();
-  const missingFromDisk = [...inOrder].filter((f) => !onDiskSet.has(f)).sort();
-  const seen = new Set();
-  const duplicates = new Set();
-  for (const file of order) {
-    if (seen.has(file)) duplicates.add(file);
-    seen.add(file);
-  }
-  return { missingFromOrder, missingFromDisk, duplicatedInOrder: [...duplicates].sort() };
-}
-
-function present() {
-  const found = new Set(readdirSync(SRC).filter((f) => f.endsWith('.js')));
-  const { missingFromOrder, missingFromDisk, duplicatedInOrder } = orderMismatches(ORDER, [...found]);
-  if (missingFromOrder.length || missingFromDisk.length || duplicatedInOrder.length) {
-    const lines = [];
-    if (missingFromOrder.length) {
-      lines.push(
-        `on disk but not in ORDER: ${missingFromOrder.join(', ')} `
-          + `(add each file to ORDER in dependency order, or remove the stray file)`,
-      );
-    }
-    if (missingFromDisk.length) {
-      lines.push(
-        `in ORDER but not on disk: ${missingFromDisk.join(', ')} `
-          + `(remove the name from ORDER, or restore the file)`,
-      );
-    }
-    if (duplicatedInOrder.length) {
-      lines.push(
-        `listed more than once in ORDER: ${duplicatedInOrder.join(', ')} `
-          + `(delete the repeated entry — a duplicate concatenates the module twice)`,
-      );
-    }
-    throw new Error(
-      `build.js: ORDER does not match workflows/src/*.js — every .js file in `
-        + `src/ must appear in ORDER exactly once (and vice versa):\n`
-        + lines.map((l) => `  ${l}`).join('\n'),
-    );
-  }
-  return ORDER.filter((f) => found.has(f));
-}
-
-// Only a RELATIVE import is safe to drop: the target is a sibling src module whose
-// body ORDER inlines into the bundle, so the stripped binding still resolves. A
-// `node:*` or bare specifier inlines nothing — stripping it ships an undefined
-// reference that lint cannot see (the binding IS declared in the src file), that the
-// bundle-fresh check calls clean (committed bundle and rebuild are wrong together),
-// and that only throws on a live dispatch, since the sandbox provides no Node
-// builtins. Same crash class as the `structuredClone` live-smoke failure. Detect it
-// at BUILD time instead. The OTHER unsafe shape is any import line strip() does not
-// match at all — its regex wants a single-line `import … from …`, so a side-effect
-// (`import './x.js';`) or multi-line import survives into the bundle verbatim, which
-// the runtime cannot parse. Both are the same defect (the line ships as written), so
-// they carry one reason: it is the missing single-line `from` clause, not the
-// specifier, that makes them unsafe.
+// Only a single-line './sibling.js' import is safe to strip: its target is inlined.
+// A node: or bare specifier inlines nothing, and the sandbox has no Node builtins, so
+// the stripped binding would stay undefined until a live dispatch threw. Any other
+// import shape survives strip() verbatim and the runtime cannot parse it.
 const IMPORT_LINE = /^\s*import(?:\s+|\s*['"])/;
 const IMPORT_SPECIFIER = /\bfrom\s*['"]([^'"]*)['"]/;
+
+export function moduleOrder(sources) {
+  const files = [...sources.keys()].sort();
+  checkUnsafeImports(files, sources);
+
+  const dependencies = new Map();
+  for (const file of files) {
+    const imports = [];
+    sources.get(file).split('\n').forEach((line, index) => {
+      if (!IMPORT_LINE.test(line)) return;
+      const specifier = IMPORT_SPECIFIER.exec(line)[1];
+      const dependency = specifier.slice(2);
+      if (!sources.has(dependency)) {
+        throw new Error(
+          `build.js: src/${file}:${index + 1} imports missing sibling '${specifier}'`,
+        );
+      }
+      imports.push(dependency);
+    });
+    dependencies.set(file, imports);
+  }
+
+  if (!sources.has('pipeline_entry.js')) {
+    throw new Error('build.js: workflows/src/pipeline_entry.js is required');
+  }
+
+  const states = new Map();
+  const active = [];
+  const ordered = [];
+  const reachable = new Set();
+  function visit(file, emit) {
+    const state = states.get(file);
+    if (state === 2) return;
+    if (state === 1) {
+      const start = active.indexOf(file);
+      const cycle = [...active.slice(start), file].join(' -> ');
+      throw new Error(`build.js: import cycle in workflows/src: ${cycle}`);
+    }
+
+    states.set(file, 1);
+    active.push(file);
+    if (emit) reachable.add(file);
+    for (const dependency of dependencies.get(file)) visit(dependency, emit);
+    active.pop();
+    states.set(file, 2);
+    if (emit) ordered.push(file);
+  }
+
+  visit('pipeline_entry.js', true);
+  for (const file of files) visit(file, false);
+
+  const unreachable = files.filter((file) => !reachable.has(file));
+  if (unreachable.length) {
+    throw new Error(
+      `build.js: src files unreachable from pipeline_entry.js: ${unreachable.join(', ')}`,
+    );
+  }
+  return ordered;
+}
 
 export function unsafeImports(source) {
   const bad = [];
@@ -115,20 +96,18 @@ export function unsafeImports(source) {
     if (specifier === null) {
       bad.push({
         line: i + 1, text: line.trim(), specifier: null,
-        reason: 'no single-line `from` clause — strip() matches only `import … from …` on one line, so a side-effect or multi-line import ships into the bundle verbatim; ORDER already concatenates every module body, so no src module needs one',
+        reason: 'no single-line `from` clause — strip() only removes single-line imports',
       });
     } else if (!specifier.startsWith('./')) {
       bad.push({
         line: i + 1, text: line.trim(), specifier,
-        reason: `specifier '${specifier}' is not relative to src/ — nothing is inlined for it, so stripping the line ships an undefined reference; inline the value into src/ instead`,
+        reason: `specifier '${specifier}' is not relative to src/ — nothing is inlined for it`,
       });
     }
   });
   return bad;
 }
 
-// Drop import lines and the hoisted consts (emitted at the top instead); rewrite
-// `export X` -> `X` for every other declaration.
 function strip(source) {
   const out = [];
   for (const line of source.split('\n')) {
@@ -139,14 +118,8 @@ function strip(source) {
   return out.join('\n');
 }
 
-// Every top-level binding in the concatenated bundle shares ONE lexical scope
-// (the runtime wraps the whole body in a single async function). Two modules
-// declaring the same top-level name — after `export` is stripped — is therefore a
-// runtime `Identifier 'X' has already been declared` SyntaxError, invisible to this
-// bundler's text concat but fatal on the first live dispatch (the SEVERITY_ORDER
-// collision the live smoke run hit). Detect it at BUILD time and fail loudly with the
-// duplicate name instead. A top-level declaration is one at column 0 (module bodies
-// concatenate flat); const/let/var/function/class, with optional `export`/`async`.
+// Concatenated modules share one async-function scope, so duplicate top-level names
+// would make the generated workflow fail to parse.
 const TOP_LEVEL_DECL = /^(?:export\s+)?(?:async\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/;
 
 export function detectTopLevelCollisions(bundleText) {
@@ -160,9 +133,6 @@ export function detectTopLevelCollisions(bundleText) {
     .map(([name, lines]) => ({ name, lines }));
 }
 
-// Extracted so the throw path itself — not just the pure unsafeImports() scan — is
-// directly testable against a synthetic files/sources map, without also having to
-// satisfy present()'s ORDER-matches-disk guard for a real file added to workflows/src/.
 export function checkUnsafeImports(files, sources) {
   const unsafe = files.flatMap((file) =>
     unsafeImports(sources.get(file)).map((v) => ({ ...v, file })));
@@ -174,8 +144,7 @@ export function checkUnsafeImports(files, sources) {
   }
 }
 
-// Raw line terminators would evade every split('\n') pass below. Reject them at the
-// source boundary so imports and comments cannot silently ship unsplit into the bundle.
+// Raw line terminators would evade the LF-based import and comment scans.
 export function checkRawLineTerminators(files, sources) {
   const violations = [];
   for (const file of files) {
@@ -202,8 +171,7 @@ function canCompile(body) {
   }
 }
 
-// Probe blank lines with one NUL and comment candidates with two NULs replacing their `//`
-// opener, then drop candidates V8 proves are inert.
+// Probe candidates with NULs and drop them only when V8 still parses the body.
 export function stripInertLines(body, moduleName = 'module') {
   try {
     new AsyncFunction(body);
@@ -252,8 +220,7 @@ export function stripInertLines(body, moduleName = 'module') {
   };
 }
 
-// The Workflow tool caps scripts at WORKFLOW_SCRIPT_CAP. Keep a separate headroom
-// margin so a successful local build cannot approach the external tool's cliff.
+// Keep headroom below the Workflow tool's script cap.
 export function checkBundleSize(bundle, maxBytes = BUNDLE_MAX_BYTES) {
   const bytes = Buffer.byteLength(bundle, 'utf8');
   if (bytes > maxBytes) {
@@ -265,28 +232,22 @@ export function checkBundleSize(bundle, maxBytes = BUNDLE_MAX_BYTES) {
   }
 }
 
-// Assemble a supplied source map so source-boundary guards and their throw paths can
-// be tested without adding fixtures to workflows/src/; build() supplies the real map.
 export function buildFromSources(
-  files,
   sources,
   { dropComments = true, maxBytes = BUNDLE_MAX_BYTES } = {},
 ) {
+  const files = [...sources.keys()].sort();
   checkRawLineTerminators(files, sources);
+  const order = moduleOrder(sources);
 
-  // 0) Fail on any import strip() cannot safely drop (see unsafeImports).
-  checkUnsafeImports(files, sources);
-
-  // 1) Hoist the public surface so the bundle's first line is `export const meta`.
   const hoisted = [];
-  for (const file of files) {
+  for (const file of order) {
     for (const line of sources.get(file).split('\n')) {
       if (isHoisted(line)) hoisted.push(line);
     }
   }
   const parts = [...hoisted, '// GENERATED by workflows/build.js — do not edit by hand.'];
-  // 2) Emit every module body (public consts already hoisted, imports dropped).
-  for (const file of files) {
+  for (const file of order) {
     parts.push(`// --- ${file} ---`);
     const body = strip(sources.get(file));
     const emitted = dropComments ? stripInertLines(body, `src/${file}`).text : body;
@@ -294,7 +255,6 @@ export function buildFromSources(
   }
   const bundle = parts.join('\n').replace(/\n+$/, '') + '\n';
 
-  // 3) Fail the build on any top-level identifier collision (see above).
   const collisions = detectTopLevelCollisions(bundle);
   if (collisions.length) {
     const detail = collisions
@@ -308,16 +268,14 @@ export function buildFromSources(
   return bundle;
 }
 
-// The default options keep the committed artifact below the external script limit;
-// dropComments and maxBytes are test controls for the unstripped text and small limits.
+// dropComments and maxBytes are build test controls.
 export function build(options = {}) {
-  const files = present();
+  const files = readdirSync(SRC).filter((f) => f.endsWith('.js')).sort();
   const sources = new Map(files.map((f) => [f, readFileSync(join(SRC, f), 'utf8')]));
-  return buildFromSources(files, sources, options);
+  return buildFromSources(sources, options);
 }
 
-// main-guard: only write when run as `node workflows/build.js`; importing this module
-// (the collision-detector unit test) must not trigger a write.
+// Importing the module for tests must not write the generated bundle.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const bundle = build();
