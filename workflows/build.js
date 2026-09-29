@@ -102,10 +102,15 @@ export function unsafeImports(source) {
       return;
     }
     const specifier = clauses.length === 1 ? clauses[0][1] : null;
-    if (specifier === null || !isStrippableImportLine(line)) {
+    if (specifier === null) {
       bad.push({
         line: i + 1, text: line.trim(), specifier,
         reason: 'no single-line `from` clause — strip() only removes single-line imports',
+      });
+    } else if (!isStrippableImportLine(line)) {
+      bad.push({
+        line: i + 1, text: line.trim(), specifier,
+        reason: 'strip() does not match this import line — write it as `import … from \'./x.js\';`',
       });
     } else if (!specifier.startsWith('./')) {
       bad.push({

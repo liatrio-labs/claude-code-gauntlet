@@ -124,6 +124,7 @@ test('unsafeImports rejects import lines that cannot be stripped safely', () => 
     ["import { x } from '../outside.js';", '../outside.js', /not relative/],
     ["import {\n  thing,\n} from './registry.js';", null, /single-line/],
     ["import { first } from './first.js'; import { second } from './second.js';", null, /one import per line/],
+    ["import x from'./a.js';", './a.js', /strip\(\) does not match/],
   ];
   for (const [source, specifier, reason] of cases) {
     const [violation] = unsafeImports(source);
