@@ -15,6 +15,8 @@ CompletedProcess = subprocess.CompletedProcess
 TimeoutExpired = subprocess.TimeoutExpired
 CalledProcessError = subprocess.CalledProcessError
 
+_DEFAULT_PATHEXT = [".COM", ".EXE", ".BAT", ".CMD"]
+
 
 class ToolError(FileNotFoundError):
     """The requested executable is unavailable on PATH."""
@@ -28,7 +30,8 @@ def which(name: str) -> str | None:
         return shutil.which(name)
     # Windows may search the current directory before PATH, including a reviewed repo.
     # Search explicit PATH entries only so a repository executable cannot shadow a tool.
-    extensions = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";")
+    pathext = os.environ.get("PATHEXT", "").split(";")
+    extensions = [ext for ext in pathext if ext] or _DEFAULT_PATHEXT
     names = [name] if os.path.splitext(name)[1] else [name + ext for ext in extensions]
     for directory in os.environ.get("PATH", "").split(os.pathsep):
         if not directory:
@@ -46,7 +49,8 @@ def _resolve(argv: Sequence[str]) -> list[str]:
     resolved = which(argv[0])
     if resolved is None:
         raise ToolError(argv)
-    return [resolved, *argv[1:]]
+    # Anchor relative PATH entries before the child's cwd changes their base.
+    return [os.path.abspath(resolved), *argv[1:]]
 
 
 @contextmanager

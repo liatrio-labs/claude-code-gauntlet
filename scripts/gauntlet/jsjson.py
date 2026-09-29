@@ -94,7 +94,10 @@ JS_MAX_SAFE_INTEGER = 2**53 - 1
 
 
 def assert_js_reproducible(obj: object, path: str = "$") -> None:
-    """Check iteratively so only json.dumps adds recursion to deep documents."""
+    """Reject floats, non-finite values, unsafe integers, non-string keys and non-JSON values.
+
+    Iterative traversal leaves recursion to the encoder.
+    """
     stack = [(obj, path)]
     while stack:
         node, where = stack.pop()
@@ -165,8 +168,8 @@ def js_stringify_pretty(obj: object) -> str:
     """Render JSON.stringify(obj, null, 2) bytes.
 
     JS never escapes non-ASCII and spells non-finite numbers as null, hence
-    ensure_ascii=False and allow_nan=False. The indent encoder recurses, so a deep
-    document is refused like any other value it cannot reproduce.
+    ensure_ascii=False and allow_nan=False. A deep document is refused where the
+    indent encoder recurses (Python before 3.14); 3.14 serializes it.
     """
     try:
         assert_js_reproducible(obj)

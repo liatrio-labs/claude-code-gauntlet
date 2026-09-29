@@ -1021,7 +1021,8 @@ def _coerce_numeric_fields(finding):
 _input_checksum = checksum_or_none
 
 
-# Only trailing whitespace and closing punctuation can be recovered deterministically.
+# The sampled agent can append a stray brace; only trailing whitespace and
+# closing punctuation are safe to recover.
 # Full matching prevents content after a valid document from entering the legacy path.
 _RECOVERABLE_TRAILING_RE = re.compile(r"[ \t\r\n}\]]*")
 

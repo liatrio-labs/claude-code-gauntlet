@@ -1426,9 +1426,7 @@ def _gitlab_fence_offsets(anchor, line, end_line):
 def _gitlab_apply_range(finding, anchor):
     """Return ``(apply_range, offsets, cap_exceeded)`` for *finding* anchored at *anchor*.
 
-    Extracted from :func:`_gitlab_anchored` so the render site and a poster's
-    overlap pre-pass compute the identical decision by calling, not copying
-    so both sites call one decision rather than copying it.
+    The render site and overlap pre-pass share the same decision.
     """
     offsets, cap_exceeded = _gitlab_fence_offsets(
         anchor, finding.get("line"), finding.get("end_line")
@@ -1806,15 +1804,11 @@ def key_material_body(finding):
     """The bytes ``finding_key`` hashes: sections only, no trailer, ``suggested_fix_code``
     stripped (:func:`_key_material_finding`).
 
-    Changing what this function renders re-keys every delivered finding it touches on every open
-    PR/MR, which is a repost wave, not a cosmetic change. It hashes the normalized rendered
-    sections; there is no alternate raw-severity key path. This re-keys
-    surrounding-whitespace labels, off-enum labels including empty strings, missing labels that
-    previously defaulted to medium, and non-strings that
-    previously raised and produced no delivered finding key. Canonical severities and plain
-    case variants keep their bytes and keys. Preparing posted title, body, suggestion and
-    rule text intentionally re-keys affected findings once. None titles also now use the
-    absent-title key. The new keys then support reruns normally.
+    Changing this rendering re-keys each affected finding on every open PR/MR.
+    Rendering normalizes severity labels, so off-enum, blank or missing labels
+    key as their normalized form. Canonical severities and case variants keep
+    their keys; posted title, body, suggestion, rule and absent-title values key
+    from their rendered forms.
     """
     return _finding_sections(_key_material_finding(finding))
 
@@ -3014,7 +3008,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     # Pure, SILENT pre-pass, same shape and same discipline as GitHub's —
     # BEFORE the summary note or any discussion posts, so the decision is made
     # once, statically, and never depends on what has or hasn't gone out live
-    # yet (R8: the demoted SET is a pure function of findings + diff,
+    # yet (the demoted set is a pure function of findings + diff,
     # rerun-stable, dry-run == live). The candidate predicate and index basis
     # are `_gitlab_overlap_records`'s own docstring — this poster and the
     # benchmark mirror both call it rather than each keeping their own copy.
@@ -3143,7 +3137,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             "new_line": line,
         }
         # An UNCHANGED (context) line is addressable only when the position carries
-        # both sides; new_line alone is rejected with 400 `line_code can't be blank`
+        # both sides; new_line alone is rejected with 400 `line_code can't be blank`.
         # An added line has no old side — omit the key rather than
         # sending null. NEVER synthesize `line_code`: it is derived server-side, and
         # both documented attempts to compute it client-side (position sibling, and
@@ -3358,7 +3352,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         }
         member_keys = [primary_key] + [corroborator_keys[id(c)] for c in corroborators]
         if primary_key in legacy_group_keys:
-            # This group's primary key was found on a older group body that
+            # This group's primary key was found on an older group body that
             # rendered a corroborator's content without ever giving it a key of
             # its own (see legacy_group_keys_for_sha). That body IS this group's
             # whole delivery — every member it renders is provably already on

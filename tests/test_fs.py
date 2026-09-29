@@ -48,8 +48,6 @@ def test_write_atomic_replaces_or_preserves(tmp_path, monkeypatch, operation):
 
 
 def test_write_atomic_creates_sibling_temp(tmp_path, monkeypatch):
-    from gauntlet import fs
-
     directories = []
     original = fs.tempfile.mkstemp
 
@@ -171,6 +169,7 @@ def test_symlink_capability_probe_only_skips_on_failure(
             calls.append(target_is_directory)
             if not capable:
                 raise OSError("symlinks unavailable")
+            return
         return original(self, target, target_is_directory=target_is_directory)
 
     monkeypatch.setattr(Path, "symlink_to", create)
