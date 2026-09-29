@@ -45,11 +45,18 @@ def test_cross_runtime_python_vector(family, case):
     if family == "fnv1a32":
         actual = fnv1a32(case["input"])
     elif family == "json_spelling":
+        if case["id"].startswith("key_order"):
+            assert (
+                json.dumps(case["input"], indent=2, ensure_ascii=False)
+                != case["expected"]
+            )
         actual = (
             normalize_content(case["input"])
             if case.get("operation") == "normalize"
             else js_stringify_pretty(case["input"])
         )
+        if case.get("operation") != "normalize":
+            actual.encode("utf-8")
     elif family == "outbound_line":
         actual = prepare_line(case["input"])
     elif family == "config_rule":

@@ -70,9 +70,9 @@ The primaries have `expect[].chars/checksum` to prove them; the plan had nothing
 So the plan carries a checksum of itself. The construction has to be unambiguous
 in BOTH runtimes (the workflow sandbox computes it, this script recomputes it):
 
-  1. Take the plan object exactly as parsed. Key order is the wire order — JS
-     object literals and Python's `json.loads` dicts are both insertion-ordered,
-     and neither runtime reorders on re-serialization.
+  1. Take the plan object exactly as parsed. JS orders array-index keys first on
+     parse and on stringify; `js_stringify_pretty` applies the same order, so both
+     runtimes serialize the parsed plan identically.
   2. Remove the single key `planChecksum`. The pipeline appends it LAST (it is
      computed before the key exists), so removing it restores the exact
      pre-checksum object on both sides.
@@ -222,31 +222,22 @@ class JsSerializationError(ValueError):
     """
 
 
-# JS numbers are IEEE-754 doubles and Number#toString has its own spelling rules;
-# Python's repr(float) does not share them. The five live divergences:
+# JS numbers are IEEE-754 doubles. Python's float spelling differs in these
+# cases, so the serializer rejects floats rather than port Number#toString:
 #
 #     value        JSON.stringify   json.dumps
-#     1e-7         1e-7             1e-07      (exponent zero-padding)
-#     0.000001     0.000001         1e-06      (Python switches to exponent at 1e-4,
-#                                               JS only below 1e-6)
-#     90.0         90               90.0       (JS never prints a trailing .0)
+#     1e-7         1e-7             1e-07
+#     0.000001     0.000001         1e-06
+#     90.0         90               90.0
 #     -0.0         0                -0.0
-#     NaN          null             NaN        (and json.loads ACCEPTS bare NaN)
+#     NaN          null             NaN        (json.loads accepts bare NaN)
 #
-# DECISION: enforce integers as a PRECONDITION rather than reimplement
-# Number#toString. Every number the pipeline puts in a finding or a checkpoint is
-# a count, a line number, or a confidence — all integers — and every number in
-# these documents originated as a JS `JSON.stringify` output, where an integral
-# double is always spelled without a dot or exponent (so it parses back as a
-# Python *int*, which round-trips exactly). A float or a NaN reaching here
-# therefore means the input is not what the pipeline produced, and reproducing it
-# faithfully would require a full Number#toString port whose own bugs would be
-# invisible. Refusing is honest and, on the JS side, persistDerivable applies the
-# same rule BEFORE anything is written and falls back to the legacy by-value
-# writer — so this precondition costs a run nothing in practice.
+# Pipeline numbers are counts, line numbers, or confidences. JSON.stringify emits
+# integral doubles without a decimal point or exponent, so parsed values are
+# Python ints; rejecting other numbers avoids a separate Number#toString port.
+# The JS writer applies the same precondition and falls back before writing.
 #
-# Integers outside JS's safe range are rejected for the same reason: JS would have
-# parsed them lossily, so the two runtimes no longer hold the same value.
+# Integers outside JS's safe range are rejected because JS parses them lossily.
 JS_MAX_SAFE_INTEGER = 2**53 - 1
 
 
@@ -287,18 +278,47 @@ def assert_js_reproducible(obj, path="$"):
         )
 
 
+def _js_property_order(value):
+    """Copy containers with ECMAScript array-index keys ordered first."""
+    if isinstance(value, dict):
+        index_keys = []
+        string_keys = []
+        for key in value:
+            if key == "0" or (
+                key.isascii()
+                and key.isdecimal()
+                and len(key) <= 10
+                and key[0] != "0"
+                and int(key) <= 4294967294
+            ):
+                index_keys.append(key)
+            else:
+                string_keys.append(key)
+        index_keys.sort(key=int)
+        return {
+            key: _js_property_order(value[key]) for key in (*index_keys, *string_keys)
+        }
+    if isinstance(value, list):
+        return [_js_property_order(item) for item in value]
+    return value
+
+
 def js_stringify_pretty(obj):
     """JSON.stringify(obj, null, 2), byte for byte.
 
     ensure_ascii=False because JS never escapes non-ASCII (U+2028/U+2029 included
-    — they are legal raw inside a JSON string and JSON.stringify leaves them
-    alone), Python's indent mode already emits JS's separators, allow_nan=False
-    so a non-finite number can never be spelled `NaN`/`Infinity` (JS emits
-    `null`), and the surrogate pass restores JS's well-formed escaping.
+    — JSON.stringify leaves them raw), Python's indent mode emits JS's separators,
+    and the surrogate pass restores JSON.stringify's well-formed escaping for
+    lone surrogates.
     """
     assert_js_reproducible(obj)
     return escape_lone_surrogates(
-        json.dumps(obj, indent=2, ensure_ascii=False, allow_nan=False)
+        json.dumps(
+            _js_property_order(obj),
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
     )
 
 
