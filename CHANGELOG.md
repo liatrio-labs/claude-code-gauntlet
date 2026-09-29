@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v3.42.10 (2026-09-29)
+
+### Bug Fixes
+
+- Close the #408 review gaps in build tests and import parsing
+  ([#434](https://github.com/liatrio-labs/claude-code-gauntlet/pull/434),
+  [`b7cca83`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b7cca83bf20c295ac5627e7317a0d66931eb655e))
+
+- Give the unstrippable single-import case its own reason and test
+  ([#434](https://github.com/liatrio-labs/claude-code-gauntlet/pull/434),
+  [`b7cca83`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b7cca83bf20c295ac5627e7317a0d66931eb655e))
+
+### Refactoring
+
+- Address the gauntlet lows on #408
+  ([#434](https://github.com/liatrio-labs/claude-code-gauntlet/pull/434),
+  [`b7cca83`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b7cca83bf20c295ac5627e7317a0d66931eb655e))
+
+- Derive the workflow bundle order from its imports
+  ([#434](https://github.com/liatrio-labs/claude-code-gauntlet/pull/434),
+  [`b7cca83`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b7cca83bf20c295ac5627e7317a0d66931eb655e))
+
+- Derive the workflow bundle order from its imports (#408)
+  ([#434](https://github.com/liatrio-labs/claude-code-gauntlet/pull/434),
+  [`b7cca83`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b7cca83bf20c295ac5627e7317a0d66931eb655e))
+
+
 ## v3.42.9 (2026-09-29)
 
 ### Bug Fixes
