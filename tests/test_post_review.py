@@ -64,7 +64,7 @@ _MISSING_SEVERITY = object()
 def _available_cli_tools(monkeypatch):
     lookup = shutil.which
     monkeypatch.setattr(
-        post_review.shutil,
+        post_review.proc,
         "which",
         lambda name: (
             lookup(name) or (f"/mock/{name}" if name in {"gh", "glab"} else None)
@@ -81,7 +81,7 @@ def test_check_tool_uses_path_lookup(name, available, monkeypatch, capsys):
         calls.append(executable)
         return f"/tools/{executable}" if available else None
 
-    monkeypatch.setattr(post_review.shutil, "which", lookup)
+    monkeypatch.setattr(post_review.proc, "which", lookup)
     if available:
         post_review.check_tool(name)
         assert capsys.readouterr().err == ""

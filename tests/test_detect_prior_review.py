@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import gauntlet.marker as review_marker
 import gauntlet.prior_review as detect_prior_review
+import pytest
 
 # Hex-only fixed SHAs (valid under review_marker.SHA_RE regardless of context).
 FULL_SHA = "a" * 40
@@ -45,6 +46,28 @@ def _run_main(argv):
     return stdout.getvalue(), code
 
 
+def _result(out="", err="", rc=0):
+    return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (
+            detect_prior_review.proc.TimeoutExpired(["git"], 3),
+            ("", "timed out after 3s", -1),
+        ),
+        (OSError("denied"), ("", "denied", -1)),
+    ],
+)
+def test_run_maps_process_failures_to_exact_sentinels(monkeypatch, failure, expected):
+    def fail(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(detect_prior_review.proc, "output", fail)
+    assert detect_prior_review.run(["git", "status"], timeout=3) == expected
+
+
 def _fake_git_run(
     resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA, commit_count=3, ancestor=True
 ):
@@ -59,16 +82,13 @@ def _fake_git_run(
     """
 
     def _run(cmd, *a, **k):
-        def res(out="", err="", rc=0):
-            return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
-
         if "cat-file" in cmd:
             # Faithful to real git: `git cat-file -e <bad>^{commit}` is a
             # "fatal:" error exiting 128, not a plain 1, and it names the
             # object it could not find. Verified empirically: `git cat-file -e
             # 000...0^{commit}` -> "fatal: Not a valid object name
             # 000...0^{commit}", exit 128.
-            return res(
+            return _result(
                 rc=0 if resolvable else 128,
                 err="" if resolvable else f"fatal: Not a valid object name {cmd[-1]}",
             )
@@ -79,9 +99,9 @@ def _fake_git_run(
             # invalid commit would exit 128 with a "fatal:" message, but that
             # branch is unreachable here — merge-base only runs after cat-file
             # has already proven the sha resolvable.)
-            return res(rc=0 if ancestor else 1)
+            return _result(rc=0 if ancestor else 1)
         if "rev-parse" in cmd and cmd[-1] == "HEAD":
-            return res(out=head_sha + "\n")
+            return _result(out=head_sha + "\n")
         if "rev-parse" in cmd:
             # Faithful to real git: `rev-parse` echoes an already-full object id
             # back unchanged and only *expands* an abbreviated one. A fake that
@@ -89,21 +109,21 @@ def _fake_git_run(
             # actually passed — exactly what an explicit --head-sha must prove.
             rev = cmd[-1]
             if len(rev) == 40:
-                return res(out=rev + "\n")
+                return _result(out=rev + "\n")
             if resolvable:
-                return res(out=full_sha + "\n")
+                return _result(out=full_sha + "\n")
             # Faithful to real git: an unresolvable rev is a "fatal:" error
             # exiting 128, not 1. Verified empirically: `git rev-parse
             # deadbeef` -> "fatal: ambiguous argument 'deadbeef': unknown
             # revision or path not in the working tree.", exit 128.
-            return res(
+            return _result(
                 err=f"fatal: ambiguous argument '{rev}': unknown revision or "
                 "path not in the working tree.",
                 rc=128,
             )
         if "rev-list" in cmd:
-            return res(out=f"{commit_count}\n")
-        return res(out="{}")
+            return _result(out=f"{commit_count}\n")
+        return _result(out="{}")
 
     return _run
 
@@ -122,21 +142,18 @@ def _fake_gh_glab_and_git_run(
     git_run = git_run or _fake_git_run()
 
     def _run(cmd, *a, **k):
-        def res(out="", err="", rc=0):
-            return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
-
         joined = " ".join(cmd)
         if "pulls" in joined and "reviews" in joined:
             if reviews_rc != 0:
-                return res(err="gh: fetch failed", rc=reviews_rc)
-            return res(out=json.dumps(reviews if reviews is not None else []))
+                return _result(err="gh: fetch failed", rc=reviews_rc)
+            return _result(out=json.dumps(reviews if reviews is not None else []))
         if "merge_requests" in joined and "notes" in joined:
             if notes_rc != 0:
-                return res(err="glab: fetch failed", rc=notes_rc)
-            return res(out=json.dumps(notes if notes is not None else []))
+                return _result(err="glab: fetch failed", rc=notes_rc)
+            return _result(out=json.dumps(notes if notes is not None else []))
         if cmd and cmd[0] == "git":
             return git_run(cmd, *a, **k)
-        return res(out="{}")
+        return _result(out="{}")
 
     return _run
 

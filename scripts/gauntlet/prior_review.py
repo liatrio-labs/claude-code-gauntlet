@@ -86,6 +86,7 @@ PLATFORM_SOURCES = {
 def run(cmd, timeout=None):
     """Return a failure sentinel when a fetch cannot run."""
     try:
+        # Strict decoding raises UnicodeDecodeError outside the OSError exit-zero path.
         return proc.output(cmd, errors="replace", timeout=timeout)
     except proc.TimeoutExpired:
         return "", f"timed out after {timeout}s", -1
@@ -233,11 +234,10 @@ def gitlab_prior_delivery_state(owner, repo, number, sha):
     review left here.
 
     ``gauntlet.delivery.post.post_gitlab`` asks three questions before delivering: is my summary
-    note already on the MR (issue #127), which of my inline discussions did a
-    partially-failed delivery already place (issue #132), and — of those — which stand
-    for a WHOLE consolidation group because they are a pre-#208 group body that rendered
-    a corroborator without ever giving it its own key (issue: unanchored corroborators
-    lost on rerun). ONE fetch answers all three — a second round trip would also be a
+    note already on the MR, which of my inline discussions did a
+    partially-failed delivery already place, and — of those — which stand
+    for a WHOLE consolidation group because an older group body rendered
+    a corroborator without its own key. ONE fetch answers all three — a second round trip would also be a
     second, possibly inconsistent view of the MR. The read lives here because this
     module is the only reader; gauntlet.delivery.post writes the signal and never parses it.
 
@@ -372,7 +372,7 @@ _CORROBORATION_HEADER = "Corroborating finding — "
 def _is_legacy_undermarked_group_body(body, matched_marker_count):
     """True when *body* renders more consolidation-group members than it carries keys for.
 
-    Before issue #208's fix, ``post_gitlab`` never gave an unanchorable corroborator (no
+    Older ``post_gitlab`` bodies did not give an unanchorable corroborator (no
     line, or a line outside the diff) a delivery key — even though it fully rendered that
     member's content into the body's ``"Corroborating finding — "`` section. Such a body
     is proof BY CONSTRUCTION that every member it renders already reached the MR, even

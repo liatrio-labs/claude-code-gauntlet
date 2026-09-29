@@ -43,8 +43,8 @@ def write_result(obj: Any) -> None:
     print(escape_lone_surrogates(json.dumps(obj, indent=2, ensure_ascii=False)))
 
 
-# The workflow hashes UTF-16 code units with String#charCodeAt and Math.imul; the
-# masked arithmetic below yields the same 32-bit pattern.
+# The workflow sandbox hashes charCodeAt units and has no TextEncoder or Buffer.
+# Masked arithmetic yields its 32-bit pattern.
 FNV_OFFSET_BASIS = 0x811C9DC5
 FNV_PRIME = 0x01000193
 
@@ -94,7 +94,7 @@ JS_MAX_SAFE_INTEGER = 2**53 - 1
 
 
 def assert_js_reproducible(obj: object, path: str = "$") -> None:
-    """Reject values whose JSON differs between Python and JavaScript."""
+    """Check iteratively so only json.dumps adds recursion to deep documents."""
     stack = [(obj, path)]
     while stack:
         node, where = stack.pop()
@@ -183,7 +183,10 @@ def js_stringify_pretty(obj: object) -> str:
 
 
 def checksum_or_none(obj: object) -> str | None:
-    """Return the JS content proof when the value can be reproduced."""
+    """Omit an unsupported consistency proof to preserve the envelope's failure shape.
+
+    This detects a drifting executor, not an untrusted writer.
+    """
     try:
         return fnv1a32(js_stringify_pretty(obj))
     except JsSerializationError:

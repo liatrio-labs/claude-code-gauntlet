@@ -2,16 +2,15 @@
 
 import io
 import json
-import sys
 from contextlib import redirect_stdout
 
 import pytest
+from gauntlet import jsjson
 from gauntlet.jsjson import (
     JsSerializationError,
     checksum_or_none,
     dumps,
     js_stringify_pretty,
-    normalize_content,
     utf16_len,
     write_result,
 )
@@ -30,17 +29,15 @@ def test_js_stringify_pretty(value, expected):
     assert js_stringify_pretty(value) == expected
 
 
-@pytest.mark.parametrize("proof", [_input_checksum, deltas_checksum, checksum_or_none])
-def test_proof_omits_value_beyond_json_nesting_limit(proof):
-    value = 0
-    for _ in range(sys.getrecursionlimit() + 100):
-        value = [value]
-    assert proof(value) is None
+def test_proof_omits_value_the_encoder_cannot_nest(monkeypatch):
+    # Python 3.14 serializes a document past the recursion limit (measured on the
+    # Windows 3.14 CI leg), so the encoder's RecursionError is injected, not reached.
+    def too_deep(*_args, **_kwargs):
+        raise RecursionError
 
-
-def test_normalize_content():
-    assert normalize_content("\ufeffA\r\n") == "A"
-    assert normalize_content("A\n\n") == "A\n"
+    monkeypatch.setattr(jsjson.json, "dumps", too_deep)
+    assert checksum_or_none([0]) is None
+    assert _input_checksum is deltas_checksum is checksum_or_none
 
 
 @pytest.mark.parametrize(

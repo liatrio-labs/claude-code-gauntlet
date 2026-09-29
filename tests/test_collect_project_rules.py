@@ -30,6 +30,44 @@ EMPTY_RULES_NOTICE = (
 )
 
 
+def test_crash_path_keeps_empty_render_unchanged(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    output = tmp_path / "rules.md"
+    original = collect_project_rules.write_atomic
+    calls = 0
+
+    def fail_first(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("first write failed")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(collect_project_rules, "write_atomic", fail_first)
+    code = main(["--repo-root", str(repo), "--out", str(output)])
+    receipt = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert receipt["ok"] is False
+    assert calls == 2
+    assert output.read_text(encoding="utf-8") == ""
+
+
+def test_changed_file_list_replaces_invalid_utf8(tmp_path):
+    changed = tmp_path / "changed.json"
+    changed.write_bytes(b'["pkg/\xff.py"]')
+    assert collect_project_rules._load_changed_files(str(changed)) == ["pkg/\ufffd.py"]
+
+
+def test_rules_output_creates_missing_parent(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    output = tmp_path / "missing" / "rules.md"
+    assert main(["--repo-root", str(repo), "--out", str(output)]) == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    assert output.read_text(encoding="utf-8") == EMPTY_RULES_NOTICE
+
+
 class _RepoCase(unittest.TestCase):
     """Builds a real on-disk repo (real files, real symlinks) per test."""
 

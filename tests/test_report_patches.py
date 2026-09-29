@@ -1654,9 +1654,9 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         """A symlink AT the artifact's own path, pointing outside
         --output-dir, must be refused rather than followed —
         ``os.path.realpath`` resolving through it is exactly the case
-        ``_confined`` exists to catch.
+        ``gauntlet.fs.confined`` exists to catch.
 
-        RED when ``_confined`` stops calling ``os.path.realpath`` (e.g.
+        RED when ``gauntlet.fs.confined`` stops calling ``os.path.realpath`` (e.g.
         ``os.path.abspath`` instead, which does not resolve symlinks): the
         escape would go undetected and the outside file would be silently
         overwritten.

@@ -58,6 +58,20 @@ from gauntlet.verify.decide import (
     verify_factual,
 )
 
+
+def test_repo_root_falls_back_when_git_probe_fails(monkeypatch):
+    from gauntlet.verify import decide
+
+    monkeypatch.setattr(
+        decide.proc,
+        "run",
+        lambda *_args, **_kwargs: decide.proc.CompletedProcess([], 1, "", "failed"),
+    )
+    assert decide._resolve_repo_root() == os.path.dirname(
+        decide.entry("verify_findings")
+    )
+
+
 # Absolute path to the script file, for the delta-echo tests that must invoke the REAL
 # CLI as a subprocess rather than calling main() in-process with a patched argv: the
 # result key ORDER on disk and the sibling assemble_artifacts import both depend on how
@@ -3013,7 +3027,7 @@ class TestSliceInputRecovery(unittest.TestCase):
 
     def test_a_document_python_cannot_spell_identically_yields_no_checksum(self):
         # js_stringify_pretty refuses a non-integral number rather than reimplement
-        # Number#toString (assemble_artifacts.assert_js_reproducible). An absent proof
+        # Number#toString (gauntlet.jsjson.assert_js_reproducible). An absent proof
         # is a legal thing to report; the workflow decides what to do about it. Raising
         # here would take out the whole envelope, including its honest failure shape --
         # the same None-rather-than-raise contract deltas_checksum already uses.

@@ -44,9 +44,7 @@ def test_missing_executable_raises_tool_error_before_child_runs(monkeypatch):
     with pytest.raises(proc.ToolError) as caught:
         proc.run(["unavailable", "arg"])
     assert isinstance(caught.value, FileNotFoundError)
-    assert caught.value.command == ("unavailable", "arg")
-    assert caught.value.executable == "unavailable"
-    assert caught.value.reason == "missing_tool"
+    assert caught.value.filename == "unavailable"
     assert "'unavailable'" in str(caught.value)
 
 
@@ -76,6 +74,42 @@ def test_child_oserror_names_requested_executable(monkeypatch):
     assert "'git'" in str(caught.value)
 
 
+def test_missing_cwd_keeps_directory_as_oserror_filename(monkeypatch, tmp_path):
+    monkeypatch.setattr(proc.shutil, "which", lambda _name: "/tools/git")
+    missing = tmp_path / "missing"
+    with pytest.raises(FileNotFoundError) as caught:
+        proc.run(["git", "status"], cwd=str(missing))
+    assert caught.value.filename == str(missing)
+
+
+def test_slash_command_reaches_child_unchanged(monkeypatch):
+    calls = []
+    monkeypatch.setattr(proc.shutil, "which", lambda _name: pytest.fail("PATH lookup"))
+
+    def child(argv, **_options):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(proc.subprocess, "run", child)
+    proc.run(["./tool", "arg"], cwd="/repo")
+    assert calls == [["./tool", "arg"]]
+
+
+def test_windows_which_uses_path_without_implicit_cwd(tmp_path, monkeypatch):
+    monkeypatch.setattr(proc.sys, "platform", "win32")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "git.cmd").write_text("", encoding="utf-8")
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "git.EXE").write_text("", encoding="utf-8")
+    monkeypatch.setenv("PATH", str(tools))
+    monkeypatch.setenv("PATHEXT", ".EXE;.cmd")
+    assert proc.which("git") == str(tools / "git.EXE")
+    assert proc._resolve(["git", "status"]) == [str(tools / "git.EXE"), "status"]
+    monkeypatch.setenv("PATH", str(tmp_path / "absent"))
+    assert proc.which("git") is None
+
+
 @pytest.mark.parametrize("failure", ["timeout", "checked_exit"])
 def test_run_preserves_subprocess_failure_types(monkeypatch, failure):
     monkeypatch.setattr(proc.shutil, "which", lambda _name: "/tools/git")
@@ -87,8 +121,9 @@ def test_run_preserves_subprocess_failure_types(monkeypatch, failure):
 
     monkeypatch.setattr(proc.subprocess, "run", child)
     if failure == "timeout":
-        with pytest.raises(subprocess.TimeoutExpired):
+        with pytest.raises(subprocess.TimeoutExpired) as caught:
             proc.run(["git", "status"], timeout=1)
+        assert caught.value.cmd == ["git", "status"]
     else:
         with pytest.raises(subprocess.CalledProcessError) as caught:
             proc.run(["git", "status"], check=True)

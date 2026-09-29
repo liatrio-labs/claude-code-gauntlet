@@ -73,6 +73,8 @@ import re
 import sys
 
 from gauntlet.cli import Command
+
+# NEVER import gauntlet.verify.decide here: it runs git at import time.
 from gauntlet.delivery.post import (
     _FIX_COUNTS,
     _FIX_REASON_COUNTS,
@@ -84,10 +86,6 @@ from gauntlet.delivery.post import (
     parse_diff_text,
     reset_run_state,
 )
-
-# NEVER import gauntlet.verify.decide here — it resolves the repo root via
-# `git rev-parse --show-toplevel` at import time, which this script has no
-# business triggering for a read-only render step.
 from gauntlet.fs import JsonReadError, confined, read_json, write_atomic
 
 _HEAD_SHA_RE = re.compile(r"^[A-Za-z0-9._-]+$")

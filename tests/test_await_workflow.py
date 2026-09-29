@@ -40,6 +40,17 @@ from gauntlet.registry import ARTIFACT_BASENAMES, ARTIFACT_PATH_TEMPLATES
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def test_resolve_target_uses_literal_task_root(tmp_path, monkeypatch):
+    from gauntlet import awaiting
+
+    root = tmp_path / "claude-[g]"
+    target = root / "slug" / "session" / "tasks" / "w123.output"
+    target.parent.mkdir(parents=True)
+    target.write_text("", encoding="utf-8")
+    monkeypatch.setattr(awaiting, "task_roots", lambda _env: [str(root)])
+    assert resolve_target("w123", {})[0] == str(target)
+
+
 def test_next_command_keeps_symlinked_plugin_root(tmp_path, symlink_or_skip):
     link = tmp_path / "plugin-link"
     link.symlink_to(REPO_ROOT, target_is_directory=True)

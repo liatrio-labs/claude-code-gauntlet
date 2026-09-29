@@ -50,7 +50,7 @@ Output JSON schema (legacy positional path — unchanged):
     why it was removed (e.g., "line not in diff", "evidence mismatch", etc.).
 
 Receipt mode (--input/--input-inline/--nonce/--head-sha) wraps that same result in the
-envelope the workflow's verify stage consumes, and adds the DELTA ECHO (issue #25 req 1/2):
+envelope the workflow's verify stage consumes, and adds the DELTA ECHO:
 
     {
       "status": "ok",
@@ -123,7 +123,7 @@ REPO_ROOT = _resolve_repo_root()
 
 
 class InputError(Exception):
-    """Let the receipt path record a failure while the legacy CLI exits one."""
+    """An Exception lets the receipt path record a failure before the legacy CLI exits one."""
 
 
 def die(msg):
@@ -931,7 +931,7 @@ def batch_findings(findings, min_batch=3, max_batch=5):
 # makes `line_start - 1`, `line_start < 1`, or `range(line_start, line_end + 1)` raise a
 # TypeError ("unsupported operand type(s) for -: 'str' and 'int'" / "'<' not supported
 # between instances of 'str' and 'int'"), which in receipt mode surfaces as
-# status:'failed' and degrades the whole slice to UNVERIFIED (the live-smoke failure).
+# status:'failed' and degrades the whole slice to UNVERIFIED.
 # The read-site scan exempts these: _coerce_numeric_fields reads them by loop, not by literal, and skips a key a dispatched slice omits.
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
@@ -1021,13 +1021,8 @@ def _coerce_numeric_fields(finding):
 _input_checksum = checksum_or_none
 
 
-# The trailing-byte class this loader RECOVERS from: whitespace and unbalanced closing
-# punctuation only. Issue #69 — the artifact-writer is a sampled agent, not a function,
-# and on smoke-20260728-144630-a162ecd it appended exactly `}\n` after two otherwise
-# complete legacy input documents, costing 23 fully intact findings their verification.
-# Recovering that class is deterministic; recovering anything wider is guessing. Matched
-# with fullmatch, so a document ending in real content can never sneak past on the
-# strength of a closing character. This recovery is positional-CLI-only.
+# Only trailing whitespace and closing punctuation can be recovered deterministically.
+# Full matching prevents content after a valid document from entering the legacy path.
 _RECOVERABLE_TRAILING_RE = re.compile(r"[ \t\r\n}\]]*")
 
 _INLINE_SAFE = frozenset(
@@ -1293,7 +1288,7 @@ def _resolve_head_sha():
 
 
 # ---------------------------------------------------------------------------
-# Delta echo (issue #25 requirements 1 and 2)
+# Delta echo
 # ---------------------------------------------------------------------------
 #
 # The workflow already holds every dispatched finding BY VALUE. The only thing it cannot

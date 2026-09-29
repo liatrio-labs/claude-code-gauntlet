@@ -2,12 +2,13 @@
 
 import glob
 import os
-import sys
+from pathlib import Path
 
 import pytest
+from gauntlet import fs
 from gauntlet.fs import JsonReadError, confined, glob_under, read_json, write_atomic
 
-from tests.conftest import symlink_or_skip
+from tests.conftest import probe_symlinks
 
 
 @pytest.mark.parametrize(
@@ -46,6 +47,22 @@ def test_write_atomic_replaces_or_preserves(tmp_path, monkeypatch, operation):
     ]
 
 
+def test_write_atomic_creates_sibling_temp(tmp_path, monkeypatch):
+    from gauntlet import fs
+
+    directories = []
+    original = fs.tempfile.mkstemp
+
+    def capture(*args, **kwargs):
+        directories.append(kwargs["dir"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(fs.tempfile, "mkstemp", capture)
+    destination = tmp_path / "out.json"
+    write_atomic(destination, "ok")
+    assert directories == [str(tmp_path)]
+
+
 @pytest.mark.parametrize(
     ("relative", "expected"),
     [
@@ -71,6 +88,15 @@ def test_confined_resolves_symlink_escape(tmp_path, symlink_or_skip):
     assert not confined(link / "file", root)
 
 
+def test_confined_accepts_child_of_symlinked_root(tmp_path, symlink_or_skip):
+    root = tmp_path / "real"
+    root.mkdir()
+    (root / "child").write_text("", encoding="utf-8")
+    link = tmp_path / "alias"
+    link.symlink_to(root, target_is_directory=True)
+    assert confined(link / "child", link)
+
+
 @pytest.mark.parametrize(
     ("content", "options", "kind", "cause"),
     [
@@ -86,11 +112,17 @@ def test_confined_resolves_symlink_escape(tmp_path, symlink_or_skip):
         ),
     ],
 )
-def test_read_json_error_classification(tmp_path, content, options, kind, cause):
+def test_read_json_error_classification(
+    tmp_path, monkeypatch, content, options, kind, cause
+):
     path = tmp_path / "input.json"
     if content == "deep":
-        depth = max(10_000, sys.getrecursionlimit() + 100)
-        content = "[" * depth + "]" * depth
+        # Python 3.14 parses documents far past the recursion limit, so inject it.
+        def too_deep(*_args, **_kwargs):
+            raise RecursionError
+
+        monkeypatch.setattr(fs.json, "loads", too_deep)
+        content = "[]"
     if isinstance(content, bytes):
         path.write_bytes(content)
     elif content is not None:
@@ -131,21 +163,24 @@ def test_glob_under_oserror_is_empty(tmp_path, monkeypatch):
 def test_symlink_capability_probe_only_skips_on_failure(
     tmp_path_factory, monkeypatch, capable
 ):
-    original = os.symlink
+    original = Path.symlink_to
     calls = []
 
-    def create(source, destination, target_is_directory=False, *, dir_fd=None):
-        if os.fspath(destination).endswith(("file-link", "directory-link")):
+    def create(self, target, target_is_directory=False):
+        if self.name in {"file-link", "directory-link"}:
             calls.append(target_is_directory)
             if not capable:
                 raise OSError("symlinks unavailable")
-        return original(source, destination, target_is_directory=target_is_directory)
+        return original(self, target, target_is_directory=target_is_directory)
 
-    monkeypatch.setattr(os, "symlink", create)
+    monkeypatch.setattr(Path, "symlink_to", create)
     if capable:
-        symlink_or_skip.__wrapped__(tmp_path_factory)
+        try:
+            probe_symlinks(tmp_path_factory)
+        except pytest.skip.Exception:
+            pytest.fail("a working symlink probe must not skip")
         assert calls == [False, True]
     else:
         with pytest.raises(pytest.skip.Exception):
-            symlink_or_skip.__wrapped__(tmp_path_factory)
+            probe_symlinks(tmp_path_factory)
         assert calls == [False]

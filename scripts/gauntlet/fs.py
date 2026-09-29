@@ -33,7 +33,7 @@ def write_atomic(
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
-        # A sibling temp starts at 0600; the replacement must have plain-open mode.
+        # A 0600 replacement may be unreadable by a later step running as another user.
         mask = os.umask(0)
         os.umask(mask)
         os.chmod(temporary, 0o666 & ~mask)
@@ -73,7 +73,7 @@ def confined(path: str | os.PathLike[str], root: str | os.PathLike[str]) -> bool
 
 
 def glob_under(root: str | os.PathLike[str], pattern: str) -> list[str]:
-    """Match relative patterns while treating the root's metacharacters literally."""
+    """Keep the root literal; callers escape literal names inside the pattern."""
     try:
         return [os.path.join(root, name) for name in glob.glob(pattern, root_dir=root)]
     except OSError:

@@ -26,7 +26,7 @@ fix that either: discourse points at ``AI-AGENTS.md``, a name no such list would
 contain. The pointer is the mechanism, so the pointer is what gets resolved.
 
 Doing this in a script rather than in Phase 2 prose is deliberate. The
-resolution rules are arithmetic, not judgment (CLAUDE.md's issue #48 lesson),
+resolution rules are arithmetic, not judgment,
 and — decisively — the confinement rules below are a security boundary. This
 script reads files from an attacker-influenceable repository and its output
 flows into nine agent prompts and potentially into a posted PR comment;

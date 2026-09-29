@@ -20,6 +20,18 @@ SCRIPT = REPO / "scripts" / "resolve_config.py"
 SKILL_ROOT = REPO / "skills" / "code-gauntlet"
 
 
+def test_git_root_probe_oserror_is_setup_failure(monkeypatch, tmp_path):
+    def fail(*_args, **_kwargs):
+        raise OSError("probe denied")
+
+    monkeypatch.setattr(resolver.proc, "run", fail)
+    assert resolver.run(["--cwd", str(tmp_path)], {}) == (
+        2,
+        "",
+        "RESOLVER SETUP ERROR: git repository probe failed: probe denied\n",
+    )
+
+
 def clean_environment(**overrides):
     env = {
         key: value

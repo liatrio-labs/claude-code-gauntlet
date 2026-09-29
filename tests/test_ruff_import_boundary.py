@@ -63,7 +63,13 @@ def test_ruff_bans_scripts_imports(source, banned):
             "from scripts.gauntlet import cli\n\nprint(cli)\n",
             True,
         ),
-        ("scripts/gauntlet/proc.py", "import subprocess\n\nprint(subprocess)\n", False),
+        ("scripts/gauntlet/proc.py", "import subprocess\n\nprint(subprocess)\n", True),
+        ("scripts/gauntlet/proc.py", "from scripts import cli\n\nprint(cli)\n", True),
+        (
+            "scripts/gauntlet/proc.py",
+            "import subprocess  # noqa: TID251\n\nprint(subprocess)\n",
+            False,
+        ),
         ("tests/probe.py", "import subprocess\n\nprint(subprocess)\n", False),
     ],
 )
@@ -82,3 +88,14 @@ def test_ruff_pin_matches_pre_commit():
         (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"),
     )
     assert dev and hook and dev.group(1) == hook.group(1)
+
+
+def test_real_proc_passes_ruff():
+    result = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", "scripts/gauntlet/proc.py"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

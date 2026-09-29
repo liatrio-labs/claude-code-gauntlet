@@ -28,4 +28,4 @@ entry file. `gauntlet.cli.Command` owns the CLI boundary and adapts unconverted 
   `persistReturn.entries` to `paths` + `resolvedPath` so the model never handles those bytes.
 - **Stdout carries the payload or nothing.** Human-facing status lines go to stderr;
   `gauntlet.fix_tasks` calls `gauntlet.jsjson.write_result(obj)`.
-- **Commands use `gauntlet.proc`; file reads and path checks use `gauntlet.fs`.**
+- **`gauntlet.fs`: JSON reads, atomic writes, confinement, literal-root globs.**

@@ -370,7 +370,7 @@ class TestPostReviewBoundary(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.findings_path = os.path.join(self.tmp, "findings.json")
         lookup = patch(
-            "gauntlet.delivery.post.shutil.which",
+            "gauntlet.delivery.post.proc.which",
             side_effect=lambda name: f"/usr/bin/{name}",
         )
         lookup.start()

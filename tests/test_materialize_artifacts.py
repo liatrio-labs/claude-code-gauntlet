@@ -13,6 +13,18 @@ from unittest.mock import patch
 from gauntlet.artifacts import plan_checksum
 from gauntlet.materialize import main, materialize
 
+
+def test_sweep_uses_literal_task_root(tmp_path, monkeypatch):
+    from gauntlet import materialize as module
+
+    root = tmp_path / "claude-[g]"
+    target = root / "slug" / "session" / "tasks" / "w123.output"
+    target.parent.mkdir(parents=True)
+    target.write_text("", encoding="utf-8")
+    monkeypatch.setattr(module, "task_roots", lambda _env: [str(root)])
+    assert module._sweep_paths({}) == [str(target)]
+
+
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 

@@ -379,7 +379,6 @@ def _git_repo_root(cwd: str) -> str:
         result = proc.run(
             ["git", "rev-parse", "--show-toplevel"],
             cwd=cwd,
-            check=False,
         )
     except OSError as exc:
         raise ResolverSetupError(f"git repository probe failed: {exc}") from exc

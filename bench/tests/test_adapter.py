@@ -613,7 +613,7 @@ class _RealPosterTestCase(unittest.TestCase):
                 side_effect=_fake_proc_run(diff, versions=versions),
             ),
             patch(
-                "gauntlet.delivery.post.shutil.which",
+                "gauntlet.delivery.post.proc.which",
                 side_effect=lambda name: f"/usr/bin/{name}",
             ),
         ):
