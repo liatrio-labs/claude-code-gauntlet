@@ -2896,10 +2896,10 @@ def gitlab_prior_delivery(owner, repo, mr_iid, sha):
     review already left.
 
     Makes a rerun after a partial delivery retry-safe in three ways: the summary note is
-    not stacked a second time (issue #127 D4), the inline discussions that did land are
-    not reposted (issue #132), and a pre-#208 group body that rendered a corroborator's
-    content without ever keying it is recognized as already carrying that member too (see
-    :func:`detect_prior_review.legacy_group_keys_for_sha`) rather than posted a second
+    not stacked a second time, the inline discussions that did land are not reposted,
+    and a legacy group body that rendered a corroborator's content without keying it is
+    recognized as already carrying that member (see
+    :func:`gauntlet.prior_review.legacy_group_keys_for_sha`) rather than posted a second
     time. ONE fetch serves all three, in gauntlet.prior_review — the only reader of the
     signals — so this module stays write-only.
 

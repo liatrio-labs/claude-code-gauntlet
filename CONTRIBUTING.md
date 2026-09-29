@@ -59,7 +59,8 @@ Secret scanning (`gitleaks`) is included in `.pre-commit-config.yaml` and runs o
 ### Common Commands
 
 ```bash
-# Pipeline pytest suite
+# Pipeline pytest suite (the import-ban test runs Ruff from the dev group)
+pip install --group dev
 python -m pytest tests/ -q
 
 # Bench harness unit tests (stdlib; no API spend)

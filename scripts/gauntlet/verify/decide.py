@@ -1420,7 +1420,7 @@ def _delta_confidence(value):
     produce ints; ``_coerce_numeric_fields`` only ever produces ints). This function is
     therefore a no-op on every real path — it exists because the delta is checksummed,
     and a non-integral double is spelled differently by JS and Python (the divergence
-    ``assemble_artifacts.assert_js_reproducible`` refuses outright). Rounding ONCE here,
+    ``gauntlet.artifacts.assert_js_reproducible`` refuses outright). Rounding ONCE here,
     in one runtime, is what keeps the two sides from having to agree on float spelling
     at all: the workflow only ever sees an integer and rejects anything else.
 
