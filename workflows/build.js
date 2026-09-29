@@ -26,30 +26,28 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 // the stripped binding would stay undefined until a live dispatch threw. Any other
 // import shape survives strip() verbatim and the runtime cannot parse it.
 const IMPORT_LINE = /^\s*import(?:\s+|\s*['"])/;
-const IMPORT_SPECIFIER = /\bfrom\s*['"]([^'"]*)['"]/;
 const IMPORT_FROM_CLAUSES = /\bfrom\s*['"]([^'"]*)['"]/g;
 const isStrippableImportLine = (line) => /^\s*import\s.+from\s.+;?\s*$/.test(line);
+
+// Runs after checkUnsafeImports, so every strippable line holds exactly one './' specifier.
+function siblingImports(file, sources) {
+  const imports = [];
+  sources.get(file).split('\n').forEach((line, index) => {
+    if (!isStrippableImportLine(line)) return;
+    const [[, specifier]] = line.matchAll(IMPORT_FROM_CLAUSES);
+    const dependency = specifier.slice(2);
+    if (!sources.has(dependency)) {
+      throw new Error(`build.js: src/${file}:${index + 1} imports missing sibling '${specifier}'`);
+    }
+    imports.push(dependency);
+  });
+  return imports;
+}
 
 export function moduleOrder(sources) {
   const files = [...sources.keys()].sort();
   checkUnsafeImports(files, sources);
-
-  const dependencies = new Map();
-  for (const file of files) {
-    const imports = [];
-    sources.get(file).split('\n').forEach((line, index) => {
-      if (!isStrippableImportLine(line)) return;
-      const specifier = IMPORT_SPECIFIER.exec(line)[1];
-      const dependency = specifier.slice(2);
-      if (!sources.has(dependency)) {
-        throw new Error(
-          `build.js: src/${file}:${index + 1} imports missing sibling '${specifier}'`,
-        );
-      }
-      imports.push(dependency);
-    });
-    dependencies.set(file, imports);
-  }
+  const dependencies = new Map(files.map((file) => [file, siblingImports(file, sources)]));
 
   if (!sources.has('pipeline_entry.js')) {
     throw new Error('build.js: workflows/src/pipeline_entry.js is required');
