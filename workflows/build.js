@@ -27,6 +27,8 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 // import shape survives strip() verbatim and the runtime cannot parse it.
 const IMPORT_LINE = /^\s*import(?:\s+|\s*['"])/;
 const IMPORT_SPECIFIER = /\bfrom\s*['"]([^'"]*)['"]/;
+const IMPORT_FROM_CLAUSES = /\bfrom\s*['"]([^'"]*)['"]/g;
+const isStrippableImportLine = (line) => /^\s*import\s.+from\s.+;?\s*$/.test(line);
 
 export function moduleOrder(sources) {
   const files = [...sources.keys()].sort();
@@ -36,7 +38,7 @@ export function moduleOrder(sources) {
   for (const file of files) {
     const imports = [];
     sources.get(file).split('\n').forEach((line, index) => {
-      if (!IMPORT_LINE.test(line)) return;
+      if (!isStrippableImportLine(line)) return;
       const specifier = IMPORT_SPECIFIER.exec(line)[1];
       const dependency = specifier.slice(2);
       if (!sources.has(dependency)) {
@@ -91,17 +93,24 @@ export function unsafeImports(source) {
   const bad = [];
   source.split('\n').forEach((line, i) => {
     if (!IMPORT_LINE.test(line)) return;
-    const match = IMPORT_SPECIFIER.exec(line);
-    const specifier = match ? match[1] : null;
-    if (specifier === null) {
+    const clauses = [...line.matchAll(IMPORT_FROM_CLAUSES)];
+    if (clauses.length > 1) {
       bad.push({
         line: i + 1, text: line.trim(), specifier: null,
+        reason: 'multiple `from` clauses on one line — use one import per line',
+      });
+      return;
+    }
+    const specifier = clauses.length === 1 ? clauses[0][1] : null;
+    if (specifier === null || !isStrippableImportLine(line)) {
+      bad.push({
+        line: i + 1, text: line.trim(), specifier,
         reason: 'no single-line `from` clause — strip() only removes single-line imports',
       });
     } else if (!specifier.startsWith('./')) {
       bad.push({
         line: i + 1, text: line.trim(), specifier,
-        reason: `specifier '${specifier}' is not relative to src/ — nothing is inlined for it`,
+        reason: `specifier '${specifier}' is not relative to src/ — stripping it ships an undefined reference; inline the value into src/ instead`,
       });
     }
   });
@@ -111,7 +120,7 @@ export function unsafeImports(source) {
 function strip(source) {
   const out = [];
   for (const line of source.split('\n')) {
-    if (/^\s*import\s.+from\s.+;?\s*$/.test(line)) continue;
+    if (isStrippableImportLine(line)) continue;
     if (isHoisted(line)) continue;
     out.push(line.replace(/^(\s*)export\s+(async function|function|const|let|class|{)/, '$1$2'));
   }
@@ -171,7 +180,7 @@ function canCompile(body) {
   }
 }
 
-// Probe candidates with NULs and drop them only when V8 still parses the body.
+// Probe candidates with NULs and keep them only when V8 still parses the body; a failed probe proves the line inert.
 export function stripInertLines(body, moduleName = 'module') {
   try {
     new AsyncFunction(body);

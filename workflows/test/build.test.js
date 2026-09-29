@@ -1,4 +1,3 @@
-// build.test.js — source ordering, bundle guards, and comment stripping.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { stripTypeScriptTypes } from 'node:module';
@@ -27,12 +26,14 @@ test('moduleOrder emits dependencies before their importers', () => {
   assert.deepEqual(moduleOrder(sources), ['leaf.js', 'middle.js', 'pipeline_entry.js']);
 });
 
-test('moduleOrder emits pipeline_entry.js last', () => {
+test('moduleOrder emits a diamond dependency once and leaves pipeline_entry.js last', () => {
   const sources = sourceMap([
-    ['pipeline_entry.js', "import { dependency } from './dependency.js';"],
-    ['dependency.js', 'const dependency = 1;'],
+    ['pipeline_entry.js', "import { a } from './a.js';\nimport { b } from './b.js';"],
+    ['a.js', "import { leaf } from './leaf.js';\nconst a = leaf;"],
+    ['b.js', "import { leaf } from './leaf.js';\nconst b = leaf;"],
+    ['leaf.js', 'const leaf = 1;'],
   ]);
-  assert.equal(moduleOrder(sources).at(-1), 'pipeline_entry.js');
+  assert.deepEqual(moduleOrder(sources), ['leaf.js', 'a.js', 'b.js', 'pipeline_entry.js']);
 });
 
 test('moduleOrder follows imports in source-line order', () => {
@@ -73,9 +74,20 @@ test('moduleOrder names a missing sibling import and its source line', () => {
 
 test('moduleOrder reports unsafe imports with file and line', () => {
   const sources = sourceMap([
-    ['pipeline_entry.js', "const entry = 1;\nimport { x } from 'lodash';"],
+    ['a.js', "const a = 1;\nimport { x } from '../outside.js';"],
+    ['pipeline_entry.js', "const entry = 1;\nimport { x } from 'lodash';\nimport fs from 'node:fs';"],
   ]);
-  assert.throws(() => moduleOrder(sources), /src\/pipeline_entry\.js:2:.*lodash/);
+  assert.throws(
+    () => moduleOrder(sources),
+    (error) => [
+      "src/a.js:2: import { x } from '../outside.js';",
+      "specifier '../outside.js'",
+      "src/pipeline_entry.js:2: import { x } from 'lodash';",
+      "specifier 'lodash'",
+      "src/pipeline_entry.js:3: import fs from 'node:fs';",
+      "specifier 'node:fs'",
+    ].every((detail) => error.message.includes(detail)),
+  );
 });
 
 test('detectTopLevelCollisions catches top-level names and ignores nested declarations', () => {
@@ -108,9 +120,10 @@ test('unsafeImports rejects import lines that cannot be stripped safely', () => 
   const cases = [
     ["import './sideEffect.js';", null, /single-line/],
     ["import { inspect } from 'node:util';", 'node:util', /not relative/],
-    ["import lodash from 'lodash';", 'lodash', /not relative/],
+    ["import lodash from 'lodash';", 'lodash', /undefined reference; inline the value into src\//],
     ["import { x } from '../outside.js';", '../outside.js', /not relative/],
     ["import {\n  thing,\n} from './registry.js';", null, /single-line/],
+    ["import { first } from './first.js'; import { second } from './second.js';", null, /one import per line/],
   ];
   for (const [source, specifier, reason] of cases) {
     const [violation] = unsafeImports(source);
@@ -121,6 +134,44 @@ test('unsafeImports rejects import lines that cannot be stripped safely', () => 
 
 test('the real bundle builds without top-level collisions', () => {
   assert.deepEqual(detectTopLevelCollisions(build()), []);
+});
+
+test('build hoists the exported meta line followed by plain PIPELINE_VERSION', () => {
+  const lines = build().split('\n');
+  assert.match(lines[0], /^export const meta\b/);
+  assert.match(lines[1], /^const PIPELINE_VERSION\b/);
+  assert.doesNotMatch(lines[1], /^export\b/);
+});
+
+test('buildFromSources emits dependency-first module sections and the entry last', () => {
+  const sources = sourceMap([
+    ['pipeline_entry.js', "import { value } from './dependency.js';\nconst entry = value;"],
+    ['dependency.js', "import { leaf } from './leaf.js';\nconst value = leaf;"],
+    ['leaf.js', 'const leaf = 1;'],
+  ]);
+  const bundle = buildFromSources(sources);
+  const markers = ['leaf.js', 'dependency.js', 'pipeline_entry.js']
+    .map((file) => bundle.indexOf(`// --- ${file} ---`));
+  assert.ok(markers.every((index) => index >= 0));
+  assert.deepEqual(markers, [...markers].sort((left, right) => left - right));
+});
+
+test('buildFromSources rejects duplicate top-level declarations', () => {
+  const sources = sourceMap([
+    ['pipeline_entry.js', "import { duplicate } from './dependency.js';\nconst duplicate = 2;"],
+    ['dependency.js', 'const duplicate = 1;'],
+  ]);
+  assert.throws(
+    () => buildFromSources(sources),
+    (error) => error.message.includes("'duplicate' declared at lines"),
+  );
+});
+
+test('buildFromSources requires pipeline_entry.js', () => {
+  assert.throws(
+    () => buildFromSources(sourceMap([])),
+    /workflows\/src\/pipeline_entry\.js is required/,
+  );
 });
 
 test('stripInertLines drops only parser-proven inert candidates', () => {
@@ -165,7 +216,14 @@ test('checkBundleSize enforces the cap and measures UTF-8 bytes', () => {
   assert.equal(BUNDLE_HEADROOM, 65_536);
   assert.equal(BUNDLE_MAX_BYTES, 458_752);
   assert.doesNotThrow(() => checkBundleSize('a'.repeat(BUNDLE_MAX_BYTES)));
-  assert.throws(() => checkBundleSize('a'.repeat(BUNDLE_MAX_BYTES + 1)), /bundle is 458753 bytes/);
+  assert.throws(
+    () => checkBundleSize('a'.repeat(BUNDLE_MAX_BYTES + 1)),
+    (error) => error.message.includes('bundle is 458753 bytes')
+      && error.message.includes('limit is 458752 bytes')
+      && error.message.includes('Workflow script cap 524288 bytes')
+      && error.message.includes('65536 bytes of headroom')
+      && error.message.includes('the bundle must shrink'),
+  );
   const multibyte = 'é'.repeat(229_377);
   assert.ok(multibyte.length < BUNDLE_MAX_BYTES);
   assert.throws(() => checkBundleSize(multibyte), /bundle is 458754 bytes/);
@@ -188,17 +246,29 @@ test('buildFromSources defaults to the headroom-adjusted cap', () => {
   assert.throws(() => buildFromSources(sources), /limit is 458752 bytes/);
 });
 
+test('buildFromSources honors an explicit zero byte limit', () => {
+  const sources = sourceMap([['pipeline_entry.js', 'const entry = 1;']]);
+  assert.throws(
+    () => buildFromSources(sources, { maxBytes: 0 }),
+    /limit is 0 bytes/,
+  );
+});
+
 test('the real bundle preserves only generated comments after inert-line stripping', () => {
   const bundle = build();
   const generated = '// GENERATED by workflows/build.js — do not edit by hand.';
   const lines = bundle.split('\n');
-  const body = lines.slice(lines.indexOf(generated)).join('\n');
+  const markerIndex = lines.indexOf(generated);
+  assert.ok(markerIndex >= 0);
+  assert.equal(lines.filter((line) => line === generated).length, 1);
+  const body = lines.slice(markerIndex).join('\n');
   const result = stripInertLines(body, 'pipeline.js');
   const separators = result.dropped.filter((line) => /^\/\/ --- \S+ ---$/.test(line));
   assert.equal(result.dropped.length, separators.length + 1);
   assert.ok(Buffer.byteLength(bundle, 'utf8') <= BUNDLE_MAX_BYTES);
 });
 
+// stripTypeScriptTypes is experimental and pinned to the CI Node version.
 test('independent parser output agrees for stripped and unstripped bundles', () => {
   const wrap = (bundle) => `async function __w(){${bundle.replace(/^export const meta\b/m, 'const meta')}}`;
   const unstripped = build({ dropComments: false, maxBytes: Infinity });
