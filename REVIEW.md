@@ -53,9 +53,9 @@ obvious from the diff alone; the full engineering rules live in `AGENTS.md`.
 - **A rule stated in prose that could be enforced by code is a finding.** Prompt text, agent
   contracts and instruction files are the fallback for what cannot be made structural, not the
   first fix.
-- **Cross-runtime lists are generated.** JS `DELTA_KEYS` is the authority for
-  `DELTA_VALUE_KEYS` and the Python `DELTA_VALUE_FIELDS` tuple. The generator
-  omits structural `id` and `verified` from the value lists.
+- **Cross-runtime lists derive from JS `DELTA_KEYS`.** The generator writes Python
+  `DELTA_VALUE_FIELDS`; a `stages.js` filter builds JS `DELTA_VALUE_KEYS`. Both
+  drop `id` and `verified`.
 - **One implementation per mechanism.** A second copy of a mechanism that already has a home is a
   finding.
 - **A test that re-proves what another layer proves is a finding**, as is a near-copy a

@@ -3021,8 +3021,8 @@ export function persistPrimaries(inp) {
 //   planChecksum = fnv1a32(JSON.stringify(planWithoutPlanChecksum, null, 2))
 //
 // Unambiguous in both runtimes because (a) the field is appended LAST, so deleting it
-// on the Python side restores this exact object (both runtimes preserve insertion order
-// and neither reorders on re-serialization), and (b) the serializer is the same pretty
+// on the Python side restores this exact object (JS orders array-index keys first, and
+// the Python serializer applies the same order), and (b) the serializer is the same pretty
 // printer that produces the derived artifacts — which makes the plan checksum a canary
 // for serializer divergence too: a Python/JS spelling difference over the plan's content
 // fails the proof before a divergent artifact is written.

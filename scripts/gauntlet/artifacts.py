@@ -10,8 +10,8 @@ command substitution, heredocs, env prefixes, or shell operators), each
 single-quoted only as the token needs it, so the executor agent can run it
 inside a sandbox-auto-approved Bash call.
 
-Why this script exists (issue #38, D3)
---------------------------------------
+Why this script exists
+----------------------
 The workflow runtime has no disk access, so an artifact-writer agent persists the
 pipeline's artifacts by value. Measured on a real run: of the 88,389 B that
 crossed the writer prompt, the post-review artifact's findings array was
@@ -70,9 +70,9 @@ The primaries have `expect[].chars/checksum` to prove them; the plan had nothing
 So the plan carries a checksum of itself. The construction has to be unambiguous
 in BOTH runtimes (the workflow sandbox computes it, this script recomputes it):
 
-  1. Take the plan object exactly as parsed. Key order is the wire order — JS
-     object literals and Python's `json.loads` dicts are both insertion-ordered,
-     and neither runtime reorders on re-serialization.
+  1. Take the plan object exactly as parsed. JS orders array-index keys first on
+     parse and on stringify; `js_stringify_pretty` applies the same order, so both
+     runtimes serialize the parsed plan identically.
   2. Remove the single key `planChecksum`. The pipeline appends it LAST (it is
      computed before the key exists), so removing it restores the exact
      pre-checksum object on both sides.
@@ -103,8 +103,8 @@ Failure contract
   is written: a missing file, unparseable JSON, a requested id absent from the
   source, duplicate ids in the source, a numeric value this script cannot
   reproduce byte-identically (see below), or a plan whose checksum does not
-  recompute. This is the class that caught the #25 incident (tool-call markup
-  appended after the JSON document).
+  recompute. This is the class that catches tool-call markup appended after the
+  JSON document.
 * A CHECKSUM MISMATCH on one of the `expect` PRIMARIES is NOT a hard failure. The
   source of truth is what is actually on disk, and the derived artifacts are
   self-consistent with it, so derivation proceeds and the entry is stamped
@@ -222,38 +222,30 @@ class JsSerializationError(ValueError):
     """
 
 
-# JS numbers are IEEE-754 doubles and Number#toString has its own spelling rules;
-# Python's repr(float) does not share them. The five live divergences:
+# JS numbers are IEEE-754 doubles. Python's float spelling differs in these
+# cases, so the serializer rejects floats rather than port Number#toString:
 #
 #     value        JSON.stringify   json.dumps
-#     1e-7         1e-7             1e-07      (exponent zero-padding)
-#     0.000001     0.000001         1e-06      (Python switches to exponent at 1e-4,
-#                                               JS only below 1e-6)
-#     90.0         90               90.0       (JS never prints a trailing .0)
+#     1e-7         1e-7             1e-07
+#     0.000001     0.000001         1e-06
+#     90.0         90               90.0
 #     -0.0         0                -0.0
-#     NaN          null             NaN        (and json.loads ACCEPTS bare NaN)
+#     NaN          null             NaN        (json.loads accepts bare NaN)
 #
-# DECISION: enforce integers as a PRECONDITION rather than reimplement
-# Number#toString. Every number the pipeline puts in a finding or a checkpoint is
-# a count, a line number, or a confidence — all integers — and every number in
-# these documents originated as a JS `JSON.stringify` output, where an integral
-# double is always spelled without a dot or exponent (so it parses back as a
-# Python *int*, which round-trips exactly). A float or a NaN reaching here
-# therefore means the input is not what the pipeline produced, and reproducing it
-# faithfully would require a full Number#toString port whose own bugs would be
-# invisible. Refusing is honest and, on the JS side, persistDerivable applies the
-# same rule BEFORE anything is written and falls back to the legacy by-value
-# writer — so this precondition costs a run nothing in practice.
+# Pipeline numbers are counts, line numbers, or confidences. Safe integers spell
+# identically in both runtimes; rejecting floats avoids a Number#toString port.
+# persistDerivable in stages.js applies the same precondition and falls back to the
+# by-value writer before writing.
 #
-# Integers outside JS's safe range are rejected for the same reason: JS would have
-# parsed them lossily, so the two runtimes no longer hold the same value.
+# Integers outside JS's safe range are rejected because JS parses them lossily.
 JS_MAX_SAFE_INTEGER = 2**53 - 1
 
 
 def assert_js_reproducible(obj, path="$"):
-    """Raise JsSerializationError for any value JSON.stringify would spell
-    differently than json.dumps. Iterative — findings nest shallowly, but a
-    hand-edited plan must not be able to blow the recursion limit."""
+    """Reject floats, non-finite numbers, unsafe integers, non-string keys, and
+    non-JSON values before writing. Key order parity is handled by
+    _js_property_order. Iterative so this walk adds no recursion beyond
+    json.dumps's own."""
     stack = [(obj, path)]
     while stack:
         node, where = stack.pop()
@@ -287,18 +279,57 @@ def assert_js_reproducible(obj, path="$"):
         )
 
 
+def _is_array_index(key):
+    # Ten digits cover 4294967294 and keep int() below Python's digit limit.
+    return key == "0" or (
+        key.isascii()
+        and key.isdecimal()
+        and len(key) <= 10
+        and key[0] != "0"
+        and int(key) <= 4294967294
+    )
+
+
+def _js_property_order(value):
+    """Copy value with each object's array-index keys first in ascending order, as
+    JSON.stringify emits them. Iterative for the same reason as
+    assert_js_reproducible."""
+    root = [value]
+    stack = [(root, 0)]
+    while stack:
+        parent, slot = stack.pop()
+        node = parent[slot]
+        if isinstance(node, dict):
+            keys = sorted(filter(_is_array_index, node), key=int)
+            keys += [key for key in node if not _is_array_index(key)]
+            copy = {key: node[key] for key in keys}
+            stack.extend((copy, key) for key in keys)
+        elif isinstance(node, list):
+            copy = list(node)
+            stack.extend((copy, index) for index in range(len(copy)))
+        else:
+            continue
+        parent[slot] = copy
+    return root[0]
+
+
 def js_stringify_pretty(obj):
     """JSON.stringify(obj, null, 2), byte for byte.
 
     ensure_ascii=False because JS never escapes non-ASCII (U+2028/U+2029 included
-    — they are legal raw inside a JSON string and JSON.stringify leaves them
-    alone), Python's indent mode already emits JS's separators, allow_nan=False
-    so a non-finite number can never be spelled `NaN`/`Infinity` (JS emits
-    `null`), and the surrogate pass restores JS's well-formed escaping.
+    — JSON.stringify leaves them raw), Python's indent mode emits JS's separators,
+    and the surrogate pass restores JSON.stringify's well-formed escaping for
+    lone surrogates. allow_nan=False prevents Python's NaN/Infinity spellings;
+    JSON.stringify spells non-finite numbers as null.
     """
     assert_js_reproducible(obj)
     return escape_lone_surrogates(
-        json.dumps(obj, indent=2, ensure_ascii=False, allow_nan=False)
+        json.dumps(
+            _js_property_order(obj),
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
     )
 
 

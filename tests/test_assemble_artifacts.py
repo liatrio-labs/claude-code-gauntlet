@@ -1,8 +1,8 @@
 """
 Tests for scripts/assemble_artifacts.py.
 
-The script is the disk-side half of the code-gauntlet persistence redesign
-(issue #38, D3): the artifact-writer agent persists only the UNIQUE content
+The script is the disk-side half of the code-gauntlet persistence redesign:
+the artifact-writer agent persists only the UNIQUE content
 (findings.json, report.md, the persist plan), and this script DERIVES the two
 artifacts that are pure projections of findings.json — the post-review delivery
 set and the resume checkpoint — while emitting a content-proof receipt.
@@ -31,8 +31,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import ClassVar
 
+import pytest
 from gauntlet.artifacts import (
     JsSerializationError,
     assemble,
@@ -245,38 +245,31 @@ def assert_assemble_hard_failure(tc, ws, plan, needle, also_absent=()):
         tc.assertFalse(os.path.exists(path))
 
 
-class TestChecksum(unittest.TestCase):
-    def test_known_vector(self):
-        # fnv1a32 of the empty string is the offset basis.
-        self.assertEqual(fnv1a32(""), "fnv1a32:0x811c9dc5")
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [("abc", 3), ("café", 4), ("日本語", 3), ("😀", 2)],
+    ids=["ascii", "accented", "cjk", "surrogate-pair"],
+)
+def test_utf16_len_counts_code_units_not_codepoints(text, expected):
+    assert utf16_len(text) == expected
 
-    def test_output_is_always_eight_hex_digits(self):
-        for s in ["", "a", "abc", "x" * 100]:
-            self.assertRegex(fnv1a32(s), r"^fnv1a32:0x[0-9a-f]{8}$")
 
-    def test_utf16_len_counts_code_units_not_codepoints(self):
-        self.assertEqual(utf16_len("abc"), 3)
-        self.assertEqual(utf16_len("café"), 4)
-        self.assertEqual(utf16_len("日本語"), 3)
-        self.assertEqual(utf16_len("😀"), 2)  # surrogate pair
+def test_pretty_stringifier_handles_deep_alternating_containers():
+    # Above a recursive key-order copy's ceiling on Python 3.10 and 3.11 (about 497)
+    # and below json.dumps's own (about 993).
+    value = 0
+    for depth in range(600):
+        value = {"value": value} if depth % 2 == 0 else [value]
 
-    def test_normalize_strips_bom_and_one_trailing_newline(self):
-        self.assertEqual(normalize_content("﻿abc"), "abc")
-        self.assertEqual(normalize_content("abc\n"), "abc")
-        self.assertEqual(normalize_content("abc\r\n"), "abc")
-        # At most ONE trailing newline is tolerated.
-        self.assertEqual(normalize_content("abc\n\n"), "abc\n")
-        self.assertEqual(normalize_content("abc"), "abc")
+    serialized = js_stringify_pretty(value)
+
+    assert json.loads(serialized) == value
 
 
 class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
-    """The cross-runtime half of hardenEscapeRuns (see workflows/src/stages.js).
-
-    The JS side respells every escaped backslash in findings.json as \\u005c so the
-    artifact-writer never has to transcribe a run of backslashes — the failure that
-    cost run wf_adc1a803-912 (2026-07-30) every artifact. That fix ships with NO
-    Python change, and this is the guard on that claim: the hardened bytes must be
-    read, checksummed and derived from exactly like any other findings.json.
+    """The JS side respells escaped backslashes in findings.json as \\u005c so the
+    text survives artifact-writer transcription. The Python reader must accept those
+    bytes and derive the same parsed content.
 
     Deliberately shells out to node for the hardened string rather than
     reimplementing the transform here — a Python twin of it could drift, and the
@@ -497,8 +490,7 @@ class TestProjection(unittest.TestCase):
 
 
 class TestStructuralHardFailures(unittest.TestCase):
-    """Exit non-zero, ok:false, NOTHING written. This is the class that caught
-    the #25 incident (tool-call markup appended after the JSON document)."""
+    """Exit non-zero, ok:false, NOTHING written for structural input failures."""
 
     def assert_hard_failure(self, ws, plan, needle):
         assert_assemble_hard_failure(
@@ -677,11 +669,8 @@ class TestNonAsciiContent(unittest.TestCase):
 
 
 class TestPlanSelfProof(unittest.TestCase):
-    """issue #38 L1-2. The plan is transcribed to disk by the artifact-writer just
-    like the two primaries, but it is the INSTRUCTION SET, not data: postReview.ids
-    alone decides which findings reach the delivered artifact. A writer that elides
-    entries used to produce a silently smaller delivered set with an ok:true receipt
-    and no gap. So the plan proves itself, and an unproven plan is not executed."""
+    """The plan is an instruction set: postReview.ids alone decides which findings
+    reach delivery, so an unproven or altered plan must not be executed."""
 
     def test_receipt_echoes_the_recomputed_plan_checksum(self):
         with _Workspace() as ws:
@@ -707,8 +696,7 @@ class TestPlanSelfProof(unittest.TestCase):
         self.assertFalse(os.path.exists(ws.checkpoint_path))
 
     def test_an_elided_delivery_id_is_refused(self):
-        # The exact issue-38 hard-line violation: two ids become one, the delivered
-        # set silently shrinks. Without the proof this ran happily to ok:true.
+        # Eliding a delivery id must invalidate the plan proof.
         with _Workspace(findings=[finding("A"), finding("B"), finding("C")]) as ws:
 
             def drop(plan):
@@ -777,14 +765,8 @@ class TestPlanSelfProof(unittest.TestCase):
 
 
 class TestLoneSurrogatesAreEscapedNotFatal(unittest.TestCase):
-    """issue #38 L1-1. A lone UTF-16 surrogate anywhere in findings.json used to
-    raise UnicodeEncodeError — a ValueError, so `except (IOError, OSError)` missed
-    it — printing a traceback with EMPTY stdout (breaking the one-line-receipt
-    contract) and leaving a truncated ZERO-BYTE file at the post-review path
-    (breaking the hard-failure-writes-nothing contract).
-
-    The fix is to spell it the way a well-formed JSON.stringify does, so it is not
-    a failure at all."""
+    """A lone UTF-16 surrogate is escaped as well-formed JSON instead of raising
+    during UTF-8 encoding."""
 
     def workspace(self):
         # A lone surrogate reaches findings.json as a JSON escape — it is not
@@ -812,7 +794,7 @@ class TestLoneSurrogatesAreEscapedNotFatal(unittest.TestCase):
         with self.workspace() as ws:
             run_script(ws.write_plan(ws.plan()))
             text = ws.read(ws.post_path)
-            self.assertGreater(len(text), 0, "a zero-byte artifact is the old bug")
+            self.assertGreater(len(text), 0, "the derived artifact must be complete")
             self.assertIn("\\ud800", text)
             self.assertEqual([f["id"] for f in json.loads(text)], ["F1", "F2"])
 
@@ -825,10 +807,8 @@ class TestLoneSurrogatesAreEscapedNotFatal(unittest.TestCase):
 
 
 class TestNoTruncatedArtifactAtAPlannedPath(unittest.TestCase):
-    """issue #38 L1-1, layer 3. Opening the destination for writing truncates it
-    BEFORE the encode, so any failure leaves an empty file that later stages read
-    as a real artifact. Every derived document is now written to a sibling temp
-    file and os.replace()d into place."""
+    """A failed write leaves the destination intact by writing to a sibling temp
+    file and replacing it only after encoding succeeds."""
 
     def test_a_failing_write_leaves_the_destination_untouched(self):
         directory = tempfile.mkdtemp(prefix="atomic-")
@@ -836,8 +816,7 @@ class TestNoTruncatedArtifactAtAPlannedPath(unittest.TestCase):
             dest = os.path.join(directory, "artifact.json")
             with open(dest, "w", encoding="utf-8") as fh:
                 fh.write("PREVIOUS CONTENT")
-            # A lone surrogate is not encodable as UTF-8: the exact failure that
-            # used to truncate the destination to zero bytes.
+            # A lone surrogate cannot be encoded, so the existing file must survive.
             with self.assertRaises(UnicodeEncodeError):
                 write_text_atomic(dest, "\ud800")
             with open(dest, encoding="utf-8") as fh:
@@ -874,9 +853,7 @@ class TestNoTruncatedArtifactAtAPlannedPath(unittest.TestCase):
 
 
 class TestAnyFailureStillReturnsAReceipt(unittest.TestCase):
-    """issue #38 L1-1, layer 2. `except (IOError, OSError)` missed every
-    ValueError-shaped failure. The one-line-receipt contract holds on EVERY path:
-    an empty stdout is indistinguishable from a dead executor."""
+    """The one-line receipt contract holds for ValueError-shaped and I/O failures."""
 
     def assert_honest_failure(self, proc, needle):
         self.assertNotEqual(proc.returncode, 0, proc.stdout)
@@ -921,116 +898,91 @@ class TestAnyFailureStillReturnsAReceipt(unittest.TestCase):
         json.dumps(receipt)  # serializable, so main() can still print one line
 
 
-class TestNumberSpellingPrecondition(unittest.TestCase):
-    """issue #38 L1-3. JS Number#toString and Python repr(float) disagree below
-    1e-6, on integral floats, and on -0/NaN. The script does NOT port
-    Number#toString (a port whose own bugs would be invisible is worse than a
-    precondition) — it refuses any number it cannot round-trip. In the pipeline the
-    JS-side persistDerivable applies the same rule first and falls back to the
-    legacy by-value writer, so this precondition costs a run nothing."""
-
-    def test_integers_are_accepted(self):
-        for value in [0, -1, 90, 2**53 - 1, -(2**53 - 1)]:
-            self.assertEqual(js_stringify_pretty(value), json.dumps(value))
-
-    def test_non_integer_numbers_are_refused(self):
-        for value in [1e-7, 0.000001, 90.5, -0.0, float("nan"), float("inf")]:
-            with self.assertRaises(JsSerializationError):
-                js_stringify_pretty({"confidence": value})
-
-    def test_integers_outside_the_js_safe_range_are_refused(self):
-        for value in [2**53, -(2**53), 10**30]:
-            with self.assertRaises(JsSerializationError):
-                js_stringify_pretty([value])
-
-    def test_the_error_names_the_path(self):
-        with self.assertRaises(JsSerializationError) as caught:
-            js_stringify_pretty({"phases": {"challenge": {"stats": {"rate": 0.5}}}})
-        self.assertIn("$.phases.challenge.stats.rate", str(caught.exception))
-
-    def test_a_float_in_the_source_is_a_structural_failure(self):
-        with _Workspace(findings=[finding("F1", confidence=0.9)]) as ws:
-            proc = run_script(ws.write_plan(ws.plan()))
-            self.assertNotEqual(proc.returncode, 0, proc.stdout)
-            receipt = json.loads(proc.stdout)
-            self.assertFalse(receipt["ok"])
-            self.assertTrue(
-                any("non-integer number" in e for e in receipt["errors"]),
-                receipt["errors"],
-            )
-            self.assertFalse(os.path.exists(ws.post_path))
-
-    def test_a_bare_NaN_in_the_source_is_a_structural_failure(self):
-        # json.loads ACCEPTS bare NaN/Infinity by default; JSON.parse rejects them
-        # and JSON.stringify would spell them `null`. Either way they must not reach
-        # a derived artifact.
-        with _Workspace() as ws:
-            ws.write(ws.findings_path, '[{"id": "F1", "confidence": NaN}]')
-            proc = run_script(ws.write_plan(ws.plan()))
-            self.assertNotEqual(proc.returncode, 0, proc.stdout)
-            self.assertFalse(json.loads(proc.stdout)["ok"])
-            self.assertFalse(os.path.exists(ws.post_path))
+DIVERGENT_NUMBER_DOCUMENTS = [
+    "[1e-7]",
+    "[0.000001]",
+    "[90.0]",
+    "[-0.0]",
+    "[9007199254740993]",
+    "[1000000000000000000000000000000]",
+]
+REFUSED_NUMBER_DOCUMENTS = [
+    *DIVERGENT_NUMBER_DOCUMENTS,
+    '{"stats": {"rate": 0.5}}',
+    "[1.5]",
+    "[1e21]",
+    "[9007199254740992]",
+    "[NaN]",
+    "[Infinity]",
+]
 
 
-class TestCrossRuntimeStringifyParity(unittest.TestCase):
-    """Guard unsupported numeric spellings and UTF-8 encoding."""
+@pytest.mark.parametrize(
+    "value", [1e-7, 0.000001, 90.5, -0.0, float("nan"), float("inf")]
+)
+def test_non_integer_numbers_are_refused(value):
+    with pytest.raises(JsSerializationError):
+        js_stringify_pretty({"confidence": value})
 
-    # Documents whose naive json.dumps spelling PROVABLY differs from JSON.stringify.
-    DIVERGENT: ClassVar[list[str]] = [
-        "[1e-7]",  # 1e-7   vs 1e-07
-        "[0.000001]",  # 0.000001 vs 1e-06
-        "[90.0]",  # 90     vs 90.0
-        "[-0.0]",  # 0      vs -0.0
-        "[9007199254740993]",  # 2**53+1: JS parses it lossily, so the values differ
-        "[1000000000000000000000000000000]",  # JS spells this 1e+30
-        '{"stats": {"rate": 0.5}}',  # spells the same, but nested — proves path reporting
-    ]
 
-    # Everything this runtime REFUSES. A superset of DIVERGENT: the rule is blanket
-    # "integers only" because deciding per-value which float happens to agree (1.5
-    # does; 1e-7 does not) needs exactly the Number#toString port the precondition
-    # exists to avoid. NaN/Infinity are here too — json.loads accepts them bare,
-    # JSON.parse rejects them, JSON.stringify spells them `null`.
-    REFUSE: ClassVar[list[str]] = [
-        *DIVERGENT,
-        "[1.5]",
-        "[1e21]",
-        "[9007199254740992]",
-        "[NaN]",
-        "[Infinity]",
-    ]
+@pytest.mark.parametrize("value", [2**53, -(2**53), 10**30])
+def test_integers_outside_the_js_safe_range_are_refused(value):
+    with pytest.raises(JsSerializationError):
+        js_stringify_pretty([value])
 
-    def test_the_agreed_output_is_always_utf8_encodable(self):
-        # The L1-1 crash: a raw lone surrogate in the output cannot be encoded.
-        vectors = json.loads(
-            (
-                Path(__file__).with_name("fixtures")
-                / "cross_runtime/json_spelling.json"
-            ).read_text(encoding="utf-8")
-        )["cases"]
-        for row in vectors:
-            if row.get("operation") != "normalize":
-                js_stringify_pretty(row["input"]).encode("utf-8")
 
-    def test_refused_documents_raise_rather_than_diverge(self):
-        for text in self.REFUSE:
-            with self.assertRaises(JsSerializationError, msg=text):
-                js_stringify_pretty(json.loads(text))
+def test_number_error_names_its_path():
+    with pytest.raises(JsSerializationError) as caught:
+        js_stringify_pretty({"phases": {"challenge": {"stats": {"rate": 0.5}}}})
+    assert "$.phases.challenge.stats.rate" in str(caught.value)
 
-    def test_the_refused_numbers_really_would_have_diverged(self):
-        # Pins the JUSTIFICATION, not just the behaviour: if a future Python or node
-        # made these agree, this test fails and the precondition can be relaxed.
-        node_or_skip(self)
-        provable = [t for t in self.DIVERGENT if t != '{"stats": {"rate": 0.5}}']
-        expected = js_stringify_many(provable)
-        for text, want in zip(provable, expected, strict=True):
-            naive = json.dumps(json.loads(text), indent=2, ensure_ascii=False)
-            self.assertNotEqual(naive, want, f"{text} no longer diverges")
+
+def test_non_string_object_keys_are_refused():
+    with pytest.raises(JsSerializationError, match="non-string object key"):
+        js_stringify_pretty({"outer": {1: "value"}})
+
+
+def test_a_float_in_the_source_is_a_structural_failure():
+    with _Workspace(findings=[finding("F1", confidence=0.9)]) as ws:
+        proc = run_script(ws.write_plan(ws.plan()))
+        assert proc.returncode != 0, proc.stdout
+        receipt = json.loads(proc.stdout)
+        assert not receipt["ok"]
+        assert any("non-integer number" in e for e in receipt["errors"])
+        assert not os.path.exists(ws.post_path)
+
+
+def test_a_bare_NaN_in_the_source_is_a_structural_failure():
+    with _Workspace(findings=[finding("F1")]) as ws:
+        ws.write(ws.findings_path, '[{"id": "F1", "confidence": NaN}]')
+        proc = run_script(ws.write_plan(ws.plan()))
+        assert proc.returncode != 0, proc.stdout
+        receipt = json.loads(proc.stdout)
+        assert not receipt["ok"]
+        assert any("non-integer number" in error for error in receipt["errors"])
+        assert not os.path.exists(ws.post_path)
+
+
+def test_refused_number_spellings_really_diverge_in_node():
+    if shutil.which("node") is None:
+        pytest.skip("node not available")
+    node_spellings = js_stringify_many(DIVERGENT_NUMBER_DOCUMENTS)
+    for text, node_spelling in zip(
+        DIVERGENT_NUMBER_DOCUMENTS, node_spellings, strict=True
+    ):
+        naive = json.dumps(json.loads(text), indent=2, ensure_ascii=False)
+        assert naive != node_spelling, f"{text} no longer diverges"
+
+
+@pytest.mark.parametrize("text", REFUSED_NUMBER_DOCUMENTS)
+def test_refused_documents_raise_rather_than_diverge(text):
+    with pytest.raises(JsSerializationError):
+        js_stringify_pretty(json.loads(text))
 
 
 class TestDerivedDocumentsAgreeWithTheJsSerialization(unittest.TestCase):
-    """issue #38 F1-persist-1/F4-4. The plan's `derive` block carries chars+checksum
-    for the two documents THIS script writes, computed on the JS side from
+    """The plan's `derive` block carries chars+checksum for the two documents THIS
+    script writes, computed on the JS side from
     writerPayload(). The workflow compares them to `written[]` and treats a
     difference as a STRUCTURAL failure (unlike a primary mismatch, there is no
     on-disk truth to fall back to) — so the two runtimes have to agree byte for byte
@@ -1083,8 +1035,8 @@ class TestDerivedDocumentsAgreeWithTheJsSerialization(unittest.TestCase):
 
 
 class TestCheckpointSkeletonGuardMirrorsTheJsOne(unittest.TestCase):
-    """issue #38 F1-persist-3. The JS side (persistPlan) empties
-    `phases.challenge.findings` into the skeleton ONLY when it held an ARRAY:
+    """The JS side (persistPlan) empties `phases.challenge.findings` into the
+    skeleton ONLY when it held an ARRAY:
     `challenge && Array.isArray(challenge.findings)`. A looser predicate here
     FABRICATES a findings array the pipeline never had — a derived document the
     two runtimes disagree about, which nothing downstream can cross-check."""
@@ -1148,8 +1100,8 @@ class TestCheckpointSkeletonGuardMirrorsTheJsOne(unittest.TestCase):
 
 
 class TestStdoutIsNeverEmpty(unittest.TestCase):
-    """issue #38 F1-persist-2. `assemble()` guarantees a receipt DICT on every
-    path, but a dict is not yet a LINE. The unsupported-planVersion branch copies
+    """`assemble()` guarantees a receipt DICT on every path, but a dict is not
+    yet a LINE. The unsupported-planVersion branch copies
     the plan's own `planVersion` into the receipt and returns BEFORE the
     number-spelling precondition ever runs — and `json.loads` accepts a bare `NaN`,
     which `allow_nan=False` then refuses to spell. That raised out of main() as a
