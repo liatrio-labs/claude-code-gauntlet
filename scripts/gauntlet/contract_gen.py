@@ -1,35 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the registry-derived blocks in agent contracts, references, and the delivery renderer.
+"""Generate Python registry and Markdown contracts from live workflow sources.
 
-WHY THIS EXISTS — issue #238.
+The phrases required by the dispatch schema and dimension-conditional dispatch
+requirement are parsed elsewhere and remain exact contract text.
 
-`workflows/src/registry.js` is the single authority for which fields are dispatch-required
-(`requiredExtra`, unconditional) or dimension-conditionally required (`requiredWhenDimension`).
-Before this script, the English sentences telling each agent's model about that requirement
-were hand-written prose in `agents/*.md`, kept honest only by a pytest equality test that
-diffed the prose against the registry. That is the shape this repo's own design rule forbids
-("Add more text" is a design smell) applied to itself: the registry could grow a new required
-field and nothing would force the matching sentence to exist except a test someone had to run.
-
-This script closes the loop the way `scripts/sync_agent_rules.py` closes AGENTS.md ⇄ CLAUDE.md:
-the registry is the source, the sentences are a generated, marker-fenced block, and a freshness
-test runs this script in `--check` mode so drift fails the build instead of a hand-authored
-lockstep comparison.
-
-The configuration registry is also projected into the generated derived-waist fence. Its
-`deriveWhen` and `derivedFrom` descriptions are checked against the live predicates and
-provenance fillers before any target is written, so an unknown registry name or unsupported
-receipt type fails loudly instead of producing an incomplete instruction.
-
-Two anchor phrases are machine-parsed elsewhere (see `docs/machine-parsed-strings.md` and
-`tests/test_dimensions_registry.py`): "required by the dispatch schema" (requiredExtra sense)
-and "dimension-conditional dispatch requirement" (requiredWhenDimension sense). Both are baked
-into the templates below verbatim — changing their wording here is changing the contract.
-
-Usage:
-    python3 scripts/generate_contract_requirements.py           # write the generated blocks
-    python3 scripts/generate_contract_requirements.py --check   # exit 1 if any target is stale
-"""
+Usage: python3 scripts/generate_contract_requirements.py [--check]"""
 
 import argparse
 import importlib.util
@@ -39,6 +14,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import types
 import uuid
 from typing import Any
 
@@ -65,9 +41,6 @@ _IDENTITY_MARKER_RE = re.compile(
 
 # {rel_path: [symbol, ...]} — the fences this file must carry, exactly once each.
 IDENTITY_FENCES = {
-    "scripts/gauntlet/delivery/post.py": ["constants"],
-    "scripts/gauntlet/fix_tasks.py": ["constants", "detail_fields"],
-    "scripts/gauntlet/config.py": ["knob_registry"],
     REPORT_FORMAT_REL: [
         "severity_legend",
         "permalink_formats",
@@ -113,6 +86,9 @@ _NODE_PROGRAM_ROOTS = (
     "workflows/src/registry.js",
     "workflows/src/args.js",
     "workflows/src/renderReport.js",
+    "workflows/src/applyValidations.js",
+    "workflows/src/filterFindings.js",
+    "workflows/src/stages.js",
 )
 _WORKFLOW_RELATIVE_IMPORT_RE = re.compile(
     r"^\s*(?:import|export)\b.*?\bfrom\s+['\"](\.[^'\"]+)['\"]",
@@ -258,10 +234,11 @@ def declared_inputs(repo_root=REPO_ROOT):
 def load_registry(repo_root=REPO_ROOT):
     """Import the live schemas and keep finding and waist required lists distinct."""
     node_src = (
-        "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/args.js')]).then(([m, a]) => console.log(JSON.stringify({"
+        "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/args.js'), import('./workflows/src/applyValidations.js'), import('./workflows/src/filterFindings.js'), import('./workflows/src/stages.js')]).then(([m, a, v, f, s]) => console.log(JSON.stringify({"
         "  required: m.FINDING_REQUIRED,"
         "  waistRequired: a.REQUIRED,"
         "  canonicalFields: Object.keys(m.FINDING_PROP_TYPES),"
+        "  findingTypes: m.FINDING_PROP_TYPES,"
         "  dimensions: m.DIMENSIONS.map(d => ({"
         "    dimension: d.dimension, agentType: d.agentType,"
         "    requiredExtra: d.requiredExtra || [],"
@@ -270,6 +247,13 @@ def load_registry(repo_root=REPO_ROOT):
         "  })),"
         "  brand: { mark: m.BRAND_MARK, name: m.BRAND_NAME },"
         "  severityEmoji: m.SEVERITY_EMOJI,"
+        "  severityOrder: f.SEVERITY_ORDER,"
+        "  reachability: v.REACHABILITY_VALUES,"
+        "  deltaKeys: s.DELTA_KEYS,"
+        "  verifySliceFields: s.VERIFY_SLICE_FIELDS,"
+        "  fixMaxLines: f.FIX_MAX_LINES, fixMaxChars: f.FIX_MAX_CHARS,"
+        "  artifactPaths: s.plannedArtifactPaths('/__gauntlet_registry_root__', '__GAUNTLET_SHA__'),"
+        "  jsTrimChars: Array.from({length: 65536}, (_, i) => String.fromCharCode(i)).filter(c => c.trim() === '' && c !== '').join(''),"
         "  severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK,"
         "  ruleSourceLabels: m.RULE_SOURCE_LABELS,"
         "  ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK,"
@@ -533,17 +517,20 @@ def _python_literal(value, indent=0):
         return "False"
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
+        is_tuple = isinstance(value, tuple)
         if not value:
-            return "[]"
-        lines = ["["]
+            return "()" if is_tuple else "[]"
+        if is_tuple and len(value) == 1 and isinstance(value[0], (str, int, float)):
+            return "(" + _python_literal(value[0]) + ",)"
+        lines = ["(" if is_tuple else "["]
         for item in value:
             rendered = _python_literal(item, indent + 4)
             item_lines = rendered.splitlines()
             lines.append(" " * (indent + 4) + item_lines[0])
             lines.extend(item_lines[1:])
             lines[-1] += ","
-        lines.append(pad + "]")
+        lines.append(pad + (")" if is_tuple else "]"))
         return "\n".join(lines)
     if isinstance(value, dict):
         if not value:
@@ -563,6 +550,180 @@ def _python_literal(value, indent=0):
         lines.append(pad + "}")
         return "\n".join(lines)
     raise SystemExit(f"cannot render non-JSON registry value: {value!r}")
+
+
+def _detail_fields(identity):
+    citation_fields = {"claude_md_rule", "spec_text"} & set(identity["canonicalFields"])
+    return {
+        row["dimension"]: tuple(
+            [
+                *row["extraFields"],
+                *(
+                    field
+                    for field in row["requiredWhenDimension"]
+                    if field in citation_fields and field not in row["extraFields"]
+                ),
+            ]
+        )
+        for row in identity["dimensions"]
+    }
+
+
+def render_python_registry(identity):
+    """Render the complete Python projection of the live JavaScript registry."""
+    field_types = identity["findingTypes"]
+    type_names = {"string": "str", "number": "int | float"}
+    annotations = {}
+    for field, schema in field_types.items():
+        if isinstance(schema, str) and schema in type_names:
+            annotations[field] = type_names[schema]
+        elif schema == {"type": "array", "items": {"type": "string"}}:
+            annotations[field] = "list[str]"
+        else:
+            raise SystemExit(f"unknown finding schema type for {field}: {schema!r}")
+    if not set(identity["required"]) <= set(annotations):
+        raise SystemExit("required finding field absent from schema")
+    delta_keys = identity["deltaKeys"]
+    if delta_keys[:2] != ["id", "verified"] or len(delta_keys) != len(set(delta_keys)):
+        raise SystemExit("invalid ordered delta keys")
+    if not set(identity["verifySliceFields"]) <= set(annotations):
+        raise SystemExit("verify slice field absent from finding schema")
+    templates = {}
+    root = "/__gauntlet_registry_root__/"
+    sha = "__GAUNTLET_SHA__"
+    paths = identity["artifactPaths"]
+    if list(paths) != ["findings", "report", "postReview", "checkpoints"]:
+        raise SystemExit("unexpected artifact path keys")
+    for key, path in paths.items():
+        if not path.startswith(root) or path.count(sha) != 1:
+            raise SystemExit(f"invalid artifact path for {key}")
+        basename = path[len(root) :]
+        if "/" in basename:
+            raise SystemExit(f"artifact path is not a basename for {key}")
+        templates[key] = basename.replace(sha, "{sha}")
+    for key in ("fixMaxLines", "fixMaxChars"):
+        value = identity[key]
+        if type(value) is not int or not 0 < value <= 9007199254740991:
+            raise SystemExit(f"invalid fix bound: {key}")
+    for key in ("severityOrder", "reachability", "deltaKeys", "verifySliceFields"):
+        values = identity[key]
+        if not values or len(values) != len(set(values)):
+            raise SystemExit(f"invalid ordered values: {key}")
+
+    def literal_type(values):
+        members = ", ".join(json.dumps(v) for v in values)
+        if len(members) <= 80:
+            return (
+                "Literal[" + members + "]"
+                if len(members) <= 60
+                else "Literal[\n    " + members + "\n]"
+            )
+        return "Literal[\n" + "\n".join(f"    {json.dumps(v)}," for v in values) + "\n]"
+
+    lines = [
+        '"""Generated by scripts/generate_contract_requirements.py. Do not edit."""',
+        "",
+        "from types import MappingProxyType",
+        "from typing import Literal, TypedDict",
+        "",
+        f"Severity = {literal_type(identity['severityOrder'])}",
+        f"Reachability = {literal_type(identity['reachability'])}",
+        f"Dimension = {literal_type([row['dimension'] for row in identity['dimensions']])}",
+        f"FindingKey = {literal_type(list(annotations))}",
+        f"DeltaKey = {literal_type(delta_keys)}",
+        "",
+        "",
+        "class _FindingRequired(TypedDict):",
+        *[f"    {key}: {annotations[key]}" for key in identity["required"]],
+        "",
+        "",
+        "class Finding(_FindingRequired, total=False):",
+        *[
+            f"    {key}: {typ}"
+            for key, typ in annotations.items()
+            if key not in identity["required"]
+        ],
+        "",
+        "",
+        "class _RuleRequired(TypedDict):",
+        '    kind: Literal["enum", "csv_subset", "positive_digits", "digits_or_null"]',
+        "",
+        "",
+        "class RuleDescriptor(_RuleRequired, total=False):",
+        "    values: list[str]",
+        "",
+        "",
+        "class KnobDescriptor(TypedDict):",
+        "    key: str",
+        "    modes: list[str]",
+        "    allowedSources: dict[str, list[str]]",
+        "    rule: RuleDescriptor | dict[str, RuleDescriptor]",
+        "    env: str | None",
+        "    reviewMdKey: str | None",
+        "    defaults: dict[str, list[str]]",
+        '    type: Literal["string", "csv_list", "int_or_null"]',
+        "    waistPath: str | None",
+        "    waistMap: dict[str, str] | None",
+        "    derivedFrom: str | None",
+        "    deriveWhen: str | None",
+        "    nullReceipt: list[str]",
+        "    resolvedKey: bool",
+        "",
+        "",
+        "class _VerifyDeltaRequired(TypedDict):",
+        "    id: str",
+        "    verified: bool",
+        "",
+        "",
+        "class VerifyDelta(_VerifyDeltaRequired, total=False):",
+        "    origin: str",
+        "    severity: Severity",
+        "    confidence: int",
+        "    elimination_reason: str",
+        "",
+        "",
+    ]
+    values = {
+        "SEVERITY_ORDER": tuple(identity["severityOrder"]),
+        "REACHABILITY_VALUES": tuple(identity["reachability"]),
+        "DELTA_KEYS": tuple(delta_keys),
+        "DELTA_VALUE_FIELDS": tuple(delta_keys[2:]),
+        "VERIFY_SLICE_FIELDS": tuple(identity["verifySliceFields"]),
+        "BRAND_MARK": identity["brand"]["mark"],
+        "BRAND_NAME": identity["brand"]["name"],
+        "SEVERITY_EMOJI": identity["severityEmoji"],
+        "SEVERITY_EMOJI_FALLBACK": identity["severityEmojiFallback"],
+        "RULE_SOURCE_LABELS": identity["ruleSourceLabels"],
+        "RULE_SOURCE_LABEL_FALLBACK": identity["ruleSourceLabelFallback"],
+        "CODE_OWNED_HEADINGS": identity["codeOwnedHeadings"],
+        "DETAIL_FIELDS_BY_DIMENSION": _detail_fields(identity),
+        "KNOB_REGISTRY": tuple(identity["knobs"]),
+    }
+    annotations = {
+        "SEVERITY_ORDER": "tuple[Severity, ...]",
+        "REACHABILITY_VALUES": "tuple[Reachability, ...]",
+        "DELTA_KEYS": "tuple[DeltaKey, ...]",
+        "DELTA_VALUE_FIELDS": "tuple[DeltaKey, ...]",
+        "VERIFY_SLICE_FIELDS": "tuple[FindingKey, ...]",
+        "KNOB_REGISTRY": "tuple[KnobDescriptor, ...]",
+    }
+    for name, value in values.items():
+        annotation = f": {annotations[name]}" if name in annotations else ""
+        lines.append(f"{name}{annotation} = {_python_literal(value)}")
+        lines.append("")
+    lines.extend(
+        [
+            "ARTIFACT_PATH_TEMPLATES = MappingProxyType(\n    "
+            + _python_literal(templates).replace("\n", "\n    ")
+            + "\n)",
+            "ARTIFACT_BASENAMES = tuple(ARTIFACT_PATH_TEMPLATES.values())",
+            f"FIX_MAX_LINES = {identity['fixMaxLines']}",
+            f"FIX_MAX_CHARS = {identity['fixMaxChars']}",
+            "JS_TRIM_CHARS = " + json.dumps(identity["jsTrimChars"], ensure_ascii=True),
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _load_resolver(repo_root):
@@ -822,7 +983,16 @@ def render_inline_comment_sample(identity):
     the reference docs; it therefore cannot make generator control comments part of
     the sample a reader copies.
     """
-    from gauntlet.delivery import post as post_review
+    try:
+        from gauntlet.delivery import post as post_review
+    except ModuleNotFoundError as error:
+        if error.name != "gauntlet.registry":
+            raise
+        # A missing generated module must be reportable as stale in --check mode.
+        module = types.ModuleType("gauntlet.registry")
+        exec(render_python_registry(identity), module.__dict__)
+        sys.modules["gauntlet.registry"] = module
+        from gauntlet.delivery import post as post_review
 
     saved = {
         name: getattr(post_review, name, None)
@@ -996,53 +1166,6 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
         return permalink_formats_body(identity)
     if symbol == "pr_identity_fields":
         return pr_identity_fields_body(identity)
-    if symbol == "constants":
-        lines = [
-            f'BRAND_MARK = "{mark}"',
-            f'BRAND_NAME = "{name}"',
-            "SEVERITY_EMOJI = {",
-        ]
-        lines += [f'    "{severity}": "{emoji}",' for emoji, severity in pairs]
-        lines += [
-            "}",
-            f'SEVERITY_EMOJI_FALLBACK = "{identity["severityEmojiFallback"]}"',
-            "RULE_SOURCE_LABELS = {",
-            *[f'    "{kind}": "{label}",' for kind, label in rule_source_pairs],
-            "}",
-            f'RULE_SOURCE_LABEL_FALLBACK = "{identity["ruleSourceLabelFallback"]}"',
-        ]
-        if rel_path == "scripts/gauntlet/delivery/post.py":
-            lines += [
-                "CODE_OWNED_HEADINGS = [",
-                *[f'    "{heading}",' for heading in identity["codeOwnedHeadings"]],
-                "]",
-            ]
-        return lines
-    if symbol == "detail_fields":
-        citation_fields = {
-            field
-            for field in ("claude_md_rule", "spec_text")
-            if field in identity["canonicalFields"]
-        }
-        lines = ["_DETAIL_FIELDS_BY_DIMENSION = {"]
-        for row in identity["dimensions"]:
-            fields = list(row["extraFields"])
-            fields.extend(
-                field
-                for field in row["requiredWhenDimension"]
-                if field in citation_fields and field not in fields
-            )
-            dimension = row["dimension"]
-            if not fields:
-                lines.append(f'    "{dimension}": (),')
-            elif len(fields) == 1:
-                lines.append(f'    "{dimension}": ("{fields[0]}",),')
-            else:
-                lines.append(f'    "{dimension}": (')
-                lines.extend(f'        "{field}",' for field in fields)
-                lines.append("    ),")
-        lines.append("}")
-        return lines
     if symbol == "summary_header":
         return [f"### {mark} {name}"]
     if symbol == "inline_sample":
@@ -1052,10 +1175,6 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
             f"- **Identity:** prepends `### {mark} {name}` to `review_body` and appends "
             f"`{mark} *{name}*` to every rendered comment body — one mark per delivered "
             "surface, never one per finding. Never hand-type either."
-        ]
-    if symbol == "knob_registry":
-        return [
-            "KNOB_REGISTRY = " + _python_literal(identity["knobs"], indent=0),
         ]
     if symbol == "headless_env_table":
         lines = [
@@ -1260,6 +1379,10 @@ def compute_targets(repo_root):
     add(REPORT_FORMAT_REL, ("table", None, registry))
     for rel_path in IDENTITY_FENCES:
         add(rel_path, ("fence", repo_root, registry))
+    add(
+        "scripts/gauntlet/registry.py",
+        ("whole", None, render_python_registry(registry)),
+    )
     return targets
 
 
@@ -1270,6 +1393,8 @@ def _apply_one(text, rel_path, kind, anchor, payload):
         return rewrite_required_column(text, payload)
     if kind == "fence":
         return fill_identity_fences(text, rel_path, payload, anchor)
+    if kind == "whole":
+        return payload
     raise SystemExit(
         f"generate_contract_requirements: unknown target kind {kind!r} for {rel_path}"
     )
@@ -1279,8 +1404,11 @@ def apply_targets(repo_root, check_only=False):
     stale = []
     for rel_path, ops in compute_targets(repo_root).items():
         abs_path = os.path.join(repo_root, rel_path)
-        with open(abs_path, encoding="utf-8") as handle:
-            current = handle.read()
+        if os.path.exists(abs_path):
+            with open(abs_path, encoding="utf-8") as handle:
+                current = handle.read()
+        else:
+            current = ""
         expected = current
         for kind, anchor, payload in ops:
             expected = _apply_one(expected, rel_path, kind, anchor, payload)

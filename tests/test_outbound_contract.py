@@ -660,57 +660,6 @@ def test_byte_fold_intervals_use_exact_runs_and_literal_span_backslashes():
     ]
 
 
-def test_live_node_prepare_line_matches_single_line_and_location_fixtures():
-    line_cases = [
-        case for case in CASES if case["field_class"] in {"single_line", "location"}
-    ]
-    idempotency_cases = [
-        case
-        for case in CASES
-        if "normalize.idempotent" in case["rule_ids"]
-        or any(rule_id in case["rule_ids"] for rule_id in _CONTAINMENT_RULES)
-    ]
-    parity_cases = [
-        case
-        for case in CASES
-        if "\n" not in case["input"] and "\r" not in case["input"]
-    ]
-    cases = {case["id"]: case for case in line_cases + idempotency_cases + parity_cases}
-    inputs = [case["input"] for case in cases.values()]
-    script = """
-const renderer = await import('./workflows/src/renderReport.js');
-if (typeof renderer.prepareLine !== 'function') {
-  process.stderr.write('missing expected JavaScript twin prepareLine');
-  process.exitCode = 17;
-} else {
-  let source = '';
-  for await (const chunk of process.stdin) source += chunk;
-  const values = JSON.parse(source);
-  process.stdout.write(JSON.stringify(values.map((value) => {
-    const once = renderer.prepareLine(value);
-    return { once, twice: renderer.prepareLine(once) };
-  })));
-}
-"""
-    result = _run_node(script, inputs)
-    assert result.returncode == 0, result.stderr
-    js_results = json.loads(result.stdout)
-    js_by_id = dict(zip(cases, js_results, strict=True))
-    for case in idempotency_cases:
-        result_row = js_by_id[case["id"]]
-        assert result_row["twice"] == result_row["once"], case["id"]
-    prepare_line = getattr(post_review, "prepare_line", None)
-    assert callable(prepare_line), "missing expected Python entry point prepare_line"
-    python_prepared = [prepare_line(case["input"]) for case in line_cases]
-    js_prepared = [js_by_id[case["id"]]["once"] for case in line_cases]
-    expected = [case["expected"] for case in line_cases]
-    assert python_prepared == expected
-    assert js_prepared == expected
-    assert js_prepared == python_prepared
-    for case in parity_cases:
-        assert js_by_id[case["id"]]["once"] == prepare_line(case["input"]), case["id"]
-
-
 @pytest.mark.parametrize("text", ("/close", ">>> x", ">>> [!note]"))
 def test_live_node_single_line_prose_rules_are_omitted(text):
     script = """

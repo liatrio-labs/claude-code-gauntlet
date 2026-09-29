@@ -1392,8 +1392,11 @@ def _copy_tracked_tree(destination: Path) -> None:
         capture_output=True,
     )
     relatives = {path for path in result.stdout.decode().split("\0") if path}
+    relatives.add("scripts/gauntlet/registry.py")
     for relative in sorted(relatives):
         source = REPO / relative
+        if not source.is_file():
+            continue  # Deletions remain indexed until the orchestrator stages them.
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)

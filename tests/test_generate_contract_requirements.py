@@ -1,12 +1,6 @@
-"""Unit tests for scripts/generate_contract_requirements.py's pure functions (issue #238).
-
-These exercise the generator in isolation from the live registry: fixture-shaped registry
-dicts and small file fragments, so a regression in the splice/table-rewrite/sentence-render
-logic fails here without needing `node` or the real agent files.
-"""
+"""Exercise the contract generator and its source-to-target freshness boundary."""
 
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -16,9 +10,85 @@ from copy import deepcopy
 from pathlib import Path
 from typing import ClassVar
 
+import pytest
 from gauntlet import contract_gen as gen
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def registry_copy(tmp_path):
+    for rel in sorted(
+        set(gen.compute_targets(str(REPO))) | gen.declared_inputs(str(REPO))
+    ):
+        source = REPO / rel
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("source", "old", "new"),
+    [
+        ("workflows/src/registry.js", "Code Gauntlet", "Changed Gauntlet"),
+        ("workflows/src/args.js", "CODE_GAUNTLET_MODEL_TIER", "CODE_GAUNTLET_NEW_TIER"),
+        ("workflows/src/applyValidations.js", "'uncertain'", "'unsure'"),
+        (
+            "workflows/src/filterFindings.js",
+            "FIX_MAX_LINES = 100",
+            "FIX_MAX_LINES = 101",
+        ),
+        (
+            "workflows/src/stages.js",
+            "'cross_file_refs', 'origin'];",
+            "'cross_file_refs', 'title'];",
+        ),
+    ],
+)
+def test_each_registry_source_stales_and_repairs_generated_module(
+    registry_copy, source, old, new
+):
+    target = registry_copy / source
+    text = target.read_text(encoding="utf-8")
+    assert old in text
+    target.write_text(text.replace(old, new, 1), encoding="utf-8")
+    assert "scripts/gauntlet/registry.py" in gen.apply_targets(
+        str(registry_copy), check_only=True
+    )
+    assert "scripts/gauntlet/registry.py" in gen.apply_targets(
+        str(registry_copy), check_only=False
+    )
+    assert gen.apply_targets(str(registry_copy), check_only=True) == []
+
+
+def test_missing_generated_module_is_stale_and_created(registry_copy):
+    target = registry_copy / "scripts/gauntlet/registry.py"
+    target.unlink()
+    assert "scripts/gauntlet/registry.py" in gen.apply_targets(
+        str(registry_copy), check_only=True
+    )
+    assert not target.exists()
+    gen.apply_targets(str(registry_copy), check_only=False)
+    assert target.is_file()
+    assert gen.apply_targets(str(registry_copy), check_only=True) == []
+
+
+@pytest.mark.skipif(shutil.which("ruff") is None, reason="ruff is not installed")
+def test_generated_module_is_a_ruff_format_fixed_point(registry_copy):
+    gen.apply_targets(str(registry_copy), check_only=False)
+    result = subprocess.run(
+        [
+            "ruff",
+            "format",
+            "--check",
+            str(registry_copy / "scripts/gauntlet/registry.py"),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 class TestDispatchRequiredSentence(unittest.TestCase):
@@ -560,57 +630,6 @@ class TestIdentityFenceGuards(unittest.TestCase):
     # (rel_path, symbol) pair `identity_body` dispatches on, and the key set is
     # asserted equal to IDENTITY_FENCES below, so a new fence cannot ship unpinned.
     EXPECTED_BODIES: ClassVar[dict] = {
-        ("scripts/gauntlet/delivery/post.py", "constants"): (
-            'BRAND_MARK = "MARK"\n'
-            'BRAND_NAME = "NAME"\n'
-            "SEVERITY_EMOJI = {\n"
-            '    "critical": "C",\n'
-            '    "low": "L",\n'
-            "}\n"
-            'SEVERITY_EMOJI_FALLBACK = "F"\n'
-            "RULE_SOURCE_LABELS = {\n"
-            '    "documented_rule": "DR",\n'
-            '    "code_comment": "CC",\n'
-            '    "repo_precedent": "RP",\n'
-            '    "self_inconsistency": "SI",\n'
-            "}\n"
-            'RULE_SOURCE_LABEL_FALLBACK = "RF"\n'
-            "CODE_OWNED_HEADINGS = [\n"
-            '    "## Summary",\n'
-            '    "## Findings",\n'
-            '    "## Unverified / pipeline-degraded findings",\n'
-            '    "## Review Dimensions Summary",\n'
-            '    "## Review Methodology",\n'
-            "]"
-        ),
-        ("scripts/gauntlet/fix_tasks.py", "constants"): (
-            'BRAND_MARK = "MARK"\n'
-            'BRAND_NAME = "NAME"\n'
-            "SEVERITY_EMOJI = {\n"
-            '    "critical": "C",\n'
-            '    "low": "L",\n'
-            "}\n"
-            'SEVERITY_EMOJI_FALLBACK = "F"\n'
-            "RULE_SOURCE_LABELS = {\n"
-            '    "documented_rule": "DR",\n'
-            '    "code_comment": "CC",\n'
-            '    "repo_precedent": "RP",\n'
-            '    "self_inconsistency": "SI",\n'
-            "}\n"
-            'RULE_SOURCE_LABEL_FALLBACK = "RF"'
-        ),
-        ("scripts/gauntlet/fix_tasks.py", "detail_fields"): (
-            "_DETAIL_FIELDS_BY_DIMENSION = {\n"
-            '    "bug": ("hidden_errors",),\n'
-            '    "convention": ("claude_md_rule",),\n'
-            '    "test_coverage": (\n'
-            '        "criticality",\n'
-            '        "failure_scenario",\n'
-            "    ),\n"
-            '    "intent": ("spec_text",),\n'
-            '    "comment_accuracy": (),\n'
-            "}"
-        ),
         (gen.REPORT_FORMAT_REL, "severity_legend"): (
             "Product mark: MARK (NAME). Severity emoji: C critical, L low.\n"
             "Rule source labels: documented_rule -> DR, code_comment -> CC, repo_precedent -> RP, self_inconsistency -> SI; unknown values -> RF.\n"
@@ -844,260 +863,6 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "The workflow fills these receipt entries itself; never stamp them.\n"
             "\n"
             "- `configEcho.delta` (interactive runs): the delta source is present."
-        ),
-        ("scripts/gauntlet/config.py", "knob_registry"): (
-            "KNOB_REGISTRY = [\n"
-            "    {\n"
-            '        "key": "alpha",\n'
-            '        "modes": [\n'
-            '            "headless",\n'
-            '            "interactive",\n'
-            "        ],\n"
-            '        "allowedSources": {\n'
-            '            "headless": [\n'
-            '                "env",\n'
-            '                "default",\n'
-            "            ],\n"
-            '            "interactive": [\n'
-            '                "fixed",\n'
-            "            ],\n"
-            "        },\n"
-            '        "rule": {\n'
-            '            "headless": {\n'
-            '                "kind": "enum",\n'
-            '                "values": [\n'
-            '                    "h-alpha",\n'
-            "                ],\n"
-            "            },\n"
-            '            "interactive": {\n'
-            '                "kind": "enum",\n'
-            '                "values": [\n'
-            '                    "i-alpha",\n'
-            "                ],\n"
-            "            },\n"
-            "        },\n"
-            '        "env": "CODE_GAUNTLET_ALPHA",\n'
-            '        "reviewMdKey": None,\n'
-            '        "defaults": {\n'
-            '            "headless": [\n'
-            '                "h-alpha",\n'
-            '                "env",\n'
-            "            ],\n"
-            '            "interactive": [\n'
-            '                "i-alpha",\n'
-            '                "fixed",\n'
-            "            ],\n"
-            "        },\n"
-            '        "type": "string",\n'
-            '        "waistPath": None,\n'
-            '        "waistMap": None,\n'
-            '        "derivedFrom": None,\n'
-            '        "deriveWhen": None,\n'
-            '        "nullReceipt": [],\n'
-            '        "resolvedKey": True,\n'
-            "    },\n"
-            "    {\n"
-            '        "key": "beta",\n'
-            '        "modes": [\n'
-            '            "headless",\n'
-            "        ],\n"
-            '        "allowedSources": {\n'
-            '            "headless": [\n'
-            '                "default",\n'
-            "            ],\n"
-            "        },\n"
-            '        "rule": {\n'
-            '            "kind": "enum",\n'
-            '            "values": [\n'
-            '                "h-beta",\n'
-            "            ],\n"
-            "        },\n"
-            '        "env": "CODE_GAUNTLET_BETA",\n'
-            '        "reviewMdKey": None,\n'
-            '        "defaults": {\n'
-            '            "headless": [\n'
-            '                "h-beta",\n'
-            '                "default",\n'
-            "            ],\n"
-            "        },\n"
-            '        "type": "string",\n'
-            '        "waistPath": "optional.beta",\n'
-            '        "waistMap": None,\n'
-            '        "derivedFrom": None,\n'
-            '        "deriveWhen": None,\n'
-            '        "nullReceipt": [\n'
-            '            "headless",\n'
-            "        ],\n"
-            '        "resolvedKey": False,\n'
-            "    },\n"
-            "    {\n"
-            '        "key": "gamma",\n'
-            '        "modes": [\n'
-            '            "headless",\n'
-            '            "interactive",\n'
-            "        ],\n"
-            '        "allowedSources": {\n'
-            '            "headless": [\n'
-            '                "default",\n'
-            "            ],\n"
-            '            "interactive": [\n'
-            '                "default",\n'
-            "            ],\n"
-            "        },\n"
-            '        "rule": {\n'
-            '            "kind": "enum",\n'
-            '            "values": [\n'
-            '                "raw",\n'
-            "            ],\n"
-            "        },\n"
-            '        "env": None,\n'
-            '        "reviewMdKey": None,\n'
-            '        "defaults": {\n'
-            '            "headless": [\n'
-            '                "raw",\n'
-            '                "default",\n'
-            "            ],\n"
-            '            "interactive": [\n'
-            '                "raw",\n'
-            '                "default",\n'
-            "            ],\n"
-            "        },\n"
-            '        "type": "string",\n'
-            '        "waistPath": "nested.gamma",\n'
-            '        "waistMap": {\n'
-            '            "raw": "mapped",\n'
-            "        },\n"
-            '        "derivedFrom": None,\n'
-            '        "deriveWhen": "gamma",\n'
-            '        "nullReceipt": [],\n'
-            '        "resolvedKey": False,\n'
-            "    },\n"
-            "    {\n"
-            '        "key": "epsilon",\n'
-            '        "modes": [\n'
-            '            "interactive",\n'
-            "        ],\n"
-            '        "allowedSources": {\n'
-            '            "interactive": [\n'
-            '                "default",\n'
-            "            ],\n"
-            "        },\n"
-            '        "rule": {\n'
-            '            "kind": "digits_or_null",\n'
-            "        },\n"
-            '        "env": None,\n'
-            '        "reviewMdKey": None,\n'
-            '        "defaults": {\n'
-            '            "interactive": [\n'
-            '                "null",\n'
-            '                "default",\n'
-            "            ],\n"
-            "        },\n"
-            '        "type": "int_or_null",\n'
-            '        "waistPath": "limits.nullable",\n'
-            '        "waistMap": None,\n'
-            '        "derivedFrom": None,\n'
-            '        "deriveWhen": None,\n'
-            '        "nullReceipt": [\n'
-            '            "interactive",\n'
-            "        ],\n"
-            '        "resolvedKey": False,\n'
-            "    },\n"
-            "    {\n"
-            '        "key": "zeta",\n'
-            '        "modes": [\n'
-            '            "headless",\n'
-            "        ],\n"
-            '        "allowedSources": {\n'
-            '            "headless": [\n'
-            '                "default",\n'
-            "            ],\n"
-            "        },\n"
-            '        "rule": {\n'
-            '            "kind": "positive_digits",\n'
-            "        },\n"
-            '        "env": None,\n'
-            '        "reviewMdKey": None,\n'
-            '        "defaults": {\n'
-            '            "headless": [\n'
-            '                "1",\n'
-            '                "default",\n'
-            "            ],\n"
-            "        },\n"
-            '        "type": "int_or_null",\n'
-            '        "waistPath": "delivery.count",\n'
-            '        "waistMap": None,\n'
-            '        "derivedFrom": None,\n'
-            '        "deriveWhen": None,\n'
-            '        "nullReceipt": [],\n'
-            '        "resolvedKey": False,\n'
-            "    },\n"
-            "    {\n"
-            '        "key": "eta",\n'
-            '        "modes": [\n'
-            '            "headless",\n'
-            "        ],\n"
-            '        "allowedSources": {\n'
-            '            "headless": [\n'
-            '                "default",\n'
-            "            ],\n"
-            "        },\n"
-            '        "rule": {\n'
-            '            "kind": "csv_subset",\n'
-            '            "values": [\n'
-            '                "a",\n'
-            '                "b",\n'
-            "            ],\n"
-            "        },\n"
-            '        "env": None,\n'
-            '        "reviewMdKey": None,\n'
-            '        "defaults": {\n'
-            '            "headless": [\n'
-            '                "a,b",\n'
-            '                "default",\n'
-            "            ],\n"
-            "        },\n"
-            '        "type": "csv_list",\n'
-            '        "waistPath": "delivery.items",\n'
-            '        "waistMap": None,\n'
-            '        "derivedFrom": None,\n'
-            '        "deriveWhen": None,\n'
-            '        "nullReceipt": [],\n'
-            '        "resolvedKey": False,\n'
-            "    },\n"
-            "    {\n"
-            '        "key": "delta",\n'
-            '        "modes": [\n'
-            '            "interactive",\n'
-            "        ],\n"
-            '        "allowedSources": {\n'
-            '            "interactive": [\n'
-            '                "discovery",\n'
-            "            ],\n"
-            "        },\n"
-            '        "rule": {\n'
-            '            "kind": "enum",\n'
-            '            "values": [\n'
-            '                "present",\n'
-            "            ],\n"
-            "        },\n"
-            '        "env": None,\n'
-            '        "reviewMdKey": None,\n'
-            '        "defaults": {\n'
-            '            "interactive": [\n'
-            '                "present",\n'
-            '                "discovery",\n'
-            "            ],\n"
-            "        },\n"
-            '        "type": "string",\n'
-            '        "waistPath": None,\n'
-            '        "waistMap": None,\n'
-            '        "derivedFrom": "delta",\n'
-            '        "deriveWhen": None,\n'
-            '        "nullReceipt": [],\n'
-            '        "resolvedKey": False,\n'
-            "    },\n"
-            "]"
         ),
         ("skills/code-gauntlet/references/headless-mode.md", "headless_env_table"): (
             "| Variable | Values | Default |\n"
@@ -1377,80 +1142,6 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
             r"^https?:\/\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\[[0-9A-Fa-f:.]{2,45}\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$",
         )
 
-    @unittest.skipUnless(
-        shutil.which("ruff"), "ruff is not installed (it is a pre-commit-pinned tool)"
-    )
-    def test_resolver_fence_is_a_ruff_format_fixed_point(self):
-        gen.apply_targets(str(self.root), check_only=False)
-        ruff = shutil.which("ruff")
-        resolver_path = str(self.root / "scripts" / "gauntlet" / "config.py")
-        results = []
-        for command in (
-            [ruff, "format", resolver_path],
-            [ruff, "format", "--check", resolver_path],
-            [ruff, "format", resolver_path],
-            [ruff, "format", "--check", resolver_path],
-        ):
-            result = subprocess.run(
-                command, capture_output=True, text=True, encoding="utf-8"
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            results.append(result)
-        self.assertNotIn("reformatted", results[2].stdout)
-        self.assertEqual(gen.apply_targets(str(self.root), check_only=True), [])
-
-    def test_stale_resolver_fence_does_not_change_the_skill_receipt(self):
-        gen.apply_targets(str(self.root), check_only=False)
-        resolver_path = self.root / "scripts" / "gauntlet" / "config.py"
-        skill_path = self.root / "skills" / "code-gauntlet" / "SKILL.md"
-        stale_skill = skill_path.read_bytes().replace(
-            b"  model_tier=optimized (fixed)", b"  model_tier=STALE (fixed)", 1
-        )
-        skill_path.write_bytes(stale_skill)
-        self.assertIn(b"  model_tier=STALE (fixed)", skill_path.read_bytes())
-        gen.apply_targets(str(self.root), check_only=False)
-        skill_before = skill_path.read_bytes()
-        self.assertNotIn(b"  model_tier=STALE (fixed)", skill_before)
-        resolver_before = resolver_path.read_text(encoding="utf-8")
-        resolver = gen._load_resolver(str(REPO))
-        registry = gen.load_registry(str(REPO))["knobs"]
-        for mode in ("interactive", "headless"):
-            expected = resolver.serialize_receipt(
-                mode,
-                resolver.resolve(mode, {}, None, "pr", registry=registry)["configEcho"],
-                registry=registry,
-            )
-            self.assertTrue(
-                expected.encode() in skill_before,
-                f"{mode} receipt not found in SKILL.md",
-            )
-        cases = {
-            "field deletion": resolver_before.replace(
-                '        "deriveWhen": None,\n', "", 1
-            ),
-            "row reorder": self._reorder_resolver_rows(resolver_before),
-        }
-        for label, corrupted in cases.items():
-            with self.subTest(corruption=label):
-                resolver_path.write_text(corrupted, encoding="utf-8")
-                stale = gen.apply_targets(str(self.root), check_only=True)
-                self.assertEqual(stale, ["scripts/gauntlet/config.py"])
-                self.assertEqual(skill_path.read_bytes(), skill_before)
-                resolver_path.write_text(resolver_before, encoding="utf-8")
-
-    @staticmethod
-    def _reorder_resolver_rows(source):
-        start = source.index("KNOB_REGISTRY = [")
-        end = source.index("\n# /generated-from-registry-identity:knob_registry", start)
-        fence = source[start:end]
-        rows = re.findall(r"(?ms)^    \{\n.*?^    \},", fence)
-        if len(rows) < 2:
-            raise AssertionError("resolver fence needs at least two rows")
-        reordered = (
-            "KNOB_REGISTRY = [\n" + "\n".join([rows[1], rows[0], *rows[2:]]) + "\n]"
-        )
-        return source[:start] + reordered + source[end:]
-
     def test_a_knob_added_to_args_stales_and_then_repairs_both_consumers(self):
         gen.apply_targets(str(self.root), check_only=False)
         args_path = self.root / "workflows" / "src" / "args.js"
@@ -1469,10 +1160,10 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         self.assertEqual(
             stale,
             [
-                "scripts/gauntlet/config.py",
                 "skills/code-gauntlet/SKILL.md",
                 "skills/code-gauntlet/references/phase2-triage.md",
                 "skills/code-gauntlet/references/phase1-preflight.md",
+                "scripts/gauntlet/registry.py",
             ],
         )
         gen.apply_targets(str(self.root), check_only=False)
@@ -1489,26 +1180,13 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         )
         args_path.write_text(changed, encoding="utf-8")
 
-        # Keep the resolver mirror current for this isolated semantic change. The receipt
-        # fixture has no waistPath, so only the three derived-waist mirrors should drift.
-        resolver_path = self.root / "scripts" / "gauntlet" / "config.py"
-        resolver_identity = gen.load_registry(str(self.root))
-        resolver_text = resolver_path.read_text(encoding="utf-8")
-        resolver_path.write_text(
-            gen.fill_identity_fences(
-                resolver_text,
-                "scripts/gauntlet/config.py",
-                resolver_identity,
-                str(self.root),
-            ),
-            encoding="utf-8",
-        )
         self.assertEqual(
             gen.apply_targets(str(self.root), check_only=True),
             [
                 "skills/code-gauntlet/SKILL.md",
                 "skills/code-gauntlet/references/phase2-triage.md",
                 "skills/code-gauntlet/references/phase1-preflight.md",
+                "scripts/gauntlet/registry.py",
             ],
         )
 

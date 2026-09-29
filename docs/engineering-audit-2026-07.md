@@ -6,7 +6,7 @@
 **This is a point-in-time document.** Every figure in it is a measurement taken on 2026-07-30 at
 `ebf399d`, and every figure carries the command or the source agent that produced it. It is not
 maintained as the repository changes — re-run the command to get a current number. The living
-half of this audit is [docs/duplication-register.md](duplication-register.md).
+half of this audit was the retired duplication register (see #409).
 
 ## 1. Exclusions
 
@@ -395,8 +395,7 @@ GOVERNANCE.md/SUPPORT.md. Deferred, not rejected: Sigstore `gitsign`. Follow-up:
 
 ## 11. Duplication
 
-The full classification is the living
-[docs/duplication-register.md](duplication-register.md); it is not reproduced here.
+The full classification was in the retired duplication register (see #409); it is not reproduced here.
 
 Summary: jscpd at `--min-tokens 60` found **116 clone pairs, 1,483 duplicated lines, 2.16% of lines
 and 2.49% of tokens** over 232 first-party files. Thirty-six rows were classified individually — 32
@@ -595,4 +594,4 @@ The orchestrator replaces each token with the real issue number after filing.
 | #107 | Add the OpenSSF Scorecard action and badge after the pinning pass lands | SHA-pinned action, weekly cron, SARIF to code scanning; sequenced after #106 |
 | #108 | Enforce the merge, tag, and rules-file gates that are currently advisory | Required checks on ruleset 16049246, tag ruleset, frozen check-run names, octo-sts claim scoping, twin-sync drift check made enforcing, the four rules-file corrections |
 | #109 | Strengthen the three tests whose docstrings claim more than they assert | `test_materialize_artifacts.py:284`, `test_verify_findings.py:572`, `test_post_review.py:838` — add the missing assertion or rename to the truth |
-| #110 | Remove the nine accidental duplications recorded in the duplication register | Priority: the two brace scanners across both runtimes and the `invoke.py` baseline walk, where a correctness invariant is held by copy-paste |
+| #110 | Remove the nine accidental duplications recorded in the retired duplication register (see #409) | Priority: the two brace scanners across both runtimes and the `invoke.py` baseline walk, where a correctness invariant is held by copy-paste |

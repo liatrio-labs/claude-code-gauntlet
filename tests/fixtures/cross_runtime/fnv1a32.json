@@ -1,0 +1,11 @@
+{
+  "algorithm": "fnv1a32",
+  "cases": [
+    {"id": "empty", "input": "", "expected": "fnv1a32:0x811c9dc5"},
+    {"id": "ascii", "input": "a", "expected": "fnv1a32:0xe40c292c"},
+    {"id": "words", "input": "hello world", "expected": "fnv1a32:0xd58b3fa7"},
+    {"id": "astral", "input": "😀", "expected": "fnv1a32:0xcb31c4b8"},
+    {"id": "lone_surrogate", "input": "x\ud800y", "expected": "fnv1a32:0x554310b4"},
+    {"id": "bom_crlf", "input": "\ufeffline\r\n", "expected": "fnv1a32:0x51fa3513"}
+  ]
+}

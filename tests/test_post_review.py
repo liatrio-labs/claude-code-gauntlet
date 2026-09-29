@@ -2583,15 +2583,6 @@ GL_DIFF = (
 
 _GLAB_FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "glab_diff")
 
-_PROSE_FENCE_CASES = os.path.join(
-    os.path.dirname(__file__), "fixtures", "prose_fence_cases.json"
-)
-
-
-def _prose_fence_cases():
-    with open(_PROSE_FENCE_CASES, encoding="utf-8") as fh:
-        return json.load(fh)
-
 
 def _glab_fixture(name):
     """Read one `glab mr diff` fixture verbatim.
@@ -6172,34 +6163,6 @@ class TestBuildSkippedSection(unittest.TestCase):
 
 class TestProseFenceHelpers(unittest.TestCase):
     """The Python fold scanner is pinned to the shared hand-typed corpus."""
-
-    def test_fold_cases_match_the_shared_fixture(self):
-        limits = post_review._body_limit("github")
-        for row in _prose_fence_cases()["folds"]:
-            with self.subTest(row=row["id"]):
-                if row["id"] == "PARTIAL":
-                    text = "``````info" + "\nDROP" * 300
-                else:
-                    text = row["kept"] + "\nDROP" * 300
-                folded, dropped = _fold_review_body(text, row["py_allowance"], "github")
-                fold_line = (
-                    f"_[folded: {dropped} more bytes; this {limits['surface']} reached the "
-                    f"{limits['bytes']}-byte {limits['label']} body limit]_"
-                )
-                expected = row["kept"] + row["closer"] + "\n\n" + fold_line
-                self.assertEqual(folded, expected)
-                self.assertEqual(
-                    dropped,
-                    len(text.encode("utf-8")) - len(row["kept"].encode("utf-8")),
-                )
-                self.assertLessEqual(len(folded.encode("utf-8")), row["py_allowance"])
-
-    def test_closer_cases_match_the_shared_fixture(self):
-        for row in _prose_fence_cases()["closers"]:
-            with self.subTest(row=row["id"]):
-                self.assertEqual(
-                    _fence_closer(row["prefix"]), row["closer"].lstrip("\n")
-                )
 
     def test_open_fence_reports_the_opener_shape(self):
         self.assertEqual(_open_fence("   ````x"), ("`", 4, 3))

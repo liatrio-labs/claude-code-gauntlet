@@ -99,18 +99,18 @@ Verify hands each projected slice to the executor as one quoted `--input-inline`
 is planned under `VERIFY_INLINE_CHAR_BUDGET`; the executor reproduces it exactly, and the script
 decodes it and writes the destination path before verification.
 
-- `_DELTA_FIELDS` (Python) and `DELTA_VALUE_KEYS` (JS — `DELTA_KEYS` minus the structural
-  `id`/`verified`) are one list in two runtimes, walked in the same order.
+- `DELTA_VALUE_FIELDS` (generated Python) and `DELTA_VALUE_KEYS` (JS — `DELTA_KEYS` minus
+  `id`/`verified`) are walked in order. The generator projects the Python tuple.
 - `result.deltas` must stay the **first** key of `result` — the reading executor's `Read` is
   length-capped with no truncation notice, so what it echoes must be a prefix.
 - The input proof has **two halves**, both mandatory in `trustSlice`: `inline_checksum` over the
   token as received, and `input_checksum` over the decoded document. Neither sorts keys (#172);
   `sliceInputChecksum` (JS) and `_input_checksum` (Python) are the twins to change together.
-- The slice input is a projection, not a full finding copy: `VERIFY_SLICE_FIELDS` (JS) and
-  `_SLICE_INPUT_FIELDS` (Python) are one list in two runtimes, walked in the same order. Every
-  field the script consults on dispatched slices must be listed there — a lockstep test pins the
-  JS/Python pair, and a read-site scan over `gauntlet.verify.decide`'s own source (both in
-  `tests/test_verify_findings.py`) enforces the list against the script, exempting its own writes
+- The slice input is a projection, not a full finding copy: `VERIFY_SLICE_FIELDS` (JS)
+  generates `gauntlet.registry.VERIFY_SLICE_FIELDS` (Python) in the same order. Every field
+  the script consults on dispatched slices must be listed there. The generator freshness test
+  pins the projection, and the read-site scan in `tests/test_verify_findings.py` enforces it
+  against the script, exempting its own writes
   (`_SCRIPT_WRITTEN_FIELDS`), legacy-CLI-only reads (`_LEGACY_CLI_FIELDS`), and the `line`/`end_line`
   numeric-coercion loop (`_NUMERIC_FIELDS`).
 

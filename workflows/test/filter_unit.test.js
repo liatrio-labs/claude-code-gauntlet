@@ -186,20 +186,6 @@ for (const c of WORD_CASES) test(`word count: ${c.name}`, () => {
   assert.equal(countWords(c.text), c.expected);
 });
 
-const FIX_BOUND_CASES = [
-  { name: 'line bound agrees with render gate', key: 'FIX_MAX_LINES', expected: 100 },
-  { name: 'character bound agrees with render gate', key: 'FIX_MAX_CHARS', expected: 8000 },
-];
-for (const c of FIX_BOUND_CASES) test(`fix bound: ${c.name}`, () => {
-  const js = readFileSync(new URL('../src/filterFindings.js', import.meta.url), 'utf8');
-  const py = readFileSync(new URL('../../scripts/gauntlet/delivery/post.py', import.meta.url), 'utf8');
-  for (const source of [js, py]) {
-    const match = source.match(new RegExp(`^\\s*(?:const\\s+)?_?${c.key}\\s*=\\s*(\\d+)`, 'm'));
-    assert.ok(match);
-    assert.equal(Number(match[1]), c.expected);
-  }
-});
-
 // Scan source so a pattern added outside SUGGESTION_SETS cannot bypass the whitespace contract.
 function regexLiterals(source) {
   const patterns = [];

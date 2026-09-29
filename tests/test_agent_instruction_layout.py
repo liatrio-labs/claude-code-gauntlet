@@ -150,20 +150,6 @@ class TestGeneratedTwins(unittest.TestCase):
                     "scripts/sync_agent_rules.py.",
                 )
 
-    def test_no_twin_is_stale(self):
-        """Delegates to the generator's own --check so the two cannot disagree."""
-        result = subprocess.run(
-            [sys.executable, str(REPO / "scripts" / "sync_agent_rules.py"), "--check"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-        self.assertEqual(
-            result.returncode,
-            0,
-            f"generated twins are stale: {result.stderr.strip()}",
-        )
-
     def test_twin_carries_the_do_not_edit_banner(self):
         """The banner is an HTML comment: stripped before injection, so it is free."""
         for directory in agents_dirs():

@@ -11,7 +11,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from gauntlet import contract_gen as contract_generator
 from gauntlet import fix_tasks as renderer
 
 REPO = Path(__file__).resolve().parents[1]
@@ -783,23 +782,7 @@ class RenderFixTasksTest(unittest.TestCase):
         )
         self.assertIn("**Cited rule:** Use the project rule.", tasks[1]["description"])
 
-    def test_every_generated_detail_field_renders_and_matches_registry(self):
-        identity = contract_generator.load_registry(str(REPO))
-        source = SOURCE.read_text(encoding="utf-8")
-        marker = "# generated-from-registry-identity:detail_fields"
-        start = source.index("_DETAIL_FIELDS_BY_DIMENSION = {", source.index(marker))
-        end = source.index("# /generated-from-registry-identity:detail_fields", start)
-        actual_fence = source[start:end].rstrip()
-        expected_fence = "\n".join(
-            contract_generator.identity_body(
-                "scripts/gauntlet/fix_tasks.py",
-                "detail_fields",
-                identity,
-                str(REPO),
-            )
-        )
-        self.assertEqual(actual_fence, expected_fence)
-
+    def test_every_generated_detail_field_renders(self):
         for dimension, fields in renderer._DETAIL_FIELDS_BY_DIMENSION.items():
             for field in fields:
                 with self.subTest(dimension=dimension, field=field):

@@ -49,15 +49,6 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "assemble_artifacts.py")
 
-# The JS twin, verbatim from the design spec (D3.1). It must live in the sandbox
-# with no TextEncoder/Buffer, so it walks UTF-16 code units via charCodeAt.
-JS_CHECKSUM = (
-    "let s = process.argv[1];"
-    "let h = 0x811c9dc5;"
-    "for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }"
-    "process.stdout.write('fnv1a32:0x' + h.toString(16).padStart(8, '0') + ' ' + s.length);"
-)
-
 # JSON.stringify(x, null, 2) for a list of JSON *documents* (passed as text so a
 # lone surrogate survives the argv hop, which raw UTF-8 could not). Returns the
 # pretty strings as a JSON array — stdout stays well-formed because a well-formed
@@ -65,18 +56,6 @@ JS_CHECKSUM = (
 JS_STRINGIFY = (
     "const docs = JSON.parse(process.argv[1]);"
     "process.stdout.write(JSON.stringify(docs.map((d) => JSON.stringify(JSON.parse(d), null, 2))));"
-)
-
-# The plan self-proof, computed the way workflows/src/stages.js persistPlan computes
-# it: delete the LAST key (`planChecksum`), pretty-print, fnv1a32. `delete` preserves
-# the order of the remaining keys, exactly as Python's dict comprehension does.
-JS_PLAN_CHECKSUM = (
-    "const plan = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));"
-    "delete plan.planChecksum;"
-    "const s = JSON.stringify(plan, null, 2);"
-    "let h = 0x811c9dc5;"
-    "for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }"
-    "process.stdout.write('fnv1a32:0x' + h.toString(16).padStart(8, '0'));"
 )
 
 
@@ -288,44 +267,6 @@ class TestChecksum(unittest.TestCase):
         # At most ONE trailing newline is tolerated.
         self.assertEqual(normalize_content("abc\n\n"), "abc\n")
         self.assertEqual(normalize_content("abc"), "abc")
-
-
-class TestCrossRuntimeChecksumParity(unittest.TestCase):
-    """The JS implementation runs in the sandbox; Python runs on disk. They must
-    agree exactly — surrogate pairs (emoji, astral plane) are the trap."""
-
-    STRINGS: ClassVar[list[str]] = [
-        "",
-        "a",
-        "hello world",
-        '{"id":"F1","line_start":10}',
-        "café — naïve",
-        "日本語のテキストです",
-        "中文字符测试",
-        "😀",
-        "😀🎉🚀",
-        "mixed 😀 café 日本語 tail",
-        "\U0001d54f astral plane \U0001d538\U0001d539\u2102",
-        "line1\nline2\ttab\r\n",
-        "𠜎𠜱𠝹",  # CJK extension B (astral)
-    ]
-
-    def test_js_and_python_agree(self):
-        if shutil.which("node") is None:
-            self.skipTest("node not available")
-        for s in self.STRINGS:
-            proc = subprocess.run(
-                ["node", "-e", JS_CHECKSUM, s],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-            )
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-            js_checksum, js_chars = proc.stdout.strip().split(" ")
-            self.assertEqual(js_checksum, fnv1a32(s), f"checksum mismatch for {s!r}")
-            self.assertEqual(
-                int(js_chars), utf16_len(s), f"char count mismatch for {s!r}"
-            )
 
 
 class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
@@ -835,36 +776,6 @@ class TestPlanSelfProof(unittest.TestCase):
             self.assertEqual(sealed["planChecksum"], fnv1a32(js_stringify_pretty(body)))
 
 
-class TestPlanChecksumCrossRuntime(unittest.TestCase):
-    """The construction has to be unambiguous in BOTH runtimes: the workflow sandbox
-    computes it with JSON.stringify + charCodeAt, this script recomputes it with
-    json.dumps + utf-16-le. If they ever disagree the plan can never be executed."""
-
-    def test_node_and_python_agree_on_the_plan_checksum(self):
-        node_or_skip(self)
-        cases = [
-            [finding("F1"), finding("F2")],
-            [
-                finding("A", description="日本語 😀 astral \U0001d54f"),
-                finding("B", title="中文 🎉"),
-            ],
-            [],
-        ]
-        for findings in cases:
-            with _Workspace(findings=findings) as ws:
-                path = ws.write_plan(ws.plan())
-                proc = subprocess.run(
-                    ["node", "-e", JS_PLAN_CHECKSUM, path],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                )
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertEqual(
-                    proc.stdout.strip(), json.loads(ws.read(path))["planChecksum"]
-                )
-
-
 class TestLoneSurrogatesAreEscapedNotFatal(unittest.TestCase):
     """issue #38 L1-1. A lone UTF-16 surrogate anywhere in findings.json used to
     raise UnicodeEncodeError — a ValueError, so `except (IOError, OSError)` missed
@@ -1113,13 +1024,6 @@ class TestCrossRuntimeStringifyParity(unittest.TestCase):
         "[NaN]",
         "[Infinity]",
     ]
-
-    def test_python_matches_node_over_the_trap_corpus(self):
-        node_or_skip(self)
-        expected = js_stringify_many(self.AGREE)
-        for text, want in zip(self.AGREE, expected, strict=True):
-            got = js_stringify_pretty(json.loads(text))
-            self.assertEqual(got, want, f"divergence for {text}")
 
     def test_the_agreed_output_is_always_utf8_encodable(self):
         # The L1-1 crash: a raw lone surrogate in the output cannot be encoded.

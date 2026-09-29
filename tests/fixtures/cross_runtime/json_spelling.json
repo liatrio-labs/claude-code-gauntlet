@@ -1,0 +1,15 @@
+{
+  "algorithm": "json_spelling",
+  "cases": [
+    {"id": "empty", "input": {}, "expected": "{}"},
+    {"id": "scalars", "input": [null, true, false, 0, ""], "expected": "[\n  null,\n  true,\n  false,\n  0,\n  \"\"\n]"},
+    {"id": "ordered_keys", "input": {"1": "one", "2": "two", "01": "leading"}, "expected": "{\n  \"1\": \"one\",\n  \"2\": \"two\",\n  \"01\": \"leading\"\n}"},
+    {"id": "omitted_vs_null", "input": {"present": null}, "expected": "{\n  \"present\": null\n}"},
+    {"id": "lone_surrogate", "input": ["\ud800"], "expected": "[\n  \"\\ud800\"\n]"},
+    {"id": "astral", "input": ["😀"], "expected": "[\n  \"😀\"\n]"},
+    {"id": "control", "input": ["a\n\t\u0000b"], "expected": "[\n  \"a\\n\\t\\u0000b\"\n]"},
+    {"id": "line_separators", "input": ["\u2028\u2029"], "expected": "[\n  \"\u2028\u2029\"\n]"},
+    {"id": "normalize_bom_crlf", "operation": "normalize", "input": "\ufeffvalue\r\n", "expected": "value"},
+    {"id": "normalize_one_newline", "operation": "normalize", "input": "value\n\n", "expected": "value\n"}
+  ]
+}

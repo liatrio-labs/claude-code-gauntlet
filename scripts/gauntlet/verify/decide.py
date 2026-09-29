@@ -7,8 +7,8 @@ Usage:
     python3 verify_findings.py --input <destination> --input-inline <slice-json> ...
 
 Input JSON schema. The workflow's verify stage dispatches a PROJECTION of each finding
-(VERIFY_SLICE_FIELDS in workflows/src/stages.js / _SLICE_INPUT_FIELDS below — one list in
-two runtimes) rather than the full finding object; extra fields are tolerated and passed
+(VERIFY_SLICE_FIELDS in workflows/src/stages.js, projected into gauntlet.registry)
+rather than the full finding object; extra fields are tolerated and passed
 through untouched when present (the positional CLI feeds full persisted artifacts, which
 carry every field merge/filter/challenge produced):
     {
@@ -97,6 +97,7 @@ from gauntlet.artifacts import (
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
 from gauntlet.paths import entry
+from gauntlet.registry import DELTA_VALUE_FIELDS as _DELTA_FIELDS
 
 # ---------------------------------------------------------------------------
 # Repo root — resolved once at startup (RF-01)
@@ -974,23 +975,6 @@ def batch_findings(findings, min_batch=3, max_batch=5):
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
 
-# The workflow's dispatch projection (VERIFY_SLICE_FIELDS in workflows/src/stages.js, one
-# list in two runtimes, same order). Every finding field this script READS must be listed
-# here — a read of an unlisted field sees only the .get() default on dispatched slices.
-# Extra fields remain tolerated (the positional CLI feeds full persisted artifacts).
-_SLICE_INPUT_FIELDS = (
-    "id",
-    "file",
-    "line_start",
-    "line_end",
-    "description",
-    "evidence",
-    "severity",
-    "confidence",
-    "cross_file_refs",
-    "origin",
-)
-
 # Written by this script before any read — never expected from the input. A dispatched
 # slice never carries these; they exist only after classify_blame / verify_factual /
 # validate_diff_lines / run_verification stamp them onto the in-memory finding.
@@ -1091,7 +1075,7 @@ def _input_checksum(doc):
     tests/test_assemble_artifacts.py and by tests/fixtures/parity/slice_input_proof/.
 
     Keys are NOT sorted, on the record (issue #172): the document arrives in
-    ``_SLICE_INPUT_FIELDS`` order and a document that comes back in another shape is a
+    generated ``VERIFY_SLICE_FIELDS`` order and a document that comes back in another shape is a
     regenerated token, not a copied one.
 
     Returns None rather than raising when the document holds a value the two runtimes
@@ -1409,7 +1393,6 @@ def _resolve_head_sha():
 #     re-lands only with the cross-dimension consolidation redesign (#22). This script
 #     never writes `agent`, so excluding it here is automatic — the workflow-side join is
 #     where the withholding is actually enforced, and a test pins it there.
-_DELTA_FIELDS = ("origin", "severity", "confidence", "elimination_reason")
 
 
 def _delta_confidence(value):

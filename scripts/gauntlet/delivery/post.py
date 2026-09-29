@@ -109,6 +109,21 @@ from gauntlet.marker import (
     is_sha_shaped,
 )
 from gauntlet.prior_review import gitlab_prior_delivery_state
+from gauntlet.registry import (
+    BRAND_MARK,
+    BRAND_NAME,
+    CODE_OWNED_HEADINGS,
+    RULE_SOURCE_LABEL_FALLBACK,
+    RULE_SOURCE_LABELS,
+    SEVERITY_EMOJI,
+    SEVERITY_EMOJI_FALLBACK,
+)
+from gauntlet.registry import (
+    FIX_MAX_CHARS as _FIX_MAX_CHARS,
+)
+from gauntlet.registry import (
+    FIX_MAX_LINES as _FIX_MAX_LINES,
+)
 from gauntlet.text import normalize_report_severity
 
 # ---------------------------------------------------------------------------
@@ -1060,15 +1075,12 @@ _FIX_REASONS = frozenset(
 
 # Delivery bound on fence content. `suggestion` prose is deliberately uncapped —
 # a human reads it — but a fence is committed by one click, so it is bounded here
-# unconditionally. The same two numbers bound the field upstream in
-# workflows/src/filterFindings.js; change both sites together.
+# unconditionally. The bounds come from workflows/src/filterFindings.js.
 #
-# ONE definition of both measures, in both homes: they are taken on the
+# Both measures are taken on the
 # NORMALIZED text (`_fix_code_text` — the single terminating newline removed).
 # Lines are the elements of that text's `split("\n")`; chars are its length in
 # CODE POINTS. Measuring the raw string instead makes a 100-line patch count 101.
-_FIX_MAX_LINES = 100
-_FIX_MAX_CHARS = 8000
 
 # GitLab's own platform limit on a ```suggestion:-m+n offset
 # (`Suggestible::MAX_LINES_CONTEXT`). An offset above it is silently CLAMPED
@@ -1670,32 +1682,6 @@ def _print_fix_summary():
     print(f"  {downgraded} suggested fix(es) downgraded to prose.")
 
 
-# generated-from-registry-identity:constants — do not edit; run scripts/generate_contract_requirements.py
-BRAND_MARK = "⚔️"
-BRAND_NAME = "Code Gauntlet"
-SEVERITY_EMOJI = {
-    "critical": "🔴",
-    "high": "🟠",
-    "medium": "🟡",
-    "low": "💡",
-}
-SEVERITY_EMOJI_FALLBACK = "💡"
-RULE_SOURCE_LABELS = {
-    "documented_rule": "Cited rule",
-    "code_comment": "Cited comment",
-    "repo_precedent": "Repo precedent",
-    "self_inconsistency": "Inconsistency",
-}
-RULE_SOURCE_LABEL_FALLBACK = "Cited rule"
-CODE_OWNED_HEADINGS = [
-    "## Summary",
-    "## Change Context",
-    "## Findings",
-    "## Unverified / pipeline-degraded findings",
-    "## Review Dimensions Summary",
-    "## Review Methodology",
-]
-# /generated-from-registry-identity:constants
 # One mark per delivered SURFACE, never per element: an inline comment/discussion body
 # carries the trailer once at the end; the summary body carries the header instead, and the
 # skipped-findings entries inside it are rendered unbranded.

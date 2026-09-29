@@ -90,10 +90,11 @@ import shlex
 import sys
 import tempfile
 import time
-from types import MappingProxyType
 
 from gauntlet.cli import Command
 from gauntlet.paths import entry
+from gauntlet.registry import ARTIFACT_BASENAMES as ARTIFACT_BASENAMES
+from gauntlet.registry import ARTIFACT_PATH_TEMPLATES
 
 # ---------------------------------------------------------------------------
 # Bounds and defaults
@@ -171,23 +172,6 @@ COMPACT_RETURN_KEYS = (
     "gaps",
     "failingPhase",
 )
-
-#: The four terminal artifacts the Persist stage puts on disk, as
-#: `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}`, keyed by the
-#: compact return's `artifactPaths` keys so the exit-5 marker hands Phase 8 the
-#: same shape. Mirrors `workflows/src/stages.js` (`plannedArtifactPaths`,
-#: `ARTIFACT_PATH_KEYS` and the `all` checkpoint name); tests/test_await_workflow.py
-#: pins the two in lockstep, because a rename on the JS side would otherwise leave
-#: this fallback silently blind forever.
-ARTIFACT_PATH_TEMPLATES = MappingProxyType(
-    {
-        "findings": "code-gauntlet-findings-{sha}.json",
-        "report": "code-gauntlet-report-{sha}.md",
-        "postReview": "code-gauntlet-post-review-{sha}.json",
-        "checkpoints": "code-gauntlet-checkpoint-all-{sha}.json",
-    }
-)
-ARTIFACT_BASENAMES = tuple(ARTIFACT_PATH_TEMPLATES.values())
 
 #: Escape hatch for an environment whose task directory this script cannot derive.
 #: Mirrors $CODE_GAUNTLET_OUTPUT_DIR: one documented variable, no guessing.

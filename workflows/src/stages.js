@@ -850,9 +850,8 @@ export function mergeStage(discoverOut, meta) {
 // The canonical key order of one delta, and the ONLY keys that carry meaning. Both the
 // dispatch schema and the checksum canonicalisation are built from this one list, so a
 // field added to the delta cannot be declared in one place and forgotten in the other.
-// It mirrors verify_findings.py's `_DELTA_FIELDS` plus the two structural keys; the
-// script's audit comment is the authority for why the set is exactly this.
-const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
+// The generator projects the Python delta value fields from this list.
+export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
 
 // The discriminated-union envelope the executor returns. Both shapes coexist so an
 // honest failure is schema-valid — the executor never fabricates a success under
@@ -1367,13 +1366,10 @@ function pinNumericFields(finding) {
 // The inline slice projection: the fields verify_findings.py consults on a
 // dispatched slice, walked in this fixed order so the serialized key order is
 // deterministic — NOT the order the script reads them in (classify_blame's reads come
-// first there and don't match this order). One list in two runtimes with
-// `_SLICE_INPUT_FIELDS` in scripts/gauntlet/verify/decide.py — `tests/test_verify_findings.py`
-// pins the pair in lockstep and scans the script's own source to enforce the list against
-// it. `origin` is listed as tolerated forward-compat even though the script never actually
-// reads the dispatched value: classify_blame overwrites `origin` before every read site.
-// Keep this list on ONE LINE — tests/test_verify_findings.py regex-parses it against the
-// Python twin.
+// first there and don't match this order). The generator projects this list into
+// gauntlet.registry; the verifier read-site test checks it against Python source.
+// `origin` is tolerated forward-compat even though classify_blame overwrites it
+// before every read site.
 export const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin'];
 
 // projectVerifySliceFinding(finding) -> a finding narrowed to VERIFY_SLICE_FIELDS, in that
