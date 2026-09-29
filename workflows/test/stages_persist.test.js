@@ -9,7 +9,7 @@
 //   1. persistPlan is a pure, directly-testable projection description.
 //   2. The fnv1a32-over-UTF-16-code-units checksum matches the Python twin
 //      (the constants below were produced by scripts/gauntlet/artifacts.py;
-//      tests/test_assemble_artifacts.py runs the live node-vs-python parity).
+//      tests/fixtures/cross_runtime/fnv1a32.json pins both runtimes).
 //   3. writeArtifacts' PUBLIC contract is unchanged: same return shape, the same
 //      four artifactPaths keys, the same partial-artifacts degradation.
 //   4. A structural failure degrades (partial); a content-proof MISMATCH does not
@@ -169,9 +169,8 @@ const labels = (ctx) => ctx.calls.map((c) => c.label);
 // --- Checksum ---------------------------------------------------------------
 
 // Vectors produced by scripts/gauntlet/artifacts.py's fnv1a32 (the Python twin).
-// tests/test_assemble_artifacts.py::TestCrossRuntimeChecksumParity runs the live
-// node-vs-python comparison over the same class of inputs; these constants make a
-// drift on EITHER side fail here too, without a subprocess.
+// tests/fixtures/cross_runtime/fnv1a32.json pins both runtimes over the same class of
+// inputs; these constants pin the checksums of this module's own fixtures.
 const CHECKSUM_VECTORS = [
   ['', 'fnv1a32:0x811c9dc5'],
   ['a', 'fnv1a32:0xe40c292c'],

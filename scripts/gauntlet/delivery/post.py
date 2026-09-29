@@ -118,6 +118,11 @@ from gauntlet.registry import (
     SEVERITY_EMOJI,
     SEVERITY_EMOJI_FALLBACK,
 )
+
+# Delivery bound on fence content: `suggestion` prose is uncapped because a human reads it,
+# but a fence is committed by one click. Both runtimes measure the normalized text
+# (`_fix_code_text` removes one final newline): lines are its `split("\n")` elements and
+# chars its length in code points, so a 100-line patch never counts 101.
 from gauntlet.registry import (
     FIX_MAX_CHARS as _FIX_MAX_CHARS,
 )
@@ -1072,14 +1077,6 @@ _FIX_REASONS = frozenset(
         _FIX_OVERLAPS_KEPT_FENCE,
     }
 )
-
-# Delivery bound on fence content. `suggestion` prose is deliberately uncapped —
-# a human reads it — but a fence is committed by one click, so it is bounded here
-# unconditionally. The bounds come from workflows/src/filterFindings.js.
-#
-# Both homes measure the normalized text (`_fix_code_text` removes one final newline).
-# Lines are the elements of that text's `split("\n")`; chars are its length in
-# CODE POINTS. Measuring the raw string instead makes a 100-line patch count 101.
 
 # GitLab's own platform limit on a ```suggestion:-m+n offset
 # (`Suggestible::MAX_LINES_CONTEXT`). An offset above it is silently CLAMPED

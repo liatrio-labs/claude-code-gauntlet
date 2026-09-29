@@ -4,8 +4,7 @@ docs/style/wording-rules.md and docs/style/cadence-rules.md are the canonical ru
 sources, written for a maintainer. scripts/build_style_artifacts.py extracts every
 `RULE: ` line verbatim into docs/style/session-context.md, the one carrier a SessionStart
 hook injects whole via scripts/emit_style_context.py. This module proves: the carrier
-stays fresh (delegating to the generator's own --check, mirroring
-TestGeneratedTwins.test_no_twin_is_stale in test_agent_instruction_layout.py), the
+stays fresh (tests/test_generated_freshness.py runs the generator's --check), the
 sources obey their own rules, the carrier is a faithful and complete extraction, fenced
 code blocks are skipped, and the emitter produces the exact hook payload shape.
 """

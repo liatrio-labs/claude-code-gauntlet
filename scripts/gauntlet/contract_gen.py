@@ -1365,7 +1365,7 @@ def apply_targets(repo_root, check_only=False):
     with _rendered_registry_module(source):
         for rel_path, ops in targets.items():
             abs_path = os.path.join(repo_root, rel_path)
-            if os.path.exists(abs_path):
+            if os.path.exists(abs_path) or ops[0][0] != "whole":
                 with open(abs_path, encoding="utf-8") as handle:
                     current = handle.read()
             else:

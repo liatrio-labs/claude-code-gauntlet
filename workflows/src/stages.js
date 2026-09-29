@@ -1492,7 +1492,7 @@ export function deltaContentProof(ids, deltas) {
 //       executor that flips one origin, shifts one confidence, or invents a plausible
 //       elimination satisfies (1) and (2) and fails here. It is the same checksum pair the
 //       persist path uses (assemble_artifacts.py <-> fnv1a32/JSON.stringify here), pinned
-//       across runtimes by tests/test_assemble_artifacts.py.
+//       across runtimes by tests/fixtures/cross_runtime/.
 //   (4) INPUT PROOF — the receipt's checksum over the document the SCRIPT decoded must
 //       equal the checksum this stage computed over the content it DISPATCHED. Guards
 //       (1)-(3) all grade the executor's answer; this one grades the QUESTION, which

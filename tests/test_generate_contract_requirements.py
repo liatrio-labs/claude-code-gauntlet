@@ -74,6 +74,17 @@ def test_missing_generated_module_is_stale_and_created(registry_copy):
     assert gen.apply_targets(str(registry_copy), check_only=True) == []
 
 
+def test_missing_spliced_target_raises_instead_of_reading_empty(registry_copy):
+    rel = next(
+        r
+        for r, ops in gen.compute_targets(str(registry_copy)).items()
+        if ops[0][0] != "whole"
+    )
+    (registry_copy / rel).unlink()
+    with pytest.raises(FileNotFoundError):
+        gen.apply_targets(str(registry_copy), check_only=True)
+
+
 @pytest.mark.parametrize("corruption", ["syntax", "missing_name"])
 def test_cli_repairs_unimportable_generated_module(tmp_path, corruption):
     shutil.copytree(REPO / "scripts", tmp_path / "scripts")

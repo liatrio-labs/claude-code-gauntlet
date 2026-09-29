@@ -78,8 +78,8 @@ transcription.**
   harness serializes. Grading resume state or the returned primaries against the verify budget
   throws away recoverable runs.
 - `fnv1a32` is defined over UTF-16 code units and **must agree between runtimes** — JS uses
-  `charCodeAt` + `Math.imul`; Python reads `utf-16-le` pairs. `tests/test_assemble_artifacts.py`
-  pins the parity over surrogates and control characters.
+  `charCodeAt` + `Math.imul`; Python reads `utf-16-le` pairs. `tests/fixtures/cross_runtime/fnv1a32.json`, read by
+  both suites, pins the parity over surrogates and control characters.
 - The checkpoint-skeleton guards must stay in lockstep: `persistPlan` empties
   `phases.challenge.findings` only when it holds an array, and `gauntlet.artifacts` refills it
   under the identical predicate. A looser Python predicate fabricates an array.

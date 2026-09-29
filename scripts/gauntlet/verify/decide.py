@@ -1076,7 +1076,7 @@ def _input_checksum(doc):
     ``_run_receipt`` writes ``--input`` itself in the pretty form, so this proof and the
     file agree there by construction. Both sides hash a canonical re-serialisation of the
     same value: the identical pair the persist path uses, pinned across runtimes by
-    tests/test_assemble_artifacts.py and by tests/fixtures/parity/slice_input_proof/.
+    tests/fixtures/cross_runtime/ and by tests/fixtures/parity/slice_input_proof/.
 
     Keys are NOT sorted, on the record (issue #172): the document arrives in
     generated ``VERIFY_SLICE_FIELDS`` order and a document that comes back in another shape is a
