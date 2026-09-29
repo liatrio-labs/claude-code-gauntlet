@@ -633,7 +633,6 @@ def render_python_registry(identity):
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
         "REACHABILITY_VALUES": tuple(identity["reachability"]),
-        "DELTA_KEYS": tuple(delta_keys),
         "DELTA_VALUE_FIELDS": tuple(delta_keys[2:]),
         "VERIFY_SLICE_FIELDS": tuple(identity["verifySliceFields"]),
         "BRAND_MARK": identity["brand"]["mark"],
@@ -649,7 +648,6 @@ def render_python_registry(identity):
     annotations = {
         "SEVERITY_ORDER": "tuple[Severity, ...]",
         "REACHABILITY_VALUES": "tuple[Reachability, ...]",
-        "DELTA_KEYS": "tuple[str, ...]",
         "DELTA_VALUE_FIELDS": "tuple[str, ...]",
         "VERIFY_SLICE_FIELDS": "tuple[str, ...]",
     }
@@ -929,27 +927,14 @@ def render_inline_comment_sample(identity):
     the reference docs; it therefore cannot make generator control comments part of
     the sample a reader copies.
     """
-    if "findingTypes" not in identity:
-        identity = {**load_registry(REPO_ROOT), **identity}
-    module_name = "gauntlet.registry"
-    module = types.ModuleType(module_name)
-    exec(render_python_registry(identity), module.__dict__)
-    previous_registry = sys.modules.get(module_name)
-    sys.modules[module_name] = module
-    try:
-        post_path = os.path.join(os.path.dirname(__file__), "delivery", "post.py")
-        spec = importlib.util.spec_from_file_location(
-            f"gauntlet.delivery._contract_sample_{uuid.uuid4().hex}", post_path
-        )
-        if spec is None or spec.loader is None:
-            raise SystemExit(f"cannot load post renderer from {post_path}")
-        post_review = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(post_review)
-    finally:
-        if previous_registry is None:
-            sys.modules.pop(module_name, None)
-        else:
-            sys.modules[module_name] = previous_registry
+    post_path = os.path.join(os.path.dirname(__file__), "delivery", "post.py")
+    spec = importlib.util.spec_from_file_location(
+        f"gauntlet.delivery._contract_sample_{uuid.uuid4().hex}", post_path
+    )
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"cannot load post renderer from {post_path}")
+    post_review = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(post_review)
 
     saved = {
         name: getattr(post_review, name, None)

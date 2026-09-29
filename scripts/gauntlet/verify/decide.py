@@ -99,6 +99,7 @@ from gauntlet.diff import walk_diff
 from gauntlet.paths import entry
 
 # The mutation audit for these generated fields lives beside DELTA_KEYS in stages.js.
+# A read of a field outside VERIFY_SLICE_FIELDS sees only its .get() default on a dispatched slice.
 from gauntlet.registry import DELTA_VALUE_FIELDS as _DELTA_FIELDS
 
 # ---------------------------------------------------------------------------
@@ -974,7 +975,7 @@ def batch_findings(findings, min_batch=3, max_batch=5):
 # TypeError ("unsupported operand type(s) for -: 'str' and 'int'" / "'<' not supported
 # between instances of 'str' and 'int'"), which in receipt mode surfaces as
 # status:'failed' and degrades the whole slice to UNVERIFIED (the live-smoke failure).
-# The read-site scan allows these reads because coercion uses the same keys it writes.
+# The read-site scan exempts these: _coerce_numeric_fields reads them by loop, not by literal, and skips a key a dispatched slice omits.
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
 
@@ -994,8 +995,6 @@ _SCRIPT_WRITTEN_FIELDS = (
 # repo reads `result.batches`. tests/test_verify_findings.py fails if an entry here stops
 # occurring in the source — a dead exemption must be removed, not left to rot.
 _LEGACY_CLI_FIELDS = ("finding_id",)
-
-# A dispatched slice lacks unlisted fields, so their reads see only .get() defaults.
 
 
 def _half_up_int(value):

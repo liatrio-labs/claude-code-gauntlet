@@ -19,15 +19,6 @@ REACHABILITY_VALUES: tuple[Reachability, ...] = (
     "uncertain",
 )
 
-DELTA_KEYS: tuple[str, ...] = (
-    "id",
-    "verified",
-    "origin",
-    "severity",
-    "confidence",
-    "elimination_reason",
-)
-
 DELTA_VALUE_FIELDS: tuple[str, ...] = (
     "origin",
     "severity",

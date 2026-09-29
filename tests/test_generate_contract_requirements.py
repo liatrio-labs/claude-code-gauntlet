@@ -92,7 +92,7 @@ def test_cli_repairs_unimportable_generated_module(tmp_path, corruption):
         registry.write_text("this is not valid Python =\n", encoding="utf-8")
     else:
         registry.write_text(
-            source.replace("KNOB_REGISTRY =", "ABSENT_KNOB_REGISTRY =", 1),
+            source.replace("BRAND_MARK =", "ABSENT_BRAND_MARK =", 1),
             encoding="utf-8",
         )
     command = [sys.executable, "scripts/generate_contract_requirements.py"]
@@ -104,6 +104,7 @@ def test_cli_repairs_unimportable_generated_module(tmp_path, corruption):
         encoding="utf-8",
     )
     assert stale.returncode == 1, stale.stdout + stale.stderr
+    assert "scripts/gauntlet/registry.py" in stale.stderr
     assert registry.read_text(encoding="utf-8") != source
     repaired = subprocess.run(
         command, cwd=tmp_path, capture_output=True, text=True, encoding="utf-8"

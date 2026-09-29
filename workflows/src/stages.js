@@ -857,7 +857,7 @@ export function mergeStage(discoverOut, meta) {
 // No deletion path mutates a finding. These are the downstream-visible writes.
 // blame_metadata, factual_verification, and diff_validation remain only in the
 // on-disk audit trail; the finding schema does not declare them. The merge-added
-// agent identity is withheld at verify's join to avoid dedup recall collapse.
+// `agent` is not a delta key: the script never writes it, and the join keeps it from the dispatched copy.
 export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
 
 // The discriminated-union envelope the executor returns. Both shapes coexist so an

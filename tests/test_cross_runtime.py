@@ -17,7 +17,23 @@ FAMILIES = ("fnv1a32", "json_spelling", "outbound_line", "outbound_fold", "confi
 def _cases(family):
     payload = json.loads((FIXTURES / f"{family}.json").read_text(encoding="utf-8"))
     assert payload["algorithm"] == family
-    return payload["cases"]
+    cases = payload["cases"]
+    if family == "outbound_line":
+        corpus = json.loads(
+            (FIXTURES.parent / "outbound_comment_cases.json").read_text(
+                encoding="utf-8"
+            )
+        )["cases"]
+        cases += [
+            {
+                "id": f"corpus:{row['id']}",
+                "input": row["input"],
+                "expected": row["expected"],
+            }
+            for row in corpus
+            if row["field_class"] in ("single_line", "location")
+        ]
+    return cases
 
 
 @pytest.mark.parametrize(

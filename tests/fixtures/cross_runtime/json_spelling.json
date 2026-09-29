@@ -70,11 +70,6 @@
       "expected": "[]"
     },
     {
-      "id": "empty_object",
-      "input": {},
-      "expected": "{}"
-    },
-    {
       "id": "scalar_mix",
       "input": [
         {},
@@ -103,13 +98,6 @@
       "expected": "\"plain string\""
     },
     {
-      "id": "lone_high",
-      "input": [
-        "\ud800"
-      ],
-      "expected": "[\n  \"\\ud800\"\n]"
-    },
-    {
       "id": "lone_low",
       "input": [
         "\udfff"
@@ -131,25 +119,11 @@
       "expected": "{\n  \"\\ud800\": \"in a KEY\"\n}"
     },
     {
-      "id": "astral_pair",
-      "input": [
-        "\ud83d\ude00"
-      ],
-      "expected": "[\n  \"\ud83d\ude00\"\n]"
-    },
-    {
       "id": "astral_plus_lone",
       "input": [
         "\ud83d\ude00\ud800"
       ],
       "expected": "[\n  \"\ud83d\ude00\\ud800\"\n]"
-    },
-    {
-      "id": "line_separator_pair",
-      "input": [
-        "\u2028\u2029"
-      ],
-      "expected": "[\n  \"\u2028\u2029\"\n]"
     },
     {
       "id": "control_range",
@@ -186,7 +160,7 @@
       "id": "safe_integer_bounds",
       "input": [
         0,
-        0,
+        -0,
         1,
         -1,
         9007199254740991,

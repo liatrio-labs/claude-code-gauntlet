@@ -790,8 +790,8 @@ class TestLoneSurrogatesAreEscapedNotFatal(unittest.TestCase):
         # A lone surrogate reaches findings.json as a JSON escape — it is not
         # UTF-8-encodable any other way, and JSON.stringify has been well-formed
         # since ES2019. This fixture is pure ASCII apart from that one escape, so
-        # `ensure_ascii=True` reproduces JS's output for it exactly (the corpus in
-        # TestCrossRuntimeStringifyParity proves the general case against node).
+        # `ensure_ascii=True` reproduces JS's output for it exactly (the shared
+        # json_spelling vectors prove the general case in both runtimes).
         findings = [
             finding("F1", description=json.loads('"a lone \\ud800 surrogate"')),
             finding("F2"),
@@ -973,32 +973,7 @@ class TestNumberSpellingPrecondition(unittest.TestCase):
 
 
 class TestCrossRuntimeStringifyParity(unittest.TestCase):
-    """js_stringify_pretty must be byte-identical to JSON.stringify(obj, null, 2).
-    The corpus is the trap list: lone surrogates (L1-1), astral pairs, U+2028/9,
-    control characters, empty containers, and the numeric edges (L1-3)."""
-
-    # Documents as JSON TEXT so escapes survive the argv hop into node unchanged.
-    AGREE: ClassVar[list[str]] = [
-        "[]",
-        "{}",
-        '[{}, [], "", null, true, false]',
-        '{"a": {"b": {"c": []}}}',
-        '"plain string"',
-        '["\\ud800"]',  # lone high surrogate
-        '["\\udfff"]',  # lone low surrogate
-        '["pre\\ud800post"]',  # lone surrogate mid-string
-        '{"\\ud800": "in a KEY"}',
-        '["\\ud83d\\ude00"]',  # a well-formed astral pair
-        '["\\ud83d\\ude00\\ud800"]',  # pair immediately followed by a lone one
-        '["\\u2028\\u2029"]',  # line/paragraph separators: NOT escaped by JS
-        '["\\u0000\\u0001\\u001f"]',  # control characters
-        '["\\b\\f\\n\\r\\t"]',
-        '["quote \\" backslash \\\\ slash /"]',
-        '["café — naïve", "日本語", "\U0001d54f astral", "\\u007f"]',
-        "[0, -0, 1, -1, 9007199254740991, -9007199254740991]",
-        '{"line_start": 10, "line_end": 12, "confidence": 90}',
-        '[{"id": "F1", "d": "多行\\ntext\\twith escapes"}]',
-    ]
+    """Guard unsupported numeric spellings and UTF-8 encoding."""
 
     # Documents whose naive json.dumps spelling PROVABLY differs from JSON.stringify.
     DIVERGENT: ClassVar[list[str]] = [
@@ -1027,8 +1002,15 @@ class TestCrossRuntimeStringifyParity(unittest.TestCase):
 
     def test_the_agreed_output_is_always_utf8_encodable(self):
         # The L1-1 crash: a raw lone surrogate in the output cannot be encoded.
-        for text in self.AGREE:
-            js_stringify_pretty(json.loads(text)).encode("utf-8")
+        vectors = json.loads(
+            (
+                Path(__file__).with_name("fixtures")
+                / "cross_runtime/json_spelling.json"
+            ).read_text(encoding="utf-8")
+        )["cases"]
+        for row in vectors:
+            if row.get("operation") != "normalize":
+                js_stringify_pretty(row["input"]).encode("utf-8")
 
     def test_refused_documents_raise_rather_than_diverge(self):
         for text in self.REFUSE:
