@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.42.9 (2026-09-29)
+
+### Bug Fixes
+
+- Run Ruff for the import ban and correct two stale module references
+  ([#433](https://github.com/liatrio-labs/claude-code-gauntlet/pull/433),
+  [`11d380c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/11d380cf8450674f52aa102d7177c0297d5f904a))
+
+- Run Ruff for the import ban and correct two stale module references (#432)
+  ([#433](https://github.com/liatrio-labs/claude-code-gauntlet/pull/433),
+  [`11d380c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/11d380cf8450674f52aa102d7177c0297d5f904a))
+
+### Documentation
+
+- Name the Ruff twin pin and the dev-group install
+  ([#433](https://github.com/liatrio-labs/claude-code-gauntlet/pull/433),
+  [`11d380c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/11d380cf8450674f52aa102d7177c0297d5f904a))
+
+
 ## v3.42.8 (2026-09-28)
 
 ### Bug Fixes
