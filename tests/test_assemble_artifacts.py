@@ -255,6 +255,8 @@ def test_utf16_len_counts_code_units_not_codepoints(text, expected):
 
 
 def test_pretty_stringifier_handles_deep_alternating_containers():
+    # Above a recursive key-order copy's ceiling on Python 3.10 and 3.11 (about 497)
+    # and below json.dumps's own (about 993).
     value = 0
     for depth in range(600):
         value = {"value": value} if depth % 2 == 0 else [value]
@@ -933,6 +935,11 @@ def test_number_error_names_its_path():
     with pytest.raises(JsSerializationError) as caught:
         js_stringify_pretty({"phases": {"challenge": {"stats": {"rate": 0.5}}}})
     assert "$.phases.challenge.stats.rate" in str(caught.value)
+
+
+def test_non_string_object_keys_are_refused():
+    with pytest.raises(JsSerializationError, match="non-string object key"):
+        js_stringify_pretty({"outer": {1: "value"}})
 
 
 def test_a_float_in_the_source_is_a_structural_failure():

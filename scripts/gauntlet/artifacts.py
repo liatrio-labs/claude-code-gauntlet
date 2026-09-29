@@ -244,8 +244,8 @@ JS_MAX_SAFE_INTEGER = 2**53 - 1
 def assert_js_reproducible(obj, path="$"):
     """Reject floats, non-finite numbers, unsafe integers, non-string keys, and
     non-JSON values before writing. Key order parity is handled by
-    _js_property_order. Iterative so a hand-edited plan cannot blow the recursion
-    limit."""
+    _js_property_order. Iterative so this walk adds no recursion beyond
+    json.dumps's own."""
     stack = [(obj, path)]
     while stack:
         node, where = stack.pop()
