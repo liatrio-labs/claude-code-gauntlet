@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v3.42.12 (2026-09-29)
+
+### Bug Fixes
+
+- Address round-1 review of the key-order change
+  ([#438](https://github.com/liatrio-labs/claude-code-gauntlet/pull/438),
+  [`1759760`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1759760fd16204d49d48e8b4d087f7eb7cac8576))
+
+- Order integer-like keys as JSON.stringify does and name each delta list's source (#435, #437)
+  ([#438](https://github.com/liatrio-labs/claude-code-gauntlet/pull/438),
+  [`1759760`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1759760fd16204d49d48e8b4d087f7eb7cac8576))
+
+### Testing
+
+- Pin the empty-string key in the key-order vector
+  ([#438](https://github.com/liatrio-labs/claude-code-gauntlet/pull/438),
+  [`1759760`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1759760fd16204d49d48e8b4d087f7eb7cac8576))
+
+- Pin the round-2 key-order and key-type survivors
+  ([#438](https://github.com/liatrio-labs/claude-code-gauntlet/pull/438),
+  [`1759760`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1759760fd16204d49d48e8b4d087f7eb7cac8576))
+
+
 ## v3.42.11 (2026-09-29)
 
 ### Bug Fixes
