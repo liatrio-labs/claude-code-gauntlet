@@ -47,3 +47,17 @@ def invoke(monkeypatch, capsys):
         )
 
     return call
+
+
+@pytest.fixture(scope="module")
+def symlink_or_skip(tmp_path_factory):
+    probe = tmp_path_factory.mktemp("symlink-probe")
+    source = probe / "file"
+    source.write_text("x", encoding="utf-8")
+    directory = probe / "directory"
+    directory.mkdir()
+    try:
+        (probe / "file-link").symlink_to(source)
+        (probe / "directory-link").symlink_to(directory, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")

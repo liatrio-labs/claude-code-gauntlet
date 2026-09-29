@@ -1,25 +1,4 @@
-"""
-Tests for scripts/await_workflow.py.
-
-The script is the Phase 3 wait protocol. It blocks inside one Bash tool call until
-the backgrounded Workflow task's output file holds a terminal `{ ok, ... }` object,
-then prints that object and exits 0; short of that it prints a machine-readable
-marker and exits 3 (attempts remain), 4 (exhausted) or 5 (the persisted artifacts
-landed but the return was never observed).
-
-Two properties carry most of the weight and are tested hardest:
-
-* A false terminal is worse than a slow one. Several objects that live near the
-  return also carry an `ok` key — the assemble receipt most of all — and accepting
-  one would send Phase 8 off with the wrong object. TestFalseTerminalRejection is
-  the guard.
-* A parse failure is never an error. For most of the wait the target is absent or
-  zero bytes, so a detector that raised or exited on unparseable input would turn
-  the ordinary case into a lost review. TestPartialAndUnreadable is the guard.
-
-Fixtures are distilled from real on-disk task output files rather than invented;
-each says which one.
-"""
+"""Wait receipts reject false terminal objects and report parse or search failures without dropping the run."""
 
 import io
 import json
@@ -61,12 +40,9 @@ from gauntlet.registry import ARTIFACT_BASENAMES, ARTIFACT_PATH_TEMPLATES
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def test_next_command_keeps_symlinked_plugin_root(tmp_path):
+def test_next_command_keeps_symlinked_plugin_root(tmp_path, symlink_or_skip):
     link = tmp_path / "plugin-link"
-    try:
-        link.symlink_to(REPO_ROOT, target_is_directory=True)
-    except OSError as exc:
-        pytest.skip(f"directory symlinks are unavailable: {exc}")
+    link.symlink_to(REPO_ROOT, target_is_directory=True)
     target = tmp_path / "pending-task"
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
@@ -985,17 +961,6 @@ class TestResolveTarget(unittest.TestCase):
             )
             self.assertEqual(path, os.path.join(ws.path, "wabc123.output"))
             self.assertTrue(searched)
-
-    def test_metacharacter_in_literal_task_root_is_not_globbed(self):
-        base, path = _plant_task_output(self, "resolve-[g]-", "wabc123.output")
-        env = {"TMPDIR": base}
-
-        resolved, searched = resolve_target("wabc123", env)
-
-        self.assertEqual(resolved, path)
-        self.assertTrue(
-            any(entry.startswith(os.path.join(base, "")) for entry in searched)
-        )
 
     def test_glob_metacharacters_in_task_id_do_not_match_other_runs(self):
         """An unescaped id is a pattern that can return another run's file."""

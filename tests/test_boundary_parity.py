@@ -1,27 +1,4 @@
-"""Boundary parity: the v3 pipeline's persisted findings schema must carry every
-field the two RETAINED Python boundary scripts read, so each consumes the pipeline
-output without erroring on a missing field.
-
-Two boundaries, two field vocabularies:
-  - verify_findings.py reads the CANONICAL names (file, line_start, line_end,
-    description, origin, cross_file_refs, ...) — all via ``.get()`` with defaults,
-    so it never errors on an absent field.
-  - post_review.py (the retained v2 poster) reads the V2 names: a finding with a
-    ``line`` INDEXES ``f["file"]`` directly (KeyError if absent), reads ``line``
-    itself and ``body`` / ``end_line`` via ``.get()``. A finding with no ``line``
-    at all degrades into the trailing "could not be anchored inline" section
-    instead of indexing anything (issue #192) — it is never fatal.
-
-The parity contract is that the persisted findings envelope carries the UNION: the
-canonical fields for verify + downstream, plus the ``line`` / ``end_line`` / ``body``
-aliases the retained poster reads. writeArtifacts applies these aliases at the
-persist boundary. This test drives REAL persisted pipeline output (produced by running
-the wired stages through the node recorder) through BOTH scripts — verify positionally,
-post_review --dry-run with the read-only CLI calls mocked — asserting neither errors,
-then documents why the ``file`` alias is load-bearing (for a finding that DOES have a
-line) via a KeyError negative control, and that a missing ``line`` alias degrades
-gracefully rather than aborting the run.
-"""
+"""Persisted findings must carry both canonical verifier fields and delivery aliases."""
 
 import contextlib
 import io
@@ -253,16 +230,12 @@ def build_gh_diff(findings):
 
 
 def _fake_run(diff="", remote="git@github.com:o/r.git\n"):
-    """subprocess.run side_effect mocking post_review's read-only CLI calls
-    (which / git remote / git rev-parse / gh pr diff). Any other command returns an
-    empty JSON object; in dry-run, post_json short-circuits before a POST subprocess."""
+    """Mock read-only CLI calls while dry-run suppresses POSTs."""
 
     def _run(cmd, *_a, **_k):
         def res(out="", err="", rc=0):
             return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
 
-        if cmd[0] == "which":
-            return res(out="/usr/bin/" + cmd[1])
         if cmd[:3] == ["git", "remote", "get-url"]:
             return res(out=remote)
         if cmd[:2] == ["git", "rev-parse"]:
@@ -396,6 +369,12 @@ class TestPostReviewBoundary(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.findings_path = os.path.join(self.tmp, "findings.json")
+        lookup = patch(
+            "gauntlet.delivery.post.shutil.which",
+            side_effect=lambda name: f"/usr/bin/{name}",
+        )
+        lookup.start()
+        self.addCleanup(lookup.stop)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -425,7 +404,7 @@ class TestPostReviewBoundary(unittest.TestCase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=diff),
             ),
         ):
@@ -453,7 +432,7 @@ class TestPostReviewBoundary(unittest.TestCase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=diff),
             ),
         ):
@@ -499,7 +478,7 @@ class TestPostReviewBoundary(unittest.TestCase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=diff),
             ),
         ):
@@ -528,7 +507,7 @@ class TestPostReviewBoundary(unittest.TestCase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS)),
             ),
             self.assertRaises(KeyError),
@@ -551,7 +530,7 @@ class TestPostReviewBoundary(unittest.TestCase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS)),
             ),
         ):

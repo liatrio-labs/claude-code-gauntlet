@@ -29,10 +29,10 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from collections.abc import Mapping
 
+from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.fs import confined
 
@@ -40,29 +40,22 @@ DEFAULT_OUTPUT_DIR = ".code-gauntlet"
 GLOB_META = set("*?[]\\!")
 
 
-def git_run(cwd: str, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        text=True,
-        capture_output=True,
-        check=False,
-        encoding="utf-8",
-    )
+def git_run(cwd: str, *args: str) -> proc.CompletedProcess[str]:
+    return proc.run(["git", *args], cwd=cwd)
 
 
 def git_repo_root(cwd: str) -> str | None:
-    proc = git_run(cwd, "rev-parse", "--show-toplevel")
-    if proc.returncode != 0:
+    result = git_run(cwd, "rev-parse", "--show-toplevel")
+    if result.returncode != 0:
         return None
-    return os.path.realpath(proc.stdout.strip())
+    return os.path.realpath(result.stdout.strip())
 
 
 def git_exclude_path(cwd: str) -> str | None:
-    proc = git_run(cwd, "rev-parse", "--git-path", "info/exclude")
-    if proc.returncode != 0:
+    result = git_run(cwd, "rev-parse", "--git-path", "info/exclude")
+    if result.returncode != 0:
         return None
-    raw = proc.stdout.strip()
+    raw = result.stdout.strip()
     if not raw:
         return None
     if os.path.isabs(raw):

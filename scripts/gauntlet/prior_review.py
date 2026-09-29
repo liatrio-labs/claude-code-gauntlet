@@ -66,8 +66,8 @@ No external Python dependencies — stdlib only.
 import argparse
 import json
 import re
-import subprocess
 
+from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import detect_signal, find_finding_markers, select_latest
@@ -83,35 +83,14 @@ PLATFORM_SOURCES = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Subprocess wrappers — the only impure surface in this module
-# ---------------------------------------------------------------------------
-
-
 def run(cmd, timeout=None):
-    """Run *cmd*. Returns ``(stdout, stderr, returncode)``. Never raises.
-
-    A missing CLI tool (OSError) and a timeout both come back as returncode -1
-    with the reason in stderr, so callers degrade instead of blowing up.
-    """
+    """Return a failure sentinel when a fetch cannot run."""
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            # text=True decodes STRICT utf-8 by default, and UnicodeDecodeError is
-            # a ValueError, not an OSError — a single undecodable byte from gh/glab
-            # would escape this wrapper and exit 1 with empty stdout, breaking the
-            # always-exit-0 contract the caller degrades on.
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
+        return proc.output(cmd, errors="replace", timeout=timeout)
+    except proc.TimeoutExpired:
         return "", f"timed out after {timeout}s", -1
     except OSError as exc:
         return "", str(exc), -1
-    return result.stdout, result.stderr, result.returncode
 
 
 def _parse_json_array(text):

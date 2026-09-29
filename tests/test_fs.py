@@ -1,10 +1,13 @@
 """Shared file and path behavior used by the pipeline scripts."""
 
+import glob
 import os
 import sys
 
 import pytest
 from gauntlet.fs import JsonReadError, confined, glob_under, read_json, write_atomic
+
+from tests.conftest import symlink_or_skip
 
 
 @pytest.mark.parametrize(
@@ -58,16 +61,13 @@ def test_confined_separator_and_traversal(tmp_path, relative, expected):
     assert confined(root / relative, root) is expected
 
 
-def test_confined_resolves_symlink_escape(tmp_path):
+def test_confined_resolves_symlink_escape(tmp_path, symlink_or_skip):
     root = tmp_path / "root"
     root.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
     link = root / "alias"
-    try:
-        link.symlink_to(outside, target_is_directory=True)
-    except (OSError, NotImplementedError):
-        pytest.skip("directory symlinks unavailable")
+    link.symlink_to(outside, target_is_directory=True)
     assert not confined(link / "file", root)
 
 
@@ -114,18 +114,38 @@ def test_glob_under_literal_root_and_escaped_id(tmp_path):
     root.mkdir()
     (root / "run[1].output").write_text("", encoding="utf-8")
     (root / "run1.output").write_text("", encoding="utf-8")
-    import glob
-
     assert glob_under(root, glob.escape("run[1]") + ".output") == [
         str(root / "run[1].output")
     ]
 
 
 def test_glob_under_oserror_is_empty(tmp_path, monkeypatch):
-    import glob
-
     def fail(*_args, **_kwargs):
         raise OSError("glob failed")
 
     monkeypatch.setattr(glob, "glob", fail)
     assert glob_under(tmp_path, "*.json") == []
+
+
+@pytest.mark.parametrize("capable", [False, True])
+def test_symlink_capability_probe_only_skips_on_failure(
+    tmp_path_factory, monkeypatch, capable
+):
+    original = os.symlink
+    calls = []
+
+    def create(source, destination, target_is_directory=False, *, dir_fd=None):
+        if os.fspath(destination).endswith(("file-link", "directory-link")):
+            calls.append(target_is_directory)
+            if not capable:
+                raise OSError("symlinks unavailable")
+        return original(source, destination, target_is_directory=target_is_directory)
+
+    monkeypatch.setattr(os, "symlink", create)
+    if capable:
+        symlink_or_skip.__wrapped__(tmp_path_factory)
+        assert calls == [False, True]
+    else:
+        with pytest.raises(pytest.skip.Exception):
+            symlink_or_skip.__wrapped__(tmp_path_factory)
+        assert calls == [False]

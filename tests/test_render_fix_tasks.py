@@ -11,9 +11,23 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from gauntlet import fix_tasks as renderer
+from gauntlet.proc import ToolError
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def test_sibling_index_missing_git_keeps_file_not_found_error(monkeypatch):
+    def missing(*_args, **_kwargs):
+        raise ToolError(["git", "ls-files", "-z"])
+
+    monkeypatch.setattr(renderer.proc, "run_bytes", missing)
+    assert renderer.SiblingIndex("/repo").error == (
+        "could not list tracked files: FileNotFoundError"
+    )
+
+
 SCRIPT = REPO / "scripts" / "render_fix_tasks.py"
 SOURCE = REPO / "scripts" / "gauntlet" / "fix_tasks.py"
 
@@ -256,6 +270,7 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertTrue(location.startswith("`src/bug.py:11-12`\n\n"))
         self.assertNotIn("alias body", task["description"])
 
+    @pytest.mark.usefixtures("symlink_or_skip")
     def test_rejected_paths_degrade_each_finding_and_report_the_count(self):
         outside = Path(self.tmp.name) / "outside.py"
         outside.write_text("x", encoding="utf-8")
@@ -397,6 +412,7 @@ class RenderFixTasksTest(unittest.TestCase):
         metadata = self.output(self.run_renderer())[0]["metadata"]
         self.assertEqual(metadata["verification"]["post"], ["dotnet test"])
 
+    @pytest.mark.usefixtures("symlink_or_skip")
     def test_outside_symlink_package_candidate_is_absent(self):
         outside = Path(self.tmp.name) / "package.json"
         outside.write_text('{"scripts":{"test":"outside"}}', encoding="utf-8")
@@ -503,6 +519,7 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertEqual(task["metadata"]["scope"]["patterns_to_follow"], [])
         self.assertIn("could not list tracked files", result.stderr)
 
+    @pytest.mark.usefixtures("symlink_or_skip")
     def test_sibling_listing_uses_one_exact_root_git_call_per_run(self):
         root_alias = Path(self.tmp.name) / "repo-alias"
         os.symlink(self.root, root_alias)
@@ -522,19 +539,14 @@ class RenderFixTasksTest(unittest.TestCase):
             calls.append((args, kwargs))
             return fake_result
 
-        with patch.object(renderer.subprocess, "run", side_effect=record_run):
+        with patch.object(renderer.proc, "run_bytes", side_effect=record_run):
             renderer.build_tasks(findings, os.path.realpath(root_alias), [])
 
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], (["git", "ls-files", "-z"],))
         self.assertEqual(
             calls[0][1],
-            {
-                "cwd": os.path.realpath(root_alias),
-                "capture_output": True,
-                "timeout": 10,
-                "check": False,
-            },
+            {"cwd": os.path.realpath(root_alias), "timeout": 10},
         )
 
     def test_normalized_severity_controls_category_complexity_and_model(self):

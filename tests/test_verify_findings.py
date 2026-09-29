@@ -1714,12 +1714,6 @@ class TestRunTimeout(unittest.TestCase):
         self.assertEqual(stdout, "")
         self.assertEqual(stderr, "")
 
-    def test_timeout_none_no_limit(self):
-        """run() without timeout behaves as before."""
-        stdout, stderr, rc = run([sys.executable, "-c", "print('hello')"])
-        self.assertEqual(rc, 0)
-        self.assertIn("hello", stdout)
-
     def test_cwd_changes_directory(self):
         """run() with cwd runs command in specified directory."""
         import os

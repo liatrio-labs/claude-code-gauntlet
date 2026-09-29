@@ -84,9 +84,9 @@ import json
 import math
 import os
 import re
-import subprocess
 import sys
 
+from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
 from gauntlet.fs import write_atomic
@@ -103,27 +103,14 @@ from gauntlet.paths import entry
 # A read of a field outside VERIFY_SLICE_FIELDS sees only its .get() default on a dispatched slice.
 from gauntlet.registry import DELTA_VALUE_FIELDS as _DELTA_FIELDS
 
-# ---------------------------------------------------------------------------
-# Repo root — resolved once at startup (RF-01)
-# ---------------------------------------------------------------------------
-
 
 def _resolve_repo_root():
-    """
-    Return the absolute path of the repository root.
-
-    Uses ``git rev-parse --show-toplevel`` and falls back to the directory
-    that contains this script so the module works even outside a git repo.
-    """
-    result = subprocess.run(
+    """Fall back to the entry directory when git cannot identify a repo."""
+    result = proc.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
     )
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
-    # Fallback: parent directory of this script file
     return os.path.dirname(entry("verify_findings"))
 
 
@@ -136,21 +123,7 @@ REPO_ROOT = _resolve_repo_root()
 
 
 class InputError(Exception):
-    """A fatal condition reported by ``die()`` — malformed input, or a required git
-    command that failed.
-
-    It exists so the two CLI modes can answer it differently. ``die()`` used to call
-    ``sys.exit(1)`` directly, which raises ``SystemExit`` — a BaseException, so it flew
-    straight past ``_run_receipt``'s ``except Exception`` and the script exited having
-    written NO output file at all. The executor then found nothing to read and the receipt
-    path degraded with "no file" rather than the reason. The receipt path now catches
-    decoder, shape, and verification errors and writes an honest failed envelope; the
-    legacy path still converts the same exception back to exit 1.
-
-    As an ordinary Exception it lands in the receipt path's honest failure envelope,
-    carrying the real message; ``main()``'s legacy path converts it back to exit 1, so
-    that behavior is byte-for-byte what it always was.
-    """
+    """Let the receipt path record a failure while the legacy CLI exits one."""
 
 
 def die(msg):
@@ -163,34 +136,17 @@ def warn(msg):
 
 
 def run(cmd, check=False, timeout=None, cwd=None):
-    """Run a subprocess command. Returns (stdout, stderr, returncode).
-
-    Args:
-        cmd: Command as list of strings.
-        check: If True, die() on non-zero exit.
-        timeout: Seconds before TimeoutExpired. None = no limit.
-        cwd: Working directory for the subprocess. None = inherit.
-
-    Returns:
-        (stdout, stderr, returncode). On timeout, returns ("", "", -1).
-    """
+    """Map command timeouts to the verifier's sentinel and checked exits to die()."""
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=cwd,
-            encoding="utf-8",
-        )
-    except subprocess.TimeoutExpired:
+        stdout, stderr, returncode = proc.output(cmd, timeout=timeout, cwd=cwd)
+    except proc.TimeoutExpired:
         return ("", "", -1)
-    if check and result.returncode != 0:
+    if check and returncode != 0:
         die(
-            f"Command failed (exit {result.returncode}): {' '.join(cmd)}\n"
-            f"stderr: {result.stderr.strip()}"
+            f"Command failed (exit {returncode}): {' '.join(cmd)}\n"
+            f"stderr: {stderr.strip()}"
         )
-    return result.stdout, result.stderr, result.returncode
+    return stdout, stderr, returncode
 
 
 # ---------------------------------------------------------------------------

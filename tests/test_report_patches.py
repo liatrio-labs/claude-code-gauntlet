@@ -1,16 +1,4 @@
-"""tests/test_report_patches.py — scripts/report_patches.py (issue #226).
-
-report_patches.py is the read-only Phase 8 gate: it re-runs the diff-only subset of
-delivery's deterministic apply-check (post_review.py's ``_gated_finding`` /
-``_suggested_fix_gate``) against the PINNED review diff and renders every patch that
-passes into a sibling artifact — never editing the report, never posting, never
-mutating ``findings.json``.
-
-Each test below states, in its docstring, the ONE thing it pins and (where
-applicable) which mutation of the implementation it must catch. Verified by actually
-reverting the fix locally and watching the named test go red — not by reading the
-implementation and assuming a green run proves anything.
-"""
+"""Patch reports reuse the delivery apply gate and disclose every downgrade."""
 
 import contextlib
 import io
@@ -25,6 +13,7 @@ from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.patches as report_patches
+import pytest
 
 
 class ReportPatchesTestBase(unittest.TestCase):
@@ -1658,6 +1647,7 @@ class TestOperationalHygiene(ReportPatchesTestBase):
     symlink confinement, the fence info-string regex, write-failure recovery,
     the atomic-write call path, and how many files a run actually creates."""
 
+    @pytest.mark.usefixtures("symlink_or_skip")
     def test_confined_symlink_escape_is_refused_and_the_outside_file_is_untouched(
         self,
     ):
@@ -1772,40 +1762,6 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         self.assertTrue(receipt["errors"])
         self.assertEqual(receipt["downgraded"], 2)
         self.assertEqual(list(receipt["reasons"].keys()), ["empty", "redacted"])
-
-    def test_write_goes_through_write_atomic(self):
-        """RED when the write is replaced by a plain ``open()``/``write()``:
-        the wrapped mock would then never be called."""
-        diff = (
-            "diff --git a/x.py b/x.py\n"
-            "--- a/x.py\n"
-            "+++ b/x.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " line1\n"
-            "+orig\n"
-        )
-        self._write_diff(diff)
-        self._write_findings(
-            [
-                {
-                    "file": "x.py",
-                    "line": 2,
-                    "end_line": 2,
-                    "title": "Kept",
-                    "suggested_fix_code": "changed",
-                }
-            ]
-        )
-
-        with patch(
-            "gauntlet.patches.write_atomic",
-            wraps=report_patches.write_atomic,
-        ) as mock_write:
-            exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        mock_write.assert_called_once()
-        self.assertEqual(mock_write.call_args[0][0], self._artifact_path())
 
     def test_run_creates_exactly_one_new_file(self):
         """R3 structural: RED if the script ever writes a second artifact

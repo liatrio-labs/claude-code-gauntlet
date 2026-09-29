@@ -91,11 +91,12 @@ import hashlib
 import json
 import os
 import re
-import subprocess
+import shutil
 import sys
 import tempfile
 from typing import NamedTuple
 
+from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
 from gauntlet.fs import JsonReadError, read_json
@@ -166,11 +167,7 @@ def warn_skip(msg):
 
 
 def check_tool(name):
-    """Exit with clear error if CLI tool is not available."""
-    result = subprocess.run(
-        ["which", name], capture_output=True, text=True, encoding="utf-8"
-    )
-    if result.returncode != 0:
+    if shutil.which(name) is None:
         die(
             f"'{name}' CLI tool not found. "
             f"Install it and ensure it is authenticated before running this script."
@@ -178,9 +175,7 @@ def check_tool(name):
 
 
 def run_api(cmd):
-    """Run a CLI API command. Returns (stdout, stderr, returncode)."""
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-    return result.stdout, result.stderr, result.returncode
+    return proc.output(cmd)
 
 
 def try_post_json(cmd_prefix, payload):

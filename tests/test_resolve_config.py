@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from gauntlet import config as resolver
 from gauntlet import contract_gen as generator
 
@@ -425,6 +426,7 @@ class TestResolverCli(unittest.TestCase):
         self.assertEqual(stdout, "")
         self.assertIn("RESOLVER SETUP ERROR:", stderr)
 
+    @pytest.mark.usefixtures("symlink_or_skip")
     def test_plugin_root_must_match_and_matching_symlink_is_allowed(self):
         with tempfile.TemporaryDirectory() as directory:
             code, stdout, stderr = resolver.run(["--plugin-root", directory], {})

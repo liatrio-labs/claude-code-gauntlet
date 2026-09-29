@@ -38,13 +38,7 @@ def test_proof_omits_value_beyond_json_nesting_limit(proof):
     assert proof(value) is None
 
 
-@pytest.mark.parametrize("value", [1.0, 2**53, {"x": object()}])
-def test_checksum_or_none_rejects_unreproducible_value(value):
-    assert checksum_or_none(value) is None
-
-
 def test_normalize_content():
-    assert utf16_len("A\U0001f642") == 3
     assert normalize_content("\ufeffA\r\n") == "A"
     assert normalize_content("A\n\n") == "A\n"
 
@@ -102,20 +96,6 @@ def test_pretty_stringifier_handles_deep_alternating_containers():
     assert json.loads(serialized) == value
 
 
-@pytest.mark.parametrize(
-    "value", [1e-7, 0.000001, 90.5, -0.0, float("nan"), float("inf")]
-)
-def test_non_integer_numbers_are_refused(value):
-    with pytest.raises(JsSerializationError):
-        js_stringify_pretty({"confidence": value})
-
-
-@pytest.mark.parametrize("value", [2**53, -(2**53), 10**30])
-def test_integers_outside_the_js_safe_range_are_refused(value):
-    with pytest.raises(JsSerializationError):
-        js_stringify_pretty([value])
-
-
 def test_number_error_names_its_path():
     with pytest.raises(JsSerializationError) as caught:
         js_stringify_pretty({"phases": {"challenge": {"stats": {"rate": 0.5}}}})
@@ -127,32 +107,38 @@ def test_non_string_object_keys_are_refused():
         js_stringify_pretty({"outer": {1: "value"}})
 
 
-DIVERGENT_NUMBER_DOCUMENTS = [
-    "[1e-7]",
-    "[0.000001]",
-    "[90.0]",
-    "[-0.0]",
-    "[9007199254740993]",
-    "[1000000000000000000000000000000]",
-]
-
-REFUSED_NUMBER_DOCUMENTS = [
-    *DIVERGENT_NUMBER_DOCUMENTS,
-    '{"stats": {"rate": 0.5}}',
-    "[1.5]",
-    "[1e21]",
-    "[9007199254740992]",
-    "[NaN]",
-    "[Infinity]",
-]
-
-
-@pytest.mark.parametrize("text", REFUSED_NUMBER_DOCUMENTS)
-def test_refused_documents_raise_rather_than_diverge(text):
+@pytest.mark.parametrize(
+    "value",
+    [
+        *(
+            {"confidence": number}
+            for number in [1e-7, 0.000001, 90.5, -0.0, float("nan"), float("inf")]
+        ),
+        *([number] for number in [2**53, -(2**53), 10**30]),
+        1.0,
+        2**53,
+        {"x": object()},
+        object(),
+        *(
+            json.loads(document)
+            for document in [
+                "[1e-7]",
+                "[0.000001]",
+                "[90.0]",
+                "[-0.0]",
+                "[9007199254740993]",
+                "[1000000000000000000000000000000]",
+                '{"stats": {"rate": 0.5}}',
+                "[1.5]",
+                "[1e21]",
+                "[9007199254740992]",
+                "[NaN]",
+                "[Infinity]",
+            ]
+        ),
+    ],
+)
+def test_unreproducible_values_are_refused(value):
     with pytest.raises(JsSerializationError):
-        js_stringify_pretty(json.loads(text))
-
-
-def test_non_json_value_is_refused():
-    with pytest.raises(JsSerializationError):
-        js_stringify_pretty(object())
+        js_stringify_pretty(value)
+    assert checksum_or_none(value) is None

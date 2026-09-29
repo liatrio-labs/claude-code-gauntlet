@@ -10,7 +10,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _ruff(source: str) -> subprocess.CompletedProcess[str]:
+def _ruff(
+    source: str, filename: str = "scripts/gauntlet/probe.py"
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable,
@@ -21,7 +23,7 @@ def _ruff(source: str) -> subprocess.CompletedProcess[str]:
             "--output-format",
             "concise",
             "--stdin-filename",
-            "scripts/gauntlet/probe.py",
+            filename,
             "-",
         ],
         input=source,
@@ -45,6 +47,30 @@ def test_ruff_bans_scripts_imports(source, banned):
     result = _ruff(source)
     assert ("TID251" in result.stdout) is banned, result.stdout + result.stderr
     assert result.returncode == (1 if banned else 0), result.stderr
+
+
+@pytest.mark.parametrize(
+    ("filename", "source", "banned"),
+    [
+        ("scripts/gauntlet/probe.py", "import subprocess\n\nprint(subprocess)\n", True),
+        (
+            "scripts/gauntlet/probe.py",
+            "from subprocess import run\n\nprint(run)\n",
+            True,
+        ),
+        (
+            "scripts/gauntlet/probe.py",
+            "from scripts.gauntlet import cli\n\nprint(cli)\n",
+            True,
+        ),
+        ("scripts/gauntlet/proc.py", "import subprocess\n\nprint(subprocess)\n", False),
+        ("tests/probe.py", "import subprocess\n\nprint(subprocess)\n", False),
+    ],
+)
+def test_ruff_shipped_process_boundary(filename, source, banned):
+    result = _ruff(source, filename)
+    assert ("TID251" in result.stdout) is banned, result.stdout + result.stderr
+    assert result.returncode == (1 if banned else 0), result.stdout + result.stderr
 
 
 def test_ruff_pin_matches_pre_commit():

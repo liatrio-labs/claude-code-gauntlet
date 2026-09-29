@@ -12,13 +12,13 @@ import json
 import os
 import posixpath
 import re
-import subprocess
 import sys
 import types
 import uuid
 from contextlib import contextmanager
 from typing import Any
 
+from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.paths import ENTRY_ROOT
 
@@ -194,17 +194,14 @@ def _run_node(node_src, repo_root):
     """Run one of the generator's Node programs with a concise failure diagnostic."""
     command = ["node", "--input-type=module", "-e", node_src]
     try:
-        return subprocess.run(
+        return proc.run(
             command,
             cwd=repo_root,
-            capture_output=True,
-            text=True,
             check=True,
-            encoding="utf-8",
         )
     except FileNotFoundError:
         raise SystemExit(_node_failure_message(command)) from None
-    except subprocess.CalledProcessError as error:
+    except proc.CalledProcessError as error:
         raise SystemExit(_node_failure_message(command, error.stderr)) from None
 
 
