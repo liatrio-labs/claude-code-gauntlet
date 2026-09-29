@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v3.42.11 (2026-09-29)
+
+### Bug Fixes
+
+- Address gauntlet findings on #436
+  ([#436](https://github.com/liatrio-labs/claude-code-gauntlet/pull/436),
+  [`41c6067`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/41c6067a31c615c6c3080020cd0a7cf382a3901b))
+
+- Address round-1 review of the #409 registry build
+  ([#436](https://github.com/liatrio-labs/claude-code-gauntlet/pull/436),
+  [`41c6067`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/41c6067a31c615c6c3080020cd0a7cf382a3901b))
+
+- Address round-2 review of the #409 registry build
+  ([#436](https://github.com/liatrio-labs/claude-code-gauntlet/pull/436),
+  [`41c6067`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/41c6067a31c615c6c3080020cd0a7cf382a3901b))
+
+### Refactoring
+
+- Generate Python's cross-runtime values and pin shared algorithms with vectors
+  ([#436](https://github.com/liatrio-labs/claude-code-gauntlet/pull/436),
+  [`41c6067`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/41c6067a31c615c6c3080020cd0a7cf382a3901b))
+
+- Generate Python's cross-runtime values and pin shared algorithms with vectors (#409)
+  ([#436](https://github.com/liatrio-labs/claude-code-gauntlet/pull/436),
+  [`41c6067`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/41c6067a31c615c6c3080020cd0a7cf382a3901b))
+
+
 ## v3.42.10 (2026-09-29)
 
 ### Bug Fixes
