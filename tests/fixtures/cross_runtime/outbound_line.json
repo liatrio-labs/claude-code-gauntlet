@@ -1,14 +1,205 @@
 {
   "algorithm": "outbound_line",
   "cases": [
-    {"id": "empty", "input": "", "expected": ""},
-    {"id": "mention", "input": "Please ask @leehopper.", "expected": "Please ask ＠leehopper."},
-    {"id": "email", "input": "Contact dev@example.com for details.", "expected": "Contact dev@example.com for details."},
-    {"id": "html", "input": "<dev@example.com>", "expected": "&lt;dev@example.com>"},
-    {"id": "link_destination", "input": "[profile](https://x.test/@user)", "expected": "[profile](https://x.test/＠user)"},
-    {"id": "inline_code", "input": "code `@inside <tag> &copy;` and @outside", "expected": "code `＠inside ＜tag> &copy;` and ＠outside"},
-    {"id": "unclosed_code", "input": "open `@outside <tag>", "expected": "open \\`＠outside &lt;tag>"},
-    {"id": "unequal_delimiter", "input": "`a`` @inside", "expected": "\\`a\\`\\` ＠inside"},
-    {"id": "named_reference", "input": "&amp; &#64; &#60;table", "expected": "&amp; ＠ &lt;table"}
+    {
+      "id": "empty",
+      "input": "",
+      "expected": ""
+    },
+    {
+      "id": "mention",
+      "input": "Please ask @leehopper.",
+      "expected": "Please ask ＠leehopper."
+    },
+    {
+      "id": "email",
+      "input": "Contact dev@example.com for details.",
+      "expected": "Contact dev@example.com for details."
+    },
+    {
+      "id": "html",
+      "input": "<dev@example.com>",
+      "expected": "&lt;dev@example.com>"
+    },
+    {
+      "id": "link_destination",
+      "input": "[profile](https://x.test/@user)",
+      "expected": "[profile](https://x.test/＠user)"
+    },
+    {
+      "id": "inline_code",
+      "input": "code `@inside <tag> &copy;` and @outside",
+      "expected": "code `＠inside ＜tag> &copy;` and ＠outside"
+    },
+    {
+      "id": "unclosed_code",
+      "input": "open `@outside <tag>",
+      "expected": "open \\`＠outside &lt;tag>"
+    },
+    {
+      "id": "unequal_delimiter",
+      "input": "`a`` @inside",
+      "expected": "\\`a\\`\\` ＠inside"
+    },
+    {
+      "id": "named_reference",
+      "input": "&amp; &#64; &#60;table",
+      "expected": "&amp; ＠ &lt;table"
+    },
+    {
+      "id": "literal_comparisons",
+      "input": "plain a < b; x <= y; <3; <tag>",
+      "expected": "plain a < b; x <= y; <3; &lt;tag>"
+    },
+    {
+      "id": "literal_underscore_mention",
+      "input": "Notify @alice and _@team; a@domain.test; https://x/@user; <table>",
+      "expected": "Notify ＠alice and _＠team; a@domain.test; https://x/＠user; &lt;table>"
+    },
+    {
+      "id": "literal_entities",
+      "input": "&amp; &lt; &gt; &quot; &copy; &#64; &#60;table",
+      "expected": "&amp; &lt; &gt; &quot; &copy; ＠ &lt;table"
+    },
+    {
+      "id": "literal_broken_link",
+      "input": "[profile](broken@leehopper",
+      "expected": "[profile](broken@leehopper"
+    },
+    {
+      "id": "literal_broken_nested_link",
+      "input": "[a](x(y)`z) @leehopper <ins>q</ins> `",
+      "expected": "[a](x(y)`z) ＠leehopper ＜ins>q＜/ins> `"
+    },
+    {
+      "id": "corpus_user_mention",
+      "input": "Please ask @leehopper.",
+      "expected": "Please ask ＠leehopper."
+    },
+    {
+      "id": "corpus_java_override",
+      "input": "@Override",
+      "expected": "＠Override"
+    },
+    {
+      "id": "corpus_types_node",
+      "input": "@types/node",
+      "expected": "＠types/node"
+    },
+    {
+      "id": "corpus_safe_single_line_title",
+      "input": "Keep the validation message clear",
+      "expected": "Keep the validation message clear"
+    },
+    {
+      "id": "corpus_single_line_newlines",
+      "input": "first\r\n@user\rsecond",
+      "expected": "first ＠usersecond"
+    },
+    {
+      "id": "corpus_title_505_code_span",
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx `<table>`",
+      "expected": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx `＜table>`"
+    },
+    {
+      "id": "corpus_location_unicode",
+      "input": "src/naïve.ts",
+      "expected": "src/naïve.ts"
+    },
+    {
+      "id": "corpus_location_at",
+      "input": "src/dir/@name.ts",
+      "expected": "src/dir/＠name.ts"
+    },
+    {
+      "id": "corpus_location_unmatched_tick",
+      "input": "src/file`name.ts",
+      "expected": "src/file\\`name.ts"
+    },
+    {
+      "id": "corpus_location_double_ticks",
+      "input": "src/file``name.ts",
+      "expected": "src/file\\`\\`name.ts"
+    },
+    {
+      "id": "corpus_unequal_double_single",
+      "input": "left ``x <ins> @user` right",
+      "expected": "left \\``x ＜ins> ＠user` right"
+    },
+    {
+      "id": "corpus_escaped_first_of_double",
+      "input": "left \\``<ins> @inside` right @outside",
+      "expected": "left \\``＜ins> ＠inside` right ＠outside"
+    },
+    {
+      "id": "corpus_span_final_backslash",
+      "input": "left `danger <table> @user\\`",
+      "expected": "left `danger ＜table> ＠user\\`"
+    },
+    {
+      "id": "corpus_fuzz_title_hash_ticks",
+      "input": "#   `|---_'@leehopper>@leehopper ````&#38;#64;~",
+      "expected": "#   \\`|---_'＠leehopper>＠leehopper \\`\\`\\`\\`＠~"
+    },
+    {
+      "id": "corpus_fuzz_title_ins_ticks",
+      "input": ">`<ins>------**```#?",
+      "expected": ">\\`&lt;ins>------**\\`\\`\\`#?"
+    },
+    {
+      "id": "corpus_fuzz_title_newline_ticks",
+      "input": "]__``~word \\@leehopper \n``````/",
+      "expected": "]__\\`\\`~word \\＠leehopper  \\`\\`\\`\\`\\`\\`/"
+    },
+    {
+      "id": "corpus_fuzz_title_mixed_runs",
+      "input": "```]\"`<ins>``|&#64;- @leehopper --- | ---",
+      "expected": "\\```]\"`＜ins>``|＠- ＠leehopper --- | ---"
+    },
+    {
+      "id": "corpus_fuzz_title_table_tail",
+      "input": "<| --- |;a- - `===--- | ---@leehopper word ``~~",
+      "expected": "<| --- |;a- - \\`===--- | ---＠leehopper word \\`\\`~~"
+    },
+    {
+      "id": "corpus_destination_rejected_closer",
+      "input": "`x](a`) <ins> @user",
+      "expected": "`x](a`) &lt;ins> ＠user"
+    },
+    {
+      "id": "corpus_arabic_indic_reference",
+      "input": "Value &#٦٤; and &#x٤٠;.",
+      "expected": "Value &#٦٤; and &#x٤٠;."
+    },
+    {
+      "id": "corpus_location_hostile_chars",
+      "input": "app/@modal/<Slot>.tsx",
+      "expected": "app/＠modal/&lt;Slot>.tsx"
+    },
+    {
+      "id": "corpus_inline_hostile_chars",
+      "input": "`<Slot> @team`",
+      "expected": "`＜Slot> ＠team`"
+    },
+    {
+      "id": "corpus_single_line_fence_shape",
+      "input": "~~~ x",
+      "expected": "~~~ x"
+    },
+    {
+      "id": "corpus_absence_nbsp",
+      "input": " ",
+      "expected": ""
+    },
+    {
+      "id": "corpus_absence_ideographic",
+      "input": "　",
+      "expected": ""
+    },
+    {
+      "id": "corpus_delimiter_removed_lt",
+      "input": "`<`q",
+      "expected": "`＜`q"
+    }
   ]
 }

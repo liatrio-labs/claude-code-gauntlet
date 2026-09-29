@@ -74,6 +74,52 @@ def test_missing_generated_module_is_stale_and_created(registry_copy):
     assert gen.apply_targets(str(registry_copy), check_only=True) == []
 
 
+@pytest.mark.parametrize("corruption", ["syntax", "missing_name"])
+def test_cli_repairs_unimportable_generated_module(tmp_path, corruption):
+    shutil.copytree(REPO / "scripts", tmp_path / "scripts")
+    for rel in sorted(
+        set(gen.compute_targets(str(REPO))) | gen.declared_inputs(str(REPO))
+    ):
+        source = REPO / rel
+        target = tmp_path / rel
+        if target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+    registry = tmp_path / "scripts/gauntlet/registry.py"
+    source = registry.read_text(encoding="utf-8")
+    if corruption == "syntax":
+        registry.write_text("this is not valid Python =\n", encoding="utf-8")
+    else:
+        registry.write_text(
+            source.replace("KNOB_REGISTRY =", "ABSENT_KNOB_REGISTRY =", 1),
+            encoding="utf-8",
+        )
+    command = [sys.executable, "scripts/generate_contract_requirements.py"]
+    stale = subprocess.run(
+        [*command, "--check"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert stale.returncode == 1, stale.stdout + stale.stderr
+    assert registry.read_text(encoding="utf-8") != source
+    repaired = subprocess.run(
+        command, cwd=tmp_path, capture_output=True, text=True, encoding="utf-8"
+    )
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    assert registry.read_text(encoding="utf-8") == source
+    clean = subprocess.run(
+        [*command, "--check"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+
+
 @pytest.mark.skipif(shutil.which("ruff") is None, reason="ruff is not installed")
 def test_generated_module_is_a_ruff_format_fixed_point(registry_copy):
     gen.apply_targets(str(registry_copy), check_only=False)

@@ -97,6 +97,8 @@ from gauntlet.artifacts import (
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
 from gauntlet.paths import entry
+
+# The mutation audit for these generated fields lives beside DELTA_KEYS in stages.js.
 from gauntlet.registry import DELTA_VALUE_FIELDS as _DELTA_FIELDS
 
 # ---------------------------------------------------------------------------
@@ -972,6 +974,7 @@ def batch_findings(findings, min_batch=3, max_batch=5):
 # TypeError ("unsupported operand type(s) for -: 'str' and 'int'" / "'<' not supported
 # between instances of 'str' and 'int'"), which in receipt mode surfaces as
 # status:'failed' and degrades the whole slice to UNVERIFIED (the live-smoke failure).
+# The read-site scan allows these reads because coercion uses the same keys it writes.
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
 
@@ -991,6 +994,8 @@ _SCRIPT_WRITTEN_FIELDS = (
 # repo reads `result.batches`. tests/test_verify_findings.py fails if an entry here stops
 # occurring in the source — a dead exemption must be removed, not left to rot.
 _LEGACY_CLI_FIELDS = ("finding_id",)
+
+# A dispatched slice lacks unlisted fields, so their reads see only .get() defaults.
 
 
 def _half_up_int(value):
@@ -1371,28 +1376,6 @@ def _resolve_head_sha():
 # generation, and the surface on which a live run turned a 10-verified/0-eliminated disk
 # result into a 7/3 echo with a valid receipt.
 #
-# WHAT THE DELTA MUST COVER — audited against every mutation site in this file (there is
-# no `del` and no `.pop`: every mutation is an assignment, so the delta is complete iff it
-# names every key this script assigns that anything downstream consumes):
-#
-#   origin              classify_blame (always) + validate_diff_lines ("surfaced" flip)
-#   severity            the one-step downgrade, at most once, from either of those two
-#   confidence          verify_factual's zeroing / proportional reduction
-#   elimination_reason  run_verification's stamp on a real elimination
-#
-# DELIBERATELY EXCLUDED, each for a reason that must survive a future edit:
-#
-#   blame_metadata / factual_verification / diff_validation — this script's own audit
-#     trail. No workflow schema declares them (registry.js FINDING_PROP_TYPES is the whole
-#     declaration), so the by-value echo ALREADY dropped them on every run and no stage
-#     downstream of verify reads them. They stay in the on-disk document, which is
-#     unchanged, for bench/v2 consumers and for anything that wants the audit trail.
-#   agent — merge-injected identity, withheld at this boundary ON PURPOSE (#25 req 1).
-#     Deterministic `agent` survival past verify is the measured dedup recall-collapse
-#     mechanism (mini-subset A: dedup eliminations 7 -> 33, recall 20/30 -> 13/30); it
-#     re-lands only with the cross-dimension consolidation redesign (#22). This script
-#     never writes `agent`, so excluding it here is automatic — the workflow-side join is
-#     where the withholding is actually enforced, and a test pins it there.
 
 
 def _delta_confidence(value):

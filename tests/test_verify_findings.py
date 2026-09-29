@@ -2165,7 +2165,7 @@ class TestBuildDeltas(unittest.TestCase):
         # blame_metadata/factual_verification/diff_validation are this script's own
         # audit trail (no workflow schema declares them); agent is merge-injected
         # identity withheld at this boundary ON PURPOSE (#25 req 1) -- see the audit
-        # comment above _DELTA_FIELDS in verify_findings.py for both rationales.
+        # beside DELTA_KEYS in workflows/src/stages.js for both rationales.
         finding = {
             "id": "bug-1",
             "origin": "surfaced",

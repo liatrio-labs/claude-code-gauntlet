@@ -58,8 +58,7 @@ def tracked(pathspec):
         check=True,
         encoding="utf-8",
     ).stdout
-    # A deletion remains in the index until the orchestrator stages this worktree.
-    return [line for line in out.splitlines() if line and (REPO / line).exists()]
+    return [line for line in out.splitlines() if line]
 
 
 class TestDocsRegistry(unittest.TestCase):

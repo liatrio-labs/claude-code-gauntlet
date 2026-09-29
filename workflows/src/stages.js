@@ -851,6 +851,13 @@ export function mergeStage(discoverOut, meta) {
 // dispatch schema and the checksum canonicalisation are built from this one list, so a
 // field added to the delta cannot be declared in one place and forgotten in the other.
 // The generator projects the Python delta value fields from this list.
+// Audit against gauntlet.verify.decide's assignments: origin is set by
+// classify_blame and validate_diff_lines; severity by their downgrade;
+// confidence by verify_factual; elimination_reason by run_verification.
+// No deletion path mutates a finding. These are the downstream-visible writes.
+// blame_metadata, factual_verification, and diff_validation remain only in the
+// on-disk audit trail; the finding schema does not declare them. The merge-added
+// agent identity is withheld at verify's join to avoid dedup recall collapse.
 export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
 
 // The discriminated-union envelope the executor returns. Both shapes coexist so an

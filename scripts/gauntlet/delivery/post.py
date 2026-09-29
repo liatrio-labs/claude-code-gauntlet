@@ -1077,8 +1077,7 @@ _FIX_REASONS = frozenset(
 # a human reads it — but a fence is committed by one click, so it is bounded here
 # unconditionally. The bounds come from workflows/src/filterFindings.js.
 #
-# Both measures are taken on the
-# NORMALIZED text (`_fix_code_text` — the single terminating newline removed).
+# Both homes measure the normalized text (`_fix_code_text` removes one final newline).
 # Lines are the elements of that text's `split("\n")`; chars are its length in
 # CODE POINTS. Measuring the raw string instead makes a 100-line patch count 101.
 

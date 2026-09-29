@@ -29,6 +29,7 @@ for (const [family, cases] of vectors) {
         actual = foldProse(source.prefix + source.repeat.repeat(source.count), row.js_limit);
       }
       assert.equal(actual, family === 'outbound_fold' ? row.expected_js : row.expected);
+      if (family === 'outbound_line') assert.equal(prepareLine(actual), actual);
     });
   }
 }

@@ -13,7 +13,7 @@ from tests.support.js_values import js_values
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# CROSSED SWORDS U+2694 + VARIATION SELECTOR-16 U+FE0F. Two codepoints, both BMP.
+# Escapes pin the variation selector that a rendered glyph can hide.
 BRAND_MARK = "\u2694\ufe0f"
 # WARNING SIGN U+26A0 + VS16 — the one other VS16-carrying mark this repo renders
 # (post_review's invalid-position warning). Disjointness from it is what keeps the

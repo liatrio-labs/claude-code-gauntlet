@@ -12,7 +12,7 @@ The five transform golden families under `tests/fixtures/parity/` are JavaScript
 
 Classifies each finding as `new` (introduced by this change) or `surfaced` (pre-existing code exposed by the change), fact-checks evidence against file content, and validates line references against the diff. It is the one stage that still shells out to Python — the workflow has no shell, so it dispatches an **executor** agent per finding-slice.
 
-**The executor pattern.** The stage slices the merged findings into `limits.verifySliceSize` chunks and plans each projected slice under `VERIFY_INLINE_CHAR_BUDGET`. The dispatched slice input carries only the fields `verify_findings.py` consults — `VERIFY_SLICE_FIELDS` (JS) / `_SLICE_INPUT_FIELDS` (Python) — so passthrough fields like `title`, `suggestion`, per-dimension extras, and `agent` never transit the executor. It then dispatches one `executor` agent per slice **sequentially** so each receipt pairs to its slice by order. Each executor runs exactly:
+**The executor pattern.** The stage slices the merged findings into `limits.verifySliceSize` chunks and plans each projected slice under `VERIFY_INLINE_CHAR_BUDGET`. The dispatched slice input carries only the fields `verify_findings.py` consults — `VERIFY_SLICE_FIELDS` (JS), generated as `gauntlet.registry.VERIFY_SLICE_FIELDS` (Python) — so passthrough fields like `title`, `suggestion`, per-dimension extras, and `agent` never transit the executor. It then dispatches one `executor` agent per slice **sequentially** so each receipt pairs to its slice by order. Each executor runs exactly:
 
 ```
 python3 {verify.scriptPath} --input {inputPathBase}.slice{i}.json --input-inline '<payload>' \
