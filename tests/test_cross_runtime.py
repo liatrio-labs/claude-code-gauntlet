@@ -55,8 +55,6 @@ def test_cross_runtime_python_vector(family, case):
             if case.get("operation") == "normalize"
             else js_stringify_pretty(case["input"])
         )
-        if case.get("operation") != "normalize":
-            actual.encode("utf-8")
     elif family == "outbound_line":
         actual = prepare_line(case["input"])
     elif family == "config_rule":

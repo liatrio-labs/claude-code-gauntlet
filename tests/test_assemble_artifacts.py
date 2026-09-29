@@ -254,9 +254,19 @@ def test_utf16_len_counts_code_units_not_codepoints(text, expected):
     assert utf16_len(text) == expected
 
 
+def test_pretty_stringifier_handles_deep_alternating_containers():
+    value = 0
+    for depth in range(600):
+        value = {"value": value} if depth % 2 == 0 else [value]
+
+    serialized = js_stringify_pretty(value)
+
+    assert json.loads(serialized) == value
+
+
 class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
     """The JS side respells escaped backslashes in findings.json as \\u005c so the
-    text survives executor transcription. The Python reader must accept those
+    text survives artifact-writer transcription. The Python reader must accept those
     bytes and derive the same parsed content.
 
     Deliberately shells out to node for the hardened string rather than
@@ -893,10 +903,10 @@ DIVERGENT_NUMBER_DOCUMENTS = [
     "[-0.0]",
     "[9007199254740993]",
     "[1000000000000000000000000000000]",
-    '{"stats": {"rate": 0.5}}',
 ]
 REFUSED_NUMBER_DOCUMENTS = [
     *DIVERGENT_NUMBER_DOCUMENTS,
+    '{"stats": {"rate": 0.5}}',
     "[1.5]",
     "[1e21]",
     "[9007199254740992]",
@@ -919,14 +929,10 @@ def test_integers_outside_the_js_safe_range_are_refused(value):
         js_stringify_pretty([value])
 
 
-@pytest.mark.parametrize(
-    ("value", "path"),
-    [(0.5, "$.phases.challenge.stats.rate")],
-)
-def test_number_error_names_its_path(value, path):
+def test_number_error_names_its_path():
     with pytest.raises(JsSerializationError) as caught:
-        js_stringify_pretty({"phases": {"challenge": {"stats": {"rate": value}}}})
-    assert path in str(caught.value)
+        js_stringify_pretty({"phases": {"challenge": {"stats": {"rate": 0.5}}}})
+    assert "$.phases.challenge.stats.rate" in str(caught.value)
 
 
 def test_a_float_in_the_source_is_a_structural_failure():
@@ -950,16 +956,15 @@ def test_a_bare_NaN_in_the_source_is_a_structural_failure():
         assert not os.path.exists(ws.post_path)
 
 
-@pytest.mark.parametrize(
-    "text",
-    [text for text in DIVERGENT_NUMBER_DOCUMENTS if text != '{"stats": {"rate": 0.5}}'],
-)
-def test_refused_number_spellings_really_diverge_in_node(text):
+def test_refused_number_spellings_really_diverge_in_node():
     if shutil.which("node") is None:
         pytest.skip("node not available")
-    js = js_stringify_many([text])[0]
-    naive = json.dumps(json.loads(text), indent=2, ensure_ascii=False)
-    assert naive != js, f"{text} no longer diverges"
+    node_spellings = js_stringify_many(DIVERGENT_NUMBER_DOCUMENTS)
+    for text, node_spelling in zip(
+        DIVERGENT_NUMBER_DOCUMENTS, node_spellings, strict=True
+    ):
+        naive = json.dumps(json.loads(text), indent=2, ensure_ascii=False)
+        assert naive != node_spelling, f"{text} no longer diverges"
 
 
 @pytest.mark.parametrize("text", REFUSED_NUMBER_DOCUMENTS)
