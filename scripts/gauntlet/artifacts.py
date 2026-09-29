@@ -136,249 +136,26 @@ inspects the reviewed codebase.
 
 import argparse
 import json
-import os
-import struct
 import sys
-import tempfile
-from contextlib import suppress
 
 from gauntlet.cli import Command
-from gauntlet.jsjson import escape_lone_surrogates
+from gauntlet.fs import write_atomic
+from gauntlet.jsjson import (
+    escape_lone_surrogates,
+    fnv1a32,
+    js_stringify_pretty,
+    normalize_content,
+    utf16_len,
+)
 
 PLAN_VERSION = 2
 PLAN_CHECKSUM_KEY = "planChecksum"
 
-# ---------------------------------------------------------------------------
-# Checksum — fnv1a32 over UTF-16 code units
-# ---------------------------------------------------------------------------
-#
-# The JS twin runs inside the workflow sandbox, which has NO TextEncoder and NO
-# Buffer, so the only cheap byte-source available there is String#charCodeAt —
-# i.e. UTF-16 code units. This implementation reproduces it exactly, including
-# surrogate pairs (an emoji contributes TWO units on both sides).
-#
-#   JS: let h = 0x811c9dc5;
-#       for (let i = 0; i < s.length; i++) {
-#         h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0;
-#       }
-#       return 'fnv1a32:0x' + h.toString(16).padStart(8, '0');
-#
-# JS's `^=` coerces through ToInt32 (so h may read as negative there) but the
-# 32-bit pattern is identical to the masked arithmetic below, and Math.imul is a
-# language builtin — not a host global — so it IS available in the sandbox.
-
-FNV_OFFSET_BASIS = 0x811C9DC5
-FNV_PRIME = 0x01000193
-
-
-def utf16_code_units(s):
-    """The UTF-16 code units of `s`, exactly what JS charCodeAt() walks."""
-    raw = s.encode("utf-16-le", "surrogatepass")
-    return struct.unpack(f"<{len(raw) // 2}H", raw)
-
-
-def utf16_len(s):
-    """The UTF-16 code-unit count — JS's `s.length`, not len(s)."""
-    return len(s.encode("utf-16-le", "surrogatepass")) // 2
-
-
-def fnv1a32(s):
-    """FNV-1a (32-bit) over UTF-16 code units, formatted as `fnv1a32:0x........`."""
-    h = FNV_OFFSET_BASIS
-    for unit in utf16_code_units(s):
-        h ^= unit
-        h = (h * FNV_PRIME) & 0xFFFFFFFF
-    return f"fnv1a32:0x{h:08x}"
-
-
-def normalize_content(s):
-    """Strip a UTF-8 BOM and AT MOST ONE trailing newline (\\n or \\r\\n).
-
-    The Write tool may normalise a trailing newline or prepend a BOM; a false
-    content-proof degrade must not cost a run its artifacts. Applied to BOTH
-    sides — the workflow computes the expected chars/checksum over the same
-    normalisation — so the tolerance is symmetric. Two trailing newlines is a
-    REAL difference and still reports as a mismatch.
-    """
-    if s.startswith("﻿"):
-        s = s[1:]
-    if s.endswith("\r\n"):
-        return s[:-2]
-    if s.endswith("\n"):
-        return s[:-1]
-    return s
-
-
-# ---------------------------------------------------------------------------
-# Serialization — byte-equivalent to JS JSON.stringify(obj, null, 2)
-# ---------------------------------------------------------------------------
-
-
-class JsSerializationError(ValueError):
-    """A value this script cannot render byte-identically to JSON.stringify.
-
-    Raised instead of writing a document that would diverge from what the
-    pipeline holds in memory. Callers turn it into a STRUCTURAL failure.
-    """
-
-
-# JS numbers are IEEE-754 doubles. Python's float spelling differs in these
-# cases, so the serializer rejects floats rather than port Number#toString:
-#
-#     value        JSON.stringify   json.dumps
-#     1e-7         1e-7             1e-07
-#     0.000001     0.000001         1e-06
-#     90.0         90               90.0
-#     -0.0         0                -0.0
-#     NaN          null             NaN        (json.loads accepts bare NaN)
-#
-# Pipeline numbers are counts, line numbers, or confidences. Safe integers spell
-# identically in both runtimes; rejecting floats avoids a Number#toString port.
-# persistDerivable in stages.js applies the same precondition and falls back to the
-# by-value writer before writing.
-#
-# Integers outside JS's safe range are rejected because JS parses them lossily.
-JS_MAX_SAFE_INTEGER = 2**53 - 1
-
-
-def assert_js_reproducible(obj, path="$"):
-    """Reject floats, non-finite numbers, unsafe integers, non-string keys, and
-    non-JSON values before writing. Key order parity is handled by
-    _js_property_order. Iterative so this walk adds no recursion beyond
-    json.dumps's own."""
-    stack = [(obj, path)]
-    while stack:
-        node, where = stack.pop()
-        if node is None or isinstance(node, (bool, str)):
-            continue
-        if isinstance(node, int):
-            if not (-JS_MAX_SAFE_INTEGER <= node <= JS_MAX_SAFE_INTEGER):
-                raise JsSerializationError(
-                    f"integer at {where} is outside JS's safe integer range ({node!r})"
-                )
-            continue
-        if isinstance(node, float):
-            raise JsSerializationError(
-                f"non-integer number at {where} ({node!r}): JS and Python spell "
-                "such numbers differently, so the derived artifact would diverge"
-            )
-        if isinstance(node, list):
-            for i, item in enumerate(node):
-                stack.append((item, f"{where}[{i}]"))
-            continue
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if not isinstance(key, str):
-                    raise JsSerializationError(
-                        f"non-string object key at {where} ({key!r})"
-                    )
-                stack.append((value, f"{where}.{key}"))
-            continue
-        raise JsSerializationError(
-            f"value at {where} has no JSON representation ({type(node).__name__})"
-        )
-
-
-def _is_array_index(key):
-    # Ten digits cover 4294967294 and keep int() below Python's digit limit.
-    return key == "0" or (
-        key.isascii()
-        and key.isdecimal()
-        and len(key) <= 10
-        and key[0] != "0"
-        and int(key) <= 4294967294
-    )
-
-
-def _js_property_order(value):
-    """Copy value with each object's array-index keys first in ascending order, as
-    JSON.stringify emits them. Iterative for the same reason as
-    assert_js_reproducible."""
-    root = [value]
-    stack = [(root, 0)]
-    while stack:
-        parent, slot = stack.pop()
-        node = parent[slot]
-        if isinstance(node, dict):
-            keys = sorted(filter(_is_array_index, node), key=int)
-            keys += [key for key in node if not _is_array_index(key)]
-            copy = {key: node[key] for key in keys}
-            stack.extend((copy, key) for key in keys)
-        elif isinstance(node, list):
-            copy = list(node)
-            stack.extend((copy, index) for index in range(len(copy)))
-        else:
-            continue
-        parent[slot] = copy
-    return root[0]
-
-
-def js_stringify_pretty(obj):
-    """JSON.stringify(obj, null, 2), byte for byte.
-
-    ensure_ascii=False because JS never escapes non-ASCII (U+2028/U+2029 included
-    — JSON.stringify leaves them raw), Python's indent mode emits JS's separators,
-    and the surrogate pass restores JSON.stringify's well-formed escaping for
-    lone surrogates. allow_nan=False prevents Python's NaN/Infinity spellings;
-    JSON.stringify spells non-finite numbers as null.
-    """
-    assert_js_reproducible(obj)
-    return escape_lone_surrogates(
-        json.dumps(
-            _js_property_order(obj),
-            indent=2,
-            ensure_ascii=False,
-            allow_nan=False,
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# Disk helpers
-# ---------------------------------------------------------------------------
-
 
 def read_text(path):
-    """Return the normalized file content, or raise (IOError/OSError/ValueError —
-    a non-UTF-8 byte on disk raises UnicodeDecodeError, which is a ValueError)."""
+    """Read normalized content while retaining the source byte policy."""
     with open(path, encoding="utf-8", newline="") as fh:
         return normalize_content(fh.read())
-
-
-def write_text_atomic(path, text):
-    """Write `text` verbatim (no trailing newline, so the bytes on disk are
-    exactly the string whose checksum the receipt reports) via a sibling temp
-    file + os.replace().
-
-    Opening the destination directly would truncate it BEFORE the encode, so any
-    failure mid-write leaves a zero-byte file at a planned path — a truncated
-    artifact that later stages would read as real. os.replace() is atomic within
-    a filesystem, so the destination is either its old content or the complete
-    new content, never a prefix.
-    """
-    directory = os.path.dirname(os.path.abspath(path))
-    fd, tmp = tempfile.mkstemp(
-        prefix=".code-gauntlet-assemble-", suffix=".tmp", dir=directory
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
-            fh.write(text)
-        # mkstemp creates 0600; os.replace would carry that onto the artifact, which
-        # a later CI step running as another user could no longer read. Restore the
-        # mode a plain open() would have produced.
-        umask = os.umask(0)
-        os.umask(umask)
-        os.chmod(tmp, 0o666 & ~umask)
-    except BaseException:
-        with suppress(OSError):
-            os.unlink(tmp)
-        raise
-    try:
-        os.replace(tmp, path)
-    except BaseException:
-        with suppress(OSError):
-            os.unlink(tmp)
-        raise
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +202,7 @@ def _load_source(path, cache, errors):
         return None
     try:
         data = json.loads(raw)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         errors.append(f"source is not valid JSON: {path} ({exc})")
         return None
     if not isinstance(data, list):
@@ -491,7 +268,7 @@ def _assemble(plan_path):
         return _receipt(False, None, None, verified, [], errors)
     try:
         plan = json.loads(normalize_content(plan_raw))
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         errors.append(f"plan is not valid JSON: {plan_path} ({exc})")
         return _receipt(False, None, None, verified, [], errors)
     if not isinstance(plan, dict):
@@ -549,7 +326,7 @@ def _assemble(plan_path):
         if isinstance(path, str) and path.endswith(".json"):
             try:
                 json.loads(content)
-            except ValueError as exc:
+            except (ValueError, RecursionError) as exc:
                 errors.append(f"expected artifact is not valid JSON: {path} ({exc})")
                 continue
         chars = utf16_len(content)
@@ -640,7 +417,7 @@ def _assemble(plan_path):
     written = []
     for path, text in pending:
         try:
-            write_text_atomic(path, text)
+            write_atomic(path, text)
         except Exception as exc:  # noqa: BLE001 - converted to a structural error
             errors.append(f"could not write {path} ({type(exc).__name__}: {exc})")
             continue

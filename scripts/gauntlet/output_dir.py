@@ -34,6 +34,7 @@ import sys
 from collections.abc import Mapping
 
 from gauntlet.cli import Command
+from gauntlet.fs import confined
 
 DEFAULT_OUTPUT_DIR = ".code-gauntlet"
 GLOB_META = set("*?[]\\!")
@@ -95,7 +96,7 @@ def escape_gitignore_pattern_segment(segment: str) -> str:
 def anchored_exclude_pattern(repo_root: str, abs_dir: str) -> str:
     """Build ``/rel/path/`` for info/exclude from repo-relative abs_dir."""
     rel = os.path.relpath(abs_dir, repo_root)
-    if rel == "." or rel.startswith(".." + os.sep) or rel == "..":
+    if rel == "." or not confined(abs_dir, repo_root):
         raise ValueError("path is not strictly inside the repo root")
     parts = [p for p in rel.replace("\\", "/").split("/") if p and p != "."]
     escaped = "/".join(escape_gitignore_pattern_segment(p) for p in parts)
@@ -103,8 +104,7 @@ def anchored_exclude_pattern(repo_root: str, abs_dir: str) -> str:
 
 
 def is_under_repo(repo_root: str, abs_path: str) -> bool:
-    root = repo_root.rstrip(os.sep) + os.sep
-    return abs_path == repo_root or abs_path.startswith(root)
+    return confined(abs_path, repo_root)
 
 
 def exclude_writable(exclude_path: str) -> bool:

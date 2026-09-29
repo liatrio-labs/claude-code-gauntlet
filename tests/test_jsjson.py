@@ -1,10 +1,52 @@
-"""Bytes emitted by the shared JSON writer."""
+"""JavaScript JSON parity at the shared serialization boundary."""
 
 import io
+import json
+import sys
 from contextlib import redirect_stdout
 
 import pytest
-from gauntlet.jsjson import dumps, write_result
+from gauntlet.jsjson import (
+    JsSerializationError,
+    checksum_or_none,
+    dumps,
+    js_stringify_pretty,
+    normalize_content,
+    utf16_len,
+    write_result,
+)
+from gauntlet.verify.decide import _input_checksum, deltas_checksum
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ({"9": 9, "2": 2, "name": "x"}, '{\n  "2": 2,\n  "9": 9,\n  "name": "x"\n}'),
+        ({"astral": "\U0001f642"}, '{\n  "astral": "\U0001f642"\n}'),
+        ([], "[]"),
+    ],
+)
+def test_js_stringify_pretty(value, expected):
+    assert js_stringify_pretty(value) == expected
+
+
+@pytest.mark.parametrize("proof", [_input_checksum, deltas_checksum, checksum_or_none])
+def test_proof_omits_value_beyond_json_nesting_limit(proof):
+    value = 0
+    for _ in range(sys.getrecursionlimit() + 100):
+        value = [value]
+    assert proof(value) is None
+
+
+@pytest.mark.parametrize("value", [1.0, 2**53, {"x": object()}])
+def test_checksum_or_none_rejects_unreproducible_value(value):
+    assert checksum_or_none(value) is None
+
+
+def test_normalize_content():
+    assert utf16_len("A\U0001f642") == 3
+    assert normalize_content("\ufeffA\r\n") == "A"
+    assert normalize_content("A\n\n") == "A\n"
 
 
 @pytest.mark.parametrize(
@@ -23,7 +65,7 @@ def test_dumps_utf8_bytes(value, expected):
 
 
 def test_dumps_compact_separators_and_ascii_escaping():
-    assert dumps({"café": [1, 2]}, compact=True).encode() == (b'{"caf\\u00e9":[1,2]}')
+    assert dumps({"café": [1, 2]}, compact=True).encode() == b'{"caf\\u00e9":[1,2]}'
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
@@ -37,3 +79,80 @@ def test_write_result_escapes_lone_surrogates_and_indents():
     with redirect_stdout(output):
         write_result({"text": "é\ud800"})
     assert output.getvalue().encode("utf-8") == b'{\n  "text": "\xc3\xa9\\ud800"\n}\n'
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [("abc", 3), ("café", 4), ("日本語", 3), ("😀", 2)],
+    ids=["ascii", "accented", "cjk", "surrogate-pair"],
+)
+def test_utf16_len_counts_code_units_not_codepoints(text, expected):
+    assert utf16_len(text) == expected
+
+
+def test_pretty_stringifier_handles_deep_alternating_containers():
+    # Above a recursive key-order copy's ceiling on Python 3.10 and 3.11 (about 497)
+    # and below json.dumps's own (about 993).
+    value = 0
+    for depth in range(600):
+        value = {"value": value} if depth % 2 == 0 else [value]
+
+    serialized = js_stringify_pretty(value)
+
+    assert json.loads(serialized) == value
+
+
+@pytest.mark.parametrize(
+    "value", [1e-7, 0.000001, 90.5, -0.0, float("nan"), float("inf")]
+)
+def test_non_integer_numbers_are_refused(value):
+    with pytest.raises(JsSerializationError):
+        js_stringify_pretty({"confidence": value})
+
+
+@pytest.mark.parametrize("value", [2**53, -(2**53), 10**30])
+def test_integers_outside_the_js_safe_range_are_refused(value):
+    with pytest.raises(JsSerializationError):
+        js_stringify_pretty([value])
+
+
+def test_number_error_names_its_path():
+    with pytest.raises(JsSerializationError) as caught:
+        js_stringify_pretty({"phases": {"challenge": {"stats": {"rate": 0.5}}}})
+    assert "$.phases.challenge.stats.rate" in str(caught.value)
+
+
+def test_non_string_object_keys_are_refused():
+    with pytest.raises(JsSerializationError, match="non-string object key"):
+        js_stringify_pretty({"outer": {1: "value"}})
+
+
+DIVERGENT_NUMBER_DOCUMENTS = [
+    "[1e-7]",
+    "[0.000001]",
+    "[90.0]",
+    "[-0.0]",
+    "[9007199254740993]",
+    "[1000000000000000000000000000000]",
+]
+
+REFUSED_NUMBER_DOCUMENTS = [
+    *DIVERGENT_NUMBER_DOCUMENTS,
+    '{"stats": {"rate": 0.5}}',
+    "[1.5]",
+    "[1e21]",
+    "[9007199254740992]",
+    "[NaN]",
+    "[Infinity]",
+]
+
+
+@pytest.mark.parametrize("text", REFUSED_NUMBER_DOCUMENTS)
+def test_refused_documents_raise_rather_than_diverge(text):
+    with pytest.raises(JsSerializationError):
+        js_stringify_pretty(json.loads(text))
+
+
+def test_non_json_value_is_refused():
+    with pytest.raises(JsSerializationError):
+        js_stringify_pretty(object())

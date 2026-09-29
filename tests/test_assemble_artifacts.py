@@ -34,14 +34,14 @@ from pathlib import Path
 
 import pytest
 from gauntlet.artifacts import (
-    JsSerializationError,
     assemble,
+    plan_checksum,
+)
+from gauntlet.jsjson import (
     fnv1a32,
     js_stringify_pretty,
     normalize_content,
-    plan_checksum,
     utf16_len,
-    write_text_atomic,
 )
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -243,27 +243,6 @@ def assert_assemble_hard_failure(tc, ws, plan, needle, also_absent=()):
     tc.assertFalse(os.path.exists(ws.checkpoint_path))
     for path in also_absent:
         tc.assertFalse(os.path.exists(path))
-
-
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [("abc", 3), ("café", 4), ("日本語", 3), ("😀", 2)],
-    ids=["ascii", "accented", "cjk", "surrogate-pair"],
-)
-def test_utf16_len_counts_code_units_not_codepoints(text, expected):
-    assert utf16_len(text) == expected
-
-
-def test_pretty_stringifier_handles_deep_alternating_containers():
-    # Above a recursive key-order copy's ceiling on Python 3.10 and 3.11 (about 497)
-    # and below json.dumps's own (about 993).
-    value = 0
-    for depth in range(600):
-        value = {"value": value} if depth % 2 == 0 else [value]
-
-    serialized = js_stringify_pretty(value)
-
-    assert json.loads(serialized) == value
 
 
 class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
@@ -806,50 +785,14 @@ class TestLoneSurrogatesAreEscapedNotFatal(unittest.TestCase):
             self.assertEqual(ws.read(ws.post_path), expected)
 
 
-class TestNoTruncatedArtifactAtAPlannedPath(unittest.TestCase):
-    """A failed write leaves the destination intact by writing to a sibling temp
-    file and replacing it only after encoding succeeds."""
-
-    def test_a_failing_write_leaves_the_destination_untouched(self):
-        directory = tempfile.mkdtemp(prefix="atomic-")
-        try:
-            dest = os.path.join(directory, "artifact.json")
-            with open(dest, "w", encoding="utf-8") as fh:
-                fh.write("PREVIOUS CONTENT")
-            # A lone surrogate cannot be encoded, so the existing file must survive.
-            with self.assertRaises(UnicodeEncodeError):
-                write_text_atomic(dest, "\ud800")
-            with open(dest, encoding="utf-8") as fh:
-                self.assertEqual(fh.read(), "PREVIOUS CONTENT")
-            self.assertEqual(
-                os.listdir(directory), ["artifact.json"], "no temp residue"
-            )
-        finally:
-            shutil.rmtree(directory, ignore_errors=True)
-
-    def test_a_successful_write_is_exact_and_leaves_no_temp_files(self):
-        directory = tempfile.mkdtemp(prefix="atomic-")
-        try:
-            dest = os.path.join(directory, "artifact.json")
-            write_text_atomic(dest, '{"a": 1}')
-            with open(dest, encoding="utf-8", newline="") as fh:
-                self.assertEqual(fh.read(), '{"a": 1}')
-            self.assertEqual(os.listdir(directory), ["artifact.json"])
-            # The temp file's 0600 must not ride along onto the artifact.
-            umask = os.umask(0)
-            os.umask(umask)
-            self.assertEqual(os.stat(dest).st_mode & 0o777, 0o666 & ~umask)
-        finally:
-            shutil.rmtree(directory, ignore_errors=True)
-
-    def test_a_structural_failure_never_creates_the_derived_files(self):
-        with _Workspace() as ws:
-            plan = ws.plan()
-            plan["postReview"]["ids"] = ["F1", "GHOST"]
-            proc = run_script(ws.write_plan(plan))
-            self.assertNotEqual(proc.returncode, 0)
-            self.assertFalse(os.path.exists(ws.post_path))
-            self.assertFalse(os.path.exists(ws.checkpoint_path))
+def test_a_structural_failure_never_creates_the_derived_files():
+    with _Workspace() as ws:
+        plan = ws.plan()
+        plan["postReview"]["ids"] = ["F1", "GHOST"]
+        proc = run_script(ws.write_plan(plan))
+        assert proc.returncode != 0
+        assert not os.path.exists(ws.post_path)
+        assert not os.path.exists(ws.checkpoint_path)
 
 
 class TestAnyFailureStillReturnsAReceipt(unittest.TestCase):
@@ -906,40 +849,6 @@ DIVERGENT_NUMBER_DOCUMENTS = [
     "[9007199254740993]",
     "[1000000000000000000000000000000]",
 ]
-REFUSED_NUMBER_DOCUMENTS = [
-    *DIVERGENT_NUMBER_DOCUMENTS,
-    '{"stats": {"rate": 0.5}}',
-    "[1.5]",
-    "[1e21]",
-    "[9007199254740992]",
-    "[NaN]",
-    "[Infinity]",
-]
-
-
-@pytest.mark.parametrize(
-    "value", [1e-7, 0.000001, 90.5, -0.0, float("nan"), float("inf")]
-)
-def test_non_integer_numbers_are_refused(value):
-    with pytest.raises(JsSerializationError):
-        js_stringify_pretty({"confidence": value})
-
-
-@pytest.mark.parametrize("value", [2**53, -(2**53), 10**30])
-def test_integers_outside_the_js_safe_range_are_refused(value):
-    with pytest.raises(JsSerializationError):
-        js_stringify_pretty([value])
-
-
-def test_number_error_names_its_path():
-    with pytest.raises(JsSerializationError) as caught:
-        js_stringify_pretty({"phases": {"challenge": {"stats": {"rate": 0.5}}}})
-    assert "$.phases.challenge.stats.rate" in str(caught.value)
-
-
-def test_non_string_object_keys_are_refused():
-    with pytest.raises(JsSerializationError, match="non-string object key"):
-        js_stringify_pretty({"outer": {1: "value"}})
 
 
 def test_a_float_in_the_source_is_a_structural_failure():
@@ -972,12 +881,6 @@ def test_refused_number_spellings_really_diverge_in_node():
     ):
         naive = json.dumps(json.loads(text), indent=2, ensure_ascii=False)
         assert naive != node_spelling, f"{text} no longer diverges"
-
-
-@pytest.mark.parametrize("text", REFUSED_NUMBER_DOCUMENTS)
-def test_refused_documents_raise_rather_than_diverge(text):
-    with pytest.raises(JsSerializationError):
-        js_stringify_pretty(json.loads(text))
 
 
 class TestDerivedDocumentsAgreeWithTheJsSerialization(unittest.TestCase):
@@ -1024,7 +927,7 @@ class TestDerivedDocumentsAgreeWithTheJsSerialization(unittest.TestCase):
             self.assertEqual(written[ws.checkpoint_path]["checksum"], checksum)
 
     def test_the_written_numbers_describe_the_bytes_actually_on_disk(self):
-        # The receipt reports the serialized text; write_text_atomic writes it
+        # The receipt reports the serialized text; write_atomic writes it
         # verbatim, so re-reading the file must reproduce the same proof.
         with _Workspace() as ws:
             receipt = json.loads(run_script(ws.write_plan(ws.plan())).stdout)

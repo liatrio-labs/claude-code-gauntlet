@@ -98,6 +98,7 @@ from typing import NamedTuple
 
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
+from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import (
     FINDING_MARKER_TOKEN,
     LEGACY_PRODUCT,
@@ -3599,12 +3600,13 @@ def main():
 
     # Load input
     try:
-        with open(args.findings_json, encoding="utf-8") as fh:
-            loaded = json.load(fh)
-    except FileNotFoundError:
-        die(f"Findings file not found: {args.findings_json}")
-    except json.JSONDecodeError as e:
-        die(f"Invalid JSON in findings file: {e}")
+        loaded = read_json(args.findings_json)
+    except JsonReadError as exc:
+        if isinstance(exc.cause, FileNotFoundError):
+            die(f"Findings file not found: {args.findings_json}")
+        if exc.kind == "parse":
+            die(f"Invalid JSON in findings file: {exc.cause}")
+        raise exc.cause from exc
 
     if isinstance(loaded, list):
         data = {}

@@ -50,7 +50,6 @@ from gauntlet.project_rules import (
     _changed_path_sets,
     _find_imports,
     _strip_code,
-    _within,
     main,
     render,
 )
@@ -826,15 +825,15 @@ class TestReviewRules(_RepoCase):
     def test_review_failure_receipt_retains_metadata_without_text(self):
         self.write("REVIEW.md", "ONLY\n")
         calls = []
-        real_write = collect_project_rules.write_text_atomic
+        real_write = collect_project_rules.write_atomic
 
-        def fail_once(path, text):
+        def fail_once(path, text, *, create_parents=False):
             calls.append((path, text))
             if len(calls) == 1:
                 raise OSError("write failed")
-            return real_write(path, text)
+            return real_write(path, text, create_parents=create_parents)
 
-        with mock.patch.object(collect_project_rules, "write_text_atomic", fail_once):
+        with mock.patch.object(collect_project_rules, "write_atomic", fail_once):
             code, receipt, body = self.run_script()
         self.assertEqual(code, 1)
         self.assertFalse(receipt["ok"])
@@ -1075,15 +1074,15 @@ class TestProvenance(_RepoCase):
     def test_failure_receipt_includes_collected_source_projection(self):
         self.write("CLAUDE.md", "ROOT-RULE\n")
         calls = []
-        real_write = collect_project_rules.write_text_atomic
+        real_write = collect_project_rules.write_atomic
 
-        def fail_once(path, text):
+        def fail_once(path, text, *, create_parents=False):
             calls.append((path, text))
             if len(calls) == 1:
                 raise OSError("write failed")
-            return real_write(path, text)
+            return real_write(path, text, create_parents=create_parents)
 
-        with mock.patch.object(collect_project_rules, "write_text_atomic", fail_once):
+        with mock.patch.object(collect_project_rules, "write_atomic", fail_once):
             code, receipt, _ = self.run_script()
 
         self.assertEqual(code, 1)
@@ -1198,15 +1197,15 @@ class TestDisclosureContract(_RepoCase):
 
     def test_crash_path_keeps_empty_render_unchanged(self):
         calls = []
-        real_write = collect_project_rules.write_text_atomic
+        real_write = collect_project_rules.write_atomic
 
-        def fail_once(path, text):
+        def fail_once(path, text, *, create_parents=False):
             calls.append((path, text))
             if len(calls) == 1:
                 raise OSError("write failed")
-            return real_write(path, text)
+            return real_write(path, text, create_parents=create_parents)
 
-        with mock.patch.object(collect_project_rules, "write_text_atomic", fail_once):
+        with mock.patch.object(collect_project_rules, "write_atomic", fail_once):
             code, receipt, body = self.run_script()
         self.assertEqual(code, 1)
         self.assertFalse(receipt["ok"])
@@ -1285,12 +1284,6 @@ class TestPureHelpers(unittest.TestCase):
 
     def test_find_imports_deduplicates_preserving_order(self):
         self.assertEqual(_find_imports("@b.md @a.md @b.md"), ["b.md", "a.md"])
-
-    def test_within_is_separator_aware(self):
-        root = os.path.join(os.sep, "base", "repo")
-        self.assertTrue(_within(root, root))
-        self.assertTrue(_within(os.path.join(root, "x.md"), root))
-        self.assertFalse(_within(os.path.join(root + "-evil", "x.md"), root))
 
 
 if __name__ == "__main__":

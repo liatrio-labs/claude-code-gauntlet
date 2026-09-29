@@ -87,15 +87,16 @@ import re
 import subprocess
 import sys
 
-from gauntlet.artifacts import (
-    JS_MAX_SAFE_INTEGER,
-    JsSerializationError,
-    fnv1a32,
-    js_stringify_pretty,
-    write_text_atomic,
-)
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
+from gauntlet.fs import write_atomic
+from gauntlet.jsjson import (
+    JS_MAX_SAFE_INTEGER,
+    JsSerializationError,
+    checksum_or_none,
+    fnv1a32,
+    js_stringify_pretty,
+)
 from gauntlet.paths import entry
 
 # The mutation audit for these generated fields lives beside DELTA_KEYS in stages.js.
@@ -1061,36 +1062,7 @@ def _coerce_numeric_fields(finding):
     return finding
 
 
-def _input_checksum(doc):
-    """The inline content proof: ``fnv1a32(js_stringify_pretty(doc))``.
-
-    The workflow computes the SAME value over the content it dispatched
-    (``JSON.stringify(content, null, 2)`` before inline encoding), so a match proves
-    the decoded document is the one this run asked for. The receipt path writes that
-    decoded value to the destination before verification.
-
-    It is a VALUE proof, not a byte proof, because it must serve two paths whose on-disk
-    spelling differs. On the LEGACY positional path an external writer chose that
-    spelling, so only the value can be compared. On the INLINE path the byte comparison
-    is available and is made separately, over the received token, by the caller below --
-    ``_run_receipt`` writes ``--input`` itself in the pretty form, so this proof and the
-    file agree there by construction. Both sides hash a canonical re-serialisation of the
-    same value: the identical pair the persist path uses, pinned across runtimes by
-    tests/fixtures/cross_runtime/ and by tests/fixtures/parity/slice_input_proof/.
-
-    Keys are NOT sorted, on the record (issue #172): the document arrives in
-    generated ``VERIFY_SLICE_FIELDS`` order and a document that comes back in another shape is a
-    regenerated token, not a copied one.
-
-    Returns None rather than raising when the document holds a value the two runtimes
-    spell differently: an absent proof lets the workflow decide honestly, where an
-    exception here would take out the whole envelope including its failure shape. Same
-    contract, same reason, as ``deltas_checksum``.
-    """
-    try:
-        return fnv1a32(js_stringify_pretty(doc))
-    except JsSerializationError:
-        return None
+_input_checksum = checksum_or_none
 
 
 # The trailing-byte class this loader RECOVERS from: whitespace and unbalanced closing
@@ -1452,30 +1424,7 @@ def build_deltas(findings, verified):
     return deltas
 
 
-def deltas_checksum(deltas):
-    """The delta echo's content proof, or None when the deltas will not serialise.
-
-    ``fnv1a32(js_stringify_pretty(deltas))`` — the same pair the persist path's content
-    proofs use, so there is exactly one checksum definition in the plugin and one parity
-    test guarding it. The workflow recomputes this over the deltas the executor echoed
-    back, rebuilt in canonical key order from the dispatched slice, and refuses the slice
-    on a mismatch.
-
-    Threat model, stated plainly and identically to trustSlice's: this is a consistency
-    check against a STALE, DRIFTING or CONFUSED executor, not authentication. The
-    checksum travels in the same envelope as the data it covers, so a Byzantine executor
-    could recompute it — but an LLM transcribing a document cannot, which is precisely
-    the failure this boundary keeps observing (the by-value writer's transcription of
-    findings.json diverged on 3 of 3 measured runs).
-
-    Returns None rather than raising if the deltas contain something unserialisable: an
-    absent proof makes the workflow degrade the slice honestly, where an exception here
-    would take out the whole envelope including the honest failure shape.
-    """
-    try:
-        return fnv1a32(js_stringify_pretty(deltas))
-    except JsSerializationError:
-        return None
+deltas_checksum = checksum_or_none
 
 
 def run_verification(findings, base_branch, diff_file=None, verbose=False):
@@ -1592,7 +1541,7 @@ def _run_receipt(args):
             input_text = js_stringify_pretty(data)
         except JsSerializationError:
             input_text = json.dumps(data, indent=2, ensure_ascii=True)
-        write_text_atomic(args.input, input_text)
+        write_atomic(args.input, input_text)
         for finding in data["findings"]:
             _coerce_numeric_fields(finding)
         findings = data["findings"]

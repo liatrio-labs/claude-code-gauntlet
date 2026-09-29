@@ -92,6 +92,7 @@ import tempfile
 import time
 
 from gauntlet.cli import Command
+from gauntlet.fs import glob_under
 from gauntlet.paths import entry
 from gauntlet.registry import ARTIFACT_BASENAMES as ARTIFACT_BASENAMES
 from gauntlet.registry import ARTIFACT_PATH_TEMPLATES
@@ -261,18 +262,6 @@ def task_roots(environ=None):
         seen.add(real)
         roots.append(candidate)
     return roots
-
-
-def glob_under(root, pattern):
-    """Return matches for a relative glob beneath the literal *root*.
-
-    The root is passed literally to glob and is never interpreted as a pattern.
-    Any literal name placed inside *pattern* must go through ``glob.escape``.
-    """
-    try:
-        return [os.path.join(root, path) for path in glob.glob(pattern, root_dir=root)]
-    except OSError:
-        return []
 
 
 def _newest(paths):

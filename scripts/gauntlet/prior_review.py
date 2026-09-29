@@ -69,6 +69,7 @@ import re
 import subprocess
 
 from gauntlet.cli import Command
+from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import detect_signal, find_finding_markers, select_latest
 
 FETCH_TIMEOUT_SECONDS = 30
@@ -447,10 +448,9 @@ def count_by_source(entries):
 def load_bodies_file(path):
     """Return ``(entries, errors)`` from the offline hook file. Never raises."""
     try:
-        with open(path, encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except (OSError, ValueError, RecursionError) as exc:
-        return [], [f"bodies-file: could not read {path} ({exc})"]
+        payload = read_json(path)
+    except JsonReadError as exc:
+        return [], [f"bodies-file: could not read {path} ({exc.cause})"]
     if not isinstance(payload, list):
         return [], [f"bodies-file: expected a JSON array in {path}"]
     return collect_entries_file(payload), []

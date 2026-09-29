@@ -30,7 +30,6 @@ module intentionally does not use ``tomllib`` or newer pattern-matching syntax.
 
 import argparse
 import difflib
-import json
 import ntpath
 import os
 import posixpath
@@ -41,6 +40,7 @@ import sys
 from contextlib import suppress
 
 from gauntlet.cli import Command
+from gauntlet.fs import JsonReadError, confined, read_json
 from gauntlet.jsjson import write_result
 from gauntlet.registry import (
     DETAIL_FIELDS_BY_DIMENSION as _DETAIL_FIELDS_BY_DIMENSION,
@@ -138,10 +138,11 @@ def _reject_json_constant(value):
 
 def _load_findings(path):
     try:
-        with open(path, encoding="utf-8") as handle:
-            data = json.load(handle, parse_constant=_reject_json_constant)
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise ContentError(f"could not read valid JSON from {path}: {exc}") from exc
+        data = read_json(path, parse_constant=_reject_json_constant)
+    except JsonReadError as exc:
+        raise ContentError(
+            f"could not read valid JSON from {path}: {exc.cause}"
+        ) from exc
 
     if isinstance(data, list):
         findings = data
@@ -171,10 +172,6 @@ def _load_findings(path):
     return normalized_findings
 
 
-def _confined(target, root):
-    return target == root or target.startswith(root + os.sep)
-
-
 def _path_info(value, root):
     """Return (accepted, real path) for a repo-relative artifact path."""
     if not isinstance(value, str) or not value or "\x00" in value:
@@ -185,7 +182,7 @@ def _path_info(value, root):
         target = os.path.realpath(os.path.join(root, value))
     except (OSError, ValueError):
         return False, None
-    if not _confined(target, root):
+    if not confined(target, root):
         return False, None
     return True, target
 
@@ -273,7 +270,7 @@ def _safe_candidate(root, name, notes):
         return None
     try:
         real = os.path.realpath(path)
-        if not _confined(real, root):
+        if not confined(real, root):
             notes.append(f"toolchain candidate {name} rejected: outside repo root")
             return None
         mode = os.stat(real).st_mode
@@ -310,9 +307,8 @@ def _package_command(scripts, prefix, default):
 def _package_toolchain(path):
     defaults = {"test": "npm test", "lint": "npm run lint", "build": "npm run build"}
     try:
-        with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, UnicodeError, json.JSONDecodeError):
+        data = read_json(path)
+    except JsonReadError:
         return defaults
     scripts = data.get("scripts") if isinstance(data, dict) else None
     if not isinstance(scripts, dict):

@@ -72,10 +72,6 @@ import os
 import re
 import sys
 
-# NEVER import gauntlet.verify.decide here — it resolves the repo root via
-# `git rev-parse --show-toplevel` at import time, which this script has no
-# business triggering for a read-only render step.
-from gauntlet.artifacts import write_text_atomic
 from gauntlet.cli import Command
 from gauntlet.delivery.post import (
     _FIX_COUNTS,
@@ -88,6 +84,11 @@ from gauntlet.delivery.post import (
     parse_diff_text,
     reset_run_state,
 )
+
+# NEVER import gauntlet.verify.decide here — it resolves the repo root via
+# `git rev-parse --show-toplevel` at import time, which this script has no
+# business triggering for a read-only render step.
+from gauntlet.fs import JsonReadError, confined, read_json, write_atomic
 
 _HEAD_SHA_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # Anchored to the FIRST line, and to git's default `a/` prefix specifically —
@@ -138,23 +139,6 @@ def build_parser():
     return parser
 
 
-def _confined(path, output_root):
-    """True when *path* resolves inside *output_root*.
-
-    Every path this script touches is DERIVED from --output-dir and a
-    regex-validated --head-sha (no `/` can appear in the sha, so no filename
-    built from it can smuggle a path separator) — so this can only ever fire
-    on a pathological --output-dir. Kept anyway as the same typo/symlink guard
-    gauntlet.materialize's own ``_confined`` applies: a wrong flag refuses
-    loudly instead of writing somewhere nothing reads.
-    """
-    try:
-        target = os.path.realpath(path)
-        return target == output_root or target.startswith(output_root + os.sep)
-    except OSError:
-        return False
-
-
 def _load_findings(path, errors):
     """Return the persisted findings list, or None (with *errors* populated).
 
@@ -165,15 +149,12 @@ def _load_findings(path, errors):
     no wrapped-object variant to fall back to.
     """
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            raw = fh.read()
-    except OSError as exc:
-        errors.append(f"could not read findings file {path}: {exc}")
-        return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        errors.append(f"invalid JSON in findings file {path}: {exc}")
+        data = read_json(path, errors="replace")
+    except JsonReadError as exc:
+        if exc.kind == "read":
+            errors.append(f"could not read findings file {path}: {exc.cause}")
+        else:
+            errors.append(f"invalid JSON in findings file {path}: {exc.cause}")
         return None
     if not isinstance(data, list):
         errors.append(
@@ -429,7 +410,7 @@ def main(argv=None):
         ("diff", diff_path),
         ("out", out_path),
     ):
-        if not _confined(path, output_root):
+        if not confined(path, output_root):
             errors.append(f"{label} path escapes --output-dir: {path}")
     if errors:
         return _pre_oracle_failure(out_path, errors)
@@ -494,7 +475,7 @@ def main(argv=None):
         content = _render(
             kept, len(candidates), filtered_earlier, oracle_state, args.head_sha
         )
-        write_text_atomic(out_path, content)
+        write_atomic(out_path, content)
     except Exception as exc:  # noqa: BLE001 - a receipt must always be emitted
         errors.append(f"{type(exc).__name__}: {exc}")
         _emit_receipt(

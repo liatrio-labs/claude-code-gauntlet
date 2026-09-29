@@ -28,7 +28,7 @@ from unittest.mock import patch
 
 # JS_MAX_SAFE_INTEGER is the same constant _delta_confidence refuses to exceed --
 # imported from the sibling module rather than re-hardcoded so the two never drift.
-from gauntlet.artifacts import JS_MAX_SAFE_INTEGER
+from gauntlet.jsjson import JS_MAX_SAFE_INTEGER
 from gauntlet.registry import VERIFY_SLICE_FIELDS as _SLICE_INPUT_FIELDS
 from gauntlet.verify.decide import (
     _DELTA_FIELDS,
@@ -2984,7 +2984,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         # that reached disk. Recomputed here from the shared pair rather than pinned as
         # a literal, so this test proves the wiring and the parity fixture (Task 4)
         # proves the cross-runtime agreement.
-        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.jsjson import fnv1a32, js_stringify_pretty
 
         doc = {"findings": [{"id": "b1", "title": "t"}], "base_branch": "main"}
         path = self._write(json.dumps(doc))
@@ -2997,7 +2997,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         # would hash the same. The workflow dispatched the NUMBER (pinNumericFields runs
         # before the slice input is written), so a quoted value on disk is a real
         # divergence and must fail the proof.
-        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.jsjson import fnv1a32, js_stringify_pretty
 
         quoted = {"findings": [{"id": "b1", "line_start": "10"}], "base_branch": "main"}
         pinned = {"findings": [{"id": "b1", "line_start": 10}], "base_branch": "main"}
@@ -3036,7 +3036,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         self.assertNotIn("input_recovery", envelope)
 
     def test_receipt_carries_the_token_proof_over_the_bytes_as_received(self):
-        from gauntlet.artifacts import fnv1a32
+        from gauntlet.jsjson import fnv1a32
 
         doc = {"findings": self._receipt_findings(), "base_branch": "main"}
         token = js_encode_inline(doc)
@@ -3053,7 +3053,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         JS values, so the value proof cannot separate them. The decoder rejects the
         escaped spelling by name, while the token proof still distinguishes the tokens.
         """
-        from gauntlet.artifacts import fnv1a32
+        from gauntlet.jsjson import fnv1a32
 
         astral_file = "\U0001f600.js"
         escaped_file = chr(0xD83D) + chr(0xDE00) + ".js"
@@ -3089,7 +3089,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         self.assertNotEqual(fnv1a32(astral), fnv1a32(escaped))
 
     def test_receipt_writes_the_decoded_inline_document_before_coercion(self):
-        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.jsjson import fnv1a32, js_stringify_pretty
 
         doc = {"findings": self._receipt_findings(), "base_branch": "main"}
         envelope = self._run_receipt_over(doc)
@@ -3141,7 +3141,7 @@ class TestSliceInputRecovery(unittest.TestCase):
             self.assertEqual(fh.read(), expected)
 
     def test_receipt_checksum_is_before_numeric_coercion(self):
-        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.jsjson import fnv1a32, js_stringify_pretty
 
         finding = self._receipt_findings()[0]
         finding["line_start"] = "10"
@@ -3176,7 +3176,7 @@ class TestSliceInputRecovery(unittest.TestCase):
                 )
 
     def test_receipt_round_trips_lone_surrogates_and_escapes_receipt_output(self):
-        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.jsjson import fnv1a32, js_stringify_pretty
 
         cases = {
             "leading": "\ud800leading",
@@ -3229,7 +3229,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         try:
             with (
                 patch(
-                    "gauntlet.artifacts.os.replace",
+                    "gauntlet.fs.os.replace",
                     side_effect=OSError("injected write failure"),
                 ),
                 patch("sys.stderr", new_callable=io.StringIO),
@@ -3309,7 +3309,7 @@ class TestInlineSliceDecoder(unittest.TestCase):
                 with open(os.path.join(root, "input.json"), encoding="utf-8") as fh:
                     cases.append((root, json.load(fh)))
         self.assertEqual(len(cases), 10)
-        from gauntlet.artifacts import fnv1a32, js_stringify_pretty
+        from gauntlet.jsjson import fnv1a32, js_stringify_pretty
 
         for root, doc in sorted(cases):
             with self.subTest(case=os.path.basename(root)):

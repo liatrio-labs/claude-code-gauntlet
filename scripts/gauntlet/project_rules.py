@@ -93,10 +93,10 @@ import os
 import re
 import stat
 import sys
-import tempfile
 from contextlib import suppress
 
 from gauntlet.cli import Command
+from gauntlet.fs import confined, read_json, write_atomic
 
 # The one place a convention filename is added. Ordered: this order is also the
 # tie-break precedence when two files at the same directory level state
@@ -207,16 +207,6 @@ def _find_imports(text):
     return found
 
 
-def _within(path, root):
-    """True when *path* is *root* or lives beneath it.
-
-    Both arguments must already be realpath-resolved. The trailing-separator
-    check is the point: a bare ``startswith`` would accept ``/tmp/repo-evil``
-    for a root of ``/tmp/repo``.
-    """
-    return path == root or path.startswith(root + os.sep)
-
-
 def _normalise_relative(path):
     """Convert Windows-style backslashes in a changed entry to forward slashes, so
     the directory walk and the modified-in-diff marker both compare against realpath
@@ -233,7 +223,7 @@ def _changed_path_sets(repo_root, changed_files):
             normalised if os.path.isabs(normalised) else os.path.join(root, normalised)
         )
         real = os.path.realpath(candidate)
-        if _within(real, root):
+        if confined(real, root):
             realpaths.add(real)
     return realpaths
 
@@ -269,7 +259,7 @@ class _Collector:
         """Repo-relative when possible; never leak an absolute host path."""
         try:
             real = os.path.realpath(path)
-            if _within(real, self.repo_root):
+            if confined(real, self.repo_root):
                 return os.path.relpath(real, self.repo_root).replace(os.sep, "/")
         except OSError:
             # Broken symlinks, missing targets, and other path errors should
@@ -302,7 +292,7 @@ class _Collector:
         # the import — never cwd, never the repo root.
         real = os.path.realpath(os.path.join(containing_dir, raw))
 
-        if not _within(real, self.repo_root):
+        if not confined(real, self.repo_root):
             return None, "outside_repo"
         # Confinement proves the target is inside the repo, not that it is a
         # rules file. Reading a named CLAUDE.md can only ever open one known
@@ -343,7 +333,7 @@ class _Collector:
         """Record a safe scope, then copy its bounded text without imports or dedup."""
         path = os.path.relpath(candidate, self.repo_root).replace(os.sep, "/")
         real = os.path.realpath(candidate)
-        if not _within(real, self.repo_root):
+        if not confined(real, self.repo_root):
             self.skipped.append({"path": path, "reason": "outside_repo"})
             return
         if not real.lower().endswith(".md"):
@@ -473,7 +463,7 @@ def _search_dirs(repo_root, changed_files):
     extra = set()
     for rel in changed_files or []:
         current = os.path.realpath(os.path.join(root, os.path.dirname(rel)))
-        while _within(current, root) and current not in seen:
+        while confined(current, root) and current not in seen:
             extra.add(current)
             seen.add(current)
             parent = os.path.dirname(current)
@@ -488,8 +478,7 @@ def _load_changed_files(path):
     """Read the changed-file list. Accepts strings or objects with a 'path'."""
     if not path:
         return []
-    with open(path, encoding="utf-8", errors="replace") as handle:
-        data = json.load(handle)
+    data = read_json(path, errors="replace")
     if not isinstance(data, list):
         return []
     out = []
@@ -519,7 +508,7 @@ def collect_sources(collector, changed):
             if not os.path.lexists(candidate):
                 continue
             real = os.path.realpath(candidate)
-            if not _within(real, collector.repo_root):
+            if not confined(real, collector.repo_root):
                 collector._skip(candidate, "outside_repo")
                 continue
             if not real.lower().endswith(".md"):
@@ -565,33 +554,6 @@ def render(sources, review_sources=()):
             "for that subtree, and its settings are applied by the pipeline, not the reader."
         )
     return caveat + "\n\n" + "\n\n".join(blocks).rstrip("\n") + "\n"
-
-
-def write_text_atomic(path, text):
-    """Write via a temp file in the same directory, then rename (mirrors
-    gauntlet.artifacts' write_text_atomic). Opening the destination
-    directly would truncate it before the encode, leaving a zero-byte file at
-    a planned path on any failure; os.replace() is atomic within a
-    filesystem, so the destination is always either its old content or the
-    complete new content, never a prefix."""
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
-    handle, tmp = tempfile.mkstemp(dir=directory, prefix=".rules-", suffix=".tmp")
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8", newline="") as out:
-            out.write(text)
-        # mkstemp creates the temp file 0600; os.replace would carry that mode
-        # onto the artifact, which a later step running as another user could
-        # no longer read. Restore the mode a plain open() would have produced.
-        umask = os.umask(0)
-        os.umask(umask)
-        os.chmod(tmp, 0o666 & ~umask)
-        os.replace(tmp, path)
-    except BaseException:
-        with suppress(OSError):
-            os.unlink(tmp)
-        raise
 
 
 def _gaps(collector):
@@ -727,7 +689,7 @@ def main(argv=None):
         output = render(collector.sources, collector.review_sources)
         if not output:
             output = "project rules: none collected (REVIEW.md, CLAUDE.md, AGENTS.md, QODO.md)\n"
-        write_text_atomic(args.out, output)
+        write_atomic(args.out, output, create_parents=True)
 
         _emit(
             _receipt(
@@ -746,11 +708,12 @@ def main(argv=None):
     except Exception as exc:  # noqa: BLE001 — a receipt on every path
         sys.stderr.write(f"collect_project_rules: {exc}\n")
         with suppress(Exception):
-            write_text_atomic(
+            write_atomic(
                 args.out,
                 render(collector.sources, collector.review_sources)
                 if collector
                 else "",
+                create_parents=True,
             )
         _emit(
             _receipt(

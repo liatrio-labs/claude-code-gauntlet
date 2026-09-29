@@ -1278,7 +1278,7 @@ class TestRenderedDisclosures(ReportPatchesTestBase):
         character), not U+FFFD (which is a *decode*-side substitution).
 
         RED when the encode/decode round trip is removed from ``_one_line``:
-        the raw lone surrogate would reach ``write_text_atomic``'s strict-UTF-8
+        the raw lone surrogate would reach ``write_atomic``'s strict-UTF-8
         write and raise ``UnicodeEncodeError``, so the run would fail instead
         of writing the artifact.
         """
@@ -1734,7 +1734,7 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         )
 
     def test_write_failure_is_ok_false_with_sorted_reasons_present(self):
-        """A permission-denied ``write_text_atomic`` call raises ``OSError``;
+        """A permission-denied ``write_atomic`` call raises ``OSError``;
         the broad ``except`` in ``main()`` must still
         emit a full receipt, with the downgrade reasons this run accumulated
         reported ALPHABETICALLY even though they were inserted in a
@@ -1762,7 +1762,7 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         )
         with patch.object(
             report_patches,
-            "write_text_atomic",
+            "write_atomic",
             side_effect=PermissionError(13, "Permission denied"),
         ):
             exit_code, receipt, *_ = self._run()
@@ -1773,7 +1773,7 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         self.assertEqual(receipt["downgraded"], 2)
         self.assertEqual(list(receipt["reasons"].keys()), ["empty", "redacted"])
 
-    def test_write_goes_through_write_text_atomic(self):
+    def test_write_goes_through_write_atomic(self):
         """RED when the write is replaced by a plain ``open()``/``write()``:
         the wrapped mock would then never be called."""
         diff = (
@@ -1798,8 +1798,8 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         )
 
         with patch(
-            "gauntlet.patches.write_text_atomic",
-            wraps=report_patches.write_text_atomic,
+            "gauntlet.patches.write_atomic",
+            wraps=report_patches.write_atomic,
         ) as mock_write:
             exit_code, receipt, *_ = self._run()
 
