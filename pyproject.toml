@@ -2,13 +2,14 @@
 # No [project] / [build-system] on purpose (see #102 / AGENTS.md).
 #
 # This table pins the CI pytest stack. Lint-tool versions are pinned by the
-# rev: fields in .pre-commit-config.yaml — keep pins in their own home; do not
-# duplicate either set here.
+# rev: fields in .pre-commit-config.yaml. Ruff is the one twin: the import-ban
+# test runs it, and tests/test_ruff_import_boundary.py holds the two pins equal.
 [dependency-groups]
 dev = [
   "pytest==9.1.1",
   "pytest-cov==7.1.0",
   "coverage[toml]==7.15.2",
+  "ruff==0.16.1",
 ]
 
 [tool.coverage.run]

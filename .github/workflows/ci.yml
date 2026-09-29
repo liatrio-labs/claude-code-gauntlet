@@ -75,19 +75,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install pytest
-        if: matrix.python-version != '3.12'
-        run: pip install pytest==9.1.1
+      - name: Install the dev group
+        run: |
+          pip install pip==26.2
+          pip install --group dev
 
       - name: Run pytest
         if: matrix.python-version != '3.12'
         run: python -m pytest tests/ -q
-
-      - name: Install pytest + coverage (gate leg)
-        if: matrix.python-version == '3.12'
-        run: |
-          pip install pip==26.2
-          pip install --group dev
 
       - name: Run pytest with coverage gate
         if: matrix.python-version == '3.12'
@@ -215,9 +210,11 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install pytest
+      - name: Install the dev group
         shell: bash
-        run: pip install pytest==9.1.1
+        run: |
+          python -m pip install pip==26.2
+          python -m pip install --group dev
       - name: Run pytest
         shell: bash
         run: python -m pytest tests/ -q
