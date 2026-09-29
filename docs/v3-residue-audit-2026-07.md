@@ -159,7 +159,7 @@ compression from semantic drift. No fix is made in this pass.
 
 ### 3.6 Duplication-register intersection
 
-`docs/duplication-register.md` was opened and intersected with this scope. Its nine `accidental`
+The retired duplication register (see #409) was opened and intersected with this scope. Its nine `accidental`
 rows are owned by #110 and must not be re-filed here. Its intentional agent copies, Python/JS twins,
 and parity-fixture rows support R-008 and R-009.
 
@@ -210,7 +210,7 @@ consensus claim about the same mechanism, and the separate `actions/checkout` an
 cross-workflow inconsistency and #106 disposition. `R-039` is therefore recorded as an
 `owned-elsewhere` cross-link rather than #37 work.
 
-The receipt-stream inconsistency in the #110 duplication register was excluded before inventory
+The receipt-stream inconsistency in the retired duplication register (see #409) was excluded before inventory
 assignment, as §3.6 requires; it is not an allegation-derived residue row. **`R-038` is that
 exclusion** — the ID was reserved for the receipt-stream row and then vacated when §3.6 ruled it out
 of scope, which is why the sequence runs `R-037` → `R-039` with no `R-038` anywhere below. The three
@@ -260,7 +260,7 @@ detector candidates are kept in Appendix A until challenged; they are not promot
 | ID | Location | Class | Evidence | Disposition | Fix or issue |
 | --- | --- | --- | --- | --- | --- |
 | R-005 | Three-way missing-`REVIEW.md` behavior | diverged duplicates | Known behavior split from refreshed triage | owned-elsewhere | #35 |
-| R-008 | False-positive exclusions ×7 agents | intentional duplication | Failure-isolation contract in `agents/AGENTS.md` and duplication register | intentional-and-documented | none |
+| R-008 | False-positive exclusions ×7 agents | intentional duplication | Failure-isolation contract in `agents/AGENTS.md` and the retired duplication register (see #409) | intentional-and-documented | none |
 | R-009 | Python twins plus parity fixtures | intentional retention | Cross-runtime parity is frozen by generated golden fixtures | intentional-and-documented | none |
 
 ### 4.5 Compatibility retention

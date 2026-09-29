@@ -29,12 +29,12 @@ from unittest.mock import patch
 # JS_MAX_SAFE_INTEGER is the same constant _delta_confidence refuses to exceed --
 # imported from the sibling module rather than re-hardcoded so the two never drift.
 from gauntlet.artifacts import JS_MAX_SAFE_INTEGER
+from gauntlet.registry import VERIFY_SLICE_FIELDS as _SLICE_INPUT_FIELDS
 from gauntlet.verify.decide import (
     _DELTA_FIELDS,
     _LEGACY_CLI_FIELDS,
     _NUMERIC_FIELDS,
     _SCRIPT_WRITTEN_FIELDS,
-    _SLICE_INPUT_FIELDS,
     REPO_ROOT,
     InputError,
     _coerce_numeric_fields,
@@ -2165,7 +2165,7 @@ class TestBuildDeltas(unittest.TestCase):
         # blame_metadata/factual_verification/diff_validation are this script's own
         # audit trail (no workflow schema declares them); agent is merge-injected
         # identity withheld at this boundary ON PURPOSE (#25 req 1) -- see the audit
-        # comment above _DELTA_FIELDS in verify_findings.py for both rationales.
+        # beside DELTA_KEYS in workflows/src/stages.js for both rationales.
         finding = {
             "id": "bug-1",
             "origin": "surfaced",
@@ -3554,79 +3554,7 @@ class TestInlineSliceDecoder(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _SLICE_INPUT_FIELDS lockstep + behavioral equivalence (issue #50b)
-# ---------------------------------------------------------------------------
-
-# workflows/src/stages.js's single-line projection constant, e.g.:
-#   export const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', ...];
-# The `export` keyword is optional in the pattern (stages.js's other module-level
-# constants are a mix of both) -- what this pins is the field list, not the keyword.
-_JS_SLICE_FIELDS_RE = re.compile(
-    r"^(?:export\s+)?const VERIFY_SLICE_FIELDS = \[(.*?)\];\s*$", re.MULTILINE
-)
-_JS_STRING_LITERAL_RE = re.compile(r"'([^']*)'|\"([^\"]*)\"")
-
-
-def _js_slice_input_fields(js_text):
-    """Parse the quoted field names out of a single-line
-    'const VERIFY_SLICE_FIELDS = [...];' declaration, in order. Returns None if no
-    such declaration is found (moved, renamed, reflowed across lines, or removed)."""
-    match = _JS_SLICE_FIELDS_RE.search(js_text)
-    if match is None:
-        return None
-    return tuple(a or b for a, b in _JS_STRING_LITERAL_RE.findall(match.group(1)))
-
-
-class TestSliceInputFieldsLockstep(unittest.TestCase):
-    """_SLICE_INPUT_FIELDS (Python, this module's target) and VERIFY_SLICE_FIELDS
-    (JS, workflows/src/stages.js) are ONE projection allowlist declared in two
-    runtimes -- the inline projection dispatches only these fields per finding,
-    and every field verify_findings.py reads must be in the list (workflows/AGENTS.md:
-    "one list in two runtimes, walked in the same order"). This pins the pair
-    literally rather than trusting the prose comment to stay true.
-    """
-
-    STAGES_JS = os.path.join(REPO_ROOT, "workflows", "src", "stages.js")
-
-    def test_parser_extracts_a_representative_declaration(self):
-        # Self-check on the parsing regex, independent of the real file's current
-        # content -- proves _js_slice_input_fields reads the documented shape
-        # before the next test trusts it against the real source.
-        sample = (
-            "// comment\n"
-            "const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'origin'];\n"
-            "const OTHER = 1;\n"
-        )
-        self.assertEqual(
-            _js_slice_input_fields(sample), ("id", "file", "line_start", "origin")
-        )
-
-    def test_python_and_js_projection_lists_agree_in_order(self):
-        with open(self.STAGES_JS, encoding="utf-8") as fh:
-            js_text = fh.read()
-        js_fields = _js_slice_input_fields(js_text)
-        self.assertIsNotNone(
-            js_fields,
-            f"{self.STAGES_JS} has no single-line 'const VERIFY_SLICE_FIELDS = "
-            "[...];' declaration -- it moved, was renamed, was reflowed across "
-            "lines, or the projection was dropped. Update this test's parser "
-            "deliberately if the shape changed on purpose, or restore the "
-            "declaration in stages.js.",
-        )
-        self.assertEqual(
-            js_fields,
-            _SLICE_INPUT_FIELDS,
-            "workflows/src/stages.js's VERIFY_SLICE_FIELDS and "
-            "scripts/verify_findings.py's _SLICE_INPUT_FIELDS have drifted -- "
-            "both name the SAME verify slice-input dispatch projection and must "
-            f"list the same fields in the same order. JS={js_fields!r} "
-            f"Python={_SLICE_INPUT_FIELDS!r}",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Read-site scan: every finding-field literal verify_findings.py mentions must be
-# accounted for by one of the four field lists (issue #50b fix 2)
+# Read-site scan: every finding-field literal must be accounted for.
 # ---------------------------------------------------------------------------
 
 # Matches `finding.get("x"`, `finding["x"]`, `f.get("x"`, `f["x"]` (either quote style)
@@ -3650,18 +3578,7 @@ def _finding_field_literals(src):
 
 
 class TestSliceInputFieldsReadSiteScan(unittest.TestCase):
-    """workflows/AGENTS.md's verify-boundary rule -- 'every finding field
-    verify_findings.py reads must be listed [in _SLICE_INPUT_FIELDS]' -- was prose
-    with no enforcement. `f.get("finding_id")` in `batch_findings` (the legacy
-    batch-naming fallback) already violated a literal reading of that rule before
-    this test existed. This scans the script's own source for every finding-field
-    literal and requires each one to resolve to _SLICE_INPUT_FIELDS (the dispatch
-    projection), _SCRIPT_WRITTEN_FIELDS (this script's own audit-trail writes, never
-    expected from input), _LEGACY_CLI_FIELDS (positional-CLI-only fallbacks) or
-    _NUMERIC_FIELDS (line/end_line -- coerced generically by _coerce_numeric_fields's
-    `for key in _NUMERIC_FIELDS` loop, never read via a literal string, but still a
-    real read path this regex-based scan cannot see).
-    """
+    """Account for verifier reads in the generated projection or a justified exemption."""
 
     SCRIPT_PATH = os.path.join(REPO_ROOT, "scripts", "gauntlet", "verify", "decide.py")
     _ALLOWED: ClassVar[set] = (
@@ -3700,11 +3617,10 @@ class TestSliceInputFieldsReadSiteScan(unittest.TestCase):
             unaccounted,
             [],
             f"{self.SCRIPT_PATH} reads/writes finding field(s) {unaccounted} that "
-            "are not in _SLICE_INPUT_FIELDS, _SCRIPT_WRITTEN_FIELDS, "
-            "_LEGACY_CLI_FIELDS or _NUMERIC_FIELDS -- add the field to "
-            "_SLICE_INPUT_FIELDS AND VERIFY_SLICE_FIELDS (workflows/src/stages.js) "
-            "if the script now consults it on dispatched slices, or exempt it "
-            "here (in scripts/verify_findings.py) with a reason.",
+            "are not in VERIFY_SLICE_FIELDS, _SCRIPT_WRITTEN_FIELDS, "
+            "_LEGACY_CLI_FIELDS or _NUMERIC_FIELDS -- add a dispatched read to "
+            "workflows/src/stages.js and regenerate the Python registry, or exempt "
+            "the read here with a reason.",
         )
 
     def test_every_legacy_cli_field_still_occurs_in_the_source(self):

@@ -42,47 +42,15 @@ from contextlib import suppress
 
 from gauntlet.cli import Command
 from gauntlet.jsjson import write_result
+from gauntlet.registry import (
+    DETAIL_FIELDS_BY_DIMENSION as _DETAIL_FIELDS_BY_DIMENSION,
+)
+from gauntlet.registry import (
+    RULE_SOURCE_LABEL_FALLBACK,
+    RULE_SOURCE_LABELS,
+    SEVERITY_EMOJI,
+)
 from gauntlet.text import normalize_report_severity
-
-# generated-from-registry-identity:constants — do not edit; run scripts/generate_contract_requirements.py
-BRAND_MARK = "⚔️"
-BRAND_NAME = "Code Gauntlet"
-SEVERITY_EMOJI = {
-    "critical": "🔴",
-    "high": "🟠",
-    "medium": "🟡",
-    "low": "💡",
-}
-SEVERITY_EMOJI_FALLBACK = "💡"
-RULE_SOURCE_LABELS = {
-    "documented_rule": "Cited rule",
-    "code_comment": "Cited comment",
-    "repo_precedent": "Repo precedent",
-    "self_inconsistency": "Inconsistency",
-}
-RULE_SOURCE_LABEL_FALLBACK = "Cited rule"
-# /generated-from-registry-identity:constants
-
-# generated-from-registry-identity:detail_fields — do not edit; run scripts/generate_contract_requirements.py
-_DETAIL_FIELDS_BY_DIMENSION = {
-    "bug": ("hidden_errors",),
-    "security": ("attack_vector",),
-    "cross_file_impact": ("affected_consumers",),
-    "test_coverage": (
-        "criticality",
-        "failure_scenario",
-    ),
-    "convention": (
-        "rule_source",
-        "claude_md_rule",
-    ),
-    "intent": ("spec_text",),
-    "comment_accuracy": (),
-    "type_design": ("invalid_state_example",),
-    "simplification": ("behavior_preserved",),
-}
-# /generated-from-registry-identity:detail_fields
-
 
 REQUIRED_FIELDS = (
     "id",

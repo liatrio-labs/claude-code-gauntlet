@@ -1,0 +1,191 @@
+{
+  "algorithm": "json_spelling",
+  "cases": [
+    {
+      "id": "empty",
+      "input": {},
+      "expected": "{}"
+    },
+    {
+      "id": "scalars",
+      "input": [
+        null,
+        true,
+        false,
+        0,
+        ""
+      ],
+      "expected": "[\n  null,\n  true,\n  false,\n  0,\n  \"\"\n]"
+    },
+    {
+      "id": "omitted_vs_null",
+      "input": {
+        "present": null
+      },
+      "expected": "{\n  \"present\": null\n}"
+    },
+    {
+      "id": "lone_surrogate",
+      "input": [
+        "\ud800"
+      ],
+      "expected": "[\n  \"\\ud800\"\n]"
+    },
+    {
+      "id": "astral",
+      "input": [
+        "\ud83d\ude00"
+      ],
+      "expected": "[\n  \"\ud83d\ude00\"\n]"
+    },
+    {
+      "id": "control",
+      "input": [
+        "a\n\t\u0000b"
+      ],
+      "expected": "[\n  \"a\\n\\t\\u0000b\"\n]"
+    },
+    {
+      "id": "line_separators",
+      "input": [
+        "\u2028\u2029"
+      ],
+      "expected": "[\n  \"\u2028\u2029\"\n]"
+    },
+    {
+      "id": "normalize_bom_crlf",
+      "operation": "normalize",
+      "input": "\ufeffvalue\r\n",
+      "expected": "value"
+    },
+    {
+      "id": "normalize_one_newline",
+      "operation": "normalize",
+      "input": "value\n\n",
+      "expected": "value\n"
+    },
+    {
+      "id": "empty_array",
+      "input": [],
+      "expected": "[]"
+    },
+    {
+      "id": "scalar_mix",
+      "input": [
+        {},
+        [],
+        "",
+        null,
+        true,
+        false
+      ],
+      "expected": "[\n  {},\n  [],\n  \"\",\n  null,\n  true,\n  false\n]"
+    },
+    {
+      "id": "nested_object",
+      "input": {
+        "a": {
+          "b": {
+            "c": []
+          }
+        }
+      },
+      "expected": "{\n  \"a\": {\n    \"b\": {\n      \"c\": []\n    }\n  }\n}"
+    },
+    {
+      "id": "plain_string",
+      "input": "plain string",
+      "expected": "\"plain string\""
+    },
+    {
+      "id": "lone_low",
+      "input": [
+        "\udfff"
+      ],
+      "expected": "[\n  \"\\udfff\"\n]"
+    },
+    {
+      "id": "lone_mid_string",
+      "input": [
+        "pre\ud800post"
+      ],
+      "expected": "[\n  \"pre\\ud800post\"\n]"
+    },
+    {
+      "id": "lone_key",
+      "input": {
+        "\ud800": "in a KEY"
+      },
+      "expected": "{\n  \"\\ud800\": \"in a KEY\"\n}"
+    },
+    {
+      "id": "astral_plus_lone",
+      "input": [
+        "\ud83d\ude00\ud800"
+      ],
+      "expected": "[\n  \"\ud83d\ude00\\ud800\"\n]"
+    },
+    {
+      "id": "control_range",
+      "input": [
+        "\u0000\u0001\u001f"
+      ],
+      "expected": "[\n  \"\\u0000\\u0001\\u001f\"\n]"
+    },
+    {
+      "id": "short_escapes",
+      "input": [
+        "\b\f\n\r\t"
+      ],
+      "expected": "[\n  \"\\b\\f\\n\\r\\t\"\n]"
+    },
+    {
+      "id": "quote_backslash_slash",
+      "input": [
+        "quote \" backslash \\ slash /"
+      ],
+      "expected": "[\n  \"quote \\\" backslash \\\\ slash /\"\n]"
+    },
+    {
+      "id": "unicode_mix",
+      "input": [
+        "caf\u00e9 \u2014 na\u00efve",
+        "\u65e5\u672c\u8a9e",
+        "\ud835\udd4f astral",
+        "\u007f"
+      ],
+      "expected": "[\n  \"caf\u00e9 \u2014 na\u00efve\",\n  \"\u65e5\u672c\u8a9e\",\n  \"\ud835\udd4f astral\",\n  \"\u007f\"\n]"
+    },
+    {
+      "id": "safe_integer_bounds",
+      "input": [
+        0,
+        -0,
+        1,
+        -1,
+        9007199254740991,
+        -9007199254740991
+      ],
+      "expected": "[\n  0,\n  0,\n  1,\n  -1,\n  9007199254740991,\n  -9007199254740991\n]"
+    },
+    {
+      "id": "finding_numeric_keys",
+      "input": {
+        "line_start": 10,
+        "line_end": 12,
+        "confidence": 90
+      },
+      "expected": "{\n  \"line_start\": 10,\n  \"line_end\": 12,\n  \"confidence\": 90\n}"
+    },
+    {
+      "id": "nested_escaped_text",
+      "input": [
+        {
+          "id": "F1",
+          "d": "\u591a\u884c\ntext\twith escapes"
+        }
+      ],
+      "expected": "[\n  {\n    \"id\": \"F1\",\n    \"d\": \"\u591a\u884c\\ntext\\twith escapes\"\n  }\n]"
+    }
+  ]
+}

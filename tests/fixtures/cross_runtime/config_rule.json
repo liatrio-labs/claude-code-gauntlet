@@ -1,0 +1,20 @@
+{
+  "algorithm": "config_rule",
+  "cases": [
+    {"id": "enum_accept", "input": {"rule": {"kind": "enum", "values": ["full", "light"]}, "value": "full", "mode": "interactive"}, "expected": true},
+    {"id": "enum_reject", "input": {"rule": {"kind": "enum", "values": ["full"]}, "value": "FULL", "mode": "interactive"}, "expected": false},
+    {"id": "mode_select", "input": {"rule": {"headless": {"kind": "enum", "values": ["fast"]}, "interactive": {"kind": "enum", "values": ["full"]}}, "value": "fast", "mode": "headless"}, "expected": true},
+    {"id": "mode_reject", "input": {"rule": {"headless": {"kind": "enum", "values": ["fast"]}}, "value": "fast", "mode": "interactive"}, "expected": false},
+    {"id": "csv_accept", "input": {"rule": {"kind": "csv_subset", "values": ["a", "b"]}, "value": "a,b", "mode": "headless"}, "expected": true},
+    {"id": "csv_duplicate", "input": {"rule": {"kind": "csv_subset", "values": ["a", "b"]}, "value": "a,a", "mode": "headless"}, "expected": false},
+    {"id": "csv_empty", "input": {"rule": {"kind": "csv_subset", "values": ["a", "b"]}, "value": "a,", "mode": "headless"}, "expected": false},
+    {"id": "positive", "input": {"rule": {"kind": "positive_digits"}, "value": "9007199254740991", "mode": "headless"}, "expected": true},
+    {"id": "positive_overflow", "input": {"rule": {"kind": "positive_digits"}, "value": "9007199254740992", "mode": "headless"}, "expected": false},
+    {"id": "leading_zero", "input": {"rule": {"kind": "positive_digits"}, "value": "01", "mode": "headless"}, "expected": false},
+    {"id": "null", "input": {"rule": {"kind": "digits_or_null"}, "value": "null", "mode": "interactive"}, "expected": true},
+    {"id": "zero", "input": {"rule": {"kind": "digits_or_null"}, "value": "0", "mode": "interactive"}, "expected": true},
+    {"id": "negative", "input": {"rule": {"kind": "digits_or_null"}, "value": "-1", "mode": "interactive"}, "expected": false},
+    {"id": "non_string", "input": {"rule": {"kind": "enum", "values": ["x"]}, "value": null, "mode": "interactive"}, "expected": false},
+    {"id": "unknown_kind", "input": {"rule": {"kind": "other"}, "value": "x", "mode": "interactive"}, "expected": false}
+  ]
+}

@@ -287,7 +287,7 @@ test('the verify echo declares NO finding item at all — the registry union sto
   assert.deepEqual(
     Object.keys(deltaProps).sort(),
     ['confidence', 'elimination_reason', 'id', 'origin', 'severity', 'verified'],
-    'the delta item declares exactly the keys verify_findings.py _DELTA_FIELDS emits (plus id/verified)',
+    'the delta item declares exactly the generated DELTA_VALUE_FIELDS plus id/verified',
   );
 
   const findingOnly = new Set(Object.keys(FINDING_PROP_TYPES));

@@ -1,22 +1,4 @@
-"""The product identity surface: one declaration, generated mirrors (issue #36).
-
-`workflows/src/registry.js` is the ONE hand-authored copy of the brand mark, the
-display name and the severity emoji map. Every other copy — the Python constants in
-`scripts/gauntlet/delivery/post.py`, the legends in `references/report-format.md` and
-`references/delivery-guide.md`, the chat-identity sentence in `SKILL.md` — is emitted
-from it by `scripts/generate_contract_requirements.py` into a hand-placed
-`generated-from-registry-identity` marker fence.
-
-Freshness is already gated (`tests/test_dimensions_registry.py`'s `--check` run). What
-these tests add is the thing `--check` cannot see: that the mirrors carry the SAME
-CHARACTERS the registry declares. `--check` compares a file against the generator's own
-output, so it stays green for any mark; a wrong-but-consistent mark, or a
-registry.js edit shipped without a regenerate, is what turns these red.
-
-Every mark literal here is written as its codepoint escape, never as a pasted glyph —
-a glyph survives a copy-paste through an editor that normalises or drops the U+FE0F
-variation selector, and the test would then pin the wrong bytes without anyone seeing it.
-"""
+"""The product identity surface and its generated documentation."""
 
 import os
 import subprocess
@@ -31,7 +13,7 @@ from tests.support.js_values import js_values
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# CROSSED SWORDS U+2694 + VARIATION SELECTOR-16 U+FE0F. Two codepoints, both BMP.
+# Escapes pin the variation selector that a rendered glyph can hide.
 BRAND_MARK = "\u2694\ufe0f"
 # WARNING SIGN U+26A0 + VS16 — the one other VS16-carrying mark this repo renders
 # (post_review's invalid-position warning). Disjointness from it is what keeps the
@@ -203,34 +185,6 @@ class TestIdentitySurface(unittest.TestCase):
     def setUpClass(cls):
         cls.registry = gen.load_registry(REPO_ROOT)
 
-    def test_python_mirror_decodes_to_the_registry_identity(self):
-        """T-MIRROR: post_review's constants ARE registry.js's, character for character.
-
-        registry.js declares the mark as an escape and the mirror carries the literal
-        bytes, so the two files never share a byte sequence — decoded codepoints are the
-        only honest comparison, and they are what a `--check`-clean tree can still get
-        wrong (edit registry.js, forget to regenerate).
-        """
-        identity = self.registry
-        self.assertEqual(
-            _codepoints(post_review.BRAND_MARK),
-            _codepoints(identity["brand"]["mark"]),
-        )
-        self.assertEqual(post_review.BRAND_NAME, identity["brand"]["name"])
-        self.assertEqual(
-            {k: _codepoints(v) for k, v in post_review.SEVERITY_EMOJI.items()},
-            {k: _codepoints(v) for k, v in identity["severityEmoji"].items()},
-        )
-        self.assertEqual(
-            _codepoints(post_review.SEVERITY_EMOJI_FALLBACK),
-            _codepoints(identity["severityEmojiFallback"]),
-        )
-        self.assertEqual(post_review.RULE_SOURCE_LABELS, identity["ruleSourceLabels"])
-        self.assertEqual(
-            post_review.RULE_SOURCE_LABEL_FALLBACK,
-            identity["ruleSourceLabelFallback"],
-        )
-
     def test_the_mark_is_the_pinned_codepoint_sequence(self):
         """T-GLYPH: the mark is U+2694 U+FE0F and collides with nothing else rendered."""
         self.assertEqual(_codepoints(post_review.BRAND_MARK), _codepoints(BRAND_MARK))
@@ -345,6 +299,8 @@ class TestIdentitySurface(unittest.TestCase):
                 for symbol in symbols
             )
         }
+        if BRAND_MARK in gen.render_python_registry(self.registry):
+            generated_mark_producers.add("scripts/gauntlet/registry.py")
         self.assertEqual(set(marked[0]["producers"]), generated_mark_producers)
 
     def test_the_composed_constants_are_the_generated_identity(self):

@@ -7,8 +7,8 @@ Usage:
     python3 verify_findings.py --input <destination> --input-inline <slice-json> ...
 
 Input JSON schema. The workflow's verify stage dispatches a PROJECTION of each finding
-(VERIFY_SLICE_FIELDS in workflows/src/stages.js / _SLICE_INPUT_FIELDS below — one list in
-two runtimes) rather than the full finding object; extra fields are tolerated and passed
+(VERIFY_SLICE_FIELDS in workflows/src/stages.js, projected into gauntlet.registry)
+rather than the full finding object; extra fields are tolerated and passed
 through untouched when present (the positional CLI feeds full persisted artifacts, which
 carry every field merge/filter/challenge produced):
     {
@@ -97,6 +97,10 @@ from gauntlet.artifacts import (
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
 from gauntlet.paths import entry
+
+# The mutation audit for these generated fields lives beside DELTA_KEYS in stages.js.
+# A read of a field outside VERIFY_SLICE_FIELDS sees only its .get() default on a dispatched slice.
+from gauntlet.registry import DELTA_VALUE_FIELDS as _DELTA_FIELDS
 
 # ---------------------------------------------------------------------------
 # Repo root — resolved once at startup (RF-01)
@@ -971,25 +975,9 @@ def batch_findings(findings, min_batch=3, max_batch=5):
 # TypeError ("unsupported operand type(s) for -: 'str' and 'int'" / "'<' not supported
 # between instances of 'str' and 'int'"), which in receipt mode surfaces as
 # status:'failed' and degrades the whole slice to UNVERIFIED (the live-smoke failure).
+# The read-site scan exempts these: _coerce_numeric_fields reads them by loop, not by literal, and skips a key a dispatched slice omits.
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
-
-# The workflow's dispatch projection (VERIFY_SLICE_FIELDS in workflows/src/stages.js, one
-# list in two runtimes, same order). Every finding field this script READS must be listed
-# here — a read of an unlisted field sees only the .get() default on dispatched slices.
-# Extra fields remain tolerated (the positional CLI feeds full persisted artifacts).
-_SLICE_INPUT_FIELDS = (
-    "id",
-    "file",
-    "line_start",
-    "line_end",
-    "description",
-    "evidence",
-    "severity",
-    "confidence",
-    "cross_file_refs",
-    "origin",
-)
 
 # Written by this script before any read — never expected from the input. A dispatched
 # slice never carries these; they exist only after classify_blame / verify_factual /
@@ -1088,10 +1076,10 @@ def _input_checksum(doc):
     ``_run_receipt`` writes ``--input`` itself in the pretty form, so this proof and the
     file agree there by construction. Both sides hash a canonical re-serialisation of the
     same value: the identical pair the persist path uses, pinned across runtimes by
-    tests/test_assemble_artifacts.py and by tests/fixtures/parity/slice_input_proof/.
+    tests/fixtures/cross_runtime/ and by tests/fixtures/parity/slice_input_proof/.
 
     Keys are NOT sorted, on the record (issue #172): the document arrives in
-    ``_SLICE_INPUT_FIELDS`` order and a document that comes back in another shape is a
+    generated ``VERIFY_SLICE_FIELDS`` order and a document that comes back in another shape is a
     regenerated token, not a copied one.
 
     Returns None rather than raising when the document holds a value the two runtimes
@@ -1387,29 +1375,6 @@ def _resolve_head_sha():
 # generation, and the surface on which a live run turned a 10-verified/0-eliminated disk
 # result into a 7/3 echo with a valid receipt.
 #
-# WHAT THE DELTA MUST COVER — audited against every mutation site in this file (there is
-# no `del` and no `.pop`: every mutation is an assignment, so the delta is complete iff it
-# names every key this script assigns that anything downstream consumes):
-#
-#   origin              classify_blame (always) + validate_diff_lines ("surfaced" flip)
-#   severity            the one-step downgrade, at most once, from either of those two
-#   confidence          verify_factual's zeroing / proportional reduction
-#   elimination_reason  run_verification's stamp on a real elimination
-#
-# DELIBERATELY EXCLUDED, each for a reason that must survive a future edit:
-#
-#   blame_metadata / factual_verification / diff_validation — this script's own audit
-#     trail. No workflow schema declares them (registry.js FINDING_PROP_TYPES is the whole
-#     declaration), so the by-value echo ALREADY dropped them on every run and no stage
-#     downstream of verify reads them. They stay in the on-disk document, which is
-#     unchanged, for bench/v2 consumers and for anything that wants the audit trail.
-#   agent — merge-injected identity, withheld at this boundary ON PURPOSE (#25 req 1).
-#     Deterministic `agent` survival past verify is the measured dedup recall-collapse
-#     mechanism (mini-subset A: dedup eliminations 7 -> 33, recall 20/30 -> 13/30); it
-#     re-lands only with the cross-dimension consolidation redesign (#22). This script
-#     never writes `agent`, so excluding it here is automatic — the workflow-side join is
-#     where the withholding is actually enforced, and a test pins it there.
-_DELTA_FIELDS = ("origin", "severity", "confidence", "elimination_reason")
 
 
 def _delta_confidence(value):

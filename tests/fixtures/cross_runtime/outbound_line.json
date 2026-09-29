@@ -1,0 +1,70 @@
+{
+  "algorithm": "outbound_line",
+  "cases": [
+    {
+      "id": "empty",
+      "input": "",
+      "expected": ""
+    },
+    {
+      "id": "email",
+      "input": "Contact dev@example.com for details.",
+      "expected": "Contact dev@example.com for details."
+    },
+    {
+      "id": "html",
+      "input": "<dev@example.com>",
+      "expected": "&lt;dev@example.com>"
+    },
+    {
+      "id": "link_destination",
+      "input": "[profile](https://x.test/@user)",
+      "expected": "[profile](https://x.test/＠user)"
+    },
+    {
+      "id": "inline_code",
+      "input": "code `@inside <tag> &copy;` and @outside",
+      "expected": "code `＠inside ＜tag> &copy;` and ＠outside"
+    },
+    {
+      "id": "unclosed_code",
+      "input": "open `@outside <tag>",
+      "expected": "open \\`＠outside &lt;tag>"
+    },
+    {
+      "id": "unequal_delimiter",
+      "input": "`a`` @inside",
+      "expected": "\\`a\\`\\` ＠inside"
+    },
+    {
+      "id": "named_reference",
+      "input": "&amp; &#64; &#60;table",
+      "expected": "&amp; ＠ &lt;table"
+    },
+    {
+      "id": "literal_comparisons",
+      "input": "plain a < b; x <= y; <3; <tag>",
+      "expected": "plain a < b; x <= y; <3; &lt;tag>"
+    },
+    {
+      "id": "literal_underscore_mention",
+      "input": "Notify @alice and _@team; a@domain.test; https://x/@user; <table>",
+      "expected": "Notify ＠alice and _＠team; a@domain.test; https://x/＠user; &lt;table>"
+    },
+    {
+      "id": "literal_entities",
+      "input": "&amp; &lt; &gt; &quot; &copy; &#64; &#60;table",
+      "expected": "&amp; &lt; &gt; &quot; &copy; ＠ &lt;table"
+    },
+    {
+      "id": "literal_broken_link",
+      "input": "[profile](broken@leehopper",
+      "expected": "[profile](broken@leehopper"
+    },
+    {
+      "id": "literal_broken_nested_link",
+      "input": "[a](x(y)`z) @leehopper <ins>q</ins> `",
+      "expected": "[a](x(y)`z) ＠leehopper ＜ins>q＜/ins> `"
+    }
+  ]
+}

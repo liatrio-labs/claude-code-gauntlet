@@ -65,7 +65,6 @@ function fieldLabel(key) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-const proseFenceCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/prose_fence_cases.json', import.meta.url), 'utf8'));
 
 test('T-TITLE: title subject precedence and identity line bytes are exact', () => {
   // Mutation: remove permalinkContext or platform ref selection; the GitHub/GitLab pins turn red.
@@ -263,20 +262,6 @@ test('T-FOLDS: every exact cap and cap-plus-one has deterministic bytes', () => 
   assert.doesNotMatch(exactSummary, /\[folded:/);
   const foldedSummary = rendered({ summary: 's'.repeat(12001) });
   assert.ok(foldedSummary.includes(`${'s'.repeat(12000)}\n\n_[folded: 1 more characters]_`));
-});
-
-test('T-FOLDS-FENCE-CORPUS: Python and JavaScript share fence cases', () => {
-  for (const row of proseFenceCases.folds) {
-    const source = row.id === 'PARTIAL'
-      ? `${'``````info'}${'\nDROP'.repeat(300)}`
-      : `${row.kept}${'\nDROP'.repeat(300)}`;
-    const omitted = Array.from(source).length - Array.from(row.kept).length;
-    const expected = `${row.kept}${row.closer}\n\n_[folded: ${omitted} more characters]_`;
-    assert.equal(foldProse(source, row.js_limit), expected, row.id);
-  }
-  for (const row of proseFenceCases.closers) {
-    assert.equal(proseFenceCloser(row.prefix), row.closer.replace(/^\n/, ''), row.id);
-  }
 });
 
 test('T-FOLDS-FENCE-SHAPE: open fences expose the shared state tuple', () => {

@@ -254,11 +254,8 @@ export const AGENT_LABELS = {
 };
 
 // --- Product identity -------------------------------------------------------
-// The ONE hand-authored copy of the brand mark, the display name, the severity emoji map,
-// and the rule-source label map. Every other copy is GENERATED from here by
-// scripts/gauntlet/contract_gen.py (--check in CI): the Python mirror in
-// scripts/gauntlet/delivery/post.py and the legends in references/report-format.md and
-// references/delivery-guide.md. Do not hand-edit a mirror.
+// The generator projects this presentation identity into gauntlet.registry and the
+// documentation surfaces.
 //
 // PRODUCT ("code-gauntlet", scripts/gauntlet/marker.py:83) is deliberately NOT here and is
 // NOT a mirror of BRAND_NAME: that is a machine-parsed wire slug pinned by

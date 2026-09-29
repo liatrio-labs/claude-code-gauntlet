@@ -8,12 +8,7 @@ It has no CLI and emits no receipt.
 
 from collections.abc import Mapping
 
-# One hand-written alphabet mirrors JS String.prototype.trim.
-# Shared by normalize_report_severity and gauntlet.config.one_line.
-JS_TRIM_CHARS = (
-    "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005"
-    "\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
-)
+from gauntlet.registry import JS_TRIM_CHARS
 
 
 def normalize_report_severity(raw: object, labels: Mapping[str, object]) -> str:

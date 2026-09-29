@@ -604,8 +604,8 @@ export const SUGGESTION_SETS = [
 export const INJECTION_STRIPPED_PROSE_FIELDS = ['suggestion', 'claude_md_rule', 'spec_text'];
 
 // Apply the same normalized line and character bounds used by the delivery fence.
-const FIX_MAX_LINES = 100;
-const FIX_MAX_CHARS = 8000;
+export const FIX_MAX_LINES = 100;
+export const FIX_MAX_CHARS = 8000;
 
 // Normalize one surrounding fence before measuring suggested fix code.
 function normalizeFixCodeForBound(code) {

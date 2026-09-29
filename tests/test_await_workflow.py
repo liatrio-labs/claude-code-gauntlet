@@ -37,8 +37,6 @@ from unittest.mock import patch
 
 import pytest
 from gauntlet.awaiting import (
-    ARTIFACT_BASENAMES,
-    ARTIFACT_PATH_TEMPLATES,
     COMPACT_RETURN_KEYS,
     DEFAULT_TIMEOUT_SECONDS,
     MIN_TIMEOUT_SECONDS,
@@ -58,6 +56,7 @@ from gauntlet.awaiting import (
     task_roots,
     terminal_from,
 )
+from gauntlet.registry import ARTIFACT_BASENAMES, ARTIFACT_PATH_TEMPLATES
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -1686,61 +1685,9 @@ class TestWaitLoop(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestArtifactNamingLockstep(unittest.TestCase):
-    """ARTIFACT_BASENAMES must track workflows/src/stages.js.
-
-    The JS side is the only producer of these paths. A rename there with no change
-    here would leave the artifacts fallback silently blind forever — it would never
-    see a complete set again, on any run, with nothing anywhere saying so.
-    """
-
-    @staticmethod
-    def _stages_js():
-        with open(
-            os.path.join(REPO_ROOT, "workflows", "src", "stages.js"), encoding="utf-8"
-        ) as fh:
-            return fh.read()
-
-    def test_directly_built_basenames_appear_in_stages_js(self):
-        """The three artifactPaths entries are literal templates over there."""
-        source = self._stages_js()
-        body = source.split("export function plannedArtifactPaths", 1)[1].split(
-            "const ARTIFACT_PATH_KEYS", 1
-        )[0]
-        for key, template in ARTIFACT_PATH_TEMPLATES.items():
-            if key == "checkpoints":
-                continue  # composed via checkpointPath(); asserted below
-            literal = template.replace("{sha}", "${sha}")
-            assignment = re.search(
-                rf"^\s*{re.escape(key)}:\s*([^,]+),?\s*$", body, re.MULTILINE
-            )
-            if assignment is None:
-                self.fail(f"{key} is not assigned in stages.js")
-            self.assertIn(literal, assignment.group(1))
-
-    def test_mapping_is_read_only(self):
-        with self.assertRaises(TypeError):
-            ARTIFACT_PATH_TEMPLATES["findings"] = "elsewhere-{sha}.json"
-
-    def test_mapping_keys_match_stages_js_artifact_path_keys(self):
-        source = self._stages_js()
-        match = re.search(r"const ARTIFACT_PATH_KEYS = \[(.*?)\];", source, re.DOTALL)
-        if match is None:
-            self.fail("ARTIFACT_PATH_KEYS was not found in stages.js")
-        keys = re.findall(r"'([^']+)'", match.group(1))
-        self.assertEqual(list(ARTIFACT_PATH_TEMPLATES), keys)
-
-    def test_checkpoint_all_is_still_how_the_combined_checkpoint_is_named(self):
-        """The checkpoint name is composed, so assert both halves of it."""
-        source = self._stages_js()
-        self.assertRegex(
-            source, r"code-gauntlet-checkpoint-\$\{phase\}-\$\{sha\}\.json"
-        )
-        self.assertRegex(source, r"checkpointPath\(\s*'all'")
-        self.assertEqual(
-            ARTIFACT_PATH_TEMPLATES["checkpoints"],
-            "code-gauntlet-checkpoint-all-{sha}.json",
-        )
+def test_artifact_mapping_is_read_only():
+    with pytest.raises(TypeError):
+        ARTIFACT_PATH_TEMPLATES["findings"] = "elsewhere-{sha}.json"
 
 
 class TestWaitProtocolAcceptance(unittest.TestCase):

@@ -1,0 +1,215 @@
+{
+  "algorithm": "outbound_fold",
+  "cases": [
+    {
+      "id": "F4",
+      "operation": "fold",
+      "input": {
+        "prefix": "````py\nkeep",
+        "repeat": "\nDROP",
+        "count": 300
+      },
+      "js_limit": 11,
+      "py_allowance": 104,
+      "platform": "github",
+      "expected_js": "````py\nkeep\n````\n\n_[folded: 1500 more characters]_",
+      "expected_py": "````py\nkeep\n````\n\n_[folded: 1500 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1500
+    },
+    {
+      "id": "F6",
+      "operation": "fold",
+      "input": {
+        "prefix": "``````\nkeep",
+        "repeat": "\nDROP",
+        "count": 300
+      },
+      "js_limit": 11,
+      "py_allowance": 106,
+      "platform": "github",
+      "expected_js": "``````\nkeep\n``````\n\n_[folded: 1500 more characters]_",
+      "expected_py": "``````\nkeep\n``````\n\n_[folded: 1500 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1500
+    },
+    {
+      "id": "FT",
+      "operation": "fold",
+      "input": {
+        "prefix": "~~~txt\nkeep",
+        "repeat": "\nDROP",
+        "count": 300
+      },
+      "js_limit": 11,
+      "py_allowance": 103,
+      "platform": "github",
+      "expected_js": "~~~txt\nkeep\n~~~\n\n_[folded: 1500 more characters]_",
+      "expected_py": "~~~txt\nkeep\n~~~\n\n_[folded: 1500 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1500
+    },
+    {
+      "id": "FM",
+      "operation": "fold",
+      "input": {
+        "prefix": "```\n~~~~\nkeep",
+        "repeat": "\nDROP",
+        "count": 300
+      },
+      "js_limit": 13,
+      "py_allowance": 105,
+      "platform": "github",
+      "expected_js": "```\n~~~~\nkeep\n```\n\n_[folded: 1500 more characters]_",
+      "expected_py": "```\n~~~~\nkeep\n```\n\n_[folded: 1500 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1500
+    },
+    {
+      "id": "FC",
+      "operation": "fold",
+      "input": {
+        "prefix": "````\nx\n````\nprose",
+        "repeat": "\nDROP",
+        "count": 300
+      },
+      "js_limit": 17,
+      "py_allowance": 109,
+      "platform": "github",
+      "expected_js": "````\nx\n````\nprose\n\n_[folded: 1500 more characters]_",
+      "expected_py": "````\nx\n````\nprose\n\n_[folded: 1500 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1500
+    },
+    {
+      "id": "FO",
+      "operation": "fold",
+      "input": {
+        "prefix": "````python",
+        "repeat": "\nDROP",
+        "count": 300
+      },
+      "js_limit": 10,
+      "py_allowance": 103,
+      "platform": "github",
+      "expected_js": "````python\n````\n\n_[folded: 1500 more characters]_",
+      "expected_py": "````python\n````\n\n_[folded: 1500 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1500
+    },
+    {
+      "id": "PARTIAL",
+      "operation": "fold",
+      "input": {
+        "prefix": "``````info",
+        "repeat": "\nDROP",
+        "count": 300
+      },
+      "js_limit": 4,
+      "py_allowance": 97,
+      "platform": "github",
+      "expected_js": "````\n````\n\n_[folded: 1506 more characters]_",
+      "expected_py": "````\n````\n\n_[folded: 1506 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1506
+    },
+    {
+      "id": "Indent3",
+      "operation": "closer",
+      "input": "   ````x",
+      "expected_js": "````",
+      "expected_py": "````"
+    },
+    {
+      "id": "Indent4",
+      "operation": "closer",
+      "input": "    ````x",
+      "expected_js": "",
+      "expected_py": ""
+    },
+    {
+      "id": "Run2",
+      "operation": "closer",
+      "input": "``",
+      "expected_js": "",
+      "expected_py": ""
+    },
+    {
+      "id": "Run3",
+      "operation": "closer",
+      "input": "```",
+      "expected_js": "```",
+      "expected_py": "```"
+    },
+    {
+      "id": "ShortClose",
+      "operation": "closer",
+      "input": "````\n```",
+      "expected_js": "````",
+      "expected_py": "````"
+    },
+    {
+      "id": "LongClose",
+      "operation": "closer",
+      "input": "````\n`````",
+      "expected_js": "",
+      "expected_py": ""
+    },
+    {
+      "id": "CloseText",
+      "operation": "closer",
+      "input": "````\n```` text",
+      "expected_js": "````",
+      "expected_py": "````"
+    },
+    {
+      "id": "BadBacktickInfo",
+      "operation": "closer",
+      "input": "```a`b",
+      "expected_js": "",
+      "expected_py": ""
+    },
+    {
+      "id": "TildeInfo",
+      "operation": "closer",
+      "input": "~~~a`b",
+      "expected_js": "~~~",
+      "expected_py": "~~~"
+    },
+    {
+      "id": "InlineRun",
+      "operation": "closer",
+      "input": "text ``` more",
+      "expected_js": "",
+      "expected_py": ""
+    },
+    {
+      "id": "LeadingTab",
+      "operation": "closer",
+      "input": "\t```",
+      "expected_js": "",
+      "expected_py": ""
+    },
+    {
+      "id": "ClosingTab",
+      "operation": "closer",
+      "input": "```\nx\n``` \t",
+      "expected_js": "",
+      "expected_py": ""
+    },
+    {
+      "id": "CRLF",
+      "operation": "closer",
+      "input": "````\r\nx\r\n````\r\nprose",
+      "expected_js": "",
+      "expected_py": ""
+    },
+    {
+      "id": "CR",
+      "operation": "closer",
+      "input": "prose\r````\rx",
+      "expected_js": "````",
+      "expected_py": "````"
+    },
+    {
+      "id": "EndsWithNewline",
+      "operation": "closer",
+      "input": "```\nx\n",
+      "expected_js": "```",
+      "expected_py": "```"
+    }
+  ]
+}

@@ -37,21 +37,6 @@ function locationSpan(bullet) {
   };
 }
 
-test('single-line preparation neutralizes mentions and contains raw HTML', () => {
-  assert.equal(
-    prepareLine('Notify @alice and _@team; a@domain.test; https://x/@user; <table>'),
-    'Notify ＠alice and _＠team; a@domain.test; https://x/＠user; &lt;table>',
-  );
-  assert.equal(prepareLine('plain a < b; x <= y; <3; <tag>'), 'plain a < b; x <= y; <3; &lt;tag>');
-});
-
-test('single-line preparation preserves named references after normalization', () => {
-  assert.equal(
-    prepareLine('&amp; &lt; &gt; &quot; &copy; &#64; &#60;table'),
-    '&amp; &lt; &gt; &quot; &copy; ＠ &lt;table',
-  );
-});
-
 test('numeric references accept ASCII digits only', () => {
   assert.equal(prepareLine('&#64; and &#x40;'), '＠ and ＠');
   assert.equal(prepareLine('&#٦٤; and &#x٤٠;'), '&#٦٤; and &#x٤٠;');
@@ -63,21 +48,6 @@ test('removing inline delimiters cannot join a raw markup opener', () => {
   assert.doesNotMatch(output.replaceAll('`', ''), /<(?=[A-Za-z/!?])/);
 });
 
-test('single-line preparation neutralizes code spans and escapes unmatched backticks', () => {
-  assert.equal(
-    prepareLine('code `@inside <tag> &copy;` and @outside'),
-    'code `＠inside ＜tag> &copy;` and ＠outside',
-  );
-  assert.equal(
-    prepareLine('open `@outside <tag>'),
-    'open \\`＠outside &lt;tag>',
-  );
-});
-
-test('a span does not close on a wider backtick run', () => {
-  assert.equal(prepareLine('`a`` @inside'), '\\`a\\`\\` ＠inside');
-});
-
 test('a backslash inside a span cannot escape its closer', () => {
   assert.equal(
     prepareLine('left `danger <table> @user\\`'),
@@ -86,18 +56,6 @@ test('a backslash inside a span cannot escape its closer', () => {
   assert.equal(
     prepareLine('left `protected\\` <table> @inside` right @outside'),
     'left `protected\\` &lt;table> ＠inside\\` right ＠outside',
-  );
-});
-
-test('single-line preparation applies mention rules in link destinations', () => {
-  assert.equal(
-    prepareLine('[profile](https://example.test/@alice)'),
-    '[profile](https://example.test/＠alice)',
-  );
-  assert.equal(prepareLine('[profile](broken@leehopper'), '[profile](broken@leehopper');
-  assert.equal(
-    prepareLine('[a](x(y)`z) @leehopper <ins>q</ins> `'),
-    '[a](x(y)`z) ＠leehopper ＜ins>q＜/ins> `',
   );
 });
 

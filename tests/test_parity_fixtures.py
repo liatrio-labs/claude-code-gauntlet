@@ -58,23 +58,6 @@ def test_slice_input_proof_parity(case_dir):
     assert _input_checksum(inp["doc"]) == expected["checksum"]
 
 
-def test_recorder_output_matches_verify_wire_committed_goldens():
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(REPO / "workflows/test/tools/record_parity.py"),
-            "--check",
-        ],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    assert result.returncode == 0, (
-        f"stale/missing verify-wire golden(s) -- rerun record_parity.py:\n{result.stderr}"
-    )
-
-
 @pytest.mark.parametrize("mode", [[], ["--check"]], ids=["record", "check"])
 def test_recorder_rejects_unknown_family(mode):
     result = subprocess.run(
