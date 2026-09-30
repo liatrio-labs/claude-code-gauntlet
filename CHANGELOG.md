@@ -2,6 +2,57 @@
 
 <!-- version list -->
 
+## v3.42.14 (2026-09-30)
+
+### Bug Fixes
+
+- Allowlist finding path characters, share one finding-list table, and fence repoRoot out of every
+  output ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+- Close the last path-normalization edges and report rewrites and drops on the right channels
+  ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+- Keep finding path fields repo-relative from discovery to delivery (#441)
+  ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+- Keep host paths out of warnings and sanitize every replayed finding field
+  ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+- Normalize every path-array finding field, keep location suffixes, and rewrite legacy consolidation
+  keys ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+- Normalize finding paths once at discover entry against a path allowlist
+  ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+- Normalize only structural finding path fields, trust relative paths, and drop the text fence
+  ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+- Reject invisible characters by position, match only real URI and drive forms, and keep suffix
+  normalization idempotent ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+- Reject relative finding paths that normalize to absolute ones and drop non-finding replay entries
+  ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+- Turn absolute finding paths under the repo root into repo-relative ones
+  ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+### Refactoring
+
+- Give each path rule one home and one normalizer result shape
+  ([#444](https://github.com/liatrio-labs/claude-code-gauntlet/pull/444),
+  [`513ee0c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/513ee0c900235e7dce11fc49e3319f406c6c4166))
+
+
 ## v3.42.13 (2026-09-30)
 
 ### Bug Fixes
