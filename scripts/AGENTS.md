@@ -17,14 +17,15 @@ entry file. `gauntlet.cli.Command` owns the CLI boundary and adapts unconverted 
 - **`gauntlet.marker` owns the prior-review marker:** it builds what `gauntlet.delivery.post` writes and
   parses what `gauntlet.prior_review` reads. Readers never branch on `version`: both token
   generations carry `"version":"3.0"` with different wire shapes. `TestRoundTrip` guards parity.
-- **Numbers crossing to JS must be JS-reproducible.** Both runtimes refuse non-integer or
-  out-of-safe-range values rather than write an artifact whose float spelling differs by language.
+- **`gauntlet.jsjson` owns JS parity.** Both runtimes refuse non-integer or unsafe numbers
+  to avoid divergent artifacts.
 - **Always emit exactly one receipt line.** `gauntlet.artifacts`'s, `gauntlet.materialize`'s
   and `gauntlet.patches`'s `main()` fall back to a hand-built minimal receipt if the real one
   will not serialize: an empty stdout is indistinguishable from a dead executor.
-- **`gauntlet.materialize` writes the primaries** from `tasks/<task-id>.output`. Reuse the
-  awaiter's task resolution and the assembler's checksum, atomic write and derivation.
+- **`gauntlet.materialize` writes primaries** from `tasks/<task-id>.output`. Reuse task
+  resolution, derivation, `gauntlet.jsjson` checksums and `gauntlet.fs` atomic writes.
 - **Never print a returned payload to stdout.** `gauntlet.awaiting` reduces
   `persistReturn.entries` to `paths` + `resolvedPath` so the model never handles those bytes.
 - **Stdout carries the payload or nothing.** Human-facing status lines go to stderr;
   `gauntlet.fix_tasks` calls `gauntlet.jsjson.write_result(obj)`.
+- **`gauntlet.fs`: JSON reads, atomic writes, confinement, literal-root globs.**

@@ -11,12 +11,25 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from gauntlet import config as resolver
 from gauntlet import contract_gen as generator
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "resolve_config.py"
 SKILL_ROOT = REPO / "skills" / "code-gauntlet"
+
+
+def test_git_root_probe_oserror_is_setup_failure(monkeypatch, tmp_path):
+    def fail(*_args, **_kwargs):
+        raise OSError("probe denied")
+
+    monkeypatch.setattr(resolver.proc, "run", fail)
+    assert resolver.run(["--cwd", str(tmp_path)], {}) == (
+        2,
+        "",
+        "RESOLVER SETUP ERROR: git repository probe failed: probe denied\n",
+    )
 
 
 def clean_environment(**overrides):
@@ -425,6 +438,7 @@ class TestResolverCli(unittest.TestCase):
         self.assertEqual(stdout, "")
         self.assertIn("RESOLVER SETUP ERROR:", stderr)
 
+    @pytest.mark.usefixtures("symlink_or_skip")
     def test_plugin_root_must_match_and_matching_symlink_is_allowed(self):
         with tempfile.TemporaryDirectory() as directory:
             code, stdout, stderr = resolver.run(["--plugin-root", directory], {})

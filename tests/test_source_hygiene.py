@@ -27,7 +27,6 @@ MIGRATING_PYTHON = {
     "materialize.py",
     "delivery/post.py",
     "fix_tasks.py",
-    "patches.py",
     "config.py",
     "pr_identity.py",
     "agent_rules.py",

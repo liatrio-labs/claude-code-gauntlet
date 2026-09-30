@@ -29,39 +29,33 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from collections.abc import Mapping
 
+from gauntlet import proc
 from gauntlet.cli import Command
+from gauntlet.fs import confined
 
 DEFAULT_OUTPUT_DIR = ".code-gauntlet"
 GLOB_META = set("*?[]\\!")
 
 
-def git_run(cwd: str, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        text=True,
-        capture_output=True,
-        check=False,
-        encoding="utf-8",
-    )
+def git_run(cwd: str, *args: str) -> proc.CompletedProcess[str]:
+    return proc.run(["git", *args], cwd=cwd)
 
 
 def git_repo_root(cwd: str) -> str | None:
-    proc = git_run(cwd, "rev-parse", "--show-toplevel")
-    if proc.returncode != 0:
+    result = git_run(cwd, "rev-parse", "--show-toplevel")
+    if result.returncode != 0:
         return None
-    return os.path.realpath(proc.stdout.strip())
+    return os.path.realpath(result.stdout.strip())
 
 
 def git_exclude_path(cwd: str) -> str | None:
-    proc = git_run(cwd, "rev-parse", "--git-path", "info/exclude")
-    if proc.returncode != 0:
+    result = git_run(cwd, "rev-parse", "--git-path", "info/exclude")
+    if result.returncode != 0:
         return None
-    raw = proc.stdout.strip()
+    raw = result.stdout.strip()
     if not raw:
         return None
     if os.path.isabs(raw):
@@ -95,7 +89,7 @@ def escape_gitignore_pattern_segment(segment: str) -> str:
 def anchored_exclude_pattern(repo_root: str, abs_dir: str) -> str:
     """Build ``/rel/path/`` for info/exclude from repo-relative abs_dir."""
     rel = os.path.relpath(abs_dir, repo_root)
-    if rel == "." or rel.startswith(".." + os.sep) or rel == "..":
+    if rel == "." or not confined(abs_dir, repo_root):
         raise ValueError("path is not strictly inside the repo root")
     parts = [p for p in rel.replace("\\", "/").split("/") if p and p != "."]
     escaped = "/".join(escape_gitignore_pattern_segment(p) for p in parts)
@@ -103,8 +97,7 @@ def anchored_exclude_pattern(repo_root: str, abs_dir: str) -> str:
 
 
 def is_under_repo(repo_root: str, abs_path: str) -> bool:
-    root = repo_root.rstrip(os.sep) + os.sep
-    return abs_path == repo_root or abs_path.startswith(root)
+    return confined(abs_path, repo_root)
 
 
 def exclude_writable(exclude_path: str) -> bool:

@@ -1,11 +1,4 @@
-"""Tests for scripts/ensure_output_dir.py (Issue #86).
-
-Containment gate: resolve absolute output dir, establish ignore via
-``git rev-parse --git-path info/exclude``, mkdir only after the gate passes.
-
-Property on every in-repo success: exit 0 implies ``git check-ignore -q`` passes
-for the resolved path.
-"""
+"""Output creation must establish and verify git ignore before returning success."""
 
 from __future__ import annotations
 
@@ -20,6 +13,7 @@ import unittest.mock
 from pathlib import Path
 
 import gauntlet.output_dir as eod
+import pytest
 
 
 def _git(cwd: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -265,6 +259,7 @@ class TestEnsureOutputDir(unittest.TestCase):
         self.assertTrue(os.path.isfile(exclude))
         self.assertIn("/.code-gauntlet/", Path(exclude).read_text(encoding="utf-8"))
 
+    @pytest.mark.usefixtures("symlink_or_skip")
     def test_symlink_into_repo_classified_in_repo(self) -> None:
         outside = tempfile.mkdtemp(prefix="cg-sym-")
         self.addCleanup(shutil.rmtree, outside, ignore_errors=True)

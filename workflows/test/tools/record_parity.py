@@ -48,7 +48,7 @@ def _slice_input_proof(inp):
 
 
 def _slice_inline(inp):
-    from gauntlet.artifacts import fnv1a32
+    from gauntlet.jsjson import fnv1a32
     from gauntlet.verify.decide import _input_checksum
 
     source = (

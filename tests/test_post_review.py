@@ -1,23 +1,4 @@
-"""
-Tests for scripts/gauntlet/delivery/post.py
-
-Covers:
-  - detect_platform: GitHub SSH, GitHub HTTPS, GitLab SSH, GitLab HTTPS,
-    unknown host, malformed URL
-  - parse_diff_lines: (post_review version) platform header semantics over the shared
-    gauntlet.diff.walk_diff
-  - is_line_valid: exact match, stripped path, None valid_lines
-  - render_comment_body: all severity emojis, with/without suggestion block
-  - build_footer: metadata JSON in HTML comment
-  - gitlab_project_id: URL encoding of owner/repo
-  - TestReviewMarkerRoundTripThroughRealPoster — issue #39 requirement 6's
-    headline "write signal == read signal" guarantee, proven against the REAL
-    post_github/post_gitlab DRY_RUN capture path rather than a
-    re-implementation of their footer composition. See the class docstring.
-  - TestGitlabInlineDiscussionIdempotency — issue #132: a rerun after a partial
-    GitLab delivery must not duplicate the inline discussions that landed, and
-    the outcome it reports must stay honest about what THIS run attempted.
-"""
+"""Delivery tests pin parsed diffs, payloads, composition, idempotency, and failure degradation."""
 
 import contextlib
 import copy
@@ -40,6 +21,7 @@ from unittest.mock import patch
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
 import gauntlet.prior_review as detect_prior_review
+import pytest
 from gauntlet.delivery.post import (
     _blockquote,
     _cap_rule_text,
@@ -76,6 +58,77 @@ from gauntlet.delivery.post import (
 
 REPO = Path(__file__).resolve().parents[1]
 _MISSING_SEVERITY = object()
+
+
+@pytest.fixture(autouse=True)
+def _available_cli_tools(monkeypatch):
+    lookup = shutil.which
+    monkeypatch.setattr(
+        post_review.proc,
+        "which",
+        lambda name: (
+            lookup(name) or (f"/mock/{name}" if name in {"gh", "glab"} else None)
+        ),
+    )
+
+
+@pytest.mark.parametrize("name", ["gh", "glab"])
+@pytest.mark.parametrize("available", [True, False])
+def test_check_tool_uses_path_lookup(name, available, monkeypatch, capsys):
+    calls = []
+
+    def lookup(executable):
+        calls.append(executable)
+        return f"/tools/{executable}" if available else None
+
+    monkeypatch.setattr(post_review.proc, "which", lookup)
+    if available:
+        post_review.check_tool(name)
+        assert capsys.readouterr().err == ""
+    else:
+        with pytest.raises(SystemExit) as caught:
+            post_review.check_tool(name)
+        assert caught.value.code == 1
+        assert capsys.readouterr().err == (
+            f"ERROR: '{name}' CLI tool not found. Install it and ensure it is "
+            "authenticated before running this script.\n"
+        )
+    assert calls == [name]
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    [
+        ("missing", "Findings file not found:"),
+        ("invalid_json", "Invalid JSON in findings file:"),
+        ("invalid_utf8", None),
+    ],
+    ids=["missing", "invalid-json", "invalid-utf8"],
+)
+def test_main_handles_findings_file_read_errors(
+    case, message, monkeypatch, tmp_path, capsys
+):
+    findings_path = tmp_path / "findings.json"
+    if case == "invalid_json":
+        findings_path.write_text("{", encoding="utf-8")
+    elif case == "invalid_utf8":
+        findings_path.write_bytes(b"\xff")
+
+    monkeypatch.setattr(sys, "argv", ["post_review.py", str(findings_path)])
+    if case == "invalid_utf8":
+        with pytest.raises(UnicodeDecodeError):
+            post_review.main()
+        return
+
+    with pytest.raises(SystemExit) as caught:
+        post_review.main()
+
+    assert caught.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert message in captured.err
+    if case == "missing":
+        assert captured.err == f"ERROR: Findings file not found: {findings_path}\n"
 
 
 def _severity_matrix():
@@ -2789,8 +2842,7 @@ def _member_key(member):
     )
 
 
-# Verbatim from the issue #127 report — the warning-content test asserts against what an
-# operator really sees, not a paraphrase.
+# The warning test uses the CLI's actual stderr spelling.
 GLAB_400_STDERR = (
     "glab: 400 Bad request - Note "
     '{:line_code=>["can\'t be blank", "must be a valid line code"]} (HTTP 400)'
@@ -2808,21 +2860,9 @@ def _fake_run(
     calls=None,
     payloads=None,
 ):
-    """Build a ``subprocess.run`` side_effect that mocks the read-only CLI calls.
+    """Model read-only CLI calls and steer live GitLab POST failures.
 
-    Handles ``which``, ``git remote get-url``, ``git rev-parse``, ``gh pr diff``,
-    ``glab mr diff``, and the GitLab ``.../versions`` GET. Any other command
-    (i.e. a POST) returns an empty JSON object — but in dry-run mode ``post_json``
-    short-circuits before reaching ``subprocess.run`` for POSTs.
-
-    The live GitLab POSTs are steerable so the fault-tolerance path is exercisable:
-    *note_rc* is the summary note's exit code, and *discussion_rcs* is consumed one per
-    inline-discussion POST (default 0 once exhausted). A non-zero discussion rc comes
-    back with the verbatim glab 400. *diff_rc* is the diff fetch's exit code — a
-    non-zero one is the real "no diff oracle" condition (``parse_diff_lines`` then
-    returns all-``None``), not something a test can fake by passing an empty diff.
-    *calls* collects every argv when given, and *payloads* collects the JSON body of
-    every live POST.
+    A failed diff fetch removes the line oracle; an empty successful diff does not.
     """
     rcs = iter(discussion_rcs or [])
 
@@ -2838,8 +2878,6 @@ def _fake_run(
             # place a test can see the bytes that actually go on the wire.
             with open(cmd[cmd.index("--input") + 1], encoding="utf-8") as fh:
                 payloads.append(json.load(fh))
-        if cmd[0] == "which":
-            return res(out="/usr/bin/" + cmd[1])
         if cmd[:3] == ["git", "remote", "get-url"]:
             return res(out=remote)
         if cmd[:2] == ["git", "rev-parse"]:
@@ -2947,7 +2985,7 @@ class TestDryRunGitHub(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -3006,7 +3044,7 @@ class TestDryRunGitHub(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -3053,7 +3091,7 @@ class TestDryRunGitLab(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GL_DIFF, versions=versions),
             ) as mock_run,
         ):
@@ -3150,7 +3188,7 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=diff, versions=versions),
             ),
         ):
@@ -3305,7 +3343,7 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 return_value=prior,
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
                 ),
@@ -3381,7 +3419,7 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 {"bytes": 20},
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
             patch("gauntlet.delivery.post.post_json") as post,
@@ -3454,7 +3492,7 @@ class TestSummaryBodyBrandHeader(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF if gitlab else GH_DIFF, versions=versions
                 ),
@@ -3920,7 +3958,7 @@ class TestGitHubDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
             ),
         ):
@@ -3954,7 +3992,7 @@ class TestGitHubDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
             ),
         ):
@@ -3990,7 +4028,7 @@ class TestGitHubDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
             ),
         ):
@@ -4058,7 +4096,7 @@ class TestGitLabDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
             ),
         ):
@@ -4089,7 +4127,7 @@ class TestGitLabDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
             ),
         ):
@@ -4123,7 +4161,7 @@ class TestGitLabDeliveryConsolidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
             ),
         ):
@@ -4163,7 +4201,7 @@ class TestLivePathUnchanged(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -4192,7 +4230,7 @@ class TestDryRunStdout(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=diff, versions=versions),
             ),
             contextlib.redirect_stdout(stdout),
@@ -4282,7 +4320,7 @@ class TestLivePathStdout(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
             contextlib.redirect_stdout(stdout),
@@ -4345,7 +4383,7 @@ class TestPostModeEnv(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "dry-run"}),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -4364,7 +4402,7 @@ class TestPostModeEnv(_DryRunTestBase):
             ),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -4379,7 +4417,7 @@ class TestPostModeEnv(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -4396,7 +4434,7 @@ class TestPostModeEnv(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "live"}),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ) as mock_run,
         ):
@@ -4445,7 +4483,7 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -4505,7 +4543,7 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(remote="https://code.example/o/r.git\n"),
             ),
             contextlib.redirect_stderr(stderr),
@@ -4523,7 +4561,7 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=GH_DIFF, remote="https://code.example/o/r.git\n"
                 ),
@@ -4564,7 +4602,7 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -4606,7 +4644,7 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GL_DIFF, versions=versions),
             ),
         ):
@@ -4647,7 +4685,7 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -4690,7 +4728,7 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -4739,7 +4777,7 @@ class TestGitlabPositionContract(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
                 ),
@@ -4808,7 +4846,7 @@ class TestGitlabRenamedFilePositionContract(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_RENAME, versions=GL_CONTRACT_VERSIONS
                 ),
@@ -4879,7 +4917,7 @@ class TestGitlabRealADirectoryPath(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_REAL_A_DIR, versions=GL_CONTRACT_VERSIONS
                 ),
@@ -4930,7 +4968,7 @@ class TestGitlabFindingPathNormalization(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
                 ),
@@ -4997,7 +5035,7 @@ class _GitlabLiveRunBase(_DryRunTestBase):
                 else _normalize_prior(prior),
             ) as mock_prior,
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_CONTRACT,
                     versions=GL_CONTRACT_VERSIONS if versions is None else versions,
@@ -5666,7 +5704,7 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
                 return_value=_normalize_prior(prior),
             ) as mock_prior,
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF_CONTRACT,
                     versions=GL_CONTRACT_VERSIONS,
@@ -6555,7 +6593,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=GL_DIFF if gitlab else GH_DIFF, versions=versions
                 ),
@@ -7747,7 +7785,7 @@ class TestSummaryBodyDelivery(_DryRunTestBase):
                 ],
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -7841,7 +7879,7 @@ class TestSummaryBodyDelivery(_DryRunTestBase):
                 ],
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -7939,7 +7977,7 @@ class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -7976,7 +8014,7 @@ class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8006,7 +8044,7 @@ class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8037,7 +8075,7 @@ class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8094,7 +8132,7 @@ class TestGitHubMultiLineRangeValidation(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
             ),
         ):
@@ -8133,7 +8171,7 @@ class TestGitHubMultiLineRangeValidation(_DryRunTestBase):
                 return_value=(None, None, None, None),
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
             ),
         ):
@@ -8217,7 +8255,7 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8274,7 +8312,7 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8330,7 +8368,7 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=GH_DIFF),
             ),
         ):
@@ -8381,7 +8419,7 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
                 return_value=(False, set(), frozenset(), None),
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(versions=GL_CONTRACT_VERSIONS, payloads=payloads),
             ),
         ):
@@ -9816,7 +9854,7 @@ class _FixGateRunBase(_DryRunTestBase):
                 else prior,
             ),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(
                     diff=self.DIFF if diff is None else diff,
                     versions=versions,
@@ -11342,7 +11380,7 @@ class TestResetRunState(unittest.TestCase):
         with (
             patch.object(sys, "argv", ["post_review.py", findings_path, "--dry-run"]),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
+                "gauntlet.delivery.post.proc.run",
                 side_effect=_fake_run(diff=""),
             ),
         ):

@@ -50,7 +50,7 @@ def test_verify_deltas_parity(case_dir):
     "case_dir", _case_dirs("slice_input_proof"), ids=lambda path: path.name
 )
 def test_slice_input_proof_parity(case_dir):
-    from gauntlet.artifacts import fnv1a32, js_stringify_pretty
+    from gauntlet.jsjson import fnv1a32, js_stringify_pretty
     from gauntlet.verify.decide import _input_checksum
 
     inp, expected = _load(case_dir)

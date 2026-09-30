@@ -13,8 +13,8 @@ import json
 import os
 import sys
 
-from gauntlet.awaiting import glob_under
 from gauntlet.cli import CliError, Command, Parser, require_head_sha
+from gauntlet.fs import glob_under
 
 DEFERRED = (
     "DEFERRED: previously reviewed at the current SHA -- truncation withheld "
@@ -24,7 +24,7 @@ DEFERRED = (
 
 def _truncate(output_dir: str, head_sha: str) -> int:
     pattern = f"code-gauntlet-*-{head_sha}.*"
-    paths = glob_under(output_dir, pattern)  # type: ignore[no-untyped-call]
+    paths = glob_under(output_dir, pattern)
     for done, path in enumerate(paths):
         try:
             with open(path, "wb"):

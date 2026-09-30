@@ -91,13 +91,14 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 from typing import NamedTuple
 
+from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
+from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import (
     FINDING_MARKER_TOKEN,
     LEGACY_PRODUCT,
@@ -165,11 +166,7 @@ def warn_skip(msg):
 
 
 def check_tool(name):
-    """Exit with clear error if CLI tool is not available."""
-    result = subprocess.run(
-        ["which", name], capture_output=True, text=True, encoding="utf-8"
-    )
-    if result.returncode != 0:
+    if proc.which(name) is None:
         die(
             f"'{name}' CLI tool not found. "
             f"Install it and ensure it is authenticated before running this script."
@@ -177,18 +174,14 @@ def check_tool(name):
 
 
 def run_api(cmd):
-    """Run a CLI API command. Returns (stdout, stderr, returncode)."""
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-    return result.stdout, result.stderr, result.returncode
+    return proc.output(cmd)
 
 
 def try_post_json(cmd_prefix, payload):
     """Post *payload* and return ``(response, error)`` — exactly one is meaningful.
 
-    The non-fatal core of :func:`post_json`, for the one caller that must survive a
-    single rejected item: post_gitlab's per-finding loop posts the summary note FIRST,
-    so exiting on the first rejected position stranded every finding behind it behind
-    non-idempotent state (issue #127 D3).
+    A rejected position must not prevent later findings from being posted after
+    the summary note.
 
     In dry-run the call is captured into ``_CAPTURED`` and ``({}, None)`` is returned,
     so callers proceed exactly as after a successful post.
@@ -315,18 +308,18 @@ def parse_diff_text(platform, diff_text):
       line). Membership is unchanged (a key is present exactly when the line can carry
       an inline comment); the value is what GitLab needs. GitLab addresses an
       UNCHANGED/context line only when the position carries BOTH ``old_line`` and
-      ``new_line`` — with new_line alone it answers 400 ``line_code can't be blank``
-      (issue #127) — so the old-side number has to survive parsing. GitHub never needs
+      ``new_line`` — with new_line alone it answers 400 ``line_code can't be blank``.
+      The old-side number must survive parsing. GitHub never needs
       it (``path``/``line``/``side`` address the new side).
     * ``new_files`` — set of filepaths newly ADDED in this diff. TWO signals, both
       required: ``gh pr diff`` writes ``--- /dev/null``; ``glab mr diff`` writes the
       SAME path on both sides and betrays the addition ONLY through an
       ``@@ -0,0 +N,M @@`` hunk header. Matching /dev/null alone made this set
       permanently empty on GitLab, so ``old_path`` was always sent and the HTTP 500 the
-      GitLab poster documents was never actually avoided (#127 D2).
+      GitLab poster documents was never actually avoided.
     * ``old_paths`` — mapping of new-side path -> the path its ``---`` header named. For
       a RENAMED file that is the pre-rename path, which is what GitLab requires in
-      ``position.old_path`` (#130); for an unrenamed modified file the two coincide
+      ``position.old_path``; for an unrenamed modified file the two coincide
       (harmless — the poster's fallback is the new path anyway). Absent for added files,
       whose old side is ``/dev/null``.
     * ``line_texts`` — a PARALLEL mapping over the SAME keys as ``valid_lines``, holding
@@ -475,7 +468,7 @@ def diff_path_spelling(valid_lines, filepath, line):
     key, fall back to the stripped one, and when validation was skipped (*valid_lines*
     is None) pass the finding's own spelling through untouched.
 
-    Ratified residual (issue #229): when the diff contains a real file under the
+    Residual: when the diff contains a real file under the
     STRIPPED spelling but nothing ADDRESSABLE under the exact one, this resolves to the
     stripped sibling — cross-file, and undecidable from the diff text alone. That is an
     accepted, ANCHOR-level limitation (a wrong anchor costs a misplaced comment a human
@@ -671,7 +664,7 @@ def _fix_code_text(value):
     a fence that silently dropped one would commit different bytes than the gate
     approved.
 
-    Whitespace-only input is still absent (``None``), the #47 semantics: a patch
+    Whitespace-only input is still absent (``None``), a patch
     made of nothing but blanks is not representable and is not shipped. A
     non-string value is coerced via ``str()`` so the renderer cannot crash on a
     hand-assembled payload — the gate rejects it as ``non_string`` first.
@@ -1006,7 +999,7 @@ def _suggestion_fence(payload, *, offsets=None):
 
     *offsets* is GitLab's ``(above, below)`` pair: it makes the header
     ``suggestion:-m+n``, which widens what one click replaces to
-    ``[anchor - m, anchor + n]`` (#219). The parser is fence-length blind, so
+    ``[anchor - m, anchor + n]``. The parser is fence-length blind, so
     the header composes with any length. ``None`` and ``(0, 0)`` both render
     the plain header — ``suggestion:-0+0`` is its exact synonym, and the plain
     spelling is the one every platform understands. This renderer is
@@ -1021,7 +1014,7 @@ def _suggestion_fence(payload, *, offsets=None):
 
 
 # ---------------------------------------------------------------------------
-# suggested_fix_code — the deterministic apply-check (issue #63)
+# suggested_fix_code — the deterministic apply-check
 # ---------------------------------------------------------------------------
 # A ```suggestion fence is a COMMITTABLE patch: one click replaces the comment's
 # apply range with its bytes, unreviewed. So it renders if and only if that range
@@ -1053,7 +1046,7 @@ _FIX_OVERLAPS_KEPT_FENCE = "overlaps_kept_fence"
 # changes shape. Adding a reason is a deliberate act — a free-text reason would
 # make the record unreadable in aggregate.
 #
-# `overlaps_kept_fence` (issue #223) is the one member that is not a
+# `overlaps_kept_fence` is the one member that is not a
 # `_suggested_fix_gate` outcome: it names a SET-LEVEL decision (this finding's
 # fence would collide, on the platform's own overlap semantic, with another
 # kept fence in the same file) rather than a property of the finding alone —
@@ -1144,7 +1137,7 @@ def _span_texts(line_texts, path_lookup, start, end):
 def _fence_path_is_ambiguous(valid_lines, raw_file):
     """True when *raw_file* — the finding's OWN spelling, unresolved — cannot say
     which of two distinct real files in the diff a ``suggested_fix_code`` fence
-    targets (issue #229).
+    targets.
 
     Fires only when *raw_file* carries a synthetic ``a/``/``b/`` diff prefix AND
     BOTH it and its stripped form name a real path in *valid_lines* — path level,
@@ -1236,7 +1229,7 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
     end_line = finding.get("end_line")
     if end_line is None:
         # A patch's stated range must be explicit. An absent end_line — including
-        # one #205 DELETED for exceeding maxLineSpan — is exactly how a multi-line
+        # one deleted for exceeding maxLineSpan — is exactly how a multi-line
         # replacement lands on a single-line anchor and corrupts the file.
         return False, _FIX_MISSING_END_LINE
     if (
@@ -1348,11 +1341,11 @@ def _gated_finding(
 
     *mismatch_reason* renames the anchor-equality failure for a caller that knows
     WHY no anchor could cover the stated range: GitLab's cap on ``-m+n`` offsets
-    is the one such caller (#219). It renames one outcome, it does not add a
+    is the one such caller. It renames one outcome, it does not add a
     check, and it cannot widen the vocabulary — an unknown name raises below
     exactly like a typo'd gate reason.
 
-    *demote_reason* (issue #223) forces a fence that PASSED the per-finding gate
+    *demote_reason* forces a fence that PASSED the per-finding gate
     to downgrade anyway, through this same funnel — tallied, warned, stripped
     exactly like an ordinary gate failure. It is consulted ONLY when the gate
     says ``ok``: a gate FAILURE keeps its own reason regardless of
@@ -1433,10 +1426,7 @@ def _gitlab_fence_offsets(anchor, line, end_line):
 def _gitlab_apply_range(finding, anchor):
     """Return ``(apply_range, offsets, cap_exceeded)`` for *finding* anchored at *anchor*.
 
-    Extracted from :func:`_gitlab_anchored` so the render site and a poster's
-    overlap pre-pass compute the identical decision by calling, not copying
-    (issue #223, the same discipline #219/#224 already established for this
-    file's other render-site decisions).
+    The render site and overlap pre-pass share the same decision.
     """
     offsets, cap_exceeded = _gitlab_fence_offsets(
         anchor, finding.get("line"), finding.get("end_line")
@@ -1453,7 +1443,7 @@ def _gitlab_anchored(finding, anchor, valid_lines, line_texts, *, demote_reason=
     """Return ``(finding_to_render, fence_offsets)`` for ONE GitLab inline body.
 
     A GitLab position is always single-line, but the fence header widens what one
-    click replaces to ``[anchor - m, anchor + n]`` (#219) — so the apply range
+    click replaces to ``[anchor - m, anchor + n]`` — so the apply range
     the gate judges is the one those offsets realize, and a span no header can
     express is judged against the single anchored line instead. The gate's
     equality check then makes a kept fence's offsets provably realize the range
@@ -1465,7 +1455,7 @@ def _gitlab_anchored(finding, anchor, valid_lines, line_texts, *, demote_reason=
     is the whole GitLab render-site decision, in one place, so the benchmark's
     payload mirror can make it by calling rather than by copying.
 
-    *demote_reason* passes straight through to :func:`_gated_finding` (#223) —
+    *demote_reason* passes straight through to :func:`_gated_finding` —
     a caller with a set-level overlap decision for this anchor states it here,
     exactly as it would at a GitHub render site.
     """
@@ -1497,10 +1487,8 @@ def _key_material_finding(finding):
     ``suggested_fix_code`` and ``rule_source`` come off UNCONDITIONALLY — not gated —
     so a key does not depend on either field at all: it is the same whether the finding ships
     grouped or individually, and the same whichever way the apply-check went. This preserves
-    the fence/rule-source exclusion guarantee and is byte-equal to the key a pre-#63 run
-    computed for the same finding, subject to deliberate rendered-content normalization such
-    as #335.
-    Prior-delivery dedup (#132/#208) is retry-safe only while keys are stable
+    the fence/rule-source exclusion guarantee for keys across delivery shapes.
+    Prior-delivery dedup is retry-safe only while keys are stable
     across runs and across delivery shapes; making the GATE deterministic would
     not be enough, because the gate's inputs (the diff, the render site) are not.
 
@@ -1521,7 +1509,7 @@ def _key_material_finding(finding):
 def _github_apply_range(valid_lines, filepath, line, end_line):
     """Return ``(multiline, apply_range)`` for a GitHub comment anchored at *line*.
 
-    Extracted verbatim from ``post_github``'s own render loop (issue #223/#224)
+    Shared with ``post_github``'s render loop
     so the loop, a pre-render overlap pass, and the benchmark's payload mirror
     all make this ONE decision by calling it — never by duplicating the
     formula. A group comment anchors only on the primary's range (a
@@ -1553,7 +1541,7 @@ def _ranges_overlap(a, b):
 
 def _github_overlap_records(groups, valid_lines, line_texts):
     """Return the CANDIDATE ``(index, path_lookup, apply_range)`` records for
-    post_github's overlap pre-pass (issue #223).
+    post_github's overlap pre-pass.
 
     *groups* is ``consolidate_delivery``'s own output (or the benchmark
     mirror's single-member-group equivalent — it models no consolidation) —
@@ -1565,7 +1553,7 @@ def _github_overlap_records(groups, valid_lines, line_texts):
     range (:func:`_github_apply_range`) the render loop itself will apply —
     "candidate" and "would render a kept fence" are one computation, not two
     that could disagree. Called by post_github's pre-pass and by the
-    benchmark's payload mirror — never duplicated (issue #224).
+    benchmark's payload mirror — never duplicated.
     """
     records = []
     for index, group in enumerate(groups):
@@ -1589,7 +1577,7 @@ def _github_overlap_records(groups, valid_lines, line_texts):
 
 def _gitlab_overlap_records(remaining, valid_lines, line_texts):
     """Return the CANDIDATE ``(index, path_lookup, apply_range)`` records for
-    post_gitlab's overlap pre-pass (issue #223).
+    post_gitlab's overlap pre-pass.
 
     *remaining* is post_gitlab's own pre-partitioned list of ``(filepath,
     group)`` pairs — every skip decision already made — so the returned
@@ -1618,7 +1606,7 @@ def _gitlab_overlap_records(remaining, valid_lines, line_texts):
 
 
 def _overlap_losers(records):
-    """Return the set of *record* indexes to DEMOTE (issue #223).
+    """Return the set of *record* indexes to DEMOTE.
 
     *records* is an iterable of ``(index, path_lookup, apply_range)`` —
     candidates only: every record's ``apply_range`` is a real ``(start, end)``
@@ -1738,7 +1726,7 @@ def _finding_sections(finding, *, fence_offsets=None):
     supplies both the emoji and the heading label.
 
     *fence_offsets* is passed through to the suggestion fence and is meaningful
-    only where a platform reads one (GitLab, #219). It is a parameter rather
+    only where a platform reads one (GitLab). It is a parameter rather
     than a finding field because the value depends on the anchor the body will
     be posted at, which only the caller knows — and because a finding's own JSON
     is caller-supplied.
@@ -1753,7 +1741,7 @@ def _finding_sections(finding, *, fence_offsets=None):
 
     parts = [f"**{emoji} [{severity.upper()}] {title or 'Finding'}**", "", body]
 
-    # Prose fix suggestion (issue #47 / #122). Agent-authored: sanitize +
+    # Agent-authored prose fix suggestion: sanitize and
     # redact, uncapped. Structural sanitize only — not the cited-rule cap.
     suggestion_text = _prepared_prose(finding.get("suggestion"))
     if suggestion_text:
@@ -1776,7 +1764,7 @@ def _finding_sections(finding, *, fence_offsets=None):
 
     # `criticality`, `failure_scenario`, `evidence`, `confidence`, and
     # `dimension` are deliberately NOT rendered into posted PR comments
-    # (issue #47) — they are scoped to the artifact/report consumers, not
+    # — they are scoped to the artifact/report consumers, not
     # this deterministic comment renderer. Do not "helpfully" add them here.
 
     # suggested_fix_code: secret-redacted; outer fence lengthened. Structural
@@ -1816,21 +1804,17 @@ def key_material_body(finding):
     """The bytes ``finding_key`` hashes: sections only, no trailer, ``suggested_fix_code``
     stripped (:func:`_key_material_finding`).
 
-    Changing what this function renders re-keys every delivered finding it touches on every open
-    PR/MR, which is a repost wave, not a cosmetic change. It hashes the normalized rendered
-    sections; there is no alternate raw-severity key path. #335 intentionally re-keyed
-    surrounding-whitespace labels, off-enum labels including empty strings, missing labels that
-    previously defaulted to medium, and non-strings that
-    previously raised and produced no delivered finding key. Canonical severities and plain
-    case variants keep their bytes and keys. Preparing posted title, body, suggestion and
-    rule text intentionally re-keys affected findings once. None titles also now use the
-    absent-title key. The new keys then support reruns normally.
+    Changing this rendering re-keys each affected finding on every open PR/MR.
+    Rendering normalizes severity labels, so off-enum, blank or missing labels
+    key as their normalized form. Canonical severities and case variants keep
+    their keys; posted title, body, suggestion, rule and absent-title values key
+    from their rendered forms.
     """
     return _finding_sections(_key_material_finding(finding))
 
 
 def consolidate_delivery(findings):
-    """Group *findings* for the posted delivery payload (#22 D2).
+    """Group *findings* for the posted delivery payload.
 
     Findings stay distinct in the caller's array — this only groups them for
     rendering. A finding carrying a truthy ``consolidation_key`` joins the group
@@ -2010,7 +1994,7 @@ def build_skipped_section(skipped, inline_count=None):
     piece neutralizes its own ``<!--`` markers before fitting; that neutralization
     lives in ``_skipped_piece``. ``gauntlet.patches`` and
     ``gauntlet.marker`` cite ``build_skipped_section`` as the precedent.
-    Returns ``""`` for an empty *skipped* list (issue #192).
+    Returns ``""`` for an empty *skipped* list.
     """
     if not skipped:
         return ""
@@ -2661,13 +2645,13 @@ def post_github(data, valid_lines, line_texts):
 
     check_tool("gh")
 
-    # consolidate_delivery(findings) is materialized ONCE (#223): the pre-pass
+    # consolidate_delivery(findings) is materialized ONCE: the pre-pass
     # below and the render loop that follows it walk the SAME list of groups by
     # index, so a demotion decided by the pre-pass lands on the exact group the
     # render loop later renders.
     groups = consolidate_delivery(findings)
 
-    # Pure, SILENT pre-pass (#223): decide which kept fences would collide, on
+    # Pure, SILENT pre-pass: decide which kept fences would collide, on
     # GitLab's own closed-interval overlap semantic, with another kept fence in
     # the same file. No warn_skip, no tally, no _gated_finding call here — every
     # existing warning still fires exactly once, from its existing render-loop
@@ -2681,7 +2665,7 @@ def post_github(data, valid_lines, line_texts):
 
     comments = []
     skipped_groups = []  # one list of (filepath, line, finding) per degraded group
-    # One posted comment per consolidation group (#22 D2): findings without a stamp
+    # One posted comment per consolidation group: findings without a stamp
     # are each their own single-member group, so this loop is unchanged for them.
     for index, group in enumerate(groups):
         primary = group["primary"]
@@ -2737,8 +2721,8 @@ def post_github(data, valid_lines, line_texts):
         # The multi-line anchor decision is made HERE, ABOVE the body render, and
         # the assembly below consumes these same locals — the decision moved, it is
         # not duplicated. The apply-check has to see the range the comment will
-        # REALLY apply at, and that range is only known once this has run (#63 D2).
-        # `_github_apply_range` (#223/#224) is the one function that makes it, so
+        # REALLY apply at, and that range is only known once this has run.
+        # `_github_apply_range` is the one function that makes it, so
         # this loop, the overlap pre-pass above, and the benchmark's payload
         # mirror all call it rather than each computing their own copy.
         #
@@ -2941,12 +2925,12 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         """Return the body renderer ``deliver`` calls with the anchor it posts at.
 
         A GitLab position is always single-line; the ```suggestion:-m+n header is
-        what widens the apply range to ``[anchor - m, anchor + n]`` (#219). Those
+        what widens the apply range to ``[anchor - m, anchor + n]``. Those
         offsets are therefore a property of the ANCHOR, not of the finding — and
         handing ``deliver`` a renderer instead of rendered bytes is what stops a
         body from being built for one anchor and posted at another.
 
-        *demote_reason* (#223) passes straight through to ``_gitlab_anchored`` —
+        *demote_reason* passes straight through to ``_gitlab_anchored`` —
         the caller's set-level overlap decision for THIS finding, made once by
         the pre-pass below and threaded here rather than recomputed per anchor.
         """
@@ -2969,7 +2953,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     skipped_groups = []  # one list of (filepath, line, finding) per degraded group
     remaining = []  # (filepath, group) — groups that reach the inline loop
     groups = consolidate_delivery(findings)
-    # One posted discussion per consolidation group (#22 D2): findings without a
+    # One posted discussion per consolidation group: findings without a
     # stamp are each their own single-member group, so this loop is unchanged
     # for them.
     for group in groups:
@@ -3021,15 +3005,15 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
 
         remaining.append((filepath, group))
 
-    # Pure, SILENT pre-pass (#223), same shape and same discipline as GitHub's —
+    # Pure, SILENT pre-pass, same shape and same discipline as GitHub's —
     # BEFORE the summary note or any discussion posts, so the decision is made
     # once, statically, and never depends on what has or hasn't gone out live
-    # yet (R8: the demoted SET is a pure function of findings + diff,
+    # yet (the demoted set is a pure function of findings + diff,
     # rerun-stable, dry-run == live). The candidate predicate and index basis
     # are `_gitlab_overlap_records`'s own docstring — this poster and the
     # benchmark mirror both call it rather than each keeping their own copy.
     # `kept_intervals` is the read-only map `deliver_corroborator`'s reactive
-    # fence sites consult (#223 R6) — it names every WINNING candidate's apply
+    # fence sites consult — it names every WINNING candidate's apply
     # range per path, never a loser's (the `if index not in losers:` guard
     # below is load-bearing: a loser's own range must never occupy anything).
     overlap_records = _gitlab_overlap_records(remaining, valid_lines, line_texts)
@@ -3095,7 +3079,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         never from the group body it may happen to ride in. That is what makes the
         two delivery shapes interchangeable for dedup: a corroborator posted on its
         own by one run is recognized by the group discussion of the next, and vice
-        versa (issue #132).
+        versa.
 
         The key render also drops ``suggested_fix_code`` UNCONDITIONALLY (see
         :func:`_key_material_finding`), so a key is fence-independent: the apply-check
@@ -3122,7 +3106,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
 
         *make_body* is called with the SAME *line* written into
         ``position.new_line`` below, so a fence's offsets cannot be measured
-        from an anchor the discussion is not posted at (#219).
+        from an anchor the discussion is not posted at.
         """
         # Render before the dedup check: the apply-check runs at render sites, so
         # the body is still gated even when a rerun posts nothing. The fold notice
@@ -3139,7 +3123,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             return "failed"
         if keys and all(k in delivered_keys for k in keys):
             # An earlier run already delivered every finding in this discussion for
-            # this sha. Reposting it is the duplication issue #132 reports, not a
+            # this sha. Reposting it is duplication, not a
             # failure. A PARTIAL match never reaches here: post_gitlab splits such a
             # group into its missing members before calling.
             return "already_present"
@@ -3153,8 +3137,8 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             "new_line": line,
         }
         # An UNCHANGED (context) line is addressable only when the position carries
-        # both sides; new_line alone is rejected with 400 `line_code can't be blank`
-        # (issue #127). An added line has no old side — omit the key rather than
+        # both sides; new_line alone is rejected with 400 `line_code can't be blank`.
+        # An added line has no old side — omit the key rather than
         # sending null. NEVER synthesize `line_code`: it is derived server-side, and
         # both documented attempts to compute it client-side (position sibling, and
         # inside line_range) reproduced the identical 400.
@@ -3167,7 +3151,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         # ``old_path`` for added files; include it for modified files so the
         # position stays anchored to the diff.
         if not is_new_file(new_files, filepath):
-            # A RENAMED file must anchor `old_path` to its PRE-RENAME path (#130) — the
+            # A RENAMED file must anchor `old_path` to its PRE-RENAME path — the
             # new path does not exist on the old side. `filepath` was resolved against
             # the parsed keys above and `old_paths` is keyed by those same keys, so the
             # two are the same spelling. The fallback to the new path covers skipped
@@ -3296,12 +3280,12 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         split into the members an earlier run did not deliver. Its file/line are
         resolved and gated here exactly as the pre-partition gates a primary's.
 
-        This is a REACTIVE fence site (#223 R6): its own anchor was never a
+        This is a REACTIVE fence site: its own anchor was never a
         candidate in the pre-pass above (the pre-pass only ever sees a group's
         primary), so it QUERIES `kept_intervals` read-only — never claims an
         interval of its own — and demotes when its stated closed interval
-        intersects an already-KEPT one on the same path. Two named residuals
-        (#223 R6): a corroborator that collides only with another reactive
+        intersects an already-KEPT one on the same path. Two residuals remain:
+        a corroborator that collides only with another reactive
         corroborator (this call site cannot see a sibling it has not been
         called for yet), and a corroborator that collides with a WINNING
         primary whose own discussion is lost late (malformed position, or a
@@ -3351,7 +3335,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     for index, (filepath, group) in enumerate(remaining):
         f = group["primary"]
         corroborators = group["corroborators"]
-        # Decided once by the pure pre-pass above (#223) — independent of
+        # Decided once by the pure pre-pass above — independent of
         # everything below (prior-delivery state, live-POST outcomes), so a
         # rerun always reaches the same verdict for this same index.
         demote_reason = _FIX_OVERLAPS_KEPT_FENCE if index in losers else None
@@ -3368,7 +3352,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         }
         member_keys = [primary_key] + [corroborator_keys[id(c)] for c in corroborators]
         if primary_key in legacy_group_keys:
-            # This group's primary key was found on a pre-#208 group body that
+            # This group's primary key was found on an older group body that
             # rendered a corroborator's content without ever giving it a key of
             # its own (see legacy_group_keys_for_sha). That body IS this group's
             # whole delivery — every member it renders is provably already on
@@ -3382,7 +3366,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         ):
             # An earlier run delivered SOME of this group — its fallback posted
             # individual discussions for part of it. Posting the group now would put
-            # that content on the MR twice (issue #132), so deliver only what is
+            # that content on the MR twice, so deliver only what is
             # missing, each on its own. A missing member without an anchor cannot
             # get its own inline discussion (deliver_corroborator requires a line),
             # so it is posted as a position-less note instead — the group body it
@@ -3458,7 +3442,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     # Both "nothing new landed" exits below report the same outcome for two different
     # losses, so both owe the operator the same true statement about what is already
     # there: on a rerun, "nothing was posted inline" is a lie whenever this review's
-    # discussions are standing on the MR from an earlier run (issue #132).
+    # discussions are standing on the MR from an earlier run.
     standing = (
         f" {already_present} from an earlier run remain on the MR."
         if already_present
@@ -3599,12 +3583,13 @@ def main():
 
     # Load input
     try:
-        with open(args.findings_json, encoding="utf-8") as fh:
-            loaded = json.load(fh)
-    except FileNotFoundError:
-        die(f"Findings file not found: {args.findings_json}")
-    except json.JSONDecodeError as e:
-        die(f"Invalid JSON in findings file: {e}")
+        loaded = read_json(args.findings_json)
+    except JsonReadError as exc:
+        if isinstance(exc.cause, FileNotFoundError):
+            die(f"Findings file not found: {args.findings_json}")
+        if exc.kind == "parse":
+            die(f"Invalid JSON in findings file: {exc.cause}")
+        raise exc.cause from exc
 
     if isinstance(loaded, list):
         data = {}

@@ -79,23 +79,18 @@ import json
 import os
 import sys
 
-from gauntlet.artifacts import (
-    assemble,
-    escape_lone_surrogates,
-    fnv1a32,
-    utf16_len,
-    write_text_atomic,
-)
+from gauntlet.artifacts import assemble
 from gauntlet.awaiting import (
     TASK_OUTPUT_DIR_GLOB,
     TASKS_DIR_ENV,
     find_terminal,
-    glob_under,
     read_text,
     resolve_target,
     task_roots,
 )
 from gauntlet.cli import Command
+from gauntlet.fs import confined, glob_under, write_atomic
+from gauntlet.jsjson import escape_lone_surrogates, fnv1a32, utf16_len
 
 #: The value `persistReturn.channel` must carry. A payload that does not name this
 #: channel is not this contract and is skipped rather than guessed at.
@@ -198,22 +193,6 @@ def select_source(task, nonce, environ):
 # ---------------------------------------------------------------------------
 
 
-def _confined(path, output_root):
-    """True when *path* resolves inside *output_root*.
-
-    The entries name their own destinations, which the pipeline built from
-    `args.outputDir`. This is the check that a payload cannot write outside the
-    review's own output directory — including through a symlink, since both sides
-    are realpath'd — and it doubles as a typo guard: a wrong --output-dir refuses
-    every entry loudly instead of scattering artifacts somewhere nothing reads.
-    """
-    try:
-        target = os.path.realpath(path)
-        return target == output_root or target.startswith(output_root + os.sep)
-    except OSError:
-        return False
-
-
 def plan_entries(payload, output_root, errors):
     """Validate the payload and return ``(entries, plan_path)``.
 
@@ -237,7 +216,7 @@ def plan_entries(payload, output_root, errors):
         if not isinstance(text, str):
             errors.append(f"entry {index} ({path}) carries no string text")
             return None, None
-        if not _confined(path, output_root):
+        if not confined(path, output_root):
             errors.append(
                 f"entry {index} writes outside the output directory: {path} is not "
                 f"inside {output_root}"
@@ -258,16 +237,11 @@ def plan_entries(payload, output_root, errors):
 
 
 def write_entries(entries, materialized, errors):
-    """Write every entry verbatim. Returns True when all of them landed.
-
-    write_text_atomic is gauntlet.artifacts': a sibling temp file plus
-    os.replace, so a failure mid-write leaves the destination as it was rather
-    than as a truncated file that a later stage would read as real.
-    """
+    """Write every entry verbatim and report failed replacements."""
     ok = True
     for path, text in entries:
         try:
-            write_text_atomic(path, text)
+            write_atomic(path, text)
         except Exception as exc:  # noqa: BLE001 - reported, never raised
             errors.append(f"could not write {path} ({type(exc).__name__}: {exc})")
             ok = False

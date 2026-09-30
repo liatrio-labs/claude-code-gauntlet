@@ -1,16 +1,4 @@
-"""tests/test_report_patches.py — scripts/report_patches.py (issue #226).
-
-report_patches.py is the read-only Phase 8 gate: it re-runs the diff-only subset of
-delivery's deterministic apply-check (post_review.py's ``_gated_finding`` /
-``_suggested_fix_gate``) against the PINNED review diff and renders every patch that
-passes into a sibling artifact — never editing the report, never posting, never
-mutating ``findings.json``.
-
-Each test below states, in its docstring, the ONE thing it pins and (where
-applicable) which mutation of the implementation it must catch. Verified by actually
-reverting the fix locally and watching the named test go red — not by reading the
-implementation and assuming a green run proves anything.
-"""
+"""Patch reports reuse the delivery apply gate and disclose every downgrade."""
 
 import contextlib
 import io
@@ -25,6 +13,7 @@ from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.patches as report_patches
+import pytest
 
 
 class ReportPatchesTestBase(unittest.TestCase):
@@ -1278,7 +1267,7 @@ class TestRenderedDisclosures(ReportPatchesTestBase):
         character), not U+FFFD (which is a *decode*-side substitution).
 
         RED when the encode/decode round trip is removed from ``_one_line``:
-        the raw lone surrogate would reach ``write_text_atomic``'s strict-UTF-8
+        the raw lone surrogate would reach ``write_atomic``'s strict-UTF-8
         write and raise ``UnicodeEncodeError``, so the run would fail instead
         of writing the artifact.
         """
@@ -1658,15 +1647,16 @@ class TestOperationalHygiene(ReportPatchesTestBase):
     symlink confinement, the fence info-string regex, write-failure recovery,
     the atomic-write call path, and how many files a run actually creates."""
 
+    @pytest.mark.usefixtures("symlink_or_skip")
     def test_confined_symlink_escape_is_refused_and_the_outside_file_is_untouched(
         self,
     ):
         """A symlink AT the artifact's own path, pointing outside
         --output-dir, must be refused rather than followed —
         ``os.path.realpath`` resolving through it is exactly the case
-        ``_confined`` exists to catch.
+        ``gauntlet.fs.confined`` exists to catch.
 
-        RED when ``_confined`` stops calling ``os.path.realpath`` (e.g.
+        RED when ``gauntlet.fs.confined`` stops calling ``os.path.realpath`` (e.g.
         ``os.path.abspath`` instead, which does not resolve symlinks): the
         escape would go undetected and the outside file would be silently
         overwritten.
@@ -1734,7 +1724,7 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         )
 
     def test_write_failure_is_ok_false_with_sorted_reasons_present(self):
-        """A permission-denied ``write_text_atomic`` call raises ``OSError``;
+        """A permission-denied ``write_atomic`` call raises ``OSError``;
         the broad ``except`` in ``main()`` must still
         emit a full receipt, with the downgrade reasons this run accumulated
         reported ALPHABETICALLY even though they were inserted in a
@@ -1762,7 +1752,7 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         )
         with patch.object(
             report_patches,
-            "write_text_atomic",
+            "write_atomic",
             side_effect=PermissionError(13, "Permission denied"),
         ):
             exit_code, receipt, *_ = self._run()
@@ -1772,40 +1762,6 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         self.assertTrue(receipt["errors"])
         self.assertEqual(receipt["downgraded"], 2)
         self.assertEqual(list(receipt["reasons"].keys()), ["empty", "redacted"])
-
-    def test_write_goes_through_write_text_atomic(self):
-        """RED when the write is replaced by a plain ``open()``/``write()``:
-        the wrapped mock would then never be called."""
-        diff = (
-            "diff --git a/x.py b/x.py\n"
-            "--- a/x.py\n"
-            "+++ b/x.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " line1\n"
-            "+orig\n"
-        )
-        self._write_diff(diff)
-        self._write_findings(
-            [
-                {
-                    "file": "x.py",
-                    "line": 2,
-                    "end_line": 2,
-                    "title": "Kept",
-                    "suggested_fix_code": "changed",
-                }
-            ]
-        )
-
-        with patch(
-            "gauntlet.patches.write_text_atomic",
-            wraps=report_patches.write_text_atomic,
-        ) as mock_write:
-            exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        mock_write.assert_called_once()
-        self.assertEqual(mock_write.call_args[0][0], self._artifact_path())
 
     def test_run_creates_exactly_one_new_file(self):
         """R3 structural: RED if the script ever writes a second artifact

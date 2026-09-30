@@ -66,9 +66,10 @@ No external Python dependencies — stdlib only.
 import argparse
 import json
 import re
-import subprocess
 
+from gauntlet import proc
 from gauntlet.cli import Command
+from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import detect_signal, find_finding_markers, select_latest
 
 FETCH_TIMEOUT_SECONDS = 30
@@ -82,35 +83,15 @@ PLATFORM_SOURCES = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Subprocess wrappers — the only impure surface in this module
-# ---------------------------------------------------------------------------
-
-
 def run(cmd, timeout=None):
-    """Run *cmd*. Returns ``(stdout, stderr, returncode)``. Never raises.
-
-    A missing CLI tool (OSError) and a timeout both come back as returncode -1
-    with the reason in stderr, so callers degrade instead of blowing up.
-    """
+    """Return a failure sentinel when a fetch cannot run."""
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            # text=True decodes STRICT utf-8 by default, and UnicodeDecodeError is
-            # a ValueError, not an OSError — a single undecodable byte from gh/glab
-            # would escape this wrapper and exit 1 with empty stdout, breaking the
-            # always-exit-0 contract the caller degrades on.
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
+        # Strict decoding raises UnicodeDecodeError outside the OSError exit-zero path.
+        return proc.output(cmd, errors="replace", timeout=timeout)
+    except proc.TimeoutExpired:
         return "", f"timed out after {timeout}s", -1
     except OSError as exc:
         return "", str(exc), -1
-    return result.stdout, result.stderr, result.returncode
 
 
 def _parse_json_array(text):
@@ -253,11 +234,10 @@ def gitlab_prior_delivery_state(owner, repo, number, sha):
     review left here.
 
     ``gauntlet.delivery.post.post_gitlab`` asks three questions before delivering: is my summary
-    note already on the MR (issue #127), which of my inline discussions did a
-    partially-failed delivery already place (issue #132), and — of those — which stand
-    for a WHOLE consolidation group because they are a pre-#208 group body that rendered
-    a corroborator without ever giving it its own key (issue: unanchored corroborators
-    lost on rerun). ONE fetch answers all three — a second round trip would also be a
+    note already on the MR, which of my inline discussions did a
+    partially-failed delivery already place, and — of those — which stand
+    for a WHOLE consolidation group because an older group body rendered
+    a corroborator without its own key. ONE fetch answers all three — a second round trip would also be a
     second, possibly inconsistent view of the MR. The read lives here because this
     module is the only reader; gauntlet.delivery.post writes the signal and never parses it.
 
@@ -392,7 +372,7 @@ _CORROBORATION_HEADER = "Corroborating finding — "
 def _is_legacy_undermarked_group_body(body, matched_marker_count):
     """True when *body* renders more consolidation-group members than it carries keys for.
 
-    Before issue #208's fix, ``post_gitlab`` never gave an unanchorable corroborator (no
+    Older ``post_gitlab`` bodies did not give an unanchorable corroborator (no
     line, or a line outside the diff) a delivery key — even though it fully rendered that
     member's content into the body's ``"Corroborating finding — "`` section. Such a body
     is proof BY CONSTRUCTION that every member it renders already reached the MR, even
@@ -447,10 +427,9 @@ def count_by_source(entries):
 def load_bodies_file(path):
     """Return ``(entries, errors)`` from the offline hook file. Never raises."""
     try:
-        with open(path, encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except (OSError, ValueError, RecursionError) as exc:
-        return [], [f"bodies-file: could not read {path} ({exc})"]
+        payload = read_json(path)
+    except JsonReadError as exc:
+        return [], [f"bodies-file: could not read {path} ({exc.cause})"]
     if not isinstance(payload, list):
         return [], [f"bodies-file: expected a JSON array in {path}"]
     return collect_entries_file(payload), []

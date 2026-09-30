@@ -1,0 +1,5 @@
+extend = "../../pyproject.toml"
+
+[lint.flake8-tidy-imports.banned-api]
+"scripts".msg = "Import gauntlet modules from gauntlet.* instead."
+"subprocess".msg = "Run commands through gauntlet.proc."

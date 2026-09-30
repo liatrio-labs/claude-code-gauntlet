@@ -1,70 +1,7 @@
 #!/usr/bin/env python3
-"""
-report_patches.py — read-only Phase 8 gate: render the apply-checked
-``suggested_fix_code`` patches of the persisted high-confidence findings into a
-sibling artifact.
+"""Render the apply-checked suggested-fix patches beside the persisted report.
 
-What it does
-------------
-Runs the diff-only subset of delivery's deterministic apply-check
-(``gauntlet.delivery.post``'s ``_gated_finding`` / ``_suggested_fix_gate``)
-against the PINNED review diff captured at Phase 2, and renders every patch
-that passes into ``{output_dir}/code-gauntlet-patches-{head_sha_short}.md`` —
-a heading and fenced code block per kept patch, preceded by a summary of how
-many candidates passed, were downgraded (with a reason tally), or had no
-diff oracle to check against. It writes nothing else and reads
-``findings.json``/the diff read-only; nothing it does can fail delivery or
-change what a PR/MR comment posts.
-
-Why a SIBLING artifact, not an edit to the report
---------------------------------------------------
-``code-gauntlet-report-{sha}.md`` is a persist-plan ``expect[]`` primary: its
-bytes are checksum-proven by ``gauntlet.artifacts`` on every re-run, and a
-``gauntlet.materialize`` re-run self-heals the file straight from
-``persistReturn``, silently reverting any in-place edit made after the fact.
-Writing a NEW file sidesteps both problems — it has no plan entry to disagree
-with and nothing to self-heal away.
-
-Why a SEPARATE script, not a `gauntlet.delivery.post` mode
-----------------------------------------------------
-``gauntlet.delivery.post``'s ``main()`` owns ``DRY_RUN``/``CODE_GAUNTLET_POST_MODE``
-and writes ``post-review-payload.json`` next to the findings file — the file
-bench scores as the delivery candidate set. A sub-mode squeezed into that
-``main()`` risks either mode leaking into the other's write path. This script
-never calls ``gauntlet.delivery.post.main()``; it imports only the pure gate helpers.
-
-Producer detection (read this before touching the oracle)
-------------------------------------------------------------
-The pinned diff has three producers: ``gh pr diff`` (full or incremental) and
-plain ``git diff`` (branch/local targets, and the incremental path on either
-platform) run git's own diff machinery, and plain ``glab mr diff``
-reconstructs headers from the MR versions API with paths verbatim and writes
-no ``diff --git`` line at all (see ``tests/fixtures/glab_diff/README.md``).
-Git's diff machinery does NOT always write ``a/``/``b/`` prefixes — that is
-only its default. ``diff.noprefix=true`` drops them entirely (the first line
-reads ``diff --git foo.py foo.py``), and ``diff.mnemonicPrefix`` swaps them
-for ``i/``/``w/`` instead. So the check anchors on the one shape every git
-producer's default config writes — a first line matching ``diff --git "?a/``
-(the optional quote covers a C-quoted first file) — and only THAT shape is
-keyed by stripping ``a/``/``b/``, via ``gauntlet.delivery.post.parse_diff_text``, the
-same parser ``gauntlet.delivery.post`` runs live, with no alias keys and no second
-keying implementation. Neither non-default config matches the anchor, so both
-fall to verbatim keying: under ``diff.noprefix`` that is exactly right (every
-path keys as itself), and under ``diff.mnemonicPrefix`` it fails closed on
-every finding instead of stripping the wrong prefix — the safer of the two
-wrong answers. The check reads the first line only, so no body content can
-masquerade as the header, and an empty diff keys nothing under either
-reading. Name the one residual: a git-shaped incremental diff on a GitLab run
-is keyed git-style while live delivery keys glab-style — the finding's path
-spelling is the same real path under both, so a kept patch here may still be
-downgraded live for render-site reasons or withheld for the delivery-side
-set-level overlap reason (``overlaps_kept_fence`` — see
-``gauntlet.delivery.post._overlap_losers``); both are already disclosed in the
-artifact.
-
-Usage:
-    python3 report_patches.py --output-dir DIR --head-sha SHORT
-"""
+A sibling file, because the report is a checksum-proven primary that re-runs self-heal."""
 
 import argparse
 import json
@@ -72,10 +9,8 @@ import os
 import re
 import sys
 
-# NEVER import gauntlet.verify.decide here — it resolves the repo root via
-# `git rev-parse --show-toplevel` at import time, which this script has no
-# business triggering for a read-only render step.
-from gauntlet.artifacts import write_text_atomic
+# NEVER import gauntlet.verify.decide here: it runs git at import time.
+# Only the pure gate helpers come from delivery; its main() owns the dry-run payload.
 from gauntlet.cli import Command
 from gauntlet.delivery.post import (
     _FIX_COUNTS,
@@ -88,6 +23,7 @@ from gauntlet.delivery.post import (
     parse_diff_text,
     reset_run_state,
 )
+from gauntlet.fs import JsonReadError, confined, read_json, write_atomic
 
 _HEAD_SHA_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # Anchored to the FIRST line, and to git's default `a/` prefix specifically —
@@ -138,23 +74,6 @@ def build_parser():
     return parser
 
 
-def _confined(path, output_root):
-    """True when *path* resolves inside *output_root*.
-
-    Every path this script touches is DERIVED from --output-dir and a
-    regex-validated --head-sha (no `/` can appear in the sha, so no filename
-    built from it can smuggle a path separator) — so this can only ever fire
-    on a pathological --output-dir. Kept anyway as the same typo/symlink guard
-    gauntlet.materialize's own ``_confined`` applies: a wrong flag refuses
-    loudly instead of writing somewhere nothing reads.
-    """
-    try:
-        target = os.path.realpath(path)
-        return target == output_root or target.startswith(output_root + os.sep)
-    except OSError:
-        return False
-
-
 def _load_findings(path, errors):
     """Return the persisted findings list, or None (with *errors* populated).
 
@@ -165,15 +84,12 @@ def _load_findings(path, errors):
     no wrapped-object variant to fall back to.
     """
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            raw = fh.read()
-    except OSError as exc:
-        errors.append(f"could not read findings file {path}: {exc}")
-        return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        errors.append(f"invalid JSON in findings file {path}: {exc}")
+        data = read_json(path, errors="replace")
+    except JsonReadError as exc:
+        if exc.kind == "read":
+            errors.append(f"could not read findings file {path}: {exc.cause}")
+        else:
+            errors.append(f"invalid JSON in findings file {path}: {exc.cause}")
         return None
     if not isinstance(data, list):
         errors.append(
@@ -185,9 +101,15 @@ def _load_findings(path, errors):
 
 
 def _diff_oracle(diff_text):
-    """Return ``(valid_lines, line_texts)`` from *diff_text*, keyed by
-    ``gauntlet.delivery.post.parse_diff_text`` after detecting the producer from the bytes —
-    see the "Producer detection" module docstring section."""
+    """Return ``(valid_lines, line_texts)`` keyed by the live delivery parser.
+
+    Only a first line shaped like ``diff --git "?a/`` (git's default prefixes, from
+    ``gh pr diff`` or ``git diff``) is keyed git-style. ``diff.noprefix`` and
+    ``glab mr diff`` headers key paths verbatim, which is right for both, and
+    ``diff.mnemonicPrefix`` then fails closed on every finding rather than strip
+    the wrong prefix. A git-shaped diff on a GitLab run keys git-style while live
+    delivery keys glab-style; the artifact already discloses that residual.
+    """
     platform = "github" if _GIT_SHAPED_RE.search(diff_text) else "gitlab"
     valid_lines, _new_files, _old_paths, line_texts = parse_diff_text(
         platform, diff_text
@@ -429,7 +351,7 @@ def main(argv=None):
         ("diff", diff_path),
         ("out", out_path),
     ):
-        if not _confined(path, output_root):
+        if not confined(path, output_root):
             errors.append(f"{label} path escapes --output-dir: {path}")
     if errors:
         return _pre_oracle_failure(out_path, errors)
@@ -494,7 +416,7 @@ def main(argv=None):
         content = _render(
             kept, len(candidates), filtered_earlier, oracle_state, args.head_sha
         )
-        write_text_atomic(out_path, content)
+        write_atomic(out_path, content)
     except Exception as exc:  # noqa: BLE001 - a receipt must always be emitted
         errors.append(f"{type(exc).__name__}: {exc}")
         _emit_receipt(

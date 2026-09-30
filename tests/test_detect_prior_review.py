@@ -1,60 +1,4 @@
-"""
-Tests for scripts/detect_prior_review.py (Issue #39).
-
-Written FROM THE DESIGN SPEC ALONE, not by reading scripts/detect_prior_review.py —
-see tests/test_review_marker.py's module docstring for the double-entry rationale.
-
-Covers:
-  - Pure collectors: collect_entries_github / collect_entries_gitlab map raw
-    GitHub/GitLab API payloads to the {body, timestamp, source, id} entry shape.
-    GitHub scans exactly one surface (pulls/{n}/reviews) — issues/{n}/comments
-    was dropped entirely; a test pins that fetch_entries_github issues exactly
-    one call and that call never touches issues/.
-  - GitLab notes are fetched with --paginate (post_gitlab posts the marker
-    summary note FIRST, so an unpaginated fetch can miss it past page 1).
-  - gitlab_prior_delivery_state answers BOTH idempotency questions post_gitlab
-    asks — is the summary note already here, and which inline discussions did a
-    partial delivery already place — from ONE fetch of the FLAT notes endpoint
-    (a /discussions-shaped response yields no keys at all, which is the point).
-  - build_result(signal, git_facts): the branches (found+advanced,
-    found+not-advanced, found+sha-unresolvable, found+resolvable-but-not-an-
-    ancestor, not-found), pinning incremental_safe == sha_resolvable and
-    head_advanced in every branch, and head_advanced additionally requiring
-    sha_is_ancestor.
-  - resolve_git_facts: the `git merge-base --is-ancestor <sha> <head>` call is
-    made and its exit code drives sha_is_ancestor, and it appends a
-    human-readable explanation to errors[] both when the head cannot be
-    resolved and when the last-reviewed commit is absent from the clone.
-  - build_result is also exercised end-to-end against a REAL resolve_git_facts
-    result (git subprocess calls patched), including the non-ancestor
-    (rebase/force-push) case, proving build_result's assumed input shape is
-    actually compatible with what resolve_git_facts emits — not just assumed
-    via the hand-built _git_facts() fixture.
-  - GitHub reviews are fetched with --paginate too, mirroring the GitLab
-    pagination pin below (PR reviews come back oldest-first at 30/page, so an
-    unpaginated fetch would silently lose the newest marker on a busy PR).
-  - sanitize_marker: allow-listed echo keys, unknown key NAMES only (values
-    never echoed verbatim), and truncation of an oversized payload.
-  - run()'s errors="replace" decode: undecodable bytes from gh/glab/git must
-    not raise, and the CLI must still exit 0 with valid JSON on stdout.
-  - CLI end-to-end via --bodies-file with git subprocess calls patched: stdout
-    parses as exactly one JSON object, exit 0, fields match. Non-ASCII content
-    (a marker key name and version, a non-ASCII bodies-file path) still prints
-    parseable, ASCII-safe JSON (ensure_ascii=True).
-  - remote_slug() accepts scp-style (git@host:owner/repo) and any-scheme
-    (https, http, ssh, git, git+ssh) remote URLs, with optional user@, :port,
-    and trailing slash, and keeps GitLab subgroup paths intact in *repo*.
-  - Fetch failure: GitHub and GitLab each scan exactly one surface now, so a
-    fetch failure degrades straight to previously_reviewed: false with
-    errors[] populated and exit 0 — there is no second surface to fall back to.
-  - Argparse usage errors: a missing --number (with no --bodies-file, and an
-    unparseable remote) is a RECOVERABLE outcome — exit 0, valid JSON, errors[]
-    populated. Only a genuinely malformed flag (missing --platform, invalid
-    --platform choice, an unknown flag) is a non-zero argparse exit.
-
-No network: git and gh/glab calls are all patched via
-``gauntlet.prior_review.subprocess.run``.
-"""
+"""Detector tests pin marker matching, local forge responses, and exit-zero degradation on fetch errors."""
 
 import contextlib
 import io
@@ -69,6 +13,7 @@ from unittest.mock import patch
 
 import gauntlet.marker as review_marker
 import gauntlet.prior_review as detect_prior_review
+import pytest
 
 # Hex-only fixed SHAs (valid under review_marker.SHA_RE regardless of context).
 FULL_SHA = "a" * 40
@@ -101,6 +46,28 @@ def _run_main(argv):
     return stdout.getvalue(), code
 
 
+def _result(out="", err="", rc=0):
+    return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (
+            detect_prior_review.proc.TimeoutExpired(["git"], 3),
+            ("", "timed out after 3s", -1),
+        ),
+        (OSError("denied"), ("", "denied", -1)),
+    ],
+)
+def test_run_maps_process_failures_to_exact_sentinels(monkeypatch, failure, expected):
+    def fail(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(detect_prior_review.proc, "output", fail)
+    assert detect_prior_review.run(["git", "status"], timeout=3) == expected
+
+
 def _fake_git_run(
     resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA, commit_count=3, ancestor=True
 ):
@@ -115,16 +82,13 @@ def _fake_git_run(
     """
 
     def _run(cmd, *a, **k):
-        def res(out="", err="", rc=0):
-            return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
-
         if "cat-file" in cmd:
             # Faithful to real git: `git cat-file -e <bad>^{commit}` is a
             # "fatal:" error exiting 128, not a plain 1, and it names the
             # object it could not find. Verified empirically: `git cat-file -e
             # 000...0^{commit}` -> "fatal: Not a valid object name
             # 000...0^{commit}", exit 128.
-            return res(
+            return _result(
                 rc=0 if resolvable else 128,
                 err="" if resolvable else f"fatal: Not a valid object name {cmd[-1]}",
             )
@@ -135,9 +99,9 @@ def _fake_git_run(
             # invalid commit would exit 128 with a "fatal:" message, but that
             # branch is unreachable here — merge-base only runs after cat-file
             # has already proven the sha resolvable.)
-            return res(rc=0 if ancestor else 1)
+            return _result(rc=0 if ancestor else 1)
         if "rev-parse" in cmd and cmd[-1] == "HEAD":
-            return res(out=head_sha + "\n")
+            return _result(out=head_sha + "\n")
         if "rev-parse" in cmd:
             # Faithful to real git: `rev-parse` echoes an already-full object id
             # back unchanged and only *expands* an abbreviated one. A fake that
@@ -145,21 +109,21 @@ def _fake_git_run(
             # actually passed — exactly what an explicit --head-sha must prove.
             rev = cmd[-1]
             if len(rev) == 40:
-                return res(out=rev + "\n")
+                return _result(out=rev + "\n")
             if resolvable:
-                return res(out=full_sha + "\n")
+                return _result(out=full_sha + "\n")
             # Faithful to real git: an unresolvable rev is a "fatal:" error
             # exiting 128, not 1. Verified empirically: `git rev-parse
             # deadbeef` -> "fatal: ambiguous argument 'deadbeef': unknown
             # revision or path not in the working tree.", exit 128.
-            return res(
+            return _result(
                 err=f"fatal: ambiguous argument '{rev}': unknown revision or "
                 "path not in the working tree.",
                 rc=128,
             )
         if "rev-list" in cmd:
-            return res(out=f"{commit_count}\n")
-        return res(out="{}")
+            return _result(out=f"{commit_count}\n")
+        return _result(out="{}")
 
     return _run
 
@@ -178,21 +142,18 @@ def _fake_gh_glab_and_git_run(
     git_run = git_run or _fake_git_run()
 
     def _run(cmd, *a, **k):
-        def res(out="", err="", rc=0):
-            return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
-
         joined = " ".join(cmd)
         if "pulls" in joined and "reviews" in joined:
             if reviews_rc != 0:
-                return res(err="gh: fetch failed", rc=reviews_rc)
-            return res(out=json.dumps(reviews if reviews is not None else []))
+                return _result(err="gh: fetch failed", rc=reviews_rc)
+            return _result(out=json.dumps(reviews if reviews is not None else []))
         if "merge_requests" in joined and "notes" in joined:
             if notes_rc != 0:
-                return res(err="glab: fetch failed", rc=notes_rc)
-            return res(out=json.dumps(notes if notes is not None else []))
+                return _result(err="glab: fetch failed", rc=notes_rc)
+            return _result(out=json.dumps(notes if notes is not None else []))
         if cmd and cmd[0] == "git":
             return git_run(cmd, *a, **k)
-        return res(out="{}")
+        return _result(out="{}")
 
     return _run
 
@@ -245,7 +206,7 @@ class TestFetchEntriesGithubSingleSurface(unittest.TestCase):
             calls.append(cmd)
             return SimpleNamespace(stdout="[]", stderr="", returncode=0)
 
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             entries, errors = detect_prior_review.fetch_entries_github("o", "r", 5)
 
         self.assertEqual(len(calls), 1, "exactly one fetch must be issued")
@@ -271,7 +232,7 @@ class TestFetchEntriesGithubPagination(unittest.TestCase):
             calls.append(cmd)
             return SimpleNamespace(stdout="[]", stderr="", returncode=0)
 
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             detect_prior_review.fetch_entries_github("o", "r", 5)
 
         self.assertEqual(len(calls), 1)
@@ -308,7 +269,7 @@ class TestFetchEntriesGitlabPagination(unittest.TestCase):
             calls.append(cmd)
             return SimpleNamespace(stdout="[]", stderr="", returncode=0)
 
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             detect_prior_review.fetch_entries_gitlab("o", "r", 5)
 
         self.assertEqual(len(calls), 1)
@@ -352,7 +313,7 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
 
     def _state(self, notes, sha, rc=0, stderr="", calls=None):
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=self._fake_notes_run(notes, rc=rc, stderr=stderr, calls=calls),
         ):
             return detect_prior_review.gitlab_prior_delivery_state("o", "r", 5, sha)
@@ -649,7 +610,7 @@ class TestLegacyGroupKeysForSha(unittest.TestCase):
         """The one fetch that answers summary/keys questions answers this one too."""
         note = _legacy_group_note(FINDING_KEY, ["Corroborator A"])
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=lambda cmd, *a, **k: SimpleNamespace(
                 stdout=json.dumps([note]), stderr="", returncode=0
             ),
@@ -856,7 +817,7 @@ class TestBuildResultWithRealResolveGitFacts(unittest.TestCase):
             commit_count=3,
             ancestor=True,
         )
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
 
         result = detect_prior_review.build_result(self._signal(FULL_SHA), git_facts)
@@ -882,7 +843,7 @@ class TestBuildResultWithRealResolveGitFacts(unittest.TestCase):
             commit_count=0,
             ancestor=False,
         )
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
 
         result = detect_prior_review.build_result(self._signal(FULL_SHA), git_facts)
@@ -895,7 +856,7 @@ class TestBuildResultWithRealResolveGitFacts(unittest.TestCase):
 
     def test_sha_unresolvable_is_not_incremental_safe(self):
         fake_run = _fake_git_run(resolvable=False, head_sha=HEAD_SHA)
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
 
         result = detect_prior_review.build_result(self._signal(FULL_SHA), git_facts)
@@ -926,7 +887,7 @@ class TestResolveGitFactsMergeBase(unittest.TestCase):
         self,
     ):
         fake_run, calls = self._tracked(resolvable=True, ancestor=True)
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
 
         merge_base_calls = [c for c in calls if "merge-base" in c]
@@ -942,7 +903,7 @@ class TestResolveGitFactsMergeBase(unittest.TestCase):
 
     def test_is_ancestor_false_exit_sets_field_false(self):
         fake_run, calls = self._tracked(resolvable=True, ancestor=False)
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
 
         merge_base_calls = [c for c in calls if "merge-base" in c]
@@ -964,7 +925,7 @@ class TestResolveGitFactsErrorMessages(unittest.TestCase):
                 )
             return SimpleNamespace(stdout="", stderr="", returncode=0)
 
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             errors = []
             facts = detect_prior_review.resolve_git_facts(None, None, errors)
 
@@ -975,7 +936,7 @@ class TestResolveGitFactsErrorMessages(unittest.TestCase):
 
     def test_last_reviewed_commit_absent_appends_explanation(self):
         fake_run = _fake_git_run(resolvable=False)
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             errors = []
             facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA, errors)
 
@@ -1040,7 +1001,7 @@ class TestCliBodiesFile(_CliTestBase):
         argv = self._base_argv(bodies_path)
 
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=_fake_git_run(resolvable=True),
         ):
             out, code = _run_main(argv)
@@ -1071,7 +1032,7 @@ class TestCliBodiesFile(_CliTestBase):
         argv = self._base_argv(bodies_path)
 
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=_fake_git_run(
                 resolvable=True, full_sha=HEAD_SHA, head_sha=HEAD_SHA, commit_count=0
             ),
@@ -1098,7 +1059,7 @@ class TestCliBodiesFile(_CliTestBase):
         argv = self._base_argv(bodies_path)
 
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=_fake_git_run(resolvable=False),
         ):
             out, code = _run_main(argv)
@@ -1121,7 +1082,7 @@ class TestCliBodiesFile(_CliTestBase):
         bodies_path = self._bodies_file(entries)
         argv = self._base_argv(bodies_path)
 
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=_fake_git_run()):
+        with patch("gauntlet.prior_review.proc.run", side_effect=_fake_git_run()):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -1137,7 +1098,7 @@ class TestCliBodiesFile(_CliTestBase):
         bodies_path = self._bodies_file([])
         argv = self._base_argv(bodies_path)
 
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=_fake_git_run()):
+        with patch("gauntlet.prior_review.proc.run", side_effect=_fake_git_run()):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -1162,7 +1123,7 @@ class TestCliBodiesFile(_CliTestBase):
         # which differs from override_head — if the result matches override_head,
         # the flag was honored rather than shelling out for HEAD.
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=_fake_git_run(resolvable=True),
         ):
             out, code = _run_main(argv)
@@ -1183,7 +1144,7 @@ class TestCliBodiesFile(_CliTestBase):
         bodies_path = self._bodies_file(entries)
         argv = self._base_argv(bodies_path)
 
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=_fake_git_run()):
+        with patch("gauntlet.prior_review.proc.run", side_effect=_fake_git_run()):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -1232,7 +1193,7 @@ class TestNonAsciiOutputIsAsciiSafe(_CliTestBase):
         argv = self._base_argv(bodies_path)
 
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=_fake_git_run(resolvable=True),
         ):
             out, code = _run_main(argv)
@@ -1251,7 +1212,7 @@ class TestNonAsciiOutputIsAsciiSafe(_CliTestBase):
         missing_path = os.path.join(self.tmp, "café-missing.json")
         argv = self._base_argv(missing_path)
 
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=_fake_git_run()):
+        with patch("gauntlet.prior_review.proc.run", side_effect=_fake_git_run()):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -1280,7 +1241,7 @@ class TestRemoteSlug(unittest.TestCase):
         def fake_run(cmd, *a, **k):
             return SimpleNamespace(stdout=url + "\n", stderr="", returncode=0)
 
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             return detect_prior_review.remote_slug()
 
     def test_accepted_url_forms(self):
@@ -1316,7 +1277,7 @@ class TestFetchFailureDegradation(_CliTestBase):
     def test_github_fetch_failing_yields_exit_zero_with_errors_and_no_signal(self):
         argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=_fake_gh_glab_and_git_run(
                 reviews_rc=1, git_run=_fake_git_run(resolvable=True)
             ),
@@ -1338,7 +1299,7 @@ class TestFetchFailureDegradation(_CliTestBase):
     def test_gitlab_fetch_failing_yields_exit_zero_with_errors_and_no_signal(self):
         argv = ["--platform", "gitlab", "--owner", "o", "--repo", "r", "--number", "5"]
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=_fake_gh_glab_and_git_run(
                 notes_rc=1, git_run=_fake_git_run(resolvable=True)
             ),
@@ -1365,7 +1326,7 @@ class TestGitlabFetch(_CliTestBase):
 
         argv = ["--platform", "gitlab", "--owner", "o", "--repo", "r", "--number", "5"]
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=_fake_gh_glab_and_git_run(
                 notes=notes, git_run=_fake_git_run(resolvable=True)
             ),
@@ -1391,7 +1352,7 @@ class TestGithubFetch(_CliTestBase):
 
         argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=_fake_gh_glab_and_git_run(
                 reviews=reviews, git_run=_fake_git_run(resolvable=True)
             ),
@@ -1448,7 +1409,7 @@ class TestGithubFetch(_CliTestBase):
             return SimpleNamespace(stdout="{}", stderr="", returncode=0)
 
         argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=fake_run):
+        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -1562,37 +1523,10 @@ class TestSanitizeMarker(unittest.TestCase):
 
 
 class TestRunSurvivesNonUtf8Stdout(unittest.TestCase):
-    """run() passes errors='replace' to subprocess.run, so a single
-    undecodable byte in gh/glab/git's stdout — a UnicodeDecodeError, which is
-    a ValueError, not an OSError — cannot escape run()'s except clauses and
-    break the always-exit-0 contract the caller degrades on. Both tests drive
-    the REAL subprocess module with a python3 child process that writes
-    invalid UTF-8 bytes, not the process-wide `gauntlet.prior_review.
-    subprocess.run` mock used elsewhere in this file, so the assertion is
-    against actual OS decode behavior rather than a fake that could lie about
-    it. No network: the child process and the one real `git rev-parse HEAD`
-    call the end-to-end test makes are both local-only."""
-
-    def test_run_wrapper_never_raises_and_replaces_undecodable_bytes(self):
-        cmd = [
-            sys.executable,
-            "-c",
-            r"import sys; sys.stdout.buffer.write(b'garbage \xff\xfe bytes')",
-        ]
-        stdout, stderr, rc = detect_prior_review.run(cmd, timeout=10)
-        self.assertEqual(rc, 0)
-        self.assertIn("garbage", stdout)
-        self.assertIn("bytes", stdout)
-        self.assertIn(
-            "�", stdout, "undecodable bytes must be replaced, not silently dropped"
-        )
+    """Undecodable CLI bytes must preserve the detector's exit-zero contract."""
 
     def test_cli_end_to_end_non_utf8_fetch_still_exits_zero_with_valid_json(self):
-        """fetch_entries_github is monkeypatched to route through the REAL
-        run() wrapper against a python3 child that writes undecodable bytes,
-        so main()'s exit code and stdout validity are proven against real
-        decode behavior end to end, not a mock that bypasses run()'s own
-        subprocess.run call entirely."""
+        """A real child with undecodable output still yields a JSON receipt."""
 
         def fake_fetch_entries_github(owner, repo, number):
             cmd = [
@@ -1638,7 +1572,7 @@ class TestArgparseUsageErrors(unittest.TestCase):
         outcome, not an argparse usage error: exit 0, valid JSON on stdout,
         previously_reviewed false, and a non-empty errors[]. gather_entries no
         longer calls parser.error for this case."""
-        with patch("gauntlet.prior_review.subprocess.run", side_effect=_fake_git_run()):
+        with patch("gauntlet.prior_review.proc.run", side_effect=_fake_git_run()):
             out, code = _run_main(["--platform", "github"])
 
         self.assertEqual(code, 0)
@@ -1691,7 +1625,7 @@ class TestRound3And4FixRegressions(unittest.TestCase):
         indication anything had gone wrong."""
         errors = []
         with patch(
-            "gauntlet.prior_review.subprocess.run",
+            "gauntlet.prior_review.proc.run",
             side_effect=_fake_git_run(resolvable=False),
         ):
             # 8 chars: the fake only echoes back a rev that is already full-length,

@@ -50,7 +50,7 @@ Output JSON schema (legacy positional path — unchanged):
     why it was removed (e.g., "line not in diff", "evidence mismatch", etc.).
 
 Receipt mode (--input/--input-inline/--nonce/--head-sha) wraps that same result in the
-envelope the workflow's verify stage consumes, and adds the DELTA ECHO (issue #25 req 1/2):
+envelope the workflow's verify stage consumes, and adds the DELTA ECHO:
 
     {
       "status": "ok",
@@ -84,45 +84,33 @@ import json
 import math
 import os
 import re
-import subprocess
 import sys
 
-from gauntlet.artifacts import (
-    JS_MAX_SAFE_INTEGER,
-    JsSerializationError,
-    fnv1a32,
-    js_stringify_pretty,
-    write_text_atomic,
-)
+from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
+from gauntlet.fs import write_atomic
+from gauntlet.jsjson import (
+    JS_MAX_SAFE_INTEGER,
+    JsSerializationError,
+    checksum_or_none,
+    fnv1a32,
+    js_stringify_pretty,
+)
 from gauntlet.paths import entry
 
 # The mutation audit for these generated fields lives beside DELTA_KEYS in stages.js.
 # A read of a field outside VERIFY_SLICE_FIELDS sees only its .get() default on a dispatched slice.
 from gauntlet.registry import DELTA_VALUE_FIELDS as _DELTA_FIELDS
 
-# ---------------------------------------------------------------------------
-# Repo root — resolved once at startup (RF-01)
-# ---------------------------------------------------------------------------
-
 
 def _resolve_repo_root():
-    """
-    Return the absolute path of the repository root.
-
-    Uses ``git rev-parse --show-toplevel`` and falls back to the directory
-    that contains this script so the module works even outside a git repo.
-    """
-    result = subprocess.run(
+    """Fall back to the entry directory when git cannot identify a repo."""
+    result = proc.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
     )
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
-    # Fallback: parent directory of this script file
     return os.path.dirname(entry("verify_findings"))
 
 
@@ -135,21 +123,7 @@ REPO_ROOT = _resolve_repo_root()
 
 
 class InputError(Exception):
-    """A fatal condition reported by ``die()`` — malformed input, or a required git
-    command that failed.
-
-    It exists so the two CLI modes can answer it differently. ``die()`` used to call
-    ``sys.exit(1)`` directly, which raises ``SystemExit`` — a BaseException, so it flew
-    straight past ``_run_receipt``'s ``except Exception`` and the script exited having
-    written NO output file at all. The executor then found nothing to read and the receipt
-    path degraded with "no file" rather than the reason. The receipt path now catches
-    decoder, shape, and verification errors and writes an honest failed envelope; the
-    legacy path still converts the same exception back to exit 1.
-
-    As an ordinary Exception it lands in the receipt path's honest failure envelope,
-    carrying the real message; ``main()``'s legacy path converts it back to exit 1, so
-    that behavior is byte-for-byte what it always was.
-    """
+    """An Exception lets the receipt path record a failure before the legacy CLI exits one."""
 
 
 def die(msg):
@@ -162,34 +136,17 @@ def warn(msg):
 
 
 def run(cmd, check=False, timeout=None, cwd=None):
-    """Run a subprocess command. Returns (stdout, stderr, returncode).
-
-    Args:
-        cmd: Command as list of strings.
-        check: If True, die() on non-zero exit.
-        timeout: Seconds before TimeoutExpired. None = no limit.
-        cwd: Working directory for the subprocess. None = inherit.
-
-    Returns:
-        (stdout, stderr, returncode). On timeout, returns ("", "", -1).
-    """
+    """Map command timeouts to the verifier's sentinel and checked exits to die()."""
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=cwd,
-            encoding="utf-8",
-        )
-    except subprocess.TimeoutExpired:
+        stdout, stderr, returncode = proc.output(cmd, timeout=timeout, cwd=cwd)
+    except proc.TimeoutExpired:
         return ("", "", -1)
-    if check and result.returncode != 0:
+    if check and returncode != 0:
         die(
-            f"Command failed (exit {result.returncode}): {' '.join(cmd)}\n"
-            f"stderr: {result.stderr.strip()}"
+            f"Command failed (exit {returncode}): {' '.join(cmd)}\n"
+            f"stderr: {stderr.strip()}"
         )
-    return result.stdout, result.stderr, result.returncode
+    return stdout, stderr, returncode
 
 
 # ---------------------------------------------------------------------------
@@ -974,7 +931,7 @@ def batch_findings(findings, min_batch=3, max_batch=5):
 # makes `line_start - 1`, `line_start < 1`, or `range(line_start, line_end + 1)` raise a
 # TypeError ("unsupported operand type(s) for -: 'str' and 'int'" / "'<' not supported
 # between instances of 'str' and 'int'"), which in receipt mode surfaces as
-# status:'failed' and degrades the whole slice to UNVERIFIED (the live-smoke failure).
+# status:'failed' and degrades the whole slice to UNVERIFIED.
 # The read-site scan exempts these: _coerce_numeric_fields reads them by loop, not by literal, and skips a key a dispatched slice omits.
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
@@ -1061,45 +1018,12 @@ def _coerce_numeric_fields(finding):
     return finding
 
 
-def _input_checksum(doc):
-    """The inline content proof: ``fnv1a32(js_stringify_pretty(doc))``.
-
-    The workflow computes the SAME value over the content it dispatched
-    (``JSON.stringify(content, null, 2)`` before inline encoding), so a match proves
-    the decoded document is the one this run asked for. The receipt path writes that
-    decoded value to the destination before verification.
-
-    It is a VALUE proof, not a byte proof, because it must serve two paths whose on-disk
-    spelling differs. On the LEGACY positional path an external writer chose that
-    spelling, so only the value can be compared. On the INLINE path the byte comparison
-    is available and is made separately, over the received token, by the caller below --
-    ``_run_receipt`` writes ``--input`` itself in the pretty form, so this proof and the
-    file agree there by construction. Both sides hash a canonical re-serialisation of the
-    same value: the identical pair the persist path uses, pinned across runtimes by
-    tests/fixtures/cross_runtime/ and by tests/fixtures/parity/slice_input_proof/.
-
-    Keys are NOT sorted, on the record (issue #172): the document arrives in
-    generated ``VERIFY_SLICE_FIELDS`` order and a document that comes back in another shape is a
-    regenerated token, not a copied one.
-
-    Returns None rather than raising when the document holds a value the two runtimes
-    spell differently: an absent proof lets the workflow decide honestly, where an
-    exception here would take out the whole envelope including its failure shape. Same
-    contract, same reason, as ``deltas_checksum``.
-    """
-    try:
-        return fnv1a32(js_stringify_pretty(doc))
-    except JsSerializationError:
-        return None
+_input_checksum = checksum_or_none
 
 
-# The trailing-byte class this loader RECOVERS from: whitespace and unbalanced closing
-# punctuation only. Issue #69 — the artifact-writer is a sampled agent, not a function,
-# and on smoke-20260728-144630-a162ecd it appended exactly `}\n` after two otherwise
-# complete legacy input documents, costing 23 fully intact findings their verification.
-# Recovering that class is deterministic; recovering anything wider is guessing. Matched
-# with fullmatch, so a document ending in real content can never sneak past on the
-# strength of a closing character. This recovery is positional-CLI-only.
+# The sampled agent can append a stray brace; only trailing whitespace and
+# closing punctuation are safe to recover.
+# Full matching prevents content after a valid document from entering the legacy path.
 _RECOVERABLE_TRAILING_RE = re.compile(r"[ \t\r\n}\]]*")
 
 _INLINE_SAFE = frozenset(
@@ -1365,7 +1289,7 @@ def _resolve_head_sha():
 
 
 # ---------------------------------------------------------------------------
-# Delta echo (issue #25 requirements 1 and 2)
+# Delta echo
 # ---------------------------------------------------------------------------
 #
 # The workflow already holds every dispatched finding BY VALUE. The only thing it cannot
@@ -1385,7 +1309,7 @@ def _delta_confidence(value):
     produce ints; ``_coerce_numeric_fields`` only ever produces ints). This function is
     therefore a no-op on every real path — it exists because the delta is checksummed,
     and a non-integral double is spelled differently by JS and Python (the divergence
-    ``gauntlet.artifacts.assert_js_reproducible`` refuses outright). Rounding ONCE here,
+    ``gauntlet.jsjson.assert_js_reproducible`` refuses outright). Rounding ONCE here,
     in one runtime, is what keeps the two sides from having to agree on float spelling
     at all: the workflow only ever sees an integer and rejects anything else.
 
@@ -1452,30 +1376,7 @@ def build_deltas(findings, verified):
     return deltas
 
 
-def deltas_checksum(deltas):
-    """The delta echo's content proof, or None when the deltas will not serialise.
-
-    ``fnv1a32(js_stringify_pretty(deltas))`` — the same pair the persist path's content
-    proofs use, so there is exactly one checksum definition in the plugin and one parity
-    test guarding it. The workflow recomputes this over the deltas the executor echoed
-    back, rebuilt in canonical key order from the dispatched slice, and refuses the slice
-    on a mismatch.
-
-    Threat model, stated plainly and identically to trustSlice's: this is a consistency
-    check against a STALE, DRIFTING or CONFUSED executor, not authentication. The
-    checksum travels in the same envelope as the data it covers, so a Byzantine executor
-    could recompute it — but an LLM transcribing a document cannot, which is precisely
-    the failure this boundary keeps observing (the by-value writer's transcription of
-    findings.json diverged on 3 of 3 measured runs).
-
-    Returns None rather than raising if the deltas contain something unserialisable: an
-    absent proof makes the workflow degrade the slice honestly, where an exception here
-    would take out the whole envelope including the honest failure shape.
-    """
-    try:
-        return fnv1a32(js_stringify_pretty(deltas))
-    except JsSerializationError:
-        return None
+deltas_checksum = checksum_or_none
 
 
 def run_verification(findings, base_branch, diff_file=None, verbose=False):
@@ -1592,7 +1493,7 @@ def _run_receipt(args):
             input_text = js_stringify_pretty(data)
         except JsSerializationError:
             input_text = json.dumps(data, indent=2, ensure_ascii=True)
-        write_text_atomic(args.input, input_text)
+        write_atomic(args.input, input_text)
         for finding in data["findings"]:
             _coerce_numeric_fields(finding)
         findings = data["findings"]

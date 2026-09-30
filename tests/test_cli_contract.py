@@ -276,16 +276,14 @@ def test_normalize_path_boundaries_and_shell_quotes(tmp_path, suffix):
 
 @pytest.mark.parametrize("kind", ("symlink", "space"))
 def test_pending_receipt_normalizes_noncanonical_root(
-    kind, tmp_path, invoke, monkeypatch
+    kind, tmp_path, invoke, monkeypatch, request
 ):
     from gauntlet import paths
 
     alias = tmp_path / ("plugin-link" if kind == "symlink" else "plugin space[1]")
     if kind == "symlink":
-        try:
-            alias.symlink_to(ROOT, target_is_directory=True)
-        except OSError as exc:
-            pytest.skip(f"directory symlinks are unavailable: {exc}")
+        request.getfixturevalue("symlink_or_skip")
+        alias.symlink_to(ROOT, target_is_directory=True)
     else:
         alias.mkdir()
     monkeypatch.setattr(paths, "ENTRY_ROOT", str(alias))

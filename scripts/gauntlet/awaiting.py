@@ -92,6 +92,7 @@ import tempfile
 import time
 
 from gauntlet.cli import Command
+from gauntlet.fs import glob_under
 from gauntlet.paths import entry
 from gauntlet.registry import ARTIFACT_BASENAMES as ARTIFACT_BASENAMES
 from gauntlet.registry import ARTIFACT_PATH_TEMPLATES
@@ -155,10 +156,10 @@ SCAN_MAX_DEEP_CANDIDATES = 8
 #: checkpoints, gaps}; the early args-rejection envelope (no checkpoints, no
 #: resolvedPolicy); the mid-run catch failure (has checkpoints via
 #: buildResumeCheckpoints, omits resolvedPolicy); the all-degraded fail-loud
-#: envelope (issue #178) — ok:false, artifactPaths:{}, failingPhase:'discover',
+#: envelope — ok:false, artifactPaths:{}, failingPhase:'discover',
 #: WITH checkpoints AND resolvedPolicy AND a non-empty stats (unlike the mid-run
-#: catch failure, this one names both); and the checkpoint-shape refusal (issues
-#: #248/#250) — ok:false, failingPhase/phaseReached both 'checkpoints', WITH
+#: catch failure, this one names both); and the checkpoint-shape refusal —
+#: ok:false, failingPhase/phaseReached both 'checkpoints', WITH
 #: checkpoints ({completed: []}, no `.phases` map so headless auto-resume cannot
 #: replay the same malformed artifact), no resolvedPolicy, empty stats. Any
 #: member below corroborates. `error` is deliberately not in this list — it is
@@ -230,7 +231,7 @@ def task_roots(environ=None):
     ``<tmp-root>/<project-slug>/<session-uuid>/tasks/<task-id>.output``.
     On POSIX, the tmp-root is `claude-<uid>` under the system temp directory.
     Windows has no uid, so its fallback root is `claude` under
-    `tempfile.gettempdir()` (tracked by issue #352). Which spelling of a POSIX
+    `tempfile.gettempdir()`. Which spelling of a POSIX
     directory is real varies (on macOS ``/tmp`` is a symlink to ``/private/tmp``),
     so every candidate is listed and de-duplicated by realpath rather than assumed.
 
@@ -249,7 +250,7 @@ def task_roots(environ=None):
     if callable(getuid):
         root_name = f"claude-{getuid()}"
     else:
-        # Windows has no uid; issue #352 tracks measuring Claude's task root.
+        # Windows has no uid; use the system temp root.
         root_name = "claude"
         bases.append(tempfile.gettempdir())
     roots, seen = [], set()
@@ -261,18 +262,6 @@ def task_roots(environ=None):
         seen.add(real)
         roots.append(candidate)
     return roots
-
-
-def glob_under(root, pattern):
-    """Return matches for a relative glob beneath the literal *root*.
-
-    The root is passed literally to glob and is never interpreted as a pattern.
-    Any literal name placed inside *pattern* must go through ``glob.escape``.
-    """
-    try:
-        return [os.path.join(root, path) for path in glob.glob(pattern, root_dir=root)]
-    except OSError:
-        return []
 
 
 def _newest(paths):
@@ -469,8 +458,8 @@ def _document_starts(text):
       skipping leading whitespace would put them back in reach; requiring column
       zero keeps them unreachable even on a mid-write read.
 
-    Documents that are genuinely appended after other output — the case issue #26
-    R2 names — do start their own line at column zero, so they are still found.
+    Documents appended after other output start their own line at column zero,
+    so they are still found.
     """
     for line_start in _line_starts(text):
         if line_start < len(text) and text[line_start] == "{":

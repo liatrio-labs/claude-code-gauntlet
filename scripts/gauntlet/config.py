@@ -22,11 +22,11 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from typing import Any, NoReturn, cast
 
+from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.paths import PLUGIN_ROOT
 from gauntlet.registry import JS_TRIM_CHARS, KNOB_REGISTRY
@@ -376,19 +376,15 @@ def _default_delivery_body(lines: Sequence[str]) -> list[str] | None:
 
 def _git_repo_root(cwd: str) -> str:
     try:
-        proc = subprocess.run(
+        result = proc.run(
             ["git", "rev-parse", "--show-toplevel"],
             cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False,
-            encoding="utf-8",
         )
     except OSError as exc:
         raise ResolverSetupError(f"git repository probe failed: {exc}") from exc
-    if proc.returncode != 0 or not proc.stdout.strip():
+    if result.returncode != 0 or not result.stdout.strip():
         raise ResolverSetupError("not a git repository")
-    return os.path.realpath(proc.stdout.strip())
+    return os.path.realpath(result.stdout.strip())
 
 
 def read_pipeline_version(plugin_root: str) -> str:

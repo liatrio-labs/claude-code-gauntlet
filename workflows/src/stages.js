@@ -1491,7 +1491,7 @@ export function deltaContentProof(ids, deltas) {
 //       SCRIPT computed over its own deltas. This is what closes coherent drift: an
 //       executor that flips one origin, shifts one confidence, or invents a plausible
 //       elimination satisfies (1) and (2) and fails here. It is the same checksum pair the
-//       persist path uses (assemble_artifacts.py <-> fnv1a32/JSON.stringify here), pinned
+//       persist path uses (scripts/gauntlet/jsjson.py <-> fnv1a32/JSON.stringify here), pinned
 //       across runtimes by tests/fixtures/cross_runtime/.
 //   (4) INPUT PROOF — the receipt's checksum over the document the SCRIPT decoded must
 //       equal the checksum this stage computed over the content it DISPATCHED. Guards
@@ -2899,7 +2899,7 @@ function stripPersistAliases(f) {
 //
 // It must be computable IDENTICALLY here and in Python. The workflow sandbox has no
 // TextEncoder and no Buffer, so the only byte source available is String#charCodeAt —
-// i.e. UTF-16 code units. scripts/gauntlet/artifacts.py reproduces this exactly by
+// i.e. UTF-16 code units. scripts/gauntlet/jsjson.py reproduces this exactly by
 // unpacking the string's utf-16-le encoding, including surrogate pairs (an emoji
 // contributes TWO units on both sides). Math.imul is a language builtin, NOT a host
 // global, so it is available in the sandbox.
@@ -2914,8 +2914,8 @@ export function fnv1a32(s) {
 
 // Strip a UTF-8 BOM and AT MOST ONE trailing newline before checksumming. The Write
 // tool may normalise a trailing newline or prepend a BOM, and a false content-proof
-// degrade must not cost a run its artifacts. Applied on BOTH sides (here and in
-// assemble_artifacts.py) so the tolerance is symmetric; two trailing newlines is a
+// degrade must not cost a run its artifacts. Applied on BOTH sides (here and by the
+// assembler through gauntlet.jsjson.normalize_content) so the tolerance is symmetric; two trailing newlines is a
 // REAL difference and still reports as a mismatch.
 export function normalizeForChecksum(s) {
   let out = typeof s === 'string' ? s : '';
@@ -3071,7 +3071,7 @@ export function persistPlan(inp, paths) {
     return { path, chars: normalized.length, checksum: fnv1a32(normalized) };
   };
   // The derived documents, as the pipeline itself would serialize them — the same pretty
-  // printer assemble_artifacts.py reproduces (js_stringify_pretty) and the same source
+  // printer that js_stringify_pretty in scripts/gauntlet/jsjson.py reproduces, and the same source
   // (writerPayload) the legacy by-value path persists. Only their chars/checksum travel.
   const held = writerPayload(inp || {});
   const plan = {
@@ -3108,7 +3108,7 @@ export function persistPlan(inp, paths) {
 //
 // JS numbers are doubles and Number#toString has its own spelling rules; Python's
 // repr(float) does not share them (1e-7 vs 1e-07, 0.000001 vs 1e-06, 90 vs 90.0, 0 vs
-// -0.0, null vs NaN). scripts/gauntlet/artifacts.py deliberately does NOT reimplement
+// -0.0, null vs NaN). scripts/gauntlet/jsjson.py deliberately does NOT reimplement
 // Number#toString — a port whose own bugs would be invisible is worse than a
 // precondition — so it refuses any number it cannot round-trip and this guard applies
 // the SAME rule one step earlier, where refusing is free: the run falls back to the

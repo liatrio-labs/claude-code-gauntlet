@@ -1,31 +1,4 @@
-"""
-Tests for scripts/materialize_artifacts.py.
-
-The script is the disk-side half of the RETURN persist channel: the pipeline
-hands its primaries back inside the workflow's own return value — which the
-HARNESS serializes to ``tasks/<task-id>.output``, with no model retyping it —
-and this script writes them and derives the projections from what landed.
-
-Every input here is REAL pipeline output. ``workflows/test/tools/emit_task_output.mjs``
-runs the wired pipeline (``runWith``) on the return channel and writes the
-Workflow tool's own envelope shape, so a stage that stopped carrying a field, or
-a writeArtifacts that stopped carrying the primaries home, fails here rather
-than passing against a hand-authored payload.
-
-Contract under test:
-  * the three primaries land BYTE-EXACT, including the escape runs, astral-plane
-    characters and long prose that the artifact-writer measurably loses;
-  * the two projections are derived from them, so post-review.json exists and PR
-    comments are postable;
-  * exactly one line of JSON on stdout on EVERY path, including no-source-found
-    and an unexpected internal error;
-  * a structural failure writes NOTHING and exits 1; a content-proof failure
-    still names what landed, because the artifacts are deliverable and the
-    divergence is a gap to disclose, not a run to throw away;
-  * an entry may not write outside --output-dir;
-  * a nonce, when given, must match — one review's findings must never be
-    delivered under another's name.
-"""
+"""Recorded pipeline returns pin byte-exact primaries, derivation, confinement, and one-line receipts."""
 
 import io
 import json
@@ -38,9 +11,19 @@ import unittest
 from unittest.mock import patch
 
 from gauntlet.artifacts import plan_checksum
-from gauntlet.materialize import _sweep_paths, main, materialize
+from gauntlet.materialize import main, materialize
 
-from tests.test_await_workflow import _plant_task_output
+
+def test_sweep_uses_literal_task_root(tmp_path, monkeypatch):
+    from gauntlet import materialize as module
+
+    root = tmp_path / "claude-[g]"
+    target = root / "slug" / "session" / "tasks" / "w123.output"
+    target.parent.mkdir(parents=True)
+    target.write_text("", encoding="utf-8")
+    monkeypatch.setattr(module, "task_roots", lambda _env: [str(root)])
+    assert module._sweep_paths({}) == [str(target)]
+
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -273,24 +256,6 @@ class TestResolution(MaterializeTestCase):
         self.assertFalse(receipt["ok"])
         self.assertEqual(receipt["materialized"], [])
         self.assertFalse(os.path.exists(self.artifact("findings")))
-
-
-class TestSweepPaths(unittest.TestCase):
-    def test_glob_metacharacters_in_sweep_roots_are_literal(self):
-        override = tempfile.mkdtemp(prefix="sweep-override-[g]-")
-        self.addCleanup(shutil.rmtree, override, ignore_errors=True)
-        override_path = os.path.join(override, "x.output")
-        with open(override_path, "w", encoding="utf-8") as fh:
-            fh.write("")
-        self.assertIn(
-            override_path,
-            _sweep_paths({"CODE_GAUNTLET_TASKS_DIR": override}),
-        )
-
-        base, task_path = _plant_task_output(self, "sweep-root-[g]-", "y.output")
-        env = {"TMPDIR": base}
-
-        self.assertIn(task_path, _sweep_paths(env))
 
 
 class TestResolutionWithoutARecordedRun(unittest.TestCase):

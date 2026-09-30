@@ -52,7 +52,7 @@ CODEX_CAP_BYTES = 32_768
 # belongs in a code comment. If both are yes, raise the number in the same commit and say
 # what the addition buys.
 #
-AGENTS_SET_BUDGET_BYTES = 22_323
+AGENTS_SET_BUDGET_BYTES = 22_310
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

@@ -566,25 +566,13 @@ def _load_fixture(path):
 # ---------------------------------------------------------------------------
 
 
-def _minimal_fake_subprocess_run(diff, versions=None):
-    """Build a bare ``subprocess.run`` stand-in for one ``--dry-run main()`` call.
-
-    Answers exactly the read-only calls a dry run makes for one platform: the
-    tool-availability check, the diff fetch, and (GitLab only) the MR-versions
-    GET. ``git remote get-url`` and ``git rev-parse`` are answered defensively
-    — the findings JSON below always pins ``platform`` and ``sha``, so neither
-    call should fire — but an unmodeled command raises rather than returning a
-    fake success or failure: a silently degraded fake here would collapse
-    ``valid_lines`` to None on a fetch failure and let every assertion below
-    pass while validating nothing.
-    """
+def _fake_proc_run(diff, versions=None):
+    """Fail on unmodeled calls so a missing diff oracle cannot pass silently."""
 
     def _run(cmd, *args, **kwargs):
         def res(out=""):
             return SimpleNamespace(stdout=out, stderr="", returncode=0)
 
-        if cmd[0] == "which":
-            return res(out="/usr/bin/" + cmd[1])
         if cmd[:3] == ["gh", "pr", "diff"] or cmd[:3] == ["glab", "mr", "diff"]:
             return res(out=diff)
         if cmd[:2] == ["glab", "api"] and cmd[-1].endswith("/versions"):
@@ -621,8 +609,12 @@ class _RealPosterTestCase(unittest.TestCase):
         with (
             patch.object(sys, "argv", argv),
             patch(
-                "gauntlet.delivery.post.subprocess.run",
-                side_effect=_minimal_fake_subprocess_run(diff, versions=versions),
+                "gauntlet.delivery.post.proc.run",
+                side_effect=_fake_proc_run(diff, versions=versions),
+            ),
+            patch(
+                "gauntlet.delivery.post.proc.which",
+                side_effect=lambda name: f"/usr/bin/{name}",
             ),
         ):
             try:
