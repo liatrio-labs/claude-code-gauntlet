@@ -2085,7 +2085,7 @@ test('contextLines/contextChars are bounded above — an absurd measurement fail
 //     reaches every discovery prompt
 //   - headShaShort / diffPath → verify executor argv (--head-sha, --diff-file) — the same
 //     argv-splitting hazard NONCE_RE already guards against
-//   - repoRoot → merge uses it to rewrite finding paths; absolute shape keeps
+//   - repoRoot → discover-entry and checkpoint-replay normalization; absolute shape keeps
 //     path containment checks anchored to the repository
 // A present-but-garbage value on a consumed path field would otherwise render a junk path
 // into every paid dispatch instead of failing at the waist. Absence stays a REQUIRED-field
@@ -2157,7 +2157,7 @@ test('validateArgs accepts an absolute outputDir (POSIX /-prefix)', () => {
   );
 });
 
-// Merge needs an absolute repoRoot to check finding path containment without a filesystem probe.
+// Discover-entry normalization needs an absolute repoRoot for containment without a filesystem probe.
 test('validateArgs rejects a relative repoRoot', () => {
   for (const bad of ['.', 'repo']) {
     const r = validateArgs({ ...good, repoRoot: bad });

@@ -1,6 +1,7 @@
 // Merge structured and text-channel findings into the Phase 4 envelope.
 import { dedupById } from './findingDedup.js';
 import { repoRelativeFindingPath } from './paths.js';
+import { FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 
 const KNOWN_DIMENSIONS = new Set([
   'bug',
@@ -155,18 +156,25 @@ export function injectAgentField(findings, agent) {
 
 // --- Validation -------------------------------------------------------------
 
+function invalidFindingPathWarning(finding, field, reason, action) {
+  return `[${finding.id ?? '<no id>'}] Invalid ${field} path: ${reason} - ${action}`;
+}
+
 function normalizeFindingPath(finding, repoRoot) {
-  const fid = 'id' in finding ? finding.id : '<no id>';
   const original = finding.file;
   const result = repoRelativeFindingPath(repoRoot, original);
   if ('reason' in result) {
-    return { valid: false, warning: `[${fid}] Invalid file path: ${result.reason} — finding rejected` };
+    return { valid: false, warning: invalidFindingPathWarning(finding, 'file', result.reason, 'finding rejected') };
   }
   if (result.file !== original) {
     finding.file = result.file;
+    // Legacy keys embed the file path and survive replay without reconsolidation.
+    if (typeof finding.consolidation_key === 'string' && finding.consolidation_key.startsWith(`${original}:`)) {
+      finding.consolidation_key = `${result.file}${finding.consolidation_key.slice(original.length)}`;
+    }
     return {
       valid: true,
-      warning: `[${fid}] File path rewritten to '${result.file}'`,
+      warning: `[${finding.id ?? '<no id>'}] File path rewritten to '${result.file}'`,
     };
   }
   return { valid: true, warning: null };
@@ -177,26 +185,29 @@ export function normalizeFindingPaths(findings, repoRoot) {
   const warnings = [];
   for (const finding of findings) {
     if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
-      warnings.push('Invalid finding shape: expected an object — finding rejected');
+      warnings.push('Invalid finding shape: expected an object - finding rejected');
       continue;
     }
     const result = normalizeFindingPath(finding, repoRoot);
     if (result.warning) warnings.push(result.warning);
     if (!result.valid) continue;
-    if (Array.isArray(finding.cross_file_refs)) {
+    for (const field of FINDING_PATH_ARRAY_FIELDS) {
+      if (!(field in finding)) continue;
+      if (!Array.isArray(finding[field])) {
+        delete finding[field];
+        warnings.push(invalidFindingPathWarning(finding, field, 'expected an array', 'field dropped'));
+        continue;
+      }
       const refs = [];
-      for (const ref of finding.cross_file_refs) {
-        // Line suffixes belong to the reference, not the repository path.
-        const suffix = typeof ref === 'string' ? (ref.match(/(:\d+(?:-\d+)?)$/)?.[1] || '') : '';
-        const path = suffix ? ref.slice(0, -suffix.length) : ref;
-        const normalized = repoRelativeFindingPath(repoRoot, path);
+      for (const ref of finding[field]) {
+        const normalized = repoRelativeFindingPath(repoRoot, ref);
         if ('reason' in normalized) {
-          warnings.push(`[${finding.id ?? '<no id>'}] Invalid cross_file_refs path: ${normalized.reason} - reference dropped`);
+          warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped'));
         } else {
-          refs.push(`${normalized.file}${suffix}`);
+          refs.push(normalized.file);
         }
       }
-      finding.cross_file_refs = refs;
+      finding[field] = refs;
     }
     valid.push(finding);
   }

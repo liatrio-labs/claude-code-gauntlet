@@ -3455,7 +3455,7 @@ function describeCheckpointShape(v) {
   return typeof v;
 }
 
-const CHECKPOINT_FINDING_FIELDS = new Set(['findings', 'filtered', 'unverified']);
+const CHECKPOINT_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS.map(([, field]) => field));
 const CHECKPOINT_FINDING_STRING_FIELDS = ['severity', 'title', 'file'];
 const CHECKPOINT_FINDING_INTEGER_FIELDS = ['line', 'line_start', 'line_end', 'end_line'];
 
@@ -4069,7 +4069,7 @@ export async function runWith(ctx, rawArgs) {
     }
 
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
-      base_branch: A.baseBranch, head_sha: A.headShaShort, repoRoot: A.repoRoot,
+      base_branch: A.baseBranch, head_sha: A.headShaShort,
     }));
 
     // The finding count now exists — re-coarsen so verify slices, validate batches,
@@ -4313,7 +4313,7 @@ export async function runWith(ctx, rawArgs) {
 
     // Persistence is a post-phase step: writeArtifacts owns its try/catch, so a
     // writer failure degrades to a partial-artifacts gap rather than the top-level catch.
-    const artifactContent = {
+    const writeOut = await writeArtifacts(c, {
       findings: challengeOut.findings,
       postReview,
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
@@ -4325,9 +4325,6 @@ export async function runWith(ctx, rawArgs) {
       // unwraps .phases, so a resume skips exactly the preserved phase and re-runs the rest.
       // The in-memory failure-path return below still carries the full phaseOutputs map.
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
-    };
-    const writeOut = await writeArtifacts(c, {
-      ...artifactContent,
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,

@@ -241,15 +241,7 @@ test('checkpointShapeErrors: every findings-family row rejects malformed ranking
     corroborations: 'not-an-array',
   };
   const fields = ['severity', 'title', 'description', 'file', 'line', 'line_start', 'line_end', 'end_line', 'confidence', 'corroborations'];
-  for (const [phase, field] of [
-    ['discover', 'findings'],
-    ['merge', 'findings'],
-    ['verify', 'findings'],
-    ['validate', 'findings'],
-    ['filter', 'filtered'],
-    ['challenge', 'findings'],
-    ['challenge', 'unverified'],
-  ]) {
+  for (const [phase, field] of CHECKPOINT_FINDING_LISTS) {
     const base = wellFormedCheckpoints();
     const cp = { ...base, [phase]: { ...base[phase], [field]: [malformed] } };
     const errors = checkpointShapeErrors(cp);

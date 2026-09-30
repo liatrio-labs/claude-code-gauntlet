@@ -51,19 +51,20 @@ export function pathUnderRoot(root, path) {
 
 export function repoRelativeFindingPath(repoRoot, file) {
   if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
+  // Location tails are metadata, so they must not participate in path checks.
+  const suffix = file.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
+  const path = suffix ? file.slice(0, -suffix.length) : file;
   // Reject traversal lexically because resolving it across symlinks could escape the root.
-  if (file.startsWith('/') && hasDotDotSegment(file)) return { reason: 'file path contains a .. segment' };
+  if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
 
   let relative;
-  if (!file.startsWith('/')) {
-    relative = file;
+  if (!path.startsWith('/')) {
+    relative = normalizePathString(path);
     while (relative.startsWith('./')) relative = relative.slice(2);
-    relative = stripTrailingSlashes(collapseDotSlash(relative));
-    if (relative.endsWith('/.')) relative = stripTrailingSlashes(relative.slice(0, -2));
   } else {
     const root = normalizeAbsoluteRoot(repoRoot);
     if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
-    const absolute = normalizePathString(file);
+    const absolute = normalizePathString(path);
     if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
     if (!pathUnderRoot(root, absolute)) return { reason: 'absolute file path is outside repoRoot' };
     relative = absolute.slice(root === '/' ? 1 : root.length + 1);
@@ -72,10 +73,10 @@ export function repoRelativeFindingPath(repoRoot, file) {
   if (relative === '' || relative === '.' || relative.startsWith('/')) return { reason: 'file path does not name a repository file' };
   if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
   if (hasBackslash(relative)) return { reason: 'file path contains a backslash' };
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(relative)) return { reason: 'file path starts with a URI scheme or drive letter' };
-  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(file)) {
+  if (/^[A-Za-z][A-Za-z0-9+-]*:/.test(relative)) return { reason: 'file path starts with a URI scheme or drive letter' };
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u.test(file)) {
     return { reason: 'file path contains a disallowed character' };
   }
   if (file !== file.trim() || relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
-  return { file: relative };
+  return { file: `${relative}${suffix}` };
 }

@@ -46,6 +46,7 @@ const CODE_OWNED_HEADINGS = [
   '## Review Dimensions Summary',
   '## Review Methodology',
 ];
+const FINDING_PATH_ARRAY_FIELDS = ['cross_file_refs', 'affected_consumers'];
 const FINDING_PROP_TYPES = {
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
@@ -179,17 +180,17 @@ function pathUnderRoot(root, path) {
 }
 function repoRelativeFindingPath(repoRoot, file) {
   if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
-  if (file.startsWith('/') && hasDotDotSegment(file)) return { reason: 'file path contains a .. segment' };
+  const suffix = file.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
+  const path = suffix ? file.slice(0, -suffix.length) : file;
+  if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
   let relative;
-  if (!file.startsWith('/')) {
-    relative = file;
+  if (!path.startsWith('/')) {
+    relative = normalizePathString(path);
     while (relative.startsWith('./')) relative = relative.slice(2);
-    relative = stripTrailingSlashes(collapseDotSlash(relative));
-    if (relative.endsWith('/.')) relative = stripTrailingSlashes(relative.slice(0, -2));
   } else {
     const root = normalizeAbsoluteRoot(repoRoot);
     if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
-    const absolute = normalizePathString(file);
+    const absolute = normalizePathString(path);
     if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
     if (!pathUnderRoot(root, absolute)) return { reason: 'absolute file path is outside repoRoot' };
     relative = absolute.slice(root === '/' ? 1 : root.length + 1);
@@ -197,12 +198,12 @@ function repoRelativeFindingPath(repoRoot, file) {
   if (relative === '' || relative === '.' || relative.startsWith('/')) return { reason: 'file path does not name a repository file' };
   if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
   if (hasBackslash(relative)) return { reason: 'file path contains a backslash' };
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(relative)) return { reason: 'file path starts with a URI scheme or drive letter' };
-  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(file)) {
+  if (/^[A-Za-z][A-Za-z0-9+-]*:/.test(relative)) return { reason: 'file path starts with a URI scheme or drive letter' };
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u.test(file)) {
     return { reason: 'file path contains a disallowed character' };
   }
   if (file !== file.trim() || relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
-  return { file: relative };
+  return { file: `${relative}${suffix}` };
 }
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set([
@@ -334,18 +335,23 @@ function parseTextFile(text, agent) {
 function injectAgentField(findings, agent) {
   for (const f of findings) f.agent = agent;
 }
+function invalidFindingPathWarning(finding, field, reason, action) {
+  return `[${finding.id ?? '<no id>'}] Invalid ${field} path: ${reason} - ${action}`;
+}
 function normalizeFindingPath(finding, repoRoot) {
-  const fid = 'id' in finding ? finding.id : '<no id>';
   const original = finding.file;
   const result = repoRelativeFindingPath(repoRoot, original);
   if ('reason' in result) {
-    return { valid: false, warning: `[${fid}] Invalid file path: ${result.reason} — finding rejected` };
+    return { valid: false, warning: invalidFindingPathWarning(finding, 'file', result.reason, 'finding rejected') };
   }
   if (result.file !== original) {
     finding.file = result.file;
+    if (typeof finding.consolidation_key === 'string' && finding.consolidation_key.startsWith(`${original}:`)) {
+      finding.consolidation_key = `${result.file}${finding.consolidation_key.slice(original.length)}`;
+    }
     return {
       valid: true,
-      warning: `[${fid}] File path rewritten to '${result.file}'`,
+      warning: `[${finding.id ?? '<no id>'}] File path rewritten to '${result.file}'`,
     };
   }
   return { valid: true, warning: null };
@@ -355,25 +361,29 @@ function normalizeFindingPaths(findings, repoRoot) {
   const warnings = [];
   for (const finding of findings) {
     if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
-      warnings.push('Invalid finding shape: expected an object — finding rejected');
+      warnings.push('Invalid finding shape: expected an object - finding rejected');
       continue;
     }
     const result = normalizeFindingPath(finding, repoRoot);
     if (result.warning) warnings.push(result.warning);
     if (!result.valid) continue;
-    if (Array.isArray(finding.cross_file_refs)) {
+    for (const field of FINDING_PATH_ARRAY_FIELDS) {
+      if (!(field in finding)) continue;
+      if (!Array.isArray(finding[field])) {
+        delete finding[field];
+        warnings.push(invalidFindingPathWarning(finding, field, 'expected an array', 'field dropped'));
+        continue;
+      }
       const refs = [];
-      for (const ref of finding.cross_file_refs) {
-        const suffix = typeof ref === 'string' ? (ref.match(/(:\d+(?:-\d+)?)$/)?.[1] || '') : '';
-        const path = suffix ? ref.slice(0, -suffix.length) : ref;
-        const normalized = repoRelativeFindingPath(repoRoot, path);
+      for (const ref of finding[field]) {
+        const normalized = repoRelativeFindingPath(repoRoot, ref);
         if ('reason' in normalized) {
-          warnings.push(`[${finding.id ?? '<no id>'}] Invalid cross_file_refs path: ${normalized.reason} - reference dropped`);
+          warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped'));
         } else {
-          refs.push(`${normalized.file}${suffix}`);
+          refs.push(normalized.file);
         }
       }
-      finding.cross_file_refs = refs;
+      finding[field] = refs;
     }
     valid.push(finding);
   }
@@ -5403,7 +5413,7 @@ function describeCheckpointShape(v) {
   if (Array.isArray(v)) return 'array';
   return typeof v;
 }
-const CHECKPOINT_FINDING_FIELDS = new Set(['findings', 'filtered', 'unverified']);
+const CHECKPOINT_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS.map(([, field]) => field));
 const CHECKPOINT_FINDING_STRING_FIELDS = ['severity', 'title', 'file'];
 const CHECKPOINT_FINDING_INTEGER_FIELDS = ['line', 'line_start', 'line_end', 'end_line'];
 function checkpointFindingShapeErrors(finding, path) {
@@ -5695,7 +5705,7 @@ async function runWith(ctx, rawArgs) {
       };
     }
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
-      base_branch: A.baseBranch, head_sha: A.headShaShort, repoRoot: A.repoRoot,
+      base_branch: A.baseBranch, head_sha: A.headShaShort,
     }));
     limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch);
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
@@ -5787,16 +5797,13 @@ async function runWith(ctx, rawArgs) {
     gaps.push(...reportGaps);
     reportOut = { report: renderReport(reportInput), gaps: reportGaps };
     phaseOutputs.report = reportOut;
-    const artifactContent = {
+    const writeOut = await writeArtifacts(c, {
       findings: challengeOut.findings,
       postReview,
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
       reviewBody,
       report: reportOut.report,
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
-    };
-    const writeOut = await writeArtifacts(c, {
-      ...artifactContent,
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,

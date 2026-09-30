@@ -26,7 +26,7 @@ export const ARGS_VERSION = 1;
 // changedFiles/changedLines feed summarize bucketing and the agent-count guard, so they're
 // REQUIRED because they're consumed. `mode` is NOT read anywhere in workflows/src beyond a
 // re-check against its own enum below — it is provenance/telemetry the skill always stamps.
-// `repoRoot` is REQUIRED because merge uses it to normalize finding locations. changedFilesPath
+// `repoRoot` is REQUIRED for discover-entry and checkpoint-replay path normalization. changedFilesPath
 // is on-disk provenance the workflow never opens.
 export const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope'];
 

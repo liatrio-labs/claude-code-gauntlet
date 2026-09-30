@@ -5,9 +5,9 @@ import { dedupById } from '../src/findingDedup.js';
 import { finding } from './helpers/findings.js';
 
 const META = { agents: ['bug-detector'], base_branch: 'main', head_sha: 'abc123full', pr_number: 42, owner: 'org', repo: 'myrepo' };
-function mergeStructured(byAgent, agents = ['bug-detector'], options = {}) {
+function mergeStructured(byAgent, agents = ['bug-detector']) {
   const ndjson = Object.fromEntries(Object.entries(byAgent).map(([agent, rows]) => [agent, rows.map((f) => JSON.stringify(f)).join('\n')]));
-  return merge(ndjson, {}, { ...META, ...options, agents });
+  return merge(ndjson, {}, { ...META, agents });
 }
 
 const VALIDATION_CASES = [
@@ -101,3 +101,71 @@ test('normalizeFindingPaths: cross_file_refs normalize paths, preserve line suff
   assert.deepEqual(merged.findings[0].cross_file_refs, snapshot[0].cross_file_refs);
   assert.deepEqual(merged.methodology.validation_warnings, []);
 });
+
+for (const field of ['cross_file_refs', 'affected_consumers']) {
+  for (const [label, value] of [['string', '/repo/src/a.js'], ['object', { path: '/repo/src/a.js' }], ['number', 42], ['null', null], ['undefined', undefined]]) {
+    test(`normalizeFindingPaths: ${field} ${label} value is removed with a warning`, () => {
+      const input = finding({ id: 'BAD_ARRAY' });
+      input[field] = value;
+      const out = normalizeFindingPaths([input], '/repo');
+      assert.equal(out.valid.length, 1);
+      assert.equal(Object.hasOwn(out.valid[0], field), false);
+      assert.deepEqual(out.warnings, [`[BAD_ARRAY] Invalid ${field} path: expected an array - field dropped`]);
+    });
+  }
+  test(`normalizeFindingPaths: ${field} preserves every location suffix`, () => {
+    const refs = ['README.md:10', 'README.md:10-20', 'README.md:10:5', 'README.md:L10', 'src/a.js:L3-L9', 'README.md:x'];
+    const out = normalizeFindingPaths([finding({ [field]: refs.map((ref) => `/repo/${ref}`) })], '/repo');
+    assert.deepEqual(out.valid[0][field], refs);
+    assert.deepEqual(out.warnings, []);
+  });
+}
+
+test('normalizeFindingPaths: affected_consumers drops outside paths and keeps normalized under-root paths', () => {
+  const out = normalizeFindingPaths([finding({
+    id: 'CONSUMERS', dimension: 'cross_file_impact',
+    affected_consumers: ['/outside/consumer.js:10:5', '/repo/src/consumer.js:L3-L9', './/src/other.js'],
+  })], '/repo');
+  assert.deepEqual(out.valid[0].affected_consumers, ['src/consumer.js:L3-L9', 'src/other.js']);
+  assert.deepEqual(out.warnings, ['[CONSUMERS] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped']);
+  const twice = normalizeFindingPaths(out.valid, '/repo');
+  assert.deepEqual(twice.valid[0].affected_consumers, ['src/consumer.js:L3-L9', 'src/other.js']);
+  assert.deepEqual(twice.warnings, []);
+});
+
+test('normalizeFindingPaths: affected_consumers remains an empty array when every entry is rejected', () => {
+  const out = normalizeFindingPaths([finding({
+    id: 'EMPTY_CONSUMERS', dimension: 'cross_file_impact',
+    affected_consumers: ['/outside/consumer.js', 42],
+  })], '/repo');
+  assert.deepEqual(out.valid[0].affected_consumers, []);
+  assert.deepEqual(out.warnings, [
+    '[EMPTY_CONSUMERS] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
+    '[EMPTY_CONSUMERS] Invalid affected_consumers path: file must be a non-empty string - reference dropped',
+  ]);
+});
+
+test('normalizeFindingPaths: file and reference warnings share the missing-id fallback', () => {
+  for (const id of [undefined, null]) {
+    const out = normalizeFindingPaths([
+      { id, file: '/outside/a.js' },
+      { id, file: 'src/a.js', cross_file_refs: ['/outside/b.js'] },
+    ], '/repo');
+    assert.deepEqual(out.warnings, [
+      '[<no id>] Invalid file path: absolute file path is outside repoRoot - finding rejected',
+      '[<no id>] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped',
+    ]);
+  }
+});
+
+for (const [key, expected] of [
+  ['/repo/src/a.js:0', 'src/a.js:0'],
+  ['/repo/src/a.js-extra:0', '/repo/src/a.js-extra:0'],
+  [42, 42],
+]) {
+  test(`normalizeFindingPaths: consolidation key ${JSON.stringify(key)} tracks only its own rewritten file`, () => {
+    const out = normalizeFindingPaths([finding({ file: '/repo/src/a.js', consolidation_key: key })], '/repo');
+    assert.equal(out.valid[0].file, 'src/a.js');
+    assert.equal(out.valid[0].consolidation_key, expected);
+  });
+}
