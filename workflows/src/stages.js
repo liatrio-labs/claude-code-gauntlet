@@ -18,7 +18,7 @@
 // No wall-clock, no import at runtime.
 import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { merge, normalizeFindingPaths } from './mergeFindings.js';
-import { normalizeAbsoluteRoot, pathUnderRoot, redactHostPaths } from './paths.js';
+import { normalizeAbsoluteRoot, pathUnderRoot } from './paths.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
@@ -3388,19 +3388,19 @@ function checkpointDiscardGap(topLevelCheckpoints) {
 // the dimensions summary table), so a string there raw-TypeErrors the same way. Element
 // tolerance on finding lists is reserved for filter.eliminated and
 // challenge.unverified/eliminated. Replay path normalization drops malformed entries from them
-// before they reach the belt or persisted artifacts. A null eliminated container is absent.
+// before they reach the belt or persisted artifacts. Eliminated lists may be absent as null.
 const CHECKPOINT_ARRAY_STRICT = 'strict';
 const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
 export const CHECKPOINT_FINDING_LISTS = [
-  ['discover', 'findings', CHECKPOINT_ARRAY_STRICT],
-  ['merge', 'findings', CHECKPOINT_ARRAY_STRICT],
-  ['verify', 'findings', CHECKPOINT_ARRAY_STRICT],
-  ['validate', 'findings', CHECKPOINT_ARRAY_STRICT],
-  ['filter', 'filtered', CHECKPOINT_ARRAY_STRICT],
-  ['filter', 'eliminated', CHECKPOINT_ARRAY_TOLERANT],
-  ['challenge', 'findings', CHECKPOINT_ARRAY_STRICT],
-  ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT],
-  ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT],
+  ['discover', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['merge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['verify', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['validate', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['filter', 'filtered', CHECKPOINT_ARRAY_STRICT, false],
+  ['filter', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
+  ['challenge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
+  ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
 ];
 const findingListShape = (phase) => Object.fromEntries(CHECKPOINT_FINDING_LISTS
   .filter(([name]) => name === phase).map(([, field, mode]) => [field, mode]));
@@ -3530,10 +3530,12 @@ export function checkpointShapeErrors(resolvedCheckpoints) {
       violations.push(`checkpoint-shape: phases.${phase} is missing required field ${requiredField}`);
     }
     const fields = CHECKPOINT_PHASE_SHAPE_TABLE[phase];
+    const nullableFields = new Set(CHECKPOINT_FINDING_LISTS
+      .filter(([name, , , nullable]) => name === phase && nullable).map(([, field]) => field));
     for (const field of Object.keys(fields)) {
       const arrVal = value[field];
       if (arrVal === undefined) continue;
-      if (phase === 'challenge' && field === 'eliminated' && arrVal === null) continue;
+      if (arrVal === null && nullableFields.has(field)) continue;
       if (!Array.isArray(arrVal)) {
         violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
         continue;
@@ -3796,7 +3798,7 @@ export async function runWith(ctx, rawArgs) {
   // reaches here. It is still worth fixing — runWith is exported, directly unit-tested,
   // and documented as throw-free.
   const entry = entryArgs(rawArgs);
-  if (!entry.ok) return redactHostPaths(entry.envelope, rawArgs?.repoRoot, 0, true).value;
+  if (!entry.ok) return entry.envelope;
   // Normalization is TOLERANT of a stamped null for the narrow NULLABLE_TOP_LEVEL allowlist
   // (issue #38 A1 — a rejected dispatch cost a 21.3s round trip). Tolerance without
   // disclosure would be a silent config substitution, though: a mis-stamped
@@ -3826,10 +3828,10 @@ export async function runWith(ctx, rawArgs) {
     // from. A naked caller that hand-built an object reads only this string (the platform
     // reports the run as completed either way), so it has to carry both. Shape comes from
     // makeArgsRejectEnvelope — same factory entryArgs uses for its refusal arm.
-    return redactHostPaths(makeArgsRejectEnvelope(
+    return makeArgsRejectEnvelope(
       `invalid args: ${check.errors.join('; ')}. ${SKILL_RECOVERY_LINE}`,
       [...nullArgGaps, ...check.errors],
-    ), A.repoRoot, 0, true).value;
+    );
   }
 
   // The bundle entry injects only pipelineVersion; retain the host globals from the default
@@ -3895,14 +3897,13 @@ export async function runWith(ctx, rawArgs) {
   // disclosure still rides on THIS exit too, not just the args-reject and success exits.
   const checkpointShapeViolations = checkpointShapeErrors(checkpoints);
   if (checkpointShapeViolations.length) {
-    return redactHostPaths(makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap, discardGap), A.repoRoot, 0, true).value;
+    return makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap, discardGap);
   }
 
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
-  let persistedRedactions = 0;
   // The phase currently being ATTEMPTED — distinct from phaseReached (last COMPLETED).
   // On a throw, phaseReached names the phase BEFORE the one that blew up; narrating the
   // crash from it misattributes the failure (live run: a Filter throw reported as
@@ -3923,7 +3924,8 @@ export async function runWith(ctx, rawArgs) {
       warnings.push(...normalized.warnings);
     }
     if (name === 'merge') {
-      const methodology = out.methodology && typeof out.methodology === 'object' ? out.methodology : {};
+      const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
+      out.methodology = methodology;
       const channels = methodology.findings_per_channel;
       const surviving = out.findings.length;
       // Attribution is approximate because replayed findings carry no channel.
@@ -3937,7 +3939,7 @@ export async function runWith(ctx, rawArgs) {
         } };
       }
       if (warnings.length) {
-        out.methodology = { ...(out.methodology || methodology), validation_warnings: [
+        out.methodology = { ...out.methodology, validation_warnings: [
           ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
           ...warnings,
         ] };
@@ -4053,7 +4055,7 @@ export async function runWith(ctx, rawArgs) {
       gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
       const resumable = { ...phaseOutputs };
       delete resumable.discover; // a degraded-to-nothing discover output must never replay on resume — a retry re-dispatches discovery under (possibly corrected) policy
-      return redactHostPaths({
+      return {
         ok: false,
         error: 'all-degraded: every active discovery dimension degraded — no review was performed',
         phaseReached,
@@ -4063,7 +4065,7 @@ export async function runWith(ctx, rawArgs) {
         resolvedPolicy: resolvedPolicyEnvelope(policy),
         checkpoints: buildResumeCheckpoints(resumable),
         gaps,
-      }, A.repoRoot, 0, true).value;
+      };
     }
 
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
@@ -4311,7 +4313,7 @@ export async function runWith(ctx, rawArgs) {
 
     // Persistence is a post-phase step: writeArtifacts owns its try/catch, so a
     // writer failure degrades to a partial-artifacts gap rather than the top-level catch.
-    const artifactContent = redactHostPaths({
+    const artifactContent = {
       findings: challengeOut.findings,
       postReview,
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
@@ -4323,10 +4325,9 @@ export async function runWith(ctx, rawArgs) {
       // unwraps .phases, so a resume skips exactly the preserved phase and re-runs the rest.
       // The in-memory failure-path return below still carries the full phaseOutputs map.
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
-    }, A.repoRoot);
-    persistedRedactions = artifactContent.count;
+    };
     const writeOut = await writeArtifacts(c, {
-      ...artifactContent.value,
+      ...artifactContent,
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
@@ -4341,7 +4342,7 @@ export async function runWith(ctx, rawArgs) {
     });
     gaps.push(...(writeOut.gaps || []));
 
-    return redactHostPaths({
+    return {
       ok: true,
       phaseReached,
       stats: {
@@ -4395,12 +4396,12 @@ export async function runWith(ctx, rawArgs) {
       // paths and gaps before it rather than after. scripts/gauntlet/awaiting.py elides its
       // `entries[].text` so the bulk never enters the orchestrator's context at all.
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
-    }, A.repoRoot, persistedRedactions, true).value;
+    };
   } catch (e) {
     // Nothing was persisted on the throw path either — carry the in-memory resume state
     // (bounded by the char budget) in the compact return so the skill can resume the
     // failed run rather than restarting from scratch.
-    return redactHostPaths({
+    return {
       ok: false,
       error: (e && e.message) || String(e),
       phaseReached,
@@ -4409,6 +4410,6 @@ export async function runWith(ctx, rawArgs) {
       stats: {},
       checkpoints: buildResumeCheckpoints(phaseOutputs),
       gaps,
-    }, A.repoRoot, persistedRedactions, true).value;
+    };
   }
 }

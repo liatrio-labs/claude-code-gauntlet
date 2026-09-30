@@ -438,7 +438,10 @@ test('a long description survives merge->verify->validate->filter->challenge->pe
 
 test('runWith normalizes fresh discovery paths before they reach artifacts', async () => {
   const args = validArgs();
-  const finding = makeFinding('ABSOLUTE_DISCOVERY', { file: `${args.repoRoot}/src/module.js` });
+  const finding = makeFinding('ABSOLUTE_DISCOVERY', {
+    file: `${args.repoRoot}/src/module.js`,
+    cross_file_refs: [`${args.repoRoot}/src/other.js:12-20`, '/outside/host-secret.js:9'],
+  });
   let persisted = null;
   const out = await runWith(makeCtx(args, {
     findings: [finding],
@@ -450,6 +453,8 @@ test('runWith normalizes fresh discovery paths before they reach artifacts', asy
     ['ABSOLUTE_DISCOVERY', 'src/module.js'],
   ]);
   assert.equal(out.stats.merge.validation_warnings, 0);
+  assert.deepEqual(persisted.findings[0].cross_file_refs, ['src/other.js:12-20']);
+  assert.ok(out.gaps.includes('[ABSOLUTE_DISCOVERY] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped'));
   assert.ok(out.gaps.some((gap) => gap.includes('[ABSOLUTE_DISCOVERY]') && gap.includes('rewritten')));
   assert.ok(!JSON.stringify(persisted).includes(`${args.repoRoot}/src/module.js`));
   assert.ok(!JSON.stringify(out).includes(`${args.repoRoot}/src/module.js`));
@@ -459,11 +464,12 @@ for (const [phase, field] of CHECKPOINT_FINDING_LISTS) {
   test(`replayed ${phase}.${field} paths are sanitized in the persisted payload and envelope`, async () => {
     const under = '/repo/src/replayed.js';
     const outside = '/private/tmp/host-secret/replayed.js';
+    const refs = [`${under}:12-20`, 'app/[id]/page.tsx:9', `${outside}:5`];
     const checkpoint = {
       ...(phase === 'challenge' ? { findings: [], unverified: [], eliminated: [], stats: {} } : {}),
-      ...(phase === 'filter' && field === 'eliminated' ? { filtered: [makeFinding('REPLAY_UNDER', { file: under })] } : {}),
+      ...(phase === 'filter' && field === 'eliminated' ? { filtered: [makeFinding('REPLAY_UNDER', { file: under, cross_file_refs: refs })] } : {}),
       [field]: [
-        makeFinding('REPLAY_UNDER', { file: under }),
+        makeFinding('REPLAY_UNDER', { file: under, cross_file_refs: refs }),
         makeFinding('REPLAY_OUTSIDE', { file: outside }),
         makeFinding('REPLAY_DOT_DOUBLE_SLASH', { file: './/Users/lee/x.js' }),
       ],
@@ -485,6 +491,7 @@ for (const [phase, field] of CHECKPOINT_FINDING_LISTS) {
     assert.deepEqual(retained.map((finding) => [finding.id, finding.file]), [
       ['REPLAY_UNDER', 'src/replayed.js'],
     ]);
+    assert.deepEqual(retained[0].cross_file_refs, ['src/replayed.js:12-20', 'app/[id]/page.tsx:9']);
     assert.ok(!JSON.stringify(persisted).includes(under));
     assert.ok(!JSON.stringify(persisted).includes(outside));
     assert.ok(!JSON.stringify(persisted).includes('/Users/'));
@@ -495,6 +502,9 @@ for (const [phase, field] of CHECKPOINT_FINDING_LISTS) {
     const failure = await runWith(makeCtx(failureArgs, { agentThrowLabel: 'artifact-writer' }), failureArgs);
     assert.equal(failure.ok, true, JSON.stringify(failure));
     assert.ok(failure.gaps.some((gap) => gap.includes('partial-artifacts')));
+    assert.deepEqual(failure.checkpoints.phases[phase][field].map((finding) => [finding.file, finding.cross_file_refs]), [
+      ['src/replayed.js', ['src/replayed.js:12-20', 'app/[id]/page.tsx:9']],
+    ]);
     assert.ok(!JSON.stringify(failure).includes(under));
     assert.ok(!JSON.stringify(failure).includes(outside));
     assert.ok(!JSON.stringify(failure).includes('/Users/'));
@@ -506,9 +516,39 @@ for (const [phase, field] of CHECKPOINT_FINDING_LISTS) {
       assert.deepEqual(out.stats.merge.findings_per_channel, {
         ndjson: 1, text_fallback: 0,
       });
-      assert.equal(out.stats.merge.validation_warnings, 3);
+      assert.equal(out.stats.merge.validation_warnings, 4);
       assert.ok(persisted.report.includes('merge: per-channel: ndjson=1, text_fallback=0'));
     }
+  });
+}
+
+test('structural normalization preserves free-text host paths, URLs and markdown', async () => {
+  const description = 'The defect in /repo/src/a.js affects callers and produces incorrect results under ordinary inputs.';
+  const evidence = 'See [source](/repo/src/a.js:10) and https://example.test/repository.';
+  const args = validArgs({ checkpoints: { challenge: {
+    findings: [makeFinding('TEXT', { file: '/repo/src/a.js', description, evidence, cross_file_refs: ['/repo/src/b.js:2'] })],
+    unverified: [], eliminated: [], gaps: [], stats: {},
+  } } });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(persisted.findings[0].file, 'src/a.js');
+  assert.deepEqual(persisted.findings[0].cross_file_refs, ['src/b.js:2']);
+  assert.equal(persisted.findings[0].description, description);
+  assert.equal(persisted.findings[0].evidence, evidence);
+  assert.ok(persisted.report.includes(evidence));
+});
+
+for (const [label, methodology, file, expected] of [
+  ['string with path warnings', '/repo/raw-methodology', '/repo/src/a.js', { validation_warnings: ["[KEEP] File path rewritten to 'src/a.js'"] }],
+  ['array with path warnings', ['/repo/raw-methodology'], '/repo/src/a.js', { validation_warnings: ["[KEEP] File path rewritten to 'src/a.js'"] }],
+  ['null without path warnings', null, 'src/a.js', {}],
+]) {
+  test(`replayed merge replaces non-object methodology: ${label}`, async () => {
+    const args = validArgs({ checkpoints: { merge: { findings: [makeFinding('KEEP', { file })], methodology, gaps: [] } } });
+    const out = await runWith(makeCtx(args, { agentThrowLabel: 'artifact-writer' }), args);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.deepEqual(out.checkpoints.phases.merge.methodology, expected);
   });
 }
 
@@ -521,26 +561,6 @@ test('replayed filter.eliminated rejects an outside host path', async () => {
   const out = await runWith(makeCtx(args), args);
   assert.equal(out.ok, true, JSON.stringify(out));
   assert.ok(out.gaps.some((gap) => gap.includes('REPLAY_OUTSIDE') && gap.includes('finding rejected')));
-});
-
-test('replayed challenge derived fields are redacted in artifacts and the envelope', async () => {
-  const absolute = '/repo/src/a.js';
-  const checkpoint = {
-    findings: [makeFinding('MAIN', { consolidation_key: `${absolute}:0` })],
-    unverified: [],
-    eliminated: [makeFinding('ELIMINATED', { elimination_reason: `duplicate of ${absolute}` })],
-    stats: {}, gaps: [],
-  };
-  const args = validArgs({ checkpoints: { challenge: checkpoint } });
-  let persisted = null;
-  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
-  assert.equal(out.ok, true, JSON.stringify(out));
-  assert.ok(!JSON.stringify(persisted).includes('/repo'));
-  const { artifactPaths: _paths, persistReturn: _persist, ...findingBearing } = out;
-  assert.ok(!JSON.stringify(findingBearing).includes('/repo'));
-  assert.equal(persisted.checkpoints.phases.challenge.findings[0].consolidation_key, '<repo>/src/a.js:0');
-  assert.equal(persisted.checkpoints.phases.challenge.eliminated[0].elimination_reason, 'duplicate of <repo>/src/a.js');
-  assert.equal(out.gaps.filter((gap) => gap.startsWith('host-path-redacted:')).length, 1);
 });
 
 test('replayed merge channel counts are finite after findings are rejected', async () => {
@@ -712,7 +732,7 @@ test('a catch envelope after discovery contains no host finding path', async () 
   const absolute = `${args.repoRoot}/src/module.js`;
   const uri = `file://${absolute}`;
   const ctx = makeCtx(args, { findings: [
-    makeFinding('UNDER', { file: absolute }),
+    makeFinding('UNDER', { file: absolute, cross_file_refs: [`${args.repoRoot}/src/other.js:4`, '/outside/host-secret.js:9'] }),
     makeFinding('URI', { file: uri }),
   ] });
   const parallel = ctx.parallel;
@@ -729,6 +749,7 @@ test('a catch envelope after discovery contains no host finding path', async () 
   assert.equal(out.failingPhase, 'validate');
   assert.ok(out.checkpoints.phases.discover);
   assert.equal(out.checkpoints.phases.discover.findings[0].file, 'src/module.js');
+  assert.deepEqual(out.checkpoints.phases.discover.findings[0].cross_file_refs, ['src/other.js:4']);
   assert.equal(JSON.stringify(out).includes(absolute), false);
   assert.equal(JSON.stringify(out).includes(uri), false);
 });
@@ -825,7 +846,7 @@ test('all-degraded envelope contains no rejected file URI host path', async () =
   const absolute = `${base.repoRoot}/src/module.js`;
   const uri = `file://${absolute}`;
   const args = validArgs({ checkpoints: { discover: {
-    findings: [makeFinding('URI', { file: uri })],
+    findings: [makeFinding('URI', { file: uri, cross_file_refs: [`${absolute}:1-2`] })],
     degraded: DIMENSIONS.map((dimension) => dimension.dimension),
     dispatched: [...AGENTS],
     gaps: [],
@@ -929,7 +950,7 @@ test('artifact-writer failure envelope contains no host finding path', async () 
   const absolute = `${args.repoRoot}/src/module.js`;
   const uri = `file://${absolute}`;
   const ctx = makeCtx(args, {
-    findings: [makeFinding('UNDER', { file: absolute }), makeFinding('URI', { file: uri })],
+    findings: [makeFinding('UNDER', { file: absolute, cross_file_refs: [`${args.repoRoot}/src/other.js:4`, '/outside/host-secret.js:9'] }), makeFinding('URI', { file: uri })],
     agentThrowLabel: 'artifact-writer',
   });
   const out = await runWith(ctx, args);
@@ -937,6 +958,7 @@ test('artifact-writer failure envelope contains no host finding path', async () 
   assert.equal(out.ok, true);
   assert.equal(out.artifactPaths.findings, null);
   assert.equal(out.checkpoints.phases.discover.findings[0].file, 'src/module.js');
+  assert.deepEqual(out.checkpoints.phases.discover.findings[0].cross_file_refs, ['src/other.js:4']);
   assert.equal(JSON.stringify(out).includes(absolute), false);
   assert.equal(JSON.stringify(out).includes(uri), false);
 });
@@ -1397,7 +1419,7 @@ test('report methodology Gaps row carries the pre-report gap count end to end', 
   assert.ok(out.gaps.some((gap) => /bug-detector/.test(gap)));
   const row = persisted.report.match(/^\| Gaps \| (\d+) \|$/m);
   assert.ok(row, 'persisted report has a numeric Gaps row');
-  assert.equal(Number(row[1]), out.gaps.length - out.gaps.filter((gap) => gap.startsWith('host-path-redacted:')).length);
+  assert.equal(Number(row[1]), out.gaps.length);
 });
 
 // --- Issue #24 req 1/3/4/5 (PR3): deterministic agentFlags derivation ------------------

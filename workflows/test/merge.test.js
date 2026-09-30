@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { merge, validateFindings } from '../src/mergeFindings.js';
+import { merge, validateFindings, normalizeFindingPaths } from '../src/mergeFindings.js';
 import { dedupById } from '../src/findingDedup.js';
 import { finding } from './helpers/findings.js';
 
@@ -58,20 +58,46 @@ for (const c of MERGE_CASES) test(`merge structured: ${c.name}`, () => {
   if (c.pass) for (const [key, value] of Object.entries(c.pass)) assert.deepEqual(out.findings[0][key], value);
 });
 
-test('merge boundary: absolute finding paths are rewritten under repoRoot and outside paths are rejected', () => {
+test('normalizeFindingPaths: absolute finding paths are rewritten under repoRoot and outside paths are rejected', () => {
   const repoRoot = '/private/tmp/wt-410';
-  const out = mergeStructured({
-    'bug-detector': [
-      finding({ id: 'UNDER_ROOT', file: `${repoRoot}/scripts/gauntlet/proc.py` }),
-      finding({ id: 'OUTSIDE_ROOT', file: '/private/tmp/wt-411/scripts/gauntlet/proc.py' }),
-    ],
-  }, ['bug-detector'], { repoRoot });
+  const out = normalizeFindingPaths([
+    finding({ id: 'UNDER_ROOT', file: `${repoRoot}/scripts/gauntlet/proc.py` }),
+    finding({ id: 'OUTSIDE_ROOT', file: '/private/tmp/wt-411/scripts/gauntlet/proc.py' }),
+  ], repoRoot);
 
-  assert.deepEqual(out.findings.map((item) => [item.id, item.file]), [
+  assert.deepEqual(out.valid.map((item) => [item.id, item.file]), [
     ['UNDER_ROOT', 'scripts/gauntlet/proc.py'],
   ]);
-  assert.ok(out.methodology.validation_warnings.some((warning) =>
+  assert.ok(out.warnings.some((warning) =>
     warning.includes('[UNDER_ROOT]') && warning.includes('rewritten')));
-  assert.ok(out.methodology.validation_warnings.some((warning) =>
+  assert.ok(out.warnings.some((warning) =>
     warning.includes('[OUTSIDE_ROOT]') && warning.includes('outside repoRoot') && warning.includes('rejected')));
+});
+
+test('normalizeFindingPaths: cross_file_refs normalize paths, preserve line suffixes and disclose rejected references', () => {
+  const out = normalizeFindingPaths([finding({
+    id: 'REFS', file: '/app/app/models/user.rb',
+    cross_file_refs: [
+      '/app/app/[id]/page.tsx:12', '/app/src/a:b.js:12-20',
+      '/app/src/index.js', './src/./index.js:4', 'app/models/user.rb:5',
+      '/outside/host-secret.js:9', '../host-secret.js:1-3', 42,
+    ],
+  })], '/app');
+  assert.equal(out.valid[0].file, 'app/models/user.rb');
+  assert.deepEqual(out.valid[0].cross_file_refs, [
+    'app/[id]/page.tsx:12', 'src/a:b.js:12-20',
+    'src/index.js', 'src/index.js:4', 'app/models/user.rb:5',
+  ]);
+  assert.deepEqual(out.warnings.slice(1), [
+    '[REFS] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped',
+    '[REFS] Invalid cross_file_refs path: file path contains a .. segment - reference dropped',
+    '[REFS] Invalid cross_file_refs path: file must be a non-empty string - reference dropped',
+  ]);
+  const snapshot = JSON.parse(JSON.stringify(out.valid));
+  const twice = normalizeFindingPaths(out.valid, '/app');
+  assert.deepEqual(twice.valid, snapshot);
+  assert.deepEqual(twice.warnings, []);
+  const merged = mergeStructured({ 'bug-detector': twice.valid });
+  assert.deepEqual(merged.findings[0].cross_file_refs, snapshot[0].cross_file_refs);
+  assert.deepEqual(merged.methodology.validation_warnings, []);
 });

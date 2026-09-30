@@ -182,12 +182,28 @@ export function normalizeFindingPaths(findings, repoRoot) {
     }
     const result = normalizeFindingPath(finding, repoRoot);
     if (result.warning) warnings.push(result.warning);
-    if (result.valid) valid.push(finding);
+    if (!result.valid) continue;
+    if (Array.isArray(finding.cross_file_refs)) {
+      const refs = [];
+      for (const ref of finding.cross_file_refs) {
+        // Line suffixes belong to the reference, not the repository path.
+        const suffix = typeof ref === 'string' ? (ref.match(/(:\d+(?:-\d+)?)$/)?.[1] || '') : '';
+        const path = suffix ? ref.slice(0, -suffix.length) : ref;
+        const normalized = repoRelativeFindingPath(repoRoot, path);
+        if ('reason' in normalized) {
+          warnings.push(`[${finding.id ?? '<no id>'}] Invalid cross_file_refs path: ${normalized.reason} - reference dropped`);
+        } else {
+          refs.push(`${normalized.file}${suffix}`);
+        }
+      }
+      finding.cross_file_refs = refs;
+    }
+    valid.push(finding);
   }
   return { valid, warnings };
 }
 
-export function validateFindings(findings, repoRoot) {
+export function validateFindings(findings) {
   const valid = [];
   const warnings = [];
 
@@ -205,10 +221,6 @@ export function validateFindings(findings, repoRoot) {
     }
 
     if (reject) continue;
-
-    const pathResult = normalizeFindingPath(f, repoRoot);
-    if (pathResult.warning) warnings.push(pathResult.warning);
-    if (!pathResult.valid) continue;
 
     const dim = 'dimension' in f ? f.dimension : undefined;
     if (dim === null || dim === undefined) {
@@ -285,7 +297,6 @@ function assembleOutput(
 export function merge(ndjsonContents, textContents, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
-  const repoRoot = M.repoRoot;
   const nd = ndjsonContents || {};
   const tx = textContents || {};
   const allWarnings = [];
@@ -320,7 +331,7 @@ export function merge(ndjsonContents, textContents, meta) {
   // Validate the combined flat list (pre-dedup) so warnings cover all raw findings.
   const allNdjsonFlat = Object.values(ndjsonFindings).flat();
   const allTextFlat = Object.values(textFindings).flat();
-  const { warnings: preValWarnings } = validateFindings(allNdjsonFlat.concat(allTextFlat), repoRoot);
+  const { warnings: preValWarnings } = validateFindings(allNdjsonFlat.concat(allTextFlat));
 
   let droppedNoId = 0;
   for (const f of allNdjsonFlat.concat(allTextFlat)) {
@@ -332,7 +343,7 @@ export function merge(ndjsonContents, textContents, meta) {
   const filterValid = (dict) => {
     const out = {};
     for (const [agent, findings] of Object.entries(dict)) {
-      out[agent] = validateFindings(findings, repoRoot).valid;
+      out[agent] = validateFindings(findings).valid;
     }
     return out;
   };

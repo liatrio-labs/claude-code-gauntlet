@@ -25,7 +25,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   checkpointShapeErrors, runWith, readCheckpoints, CHECKPOINT_PHASE_SHAPE_TABLE, buildResumeCheckpoints,
-  slimPersistedCheckpoints,
+  slimPersistedCheckpoints, CHECKPOINT_FINDING_LISTS,
 } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
@@ -301,6 +301,16 @@ test('checkpointShapeErrors: challenge.eliminated null is accepted as absent', (
   };
   assert.deepEqual(checkpointShapeErrors(cp), []);
 });
+
+for (const [phase, field, , nullable] of CHECKPOINT_FINDING_LISTS) {
+  test(`checkpointShapeErrors: ${phase}.${field} null tolerance follows its finding-list row`, () => {
+    const cp = wellFormedCheckpoints();
+    cp[phase][field] = null;
+    const errors = checkpointShapeErrors(cp);
+    if (nullable) assert.deepEqual(errors, []);
+    else assert.deepEqual(errors, [`checkpoint-shape: phases.${phase}.${field} must be an array, got null`]);
+  });
+}
 
 test('checkpointShapeErrors: unknown checkpoint keys are inert', () => {
   const cp = { ...wellFormedCheckpoints(), someFuturePhase: 'garbage', notAPhase: 123 };
