@@ -22,7 +22,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   runWith, summarize, writeArtifacts, checkpointPath, readCheckpoints, buildResumeCheckpoints,
-  coarsenLimits, plannedArtifactPaths, deriveAgentFlags, compactMethodology,
+  coarsenLimits, plannedArtifactPaths, deriveAgentFlags, compactMethodology, CHECKPOINT_FINDING_LISTS,
 } from '../src/stages.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { AGENTS, DIMENSIONS } from '../src/registry.js';
@@ -455,22 +455,13 @@ test('runWith normalizes fresh discovery paths before they reach artifacts', asy
   assert.ok(!JSON.stringify(out).includes(`${args.repoRoot}/src/module.js`));
 });
 
-const REPLAY_PATH_FIELDS = [
-  ['discover', 'findings'],
-  ['merge', 'findings'],
-  ['verify', 'findings'],
-  ['validate', 'findings'],
-  ['filter', 'filtered'],
-  ['challenge', 'findings'],
-  ['challenge', 'unverified'],
-  ['challenge', 'eliminated'],
-];
-for (const [phase, field] of REPLAY_PATH_FIELDS) {
+for (const [phase, field] of CHECKPOINT_FINDING_LISTS) {
   test(`replayed ${phase}.${field} paths are sanitized in the persisted payload and envelope`, async () => {
     const under = '/repo/src/replayed.js';
     const outside = '/private/tmp/host-secret/replayed.js';
     const checkpoint = {
       ...(phase === 'challenge' ? { findings: [], unverified: [], eliminated: [], stats: {} } : {}),
+      ...(phase === 'filter' && field === 'eliminated' ? { filtered: [makeFinding('REPLAY_UNDER', { file: under })] } : {}),
       [field]: [
         makeFinding('REPLAY_UNDER', { file: under }),
         makeFinding('REPLAY_OUTSIDE', { file: outside }),
@@ -483,6 +474,7 @@ for (const [phase, field] of REPLAY_PATH_FIELDS) {
       } } : {}),
     };
     const args = validArgs({ checkpoints: { [phase]: checkpoint } });
+    const failureCheckpoint = JSON.parse(JSON.stringify(checkpoint));
     let persisted = null;
     const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
 
@@ -499,6 +491,17 @@ for (const [phase, field] of REPLAY_PATH_FIELDS) {
     assert.ok(!JSON.stringify(out).includes(under));
     assert.ok(!JSON.stringify(out).includes(outside));
     assert.ok(!JSON.stringify(out).includes('/Users/'));
+    const failureArgs = validArgs({ checkpoints: { [phase]: failureCheckpoint } });
+    const failure = await runWith(makeCtx(failureArgs, { agentThrowLabel: 'artifact-writer' }), failureArgs);
+    assert.equal(failure.ok, true, JSON.stringify(failure));
+    assert.ok(failure.gaps.some((gap) => gap.includes('partial-artifacts')));
+    assert.ok(!JSON.stringify(failure).includes(under));
+    assert.ok(!JSON.stringify(failure).includes(outside));
+    assert.ok(!JSON.stringify(failure).includes('/Users/'));
+    if (phase === 'filter' && field === 'eliminated') {
+      assert.ok(out.gaps.some((gap) => gap.includes('REPLAY_OUTSIDE')));
+      assert.ok(failure.gaps.some((gap) => gap.includes('REPLAY_OUTSIDE')));
+    }
     if (phase === 'merge') {
       assert.deepEqual(out.stats.merge.findings_per_channel, {
         ndjson: 1, text_fallback: 0,
@@ -508,6 +511,37 @@ for (const [phase, field] of REPLAY_PATH_FIELDS) {
     }
   });
 }
+
+test('replayed filter.eliminated rejects an outside host path', async () => {
+  const args = validArgs({ checkpoints: { filter: {
+    filtered: [],
+    eliminated: [makeFinding('REPLAY_OUTSIDE', { file: '/private/tmp/host-secret/x.js' })],
+    gaps: [], stats: {},
+  } } });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.ok(out.gaps.some((gap) => gap.includes('REPLAY_OUTSIDE') && gap.includes('finding rejected')));
+});
+
+test('replayed challenge derived fields are redacted in artifacts and the envelope', async () => {
+  const absolute = '/repo/src/a.js';
+  const checkpoint = {
+    findings: [makeFinding('MAIN', { consolidation_key: `${absolute}:0` })],
+    unverified: [],
+    eliminated: [makeFinding('ELIMINATED', { elimination_reason: `duplicate of ${absolute}` })],
+    stats: {}, gaps: [],
+  };
+  const args = validArgs({ checkpoints: { challenge: checkpoint } });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.ok(!JSON.stringify(persisted).includes('/repo'));
+  const { artifactPaths: _paths, persistReturn: _persist, ...findingBearing } = out;
+  assert.ok(!JSON.stringify(findingBearing).includes('/repo'));
+  assert.equal(persisted.checkpoints.phases.challenge.findings[0].consolidation_key, '<repo>/src/a.js:0');
+  assert.equal(persisted.checkpoints.phases.challenge.eliminated[0].elimination_reason, 'duplicate of <repo>/src/a.js');
+  assert.equal(out.gaps.filter((gap) => gap.startsWith('host-path-redacted:')).length, 1);
+});
 
 test('replayed merge channel counts are finite after findings are rejected', async () => {
   const args = validArgs({ checkpoints: { merge: {
@@ -1363,7 +1397,7 @@ test('report methodology Gaps row carries the pre-report gap count end to end', 
   assert.ok(out.gaps.some((gap) => /bug-detector/.test(gap)));
   const row = persisted.report.match(/^\| Gaps \| (\d+) \|$/m);
   assert.ok(row, 'persisted report has a numeric Gaps row');
-  assert.equal(Number(row[1]), out.gaps.length);
+  assert.equal(Number(row[1]), out.gaps.length - out.gaps.filter((gap) => gap.startsWith('host-path-redacted:')).length);
 });
 
 // --- Issue #24 req 1/3/4/5 (PR3): deterministic agentFlags derivation ------------------

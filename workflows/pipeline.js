@@ -133,441 +133,6 @@ function dedupById(ndjsonFindings, textFindings) {
   for (const findings of Object.values(ndjsonFindings || {})) for (const f of findings) add(f, 2);
   return { merged: [...seen.values()].map((v) => v.finding), duplicatesResolved, droppedNoId };
 }
-// --- paths.js ---
-function collapseDotSlash(path) {
-  let out = path;
-  for (;;) {
-    const next = out.replace(/\/\.\//g, '/');
-    if (next === out) return out;
-    out = next;
-  }
-}
-function stripTrailingSlashes(path) {
-  let out = path;
-  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
-  return out;
-}
-function normalizePathString(path) {
-  let out = path;
-  for (;;) {
-    let next = stripTrailingSlashes(collapseDotSlash(out.replace(/\/{2,}/g, '/')));
-    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
-    next = stripTrailingSlashes(next);
-    if (next === out) return next;
-    out = next;
-  }
-}
-function hasBackslash(path) {
-  return path.includes('\\');
-}
-function hasDotDotSegment(path) {
-  return path.split('/').includes('..');
-}
-function normalizeAbsoluteRoot(root) {
-  if (typeof root !== 'string' || root === '') return null;
-  const normalized = normalizePathString(root);
-  if (!normalized.startsWith('/') || hasBackslash(normalized) || hasDotDotSegment(normalized)) return null;
-  return normalized;
-}
-function pathUnderRoot(root, path) {
-  const normalizedRoot = normalizeAbsoluteRoot(root);
-  if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
-  const normalizedPath = normalizePathString(path);
-  if (!normalizedPath.startsWith('/') || hasBackslash(normalizedPath) || hasDotDotSegment(normalizedPath)) return false;
-  const prefix = normalizedRoot === '/' ? '/' : `${normalizedRoot}/`;
-  return normalizedPath === normalizedRoot || normalizedPath.startsWith(prefix);
-}
-function repoRelativeFindingPath(repoRoot, file) {
-  if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
-  if (file.startsWith('/') && hasDotDotSegment(file)) return { reason: 'file path contains a .. segment' };
-  let relative;
-  if (!file.startsWith('/')) {
-    relative = file;
-    while (relative.startsWith('./')) relative = relative.slice(2);
-    relative = normalizePathString(relative);
-  } else {
-    const root = normalizeAbsoluteRoot(repoRoot);
-    if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
-    const absolute = normalizePathString(file);
-    if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
-    if (!pathUnderRoot(root, absolute)) return { reason: 'absolute file path is outside repoRoot' };
-    relative = absolute.slice(root === '/' ? 1 : root.length + 1).replace(/^\/+/, '');
-  }
-  if (relative === '' || relative === '.' || relative.startsWith('/')) return { reason: 'file path does not name a repository file' };
-  if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
-  if (hasBackslash(relative)) return { reason: 'file path contains a backslash' };
-  const segments = relative.split('/');
-  if (segments.some((segment) => /[\x00-\x1f\x7f]/.test(segment) || segment !== segment.trim())) {
-    return { reason: 'file path contains control characters or surrounding whitespace' };
-  }
-  if (segments[0].includes(':')) return { reason: 'file path has a colon in its first segment' };
-  return { file: relative };
-}
-// --- mergeFindings.js ---
-const KNOWN_DIMENSIONS = new Set([
-  'bug',
-  'security',
-  'cross_file_impact',
-  'test_coverage',
-  'convention',
-  'intent',
-  'comment_accuracy',
-  'type_design',
-  'simplification',
-]);
-const REQUIRED_FIELDS = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence'];
-function parseNdjson(text, agent) {
-  const findings = [];
-  const warnings = [];
-  if (text === undefined || text === null) return { findings, warnings };
-  let lineno = 0;
-  for (const rawLine of text.split('\n')) {
-    lineno += 1;
-    const line = rawLine.trim();
-    if (!line) continue;
-    let obj;
-    try {
-      obj = JSON.parse(line);
-    } catch {
-      warnings.push(`[${agent}] NDJSON line ${lineno}: invalid JSON`);
-      continue;
-    }
-    if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
-      warnings.push(`[${agent}] NDJSON line ${lineno}: expected object, got ${jsonTypeName(obj)}`);
-      continue;
-    }
-    findings.push(obj);
-  }
-  return { findings, warnings };
-}
-function jsonTypeName(v) {
-  if (v === null) return 'null';
-  if (Array.isArray(v)) return 'array';
-  return typeof v;
-}
-function extractJsonBlocks(text) {
-  const results = [];
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] !== '{') {
-      i += 1;
-      continue;
-    }
-    const obj = tryParseJsonAt(text, i);
-    if (obj !== null && obj !== undefined && typeof obj === 'object' && !Array.isArray(obj) && 'id' in obj) {
-      results.push(obj);
-      i = findEndOfJson(text, i);
-    } else {
-      i += 1;
-    }
-  }
-  return results;
-}
-function scanJsonObject(text, start) {
-  let depth = 0;
-  let inString = false;
-  let escapeNext = false;
-  let i = start;
-  while (i < text.length) {
-    const ch = text[i];
-    if (escapeNext) {
-      escapeNext = false;
-      i += 1;
-      continue;
-    }
-    if (ch === '\\' && inString) {
-      escapeNext = true;
-      i += 1;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      i += 1;
-      continue;
-    }
-    if (inString) {
-      i += 1;
-      continue;
-    }
-    if (ch === '{') {
-      depth += 1;
-    } else if (ch === '}') {
-      depth -= 1;
-      if (depth === 0) return i + 1;
-    }
-    i += 1;
-  }
-  return -1;
-}
-function tryParseJsonAt(text, start) {
-  const end = scanJsonObject(text, start);
-  if (end < 0) return null;
-  try {
-    return JSON.parse(text.slice(start, end));
-  } catch {
-    return null;
-  }
-}
-function findEndOfJson(text, start) {
-  const end = scanJsonObject(text, start);
-  if (end < 0) return text.length + 1;
-  return end;
-}
-function parseTextFile(text, agent) {
-  const findings = [];
-  const warnings = [];
-  let hasProse = false;
-  let hasSkip = false;
-  if (text === undefined || text === null) return { findings, warnings, hasProse, hasSkip };
-  if (text.trim() === '') return { findings, warnings, hasProse, hasSkip };
-  if (/^\s*SKIP\s*:/im.test(text)) hasSkip = true;
-  for (const obj of extractJsonBlocks(text)) {
-    if ('id' in obj) findings.push(obj);
-  }
-  let stripped = text.replace(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, '');
-  stripped = stripped.replace(/^\s*SKIP\s*:.*$/gim, '');
-  stripped = stripped.trim();
-  if (stripped.replace(/\s+/g, '').length > 20) hasProse = true;
-  return { findings, warnings, hasProse, hasSkip };
-}
-function injectAgentField(findings, agent) {
-  for (const f of findings) f.agent = agent;
-}
-function normalizeFindingPath(finding, repoRoot) {
-  const fid = 'id' in finding ? finding.id : '<no id>';
-  const original = finding.file;
-  const result = repoRelativeFindingPath(repoRoot, original);
-  if ('reason' in result) {
-    return { valid: false, warning: `[${fid}] Invalid file path: ${result.reason} — finding rejected` };
-  }
-  if (result.file !== original) {
-    finding.file = result.file;
-    return {
-      valid: true,
-      warning: `[${fid}] File path rewritten to '${result.file}'`,
-    };
-  }
-  return { valid: true, warning: null };
-}
-function normalizeFindingPaths(findings, repoRoot) {
-  const valid = [];
-  const warnings = [];
-  for (const finding of findings) {
-    if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
-      warnings.push('Invalid finding shape: expected an object — finding rejected');
-      continue;
-    }
-    const result = normalizeFindingPath(finding, repoRoot);
-    if (result.warning) warnings.push(result.warning);
-    if (result.valid) valid.push(finding);
-  }
-  return { valid, warnings };
-}
-function validateFindings(findings, repoRoot) {
-  const valid = [];
-  const warnings = [];
-  for (const f of findings) {
-    const fid = 'id' in f ? f.id : '<no id>';
-    let reject = false;
-    for (const field of REQUIRED_FIELDS) {
-      const v = f[field];
-      if (!(field in f) || v === null || v === undefined || v === '') {
-        warnings.push(`[${fid}] Missing required field '${field}' — finding rejected`);
-        reject = true;
-        break;
-      }
-    }
-    if (reject) continue;
-    const pathResult = normalizeFindingPath(f, repoRoot);
-    if (pathResult.warning) warnings.push(pathResult.warning);
-    if (!pathResult.valid) continue;
-    const dim = 'dimension' in f ? f.dimension : undefined;
-    if (dim === null || dim === undefined) {
-      warnings.push(`[${fid}] Missing 'dimension' field — finding kept with warning`);
-    } else if (!KNOWN_DIMENSIONS.has(dim)) {
-      warnings.push(`[${fid}] Unknown dimension '${dim}' — finding kept with warning`);
-    }
-    valid.push(f);
-  }
-  return { valid, warnings };
-}
-function detectTruncation(ndjsonRaw, textPre, hasProse, hasSkip) {
-  const warnings = [];
-  for (const agent of Object.keys(ndjsonRaw)) {
-    const ndjsonEmpty = (ndjsonRaw[agent] || 0) === 0;
-    const textEmpty = (textPre[agent] || []).length === 0;
-    const prose = hasProse[agent] || false;
-    const skip = hasSkip[agent] || false;
-    if (ndjsonEmpty && textEmpty && prose && !skip) {
-      warnings.push(
-        `[${agent}] Possible truncation: no structured findings, ` +
-          'prose present in text output, no SKIP lines detected',
-      );
-    }
-  }
-  return warnings;
-}
-function assembleOutput(
-  findings,
-  agents,
-  ndjsonCount,
-  textFallbackCount,
-  duplicatesResolved,
-  droppedNoId,
-  truncationWarnings,
-  validationWarnings,
-  baseBranch,
-  headSha,
-  prNumber,
-  owner,
-  repo,
-) {
-  return {
-    findings,
-    base_branch: baseBranch,
-    head_sha: headSha,
-    pr_number: prNumber,
-    owner,
-    repo,
-    methodology: {
-      agents_dispatched: agents,
-      findings_per_channel: {
-        ndjson: ndjsonCount,
-        text_fallback: textFallbackCount,
-      },
-      duplicates_resolved: duplicatesResolved,
-      dropped_no_id: droppedNoId,
-      truncation_warnings: truncationWarnings,
-      validation_warnings: validationWarnings,
-    },
-  };
-}
-function merge(ndjsonContents, textContents, meta) {
-  const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
-  const agents = M.agents;
-  const repoRoot = M.repoRoot;
-  const nd = ndjsonContents || {};
-  const tx = textContents || {};
-  const allWarnings = [];
-  const ndjsonFindings = {};
-  for (const agent of agents) {
-    const { findings, warnings } = parseNdjson(nd[agent], agent);
-    ndjsonFindings[agent] = findings;
-    for (const w of warnings) allWarnings.push(w);
-  }
-  const textFindings = {};
-  const textHasProse = {};
-  const textHasSkip = {};
-  for (const agent of agents) {
-    const { findings, warnings, hasProse, hasSkip } = parseTextFile(tx[agent], agent);
-    textFindings[agent] = findings;
-    textHasProse[agent] = hasProse;
-    textHasSkip[agent] = hasSkip;
-    for (const w of warnings) allWarnings.push(w);
-  }
-  const ndjsonRawCounts = {};
-  for (const agent of Object.keys(ndjsonFindings)) ndjsonRawCounts[agent] = ndjsonFindings[agent].length;
-  for (const [agent, findings] of Object.entries(textFindings)) injectAgentField(findings, agent);
-  for (const [agent, findings] of Object.entries(ndjsonFindings)) injectAgentField(findings, agent);
-  const allNdjsonFlat = Object.values(ndjsonFindings).flat();
-  const allTextFlat = Object.values(textFindings).flat();
-  const { warnings: preValWarnings } = validateFindings(allNdjsonFlat.concat(allTextFlat), repoRoot);
-  let droppedNoId = 0;
-  for (const f of allNdjsonFlat.concat(allTextFlat)) {
-    const fid = f.id;
-    if (fid === undefined || fid === null || fid === '') droppedNoId += 1;
-  }
-  const filterValid = (dict) => {
-    const out = {};
-    for (const [agent, findings] of Object.entries(dict)) {
-      out[agent] = validateFindings(findings, repoRoot).valid;
-    }
-    return out;
-  };
-  const ndjsonValid = filterValid(ndjsonFindings);
-  const textFindingsPreValidation = {};
-  for (const [agent, findings] of Object.entries(textFindings)) textFindingsPreValidation[agent] = findings.slice();
-  const textValid = filterValid(textFindings);
-  const { merged, duplicatesResolved } = dedupById(ndjsonValid, textValid);
-  const ndjsonIds = new Set();
-  for (const findings of Object.values(ndjsonValid)) {
-    for (const f of findings) if ('id' in f) ndjsonIds.add(f.id);
-  }
-  let ndjsonCount = 0;
-  let textFallbackCount = 0;
-  for (const f of merged) {
-    if (ndjsonIds.has(f.id)) ndjsonCount += 1;
-    else textFallbackCount += 1;
-  }
-  const truncationWarnings = detectTruncation(
-    ndjsonRawCounts,
-    textFindingsPreValidation,
-    textHasProse,
-    textHasSkip,
-  );
-  const validationWarnings = allWarnings.concat(preValWarnings);
-  return assembleOutput(
-    merged,
-    agents,
-    ndjsonCount,
-    textFallbackCount,
-    duplicatesResolved,
-    droppedNoId,
-    truncationWarnings,
-    validationWarnings,
-    M.base_branch,
-    M.head_sha,
-    M.pr_number,
-    M.owner,
-    M.repo,
-  );
-}
-// --- applyValidations.js ---
-function pyIntStrict(v) {
-  if (typeof v === 'boolean') return v ? 1 : 0;
-  if (typeof v === 'number') return Number.isFinite(v) ? Math.trunc(v) : null;
-  if (typeof v === 'string') {
-    const s = v.trim();
-    if (/^[+-]?\d+$/.test(s)) return parseInt(s, 10); // int-string only
-    return null; // "72.9", "abc", "" all rejected
-  }
-  return null; // None/object -> skip (int(None) raises TypeError in Python;
-}
-const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
-function applyValidations(findings, validations) {
-  const findingById = new Map();
-  for (const finding of findings) {
-    const fid = 'id' in finding ? finding.id : undefined;
-    if (fid !== null && fid !== undefined) findingById.set(fid, finding);
-  }
-  let adjustedCount = 0;
-  const unmatchedIds = [];
-  for (const validation of validations) {
-    const vid = 'id' in validation ? validation.id : undefined;
-    if (vid === null || vid === undefined) continue; // missing id -- skipped (warning)
-    const rawConf = 'confidence' in validation ? validation.confidence : undefined;
-    if (rawConf === null || rawConf === undefined) continue; // missing confidence -- skipped (warning)
-    const parsed = pyIntStrict(rawConf);
-    if (parsed === null) continue; // non-integer confidence -- skipped (warning)
-    const newConf = Math.max(0, Math.min(100, parsed));
-    const finding = findingById.get(vid);
-    if (finding === undefined) {
-      unmatchedIds.push(vid);
-      continue;
-    }
-    if (!('original_confidence' in finding)) {
-      finding.original_confidence = 'confidence' in finding ? finding.confidence : 0;
-    }
-    finding.validator_confidence = newConf;
-    finding.confidence = newConf;
-    const justification = 'justification' in validation ? validation.justification : undefined;
-    if (justification) finding.validation_justification = justification;
-    const reachability = 'reachability' in validation ? validation.reachability : undefined;
-    if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
-    adjustedCount += 1;
-  }
-  return { adjustedCount, unmatchedIds };
-}
 // --- filterFindings.js ---
 const FIELD_RENAMES = { body: 'description', line: 'line_start', blame_tag: 'origin' };
 function normalizeFieldNames(findings) {
@@ -1630,6 +1195,52 @@ function applyExclusions(findings, exclusionPatterns, config = null) {
   }
   return { kept, eliminated };
 }
+// --- applyValidations.js ---
+function pyIntStrict(v) {
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  if (typeof v === 'number') return Number.isFinite(v) ? Math.trunc(v) : null;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (/^[+-]?\d+$/.test(s)) return parseInt(s, 10); // int-string only
+    return null; // "72.9", "abc", "" all rejected
+  }
+  return null; // None/object -> skip (int(None) raises TypeError in Python;
+}
+const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
+function applyValidations(findings, validations) {
+  const findingById = new Map();
+  for (const finding of findings) {
+    const fid = 'id' in finding ? finding.id : undefined;
+    if (fid !== null && fid !== undefined) findingById.set(fid, finding);
+  }
+  let adjustedCount = 0;
+  const unmatchedIds = [];
+  for (const validation of validations) {
+    const vid = 'id' in validation ? validation.id : undefined;
+    if (vid === null || vid === undefined) continue; // missing id -- skipped (warning)
+    const rawConf = 'confidence' in validation ? validation.confidence : undefined;
+    if (rawConf === null || rawConf === undefined) continue; // missing confidence -- skipped (warning)
+    const parsed = pyIntStrict(rawConf);
+    if (parsed === null) continue; // non-integer confidence -- skipped (warning)
+    const newConf = Math.max(0, Math.min(100, parsed));
+    const finding = findingById.get(vid);
+    if (finding === undefined) {
+      unmatchedIds.push(vid);
+      continue;
+    }
+    if (!('original_confidence' in finding)) {
+      finding.original_confidence = 'confidence' in finding ? finding.confidence : 0;
+    }
+    finding.validator_confidence = newConf;
+    finding.confidence = newConf;
+    const justification = 'justification' in validation ? validation.justification : undefined;
+    if (justification) finding.validation_justification = justification;
+    const reachability = 'reachability' in validation ? validation.reachability : undefined;
+    if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
+    adjustedCount += 1;
+  }
+  return { adjustedCount, unmatchedIds };
+}
 // --- applyChallenges.js ---
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -1777,6 +1388,428 @@ function applyChallenges(findings, challenges) {
       final_count: ranked.length,
     },
   };
+}
+// --- paths.js ---
+function collapseDotSlash(path) {
+  let out = path;
+  for (;;) {
+    const next = out.replace(/\/\.\//g, '/');
+    if (next === out) return out;
+    out = next;
+  }
+}
+function stripTrailingSlashes(path) {
+  let out = path;
+  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
+  return out;
+}
+function normalizePathString(path) {
+  let out = path;
+  for (;;) {
+    let next = stripTrailingSlashes(collapseDotSlash(out.replace(/\/{2,}/g, '/')));
+    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
+    next = stripTrailingSlashes(next);
+    if (next === out) return next;
+    out = next;
+  }
+}
+function hasBackslash(path) {
+  return path.includes('\\');
+}
+function hasDotDotSegment(path) {
+  return path.split('/').includes('..');
+}
+function normalizeAbsoluteRoot(root) {
+  if (typeof root !== 'string' || root === '') return null;
+  const normalized = normalizePathString(root);
+  if (!normalized.startsWith('/') || hasBackslash(normalized) || hasDotDotSegment(normalized)) return null;
+  return normalized;
+}
+function pathUnderRoot(root, path) {
+  const normalizedRoot = normalizeAbsoluteRoot(root);
+  if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
+  const normalizedPath = normalizePathString(path);
+  if (!normalizedPath.startsWith('/') || hasBackslash(normalizedPath) || hasDotDotSegment(normalizedPath)) return false;
+  const prefix = normalizedRoot === '/' ? '/' : `${normalizedRoot}/`;
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(prefix);
+}
+function repoRelativeFindingPath(repoRoot, file) {
+  if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
+  if (file.startsWith('/') && hasDotDotSegment(file)) return { reason: 'file path contains a .. segment' };
+  let relative;
+  if (!file.startsWith('/')) {
+    relative = file;
+    while (relative.startsWith('./')) relative = relative.slice(2);
+    relative = normalizePathString(relative);
+    const root = normalizeAbsoluteRoot(repoRoot);
+    if (root !== null && pathUnderRoot(root, `/${relative}`)) {
+      relative = `/${relative}`.slice(root === '/' ? 1 : root.length + 1);
+    }
+  } else {
+    const root = normalizeAbsoluteRoot(repoRoot);
+    if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
+    const absolute = normalizePathString(file);
+    if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
+    if (!pathUnderRoot(root, absolute)) return { reason: 'absolute file path is outside repoRoot' };
+    relative = absolute.slice(root === '/' ? 1 : root.length + 1).replace(/^\/+/, '');
+  }
+  if (relative === '' || relative === '.' || relative.startsWith('/')) return { reason: 'file path does not name a repository file' };
+  if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
+  if (hasBackslash(relative)) return { reason: 'file path contains a backslash' };
+  const segments = relative.split('/');
+  const segmentPattern = /^[\p{L}\p{N}._+@=,~-][\p{L}\p{N}._+@=,~ -]*$/u;
+  const laterSegmentPattern = /^[\p{L}\p{N}._+@=,~-][\p{L}\p{N}._+@=,~ :-]*$/u;
+  if (segments[0].startsWith('~')) return { reason: 'file path starts with a home-directory marker' };
+  if (segments.some((segment, index) => !(index === 0 ? segmentPattern : laterSegmentPattern).test(segment))) {
+    return { reason: 'file path contains a disallowed character' };
+  }
+  return { file: relative };
+}
+const HOST_PATH_KEYS = new Set(['artifactPaths', 'persistReturn']);
+function redactHostPaths(value, repoRoot, priorCount = 0, recordGap = false) {
+  const copy = deepClone(value);
+  const root = normalizeAbsoluteRoot(repoRoot);
+  if (root === null) return { value: copy, count: 0 };
+  let count = 0;
+  const walk = (node) => {
+    if (typeof node === 'string') {
+      const occurrences = node.split(root).length - 1;
+      count += occurrences;
+      return occurrences ? node.split(root).join('<repo>') : node;
+    }
+    if (Array.isArray(node)) return node.map(walk);
+    if (node !== null && typeof node === 'object') {
+      for (const key of Object.keys(node)) node[key] = walk(node[key]);
+    }
+    return node;
+  };
+  const redacted =
+    copy !== null && typeof copy === 'object' && !Array.isArray(copy)
+      ? Object.fromEntries(Object.entries(copy).map(([k, v]) => [k, HOST_PATH_KEYS.has(k) ? v : walk(v)]))
+      : walk(copy);
+  if (recordGap && count + priorCount > 0) {
+    redacted.gaps = [...(Array.isArray(redacted.gaps) ? redacted.gaps : []), `host-path-redacted: ${count + priorCount} occurrence(s)`];
+  }
+  return { value: redacted, count };
+}
+// --- mergeFindings.js ---
+const KNOWN_DIMENSIONS = new Set([
+  'bug',
+  'security',
+  'cross_file_impact',
+  'test_coverage',
+  'convention',
+  'intent',
+  'comment_accuracy',
+  'type_design',
+  'simplification',
+]);
+const REQUIRED_FIELDS = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence'];
+function parseNdjson(text, agent) {
+  const findings = [];
+  const warnings = [];
+  if (text === undefined || text === null) return { findings, warnings };
+  let lineno = 0;
+  for (const rawLine of text.split('\n')) {
+    lineno += 1;
+    const line = rawLine.trim();
+    if (!line) continue;
+    let obj;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      warnings.push(`[${agent}] NDJSON line ${lineno}: invalid JSON`);
+      continue;
+    }
+    if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+      warnings.push(`[${agent}] NDJSON line ${lineno}: expected object, got ${jsonTypeName(obj)}`);
+      continue;
+    }
+    findings.push(obj);
+  }
+  return { findings, warnings };
+}
+function jsonTypeName(v) {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'array';
+  return typeof v;
+}
+function extractJsonBlocks(text) {
+  const results = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== '{') {
+      i += 1;
+      continue;
+    }
+    const obj = tryParseJsonAt(text, i);
+    if (obj !== null && obj !== undefined && typeof obj === 'object' && !Array.isArray(obj) && 'id' in obj) {
+      results.push(obj);
+      i = findEndOfJson(text, i);
+    } else {
+      i += 1;
+    }
+  }
+  return results;
+}
+function scanJsonObject(text, start) {
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+  let i = start;
+  while (i < text.length) {
+    const ch = text[i];
+    if (escapeNext) {
+      escapeNext = false;
+      i += 1;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escapeNext = true;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      i += 1;
+      continue;
+    }
+    if (inString) {
+      i += 1;
+      continue;
+    }
+    if (ch === '{') {
+      depth += 1;
+    } else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return i + 1;
+    }
+    i += 1;
+  }
+  return -1;
+}
+function tryParseJsonAt(text, start) {
+  const end = scanJsonObject(text, start);
+  if (end < 0) return null;
+  try {
+    return JSON.parse(text.slice(start, end));
+  } catch {
+    return null;
+  }
+}
+function findEndOfJson(text, start) {
+  const end = scanJsonObject(text, start);
+  if (end < 0) return text.length + 1;
+  return end;
+}
+function parseTextFile(text, agent) {
+  const findings = [];
+  const warnings = [];
+  let hasProse = false;
+  let hasSkip = false;
+  if (text === undefined || text === null) return { findings, warnings, hasProse, hasSkip };
+  if (text.trim() === '') return { findings, warnings, hasProse, hasSkip };
+  if (/^\s*SKIP\s*:/im.test(text)) hasSkip = true;
+  for (const obj of extractJsonBlocks(text)) {
+    if ('id' in obj) findings.push(obj);
+  }
+  let stripped = text.replace(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, '');
+  stripped = stripped.replace(/^\s*SKIP\s*:.*$/gim, '');
+  stripped = stripped.trim();
+  if (stripped.replace(/\s+/g, '').length > 20) hasProse = true;
+  return { findings, warnings, hasProse, hasSkip };
+}
+function injectAgentField(findings, agent) {
+  for (const f of findings) f.agent = agent;
+}
+function normalizeFindingPath(finding, repoRoot) {
+  const fid = 'id' in finding ? finding.id : '<no id>';
+  const original = finding.file;
+  const result = repoRelativeFindingPath(repoRoot, original);
+  if ('reason' in result) {
+    return { valid: false, warning: `[${fid}] Invalid file path: ${result.reason} — finding rejected` };
+  }
+  if (result.file !== original) {
+    finding.file = result.file;
+    return {
+      valid: true,
+      warning: `[${fid}] File path rewritten to '${result.file}'`,
+    };
+  }
+  return { valid: true, warning: null };
+}
+function normalizeFindingPaths(findings, repoRoot) {
+  const valid = [];
+  const warnings = [];
+  for (const finding of findings) {
+    if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
+      warnings.push('Invalid finding shape: expected an object — finding rejected');
+      continue;
+    }
+    const result = normalizeFindingPath(finding, repoRoot);
+    if (result.warning) warnings.push(result.warning);
+    if (result.valid) valid.push(finding);
+  }
+  return { valid, warnings };
+}
+function validateFindings(findings, repoRoot) {
+  const valid = [];
+  const warnings = [];
+  for (const f of findings) {
+    const fid = 'id' in f ? f.id : '<no id>';
+    let reject = false;
+    for (const field of REQUIRED_FIELDS) {
+      const v = f[field];
+      if (!(field in f) || v === null || v === undefined || v === '') {
+        warnings.push(`[${fid}] Missing required field '${field}' — finding rejected`);
+        reject = true;
+        break;
+      }
+    }
+    if (reject) continue;
+    const pathResult = normalizeFindingPath(f, repoRoot);
+    if (pathResult.warning) warnings.push(pathResult.warning);
+    if (!pathResult.valid) continue;
+    const dim = 'dimension' in f ? f.dimension : undefined;
+    if (dim === null || dim === undefined) {
+      warnings.push(`[${fid}] Missing 'dimension' field — finding kept with warning`);
+    } else if (!KNOWN_DIMENSIONS.has(dim)) {
+      warnings.push(`[${fid}] Unknown dimension '${dim}' — finding kept with warning`);
+    }
+    valid.push(f);
+  }
+  return { valid, warnings };
+}
+function detectTruncation(ndjsonRaw, textPre, hasProse, hasSkip) {
+  const warnings = [];
+  for (const agent of Object.keys(ndjsonRaw)) {
+    const ndjsonEmpty = (ndjsonRaw[agent] || 0) === 0;
+    const textEmpty = (textPre[agent] || []).length === 0;
+    const prose = hasProse[agent] || false;
+    const skip = hasSkip[agent] || false;
+    if (ndjsonEmpty && textEmpty && prose && !skip) {
+      warnings.push(
+        `[${agent}] Possible truncation: no structured findings, ` +
+          'prose present in text output, no SKIP lines detected',
+      );
+    }
+  }
+  return warnings;
+}
+function assembleOutput(
+  findings,
+  agents,
+  ndjsonCount,
+  textFallbackCount,
+  duplicatesResolved,
+  droppedNoId,
+  truncationWarnings,
+  validationWarnings,
+  baseBranch,
+  headSha,
+  prNumber,
+  owner,
+  repo,
+) {
+  return {
+    findings,
+    base_branch: baseBranch,
+    head_sha: headSha,
+    pr_number: prNumber,
+    owner,
+    repo,
+    methodology: {
+      agents_dispatched: agents,
+      findings_per_channel: {
+        ndjson: ndjsonCount,
+        text_fallback: textFallbackCount,
+      },
+      duplicates_resolved: duplicatesResolved,
+      dropped_no_id: droppedNoId,
+      truncation_warnings: truncationWarnings,
+      validation_warnings: validationWarnings,
+    },
+  };
+}
+function merge(ndjsonContents, textContents, meta) {
+  const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
+  const agents = M.agents;
+  const repoRoot = M.repoRoot;
+  const nd = ndjsonContents || {};
+  const tx = textContents || {};
+  const allWarnings = [];
+  const ndjsonFindings = {};
+  for (const agent of agents) {
+    const { findings, warnings } = parseNdjson(nd[agent], agent);
+    ndjsonFindings[agent] = findings;
+    for (const w of warnings) allWarnings.push(w);
+  }
+  const textFindings = {};
+  const textHasProse = {};
+  const textHasSkip = {};
+  for (const agent of agents) {
+    const { findings, warnings, hasProse, hasSkip } = parseTextFile(tx[agent], agent);
+    textFindings[agent] = findings;
+    textHasProse[agent] = hasProse;
+    textHasSkip[agent] = hasSkip;
+    for (const w of warnings) allWarnings.push(w);
+  }
+  const ndjsonRawCounts = {};
+  for (const agent of Object.keys(ndjsonFindings)) ndjsonRawCounts[agent] = ndjsonFindings[agent].length;
+  for (const [agent, findings] of Object.entries(textFindings)) injectAgentField(findings, agent);
+  for (const [agent, findings] of Object.entries(ndjsonFindings)) injectAgentField(findings, agent);
+  const allNdjsonFlat = Object.values(ndjsonFindings).flat();
+  const allTextFlat = Object.values(textFindings).flat();
+  const { warnings: preValWarnings } = validateFindings(allNdjsonFlat.concat(allTextFlat), repoRoot);
+  let droppedNoId = 0;
+  for (const f of allNdjsonFlat.concat(allTextFlat)) {
+    const fid = f.id;
+    if (fid === undefined || fid === null || fid === '') droppedNoId += 1;
+  }
+  const filterValid = (dict) => {
+    const out = {};
+    for (const [agent, findings] of Object.entries(dict)) {
+      out[agent] = validateFindings(findings, repoRoot).valid;
+    }
+    return out;
+  };
+  const ndjsonValid = filterValid(ndjsonFindings);
+  const textFindingsPreValidation = {};
+  for (const [agent, findings] of Object.entries(textFindings)) textFindingsPreValidation[agent] = findings.slice();
+  const textValid = filterValid(textFindings);
+  const { merged, duplicatesResolved } = dedupById(ndjsonValid, textValid);
+  const ndjsonIds = new Set();
+  for (const findings of Object.values(ndjsonValid)) {
+    for (const f of findings) if ('id' in f) ndjsonIds.add(f.id);
+  }
+  let ndjsonCount = 0;
+  let textFallbackCount = 0;
+  for (const f of merged) {
+    if (ndjsonIds.has(f.id)) ndjsonCount += 1;
+    else textFallbackCount += 1;
+  }
+  const truncationWarnings = detectTruncation(
+    ndjsonRawCounts,
+    textFindingsPreValidation,
+    textHasProse,
+    textHasSkip,
+  );
+  const validationWarnings = allWarnings.concat(preValWarnings);
+  return assembleOutput(
+    merged,
+    agents,
+    ndjsonCount,
+    textFallbackCount,
+    duplicatesResolved,
+    droppedNoId,
+    truncationWarnings,
+    validationWarnings,
+    M.base_branch,
+    M.head_sha,
+    M.pr_number,
+    M.owner,
+    M.repo,
+  );
 }
 // --- args.js ---
 const ARGS_VERSION = 1;
@@ -5344,22 +5377,33 @@ function checkpointDiscardGap(topLevelCheckpoints) {
 }
 const CHECKPOINT_ARRAY_STRICT = 'strict';
 const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
+const CHECKPOINT_FINDING_LISTS = [
+  ['discover', 'findings', CHECKPOINT_ARRAY_STRICT],
+  ['merge', 'findings', CHECKPOINT_ARRAY_STRICT],
+  ['verify', 'findings', CHECKPOINT_ARRAY_STRICT],
+  ['validate', 'findings', CHECKPOINT_ARRAY_STRICT],
+  ['filter', 'filtered', CHECKPOINT_ARRAY_STRICT],
+  ['filter', 'eliminated', CHECKPOINT_ARRAY_TOLERANT],
+  ['challenge', 'findings', CHECKPOINT_ARRAY_STRICT],
+  ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT],
+  ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT],
+];
+const findingListShape = (phase) => Object.fromEntries(CHECKPOINT_FINDING_LISTS
+  .filter(([name]) => name === phase).map(([, field, mode]) => [field, mode]));
 const CHECKPOINT_PHASE_SHAPE_TABLE = {
   summarize: { gaps: CHECKPOINT_ARRAY_TOLERANT },
   discover: {
-    findings: CHECKPOINT_ARRAY_STRICT,
+    ...findingListShape('discover'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
     dispatched: CHECKPOINT_ARRAY_TOLERANT,
     degraded: CHECKPOINT_ARRAY_TOLERANT,
   },
-  merge: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  verify: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  validate: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  filter: { filtered: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
+  merge: { ...findingListShape('merge'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  verify: { ...findingListShape('verify'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  validate: { ...findingListShape('validate'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  filter: { ...findingListShape('filter'), gaps: CHECKPOINT_ARRAY_TOLERANT },
   challenge: {
-    findings: CHECKPOINT_ARRAY_STRICT,
-    unverified: CHECKPOINT_ARRAY_TOLERANT,
-    eliminated: CHECKPOINT_ARRAY_TOLERANT,
+    ...findingListShape('challenge'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
   },
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
@@ -5511,18 +5555,7 @@ function resolvedPolicyEnvelope(policy) {
 const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
 function beltPartitionList(list) {
   if (!Array.isArray(list) || list.length === 0) return { list, eliminated: [] };
-  const positions = [];
-  const objectElements = [];
-  for (const el of list) {
-    if (el && typeof el === 'object') {
-      const idx = objectElements.length;
-      objectElements.push({ ...el, [REPLAY_BELT_INDEX_KEY]: idx });
-      positions.push({ objIdx: idx });
-    } else {
-      positions.push({ raw: el });
-    }
-  }
-  if (objectElements.length === 0) return { list, eliminated: [] };
+  const objectElements = list.map((el, idx) => ({ ...el, [REPLAY_BELT_INDEX_KEY]: idx }));
   normalizeFieldNames(objectElements);
   const { kept, eliminated } = applyReplayInjectionScan(objectElements);
   const survivorByIdx = new Map();
@@ -5534,21 +5567,11 @@ function beltPartitionList(list) {
     const { [REPLAY_BELT_INDEX_KEY]: _idx, ...clean } = f;
     return { ...clean, replay_belt: true };
   });
-  const splicedList = [];
-  for (const p of positions) {
-    if ('raw' in p) { splicedList.push(p.raw); continue; }
-    if (survivorByIdx.has(p.objIdx)) splicedList.push(survivorByIdx.get(p.objIdx));
-  }
+  const splicedList = list.flatMap((_el, idx) => survivorByIdx.has(idx) ? [survivorByIdx.get(idx)] : []);
   return { list: splicedList, eliminated: eliminatedOut };
 }
-function stripEliminatedList(list, gaps) {
-  return Array.isArray(list)
-    ? list.flatMap((f) => {
-      if (f && typeof f === 'object' && !Array.isArray(f)) return [applyInjectedProseStrip(f)];
-      gaps.push('challenge.eliminated: non-object finding dropped');
-      return [];
-    })
-    : [];
+function stripEliminatedList(list) {
+  return list.map(applyInjectedProseStrip);
 }
 const METHODOLOGY_COUNT_ONLY_FIELDS = ['truncation_warnings', 'validation_warnings'];
 function compactMethodology(m) {
@@ -5561,7 +5584,7 @@ function compactMethodology(m) {
 }
 async function runWith(ctx, rawArgs) {
   const entry = entryArgs(rawArgs);
-  if (!entry.ok) return entry.envelope;
+  if (!entry.ok) return redactHostPaths(entry.envelope, rawArgs?.repoRoot, 0, true).value;
   const {
     args: A,
     dropped: droppedNulls,
@@ -5574,10 +5597,10 @@ async function runWith(ctx, rawArgs) {
   ];
   const check = validateArgs(A);
   if (!check.ok) {
-    return makeArgsRejectEnvelope(
+    return redactHostPaths(makeArgsRejectEnvelope(
       `invalid args: ${check.errors.join('; ')}. ${SKILL_RECOVERY_LINE}`,
       [...nullArgGaps, ...check.errors],
-    );
+    ), A.repoRoot, 0, true).value;
   }
   const c = { ...defaultCtx(), ...(ctx || {}) };
   const nChangedFiles = (A.changedFiles || []).length;
@@ -5605,23 +5628,17 @@ async function runWith(ctx, rawArgs) {
   const checkpoints = readCheckpoints(c, A);
   const checkpointShapeViolations = checkpointShapeErrors(checkpoints);
   if (checkpointShapeViolations.length) {
-    return makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap, discardGap);
+    return redactHostPaths(makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap, discardGap), A.repoRoot, 0, true).value;
   }
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
+  let persistedRedactions = 0;
   let phaseAttempting = null;
   const normalizePhaseFindings = (name, out) => {
     if (!out || typeof out !== 'object') return;
-    const fields = {
-      discover: ['findings'],
-      merge: ['findings'],
-      verify: ['findings'],
-      validate: ['findings'],
-      filter: ['filtered'],
-      challenge: ['findings', 'unverified', 'eliminated'],
-    }[name] || [];
+    const fields = CHECKPOINT_FINDING_LISTS.filter(([phase]) => phase === name).map(([, field]) => field);
     const warnings = [];
     for (const field of fields) {
       if (!Array.isArray(out[field])) continue;
@@ -5684,7 +5701,7 @@ async function runWith(ctx, rawArgs) {
       gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
       const resumable = { ...phaseOutputs };
       delete resumable.discover; // a degraded-to-nothing discover output must never replay on resume — a retry re-dispatches discovery under (possibly corrected) policy
-      return {
+      return redactHostPaths({
         ok: false,
         error: 'all-degraded: every active discovery dimension degraded — no review was performed',
         phaseReached,
@@ -5694,7 +5711,7 @@ async function runWith(ctx, rawArgs) {
         resolvedPolicy: resolvedPolicyEnvelope(policy),
         checkpoints: buildResumeCheckpoints(resumable),
         gaps,
-      };
+      }, A.repoRoot, 0, true).value;
     }
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
       base_branch: A.baseBranch, head_sha: A.headShaShort, repoRoot: A.repoRoot,
@@ -5732,7 +5749,7 @@ async function runWith(ctx, rawArgs) {
       challengeOut.unverified = unverifiedResult.list;
       const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
       const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
-      challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated], gaps);
+      challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
       if (challengeOut.stats && typeof challengeOut.stats === 'object') {
         const k1 = findingsResult.eliminated.length;
         const k2 = unverifiedResult.eliminated.length;
@@ -5789,13 +5806,17 @@ async function runWith(ctx, rawArgs) {
     gaps.push(...reportGaps);
     reportOut = { report: renderReport(reportInput), gaps: reportGaps };
     phaseOutputs.report = reportOut;
-    const writeOut = await writeArtifacts(c, {
+    const artifactContent = redactHostPaths({
       findings: challengeOut.findings,
       postReview,
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
       reviewBody,
       report: reportOut.report,
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
+    }, A.repoRoot);
+    persistedRedactions = artifactContent.count;
+    const writeOut = await writeArtifacts(c, {
+      ...artifactContent.value,
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
@@ -5804,7 +5825,7 @@ async function runWith(ctx, rawArgs) {
       policy,
     });
     gaps.push(...(writeOut.gaps || []));
-    return {
+    return redactHostPaths({
       ok: true,
       phaseReached,
       stats: {
@@ -5834,9 +5855,9 @@ async function runWith(ctx, rawArgs) {
       checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
       gaps,
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
-    };
+    }, A.repoRoot, persistedRedactions, true).value;
   } catch (e) {
-    return {
+    return redactHostPaths({
       ok: false,
       error: (e && e.message) || String(e),
       phaseReached,
@@ -5845,7 +5866,7 @@ async function runWith(ctx, rawArgs) {
       stats: {},
       checkpoints: buildResumeCheckpoints(phaseOutputs),
       gaps,
-    };
+    }, A.repoRoot, persistedRedactions, true).value;
   }
 }
 // --- pipeline_entry.js ---

@@ -8,7 +8,7 @@ import {
   PATH_ESCAPE_TOKEN,
   runWith,
 } from '../src/stages.js';
-import { normalizeAbsoluteRoot, pathUnderRoot, repoRelativeFindingPath } from '../src/paths.js';
+import { normalizeAbsoluteRoot, pathUnderRoot, repoRelativeFindingPath, redactHostPaths } from '../src/paths.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
 const ROOT = '/repo/.code-gauntlet';
@@ -43,6 +43,7 @@ test('pathUnderRoot: /./ collapses; // is deliberately allowed when under root',
   assert.equal(pathUnderRoot(ROOT, `${ROOT}/./findings.json`), true);
   assert.equal(pathUnderRoot(`${ROOT}/./`, `${ROOT}/findings.json`), true);
   assert.equal(pathUnderRoot(ROOT, `${ROOT}//findings.json`), true);
+  assert.equal(pathUnderRoot('/repo', '//repo/src/a.js'), true);
 });
 
 test('pathUnderRoot: empty / null / undefined path is false (no TypeError)', () => {
@@ -70,6 +71,8 @@ const REPO_RELATIVE_CASES = [
   { name: 'relative repeated slashes are collapsed', file: 'scripts//gauntlet///proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },
   { name: 'relative trailing slash is stripped', file: 'scripts/gauntlet/', expected: { file: 'scripts/gauntlet' } },
   { name: 'relative trailing dot is stripped', file: 'scripts/gauntlet/.', expected: { file: 'scripts/gauntlet' } },
+  { name: 'root-prefixed relative path becomes relative', root: '/Users/lee/repo', file: 'Users/lee/repo/a.js', expected: { file: 'a.js' } },
+  { name: 'Unicode filename is accepted', file: 'src/café.js', expected: { file: 'src/café.js' } },
   { name: 'absolute path under root becomes relative', file: `${REPO_ROOT}/scripts/gauntlet/proc.py`, expected: { file: 'scripts/gauntlet/proc.py' } },
   { name: 'absolute path under slash root becomes relative', root: '/', file: '/proc.py', expected: { file: 'proc.py' } },
   { name: 'absolute dot slash is normalized', file: `${REPO_ROOT}/./scripts/gauntlet/proc.py`, expected: { file: 'scripts/gauntlet/proc.py' } },
@@ -83,24 +86,42 @@ const REPO_RELATIVE_CASES = [
   { name: 'empty file is rejected', file: '', expected: { reason: 'file must be a non-empty string' } },
   { name: 'dot file is rejected', file: '.', expected: { reason: 'file path does not name a repository file' } },
   { name: 'dot slash file is rejected', file: './', expected: { reason: 'file path does not name a repository file' } },
-  { name: 'file URI with triple slash is rejected', file: 'file:///Users/x/a.js', expected: { reason: 'file path has a colon in its first segment' } },
-  { name: 'file URI with single slash is rejected', file: 'file:/Users/a', expected: { reason: 'file path has a colon in its first segment' } },
-  { name: 'web URI is rejected', file: 'https://x/a', expected: { reason: 'file path has a colon in its first segment' } },
-  { name: 'leading whitespace host path is rejected', file: ' /Users/x/a', expected: { reason: 'file path contains control characters or surrounding whitespace' } },
-  { name: 'leading newline host path is rejected', file: '\n/Users/x', expected: { reason: 'file path contains control characters or surrounding whitespace' } },
-  { name: 'whitespace segment after dot slash is rejected', file: './ /Users', expected: { reason: 'file path contains control characters or surrounding whitespace' } },
-  { name: 'interior ASCII control is rejected', file: 'src/a\tb.js', expected: { reason: 'file path contains control characters or surrounding whitespace' } },
-  { name: 'trailing whitespace segment is rejected', file: 'src/a.js ', expected: { reason: 'file path contains control characters or surrounding whitespace' } },
-  { name: 'leading drive letter is rejected', file: 'C:/x', expected: { reason: 'file path has a colon in its first segment' } },
-  { name: 'leading drive letter after dot slash is rejected', file: './C:file.js', expected: { reason: 'file path has a colon in its first segment' } },
+  { name: 'file URI with triple slash is rejected', file: 'file:///Users/x/a.js', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'file URI with single slash is rejected', file: 'file:/Users/a', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'web URI is rejected', file: 'https://x/a', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'leading whitespace host path is rejected', file: ' /Users/x/a', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'leading newline host path is rejected', file: '\n/Users/x', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'whitespace segment after dot slash is rejected', file: './ /Users', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'interior ASCII control is rejected', file: 'src/a\tb.js', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'trailing space is accepted by the segment grammar', file: 'src/a.js ', expected: { file: 'src/a.js ' } },
+  { name: 'leading drive letter is rejected', file: 'C:/x', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'leading drive letter after dot slash is rejected', file: './C:file.js', expected: { reason: 'file path contains a disallowed character' } },
   { name: 'colon after first segment is accepted', file: 'src/a:b.js', expected: { file: 'src/a:b.js' } },
-  { name: 'absolute path with colon after root is rejected', file: `${REPO_ROOT}/file:/a.js`, expected: { reason: 'file path has a colon in its first segment' } },
+  { name: 'absolute path with colon after root is rejected', file: `${REPO_ROOT}/file:/a.js`, expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'NEL prefix is rejected', file: '\u0085src/a.js', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'zero-width prefix is rejected', file: '\u200Bsrc/a.js', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'bidi prefix is rejected', file: '\u202Esrc/a.js', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'line-separator prefix is rejected', file: '\u2028src/a.js', expected: { reason: 'file path contains a disallowed character' } },
+  { name: 'home path is rejected', file: '~/.ssh/id_rsa', expected: { reason: 'file path starts with a home-directory marker' } },
+  { name: 'named home path is rejected', file: '~lee/x', expected: { reason: 'file path starts with a home-directory marker' } },
 ];
 for (const c of REPO_RELATIVE_CASES) {
   test(`repoRelativeFindingPath: ${c.name}`, () => {
     assert.deepEqual(repoRelativeFindingPath(c.root ?? REPO_ROOT, c.file), c.expected);
   });
 }
+
+test('redactHostPaths uses the normalized root throughout nested JSON values', () => {
+  const input = { finding: { consolidation_key: '/repo/src/a.js:0' }, reasons: ['/repo', '/repo/'] };
+  const out = redactHostPaths(input, '/repo/', 0, true);
+  assert.equal(out.count, 3);
+  assert.deepEqual(out.value, {
+    finding: { consolidation_key: '<repo>/src/a.js:0' },
+    reasons: ['<repo>', '<repo>/'],
+    gaps: ['host-path-redacted: 3 occurrence(s)'],
+  });
+  assert.equal(input.finding.consolidation_key, '/repo/src/a.js:0');
+});
 
 test('requireAbsoluteOutputDir: absolute ok; relative / missing throw distinct message', () => {
   assert.equal(requireAbsoluteOutputDir(ROOT), ROOT);
@@ -216,4 +237,16 @@ test('runWith: outputDir with .. segment → ok:false with absolute-root error (
   assert.equal(out.ok, false);
   assert.match(out.error || '', /absolute confined root/);
   assert.ok(!(out.gaps || []).some((g) => /partial-artifacts/.test(g) && /persistence threw/.test(g)));
+});
+
+test('redactHostPaths leaves the host paths the skill opens intact', () => {
+  const input = {
+    artifactPaths: { findings: '/repo/.code-gauntlet/f.json' },
+    persistReturn: { planPath: '/repo/.code-gauntlet/plan.json', entries: [{ path: '/repo/.code-gauntlet/r.md' }] },
+    gaps: ['saw /repo/src/a.js'],
+  };
+  const out = redactHostPaths(input, '/repo', 0, true);
+  assert.deepEqual(out.value.artifactPaths, input.artifactPaths);
+  assert.deepEqual(out.value.persistReturn, input.persistReturn);
+  assert.deepEqual(out.value.gaps, ['saw <repo>/src/a.js', 'host-path-redacted: 1 occurrence(s)']);
 });

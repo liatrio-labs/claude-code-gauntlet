@@ -18,7 +18,7 @@
 // No wall-clock, no import at runtime.
 import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { merge, normalizeFindingPaths } from './mergeFindings.js';
-import { normalizeAbsoluteRoot, pathUnderRoot } from './paths.js';
+import { normalizeAbsoluteRoot, pathUnderRoot, redactHostPaths } from './paths.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
@@ -3386,11 +3386,24 @@ function checkpointDiscardGap(topLevelCheckpoints) {
 // container-only is enough to close that. discover also gets `dispatched`/`degraded` as
 // 'tolerant': both are unconditionally `.join`-ed or iterated (allActiveDimensionsDegraded,
 // the dimensions summary table), so a string there raw-TypeErrors the same way. Element
-// tolerance on finding lists is reserved for challenge.unverified and
-// challenge.eliminated. Replay path normalization drops malformed entries from them
+// tolerance on finding lists is reserved for filter.eliminated and
+// challenge.unverified/eliminated. Replay path normalization drops malformed entries from them
 // before they reach the belt or persisted artifacts. A null eliminated container is absent.
 const CHECKPOINT_ARRAY_STRICT = 'strict';
 const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
+export const CHECKPOINT_FINDING_LISTS = [
+  ['discover', 'findings', CHECKPOINT_ARRAY_STRICT],
+  ['merge', 'findings', CHECKPOINT_ARRAY_STRICT],
+  ['verify', 'findings', CHECKPOINT_ARRAY_STRICT],
+  ['validate', 'findings', CHECKPOINT_ARRAY_STRICT],
+  ['filter', 'filtered', CHECKPOINT_ARRAY_STRICT],
+  ['filter', 'eliminated', CHECKPOINT_ARRAY_TOLERANT],
+  ['challenge', 'findings', CHECKPOINT_ARRAY_STRICT],
+  ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT],
+  ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT],
+];
+const findingListShape = (phase) => Object.fromEntries(CHECKPOINT_FINDING_LISTS
+  .filter(([name]) => name === phase).map(([, field, mode]) => [field, mode]));
 // Exported for checkpoint_shape_gate.test.js, which derives the strict rows from it so a
 // row flipped to strict gets an element-level null/primitive test for free, with no second
 // edit to keep in sync (the export costs nothing in the bundle -- the table is consumed
@@ -3398,19 +3411,17 @@ const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
 export const CHECKPOINT_PHASE_SHAPE_TABLE = {
   summarize: { gaps: CHECKPOINT_ARRAY_TOLERANT },
   discover: {
-    findings: CHECKPOINT_ARRAY_STRICT,
+    ...findingListShape('discover'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
     dispatched: CHECKPOINT_ARRAY_TOLERANT,
     degraded: CHECKPOINT_ARRAY_TOLERANT,
   },
-  merge: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  verify: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  validate: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  filter: { filtered: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
+  merge: { ...findingListShape('merge'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  verify: { ...findingListShape('verify'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  validate: { ...findingListShape('validate'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  filter: { ...findingListShape('filter'), gaps: CHECKPOINT_ARRAY_TOLERANT },
   challenge: {
-    findings: CHECKPOINT_ARRAY_STRICT,
-    unverified: CHECKPOINT_ARRAY_TOLERANT,
-    eliminated: CHECKPOINT_ARRAY_TOLERANT,
+    ...findingListShape('challenge'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
   },
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
@@ -3698,13 +3709,7 @@ const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
 
 // beltPartitionList(list) -> { list, eliminated }. The #253 belt's per-list
 // worker for challengeOut.findings / .unverified:
-//   - a non-array `list` (or an empty one) is returned untouched, `eliminated`
-//     empty -- mirrors the #213 tolerance this belt replaces
-//     (stages_delivery.test.js:488-512 is the sibling oracle for that same
-//     tolerance, on .eliminated);
-//   - a non-object element (null, a primitive -- stages_delivery.test.js:
-//     514-542 is the oracle) keeps its exact position in the output, never
-//     touched, never handed to the scan;
+//   - an absent or empty list is returned untouched because it has no scan state;
 //   - every object element is normalized (normalizeFieldNames, idempotent --
 //     a precondition of the scan, not pre-challenge semantics: a hand-built
 //     or v2-era checkpoint can carry `body`/`line`/`blame_tag` instead of the
@@ -3714,22 +3719,12 @@ const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
 //     re-spliced back into their original relative position among the other
 //     surviving elements; eliminated elements are removed from `list` and
 //     returned separately, stamped with a `replay_belt: true` marker on top
-//     of the scan's own eliminated_by/elimination_reason.
+//     of the scan's own eliminated_by/elimination_reason. Replay normalization
+//     has already removed non-objects from these lists.
 function beltPartitionList(list) {
   if (!Array.isArray(list) || list.length === 0) return { list, eliminated: [] };
 
-  const positions = [];
-  const objectElements = [];
-  for (const el of list) {
-    if (el && typeof el === 'object') {
-      const idx = objectElements.length;
-      objectElements.push({ ...el, [REPLAY_BELT_INDEX_KEY]: idx });
-      positions.push({ objIdx: idx });
-    } else {
-      positions.push({ raw: el });
-    }
-  }
-  if (objectElements.length === 0) return { list, eliminated: [] };
+  const objectElements = list.map((el, idx) => ({ ...el, [REPLAY_BELT_INDEX_KEY]: idx }));
 
   normalizeFieldNames(objectElements);
   const { kept, eliminated } = applyReplayInjectionScan(objectElements);
@@ -3744,25 +3739,14 @@ function beltPartitionList(list) {
     return { ...clean, replay_belt: true };
   });
 
-  const splicedList = [];
-  for (const p of positions) {
-    if ('raw' in p) { splicedList.push(p.raw); continue; }
-    if (survivorByIdx.has(p.objIdx)) splicedList.push(survivorByIdx.get(p.objIdx));
-    // else: eliminated -- omitted from the spliced list, present in eliminatedOut.
-  }
+  const splicedList = list.flatMap((_el, idx) => survivorByIdx.has(idx) ? [survivorByIdx.get(idx)] : []);
 
   return { list: splicedList, eliminated: eliminatedOut };
 }
 
 // A fresh challenge can omit eliminated; replayed containers are shape-gated.
-function stripEliminatedList(list, gaps) {
-  return Array.isArray(list)
-    ? list.flatMap((f) => {
-      if (f && typeof f === 'object' && !Array.isArray(f)) return [applyInjectedProseStrip(f)];
-      gaps.push('challenge.eliminated: non-object finding dropped');
-      return [];
-    })
-    : [];
+function stripEliminatedList(list) {
+  return list.map(applyInjectedProseStrip);
 }
 
 // #181: merge()'s per-agent channel/dedup/validation-warning granularity — the only
@@ -3812,7 +3796,7 @@ export async function runWith(ctx, rawArgs) {
   // reaches here. It is still worth fixing — runWith is exported, directly unit-tested,
   // and documented as throw-free.
   const entry = entryArgs(rawArgs);
-  if (!entry.ok) return entry.envelope;
+  if (!entry.ok) return redactHostPaths(entry.envelope, rawArgs?.repoRoot, 0, true).value;
   // Normalization is TOLERANT of a stamped null for the narrow NULLABLE_TOP_LEVEL allowlist
   // (issue #38 A1 — a rejected dispatch cost a 21.3s round trip). Tolerance without
   // disclosure would be a silent config substitution, though: a mis-stamped
@@ -3842,10 +3826,10 @@ export async function runWith(ctx, rawArgs) {
     // from. A naked caller that hand-built an object reads only this string (the platform
     // reports the run as completed either way), so it has to carry both. Shape comes from
     // makeArgsRejectEnvelope — same factory entryArgs uses for its refusal arm.
-    return makeArgsRejectEnvelope(
+    return redactHostPaths(makeArgsRejectEnvelope(
       `invalid args: ${check.errors.join('; ')}. ${SKILL_RECOVERY_LINE}`,
       [...nullArgGaps, ...check.errors],
-    );
+    ), A.repoRoot, 0, true).value;
   }
 
   // The bundle entry injects only pipelineVersion; retain the host globals from the default
@@ -3911,13 +3895,14 @@ export async function runWith(ctx, rawArgs) {
   // disclosure still rides on THIS exit too, not just the args-reject and success exits.
   const checkpointShapeViolations = checkpointShapeErrors(checkpoints);
   if (checkpointShapeViolations.length) {
-    return makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap, discardGap);
+    return redactHostPaths(makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap, discardGap), A.repoRoot, 0, true).value;
   }
 
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
+  let persistedRedactions = 0;
   // The phase currently being ATTEMPTED — distinct from phaseReached (last COMPLETED).
   // On a throw, phaseReached names the phase BEFORE the one that blew up; narrating the
   // crash from it misattributes the failure (live run: a Filter throw reported as
@@ -3929,14 +3914,7 @@ export async function runWith(ctx, rawArgs) {
   // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
   const normalizePhaseFindings = (name, out) => {
     if (!out || typeof out !== 'object') return;
-    const fields = {
-      discover: ['findings'],
-      merge: ['findings'],
-      verify: ['findings'],
-      validate: ['findings'],
-      filter: ['filtered'],
-      challenge: ['findings', 'unverified', 'eliminated'],
-    }[name] || [];
+    const fields = CHECKPOINT_FINDING_LISTS.filter(([phase]) => phase === name).map(([, field]) => field);
     const warnings = [];
     for (const field of fields) {
       if (!Array.isArray(out[field])) continue;
@@ -4075,7 +4053,7 @@ export async function runWith(ctx, rawArgs) {
       gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
       const resumable = { ...phaseOutputs };
       delete resumable.discover; // a degraded-to-nothing discover output must never replay on resume — a retry re-dispatches discovery under (possibly corrected) policy
-      return {
+      return redactHostPaths({
         ok: false,
         error: 'all-degraded: every active discovery dimension degraded — no review was performed',
         phaseReached,
@@ -4085,7 +4063,7 @@ export async function runWith(ctx, rawArgs) {
         resolvedPolicy: resolvedPolicyEnvelope(policy),
         checkpoints: buildResumeCheckpoints(resumable),
         gaps,
-      };
+      }, A.repoRoot, 0, true).value;
     }
 
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
@@ -4155,9 +4133,8 @@ export async function runWith(ctx, rawArgs) {
     // heuristic 4) at filter time THIS run, so it is a no-op by construction there.
     //
     // Position-preserving partition, single walk per list (findings, then unverified):
-    // beltPartitionList normalizes and re-scans only the OBJECT elements as one ordered
-    // list (heuristic 10's dedup state makes scan order load-bearing), then re-splices
-    // survivors back into their original relative position. The replay path normalizer
+    // beltPartitionList normalizes and re-scans the objects as one ordered list because
+    // heuristic 10's dedup state makes scan order load-bearing. Replay normalization
     // drops non-object entries before this scan.
     // See beltPartitionList's own doc comment for the splice mechanics.
     //
@@ -4211,7 +4188,7 @@ export async function runWith(ctx, rawArgs) {
       const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
 
       const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
-      challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated], gaps);
+      challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
 
       // stats: final_count/skipped are the two numeric keys whose value IS the length
       // of an array this belt just rewrote (challengeOut.findings / .unverified), so
@@ -4334,7 +4311,7 @@ export async function runWith(ctx, rawArgs) {
 
     // Persistence is a post-phase step: writeArtifacts owns its try/catch, so a
     // writer failure degrades to a partial-artifacts gap rather than the top-level catch.
-    const writeOut = await writeArtifacts(c, {
+    const artifactContent = redactHostPaths({
       findings: challengeOut.findings,
       postReview,
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
@@ -4346,6 +4323,10 @@ export async function runWith(ctx, rawArgs) {
       // unwraps .phases, so a resume skips exactly the preserved phase and re-runs the rest.
       // The in-memory failure-path return below still carries the full phaseOutputs map.
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
+    }, A.repoRoot);
+    persistedRedactions = artifactContent.count;
+    const writeOut = await writeArtifacts(c, {
+      ...artifactContent.value,
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
@@ -4360,7 +4341,7 @@ export async function runWith(ctx, rawArgs) {
     });
     gaps.push(...(writeOut.gaps || []));
 
-    return {
+    return redactHostPaths({
       ok: true,
       phaseReached,
       stats: {
@@ -4414,12 +4395,12 @@ export async function runWith(ctx, rawArgs) {
       // paths and gaps before it rather than after. scripts/gauntlet/awaiting.py elides its
       // `entries[].text` so the bulk never enters the orchestrator's context at all.
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
-    };
+    }, A.repoRoot, persistedRedactions, true).value;
   } catch (e) {
     // Nothing was persisted on the throw path either — carry the in-memory resume state
     // (bounded by the char budget) in the compact return so the skill can resume the
     // failed run rather than restarting from scratch.
-    return {
+    return redactHostPaths({
       ok: false,
       error: (e && e.message) || String(e),
       phaseReached,
@@ -4428,6 +4409,6 @@ export async function runWith(ctx, rawArgs) {
       stats: {},
       checkpoints: buildResumeCheckpoints(phaseOutputs),
       gaps,
-    };
+    }, A.repoRoot, persistedRedactions, true).value;
   }
 }
