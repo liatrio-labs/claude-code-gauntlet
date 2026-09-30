@@ -2,6 +2,51 @@
 
 <!-- version list -->
 
+## v3.42.13 (2026-09-30)
+
+### Bug Fixes
+
+- Address the gauntlet findings on #440 (#410, #439)
+  ([#440](https://github.com/liatrio-labs/claude-code-gauntlet/pull/440),
+  [`1a16f37`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1a16f3779fb81bfbb230dcbba8386027cd5a842b))
+
+- Drive the missing-git test through proc and correct moved-serializer comments
+  ([#440](https://github.com/liatrio-labs/claude-code-gauntlet/pull/440),
+  [`1a16f37`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1a16f3779fb81bfbb230dcbba8386027cd5a842b))
+
+- Keep proc errors and lookups honest and pin migrated caller mappings (#410, #439)
+  ([#440](https://github.com/liatrio-labs/claude-code-gauntlet/pull/440),
+  [`1a16f37`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1a16f3779fb81bfbb230dcbba8386027cd5a842b))
+
+- Make proc tests platform-honest and anchor Windows lookups
+  ([#440](https://github.com/liatrio-labs/claude-code-gauntlet/pull/440),
+  [`1a16f37`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1a16f3779fb81bfbb230dcbba8386027cd5a842b))
+
+### Refactoring
+
+- Give file I/O and commands one home each, and omit proofs the encoder cannot nest (#410, #439,
+  #353, #355) ([#440](https://github.com/liatrio-labs/claude-code-gauntlet/pull/440),
+  [`1a16f37`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1a16f3779fb81bfbb230dcbba8386027cd5a842b))
+
+- Move JS-reproducible JSON into jsjson and give file I/O one home (#410, #439)
+  ([#440](https://github.com/liatrio-labs/claude-code-gauntlet/pull/440),
+  [`1a16f37`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1a16f3779fb81bfbb230dcbba8386027cd5a842b))
+
+- Run commands through gauntlet.proc and guard symlink tests by capability (#410, #353, #355)
+  ([#440](https://github.com/liatrio-labs/claude-code-gauntlet/pull/440),
+  [`1a16f37`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1a16f3779fb81bfbb230dcbba8386027cd5a842b))
+
+### Testing
+
+- Compare proc's resolved paths platform-neutrally
+  ([#440](https://github.com/liatrio-labs/claude-code-gauntlet/pull/440),
+  [`1a16f37`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1a16f3779fb81bfbb230dcbba8386027cd5a842b))
+
+- Import the assembler one way in its recursion test
+  ([#440](https://github.com/liatrio-labs/claude-code-gauntlet/pull/440),
+  [`1a16f37`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1a16f3779fb81bfbb230dcbba8386027cd5a842b))
+
+
 ## v3.42.12 (2026-09-29)
 
 ### Bug Fixes
