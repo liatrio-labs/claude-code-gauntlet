@@ -32,7 +32,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import gauntlet.artifacts as artifacts
 import pytest
 from gauntlet.artifacts import (
     assemble,
@@ -574,9 +573,7 @@ def test_recursion_errors_during_json_parsing_are_structural(
                 raise RecursionError("injected parser depth failure")
             return original_loads(content, *args, **kwargs)
 
-        monkeypatch.setattr(
-            artifacts.json, "loads", loads_with_targeted_recursion_error
-        )
+        monkeypatch.setattr(json, "loads", loads_with_targeted_recursion_error)
         receipt = assemble(plan_path)
 
     assert raised
