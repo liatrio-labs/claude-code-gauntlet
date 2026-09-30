@@ -472,6 +472,7 @@ for (const [phase, field] of REPLAY_PATH_FIELDS) {
       [field]: [
         makeFinding('REPLAY_UNDER', { file: under }),
         makeFinding('REPLAY_OUTSIDE', { file: outside }),
+        makeFinding('REPLAY_DOT_DOUBLE_SLASH', { file: './/Users/lee/x.js' }),
       ],
       gaps: [],
       ...(phase === 'merge' ? { methodology: {
@@ -492,17 +493,32 @@ for (const [phase, field] of REPLAY_PATH_FIELDS) {
     ]);
     assert.ok(!JSON.stringify(persisted).includes(under));
     assert.ok(!JSON.stringify(persisted).includes(outside));
+    assert.ok(!JSON.stringify(persisted).includes('/Users/'));
     assert.ok(!JSON.stringify(out).includes(under));
     assert.ok(!JSON.stringify(out).includes(outside));
+    assert.ok(!JSON.stringify(out).includes('/Users/'));
     if (phase === 'merge') {
       assert.deepEqual(out.stats.merge.findings_per_channel, {
         ndjson: 1, text_fallback: 0,
       });
-      assert.equal(out.stats.merge.validation_warnings, 2);
+      assert.equal(out.stats.merge.validation_warnings, 3);
       assert.ok(persisted.report.includes('merge: per-channel: ndjson=1, text_fallback=0'));
     }
   });
 }
+
+test('replayed merge channel counts are finite after findings are rejected', async () => {
+  const args = validArgs({ checkpoints: { merge: {
+    findings: [makeFinding('KEEP'), makeFinding('DROP', { file: '/private/tmp/host-secret/x.js' })],
+    methodology: { findings_per_channel: { ndjson: Infinity, text_fallback: NaN }, validation_warnings: [] },
+    gaps: [],
+  } } });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(out.stats.merge.findings_per_channel, { ndjson: 0, text_fallback: 0 });
+  assert.ok(persisted.report.includes('merge: per-channel: ndjson=0, text_fallback=0'));
+});
 
 // --- Replayed empty-report recovery -----------------------------------------
 

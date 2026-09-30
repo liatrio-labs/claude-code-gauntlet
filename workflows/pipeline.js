@@ -185,7 +185,7 @@ function repoRelativeFindingPath(repoRoot, file) {
     let relative = file;
     while (relative.startsWith('./')) relative = relative.slice(2);
     relative = normalizePathString(relative);
-    if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
+    if (relative === '' || relative === '.' || relative.startsWith('/')) return { reason: 'file path does not name a repository file' };
     if (/^[A-Za-z]:/.test(relative)) return { reason: 'file path has a leading drive letter' };
     return { file: relative };
   }
@@ -349,7 +349,7 @@ function normalizeFindingPaths(findings, repoRoot) {
   const warnings = [];
   for (const finding of findings) {
     if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
-      valid.push(finding);
+      warnings.push('Invalid finding shape: expected an object — finding rejected');
       continue;
     }
     const result = normalizeFindingPath(finding, repoRoot);
@@ -5434,6 +5434,7 @@ function checkpointShapeErrors(resolvedCheckpoints) {
     for (const field of Object.keys(fields)) {
       const arrVal = value[field];
       if (arrVal === undefined) continue;
+      if (phase === 'challenge' && field === 'eliminated' && arrVal === null) continue;
       if (!Array.isArray(arrVal)) {
         violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
         continue;
@@ -5535,9 +5536,13 @@ function beltPartitionList(list) {
   }
   return { list: splicedList, eliminated: eliminatedOut };
 }
-function stripEliminatedList(list) {
+function stripEliminatedList(list, gaps) {
   return Array.isArray(list)
-    ? list.map((f) => ((f && typeof f === 'object') ? applyInjectedProseStrip(f) : f))
+    ? list.flatMap((f) => {
+      if (f && typeof f === 'object' && !Array.isArray(f)) return [applyInjectedProseStrip(f)];
+      gaps.push('challenge.eliminated: non-object finding dropped');
+      return [];
+    })
     : [];
 }
 const METHODOLOGY_COUNT_ONLY_FIELDS = ['truncation_warnings', 'validation_warnings'];
@@ -5623,8 +5628,10 @@ async function runWith(ctx, rawArgs) {
       const methodology = out.methodology && typeof out.methodology === 'object' ? out.methodology : {};
       const channels = methodology.findings_per_channel;
       const surviving = out.findings.length;
-      const ndjson = Math.min(Math.max(0, channels?.ndjson || 0), surviving);
-      const textFallback = Math.min(Math.max(0, channels?.text_fallback || 0), surviving - ndjson);
+      const ndjsonCount = Number.isFinite(channels?.ndjson) ? channels.ndjson : 0;
+      const textFallbackCount = Number.isFinite(channels?.text_fallback) ? channels.text_fallback : 0;
+      const ndjson = Math.min(Math.max(0, ndjsonCount), surviving);
+      const textFallback = Math.min(Math.max(0, textFallbackCount), surviving - ndjson);
       out.methodology = {
         ...methodology,
         ...(channels && typeof channels === 'object' ? { findings_per_channel: {
@@ -5718,18 +5725,8 @@ async function runWith(ctx, rawArgs) {
       challengeOut.findings = findingsResult.list;
       challengeOut.unverified = unverifiedResult.list;
       const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
-      if (challengeOut.eliminated !== undefined && !Array.isArray(challengeOut.eliminated)) {
-        gaps.push('challenge-shape: eliminated must be an array; malformed value dropped');
-      }
-      let droppedCount = 0;
-      if (Array.isArray(challengeOut.eliminated)) {
-        challengeOut.eliminated = [...challengeOut.eliminated, ...newlyEliminated];
-      } else if ((challengeOut.eliminated === undefined || challengeOut.eliminated === null) && newlyEliminated.length) {
-        challengeOut.eliminated = newlyEliminated;
-      } else if (newlyEliminated.length) {
-        droppedCount = newlyEliminated.length;
-      }
-      challengeOut.eliminated = stripEliminatedList(challengeOut.eliminated);
+      const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
+      challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated], gaps);
       if (challengeOut.stats && typeof challengeOut.stats === 'object') {
         const k1 = findingsResult.eliminated.length;
         const k2 = unverifiedResult.eliminated.length;
@@ -5740,24 +5737,12 @@ async function runWith(ctx, rawArgs) {
           challengeOut.stats.skipped = challengeOut.unverified.length;
         }
         challengeOut.stats.replay_belt_eliminated = k1 + k2;
-        const priorDropped = (typeof challengeOut.stats.replay_belt_dropped === 'number'
-          && Number.isFinite(challengeOut.stats.replay_belt_dropped))
-          ? challengeOut.stats.replay_belt_dropped
-          : 0;
-        challengeOut.stats.replay_belt_dropped = priorDropped + droppedCount;
       }
       const markedCount = Array.isArray(challengeOut.eliminated)
         ? challengeOut.eliminated.filter((f) => f && typeof f === 'object' && f.replay_belt === true).length
         : 0;
       if (markedCount > 0) {
         gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
-      }
-      const dropGapCount = (challengeOut.stats && typeof challengeOut.stats === 'object'
-        && typeof challengeOut.stats.replay_belt_dropped === 'number')
-        ? challengeOut.stats.replay_belt_dropped
-        : droppedCount;
-      if (dropGapCount > 0) {
-        gaps.push(`replay-filter: ${dropGapCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter, but the malformed (non-array) eliminated bucket on this checkpoint could not record them — dropped, not delivered, not persisted`);
       }
     }
     const deliveryTier = A.delivery && A.delivery.tier;

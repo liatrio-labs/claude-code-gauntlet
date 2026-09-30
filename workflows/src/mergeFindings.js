@@ -177,7 +177,7 @@ export function normalizeFindingPaths(findings, repoRoot) {
   const warnings = [];
   for (const finding of findings) {
     if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
-      valid.push(finding);
+      warnings.push('Invalid finding shape: expected an object — finding rejected');
       continue;
     }
     const result = normalizeFindingPath(finding, repoRoot);

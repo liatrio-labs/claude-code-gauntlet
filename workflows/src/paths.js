@@ -58,7 +58,7 @@ export function repoRelativeFindingPath(repoRoot, file) {
     let relative = file;
     while (relative.startsWith('./')) relative = relative.slice(2);
     relative = normalizePathString(relative);
-    if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
+    if (relative === '' || relative === '.' || relative.startsWith('/')) return { reason: 'file path does not name a repository file' };
     if (/^[A-Za-z]:/.test(relative)) return { reason: 'file path has a leading drive letter' };
     return { file: relative };
   }

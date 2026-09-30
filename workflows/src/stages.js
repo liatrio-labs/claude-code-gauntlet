@@ -3386,11 +3386,9 @@ function checkpointDiscardGap(topLevelCheckpoints) {
 // container-only is enough to close that. discover also gets `dispatched`/`degraded` as
 // 'tolerant': both are unconditionally `.join`-ed or iterated (allActiveDimensionsDegraded,
 // the dimensions summary table), so a string there raw-TypeErrors the same way. Element
-// tolerance is otherwise reserved for challenge.unverified, whose null-element tolerance is
-// a pinned, correct, fully-delivering degradation (stages_delivery.test.js:514-542: the
-// belt's `{raw: el}` positions and dimensionsSummaryTable are all null-safe for that one
-// field). challenge.eliminated also tolerates elements, but its container must be
-// an array before path normalization or persistence can safely use it.
+// tolerance on finding lists is reserved for challenge.unverified and
+// challenge.eliminated. Replay path normalization drops malformed entries from them
+// before they reach the belt or persisted artifacts. A null eliminated container is absent.
 const CHECKPOINT_ARRAY_STRICT = 'strict';
 const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
 // Exported for checkpoint_shape_gate.test.js, which derives the strict rows from it so a
@@ -3524,6 +3522,7 @@ export function checkpointShapeErrors(resolvedCheckpoints) {
     for (const field of Object.keys(fields)) {
       const arrVal = value[field];
       if (arrVal === undefined) continue;
+      if (phase === 'challenge' && field === 'eliminated' && arrVal === null) continue;
       if (!Array.isArray(arrVal)) {
         violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
         continue;
@@ -3756,10 +3755,13 @@ function beltPartitionList(list) {
 }
 
 // A fresh challenge can omit eliminated; replayed containers are shape-gated.
-// Preserve non-object elements while stripping injected prose from finding objects.
-function stripEliminatedList(list) {
+function stripEliminatedList(list, gaps) {
   return Array.isArray(list)
-    ? list.map((f) => ((f && typeof f === 'object') ? applyInjectedProseStrip(f) : f))
+    ? list.flatMap((f) => {
+      if (f && typeof f === 'object' && !Array.isArray(f)) return [applyInjectedProseStrip(f)];
+      gaps.push('challenge.eliminated: non-object finding dropped');
+      return [];
+    })
     : [];
 }
 
@@ -3946,8 +3948,11 @@ export async function runWith(ctx, rawArgs) {
       const methodology = out.methodology && typeof out.methodology === 'object' ? out.methodology : {};
       const channels = methodology.findings_per_channel;
       const surviving = out.findings.length;
-      const ndjson = Math.min(Math.max(0, channels?.ndjson || 0), surviving);
-      const textFallback = Math.min(Math.max(0, channels?.text_fallback || 0), surviving - ndjson);
+      // Attribution is approximate because replayed findings carry no channel.
+      const ndjsonCount = Number.isFinite(channels?.ndjson) ? channels.ndjson : 0;
+      const textFallbackCount = Number.isFinite(channels?.text_fallback) ? channels.text_fallback : 0;
+      const ndjson = Math.min(Math.max(0, ndjsonCount), surviving);
+      const textFallback = Math.min(Math.max(0, textFallbackCount), surviving - ndjson);
       out.methodology = {
         ...methodology,
         ...(channels && typeof channels === 'object' ? { findings_per_channel: {
@@ -4150,15 +4155,8 @@ export async function runWith(ctx, rawArgs) {
     // Position-preserving partition, single walk per list (findings, then unverified):
     // beltPartitionList normalizes and re-scans only the OBJECT elements as one ordered
     // list (heuristic 10's dedup state makes scan order load-bearing), then re-splices
-    // survivors back into their original relative position; a non-object element (null,
-    // a primitive) keeps its exact position, never touched (stages_delivery.test.js:
-    // 514-542 is the oracle). beltPartitionList ALSO tolerates a non-array findings/
-    // unverified (returned untouched, `eliminated` empty), but that tolerance can no
-    // longer be reached from a REPLAYED checkpoint: the pre-dispatch checkpoint-shape gate
-    // (checkpointShapeErrors + makeCheckpointShapeRejectEnvelope, above runWith's try
-    // block) already refuses a non-array phases.challenge.findings/.unverified before any
-    // phase runs. It stays live only for a non-replay caller of beltPartitionList directly
-    // -- a fresh challenge result can still have a malformed eliminated field.
+    // survivors back into their original relative position. The replay path normalizer
+    // drops non-object entries before this scan.
     // See beltPartitionList's own doc comment for the splice mechanics.
     //
     // .eliminated: newly-belt-eliminated entries APPEND first, then the WHOLE resulting
@@ -4168,8 +4166,7 @@ export async function runWith(ctx, rawArgs) {
     // its kept path does), and a finding can be eliminated by its description while
     // ALSO carrying an unrelated payload in one of those three fields; stripping the
     // whole array only after the append is what keeps that second payload out of
-    // checkpoint-all.json. A malformed non-array eliminated value is discarded with
-    // a gap before persistence; an append failure also discloses lost eliminations.
+    // checkpoint-all.json.
     //
     // Rewrites challengeOut's OWN findings/unverified/eliminated/stats IN PLACE (not
     // threaded through locals): every existing downstream reader (selectDelivery/
@@ -4211,20 +4208,8 @@ export async function runWith(ctx, rawArgs) {
       challengeOut.unverified = unverifiedResult.list;
       const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
 
-      if (challengeOut.eliminated !== undefined && !Array.isArray(challengeOut.eliminated)) {
-        gaps.push('challenge-shape: eliminated must be an array; malformed value dropped');
-      }
-      let droppedCount = 0;
-      if (Array.isArray(challengeOut.eliminated)) {
-        challengeOut.eliminated = [...challengeOut.eliminated, ...newlyEliminated];
-      } else if ((challengeOut.eliminated === undefined || challengeOut.eliminated === null) && newlyEliminated.length) {
-        challengeOut.eliminated = newlyEliminated;
-      } else if (newlyEliminated.length) {
-        // A malformed eliminated bucket cannot receive new eliminations. The
-        // loss is counted and disclosed below.
-        droppedCount = newlyEliminated.length;
-      }
-      challengeOut.eliminated = stripEliminatedList(challengeOut.eliminated);
+      const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
+      challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated], gaps);
 
       // stats: final_count/skipped are the two numeric keys whose value IS the length
       // of an array this belt just rewrote (challengeOut.findings / .unverified), so
@@ -4244,9 +4229,7 @@ export async function runWith(ctx, rawArgs) {
       // envelope both read challengeOut.stats BY REFERENCE (this same object, further
       // down in this function), so this mutation is visible to both for free.
       // replay_belt_eliminated is this CALL's own total (not a cross-resume running
-      // total -- the gap line below is the resume-safe signal for that, and
-      // replay_belt_dropped just below is its cross-resume counterpart for the drop
-      // path); it is always stamped, even at 0, so a reader never has to distinguish
+      // total -- the gap line below is the resume-safe signal for that). Stamp zero so a reader never has to distinguish
       // "zero eliminations" from "key absent".
       if (challengeOut.stats && typeof challengeOut.stats === 'object') {
         const k1 = findingsResult.eliminated.length;
@@ -4258,20 +4241,6 @@ export async function runWith(ctx, rawArgs) {
           challengeOut.stats.skipped = challengeOut.unverified.length;
         }
         challengeOut.stats.replay_belt_eliminated = k1 + k2;
-
-        // Durable drop-disclosure counter: the sibling accumulation to markedCount's
-        // DERIVATION below, for the case markedCount cannot cover -- a malformed
-        // (truthy, non-array) .eliminated means the drop is recorded NOWHERE in the
-        // checkpoint, so there is nothing to re-derive from on a later resume. Carrying
-        // a running total here (only ever increased) is what lets a resume-of-a-resume
-        // still disclose a drop this call's own droppedCount (0) would otherwise hide.
-        // Only accumulated when stats is a plain object; when it is not, the per-call
-        // gap line below is the only disclosure there is for this run.
-        const priorDropped = (typeof challengeOut.stats.replay_belt_dropped === 'number'
-          && Number.isFinite(challengeOut.stats.replay_belt_dropped))
-          ? challengeOut.stats.replay_belt_dropped
-          : 0;
-        challengeOut.stats.replay_belt_dropped = priorDropped + droppedCount;
       }
 
       // Disclosure -- idempotent BY DERIVATION, not by counting this call's own
@@ -4290,19 +4259,6 @@ export async function runWith(ctx, rawArgs) {
         gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
       }
 
-      // Drop-gap count: the DURABLE accumulated value (stats.replay_belt_dropped) when
-      // challengeOut.stats is a plain object, so the disclosure survives a
-      // resume-of-a-resume where this call's own droppedCount is 0 because the belt
-      // already shrank the arrays on a prior pass and there was never an array to leave
-      // a residue in; otherwise this call's own droppedCount is the only disclosure
-      // there is.
-      const dropGapCount = (challengeOut.stats && typeof challengeOut.stats === 'object'
-        && typeof challengeOut.stats.replay_belt_dropped === 'number')
-        ? challengeOut.stats.replay_belt_dropped
-        : droppedCount;
-      if (dropGapCount > 0) {
-        gaps.push(`replay-filter: ${dropGapCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter, but the malformed (non-array) eliminated bucket on this checkpoint could not record them — dropped, not delivered, not persisted`);
-      }
     }
 
     // Deterministic delivery selection: the challenge-survivors filtered by the user-chosen

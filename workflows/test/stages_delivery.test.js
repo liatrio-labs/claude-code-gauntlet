@@ -781,14 +781,9 @@ test('runWith refuses a replayed non-array eliminated field before persistence',
   assert.equal(persisted, null);
 });
 
-test('runWith replay belt: a null element alongside a real finding in the SAME list is passed through untouched, the real one still stripped (#213)', async () => {
-  // Bugbot, round-2 review: property access inside stripInjectedProseFields (`field in
-  // kept`) throws on a null ARRAY ELEMENT -- a shape this run has never validated even
-  // though the surrounding array itself is real. Uses `unverified` (not `findings`):
-  // a null element in `findings` hits an UNRELATED, pre-existing null-intolerance in
-  // selectDelivery/rankFindings (reads `finding.severity` unconditionally) that predates
-  // this issue and is out of this fix's scope -- `unverified` never reaches that code
-  // path, so it isolates the belt's OWN null-tolerance from that separate gap.
+test('runWith replay belt: a null unverified element is dropped with a gap while the real one is stripped', async () => {
+  // Unverified accepts malformed elements at the shape gate, so normalization must
+  // remove them before the belt and persistence.
   const checkpoint = {
     findings: [makeFinding('M1', { severity: 'critical', confidence: 95, report_tag: 'main', report_destination: 'main' })],
     unverified: [
@@ -806,9 +801,33 @@ test('runWith replay belt: a null element alongside a real finding in the SAME l
   const out = await runWith(ctx, args);
   assert.equal(out.ok, true, 'a null element must not turn into a run failure');
   const persistedUnverified = persisted.checkpoints.phases.challenge.unverified;
-  assert.equal(persistedUnverified[0], null, 'the null element passes through untouched');
-  assert.equal(persistedUnverified[1].claude_md_rule, undefined, 'the real element next to it is still stripped');
-  assert.equal(persistedUnverified[1].claude_md_rule_removed_by, 'injection');
+  assert.equal(persistedUnverified.length, 1);
+  assert.equal(persistedUnverified[0].claude_md_rule, undefined);
+  assert.equal(persistedUnverified[0].claude_md_rule_removed_by, 'injection');
+  assert.ok(persisted.checkpoints.phases.challenge.gaps.some((gap) => gap.includes('finding rejected')));
+});
+
+test('runWith accepts a replayed null eliminated bucket as empty', async () => {
+  const args = validArgs({ checkpoints: { challenge: {
+    findings: [makeFinding('M1')], unverified: [], eliminated: null, gaps: [], stats: {},
+  } } });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(persisted.checkpoints.phases.challenge.eliminated, []);
+});
+
+test('runWith drops a replayed eliminated primitive host path with a gap', async () => {
+  const absolute = '/private/tmp/host-secret/x.js';
+  const args = validArgs({ checkpoints: { challenge: {
+    findings: [makeFinding('M1')], unverified: [], eliminated: [absolute], gaps: [], stats: {},
+  } } });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(persisted.checkpoints.phases.challenge.eliminated, []);
+  assert.ok(persisted.checkpoints.phases.challenge.gaps.some((gap) => gap.includes('finding rejected')));
+  assert.ok(!JSON.stringify(persisted).includes(absolute));
 });
 
 // --- runWith: #253 replay belt v2 --------------------------------------------

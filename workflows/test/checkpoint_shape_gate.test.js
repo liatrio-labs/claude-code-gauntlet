@@ -294,6 +294,14 @@ test('checkpointShapeErrors: challenge.eliminated must be an array', () => {
   assert.ok(checkpointShapeErrors(cp).some((e) => e.includes('challenge.eliminated must be an array')));
 });
 
+test('checkpointShapeErrors: challenge.eliminated null is accepted as absent', () => {
+  const cp = {
+    ...wellFormedCheckpoints(),
+    challenge: { ...wellFormedCheckpoints().challenge, eliminated: null },
+  };
+  assert.deepEqual(checkpointShapeErrors(cp), []);
+});
+
 test('checkpointShapeErrors: unknown checkpoint keys are inert', () => {
   const cp = { ...wellFormedCheckpoints(), someFuturePhase: 'garbage', notAPhase: 123 };
   assert.deepEqual(checkpointShapeErrors(cp), []);
