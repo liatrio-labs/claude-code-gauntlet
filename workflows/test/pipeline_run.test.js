@@ -490,7 +490,10 @@ test('runWith normalizes fresh discovery paths before they reach artifacts', asy
   assert.equal(JSON.stringify(persisted).includes('/outside/consumer.js'), false);
   assert.equal(JSON.stringify(persisted).includes(`${args.repoRoot}/src/consumer.js`), false);
   assert.ok(out.gaps.includes('[ABSOLUTE_DISCOVERY] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped'));
-  assert.ok(out.gaps.some((gap) => gap.includes('[ABSOLUTE_DISCOVERY]') && gap.includes('rewritten')));
+  assert.ok(!out.gaps.some((gap) => gap.includes('rewritten')));
+  assert.equal(out.stats.pathNormalization.discover.path_rewrites, 3);
+  assert.ok(persisted.report.includes('discover paths: path_rewrites=3'));
+  assert.ok(!persisted.report.includes('replay_path_rejected='));
   assert.ok(!JSON.stringify(persisted).includes(`${args.repoRoot}/src/module.js`));
   assert.ok(!JSON.stringify(out).includes(`${args.repoRoot}/src/module.js`));
 });
@@ -545,6 +548,12 @@ for (const [phase, field] of CHECKPOINT_FINDING_LISTS) {
       ['src/replayed.js', ['src/replayed.js:12-20', 'app/[id]/page.tsx:9']],
     ]);
     assert.deepEqual(failure.checkpoints.phases[phase][field][0].affected_consumers, ['src/replayed.js:L3-L9']);
+    assert.equal(failure.checkpoints.phases[phase].stats.replay_path_rejected, 2);
+    assert.equal(out.stats.pathNormalization[phase].replay_path_rejected, 2);
+    assert.ok(persisted.report.includes('replay_path_rejected=2'));
+    assert.ok(out.gaps.some((gap) => gap.includes('REPLAY_OUTSIDE') && gap.includes('finding rejected')));
+    assert.ok(out.gaps.some((gap) => gap.includes('REPLAY_INVISIBLE_LEAD') && gap.includes('finding rejected')));
+    assert.ok(!out.gaps.some((gap) => gap.includes('rewritten')));
     const pathWarnings = phase === 'merge'
       ? failure.checkpoints.phases.merge.methodology.validation_warnings : out.gaps;
     assert.ok(pathWarnings.includes('[REPLAY_UNDER] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped'));
@@ -559,7 +568,7 @@ for (const [phase, field] of CHECKPOINT_FINDING_LISTS) {
       assert.deepEqual(out.stats.merge.findings_per_channel, {
         ndjson: 1, text_fallback: 0,
       });
-      assert.equal(out.stats.merge.validation_warnings, 5);
+      assert.equal(out.stats.merge.validation_warnings, 4);
       assert.ok(persisted.report.includes('merge: per-channel: ndjson=1, text_fallback=0'));
     }
   });
@@ -649,8 +658,8 @@ test('structural normalization preserves free-text host paths, URLs and markdown
 });
 
 for (const [label, methodology, file, expected] of [
-  ['string with path warnings', '/repo/raw-methodology', '/repo/src/a.js', { validation_warnings: ["[KEEP] File path rewritten to 'src/a.js'"] }],
-  ['array with path warnings', ['/repo/raw-methodology'], '/repo/src/a.js', { validation_warnings: ["[KEEP] File path rewritten to 'src/a.js'"] }],
+  ['string with path warnings', '/repo/raw-methodology', '/repo/src/a.js', {}],
+  ['array with path warnings', ['/repo/raw-methodology'], '/repo/src/a.js', {}],
   ['null without path warnings', null, 'src/a.js', {}],
 ]) {
   test(`replayed merge replaces non-object methodology: ${label}`, async () => {
@@ -698,6 +707,44 @@ test('replayed merge channel counts are finite without rejected findings', async
   assert.equal(out.stats.merge.validation_warnings, 0);
   assert.ok(persisted.report.includes('merge: per-channel: ndjson=0, text_fallback=0'));
 });
+
+test('replayed zero path rejection counts are omitted from methodology', async () => {
+  const args = validArgs({ checkpoints: { filter: {
+    filtered: [makeFinding('KEEP')], eliminated: [], gaps: [],
+    stats: { replay_path_rejected: 0 },
+  } } });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.ok(!persisted.report.includes('replay_path_rejected='));
+  assert.deepEqual(out.stats.pathNormalization, {});
+});
+
+for (const [label, channels, expected] of [
+  ['absent', undefined, undefined],
+  ['null', null, null],
+  ['non-object', 'legacy', 'legacy'],
+  ['missing counts', {}, { ndjson: 0, text_fallback: 0 }],
+  ['missing ndjson', { text_fallback: 7 }, { ndjson: 0, text_fallback: 2 }],
+  ['missing text fallback', { ndjson: 1 }, { ndjson: 1, text_fallback: 0 }],
+  ['negative counts', { ndjson: -1, text_fallback: -2 }, { ndjson: 0, text_fallback: 0 }],
+  ['both channels exceed survivors', { ndjson: 7, text_fallback: 7 }, { ndjson: 2, text_fallback: 0 }],
+  ['text fallback exceeds remaining', { ndjson: 1, text_fallback: 7 }, { ndjson: 1, text_fallback: 1 }],
+]) {
+  test(`replayed merge clamps channel counts: ${label}`, async () => {
+    const args = validArgs({ checkpoints: { merge: {
+      findings: [makeFinding('KEEP1'), makeFinding('KEEP2'), makeFinding('DROP', { file: '/outside/x.js' })],
+      methodology: { findings_per_channel: channels }, gaps: [],
+    } } });
+    const out = await runWith(makeCtx(args, { agentThrowLabel: 'artifact-writer' }), args);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.deepEqual(out.stats.merge.findings_per_channel, expected);
+    assert.equal(out.checkpoints.phases.merge.stats.replay_path_rejected, 1);
+    const warning = '[DROP] Invalid file path: absolute file path is outside repoRoot - finding rejected';
+    assert.ok(out.gaps.includes(warning));
+    assert.deepEqual(out.checkpoints.phases.merge.methodology.validation_warnings, [warning]);
+  });
+}
 
 // --- Replayed empty-report recovery -----------------------------------------
 
@@ -784,7 +831,8 @@ test('replayed challenge finding paths are normalized or rejected before deliver
     ['REPLAY_UNDER', 'scripts/gauntlet/proc.py'],
   ]);
   assert.deepEqual(persisted.postReview.map((item) => item.id), ['REPLAY_UNDER']);
-  assert.ok(out.gaps.some((gap) => gap.includes('[REPLAY_UNDER]') && gap.includes('rewritten')));
+  assert.ok(!out.gaps.some((gap) => gap.includes('rewritten')));
+  assert.equal(out.stats.pathNormalization.challenge.path_rewrites, 1);
   assert.ok(out.gaps.some((gap) => gap.includes('[REPLAY_OUTSIDE]') && gap.includes('outside repoRoot') && gap.includes('rejected')));
 });
 
@@ -807,7 +855,8 @@ test('replayed filter findings are normalized before challenge dispatch', async 
   assert.deepEqual(persisted.findings.map((item) => [item.id, item.file]), [
     ['FILTER_UNDER', 'scripts/gauntlet/proc.py'],
   ]);
-  assert.ok(out.gaps.some((gap) => gap.includes('[FILTER_UNDER]') && gap.includes('rewritten')));
+  assert.ok(!out.gaps.some((gap) => gap.includes('rewritten')));
+  assert.equal(out.stats.pathNormalization.filter.path_rewrites, 1);
   assert.ok(out.gaps.some((gap) => gap.includes('[FILTER_OUTSIDE]') && gap.includes('outside repoRoot') && gap.includes('rejected')));
 });
 

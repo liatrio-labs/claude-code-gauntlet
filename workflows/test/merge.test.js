@@ -68,8 +68,8 @@ test('normalizeFindingPaths: absolute finding paths are rewritten under repoRoot
   assert.deepEqual(out.valid.map((item) => [item.id, item.file]), [
     ['UNDER_ROOT', 'scripts/gauntlet/proc.py'],
   ]);
-  assert.ok(out.warnings.some((warning) =>
-    warning.includes('[UNDER_ROOT]') && warning.includes('rewritten')));
+  assert.equal(out.path_rewrites, 1);
+  assert.ok(!out.warnings.some((warning) => warning.includes('rewritten')));
   assert.ok(out.warnings.some((warning) =>
     warning.includes('[OUTSIDE_ROOT]') && warning.includes('outside repoRoot') && warning.includes('rejected')));
 });
@@ -88,7 +88,8 @@ test('normalizeFindingPaths: cross_file_refs normalize paths, preserve line suff
     'app/[id]/page.tsx:12', 'src/a:b.js:12-20',
     'src/index.js', 'src/index.js:4', 'app/models/user.rb:5',
   ]);
-  assert.deepEqual(out.warnings.slice(1), [
+  assert.equal(out.path_rewrites, 5);
+  assert.deepEqual(out.warnings, [
     '[REFS] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped',
     '[REFS] Invalid cross_file_refs path: file path contains a .. segment - reference dropped',
     '[REFS] Invalid cross_file_refs path: file must be a non-empty string - reference dropped',
@@ -97,6 +98,7 @@ test('normalizeFindingPaths: cross_file_refs normalize paths, preserve line suff
   const twice = normalizeFindingPaths(out.valid, '/app');
   assert.deepEqual(twice.valid, snapshot);
   assert.deepEqual(twice.warnings, []);
+  assert.equal(twice.path_rewrites, 0);
   const merged = mergeStructured({ 'bug-detector': twice.valid });
   assert.deepEqual(merged.findings[0].cross_file_refs, snapshot[0].cross_file_refs);
   assert.deepEqual(merged.methodology.validation_warnings, []);
@@ -131,6 +133,7 @@ test('normalizeFindingPaths: affected_consumers drops outside paths and keeps no
   const twice = normalizeFindingPaths(out.valid, '/repo');
   assert.deepEqual(twice.valid[0].affected_consumers, ['src/consumer.js:L3-L9', 'src/other.js']);
   assert.deepEqual(twice.warnings, []);
+  assert.equal(twice.path_rewrites, 0);
 });
 
 test('normalizeFindingPaths: affected_consumers remains an empty array when every entry is rejected', () => {

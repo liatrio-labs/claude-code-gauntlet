@@ -180,7 +180,14 @@ function pathUnderRoot(root, path) {
 }
 function repoRelativeFindingPath(repoRoot, file) {
   if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
-  const normalized = normalizePathString(file);
+  let normalized = file;
+  for (let remaining = file.length; remaining > 0; remaining -= 1) {
+    const slashes = normalizePathString(normalized);
+    const tail = slashes.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
+    const next = `${normalizePathString(tail ? slashes.slice(0, -tail.length) : slashes)}${tail}`;
+    if (next === normalized) break;
+    normalized = next;
+  }
   const suffix = normalized.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
   const path = suffix ? normalized.slice(0, -suffix.length) : normalized;
   if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
@@ -193,21 +200,22 @@ function repoRelativeFindingPath(repoRoot, file) {
     if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
     const absolute = normalizePathString(path);
     if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
-    if (!pathUnderRoot(root, absolute)) return { reason: 'absolute file path is outside repoRoot' };
+    const prefix = root === '/' ? '/' : `${root}/`;
+    if (!absolute.startsWith(prefix)) return { reason: 'absolute file path is outside repoRoot' };
     relative = absolute.slice(root === '/' ? 1 : root.length + 1);
   }
   if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
   if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
-  if (hasBackslash(relative)) return { reason: 'file path contains a backslash' };
+  if (relative.startsWith('\\')) return { reason: 'file path starts with a backslash' };
   if (relative.split('/')[0] === '~') return { reason: 'file path starts with a home anchor' };
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:\//.test(relative) || /^[A-Za-z]:(\/|$)/.test(relative)) {
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\//.test(relative) || /^[A-Za-z]:([/\\]|$)/.test(relative)) {
     return { reason: 'file path starts with a URI scheme or drive letter' };
   }
   if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(file)
-    || file.split('/').some((segment) => /^[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
+    || file.split('/').some((segment) => /^[\p{Cf}\p{Mn}\p{Me}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
     return { reason: 'file path contains a disallowed character' };
   }
-  if (file !== file.trim() || relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
+  if (relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
   return { file: `${relative}${suffix}` };
 }
 // --- mergeFindings.js ---
@@ -354,16 +362,14 @@ function normalizeFindingPath(finding, repoRoot) {
     if (typeof finding.consolidation_key === 'string' && finding.consolidation_key.startsWith(`${original}:`)) {
       finding.consolidation_key = `${result.file}${finding.consolidation_key.slice(original.length)}`;
     }
-    return {
-      valid: true,
-      warning: `[${finding.id ?? '<no id>'}] File path rewritten to '${result.file}'`,
-    };
+    return { valid: true, rewritten: true };
   }
   return { valid: true, warning: null };
 }
 function normalizeFindingPaths(findings, repoRoot) {
   const valid = [];
   const warnings = [];
+  let pathRewrites = 0;
   for (const finding of findings) {
     if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
       warnings.push('Invalid finding shape: expected an object - finding rejected');
@@ -372,6 +378,7 @@ function normalizeFindingPaths(findings, repoRoot) {
     const result = normalizeFindingPath(finding, repoRoot);
     if (result.warning) warnings.push(result.warning);
     if (!result.valid) continue;
+    if (result.rewritten) pathRewrites += 1;
     for (const field of FINDING_PATH_ARRAY_FIELDS) {
       if (!(field in finding)) continue;
       if (!Array.isArray(finding[field])) {
@@ -386,13 +393,14 @@ function normalizeFindingPaths(findings, repoRoot) {
           warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped'));
         } else {
           refs.push(normalized.file);
+          if (normalized.file !== ref) pathRewrites += 1;
         }
       }
       finding[field] = refs;
     }
     valid.push(finding);
   }
-  return { valid, warnings };
+  return { valid, warnings, path_rewrites: pathRewrites };
 }
 function validateFindings(findings) {
   const valid = [];
@@ -2269,7 +2277,10 @@ function validateArgs(args) {
     if (field === 'headShaShort' && !NONCE_RE.test(v)) {
       errors.push(`headShaShort must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv)`);
     }
-    if ((field === 'outputDir' || field === 'repoRoot' || field === 'pluginRoot') && !v.startsWith('/')) {
+    if (field === 'repoRoot' && normalizeAbsoluteRoot(v) === null) {
+      errors.push('repoRoot must be an absolute path without .. segments or backslashes');
+    }
+    if ((field === 'outputDir' || field === 'pluginRoot') && !v.startsWith('/')) {
       errors.push(`${field} must be an absolute path (POSIX /-prefix)`);
     }
   }
@@ -3536,7 +3547,7 @@ function receiptLines(input) {
 }
 function countSummary(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'none';
-  const entries = Object.entries(value).map(([key, item]) => {
+  const entries = Object.entries(value).filter(([key, item]) => key !== 'replay_path_rejected' || item > 0).map(([key, item]) => {
     const count = Array.isArray(item) ? item.length : item;
     return `${key}=${tableCell(count)}`;
   });
@@ -3603,9 +3614,11 @@ function methodologyRows(input, rawFindings) {
     ? `ndjson=${merge.findings_per_channel.ndjson ?? 0}, text_fallback=${merge.findings_per_channel.text_fallback ?? 0}`
     : 'ndjson=0, text_fallback=0';
   const mergeCounts = `per-channel: ${channels}; duplicates resolved=${merge.duplicates_resolved ?? 0}; dropped-no-id=${merge.dropped_no_id ?? 0}; truncation warnings=${merge.truncation_warnings ?? 0}; validation warnings=${merge.validation_warnings ?? 0}`;
+  const pathCounts = Object.entries(stats.pathNormalization || {})
+    .map(([phase, counts]) => `; ${tableCell(phase)} paths: ${countSummary(counts)}`).join('');
   rows.push([
     'Findings pipeline',
-    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}`,
+    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}${pathCounts}`,
   ]);
   const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;
   rows.push(['Gaps', String(gapCount)]);
@@ -5625,14 +5638,25 @@ async function runWith(ctx, rawArgs) {
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
   let phaseAttempting = null;
-  const normalizePhaseFindings = (name, out) => {
+  const normalizePhaseFindings = (name, out, replayed) => {
     if (!out || typeof out !== 'object') return;
     const warnings = [];
+    let rejected = 0;
+    let pathRewrites = 0;
     for (const [, field] of checkpointFindingListsForPhase(name)) {
       if (!Array.isArray(out[field])) continue;
       const normalized = normalizeFindingPaths(out[field], A.repoRoot);
+      rejected += out[field].length - normalized.valid.length;
+      pathRewrites += normalized.path_rewrites;
       out[field] = normalized.valid;
       warnings.push(...normalized.warnings);
+    }
+    if (pathRewrites || (replayed && rejected)) {
+      const stats = isPlainCheckpointObject(out.stats) ? out.stats : {};
+      out.stats = { ...stats,
+        ...(pathRewrites ? { path_rewrites: (stats.path_rewrites || 0) + pathRewrites } : {}),
+        ...(replayed && rejected ? { replay_path_rejected: rejected } : {}),
+      };
     }
     if (name === 'merge') {
       const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
@@ -5654,7 +5678,6 @@ async function runWith(ctx, rawArgs) {
           ...warnings,
         ] };
       }
-      return;
     }
     if (!warnings.length) return;
     out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
@@ -5663,7 +5686,7 @@ async function runWith(ctx, rawArgs) {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;
     const out = replayed ? checkpoints[name] : await thunk();
-    if (replayed || name === 'discover') normalizePhaseFindings(name, out);
+    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed);
     phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -5704,6 +5727,7 @@ async function runWith(ctx, rawArgs) {
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
       base_branch: A.baseBranch, head_sha: A.headShaShort,
     }));
+    gaps.push(...(mergeOut.gaps || []));
     limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch);
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
       findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
@@ -5761,12 +5785,21 @@ async function runWith(ctx, rawArgs) {
     const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
       && (A.mode !== 'headless'
         || headlessCommentsEnabled);
+    const pathNormalization = {};
+    for (const [phase, output] of Object.entries(phaseOutputs)) {
+      const counts = {};
+      for (const field of ['path_rewrites', 'replay_path_rejected']) {
+        if (output.stats?.[field] > 0) counts[field] = output.stats[field];
+      }
+      if (Object.keys(counts).length) pathNormalization[phase] = counts;
+    }
     const reportInput = {
       summary: summaryOut.summary,
       ...(includeDelivered ? { delivered: postReview } : {}),
       findings: challengeOut.findings,
       unverified: challengeOut.unverified,
       stats: {
+        pathNormalization,
         discovered: (discoverOut.findings || []).length,
         validate: validateOut.stats,
         filter: filterOut.stats,
@@ -5812,6 +5845,7 @@ async function runWith(ctx, rawArgs) {
       ok: true,
       phaseReached,
       stats: {
+        pathNormalization,
         discovered: (discoverOut.findings || []).length,
         merged: (mergeOut.findings || []).length,
         merge: compactMethodology(mergeOut.methodology),

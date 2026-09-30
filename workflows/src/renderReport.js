@@ -965,7 +965,7 @@ function receiptLines(input) {
 
 function countSummary(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'none';
-  const entries = Object.entries(value).map(([key, item]) => {
+  const entries = Object.entries(value).filter(([key, item]) => key !== 'replay_path_rejected' || item > 0).map(([key, item]) => {
     const count = Array.isArray(item) ? item.length : item;
     return `${key}=${tableCell(count)}`;
   });
@@ -1042,9 +1042,11 @@ function methodologyRows(input, rawFindings) {
     ? `ndjson=${merge.findings_per_channel.ndjson ?? 0}, text_fallback=${merge.findings_per_channel.text_fallback ?? 0}`
     : 'ndjson=0, text_fallback=0';
   const mergeCounts = `per-channel: ${channels}; duplicates resolved=${merge.duplicates_resolved ?? 0}; dropped-no-id=${merge.dropped_no_id ?? 0}; truncation warnings=${merge.truncation_warnings ?? 0}; validation warnings=${merge.validation_warnings ?? 0}`;
+  const pathCounts = Object.entries(stats.pathNormalization || {})
+    .map(([phase, counts]) => `; ${tableCell(phase)} paths: ${countSummary(counts)}`).join('');
   rows.push([
     'Findings pipeline',
-    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}`,
+    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}${pathCounts}`,
   ]);
 
   const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;

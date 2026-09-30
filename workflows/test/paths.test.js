@@ -87,16 +87,21 @@ const REPO_RELATIVE_CASES = [
   { name: 'home anchor after dot slash is rejected', file: './~/x.md', expected: { reason: 'file path starts with a home anchor' } },
   { name: 'interior tilde segment is accepted', file: 'docs/~/x.md', expected: { file: 'docs/~/x.md' } },
   { name: 'Unicode filename is accepted', file: 'src/café.js', expected: { file: 'src/café.js' } },
-  ...['docs/می‌خواهم.md', 'img/❤️.png', 'a/👨‍💻.md'].map((file) => ({
+  ...['docs/می‌خواهم.md', 'img/❤️.png', 'a/👨‍💻.md', 'a/e\u0301.md'].map((file) => ({
     name: `interior shaping characters are accepted in ${file}`, file, expected: { file },
   })),
-  ...[0x2800, 0x115F, 0x1160, 0x3164, 0xFFA0, 0x200B, 0x034F, 0xFE0F].flatMap((code) => {
+  ...[0x2800, 0x115F, 0x1160, 0x3164, 0xFFA0, 0x200B, 0x034F, 0xFE0F, 0x0301, 0x20DD].flatMap((code) => {
     const invisible = String.fromCodePoint(code);
     return [
       { name: `segment-leading U+${code.toString(16)} is rejected`, file: `a/${invisible}b`, expected: { reason: 'file path contains a disallowed character' } },
       { name: `interior U+${code.toString(16)} is accepted`, file: `a/b${invisible}c`, expected: { file: `a/b${invisible}c` } },
     ];
   }),
+  ...[0x0301, 0x20DD].map((code) => ({
+    name: `combining U+${code.toString(16)} host-like prefix is rejected`,
+    file: `${String.fromCodePoint(code)}/Users/lee/x.js`,
+    expected: { reason: 'file path contains a disallowed character' },
+  })),
   { name: 'Braille blank host-like prefix is rejected', file: '\u2800/Users/lee/x', expected: { reason: 'file path contains a disallowed character' } },
   ...[0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0x2028, 0x2029].flatMap((code) => {
     const control = String.fromCodePoint(code);
@@ -113,7 +118,7 @@ const REPO_RELATIVE_CASES = [
   { name: 'absolute path outside root is rejected', file: '/private/tmp/wt-410-evil/proc.py', expected: { reason: 'absolute file path is outside repoRoot' } },
   { name: 'relative traversal is rejected', file: '../proc.py', expected: { reason: 'file path contains a .. segment' } },
   { name: 'absolute traversal is rejected', file: `${REPO_ROOT}/../proc.py`, expected: { reason: 'file path contains a .. segment' } },
-  { name: 'backslash path is rejected', file: 'scripts\\proc.py', expected: { reason: 'file path contains a backslash' } },
+  { name: 'interior backslash path is accepted', file: 'scripts\\proc.py', expected: { file: 'scripts\\proc.py' } },
   { name: 'invalid root is rejected for an absolute file', root: 'repo', file: '/repo/proc.py', expected: { reason: 'repoRoot must be an absolute path without .. segments or backslashes' } },
   { name: 'empty file is rejected', file: '', expected: { reason: 'file must be a non-empty string' } },
   { name: 'non-string file is rejected', file: null, expected: { reason: 'file must be a non-empty string' } },
@@ -152,7 +157,12 @@ const REPO_RELATIVE_CASES = [
   { name: 'bidi prefix is rejected', file: '\u202E/x', expected: { reason: 'file path contains a disallowed character' } },
   { name: 'line-separator prefix is rejected', file: '\u2028src/a.js', expected: { reason: 'file path contains a disallowed character' } },
   { name: 'paragraph-separator prefix is rejected', file: '\u2029/x', expected: { reason: 'file path contains a disallowed character' } },
-  { name: 'backslash is rejected', file: 'a\\b', expected: { reason: 'file path contains a backslash' } },
+  { name: 'interior backslash is accepted', file: 'a\\b', expected: { file: 'a\\b' } },
+  { name: 'escaped POSIX unit name is accepted', file: String.raw`units/foo\x2dbar.service`, expected: { file: String.raw`units/foo\x2dbar.service` } },
+  { name: 'absolute interior backslash is accepted', file: `${REPO_ROOT}/units/foo\\x2dbar.service`, expected: { file: String.raw`units/foo\x2dbar.service` } },
+  { name: 'UNC backslash is rejected', file: String.raw`\\host\share\x`, expected: { reason: 'file path starts with a backslash' } },
+  { name: 'rooted Windows backslash is rejected', file: String.raw`\root\x`, expected: { reason: 'file path starts with a backslash' } },
+  { name: 'Windows drive backslash is rejected', file: String.raw`C:\root\x`, expected: { reason: 'file path starts with a URI scheme or drive letter' } },
   { name: 'traversal is rejected', file: '../x', expected: { reason: 'file path contains a .. segment' } },
 ];
 for (const c of REPO_RELATIVE_CASES) {
@@ -162,7 +172,7 @@ for (const c of REPO_RELATIVE_CASES) {
 }
 
 test('repoRelativeFindingPath is idempotent over every table row', () => {
-  for (const c of REPO_RELATIVE_CASES) {
+  for (const c of [...REPO_RELATIVE_CASES, { file: 'dir/:1/:2' }, { file: 'dir/:1/:2/:3/:4' }]) {
     const root = c.root ?? REPO_ROOT;
     const once = repoRelativeFindingPath(root, c.file);
     assert.deepEqual(repoRelativeFindingPath(root, once.file ?? c.file), once, `idempotence: ${c.file}`);

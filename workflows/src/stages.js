@@ -3900,14 +3900,25 @@ export async function runWith(ctx, rawArgs) {
   // Resume: a phase whose checkpoint is present reuses that output instead of
   // dispatching. Either way the phase counts as reached, and its output is recorded
   // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
-  const normalizePhaseFindings = (name, out) => {
+  const normalizePhaseFindings = (name, out, replayed) => {
     if (!out || typeof out !== 'object') return;
     const warnings = [];
+    let rejected = 0;
+    let pathRewrites = 0;
     for (const [, field] of checkpointFindingListsForPhase(name)) {
       if (!Array.isArray(out[field])) continue;
       const normalized = normalizeFindingPaths(out[field], A.repoRoot);
+      rejected += out[field].length - normalized.valid.length;
+      pathRewrites += normalized.path_rewrites;
       out[field] = normalized.valid;
       warnings.push(...normalized.warnings);
+    }
+    if (pathRewrites || (replayed && rejected)) {
+      const stats = isPlainCheckpointObject(out.stats) ? out.stats : {};
+      out.stats = { ...stats,
+        ...(pathRewrites ? { path_rewrites: (stats.path_rewrites || 0) + pathRewrites } : {}),
+        ...(replayed && rejected ? { replay_path_rejected: rejected } : {}),
+      };
     }
     if (name === 'merge') {
       const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
@@ -3930,7 +3941,6 @@ export async function runWith(ctx, rawArgs) {
           ...warnings,
         ] };
       }
-      return;
     }
     if (!warnings.length) return;
     out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
@@ -3941,7 +3951,7 @@ export async function runWith(ctx, rawArgs) {
     const replayed = checkpoints[name] !== undefined;
     const out = replayed ? checkpoints[name] : await thunk();
     // Discover is the entry to every downstream finding-bearing phase.
-    if (replayed || name === 'discover') normalizePhaseFindings(name, out);
+    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed);
     phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -4055,6 +4065,7 @@ export async function runWith(ctx, rawArgs) {
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
       base_branch: A.baseBranch, head_sha: A.headShaShort,
     }));
+    gaps.push(...(mergeOut.gaps || []));
 
     // The finding count now exists — re-coarsen so verify slices, validate batches,
     // and the challenge cap keep the remaining worst-case fan-out under the guard.
@@ -4241,12 +4252,21 @@ export async function runWith(ctx, rawArgs) {
       && (A.mode !== 'headless'
         || headlessCommentsEnabled);
 
+    const pathNormalization = {};
+    for (const [phase, output] of Object.entries(phaseOutputs)) {
+      const counts = {};
+      for (const field of ['path_rewrites', 'replay_path_rejected']) {
+        if (output.stats?.[field] > 0) counts[field] = output.stats[field];
+      }
+      if (Object.keys(counts).length) pathNormalization[phase] = counts;
+    }
     const reportInput = {
       summary: summaryOut.summary,
       ...(includeDelivered ? { delivered: postReview } : {}),
       findings: challengeOut.findings,
       unverified: challengeOut.unverified,
       stats: {
+        pathNormalization,
         discovered: (discoverOut.findings || []).length,
         validate: validateOut.stats,
         filter: filterOut.stats,
@@ -4326,6 +4346,7 @@ export async function runWith(ctx, rawArgs) {
       ok: true,
       phaseReached,
       stats: {
+        pathNormalization,
         discovered: (discoverOut.findings || []).length,
         merged: (mergeOut.findings || []).length,
         merge: compactMethodology(mergeOut.methodology),

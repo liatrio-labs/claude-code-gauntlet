@@ -1,5 +1,6 @@
 import { loadExclusions, buildReviewConfig, REVIEW_SETTING_KEYS } from './filterFindings.js';
 import { PR_IDENTITY_FIELDS } from './registry.js';
+import { normalizeAbsoluteRoot } from './paths.js';
 
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
@@ -805,7 +806,10 @@ export function validateArgs(args) {
       errors.push(`headShaShort must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv)`);
     }
     // Fail on relative roots instead of resolving them against an unavailable cwd.
-    if ((field === 'outputDir' || field === 'repoRoot' || field === 'pluginRoot') && !v.startsWith('/')) {
+    if (field === 'repoRoot' && normalizeAbsoluteRoot(v) === null) {
+      errors.push('repoRoot must be an absolute path without .. segments or backslashes');
+    }
+    if ((field === 'outputDir' || field === 'pluginRoot') && !v.startsWith('/')) {
       errors.push(`${field} must be an absolute path (POSIX /-prefix)`);
     }
   }

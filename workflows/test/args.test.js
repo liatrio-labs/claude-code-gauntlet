@@ -2687,3 +2687,11 @@ test('resolveReviewConfig: reviewMd scopes are depth-ordered regardless of input
   assert.equal(out.reviewConfig.confidence_threshold, 70);
   assert.deepEqual(out.reviewConfig.scopes, [{ dir: 'src/deep', confidence_threshold: 90, ignore: [] }]);
 });
+
+for (const repoRoot of ['/work/../repo', String.raw`/a\b`]) {
+  test(`validateArgs rejects an unconfined repoRoot: ${repoRoot}`, () => {
+    const out = validateArgs({ ...good, repoRoot });
+    assert.equal(out.ok, false);
+    assert.ok(out.errors.includes('repoRoot must be an absolute path without .. segments or backslashes'));
+  });
+}
