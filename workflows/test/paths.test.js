@@ -82,7 +82,29 @@ const REPO_RELATIVE_CASES = [
   { name: 'group and catch-all route is accepted', file: 'app/(group)/[...slug]/page.tsx', expected: { file: 'app/(group)/[...slug]/page.tsx' } },
   { name: 'filename with spaces is accepted', file: 'my file.js', expected: { file: 'my file.js' } },
   { name: 'tilde filename is accepted', file: '~notes/x.md', expected: { file: '~notes/x.md' } },
+  { name: 'home anchor is rejected', file: '~/x.md', expected: { reason: 'file path starts with a home anchor' } },
+  { name: 'bare home anchor is rejected', file: '~', expected: { reason: 'file path starts with a home anchor' } },
+  { name: 'home anchor after dot slash is rejected', file: './~/x.md', expected: { reason: 'file path starts with a home anchor' } },
+  { name: 'interior tilde segment is accepted', file: 'docs/~/x.md', expected: { file: 'docs/~/x.md' } },
   { name: 'Unicode filename is accepted', file: 'src/café.js', expected: { file: 'src/café.js' } },
+  ...['docs/می‌خواهم.md', 'img/❤️.png', 'a/👨‍💻.md'].map((file) => ({
+    name: `interior shaping characters are accepted in ${file}`, file, expected: { file },
+  })),
+  ...[0x2800, 0x115F, 0x1160, 0x3164, 0xFFA0, 0x200B, 0x034F, 0xFE0F].flatMap((code) => {
+    const invisible = String.fromCodePoint(code);
+    return [
+      { name: `segment-leading U+${code.toString(16)} is rejected`, file: `a/${invisible}b`, expected: { reason: 'file path contains a disallowed character' } },
+      { name: `interior U+${code.toString(16)} is accepted`, file: `a/b${invisible}c`, expected: { file: `a/b${invisible}c` } },
+    ];
+  }),
+  { name: 'Braille blank host-like prefix is rejected', file: '\u2800/Users/lee/x', expected: { reason: 'file path contains a disallowed character' } },
+  ...[0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0x2028, 0x2029].flatMap((code) => {
+    const control = String.fromCodePoint(code);
+    return [
+      { name: `leading U+${code.toString(16)} control is rejected`, file: `${control}/x`, expected: { reason: 'file path contains a disallowed character' } },
+      { name: `interior U+${code.toString(16)} control is rejected`, file: `a${control}b`, expected: { reason: 'file path contains a disallowed character' } },
+    ];
+  }),
   { name: 'absolute path under root becomes relative', file: `${REPO_ROOT}/scripts/gauntlet/proc.py`, expected: { file: 'scripts/gauntlet/proc.py' } },
   { name: 'absolute path under slash root becomes relative', root: '/', file: '/proc.py', expected: { file: 'proc.py' } },
   { name: 'absolute dot slash is normalized', file: `${REPO_ROOT}/./scripts/gauntlet/proc.py`, expected: { file: 'scripts/gauntlet/proc.py' } },
@@ -106,13 +128,22 @@ const REPO_RELATIVE_CASES = [
   { name: 'interior ASCII control is rejected', file: 'src/a\tb.js', expected: { reason: 'file path contains a disallowed character' } },
   { name: 'trailing space is rejected', file: 'src/a.js ', expected: { reason: 'file path has leading or trailing whitespace' } },
   { name: 'leading drive letter is rejected', file: 'C:/x', expected: { reason: 'file path starts with a URI scheme or drive letter' } },
-  { name: 'leading drive letter after dot slash is rejected', file: './C:file.js', expected: { reason: 'file path starts with a URI scheme or drive letter' } },
+  { name: 'bare drive letter is rejected', file: 'C:', expected: { reason: 'file path starts with a URI scheme or drive letter' } },
+  { name: 'leading drive letter after dot slash is rejected', file: './C:/file.js', expected: { reason: 'file path starts with a URI scheme or drive letter' } },
+  { name: 'drive-like colon filename is accepted', file: './C:file.js', expected: { file: 'C:file.js' } },
+  { name: 'dotted URI scheme is rejected', file: 'git.foo+bar-baz:/x', expected: { reason: 'file path starts with a URI scheme or drive letter' } },
+  ...['Makefile:build', 'Dockerfile:12:5-14:2', 'Makefile:12,14'].map((file) => ({
+    name: `colon filename ${file} is accepted`, file, expected: { file },
+  })),
   { name: 'colon after first segment is accepted', file: 'src/a:b.js', expected: { file: 'src/a:b.js' } },
   ...['README.md:10', 'README.md:10-20', 'README.md:10:5', 'README.md:L10', 'src/a.js:L3-L9'].map((file) => ({
     name: `location suffix ${file} is preserved`, file, expected: { file },
   })),
   { name: 'dotted filename suffix README.md:x stays a literal relative path', file: 'README.md:x', expected: { file: 'README.md:x' } },
   { name: 'absolute column location becomes relative with its suffix', file: `${REPO_ROOT}/src/a.js:10:5`, expected: { file: 'src/a.js:10:5' } },
+  { name: 'location dir/:12/ is normalized', file: 'dir/:12/', expected: { file: 'dir:12' } },
+  { name: 'location dir/./:L3/. is normalized', file: 'dir/./:L3/.', expected: { file: 'dir:L3' } },
+  { name: 'location ./:4/ without a file is rejected', file: './:4/', expected: { reason: 'file path does not name a repository file' } },
   { name: 'location without a path is rejected', file: ':10', expected: { reason: 'file path does not name a repository file' } },
   { name: 'absolute path with colon after root is rejected', file: `${REPO_ROOT}/file:/a.js`, expected: { reason: 'file path starts with a URI scheme or drive letter' } },
   { name: 'NEL prefix is rejected', file: '\u0085/x', expected: { reason: 'file path contains a disallowed character' } },
@@ -130,11 +161,11 @@ for (const c of REPO_RELATIVE_CASES) {
   });
 }
 
-test('repoRelativeFindingPath is idempotent for every accepted path', () => {
-  for (const c of REPO_RELATIVE_CASES.filter((row) => 'file' in row.expected)) {
+test('repoRelativeFindingPath is idempotent over every table row', () => {
+  for (const c of REPO_RELATIVE_CASES) {
     const root = c.root ?? REPO_ROOT;
     const once = repoRelativeFindingPath(root, c.file);
-    assert.deepEqual(repoRelativeFindingPath(root, once.file), once, c.name);
+    assert.deepEqual(repoRelativeFindingPath(root, once.file ?? c.file), once, `idempotence: ${c.file}`);
   }
 });
 

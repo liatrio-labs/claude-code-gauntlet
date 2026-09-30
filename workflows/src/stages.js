@@ -2135,7 +2135,7 @@ const WRITTEN_SCHEMA = {
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
 
-/** Gap token for writer-reported paths outside outputDir. */
+// A stable token lets callers recognize invalid writer path receipts without parsing prose.
 export const PATH_ESCAPE_TOKEN = 'path-escape';
 
 export function requireAbsoluteOutputDir(outputDir) {
@@ -3402,8 +3402,9 @@ export const CHECKPOINT_FINDING_LISTS = [
   ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
   ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
 ];
-const findingListShape = (phase) => Object.fromEntries(CHECKPOINT_FINDING_LISTS
-  .filter(([name]) => name === phase).map(([, field, mode]) => [field, mode]));
+const checkpointFindingListsForPhase = (phase) => CHECKPOINT_FINDING_LISTS.filter(([name]) => name === phase);
+const findingListShape = (phase) => Object.fromEntries(checkpointFindingListsForPhase(phase)
+  .map(([, field, mode]) => [field, mode]));
 // Exported for checkpoint_shape_gate.test.js, which derives the strict rows from it so a
 // row flipped to strict gets an element-level null/primitive test for free, with no second
 // edit to keep in sync (the export costs nothing in the bundle -- the table is consumed
@@ -3427,23 +3428,11 @@ export const CHECKPOINT_PHASE_SHAPE_TABLE = {
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
 };
 
-// CHECKPOINT_REQUIRED_CONTENT_FIELD: phase -> the one field REQUIRED whenever the phase key
-// itself is present in a replayed checkpoint (issue #248's silent-empty). No legitimate
-// producer ever omits it -- every stage always emits it, and persistPlan empties
-// challenge.findings to `[]`, never to absent -- so a MISSING content field only ever means
-// a hand-edited or version-skewed checkpoint. Left absent, `challenge: {}` returns ok:true
-// with an empty review AND disarms the #178 all-degraded guard, whose third conjunct is
-// `checkpoints.challenge !== undefined` (this file, runWith, the all-degraded gap). Content
-// phases only: summarize/report have no required field, and challenge.unverified plus every
-// phase's gaps/dispatched/degraded stay OPTIONAL through the table above.
-const CHECKPOINT_REQUIRED_CONTENT_FIELD = {
-  discover: 'findings',
-  merge: 'findings',
-  verify: 'findings',
-  validate: 'findings',
-  filter: 'filtered',
-  challenge: 'findings',
-};
+// Strict content lists are always emitted; their absence would replay a false empty review.
+const CHECKPOINT_REQUIRED_CONTENT_FIELD = Object.fromEntries(CHECKPOINT_FINDING_LISTS
+  .filter(([, , mode]) => mode === CHECKPOINT_ARRAY_STRICT).map(([phase, field]) => [phase, field]));
+const CHECKPOINT_NULLABLE_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS
+  .filter(([, , , nullable]) => nullable).map(([phase, field]) => `${phase}.${field}`));
 
 function isPlainCheckpointObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -3530,12 +3519,10 @@ export function checkpointShapeErrors(resolvedCheckpoints) {
       violations.push(`checkpoint-shape: phases.${phase} is missing required field ${requiredField}`);
     }
     const fields = CHECKPOINT_PHASE_SHAPE_TABLE[phase];
-    const nullableFields = new Set(CHECKPOINT_FINDING_LISTS
-      .filter(([name, , , nullable]) => name === phase && nullable).map(([, field]) => field));
     for (const field of Object.keys(fields)) {
       const arrVal = value[field];
       if (arrVal === undefined) continue;
-      if (arrVal === null && nullableFields.has(field)) continue;
+      if (arrVal === null && CHECKPOINT_NULLABLE_FINDING_FIELDS.has(`${phase}.${field}`)) continue;
       if (!Array.isArray(arrVal)) {
         violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
         continue;
@@ -3915,9 +3902,8 @@ export async function runWith(ctx, rawArgs) {
   // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
   const normalizePhaseFindings = (name, out) => {
     if (!out || typeof out !== 'object') return;
-    const fields = CHECKPOINT_FINDING_LISTS.filter(([phase]) => phase === name).map(([, field]) => field);
     const warnings = [];
-    for (const field of fields) {
+    for (const [, field] of checkpointFindingListsForPhase(name)) {
       if (!Array.isArray(out[field])) continue;
       const normalized = normalizeFindingPaths(out[field], A.repoRoot);
       out[field] = normalized.valid;
@@ -3948,8 +3934,6 @@ export async function runWith(ctx, rawArgs) {
     }
     if (!warnings.length) return;
     out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
-    // Filter gaps are not otherwise aggregated by runWith.
-    if (name === 'filter') gaps.push(...warnings);
   };
 
   const runPhase = async (name, thunk) => {
@@ -4104,6 +4088,7 @@ export async function runWith(ctx, rawArgs) {
       findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
       exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
+    gaps.push(...(filterOut.gaps || []));
 
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
       // No context line: challengeStage never read one, and challengePrompt takes only the
@@ -4233,9 +4218,7 @@ export async function runWith(ctx, rawArgs) {
       // Pushed to runWith's own top-level `gaps` (below), never `challengeOut.gaps`
       // (which rides into the persisted checkpoint and would double-count on the
       // NEXT resume's re-derivation of this same count).
-      const markedCount = Array.isArray(challengeOut.eliminated)
-        ? challengeOut.eliminated.filter((f) => f && typeof f === 'object' && f.replay_belt === true).length
-        : 0;
+      const markedCount = challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
       if (markedCount > 0) {
         gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
       }

@@ -436,6 +436,33 @@ test('a long description survives merge->verify->validate->filter->challenge->pe
   );
 });
 
+for (const field of ['filtered', 'eliminated']) {
+  test(`replayed filter.${field} path rejection warnings survive a resume of a resume`, async () => {
+    const warning = '[REJECTED_FILTER] Invalid file path: absolute file path is outside repoRoot - finding rejected';
+    const clean = makeFinding('CLEAN_FILTER');
+    const args = validArgs({ checkpoints: { filter: {
+      filtered: field === 'filtered' ? [clean, makeFinding('REJECTED_FILTER', { file: '/outside/x.js' })] : [clean],
+      eliminated: field === 'eliminated' ? [makeFinding('REJECTED_FILTER', { file: '/outside/x.js' })] : [],
+      gaps: [],
+    } } });
+    const first = await runWith(makeCtx(args, { agentThrowLabel: 'artifact-writer' }), args);
+    assert.equal(first.ok, true);
+    assert.deepEqual(first.checkpoints.phases.filter.gaps, [warning]);
+    assert.equal(first.gaps.filter((gap) => gap === warning).length, 1);
+    assert.deepEqual(first.checkpoints.phases.filter[field].map((finding) => finding.id), field === 'filtered' ? ['CLEAN_FILTER'] : []);
+
+    const resumedArgs = validArgs({ checkpoints: first.checkpoints });
+    let persisted = null;
+    const resumed = await runWith(makeCtx(resumedArgs, {
+      onPersist: (payload) => { persisted = payload; },
+    }), resumedArgs);
+    assert.equal(resumed.ok, true);
+    assert.equal(resumed.gaps.filter((gap) => gap === warning).length, 1);
+    assert.deepEqual(persisted.findings.map((finding) => finding.id), ['CLEAN_FILTER']);
+    assert.deepEqual(persisted.postReview.map((finding) => finding.id), ['CLEAN_FILTER']);
+  });
+}
+
 test('runWith normalizes fresh discovery paths before they reach artifacts', async () => {
   const args = validArgs();
   const finding = makeFinding('ABSOLUTE_DISCOVERY', {

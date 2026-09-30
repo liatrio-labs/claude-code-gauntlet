@@ -46,7 +46,6 @@ const CODE_OWNED_HEADINGS = [
   '## Review Dimensions Summary',
   '## Review Methodology',
 ];
-const FINDING_PATH_ARRAY_FIELDS = ['cross_file_refs', 'affected_consumers'];
 const FINDING_PROP_TYPES = {
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
@@ -55,6 +54,7 @@ const FINDING_PROP_TYPES = {
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 };
+const FINDING_PATH_ARRAY_FIELDS = ['cross_file_refs', 'affected_consumers'];
 const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
 const DIMENSIONS = [
   { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
@@ -180,8 +180,9 @@ function pathUnderRoot(root, path) {
 }
 function repoRelativeFindingPath(repoRoot, file) {
   if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
-  const suffix = file.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
-  const path = suffix ? file.slice(0, -suffix.length) : file;
+  const normalized = normalizePathString(file);
+  const suffix = normalized.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
+  const path = suffix ? normalized.slice(0, -suffix.length) : normalized;
   if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
   let relative;
   if (!path.startsWith('/')) {
@@ -195,11 +196,15 @@ function repoRelativeFindingPath(repoRoot, file) {
     if (!pathUnderRoot(root, absolute)) return { reason: 'absolute file path is outside repoRoot' };
     relative = absolute.slice(root === '/' ? 1 : root.length + 1);
   }
-  if (relative === '' || relative === '.' || relative.startsWith('/')) return { reason: 'file path does not name a repository file' };
+  if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
   if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
   if (hasBackslash(relative)) return { reason: 'file path contains a backslash' };
-  if (/^[A-Za-z][A-Za-z0-9+-]*:/.test(relative)) return { reason: 'file path starts with a URI scheme or drive letter' };
-  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u.test(file)) {
+  if (relative.split('/')[0] === '~') return { reason: 'file path starts with a home anchor' };
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\//.test(relative) || /^[A-Za-z]:(\/|$)/.test(relative)) {
+    return { reason: 'file path starts with a URI scheme or drive letter' };
+  }
+  if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(file)
+    || file.split('/').some((segment) => /^[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
     return { reason: 'file path contains a disallowed character' };
   }
   if (file !== file.trim() || relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
@@ -4774,7 +4779,6 @@ const WRITTEN_SCHEMA = {
   type: 'object',
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
-/** Gap token for writer-reported paths outside outputDir. */
 const PATH_ESCAPE_TOKEN = 'path-escape';
 function requireAbsoluteOutputDir(outputDir) {
   const root = normalizeAbsoluteRoot(outputDir);
@@ -5377,8 +5381,9 @@ const CHECKPOINT_FINDING_LISTS = [
   ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
   ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
 ];
-const findingListShape = (phase) => Object.fromEntries(CHECKPOINT_FINDING_LISTS
-  .filter(([name]) => name === phase).map(([, field, mode]) => [field, mode]));
+const checkpointFindingListsForPhase = (phase) => CHECKPOINT_FINDING_LISTS.filter(([name]) => name === phase);
+const findingListShape = (phase) => Object.fromEntries(checkpointFindingListsForPhase(phase)
+  .map(([, field, mode]) => [field, mode]));
 const CHECKPOINT_PHASE_SHAPE_TABLE = {
   summarize: { gaps: CHECKPOINT_ARRAY_TOLERANT },
   discover: {
@@ -5397,14 +5402,10 @@ const CHECKPOINT_PHASE_SHAPE_TABLE = {
   },
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
 };
-const CHECKPOINT_REQUIRED_CONTENT_FIELD = {
-  discover: 'findings',
-  merge: 'findings',
-  verify: 'findings',
-  validate: 'findings',
-  filter: 'filtered',
-  challenge: 'findings',
-};
+const CHECKPOINT_REQUIRED_CONTENT_FIELD = Object.fromEntries(CHECKPOINT_FINDING_LISTS
+  .filter(([, , mode]) => mode === CHECKPOINT_ARRAY_STRICT).map(([phase, field]) => [phase, field]));
+const CHECKPOINT_NULLABLE_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS
+  .filter(([, , , nullable]) => nullable).map(([phase, field]) => `${phase}.${field}`));
 function isPlainCheckpointObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -5469,12 +5470,10 @@ function checkpointShapeErrors(resolvedCheckpoints) {
       violations.push(`checkpoint-shape: phases.${phase} is missing required field ${requiredField}`);
     }
     const fields = CHECKPOINT_PHASE_SHAPE_TABLE[phase];
-    const nullableFields = new Set(CHECKPOINT_FINDING_LISTS
-      .filter(([name, , , nullable]) => name === phase && nullable).map(([, field]) => field));
     for (const field of Object.keys(fields)) {
       const arrVal = value[field];
       if (arrVal === undefined) continue;
-      if (arrVal === null && nullableFields.has(field)) continue;
+      if (arrVal === null && CHECKPOINT_NULLABLE_FINDING_FIELDS.has(`${phase}.${field}`)) continue;
       if (!Array.isArray(arrVal)) {
         violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
         continue;
@@ -5628,9 +5627,8 @@ async function runWith(ctx, rawArgs) {
   let phaseAttempting = null;
   const normalizePhaseFindings = (name, out) => {
     if (!out || typeof out !== 'object') return;
-    const fields = CHECKPOINT_FINDING_LISTS.filter(([phase]) => phase === name).map(([, field]) => field);
     const warnings = [];
-    for (const field of fields) {
+    for (const [, field] of checkpointFindingListsForPhase(name)) {
       if (!Array.isArray(out[field])) continue;
       const normalized = normalizeFindingPaths(out[field], A.repoRoot);
       out[field] = normalized.valid;
@@ -5660,7 +5658,6 @@ async function runWith(ctx, rawArgs) {
     }
     if (!warnings.length) return;
     out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
-    if (name === 'filter') gaps.push(...warnings);
   };
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
@@ -5729,6 +5726,7 @@ async function runWith(ctx, rawArgs) {
       findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
       exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
+    gaps.push(...(filterOut.gaps || []));
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
       findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
     }));
@@ -5752,9 +5750,7 @@ async function runWith(ctx, rawArgs) {
         }
         challengeOut.stats.replay_belt_eliminated = k1 + k2;
       }
-      const markedCount = Array.isArray(challengeOut.eliminated)
-        ? challengeOut.eliminated.filter((f) => f && typeof f === 'object' && f.replay_belt === true).length
-        : 0;
+      const markedCount = challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
       if (markedCount > 0) {
         gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
       }

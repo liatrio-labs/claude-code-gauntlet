@@ -51,9 +51,10 @@ export function pathUnderRoot(root, path) {
 
 export function repoRelativeFindingPath(repoRoot, file) {
   if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
-  // Location tails are metadata, so they must not participate in path checks.
-  const suffix = file.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
-  const path = suffix ? file.slice(0, -suffix.length) : file;
+  // Slash normalization must expose location tails before they are separated from the path.
+  const normalized = normalizePathString(file);
+  const suffix = normalized.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
+  const path = suffix ? normalized.slice(0, -suffix.length) : normalized;
   // Reject traversal lexically because resolving it across symlinks could escape the root.
   if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
 
@@ -70,11 +71,16 @@ export function repoRelativeFindingPath(repoRoot, file) {
     relative = absolute.slice(root === '/' ? 1 : root.length + 1);
   }
 
-  if (relative === '' || relative === '.' || relative.startsWith('/')) return { reason: 'file path does not name a repository file' };
+  if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
   if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
   if (hasBackslash(relative)) return { reason: 'file path contains a backslash' };
-  if (/^[A-Za-z][A-Za-z0-9+-]*:/.test(relative)) return { reason: 'file path starts with a URI scheme or drive letter' };
-  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u.test(file)) {
+  if (relative.split('/')[0] === '~') return { reason: 'file path starts with a home anchor' };
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\//.test(relative) || /^[A-Za-z]:(\/|$)/.test(relative)) {
+    return { reason: 'file path starts with a URI scheme or drive letter' };
+  }
+  // Controls can obscure any position; shaping characters only hide segment starts.
+  if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(file)
+    || file.split('/').some((segment) => /^[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
     return { reason: 'file path contains a disallowed character' };
   }
   if (file !== file.trim() || relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
