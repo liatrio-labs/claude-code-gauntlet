@@ -436,7 +436,7 @@ test('a long description survives merge->verify->validate->filter->challenge->pe
   );
 });
 
-test('runWith passes repoRoot to merge so absolute discovery paths persist relative', async () => {
+test('runWith normalizes fresh discovery paths before they reach artifacts', async () => {
   const args = validArgs();
   const finding = makeFinding('ABSOLUTE_DISCOVERY', { file: `${args.repoRoot}/src/module.js` });
   let persisted = null;
@@ -449,12 +449,14 @@ test('runWith passes repoRoot to merge so absolute discovery paths persist relat
   assert.deepEqual(persisted.findings.map((item) => [item.id, item.file]), [
     ['ABSOLUTE_DISCOVERY', 'src/module.js'],
   ]);
-  assert.equal(out.stats.merge.validation_warnings, 1);
+  assert.equal(out.stats.merge.validation_warnings, 0);
+  assert.ok(out.gaps.some((gap) => gap.includes('[ABSOLUTE_DISCOVERY]') && gap.includes('rewritten')));
   assert.ok(!JSON.stringify(persisted).includes(`${args.repoRoot}/src/module.js`));
   assert.ok(!JSON.stringify(out).includes(`${args.repoRoot}/src/module.js`));
 });
 
 const REPLAY_PATH_FIELDS = [
+  ['discover', 'findings'],
   ['merge', 'findings'],
   ['verify', 'findings'],
   ['validate', 'findings'],
@@ -517,6 +519,20 @@ test('replayed merge channel counts are finite after findings are rejected', asy
   const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
   assert.equal(out.ok, true, JSON.stringify(out));
   assert.deepEqual(out.stats.merge.findings_per_channel, { ndjson: 0, text_fallback: 0 });
+  assert.ok(persisted.report.includes('merge: per-channel: ndjson=0, text_fallback=0'));
+});
+
+test('replayed merge channel counts are finite without rejected findings', async () => {
+  const args = validArgs({ checkpoints: { merge: {
+    findings: [makeFinding('KEEP')],
+    methodology: { findings_per_channel: { ndjson: Infinity, text_fallback: NaN }, validation_warnings: [] },
+    gaps: [],
+  } } });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(out.stats.merge.findings_per_channel, { ndjson: 0, text_fallback: 0 });
+  assert.equal(out.stats.merge.validation_warnings, 0);
   assert.ok(persisted.report.includes('merge: per-channel: ndjson=0, text_fallback=0'));
 });
 
@@ -657,6 +673,32 @@ test('a throw in a core stage (discover) is caught by the top-level try/catch', 
   assert.ok(!('discover' in out.checkpoints.phases), 'the phase that threw is not recorded');
 });
 
+test('a catch envelope after discovery contains no host finding path', async () => {
+  const args = validArgs();
+  const absolute = `${args.repoRoot}/src/module.js`;
+  const uri = `file://${absolute}`;
+  const ctx = makeCtx(args, { findings: [
+    makeFinding('UNDER', { file: absolute }),
+    makeFinding('URI', { file: uri }),
+  ] });
+  const parallel = ctx.parallel;
+  let dispatches = 0;
+  ctx.parallel = (thunks) => {
+    dispatches += 1;
+    if (dispatches === 2) throw new Error('simulated post-discovery failure');
+    return parallel(thunks);
+  };
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, false);
+  assert.equal(out.phaseReached, 'verify');
+  assert.equal(out.failingPhase, 'validate');
+  assert.ok(out.checkpoints.phases.discover);
+  assert.equal(out.checkpoints.phases.discover.findings[0].file, 'src/module.js');
+  assert.equal(JSON.stringify(out).includes(absolute), false);
+  assert.equal(JSON.stringify(out).includes(uri), false);
+});
+
 test('run never throws out of runWith even when a stage throws', async () => {
   const args = validArgs();
   const ctx = makeCtx(args, { parallelThrows: true });
@@ -744,6 +786,24 @@ test('issue #178 checkpoint-replay defense: an all-degraded discover checkpoint 
   assert.ok(!ctx.calls.some((c) => c.label.startsWith('code-gauntlet:')), 'no discovery agent was dispatched (replayed instead)');
 });
 
+test('all-degraded envelope contains no rejected file URI host path', async () => {
+  const base = validArgs();
+  const absolute = `${base.repoRoot}/src/module.js`;
+  const uri = `file://${absolute}`;
+  const args = validArgs({ checkpoints: { discover: {
+    findings: [makeFinding('URI', { file: uri })],
+    degraded: DIMENSIONS.map((dimension) => dimension.dimension),
+    dispatched: [...AGENTS],
+    gaps: [],
+  } } });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, false);
+  assert.equal(out.failingPhase, 'discover');
+  assert.equal(JSON.stringify(out).includes(absolute), false);
+  assert.equal(JSON.stringify(out).includes(uri), false);
+});
+
 // Inverse boundary (finding 5): every discovery agent is HEALTHY but genuinely finds
 // nothing (a real clean review), fresh dispatch, no checkpoints in play. This must sail
 // through exactly as before the guard existed — ok:true, a real report, and no
@@ -828,6 +888,23 @@ test('a writeArtifacts agent() throw yields ok:true with a partial-artifacts gap
   // phase (through report) is recoverable without re-running.
   assert.ok(out.checkpoints && out.checkpoints.phases, 'writer-failure carries the in-memory phases map');
   assert.ok('report' in out.checkpoints.phases);
+});
+
+test('artifact-writer failure envelope contains no host finding path', async () => {
+  const args = validArgs();
+  const absolute = `${args.repoRoot}/src/module.js`;
+  const uri = `file://${absolute}`;
+  const ctx = makeCtx(args, {
+    findings: [makeFinding('UNDER', { file: absolute }), makeFinding('URI', { file: uri })],
+    agentThrowLabel: 'artifact-writer',
+  });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  assert.equal(out.artifactPaths.findings, null);
+  assert.equal(out.checkpoints.phases.discover.findings[0].file, 'src/module.js');
+  assert.equal(JSON.stringify(out).includes(absolute), false);
+  assert.equal(JSON.stringify(out).includes(uri), false);
 });
 
 test('writeArtifacts in isolation: a bare agent() throw yields a partial-artifacts gap', async () => {

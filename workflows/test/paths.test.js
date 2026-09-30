@@ -83,8 +83,18 @@ const REPO_RELATIVE_CASES = [
   { name: 'empty file is rejected', file: '', expected: { reason: 'file must be a non-empty string' } },
   { name: 'dot file is rejected', file: '.', expected: { reason: 'file path does not name a repository file' } },
   { name: 'dot slash file is rejected', file: './', expected: { reason: 'file path does not name a repository file' } },
-  { name: 'leading drive letter is rejected', file: 'C:/users/lee/file.js', expected: { reason: 'file path has a leading drive letter' } },
-  { name: 'leading drive letter after dot slash is rejected', file: './C:file.js', expected: { reason: 'file path has a leading drive letter' } },
+  { name: 'file URI with triple slash is rejected', file: 'file:///Users/x/a.js', expected: { reason: 'file path has a colon in its first segment' } },
+  { name: 'file URI with single slash is rejected', file: 'file:/Users/a', expected: { reason: 'file path has a colon in its first segment' } },
+  { name: 'web URI is rejected', file: 'https://x/a', expected: { reason: 'file path has a colon in its first segment' } },
+  { name: 'leading whitespace host path is rejected', file: ' /Users/x/a', expected: { reason: 'file path contains control characters or surrounding whitespace' } },
+  { name: 'leading newline host path is rejected', file: '\n/Users/x', expected: { reason: 'file path contains control characters or surrounding whitespace' } },
+  { name: 'whitespace segment after dot slash is rejected', file: './ /Users', expected: { reason: 'file path contains control characters or surrounding whitespace' } },
+  { name: 'interior ASCII control is rejected', file: 'src/a\tb.js', expected: { reason: 'file path contains control characters or surrounding whitespace' } },
+  { name: 'trailing whitespace segment is rejected', file: 'src/a.js ', expected: { reason: 'file path contains control characters or surrounding whitespace' } },
+  { name: 'leading drive letter is rejected', file: 'C:/x', expected: { reason: 'file path has a colon in its first segment' } },
+  { name: 'leading drive letter after dot slash is rejected', file: './C:file.js', expected: { reason: 'file path has a colon in its first segment' } },
+  { name: 'colon after first segment is accepted', file: 'src/a:b.js', expected: { file: 'src/a:b.js' } },
+  { name: 'absolute path with colon after root is rejected', file: `${REPO_ROOT}/file:/a.js`, expected: { reason: 'file path has a colon in its first segment' } },
 ];
 for (const c of REPO_RELATIVE_CASES) {
   test(`repoRelativeFindingPath: ${c.name}`, () => {

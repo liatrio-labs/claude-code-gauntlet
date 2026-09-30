@@ -179,24 +179,29 @@ function pathUnderRoot(root, path) {
 }
 function repoRelativeFindingPath(repoRoot, file) {
   if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
-  if (hasBackslash(file)) return { reason: 'file path contains a backslash' };
-  if (hasDotDotSegment(file)) return { reason: 'file path contains a .. segment' };
+  if (file.startsWith('/') && hasDotDotSegment(file)) return { reason: 'file path contains a .. segment' };
+  let relative;
   if (!file.startsWith('/')) {
-    let relative = file;
+    relative = file;
     while (relative.startsWith('./')) relative = relative.slice(2);
     relative = normalizePathString(relative);
-    if (relative === '' || relative === '.' || relative.startsWith('/')) return { reason: 'file path does not name a repository file' };
-    if (/^[A-Za-z]:/.test(relative)) return { reason: 'file path has a leading drive letter' };
-    return { file: relative };
+  } else {
+    const root = normalizeAbsoluteRoot(repoRoot);
+    if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
+    const absolute = normalizePathString(file);
+    if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
+    if (!pathUnderRoot(root, absolute)) return { reason: 'absolute file path is outside repoRoot' };
+    relative = absolute.slice(root === '/' ? 1 : root.length + 1).replace(/^\/+/, '');
   }
-  const root = normalizeAbsoluteRoot(repoRoot);
-  if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
-  const absolute = normalizePathString(file);
-  if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
-  if (!pathUnderRoot(root, absolute)) return { reason: 'absolute file path is outside repoRoot' };
-  const remainder = absolute.slice(root === '/' ? 1 : root.length + 1).replace(/^\/+/, '');
-  if (remainder === '') return { reason: 'absolute file path does not name a repository file' };
-  return { file: remainder };
+  if (relative === '' || relative === '.' || relative.startsWith('/')) return { reason: 'file path does not name a repository file' };
+  if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
+  if (hasBackslash(relative)) return { reason: 'file path contains a backslash' };
+  const segments = relative.split('/');
+  if (segments.some((segment) => /[\x00-\x1f\x7f]/.test(segment) || segment !== segment.trim())) {
+    return { reason: 'file path contains control characters or surrounding whitespace' };
+  }
+  if (segments[0].includes(':')) return { reason: 'file path has a colon in its first segment' };
+  return { file: relative };
 }
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set([
@@ -5607,9 +5612,10 @@ async function runWith(ctx, rawArgs) {
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
   let phaseAttempting = null;
-  const normalizeReplayedFindings = (name, out) => {
+  const normalizePhaseFindings = (name, out) => {
     if (!out || typeof out !== 'object') return;
     const fields = {
+      discover: ['findings'],
       merge: ['findings'],
       verify: ['findings'],
       validate: ['findings'],
@@ -5624,7 +5630,6 @@ async function runWith(ctx, rawArgs) {
       warnings.push(...normalized.warnings);
     }
     if (name === 'merge') {
-      if (!warnings.length) return;
       const methodology = out.methodology && typeof out.methodology === 'object' ? out.methodology : {};
       const channels = methodology.findings_per_channel;
       const surviving = out.findings.length;
@@ -5632,16 +5637,17 @@ async function runWith(ctx, rawArgs) {
       const textFallbackCount = Number.isFinite(channels?.text_fallback) ? channels.text_fallback : 0;
       const ndjson = Math.min(Math.max(0, ndjsonCount), surviving);
       const textFallback = Math.min(Math.max(0, textFallbackCount), surviving - ndjson);
-      out.methodology = {
-        ...methodology,
-        ...(channels && typeof channels === 'object' ? { findings_per_channel: {
+      if (channels && typeof channels === 'object') {
+        out.methodology = { ...methodology, findings_per_channel: {
           ...channels, ndjson, text_fallback: textFallback,
-        } } : {}),
-        validation_warnings: [
+        } };
+      }
+      if (warnings.length) {
+        out.methodology = { ...(out.methodology || methodology), validation_warnings: [
           ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
           ...warnings,
-        ],
-      };
+        ] };
+      }
       return;
     }
     if (!warnings.length) return;
@@ -5652,7 +5658,7 @@ async function runWith(ctx, rawArgs) {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;
     const out = replayed ? checkpoints[name] : await thunk();
-    if (replayed) normalizeReplayedFindings(name, out);
+    if (replayed || name === 'discover') normalizePhaseFindings(name, out);
     phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;

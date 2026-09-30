@@ -3927,9 +3927,10 @@ export async function runWith(ctx, rawArgs) {
   // Resume: a phase whose checkpoint is present reuses that output instead of
   // dispatching. Either way the phase counts as reached, and its output is recorded
   // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
-  const normalizeReplayedFindings = (name, out) => {
+  const normalizePhaseFindings = (name, out) => {
     if (!out || typeof out !== 'object') return;
     const fields = {
+      discover: ['findings'],
       merge: ['findings'],
       verify: ['findings'],
       validate: ['findings'],
@@ -3944,7 +3945,6 @@ export async function runWith(ctx, rawArgs) {
       warnings.push(...normalized.warnings);
     }
     if (name === 'merge') {
-      if (!warnings.length) return;
       const methodology = out.methodology && typeof out.methodology === 'object' ? out.methodology : {};
       const channels = methodology.findings_per_channel;
       const surviving = out.findings.length;
@@ -3953,16 +3953,17 @@ export async function runWith(ctx, rawArgs) {
       const textFallbackCount = Number.isFinite(channels?.text_fallback) ? channels.text_fallback : 0;
       const ndjson = Math.min(Math.max(0, ndjsonCount), surviving);
       const textFallback = Math.min(Math.max(0, textFallbackCount), surviving - ndjson);
-      out.methodology = {
-        ...methodology,
-        ...(channels && typeof channels === 'object' ? { findings_per_channel: {
+      if (channels && typeof channels === 'object') {
+        out.methodology = { ...methodology, findings_per_channel: {
           ...channels, ndjson, text_fallback: textFallback,
-        } } : {}),
-        validation_warnings: [
+        } };
+      }
+      if (warnings.length) {
+        out.methodology = { ...(out.methodology || methodology), validation_warnings: [
           ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
           ...warnings,
-        ],
-      };
+        ] };
+      }
       return;
     }
     if (!warnings.length) return;
@@ -3975,7 +3976,8 @@ export async function runWith(ctx, rawArgs) {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;
     const out = replayed ? checkpoints[name] : await thunk();
-    if (replayed) normalizeReplayedFindings(name, out);
+    // Discover is the entry to every downstream finding-bearing phase.
+    if (replayed || name === 'discover') normalizePhaseFindings(name, out);
     phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
