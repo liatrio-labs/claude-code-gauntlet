@@ -54,6 +54,7 @@ const FINDING_PROP_TYPES = {
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 };
+const FINDING_PATH_ARRAY_FIELDS = ['cross_file_refs', 'affected_consumers'];
 const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
 const DIMENSIONS = [
   { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
@@ -132,6 +133,105 @@ function dedupById(ndjsonFindings, textFindings) {
   for (const findings of Object.values(textFindings || {})) for (const f of findings) add(f, 1);
   for (const findings of Object.values(ndjsonFindings || {})) for (const f of findings) add(f, 2);
   return { merged: [...seen.values()].map((v) => v.finding), duplicatesResolved, droppedNoId };
+}
+// --- paths.js ---
+function collapseDotSlash(path) {
+  let out = path;
+  for (;;) {
+    const next = out.replace(/\/\.\//g, '/');
+    if (next === out) return out;
+    out = next;
+  }
+}
+function stripTrailingSlashes(path) {
+  let out = path;
+  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
+  return out;
+}
+function normalizePathString(path) {
+  let out = path;
+  for (;;) {
+    let next = stripTrailingSlashes(collapseDotSlash(out.replace(/\/{2,}/g, '/')));
+    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
+    next = stripTrailingSlashes(next);
+    if (next === out) return next;
+    out = next;
+  }
+}
+function hasBackslash(path) {
+  return path.includes('\\');
+}
+function hasDotDotSegment(path) {
+  return path.split('/').includes('..');
+}
+function isSafeAbsolutePath(path) {
+  return path.startsWith('/') && !hasBackslash(path) && !hasDotDotSegment(path);
+}
+function rootPrefix(root) {
+  return root === '/' ? '/' : `${root}/`;
+}
+const LOCATION_SUFFIX_RE = /:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/;
+function splitLocationSuffix(path) {
+  const suffix = path.match(LOCATION_SUFFIX_RE)?.[0] || '';
+  return { path: suffix ? path.slice(0, -suffix.length) : path, suffix };
+}
+function normalizeAbsoluteRoot(root) {
+  if (typeof root !== 'string' || root === '') return null;
+  const normalized = normalizePathString(root);
+  if (!isSafeAbsolutePath(normalized)) return null;
+  return normalized;
+}
+function pathUnderRoot(root, path) {
+  const normalizedRoot = normalizeAbsoluteRoot(root);
+  if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
+  const normalizedPath = normalizePathString(path);
+  if (!isSafeAbsolutePath(normalizedPath)) return false;
+  const prefix = rootPrefix(normalizedRoot);
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(prefix);
+}
+function repoRelativeFindingPath(repoRoot, file) {
+  if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
+  let normalized = file;
+  let location;
+  for (let remaining = file.length; remaining >= 0; remaining -= 1) {
+    const slashes = normalizePathString(normalized);
+    const split = splitLocationSuffix(slashes);
+    const path = normalizePathString(split.path);
+    const next = `${path}${split.suffix}`;
+    if (next === normalized) {
+      location = { path, suffix: split.suffix };
+      break;
+    }
+    normalized = next;
+  }
+  const { path, suffix } = location;
+  if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
+  let relative;
+  if (!path.startsWith('/')) {
+    relative = normalizePathString(path);
+    while (relative.startsWith('./')) relative = relative.slice(2);
+  } else {
+    const root = normalizeAbsoluteRoot(repoRoot);
+    if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
+    const absolute = normalizePathString(path);
+    if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
+    const prefix = rootPrefix(root);
+    if (!absolute.startsWith(prefix)) return { reason: 'absolute file path is outside repoRoot' };
+    relative = absolute.slice(prefix.length);
+  }
+  if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
+  if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
+  if (relative.startsWith('\\')) return { reason: 'file path starts with a backslash' };
+  if (relative.split('/')[0] === '~') return { reason: 'file path starts with a home anchor' };
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\//.test(relative) || /^[A-Za-z]:([/\\]|$)/.test(relative)) {
+    return { reason: 'file path starts with a URI scheme or drive letter' };
+  }
+  if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(file)
+    || file.split('/').some((segment) => /^[\p{Cf}\p{Mn}\p{Me}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
+    return { reason: 'file path contains a disallowed character' };
+  }
+  if (relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
+  return { file: `${relative}${suffix}` };
 }
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set([
@@ -262,6 +362,62 @@ function parseTextFile(text, agent) {
 }
 function injectAgentField(findings, agent) {
   for (const f of findings) f.agent = agent;
+}
+function invalidFindingPathWarning(finding, field, reason, action) {
+  return `[${finding.id ?? '<no id>'}] Invalid ${field} path: ${reason} - ${action}`;
+}
+function normalizeFindingPath(finding, repoRoot) {
+  const original = finding.file;
+  const result = repoRelativeFindingPath(repoRoot, original);
+  if ('reason' in result) {
+    return { valid: false, warning: invalidFindingPathWarning(finding, 'file', result.reason, 'finding rejected') };
+  }
+  if (result.file !== original) {
+    finding.file = result.file;
+    if (typeof finding.consolidation_key === 'string' && finding.consolidation_key.startsWith(`${original}:`)) {
+      finding.consolidation_key = `${result.file}${finding.consolidation_key.slice(original.length)}`;
+    }
+    return { valid: true, rewritten: true };
+  }
+  return { valid: true, rewritten: false };
+}
+function normalizeFindingPaths(findings, repoRoot) {
+  const valid = [];
+  const warnings = [];
+  let pathRewrites = 0;
+  for (const finding of findings) {
+    if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
+      warnings.push('Invalid finding shape: expected an object - finding rejected');
+      continue;
+    }
+    const result = normalizeFindingPath(finding, repoRoot);
+    if (!result.valid) {
+      warnings.push(result.warning);
+      continue;
+    }
+    if (result.rewritten) pathRewrites += 1;
+    for (const field of FINDING_PATH_ARRAY_FIELDS) {
+      if (!(field in finding)) continue;
+      if (!Array.isArray(finding[field])) {
+        delete finding[field];
+        warnings.push(invalidFindingPathWarning(finding, field, 'expected an array', 'field dropped'));
+        continue;
+      }
+      const refs = [];
+      for (const ref of finding[field]) {
+        const normalized = repoRelativeFindingPath(repoRoot, ref);
+        if ('reason' in normalized) {
+          warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped'));
+        } else {
+          refs.push(normalized.file);
+          if (normalized.file !== ref) pathRewrites += 1;
+        }
+      }
+      finding[field] = refs;
+    }
+    valid.push(finding);
+  }
+  return { valid, warnings, path_rewrites: pathRewrites };
 }
 function validateFindings(findings) {
   const valid = [];
@@ -2138,7 +2294,10 @@ function validateArgs(args) {
     if (field === 'headShaShort' && !NONCE_RE.test(v)) {
       errors.push(`headShaShort must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv)`);
     }
-    if ((field === 'outputDir' || field === 'repoRoot' || field === 'pluginRoot') && !v.startsWith('/')) {
+    if (field === 'repoRoot' && normalizeAbsoluteRoot(v) === null) {
+      errors.push('repoRoot must be an absolute path without .. segments or backslashes');
+    }
+    if ((field === 'outputDir' || field === 'pluginRoot') && !v.startsWith('/')) {
       errors.push(`${field} must be an absolute path (POSIX /-prefix)`);
     }
   }
@@ -3405,7 +3564,7 @@ function receiptLines(input) {
 }
 function countSummary(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'none';
-  const entries = Object.entries(value).map(([key, item]) => {
+  const entries = Object.entries(value).filter(([key, item]) => key !== 'replay_path_rejected' || item > 0).map(([key, item]) => {
     const count = Array.isArray(item) ? item.length : item;
     return `${key}=${tableCell(count)}`;
   });
@@ -3472,9 +3631,11 @@ function methodologyRows(input, rawFindings) {
     ? `ndjson=${merge.findings_per_channel.ndjson ?? 0}, text_fallback=${merge.findings_per_channel.text_fallback ?? 0}`
     : 'ndjson=0, text_fallback=0';
   const mergeCounts = `per-channel: ${channels}; duplicates resolved=${merge.duplicates_resolved ?? 0}; dropped-no-id=${merge.dropped_no_id ?? 0}; truncation warnings=${merge.truncation_warnings ?? 0}; validation warnings=${merge.validation_warnings ?? 0}`;
+  const pathCounts = Object.entries(stats.pathNormalization || {})
+    .map(([phase, counts]) => `; ${tableCell(phase)} paths: ${countSummary(counts)}`).join('');
   rows.push([
     'Findings pipeline',
-    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}`,
+    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}${pathCounts}`,
   ]);
   const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;
   rows.push(['Gaps', String(gapCount)]);
@@ -4648,45 +4809,9 @@ const WRITTEN_SCHEMA = {
   type: 'object',
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
-/** Gap token for writer-reported paths outside outputDir. Registered in docs/machine-parsed-strings.md; G3 still keys off the surrounding `(partial-artifacts)` suffix. */
 const PATH_ESCAPE_TOKEN = 'path-escape';
-function collapseDotSlash(p) {
-  let out = p;
-  for (;;) {
-    const next = out.replace(/\/\.\//g, '/');
-    if (next === out) return out;
-    out = next;
-  }
-}
-function stripTrailingSlashes(p) {
-  let out = p;
-  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
-  return out;
-}
-function normalizePathString(p) {
-  let out = p;
-  for (;;) {
-    let next = stripTrailingSlashes(collapseDotSlash(out));
-    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
-    next = stripTrailingSlashes(next);
-    if (next === out) return next;
-    out = next;
-  }
-}
-function hasBackslash(s) {
-  return s.includes('\\');
-}
-function hasDotDotSegment(s) {
-  return s.split('/').includes('..');
-}
-function normalizeOutputDirRoot(outputDir) {
-  if (typeof outputDir !== 'string' || outputDir === '') return null;
-  const root = normalizePathString(outputDir);
-  if (!root.startsWith('/') || hasBackslash(root) || hasDotDotSegment(root)) return null;
-  return root;
-}
 function requireAbsoluteOutputDir(outputDir) {
-  const root = normalizeOutputDirRoot(outputDir);
+  const root = normalizeAbsoluteRoot(outputDir);
   if (root === null) {
     throw new Error(
       `outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
@@ -4694,16 +4819,8 @@ function requireAbsoluteOutputDir(outputDir) {
   }
   return root;
 }
-function pathUnderOutputDir(outputDir, path) {
-  const root = normalizeOutputDirRoot(outputDir);
-  if (root === null) return false;
-  if (typeof path !== 'string' || path === '') return false;
-  const p = normalizePathString(path);
-  if (!p.startsWith('/') || hasBackslash(p) || hasDotDotSegment(p)) return false;
-  return p === root || p.startsWith(`${root}/`);
-}
 function assertPlannedPathUnderOutputDir(outputDir, path) {
-  if (!pathUnderOutputDir(outputDir, path)) {
+  if (!pathUnderRoot(outputDir, path)) {
     throw new Error(`planned artifact path escapes outputDir: ${path}`);
   }
 }
@@ -4711,7 +4828,7 @@ function pathEscapeReason(outputDir, fields) {
   const escaped = [];
   for (const { name, path, present } of fields) {
     if (!present) continue;
-    if (!pathUnderOutputDir(outputDir, path)) {
+    if (!pathUnderRoot(outputDir, path)) {
       escaped.push(`${name}=${path == null ? String(path) : path}`);
     }
   }
@@ -5283,33 +5400,42 @@ function checkpointDiscardGap(topLevelCheckpoints) {
 }
 const CHECKPOINT_ARRAY_STRICT = 'strict';
 const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
+const CHECKPOINT_FINDING_LISTS = [
+  ['discover', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['merge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['verify', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['validate', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['filter', 'filtered', CHECKPOINT_ARRAY_STRICT, false],
+  ['filter', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
+  ['challenge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
+  ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
+];
+const checkpointFindingListsForPhase = (phase) => CHECKPOINT_FINDING_LISTS.filter(([name]) => name === phase);
+const findingListShape = (phase) => Object.fromEntries(checkpointFindingListsForPhase(phase)
+  .map(([, field, mode]) => [field, mode]));
 const CHECKPOINT_PHASE_SHAPE_TABLE = {
   summarize: { gaps: CHECKPOINT_ARRAY_TOLERANT },
   discover: {
-    findings: CHECKPOINT_ARRAY_STRICT,
+    ...findingListShape('discover'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
     dispatched: CHECKPOINT_ARRAY_TOLERANT,
     degraded: CHECKPOINT_ARRAY_TOLERANT,
   },
-  merge: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  verify: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  validate: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  filter: { filtered: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
+  merge: { ...findingListShape('merge'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  verify: { ...findingListShape('verify'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  validate: { ...findingListShape('validate'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  filter: { ...findingListShape('filter'), gaps: CHECKPOINT_ARRAY_TOLERANT },
   challenge: {
-    findings: CHECKPOINT_ARRAY_STRICT,
-    unverified: CHECKPOINT_ARRAY_TOLERANT,
+    ...findingListShape('challenge'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
   },
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
 };
-const CHECKPOINT_REQUIRED_CONTENT_FIELD = {
-  discover: 'findings',
-  merge: 'findings',
-  verify: 'findings',
-  validate: 'findings',
-  filter: 'filtered',
-  challenge: 'findings',
-};
+const CHECKPOINT_REQUIRED_CONTENT_FIELD = Object.fromEntries(CHECKPOINT_FINDING_LISTS
+  .filter(([, , mode]) => mode === CHECKPOINT_ARRAY_STRICT).map(([phase, field]) => [phase, field]));
+const CHECKPOINT_NULLABLE_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS
+  .filter(([, , , nullable]) => nullable).map(([phase, field]) => `${phase}.${field}`));
 function isPlainCheckpointObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -5318,7 +5444,7 @@ function describeCheckpointShape(v) {
   if (Array.isArray(v)) return 'array';
   return typeof v;
 }
-const CHECKPOINT_FINDING_FIELDS = new Set(['findings', 'filtered', 'unverified']);
+const CHECKPOINT_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS.map(([, field]) => field));
 const CHECKPOINT_FINDING_STRING_FIELDS = ['severity', 'title', 'file'];
 const CHECKPOINT_FINDING_INTEGER_FIELDS = ['line', 'line_start', 'line_end', 'end_line'];
 function checkpointFindingShapeErrors(finding, path) {
@@ -5377,6 +5503,7 @@ function checkpointShapeErrors(resolvedCheckpoints) {
     for (const field of Object.keys(fields)) {
       const arrVal = value[field];
       if (arrVal === undefined) continue;
+      if (arrVal === null && CHECKPOINT_NULLABLE_FINDING_FIELDS.has(`${phase}.${field}`)) continue;
       if (!Array.isArray(arrVal)) {
         violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
         continue;
@@ -5448,18 +5575,7 @@ function resolvedPolicyEnvelope(policy) {
 const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
 function beltPartitionList(list) {
   if (!Array.isArray(list) || list.length === 0) return { list, eliminated: [] };
-  const positions = [];
-  const objectElements = [];
-  for (const el of list) {
-    if (el && typeof el === 'object') {
-      const idx = objectElements.length;
-      objectElements.push({ ...el, [REPLAY_BELT_INDEX_KEY]: idx });
-      positions.push({ objIdx: idx });
-    } else {
-      positions.push({ raw: el });
-    }
-  }
-  if (objectElements.length === 0) return { list, eliminated: [] };
+  const objectElements = list.map((el, idx) => ({ ...el, [REPLAY_BELT_INDEX_KEY]: idx }));
   normalizeFieldNames(objectElements);
   const { kept, eliminated } = applyReplayInjectionScan(objectElements);
   const survivorByIdx = new Map();
@@ -5471,17 +5587,11 @@ function beltPartitionList(list) {
     const { [REPLAY_BELT_INDEX_KEY]: _idx, ...clean } = f;
     return { ...clean, replay_belt: true };
   });
-  const splicedList = [];
-  for (const p of positions) {
-    if ('raw' in p) { splicedList.push(p.raw); continue; }
-    if (survivorByIdx.has(p.objIdx)) splicedList.push(survivorByIdx.get(p.objIdx));
-  }
+  const splicedList = list.flatMap((_el, idx) => survivorByIdx.has(idx) ? [survivorByIdx.get(idx)] : []);
   return { list: splicedList, eliminated: eliminatedOut };
 }
 function stripEliminatedList(list) {
-  return Array.isArray(list)
-    ? list.map((f) => ((f && typeof f === 'object') ? applyInjectedProseStrip(f) : f))
-    : list;
+  return list.map(applyInjectedProseStrip);
 }
 const METHODOLOGY_COUNT_ONLY_FIELDS = ['truncation_warnings', 'validation_warnings'];
 function compactMethodology(m) {
@@ -5545,9 +5655,55 @@ async function runWith(ctx, rawArgs) {
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
   let phaseAttempting = null;
+  const normalizePhaseFindings = (name, out, replayed) => {
+    if (!out || typeof out !== 'object') return;
+    const warnings = [];
+    let rejected = 0;
+    let pathRewrites = 0;
+    for (const [, field] of checkpointFindingListsForPhase(name)) {
+      if (!Array.isArray(out[field])) continue;
+      const normalized = normalizeFindingPaths(out[field], A.repoRoot);
+      rejected += out[field].length - normalized.valid.length;
+      pathRewrites += normalized.path_rewrites;
+      out[field] = normalized.valid;
+      warnings.push(...normalized.warnings);
+    }
+    if (pathRewrites || (replayed && rejected)) {
+      const stats = isPlainCheckpointObject(out.stats) ? out.stats : {};
+      out.stats = { ...stats,
+        ...(pathRewrites ? { path_rewrites: (stats.path_rewrites || 0) + pathRewrites } : {}),
+        ...(replayed && rejected ? { replay_path_rejected: rejected } : {}),
+      };
+    }
+    if (name === 'merge') {
+      const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
+      out.methodology = methodology;
+      const channels = methodology.findings_per_channel;
+      const surviving = out.findings.length;
+      const ndjsonCount = Number.isFinite(channels?.ndjson) ? channels.ndjson : 0;
+      const textFallbackCount = Number.isFinite(channels?.text_fallback) ? channels.text_fallback : 0;
+      const ndjson = Math.min(Math.max(0, ndjsonCount), surviving);
+      const textFallback = Math.min(Math.max(0, textFallbackCount), surviving - ndjson);
+      if (channels && typeof channels === 'object') {
+        out.methodology = { ...methodology, findings_per_channel: {
+          ...channels, ndjson, text_fallback: textFallback,
+        } };
+      }
+      if (warnings.length) {
+        out.methodology = { ...out.methodology, validation_warnings: [
+          ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
+          ...warnings,
+        ] };
+      }
+    }
+    if (!warnings.length) return;
+    out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
+  };
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
-    const out = checkpoints[name] !== undefined ? checkpoints[name] : await thunk();
+    const replayed = checkpoints[name] !== undefined;
+    const out = replayed ? checkpoints[name] : await thunk();
+    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed);
     phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -5588,6 +5744,7 @@ async function runWith(ctx, rawArgs) {
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
       base_branch: A.baseBranch, head_sha: A.headShaShort,
     }));
+    gaps.push(...(mergeOut.gaps || []));
     limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch);
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
       findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
@@ -5610,6 +5767,7 @@ async function runWith(ctx, rawArgs) {
       findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
       exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
+    gaps.push(...(filterOut.gaps || []));
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
       findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
     }));
@@ -5620,15 +5778,8 @@ async function runWith(ctx, rawArgs) {
       challengeOut.findings = findingsResult.list;
       challengeOut.unverified = unverifiedResult.list;
       const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
-      let droppedCount = 0;
-      if (Array.isArray(challengeOut.eliminated)) {
-        challengeOut.eliminated = [...challengeOut.eliminated, ...newlyEliminated];
-      } else if ((challengeOut.eliminated === undefined || challengeOut.eliminated === null) && newlyEliminated.length) {
-        challengeOut.eliminated = newlyEliminated;
-      } else if (newlyEliminated.length) {
-        droppedCount = newlyEliminated.length;
-      }
-      challengeOut.eliminated = stripEliminatedList(challengeOut.eliminated);
+      const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
+      challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
       if (challengeOut.stats && typeof challengeOut.stats === 'object') {
         const k1 = findingsResult.eliminated.length;
         const k2 = unverifiedResult.eliminated.length;
@@ -5639,24 +5790,10 @@ async function runWith(ctx, rawArgs) {
           challengeOut.stats.skipped = challengeOut.unverified.length;
         }
         challengeOut.stats.replay_belt_eliminated = k1 + k2;
-        const priorDropped = (typeof challengeOut.stats.replay_belt_dropped === 'number'
-          && Number.isFinite(challengeOut.stats.replay_belt_dropped))
-          ? challengeOut.stats.replay_belt_dropped
-          : 0;
-        challengeOut.stats.replay_belt_dropped = priorDropped + droppedCount;
       }
-      const markedCount = Array.isArray(challengeOut.eliminated)
-        ? challengeOut.eliminated.filter((f) => f && typeof f === 'object' && f.replay_belt === true).length
-        : 0;
+      const markedCount = challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
       if (markedCount > 0) {
         gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
-      }
-      const dropGapCount = (challengeOut.stats && typeof challengeOut.stats === 'object'
-        && typeof challengeOut.stats.replay_belt_dropped === 'number')
-        ? challengeOut.stats.replay_belt_dropped
-        : droppedCount;
-      if (dropGapCount > 0) {
-        gaps.push(`replay-filter: ${dropGapCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter, but the malformed (non-array) eliminated bucket on this checkpoint could not record them — dropped, not delivered, not persisted`);
       }
     }
     const deliveryTier = A.delivery && A.delivery.tier;
@@ -5665,12 +5802,21 @@ async function runWith(ctx, rawArgs) {
     const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
       && (A.mode !== 'headless'
         || headlessCommentsEnabled);
+    const pathNormalization = {};
+    for (const [phase, output] of Object.entries(phaseOutputs)) {
+      const counts = {};
+      for (const field of ['path_rewrites', 'replay_path_rejected']) {
+        if (output.stats?.[field] > 0) counts[field] = output.stats[field];
+      }
+      if (Object.keys(counts).length) pathNormalization[phase] = counts;
+    }
     const reportInput = {
       summary: summaryOut.summary,
       ...(includeDelivered ? { delivered: postReview } : {}),
       findings: challengeOut.findings,
       unverified: challengeOut.unverified,
       stats: {
+        pathNormalization,
         discovered: (discoverOut.findings || []).length,
         validate: validateOut.stats,
         filter: filterOut.stats,
@@ -5716,6 +5862,7 @@ async function runWith(ctx, rawArgs) {
       ok: true,
       phaseReached,
       stats: {
+        pathNormalization,
         discovered: (discoverOut.findings || []).length,
         merged: (mergeOut.findings || []).length,
         merge: compactMethodology(mergeOut.methodology),

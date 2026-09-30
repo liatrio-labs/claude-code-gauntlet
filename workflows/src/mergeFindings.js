@@ -1,5 +1,7 @@
 // Merge structured and text-channel findings into the Phase 4 envelope.
 import { dedupById } from './findingDedup.js';
+import { repoRelativeFindingPath } from './paths.js';
+import { FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 
 const KNOWN_DIMENSIONS = new Set([
   'bug',
@@ -153,6 +155,66 @@ export function injectAgentField(findings, agent) {
 }
 
 // --- Validation -------------------------------------------------------------
+
+function invalidFindingPathWarning(finding, field, reason, action) {
+  return `[${finding.id ?? '<no id>'}] Invalid ${field} path: ${reason} - ${action}`;
+}
+
+function normalizeFindingPath(finding, repoRoot) {
+  const original = finding.file;
+  const result = repoRelativeFindingPath(repoRoot, original);
+  if ('reason' in result) {
+    return { valid: false, warning: invalidFindingPathWarning(finding, 'file', result.reason, 'finding rejected') };
+  }
+  if (result.file !== original) {
+    finding.file = result.file;
+    // Legacy keys embed the file path and survive replay without reconsolidation.
+    if (typeof finding.consolidation_key === 'string' && finding.consolidation_key.startsWith(`${original}:`)) {
+      finding.consolidation_key = `${result.file}${finding.consolidation_key.slice(original.length)}`;
+    }
+    return { valid: true, rewritten: true };
+  }
+  return { valid: true, rewritten: false };
+}
+
+export function normalizeFindingPaths(findings, repoRoot) {
+  const valid = [];
+  const warnings = [];
+  let pathRewrites = 0;
+  for (const finding of findings) {
+    if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
+      warnings.push('Invalid finding shape: expected an object - finding rejected');
+      continue;
+    }
+    const result = normalizeFindingPath(finding, repoRoot);
+    if (!result.valid) {
+      warnings.push(result.warning);
+      continue;
+    }
+    if (result.rewritten) pathRewrites += 1;
+    for (const field of FINDING_PATH_ARRAY_FIELDS) {
+      if (!(field in finding)) continue;
+      if (!Array.isArray(finding[field])) {
+        delete finding[field];
+        warnings.push(invalidFindingPathWarning(finding, field, 'expected an array', 'field dropped'));
+        continue;
+      }
+      const refs = [];
+      for (const ref of finding[field]) {
+        const normalized = repoRelativeFindingPath(repoRoot, ref);
+        if ('reason' in normalized) {
+          warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped'));
+        } else {
+          refs.push(normalized.file);
+          if (normalized.file !== ref) pathRewrites += 1;
+        }
+      }
+      finding[field] = refs;
+    }
+    valid.push(finding);
+  }
+  return { valid, warnings, path_rewrites: pathRewrites };
+}
 
 export function validateFindings(findings) {
   const valid = [];

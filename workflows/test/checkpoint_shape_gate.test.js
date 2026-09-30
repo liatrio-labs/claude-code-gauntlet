@@ -1,31 +1,12 @@
-// checkpoint_shape_gate.test.js — #248 + #250: the RESOLVED replayed checkpoint map is
-// shape-gated, pre-dispatch, before runWith trusts any phase's checkpointed value.
-//
-// checkpointShapeErrors(resolvedCheckpoints) is a pure function: it takes the OUTPUT of
-// readCheckpoints (already `.phases`-unwrapped, already defaulted to {} for a non-object
-// top-level `checkpoints`) and returns a string[] of `checkpoint-shape:`-prefixed
-// violations, one per malformed spot. runWith calls it immediately after
-// `readCheckpoints`, pre-dispatch and outside the top-level try, and on ANY violation
-// returns a dedicated refusal envelope instead of running the pipeline at all.
-//
-// Table under test (issues #248/#250) — one row per phase runPhase() names, ALL EIGHT:
-//   every phase                 : gaps (array, elements NOT checked — container-only)
-//   discover                    : additionally dispatched, degraded (array, container-only)
-//   discover/merge/verify/validate: findings (array, elements plain objects, REQUIRED
-//                                  whenever the phase key is present); each finding's
-//                                  ranking/delivery field types are checked too
-//   filter                       : filtered (array, elements plain objects, REQUIRED,
-//                                  with the same finding field checks)
-//   challenge                    : findings (array, elements plain objects, strict,
-//                                  REQUIRED, with the same finding field checks);
-//                                  unverified (array, elements TOLERATED, optional, but
-//                                  object elements get the same finding field checks);
-//                                  eliminated is WHOLLY ungated (not in the table at all)
+// Replay must be shape-gated before dispatch so corrupt checkpoints cannot become clean reviews.
+// Required content lists prevent silent emptiness; every finding object is checked even in
+// tolerant lists because ranking and delivery read its fields. Tolerant finding lists may
+// carry primitive entries for path normalization to drop. Only eliminated lists accept null.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   checkpointShapeErrors, runWith, readCheckpoints, CHECKPOINT_PHASE_SHAPE_TABLE, buildResumeCheckpoints,
-  slimPersistedCheckpoints,
+  slimPersistedCheckpoints, CHECKPOINT_FINDING_LISTS,
 } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
@@ -241,15 +222,7 @@ test('checkpointShapeErrors: every findings-family row rejects malformed ranking
     corroborations: 'not-an-array',
   };
   const fields = ['severity', 'title', 'description', 'file', 'line', 'line_start', 'line_end', 'end_line', 'confidence', 'corroborations'];
-  for (const [phase, field] of [
-    ['discover', 'findings'],
-    ['merge', 'findings'],
-    ['verify', 'findings'],
-    ['validate', 'findings'],
-    ['filter', 'filtered'],
-    ['challenge', 'findings'],
-    ['challenge', 'unverified'],
-  ]) {
+  for (const [phase, field] of CHECKPOINT_FINDING_LISTS) {
     const base = wellFormedCheckpoints();
     const cp = { ...base, [phase]: { ...base[phase], [field]: [malformed] } };
     const errors = checkpointShapeErrors(cp);
@@ -286,13 +259,40 @@ test('checkpointShapeErrors: challenge.unverified [null, real] is ACCEPTED (elem
   assert.deepEqual(checkpointShapeErrors(cp), []);
 });
 
-test('checkpointShapeErrors: challenge.eliminated "not-an-array" is ACCEPTED (wholly ungated)', () => {
+test('checkpointShapeErrors: challenge.eliminated must be an array', () => {
   const cp = {
     ...wellFormedCheckpoints(),
     challenge: { ...wellFormedCheckpoints().challenge, eliminated: 'not-an-array' },
   };
+  assert.ok(checkpointShapeErrors(cp).some((e) => e.includes('challenge.eliminated must be an array')));
+});
+
+test('checkpointShapeErrors: challenge.eliminated null is accepted as absent', () => {
+  const cp = {
+    ...wellFormedCheckpoints(),
+    challenge: { ...wellFormedCheckpoints().challenge, eliminated: null },
+  };
   assert.deepEqual(checkpointShapeErrors(cp), []);
 });
+
+for (const [phase, field, expected] of [
+  ['discover', 'findings', ['checkpoint-shape: phases.discover.findings must be an array, got null']],
+  ['merge', 'findings', ['checkpoint-shape: phases.merge.findings must be an array, got null']],
+  ['verify', 'findings', ['checkpoint-shape: phases.verify.findings must be an array, got null']],
+  ['validate', 'findings', ['checkpoint-shape: phases.validate.findings must be an array, got null']],
+  ['filter', 'filtered', ['checkpoint-shape: phases.filter.filtered must be an array, got null']],
+  ['filter', 'eliminated', []],
+  ['challenge', 'findings', ['checkpoint-shape: phases.challenge.findings must be an array, got null']],
+  ['challenge', 'unverified', ['checkpoint-shape: phases.challenge.unverified must be an array, got null']],
+  ['challenge', 'eliminated', []],
+]) {
+  test(`checkpointShapeErrors: ${phase}.${field} has the expected null tolerance`, () => {
+    const cp = wellFormedCheckpoints();
+    cp[phase][field] = null;
+    const errors = checkpointShapeErrors(cp);
+    assert.deepEqual(errors, expected);
+  });
+}
 
 test('checkpointShapeErrors: unknown checkpoint keys are inert', () => {
   const cp = { ...wellFormedCheckpoints(), someFuturePhase: 'garbage', notAPhase: 123 };

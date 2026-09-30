@@ -2085,8 +2085,8 @@ test('contextLines/contextChars are bounded above — an absurd measurement fail
 //     reaches every discovery prompt
 //   - headShaShort / diffPath → verify executor argv (--head-sha, --diff-file) — the same
 //     argv-splitting hazard NONCE_RE already guards against
-//   - repoRoot → provenance-only, unread by every stage; absolute-shape-checked for stamp
-//     honesty (issue #81)
+//   - repoRoot → discover-entry and checkpoint-replay normalization; absolute shape keeps
+//     path containment checks anchored to the repository
 // A present-but-garbage value on a consumed path field would otherwise render a junk path
 // into every paid dispatch instead of failing at the waist. Absence stays a REQUIRED-field
 // error (tested elsewhere); these checks fire only when the field is PRESENT.
@@ -2157,8 +2157,7 @@ test('validateArgs accepts an absolute outputDir (POSIX /-prefix)', () => {
   );
 });
 
-// Issue #81: repoRoot must be absolute (POSIX /-prefix). Provenance-only / unread, but the
-// waist rejects a relative stamp rather than resolving (no reliable cwd; no FS probe).
+// Discover-entry normalization needs an absolute repoRoot for containment without a filesystem probe.
 test('validateArgs rejects a relative repoRoot', () => {
   for (const bad of ['.', 'repo']) {
     const r = validateArgs({ ...good, repoRoot: bad });
@@ -2688,3 +2687,11 @@ test('resolveReviewConfig: reviewMd scopes are depth-ordered regardless of input
   assert.equal(out.reviewConfig.confidence_threshold, 70);
   assert.deepEqual(out.reviewConfig.scopes, [{ dir: 'src/deep', confidence_threshold: 90, ignore: [] }]);
 });
+
+for (const repoRoot of ['/work/../repo', String.raw`/a\b`]) {
+  test(`validateArgs rejects an unconfined repoRoot: ${repoRoot}`, () => {
+    const out = validateArgs({ ...good, repoRoot });
+    assert.equal(out.ok, false);
+    assert.ok(out.errors.includes('repoRoot must be an absolute path without .. segments or backslashes'));
+  });
+}

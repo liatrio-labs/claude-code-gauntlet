@@ -126,6 +126,9 @@ export const FINDING_PROP_TYPES = {
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 };
 
+// Structural references need the same confinement as file before reaching artifacts.
+export const FINDING_PATH_ARRAY_FIELDS = ['cross_file_refs', 'affected_consumers'];
+
 // FINDING_REQUIRED stays the flat canonical list shared by every dispatch schema — it names
 // only fields every dimension emits, so it can never itself carry a single-dimension name.
 // Per-dimension requirements live one level down, on each DIMENSIONS row's `requiredExtra`

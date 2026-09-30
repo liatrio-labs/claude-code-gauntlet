@@ -17,7 +17,8 @@
 // survives, the merge or single-call result is null, or any summarize dispatch throws.
 // No wall-clock, no import at runtime.
 import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
-import { merge } from './mergeFindings.js';
+import { merge, normalizeFindingPaths } from './mergeFindings.js';
+import { normalizeAbsoluteRoot, pathUnderRoot } from './paths.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
@@ -822,22 +823,8 @@ export function mergeStage(discoverOut, meta) {
     ndjsonContents[a] = group.map((f) => JSON.stringify(f)).join('\n');
   }
 
-  // agents drives merge()'s per-agent iteration AND methodology.agents_dispatched — and
-  // merge()'s injectAgentField RE-STAMPS every finding's `.agent` to whichever string is
-  // in this list. discover() now injects the SHORT agent name onto findings (FIX 1: the
-  // full 'code-gauntlet:' prefix broke filterFindings' short-name matching), so this list
-  // must match that short form too, or the `nd[agent]` lookup below misses for every
-  // agent (silently dropping all its findings) and injectAgentField would re-inject the
-  // long prefix, undoing FIX 1 downstream. discover()'s own fan-out list (`dispatched`)
-  // is still the full 'code-gauntlet:<agent>' agentType (unaffected by FIX 1), so it is
-  // normalized here — Object.keys(ndjsonContents) is already short (built straight from
-  // findings' own .agent) and needs no normalization.
-  //
-  // Prefer discover()'s own fan-out list (`dispatched`) so a zero-finding agent is
-  // still counted as dispatched, distinguishable from one never dispatched at all
-  // (disabled via agentFlags). Older/synthetic callers that omit `dispatched` fall back
-  // to the agents that actually produced findings, and finally the full roster so an
-  // empty run still yields an envelope.
+  // Merge uses the short agent names stamped on findings, while dispatched carries the
+  // full agent types. Keep the roster so zero-finding agents remain visible in methodology.
   const shortAgentName = (a) => (typeof a === 'string' ? a.split(':').pop() : a);
   const agents = Array.isArray(out.dispatched)
     ? out.dispatched.map(shortAgentName)
@@ -2148,62 +2135,11 @@ const WRITTEN_SCHEMA = {
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
 
-// Issue #148: Persist outputDir-prefix fence. One predicate for stamp throws and
-// writer-echo gaps. Sandbox has no fs/realpath — string normalize then prefix only.
-// Deliberately do NOT collapse `//` (still under the fence; collapsing it would be a
-// separate normalizer that tests would then need to pin). Reject `..` outright — do not
-// resolve it textually (symlinks make a/b/../c ≠ a/c). Reject `\` so a Windows separator
-// cannot sail past a /-based prefix test.
-
-/** Gap token for writer-reported paths outside outputDir. Registered in docs/machine-parsed-strings.md; G3 still keys off the surrounding `(partial-artifacts)` suffix. */
+// A stable token lets callers recognize invalid writer path receipts without parsing prose.
 export const PATH_ESCAPE_TOKEN = 'path-escape';
 
-function collapseDotSlash(p) {
-  let out = p;
-  for (;;) {
-    const next = out.replace(/\/\.\//g, '/');
-    if (next === out) return out;
-    out = next;
-  }
-}
-
-function stripTrailingSlashes(p) {
-  let out = p;
-  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
-  return out;
-}
-
-// Collapse `/./` then strip trailing `/` (and a leftover trailing `/.` from `..././`).
-// Deliberately does NOT collapse `//` — still under the fence; see #148 design.
-function normalizePathString(p) {
-  let out = p;
-  for (;;) {
-    let next = stripTrailingSlashes(collapseDotSlash(out));
-    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
-    next = stripTrailingSlashes(next);
-    if (next === out) return next;
-    out = next;
-  }
-}
-
-function hasBackslash(s) {
-  return s.includes('\\');
-}
-
-function hasDotDotSegment(s) {
-  return s.split('/').includes('..');
-}
-
-// Normalize an absolute confined root, or null if it fails the absolute/root arms.
-export function normalizeOutputDirRoot(outputDir) {
-  if (typeof outputDir !== 'string' || outputDir === '') return null;
-  const root = normalizePathString(outputDir);
-  if (!root.startsWith('/') || hasBackslash(root) || hasDotDotSegment(root)) return null;
-  return root;
-}
-
 export function requireAbsoluteOutputDir(outputDir) {
-  const root = normalizeOutputDirRoot(outputDir);
+  const root = normalizeAbsoluteRoot(outputDir);
   if (root === null) {
     throw new Error(
       `outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
@@ -2212,20 +2148,8 @@ export function requireAbsoluteOutputDir(outputDir) {
   return root;
 }
 
-// True iff path is under the absolute outputDir root after the shared normalize arms.
-// Empty / null / undefined path → false (gap, not TypeError). Bad root → false.
-export function pathUnderOutputDir(outputDir, path) {
-  const root = normalizeOutputDirRoot(outputDir);
-  if (root === null) return false;
-  if (typeof path !== 'string' || path === '') return false;
-  const p = normalizePathString(path);
-  if (!p.startsWith('/') || hasBackslash(p) || hasDotDotSegment(p)) return false;
-  // Equality arm: path === root must pass (startsWith(root + '/') alone would reject it).
-  return p === root || p.startsWith(`${root}/`);
-}
-
 function assertPlannedPathUnderOutputDir(outputDir, path) {
-  if (!pathUnderOutputDir(outputDir, path)) {
+  if (!pathUnderRoot(outputDir, path)) {
     throw new Error(`planned artifact path escapes outputDir: ${path}`);
   }
 }
@@ -2238,7 +2162,7 @@ function pathEscapeReason(outputDir, fields) {
   const escaped = [];
   for (const { name, path, present } of fields) {
     if (!present) continue;
-    if (!pathUnderOutputDir(outputDir, path)) {
+    if (!pathUnderRoot(outputDir, path)) {
       escaped.push(`${name}=${path == null ? String(path) : path}`);
     }
   }
@@ -2249,8 +2173,7 @@ function pathEscapeReason(outputDir, fields) {
 // The four artifacts writeArtifacts plans (and asks the writer to echo). Exported so a
 // faithful mock/recorder echoes the SAME paths the write-proof gate checks against — the
 // gate rejects any echo that fails to account for all four planned paths.
-// Issue #148: requires absolute outputDir; every stamped path must pass pathUnderOutputDir
-// or this throws (programming-error / stamp regression — not a partial-artifacts gap).
+// Every stamped path must remain under the absolute output directory.
 export function plannedArtifactPaths(outputDir, sha) {
   const root = requireAbsoluteOutputDir(outputDir);
   const paths = {
@@ -3463,15 +3386,25 @@ function checkpointDiscardGap(topLevelCheckpoints) {
 // container-only is enough to close that. discover also gets `dispatched`/`degraded` as
 // 'tolerant': both are unconditionally `.join`-ed or iterated (allActiveDimensionsDegraded,
 // the dimensions summary table), so a string there raw-TypeErrors the same way. Element
-// tolerance is otherwise reserved for challenge.unverified, whose null-element tolerance is
-// a pinned, correct, fully-delivering degradation (stages_delivery.test.js:514-542: the
-// belt's `{raw: el}` positions and dimensionsSummaryTable are all null-safe for that one
-// field). challenge.eliminated is deliberately ABSENT from
-// this table -- it never reaches rankFindings, and the belt owns its own malformed
-// shapes with a disclosed drop path (`stats.replay_belt_dropped`, the `replay-filter:`
-// gap) -- so it is wholly ungated here, by omission, not by an explicit skip.
+// tolerance on finding lists is reserved for filter.eliminated and
+// challenge.unverified/eliminated. Replay path normalization drops malformed entries from them
+// before they reach the belt or persisted artifacts. Eliminated lists may be absent as null.
 const CHECKPOINT_ARRAY_STRICT = 'strict';
 const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
+export const CHECKPOINT_FINDING_LISTS = [
+  ['discover', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['merge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['verify', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['validate', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['filter', 'filtered', CHECKPOINT_ARRAY_STRICT, false],
+  ['filter', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
+  ['challenge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
+  ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
+];
+const checkpointFindingListsForPhase = (phase) => CHECKPOINT_FINDING_LISTS.filter(([name]) => name === phase);
+const findingListShape = (phase) => Object.fromEntries(checkpointFindingListsForPhase(phase)
+  .map(([, field, mode]) => [field, mode]));
 // Exported for checkpoint_shape_gate.test.js, which derives the strict rows from it so a
 // row flipped to strict gets an element-level null/primitive test for free, with no second
 // edit to keep in sync (the export costs nothing in the bundle -- the table is consumed
@@ -3479,40 +3412,27 @@ const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
 export const CHECKPOINT_PHASE_SHAPE_TABLE = {
   summarize: { gaps: CHECKPOINT_ARRAY_TOLERANT },
   discover: {
-    findings: CHECKPOINT_ARRAY_STRICT,
+    ...findingListShape('discover'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
     dispatched: CHECKPOINT_ARRAY_TOLERANT,
     degraded: CHECKPOINT_ARRAY_TOLERANT,
   },
-  merge: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  verify: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  validate: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
-  filter: { filtered: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
+  merge: { ...findingListShape('merge'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  verify: { ...findingListShape('verify'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  validate: { ...findingListShape('validate'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  filter: { ...findingListShape('filter'), gaps: CHECKPOINT_ARRAY_TOLERANT },
   challenge: {
-    findings: CHECKPOINT_ARRAY_STRICT,
-    unverified: CHECKPOINT_ARRAY_TOLERANT,
+    ...findingListShape('challenge'),
     gaps: CHECKPOINT_ARRAY_TOLERANT,
   },
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
 };
 
-// CHECKPOINT_REQUIRED_CONTENT_FIELD: phase -> the one field REQUIRED whenever the phase key
-// itself is present in a replayed checkpoint (issue #248's silent-empty). No legitimate
-// producer ever omits it -- every stage always emits it, and persistPlan empties
-// challenge.findings to `[]`, never to absent -- so a MISSING content field only ever means
-// a hand-edited or version-skewed checkpoint. Left absent, `challenge: {}` returns ok:true
-// with an empty review AND disarms the #178 all-degraded guard, whose third conjunct is
-// `checkpoints.challenge !== undefined` (this file, runWith, the all-degraded gap). Content
-// phases only: summarize/report have no required field, and challenge.unverified plus every
-// phase's gaps/dispatched/degraded stay OPTIONAL through the table above.
-const CHECKPOINT_REQUIRED_CONTENT_FIELD = {
-  discover: 'findings',
-  merge: 'findings',
-  verify: 'findings',
-  validate: 'findings',
-  filter: 'filtered',
-  challenge: 'findings',
-};
+// Strict content lists are always emitted; their absence would replay a false empty review.
+const CHECKPOINT_REQUIRED_CONTENT_FIELD = Object.fromEntries(CHECKPOINT_FINDING_LISTS
+  .filter(([, , mode]) => mode === CHECKPOINT_ARRAY_STRICT).map(([phase, field]) => [phase, field]));
+const CHECKPOINT_NULLABLE_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS
+  .filter(([, , , nullable]) => nullable).map(([phase, field]) => `${phase}.${field}`));
 
 function isPlainCheckpointObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -3524,7 +3444,7 @@ function describeCheckpointShape(v) {
   return typeof v;
 }
 
-const CHECKPOINT_FINDING_FIELDS = new Set(['findings', 'filtered', 'unverified']);
+const CHECKPOINT_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS.map(([, field]) => field));
 const CHECKPOINT_FINDING_STRING_FIELDS = ['severity', 'title', 'file'];
 const CHECKPOINT_FINDING_INTEGER_FIELDS = ['line', 'line_start', 'line_end', 'end_line'];
 
@@ -3602,6 +3522,7 @@ export function checkpointShapeErrors(resolvedCheckpoints) {
     for (const field of Object.keys(fields)) {
       const arrVal = value[field];
       if (arrVal === undefined) continue;
+      if (arrVal === null && CHECKPOINT_NULLABLE_FINDING_FIELDS.has(`${phase}.${field}`)) continue;
       if (!Array.isArray(arrVal)) {
         violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
         continue;
@@ -3777,13 +3698,7 @@ const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
 
 // beltPartitionList(list) -> { list, eliminated }. The #253 belt's per-list
 // worker for challengeOut.findings / .unverified:
-//   - a non-array `list` (or an empty one) is returned untouched, `eliminated`
-//     empty -- mirrors the #213 tolerance this belt replaces
-//     (stages_delivery.test.js:488-512 is the sibling oracle for that same
-//     tolerance, on .eliminated);
-//   - a non-object element (null, a primitive -- stages_delivery.test.js:
-//     514-542 is the oracle) keeps its exact position in the output, never
-//     touched, never handed to the scan;
+//   - an absent or empty list is returned untouched because it has no scan state;
 //   - every object element is normalized (normalizeFieldNames, idempotent --
 //     a precondition of the scan, not pre-challenge semantics: a hand-built
 //     or v2-era checkpoint can carry `body`/`line`/`blame_tag` instead of the
@@ -3793,22 +3708,12 @@ const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
 //     re-spliced back into their original relative position among the other
 //     surviving elements; eliminated elements are removed from `list` and
 //     returned separately, stamped with a `replay_belt: true` marker on top
-//     of the scan's own eliminated_by/elimination_reason.
+//     of the scan's own eliminated_by/elimination_reason. Replay normalization
+//     has already removed non-objects from these lists.
 function beltPartitionList(list) {
   if (!Array.isArray(list) || list.length === 0) return { list, eliminated: [] };
 
-  const positions = [];
-  const objectElements = [];
-  for (const el of list) {
-    if (el && typeof el === 'object') {
-      const idx = objectElements.length;
-      objectElements.push({ ...el, [REPLAY_BELT_INDEX_KEY]: idx });
-      positions.push({ objIdx: idx });
-    } else {
-      positions.push({ raw: el });
-    }
-  }
-  if (objectElements.length === 0) return { list, eliminated: [] };
+  const objectElements = list.map((el, idx) => ({ ...el, [REPLAY_BELT_INDEX_KEY]: idx }));
 
   normalizeFieldNames(objectElements);
   const { kept, eliminated } = applyReplayInjectionScan(objectElements);
@@ -3823,26 +3728,14 @@ function beltPartitionList(list) {
     return { ...clean, replay_belt: true };
   });
 
-  const splicedList = [];
-  for (const p of positions) {
-    if ('raw' in p) { splicedList.push(p.raw); continue; }
-    if (survivorByIdx.has(p.objIdx)) splicedList.push(survivorByIdx.get(p.objIdx));
-    // else: eliminated -- omitted from the spliced list, present in eliminatedOut.
-  }
+  const splicedList = list.flatMap((_el, idx) => survivorByIdx.has(idx) ? [survivorByIdx.get(idx)] : []);
 
   return { list: splicedList, eliminated: eliminatedOut };
 }
 
-// stripEliminatedList(list) -> the #213-established element tolerance,
-// reused by the #253 belt for the FINAL .eliminated strip (see the
-// append-then-strip ordering at the call site, D2): a non-array `list`
-// passes through untouched, a non-object element passes through untouched,
-// every other element is run through applyInjectedProseStrip (idempotent --
-// a no-op on an already-stripped finding, so a resume-of-a-resume is safe).
+// A fresh challenge can omit eliminated; replayed containers are shape-gated.
 function stripEliminatedList(list) {
-  return Array.isArray(list)
-    ? list.map((f) => ((f && typeof f === 'object') ? applyInjectedProseStrip(f) : f))
-    : list;
+  return list.map(applyInjectedProseStrip);
 }
 
 // #181: merge()'s per-agent channel/dedup/validation-warning granularity — the only
@@ -4004,12 +3897,62 @@ export async function runWith(ctx, rawArgs) {
   // "failed during Validate"). The catch envelope carries both.
   let phaseAttempting = null;
 
+  // Replayed checkpoints need the same finding-path validation as fresh output.
+  const normalizePhaseFindings = (name, out, replayed) => {
+    if (!out || typeof out !== 'object') return;
+    const warnings = [];
+    let rejected = 0;
+    let pathRewrites = 0;
+    for (const [, field] of checkpointFindingListsForPhase(name)) {
+      if (!Array.isArray(out[field])) continue;
+      const normalized = normalizeFindingPaths(out[field], A.repoRoot);
+      rejected += out[field].length - normalized.valid.length;
+      pathRewrites += normalized.path_rewrites;
+      out[field] = normalized.valid;
+      warnings.push(...normalized.warnings);
+    }
+    if (pathRewrites || (replayed && rejected)) {
+      const stats = isPlainCheckpointObject(out.stats) ? out.stats : {};
+      out.stats = { ...stats,
+        ...(pathRewrites ? { path_rewrites: (stats.path_rewrites || 0) + pathRewrites } : {}),
+        ...(replayed && rejected ? { replay_path_rejected: rejected } : {}),
+      };
+    }
+    if (name === 'merge') {
+      const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
+      out.methodology = methodology;
+      const channels = methodology.findings_per_channel;
+      const surviving = out.findings.length;
+      // Attribution is approximate because replayed findings carry no channel.
+      const ndjsonCount = Number.isFinite(channels?.ndjson) ? channels.ndjson : 0;
+      const textFallbackCount = Number.isFinite(channels?.text_fallback) ? channels.text_fallback : 0;
+      const ndjson = Math.min(Math.max(0, ndjsonCount), surviving);
+      const textFallback = Math.min(Math.max(0, textFallbackCount), surviving - ndjson);
+      if (channels && typeof channels === 'object') {
+        out.methodology = { ...methodology, findings_per_channel: {
+          ...channels, ndjson, text_fallback: textFallback,
+        } };
+      }
+      if (warnings.length) {
+        out.methodology = { ...out.methodology, validation_warnings: [
+          ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
+          ...warnings,
+        ] };
+      }
+    }
+    if (!warnings.length) return;
+    out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
+  };
+
   // Resume: a phase whose checkpoint is present reuses that output instead of
   // dispatching. Either way the phase counts as reached, and its output is recorded
   // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
-    const out = checkpoints[name] !== undefined ? checkpoints[name] : await thunk();
+    const replayed = checkpoints[name] !== undefined;
+    const out = replayed ? checkpoints[name] : await thunk();
+    // Discover is the entry to every downstream finding-bearing phase.
+    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed);
     phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -4123,6 +4066,7 @@ export async function runWith(ctx, rawArgs) {
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
       base_branch: A.baseBranch, head_sha: A.headShaShort,
     }));
+    gaps.push(...(mergeOut.gaps || []));
 
     // The finding count now exists — re-coarsen so verify slices, validate batches,
     // and the challenge cap keep the remaining worst-case fan-out under the guard.
@@ -4156,6 +4100,7 @@ export async function runWith(ctx, rawArgs) {
       findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
       exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
+    gaps.push(...(filterOut.gaps || []));
 
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
       // No context line: challengeStage never read one, and challengePrompt takes only the
@@ -4187,20 +4132,10 @@ export async function runWith(ctx, rawArgs) {
     // heuristic 4) at filter time THIS run, so it is a no-op by construction there.
     //
     // Position-preserving partition, single walk per list (findings, then unverified):
-    // beltPartitionList normalizes and re-scans only the OBJECT elements as one ordered
-    // list (heuristic 10's dedup state makes scan order load-bearing), then re-splices
-    // survivors back into their original relative position; a non-object element (null,
-    // a primitive) keeps its exact position, never touched (stages_delivery.test.js:
-    // 514-542 is the oracle). beltPartitionList ALSO tolerates a non-array findings/
-    // unverified (returned untouched, `eliminated` empty), but that tolerance can no
-    // longer be reached from a REPLAYED checkpoint: the pre-dispatch checkpoint-shape gate
-    // (checkpointShapeErrors + makeCheckpointShapeRejectEnvelope, above runWith's try
-    // block) already refuses a non-array phases.challenge.findings/.unverified before any
-    // phase runs. It stays live only for a non-replay caller of beltPartitionList directly
-    // -- stages_delivery.test.js:488-512's non-array `.eliminated` (wholly ungated by the
-    // shape table, so still reachable via replay) is the closest surviving oracle for the
-    // same code shape. See beltPartitionList's own doc comment for the splice mechanics
-    // and stripEliminatedList's for the #213 element tolerance it reuses.
+    // beltPartitionList normalizes and re-scans the objects as one ordered list because
+    // heuristic 10's dedup state makes scan order load-bearing. Replay normalization
+    // drops non-object entries before this scan.
+    // See beltPartitionList's own doc comment for the splice mechanics.
     //
     // .eliminated: newly-belt-eliminated entries APPEND first, then the WHOLE resulting
     // array runs through stripEliminatedList (order is the defence, D2): appending
@@ -4209,10 +4144,7 @@ export async function runWith(ctx, rawArgs) {
     // its kept path does), and a finding can be eliminated by its description while
     // ALSO carrying an unrelated payload in one of those three fields; stripping the
     // whole array only after the append is what keeps that second payload out of
-    // checkpoint-all.json. undefined/null .eliminated becomes a fresh array only when
-    // there is something to put in it; any OTHER non-array (a malformed checkpoint) is
-    // left untouched -- the append cannot happen, so the drop is disclosed on its own
-    // gap line below instead of silently losing the eliminations.
+    // checkpoint-all.json.
     //
     // Rewrites challengeOut's OWN findings/unverified/eliminated/stats IN PLACE (not
     // threaded through locals): every existing downstream reader (selectDelivery/
@@ -4254,19 +4186,8 @@ export async function runWith(ctx, rawArgs) {
       challengeOut.unverified = unverifiedResult.list;
       const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
 
-      let droppedCount = 0;
-      if (Array.isArray(challengeOut.eliminated)) {
-        challengeOut.eliminated = [...challengeOut.eliminated, ...newlyEliminated];
-      } else if ((challengeOut.eliminated === undefined || challengeOut.eliminated === null) && newlyEliminated.length) {
-        challengeOut.eliminated = newlyEliminated;
-      } else if (newlyEliminated.length) {
-        // A malformed .eliminated that is truthy and non-array (e.g. the string
-        // 'not-an-array', per the #213 tolerance test) cannot receive an append --
-        // these eliminations are dropped, not delivered and not persisted anywhere,
-        // and disclosed on their own gap line below (there is nothing to append to).
-        droppedCount = newlyEliminated.length;
-      }
-      challengeOut.eliminated = stripEliminatedList(challengeOut.eliminated);
+      const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
+      challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
 
       // stats: final_count/skipped are the two numeric keys whose value IS the length
       // of an array this belt just rewrote (challengeOut.findings / .unverified), so
@@ -4286,9 +4207,7 @@ export async function runWith(ctx, rawArgs) {
       // envelope both read challengeOut.stats BY REFERENCE (this same object, further
       // down in this function), so this mutation is visible to both for free.
       // replay_belt_eliminated is this CALL's own total (not a cross-resume running
-      // total -- the gap line below is the resume-safe signal for that, and
-      // replay_belt_dropped just below is its cross-resume counterpart for the drop
-      // path); it is always stamped, even at 0, so a reader never has to distinguish
+      // total -- the gap line below is the resume-safe signal for that). Stamp zero so a reader never has to distinguish
       // "zero eliminations" from "key absent".
       if (challengeOut.stats && typeof challengeOut.stats === 'object') {
         const k1 = findingsResult.eliminated.length;
@@ -4300,20 +4219,6 @@ export async function runWith(ctx, rawArgs) {
           challengeOut.stats.skipped = challengeOut.unverified.length;
         }
         challengeOut.stats.replay_belt_eliminated = k1 + k2;
-
-        // Durable drop-disclosure counter: the sibling accumulation to markedCount's
-        // DERIVATION below, for the case markedCount cannot cover -- a malformed
-        // (truthy, non-array) .eliminated means the drop is recorded NOWHERE in the
-        // checkpoint, so there is nothing to re-derive from on a later resume. Carrying
-        // a running total here (only ever increased) is what lets a resume-of-a-resume
-        // still disclose a drop this call's own droppedCount (0) would otherwise hide.
-        // Only accumulated when stats is a plain object; when it is not, the per-call
-        // gap line below is the only disclosure there is for this run.
-        const priorDropped = (typeof challengeOut.stats.replay_belt_dropped === 'number'
-          && Number.isFinite(challengeOut.stats.replay_belt_dropped))
-          ? challengeOut.stats.replay_belt_dropped
-          : 0;
-        challengeOut.stats.replay_belt_dropped = priorDropped + droppedCount;
       }
 
       // Disclosure -- idempotent BY DERIVATION, not by counting this call's own
@@ -4325,26 +4230,11 @@ export async function runWith(ctx, rawArgs) {
       // Pushed to runWith's own top-level `gaps` (below), never `challengeOut.gaps`
       // (which rides into the persisted checkpoint and would double-count on the
       // NEXT resume's re-derivation of this same count).
-      const markedCount = Array.isArray(challengeOut.eliminated)
-        ? challengeOut.eliminated.filter((f) => f && typeof f === 'object' && f.replay_belt === true).length
-        : 0;
+      const markedCount = challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
       if (markedCount > 0) {
         gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
       }
 
-      // Drop-gap count: the DURABLE accumulated value (stats.replay_belt_dropped) when
-      // challengeOut.stats is a plain object, so the disclosure survives a
-      // resume-of-a-resume where this call's own droppedCount is 0 because the belt
-      // already shrank the arrays on a prior pass and there was never an array to leave
-      // a residue in; otherwise this call's own droppedCount is the only disclosure
-      // there is.
-      const dropGapCount = (challengeOut.stats && typeof challengeOut.stats === 'object'
-        && typeof challengeOut.stats.replay_belt_dropped === 'number')
-        ? challengeOut.stats.replay_belt_dropped
-        : droppedCount;
-      if (dropGapCount > 0) {
-        gaps.push(`replay-filter: ${dropGapCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter, but the malformed (non-array) eliminated bucket on this checkpoint could not record them — dropped, not delivered, not persisted`);
-      }
     }
 
     // Deterministic delivery selection: the challenge-survivors filtered by the user-chosen
@@ -4363,12 +4253,21 @@ export async function runWith(ctx, rawArgs) {
       && (A.mode !== 'headless'
         || headlessCommentsEnabled);
 
+    const pathNormalization = {};
+    for (const [phase, output] of Object.entries(phaseOutputs)) {
+      const counts = {};
+      for (const field of ['path_rewrites', 'replay_path_rejected']) {
+        if (output.stats?.[field] > 0) counts[field] = output.stats[field];
+      }
+      if (Object.keys(counts).length) pathNormalization[phase] = counts;
+    }
     const reportInput = {
       summary: summaryOut.summary,
       ...(includeDelivered ? { delivered: postReview } : {}),
       findings: challengeOut.findings,
       unverified: challengeOut.unverified,
       stats: {
+        pathNormalization,
         discovered: (discoverOut.findings || []).length,
         validate: validateOut.stats,
         filter: filterOut.stats,
@@ -4448,6 +4347,7 @@ export async function runWith(ctx, rawArgs) {
       ok: true,
       phaseReached,
       stats: {
+        pathNormalization,
         discovered: (discoverOut.findings || []).length,
         merged: (mergeOut.findings || []).length,
         merge: compactMethodology(mergeOut.methodology),
