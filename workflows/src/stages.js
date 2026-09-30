@@ -3897,9 +3897,7 @@ export async function runWith(ctx, rawArgs) {
   // "failed during Validate"). The catch envelope carries both.
   let phaseAttempting = null;
 
-  // Resume: a phase whose checkpoint is present reuses that output instead of
-  // dispatching. Either way the phase counts as reached, and its output is recorded
-  // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
+  // Replayed checkpoints need the same finding-path validation as fresh output.
   const normalizePhaseFindings = (name, out, replayed) => {
     if (!out || typeof out !== 'object') return;
     const warnings = [];
@@ -3946,6 +3944,9 @@ export async function runWith(ctx, rawArgs) {
     out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
   };
 
+  // Resume: a phase whose checkpoint is present reuses that output instead of
+  // dispatching. Either way the phase counts as reached, and its output is recorded
+  // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;

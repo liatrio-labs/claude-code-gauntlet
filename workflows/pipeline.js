@@ -164,32 +164,47 @@ function hasBackslash(path) {
 function hasDotDotSegment(path) {
   return path.split('/').includes('..');
 }
+function isSafeAbsolutePath(path) {
+  return path.startsWith('/') && !hasBackslash(path) && !hasDotDotSegment(path);
+}
+function rootPrefix(root) {
+  return root === '/' ? '/' : `${root}/`;
+}
+const LOCATION_SUFFIX_RE = /:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/;
+function splitLocationSuffix(path) {
+  const suffix = path.match(LOCATION_SUFFIX_RE)?.[0] || '';
+  return { path: suffix ? path.slice(0, -suffix.length) : path, suffix };
+}
 function normalizeAbsoluteRoot(root) {
   if (typeof root !== 'string' || root === '') return null;
   const normalized = normalizePathString(root);
-  if (!normalized.startsWith('/') || hasBackslash(normalized) || hasDotDotSegment(normalized)) return null;
+  if (!isSafeAbsolutePath(normalized)) return null;
   return normalized;
 }
 function pathUnderRoot(root, path) {
   const normalizedRoot = normalizeAbsoluteRoot(root);
   if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
   const normalizedPath = normalizePathString(path);
-  if (!normalizedPath.startsWith('/') || hasBackslash(normalizedPath) || hasDotDotSegment(normalizedPath)) return false;
-  const prefix = normalizedRoot === '/' ? '/' : `${normalizedRoot}/`;
+  if (!isSafeAbsolutePath(normalizedPath)) return false;
+  const prefix = rootPrefix(normalizedRoot);
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(prefix);
 }
 function repoRelativeFindingPath(repoRoot, file) {
   if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
   let normalized = file;
-  for (let remaining = file.length; remaining > 0; remaining -= 1) {
+  let location;
+  for (let remaining = file.length; remaining >= 0; remaining -= 1) {
     const slashes = normalizePathString(normalized);
-    const tail = slashes.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
-    const next = `${normalizePathString(tail ? slashes.slice(0, -tail.length) : slashes)}${tail}`;
-    if (next === normalized) break;
+    const split = splitLocationSuffix(slashes);
+    const path = normalizePathString(split.path);
+    const next = `${path}${split.suffix}`;
+    if (next === normalized) {
+      location = { path, suffix: split.suffix };
+      break;
+    }
     normalized = next;
   }
-  const suffix = normalized.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
-  const path = suffix ? normalized.slice(0, -suffix.length) : normalized;
+  const { path, suffix } = location;
   if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
   let relative;
   if (!path.startsWith('/')) {
@@ -200,9 +215,9 @@ function repoRelativeFindingPath(repoRoot, file) {
     if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
     const absolute = normalizePathString(path);
     if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
-    const prefix = root === '/' ? '/' : `${root}/`;
+    const prefix = rootPrefix(root);
     if (!absolute.startsWith(prefix)) return { reason: 'absolute file path is outside repoRoot' };
-    relative = absolute.slice(root === '/' ? 1 : root.length + 1);
+    relative = absolute.slice(prefix.length);
   }
   if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
   if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
@@ -364,7 +379,7 @@ function normalizeFindingPath(finding, repoRoot) {
     }
     return { valid: true, rewritten: true };
   }
-  return { valid: true, warning: null };
+  return { valid: true, rewritten: false };
 }
 function normalizeFindingPaths(findings, repoRoot) {
   const valid = [];
@@ -376,8 +391,10 @@ function normalizeFindingPaths(findings, repoRoot) {
       continue;
     }
     const result = normalizeFindingPath(finding, repoRoot);
-    if (result.warning) warnings.push(result.warning);
-    if (!result.valid) continue;
+    if (!result.valid) {
+      warnings.push(result.warning);
+      continue;
+    }
     if (result.rewritten) pathRewrites += 1;
     for (const field of FINDING_PATH_ARRAY_FIELDS) {
       if (!(field in finding)) continue;

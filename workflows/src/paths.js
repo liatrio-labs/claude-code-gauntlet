@@ -33,10 +33,25 @@ function hasDotDotSegment(path) {
   return path.split('/').includes('..');
 }
 
+function isSafeAbsolutePath(path) {
+  return path.startsWith('/') && !hasBackslash(path) && !hasDotDotSegment(path);
+}
+
+function rootPrefix(root) {
+  return root === '/' ? '/' : `${root}/`;
+}
+
+const LOCATION_SUFFIX_RE = /:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/;
+
+function splitLocationSuffix(path) {
+  const suffix = path.match(LOCATION_SUFFIX_RE)?.[0] || '';
+  return { path: suffix ? path.slice(0, -suffix.length) : path, suffix };
+}
+
 export function normalizeAbsoluteRoot(root) {
   if (typeof root !== 'string' || root === '') return null;
   const normalized = normalizePathString(root);
-  if (!normalized.startsWith('/') || hasBackslash(normalized) || hasDotDotSegment(normalized)) return null;
+  if (!isSafeAbsolutePath(normalized)) return null;
   return normalized;
 }
 
@@ -44,8 +59,8 @@ export function pathUnderRoot(root, path) {
   const normalizedRoot = normalizeAbsoluteRoot(root);
   if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
   const normalizedPath = normalizePathString(path);
-  if (!normalizedPath.startsWith('/') || hasBackslash(normalizedPath) || hasDotDotSegment(normalizedPath)) return false;
-  const prefix = normalizedRoot === '/' ? '/' : `${normalizedRoot}/`;
+  if (!isSafeAbsolutePath(normalizedPath)) return false;
+  const prefix = rootPrefix(normalizedRoot);
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(prefix);
 }
 
@@ -54,15 +69,19 @@ export function repoRelativeFindingPath(repoRoot, file) {
   // Slash normalization must expose location tails before they are separated from the path.
   let normalized = file;
   // Each changing pass removes characters, so input length bounds convergence.
-  for (let remaining = file.length; remaining > 0; remaining -= 1) {
+  let location;
+  for (let remaining = file.length; remaining >= 0; remaining -= 1) {
     const slashes = normalizePathString(normalized);
-    const tail = slashes.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
-    const next = `${normalizePathString(tail ? slashes.slice(0, -tail.length) : slashes)}${tail}`;
-    if (next === normalized) break;
+    const split = splitLocationSuffix(slashes);
+    const path = normalizePathString(split.path);
+    const next = `${path}${split.suffix}`;
+    if (next === normalized) {
+      location = { path, suffix: split.suffix };
+      break;
+    }
     normalized = next;
   }
-  const suffix = normalized.match(/:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/)?.[0] || '';
-  const path = suffix ? normalized.slice(0, -suffix.length) : normalized;
+  const { path, suffix } = location;
   // Reject traversal lexically because resolving it across symlinks could escape the root.
   if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
 
@@ -75,9 +94,9 @@ export function repoRelativeFindingPath(repoRoot, file) {
     if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
     const absolute = normalizePathString(path);
     if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
-    const prefix = root === '/' ? '/' : `${root}/`;
+    const prefix = rootPrefix(root);
     if (!absolute.startsWith(prefix)) return { reason: 'absolute file path is outside repoRoot' };
-    relative = absolute.slice(root === '/' ? 1 : root.length + 1);
+    relative = absolute.slice(prefix.length);
   }
 
   if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };

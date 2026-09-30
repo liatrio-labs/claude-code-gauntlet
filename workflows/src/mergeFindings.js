@@ -174,7 +174,7 @@ function normalizeFindingPath(finding, repoRoot) {
     }
     return { valid: true, rewritten: true };
   }
-  return { valid: true, warning: null };
+  return { valid: true, rewritten: false };
 }
 
 export function normalizeFindingPaths(findings, repoRoot) {
@@ -187,8 +187,10 @@ export function normalizeFindingPaths(findings, repoRoot) {
       continue;
     }
     const result = normalizeFindingPath(finding, repoRoot);
-    if (result.warning) warnings.push(result.warning);
-    if (!result.valid) continue;
+    if (!result.valid) {
+      warnings.push(result.warning);
+      continue;
+    }
     if (result.rewritten) pathRewrites += 1;
     for (const field of FINDING_PATH_ARRAY_FIELDS) {
       if (!(field in finding)) continue;
