@@ -5,9 +5,9 @@ import { dedupById } from '../src/findingDedup.js';
 import { finding } from './helpers/findings.js';
 
 const META = { agents: ['bug-detector'], base_branch: 'main', head_sha: 'abc123full', pr_number: 42, owner: 'org', repo: 'myrepo' };
-function mergeStructured(byAgent, agents = ['bug-detector']) {
+function mergeStructured(byAgent, agents = ['bug-detector'], options = {}) {
   const ndjson = Object.fromEntries(Object.entries(byAgent).map(([agent, rows]) => [agent, rows.map((f) => JSON.stringify(f)).join('\n')]));
-  return merge(ndjson, {}, { ...META, agents });
+  return merge(ndjson, {}, { ...META, ...options, agents });
 }
 
 const VALIDATION_CASES = [
@@ -56,4 +56,22 @@ for (const c of MERGE_CASES) test(`merge structured: ${c.name}`, () => {
   assert.deepEqual(out.methodology.truncation_warnings, []);
   if (c.stamped) assert.deepEqual(out.findings.map((f) => f.agent), c.stamped);
   if (c.pass) for (const [key, value] of Object.entries(c.pass)) assert.deepEqual(out.findings[0][key], value);
+});
+
+test('merge boundary: absolute finding paths are rewritten under repoRoot and outside paths are rejected', () => {
+  const repoRoot = '/private/tmp/wt-410';
+  const out = mergeStructured({
+    'bug-detector': [
+      finding({ id: 'UNDER_ROOT', file: `${repoRoot}/scripts/gauntlet/proc.py` }),
+      finding({ id: 'OUTSIDE_ROOT', file: '/private/tmp/wt-411/scripts/gauntlet/proc.py' }),
+    ],
+  }, ['bug-detector'], { repoRoot });
+
+  assert.deepEqual(out.findings.map((item) => [item.id, item.file]), [
+    ['UNDER_ROOT', 'scripts/gauntlet/proc.py'],
+  ]);
+  assert.ok(out.methodology.validation_warnings.some((warning) =>
+    warning.includes('[UNDER_ROOT]') && warning.includes('rewritten')));
+  assert.ok(out.methodology.validation_warnings.some((warning) =>
+    warning.includes('[OUTSIDE_ROOT]') && warning.includes('outside repoRoot') && warning.includes('rejected')));
 });

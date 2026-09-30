@@ -1,5 +1,6 @@
 // Merge structured and text-channel findings into the Phase 4 envelope.
 import { dedupById } from './findingDedup.js';
+import { repoRelativeFindingPath } from './paths.js';
 
 const KNOWN_DIMENSIONS = new Set([
   'bug',
@@ -154,7 +155,39 @@ export function injectAgentField(findings, agent) {
 
 // --- Validation -------------------------------------------------------------
 
-export function validateFindings(findings) {
+function normalizeFindingPath(finding, repoRoot) {
+  const fid = 'id' in finding ? finding.id : '<no id>';
+  const original = finding.file;
+  const result = repoRelativeFindingPath(repoRoot, original);
+  if ('reason' in result) {
+    return { valid: false, warning: `[${fid}] Invalid file path: ${result.reason} — finding rejected` };
+  }
+  if (result.file !== original) {
+    finding.file = result.file;
+    return {
+      valid: true,
+      warning: `[${fid}] File path rewritten from '${original}' to '${result.file}'`,
+    };
+  }
+  return { valid: true, warning: null };
+}
+
+export function normalizeFindingPaths(findings, repoRoot) {
+  const valid = [];
+  const warnings = [];
+  for (const finding of findings) {
+    if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
+      valid.push(finding);
+      continue;
+    }
+    const result = normalizeFindingPath(finding, repoRoot);
+    if (result.warning) warnings.push(result.warning);
+    if (result.valid) valid.push(finding);
+  }
+  return { valid, warnings };
+}
+
+export function validateFindings(findings, repoRoot) {
   const valid = [];
   const warnings = [];
 
@@ -172,6 +205,10 @@ export function validateFindings(findings) {
     }
 
     if (reject) continue;
+
+    const pathResult = normalizeFindingPath(f, repoRoot);
+    if (pathResult.warning) warnings.push(pathResult.warning);
+    if (!pathResult.valid) continue;
 
     const dim = 'dimension' in f ? f.dimension : undefined;
     if (dim === null || dim === undefined) {
@@ -248,6 +285,7 @@ function assembleOutput(
 export function merge(ndjsonContents, textContents, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
+  const repoRoot = M.repoRoot;
   const nd = ndjsonContents || {};
   const tx = textContents || {};
   const allWarnings = [];
@@ -282,7 +320,7 @@ export function merge(ndjsonContents, textContents, meta) {
   // Validate the combined flat list (pre-dedup) so warnings cover all raw findings.
   const allNdjsonFlat = Object.values(ndjsonFindings).flat();
   const allTextFlat = Object.values(textFindings).flat();
-  const { warnings: preValWarnings } = validateFindings(allNdjsonFlat.concat(allTextFlat));
+  const { warnings: preValWarnings } = validateFindings(allNdjsonFlat.concat(allTextFlat), repoRoot);
 
   let droppedNoId = 0;
   for (const f of allNdjsonFlat.concat(allTextFlat)) {
@@ -294,7 +332,7 @@ export function merge(ndjsonContents, textContents, meta) {
   const filterValid = (dict) => {
     const out = {};
     for (const [agent, findings] of Object.entries(dict)) {
-      out[agent] = validateFindings(findings).valid;
+      out[agent] = validateFindings(findings, repoRoot).valid;
     }
     return out;
   };

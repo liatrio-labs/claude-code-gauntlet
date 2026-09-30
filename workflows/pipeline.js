@@ -133,6 +133,69 @@ function dedupById(ndjsonFindings, textFindings) {
   for (const findings of Object.values(ndjsonFindings || {})) for (const f of findings) add(f, 2);
   return { merged: [...seen.values()].map((v) => v.finding), duplicatesResolved, droppedNoId };
 }
+// --- paths.js ---
+function collapseDotSlash(path) {
+  let out = path;
+  for (;;) {
+    const next = out.replace(/\/\.\//g, '/');
+    if (next === out) return out;
+    out = next;
+  }
+}
+function stripTrailingSlashes(path) {
+  let out = path;
+  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
+  return out;
+}
+function normalizePathString(path) {
+  let out = path;
+  for (;;) {
+    let next = stripTrailingSlashes(collapseDotSlash(out));
+    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
+    next = stripTrailingSlashes(next);
+    if (next === out) return next;
+    out = next;
+  }
+}
+function hasBackslash(path) {
+  return path.includes('\\');
+}
+function hasDotDotSegment(path) {
+  return path.split('/').includes('..');
+}
+function normalizeAbsoluteRoot(root) {
+  if (typeof root !== 'string' || root === '') return null;
+  const normalized = normalizePathString(root);
+  if (!normalized.startsWith('/') || hasBackslash(normalized) || hasDotDotSegment(normalized)) return null;
+  return normalized;
+}
+function pathUnderRoot(root, path) {
+  const normalizedRoot = normalizeAbsoluteRoot(root);
+  if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
+  const normalizedPath = normalizePathString(path);
+  if (!normalizedPath.startsWith('/') || hasBackslash(normalizedPath) || hasDotDotSegment(normalizedPath)) return false;
+  const prefix = normalizedRoot === '/' ? '/' : `${normalizedRoot}/`;
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(prefix);
+}
+function repoRelativeFindingPath(repoRoot, file) {
+  if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
+  if (hasBackslash(file)) return { reason: 'file path contains a backslash' };
+  if (hasDotDotSegment(file)) return { reason: 'file path contains a .. segment' };
+  if (!file.startsWith('/')) {
+    let relative = file;
+    while (relative.startsWith('./')) relative = relative.slice(2);
+    if (relative === '') return { reason: 'file path does not name a repository file' };
+    return { file: relative };
+  }
+  const root = normalizeAbsoluteRoot(repoRoot);
+  if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
+  const absolute = normalizePathString(file);
+  if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
+  if (!pathUnderRoot(root, absolute)) return { reason: 'absolute file path is outside repoRoot' };
+  const remainder = absolute.slice(root === '/' ? 1 : root.length + 1).replace(/^\/+/, '');
+  if (remainder === '') return { reason: 'absolute file path does not name a repository file' };
+  return { file: remainder };
+}
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set([
   'bug',
@@ -263,7 +326,37 @@ function parseTextFile(text, agent) {
 function injectAgentField(findings, agent) {
   for (const f of findings) f.agent = agent;
 }
-function validateFindings(findings) {
+function normalizeFindingPath(finding, repoRoot) {
+  const fid = 'id' in finding ? finding.id : '<no id>';
+  const original = finding.file;
+  const result = repoRelativeFindingPath(repoRoot, original);
+  if ('reason' in result) {
+    return { valid: false, warning: `[${fid}] Invalid file path: ${result.reason} — finding rejected` };
+  }
+  if (result.file !== original) {
+    finding.file = result.file;
+    return {
+      valid: true,
+      warning: `[${fid}] File path rewritten from '${original}' to '${result.file}'`,
+    };
+  }
+  return { valid: true, warning: null };
+}
+function normalizeFindingPaths(findings, repoRoot) {
+  const valid = [];
+  const warnings = [];
+  for (const finding of findings) {
+    if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) {
+      valid.push(finding);
+      continue;
+    }
+    const result = normalizeFindingPath(finding, repoRoot);
+    if (result.warning) warnings.push(result.warning);
+    if (result.valid) valid.push(finding);
+  }
+  return { valid, warnings };
+}
+function validateFindings(findings, repoRoot) {
   const valid = [];
   const warnings = [];
   for (const f of findings) {
@@ -278,6 +371,9 @@ function validateFindings(findings) {
       }
     }
     if (reject) continue;
+    const pathResult = normalizeFindingPath(f, repoRoot);
+    if (pathResult.warning) warnings.push(pathResult.warning);
+    if (!pathResult.valid) continue;
     const dim = 'dimension' in f ? f.dimension : undefined;
     if (dim === null || dim === undefined) {
       warnings.push(`[${fid}] Missing 'dimension' field — finding kept with warning`);
@@ -342,6 +438,7 @@ function assembleOutput(
 function merge(ndjsonContents, textContents, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
+  const repoRoot = M.repoRoot;
   const nd = ndjsonContents || {};
   const tx = textContents || {};
   const allWarnings = [];
@@ -367,7 +464,7 @@ function merge(ndjsonContents, textContents, meta) {
   for (const [agent, findings] of Object.entries(ndjsonFindings)) injectAgentField(findings, agent);
   const allNdjsonFlat = Object.values(ndjsonFindings).flat();
   const allTextFlat = Object.values(textFindings).flat();
-  const { warnings: preValWarnings } = validateFindings(allNdjsonFlat.concat(allTextFlat));
+  const { warnings: preValWarnings } = validateFindings(allNdjsonFlat.concat(allTextFlat), repoRoot);
   let droppedNoId = 0;
   for (const f of allNdjsonFlat.concat(allTextFlat)) {
     const fid = f.id;
@@ -376,7 +473,7 @@ function merge(ndjsonContents, textContents, meta) {
   const filterValid = (dict) => {
     const out = {};
     for (const [agent, findings] of Object.entries(dict)) {
-      out[agent] = validateFindings(findings).valid;
+      out[agent] = validateFindings(findings, repoRoot).valid;
     }
     return out;
   };
@@ -4648,45 +4745,10 @@ const WRITTEN_SCHEMA = {
   type: 'object',
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
-/** Gap token for writer-reported paths outside outputDir. Registered in docs/machine-parsed-strings.md; G3 still keys off the surrounding `(partial-artifacts)` suffix. */
+/** Gap token for writer-reported paths outside outputDir. */
 const PATH_ESCAPE_TOKEN = 'path-escape';
-function collapseDotSlash(p) {
-  let out = p;
-  for (;;) {
-    const next = out.replace(/\/\.\//g, '/');
-    if (next === out) return out;
-    out = next;
-  }
-}
-function stripTrailingSlashes(p) {
-  let out = p;
-  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
-  return out;
-}
-function normalizePathString(p) {
-  let out = p;
-  for (;;) {
-    let next = stripTrailingSlashes(collapseDotSlash(out));
-    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
-    next = stripTrailingSlashes(next);
-    if (next === out) return next;
-    out = next;
-  }
-}
-function hasBackslash(s) {
-  return s.includes('\\');
-}
-function hasDotDotSegment(s) {
-  return s.split('/').includes('..');
-}
-function normalizeOutputDirRoot(outputDir) {
-  if (typeof outputDir !== 'string' || outputDir === '') return null;
-  const root = normalizePathString(outputDir);
-  if (!root.startsWith('/') || hasBackslash(root) || hasDotDotSegment(root)) return null;
-  return root;
-}
 function requireAbsoluteOutputDir(outputDir) {
-  const root = normalizeOutputDirRoot(outputDir);
+  const root = normalizeAbsoluteRoot(outputDir);
   if (root === null) {
     throw new Error(
       `outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
@@ -4694,16 +4756,8 @@ function requireAbsoluteOutputDir(outputDir) {
   }
   return root;
 }
-function pathUnderOutputDir(outputDir, path) {
-  const root = normalizeOutputDirRoot(outputDir);
-  if (root === null) return false;
-  if (typeof path !== 'string' || path === '') return false;
-  const p = normalizePathString(path);
-  if (!p.startsWith('/') || hasBackslash(p) || hasDotDotSegment(p)) return false;
-  return p === root || p.startsWith(`${root}/`);
-}
 function assertPlannedPathUnderOutputDir(outputDir, path) {
-  if (!pathUnderOutputDir(outputDir, path)) {
+  if (!pathUnderRoot(outputDir, path)) {
     throw new Error(`planned artifact path escapes outputDir: ${path}`);
   }
 }
@@ -4711,7 +4765,7 @@ function pathEscapeReason(outputDir, fields) {
   const escaped = [];
   for (const { name, path, present } of fields) {
     if (!present) continue;
-    if (!pathUnderOutputDir(outputDir, path)) {
+    if (!pathUnderRoot(outputDir, path)) {
       escaped.push(`${name}=${path == null ? String(path) : path}`);
     }
   }
@@ -5545,9 +5599,42 @@ async function runWith(ctx, rawArgs) {
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
   let phaseAttempting = null;
+  const normalizeReplayedFindings = (name, out) => {
+    if (!out || typeof out !== 'object') return;
+    const fields = {
+      merge: ['findings'],
+      verify: ['findings'],
+      validate: ['findings'],
+      filter: ['filtered'],
+      challenge: ['findings', 'unverified', 'eliminated'],
+    }[name] || [];
+    const warnings = [];
+    for (const field of fields) {
+      if (!Array.isArray(out[field])) continue;
+      const normalized = normalizeFindingPaths(out[field], A.repoRoot);
+      out[field] = normalized.valid;
+      warnings.push(...normalized.warnings);
+    }
+    if (!warnings.length) return;
+    if (name === 'merge') {
+      const methodology = out.methodology && typeof out.methodology === 'object' ? out.methodology : {};
+      out.methodology = {
+        ...methodology,
+        validation_warnings: [
+          ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
+          ...warnings,
+        ],
+      };
+      return;
+    }
+    out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
+    if (name === 'filter') gaps.push(...warnings);
+  };
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
-    const out = checkpoints[name] !== undefined ? checkpoints[name] : await thunk();
+    const replayed = checkpoints[name] !== undefined;
+    const out = replayed ? checkpoints[name] : await thunk();
+    if (replayed) normalizeReplayedFindings(name, out);
     phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -5586,7 +5673,7 @@ async function runWith(ctx, rawArgs) {
       };
     }
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
-      base_branch: A.baseBranch, head_sha: A.headShaShort,
+      base_branch: A.baseBranch, head_sha: A.headShaShort, repoRoot: A.repoRoot,
     }));
     limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch);
     const verifyOut = await runPhase('verify', () => verifyStage(c, {

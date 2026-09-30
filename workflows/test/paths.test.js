@@ -1,63 +1,84 @@
-// stages_path_fence.test.js — issue #148 Persist outputDir-prefix fence.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pathUnderOutputDir,
   requireAbsoluteOutputDir,
-  normalizeOutputDirRoot,
   plannedArtifactPaths,
   persistPlanPath,
   writeArtifacts,
   PATH_ESCAPE_TOKEN,
   runWith,
 } from '../src/stages.js';
+import { normalizeAbsoluteRoot, pathUnderRoot, repoRelativeFindingPath } from '../src/paths.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
 const ROOT = '/repo/.code-gauntlet';
 
-// --- pathUnderOutputDir matrix ----------------------------------------------
+// --- pathUnderRoot matrix ----------------------------------------------------
 
-test('pathUnderOutputDir: path under root passes', () => {
-  assert.equal(pathUnderOutputDir(ROOT, `${ROOT}/findings.json`), true);
+test('pathUnderRoot: path under root passes', () => {
+  assert.equal(pathUnderRoot(ROOT, `${ROOT}/findings.json`), true);
 });
 
-test('pathUnderOutputDir: equality arm — path === root passes', () => {
-  assert.equal(pathUnderOutputDir(ROOT, ROOT), true);
-  assert.equal(pathUnderOutputDir(`${ROOT}/`, ROOT), true);
+test('pathUnderRoot: equality arm — path === root passes', () => {
+  assert.equal(pathUnderRoot(ROOT, ROOT), true);
+  assert.equal(pathUnderRoot(`${ROOT}/`, ROOT), true);
 });
 
-test('pathUnderOutputDir: prefix sibling (/tmp/out vs /tmp/out-evil) fails', () => {
-  assert.equal(pathUnderOutputDir('/tmp/out', '/tmp/out-evil/x'), false);
+test('pathUnderRoot: prefix sibling (/tmp/out vs /tmp/out-evil) fails', () => {
+  assert.equal(pathUnderRoot('/tmp/out', '/tmp/out-evil/x'), false);
 });
 
-test('pathUnderOutputDir: .. segment fails on path and on root', () => {
-  assert.equal(pathUnderOutputDir(ROOT, `${ROOT}/../evil`), false);
-  assert.equal(pathUnderOutputDir('/repo/../x', '/repo/../x/a'), false);
-  assert.equal(normalizeOutputDirRoot('/repo/../x'), null);
+test('pathUnderRoot: .. segment fails on path and on root', () => {
+  assert.equal(pathUnderRoot(ROOT, `${ROOT}/../evil`), false);
+  assert.equal(pathUnderRoot('/repo/../x', '/repo/../x/a'), false);
+  assert.equal(normalizeAbsoluteRoot('/repo/../x'), null);
 });
 
-test('pathUnderOutputDir: backslash fails on path and on root', () => {
-  assert.equal(pathUnderOutputDir(ROOT, `${ROOT}\\evil`), false);
-  assert.equal(normalizeOutputDirRoot('/repo\\out'), null);
+test('pathUnderRoot: backslash fails on path and on root', () => {
+  assert.equal(pathUnderRoot(ROOT, `${ROOT}\\evil`), false);
+  assert.equal(normalizeAbsoluteRoot('/repo\\out'), null);
 });
 
-test('pathUnderOutputDir: /./ collapses; // is deliberately allowed when under root', () => {
-  assert.equal(pathUnderOutputDir(ROOT, `${ROOT}/./findings.json`), true);
-  assert.equal(pathUnderOutputDir(`${ROOT}/./`, `${ROOT}/findings.json`), true);
-  assert.equal(pathUnderOutputDir(ROOT, `${ROOT}//findings.json`), true);
+test('pathUnderRoot: /./ collapses; // is deliberately allowed when under root', () => {
+  assert.equal(pathUnderRoot(ROOT, `${ROOT}/./findings.json`), true);
+  assert.equal(pathUnderRoot(`${ROOT}/./`, `${ROOT}/findings.json`), true);
+  assert.equal(pathUnderRoot(ROOT, `${ROOT}//findings.json`), true);
 });
 
-test('pathUnderOutputDir: empty / null / undefined path is false (no TypeError)', () => {
-  assert.equal(pathUnderOutputDir(ROOT, ''), false);
-  assert.equal(pathUnderOutputDir(ROOT, null), false);
-  assert.equal(pathUnderOutputDir(ROOT, undefined), false);
+test('pathUnderRoot: empty / null / undefined path is false (no TypeError)', () => {
+  assert.equal(pathUnderRoot(ROOT, ''), false);
+  assert.equal(pathUnderRoot(ROOT, null), false);
+  assert.equal(pathUnderRoot(ROOT, undefined), false);
 });
 
-test('pathUnderOutputDir: relative or missing root is false', () => {
-  assert.equal(pathUnderOutputDir('.code-gauntlet', '.code-gauntlet/x'), false);
-  assert.equal(pathUnderOutputDir('', '/x'), false);
-  assert.equal(pathUnderOutputDir(null, '/x'), false);
+test('pathUnderRoot: relative or missing root is false', () => {
+  assert.equal(pathUnderRoot('.code-gauntlet', '.code-gauntlet/x'), false);
+  assert.equal(pathUnderRoot('', '/x'), false);
+  assert.equal(pathUnderRoot(null, '/x'), false);
+  assert.equal(pathUnderRoot('/', '/x'), true);
 });
+
+const REPO_ROOT = '/private/tmp/wt-410';
+const REPO_RELATIVE_CASES = [
+  { name: 'relative path stays relative', file: 'scripts/gauntlet/proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },
+  { name: 'leading dot slash is stripped', file: './scripts/gauntlet/proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },
+  { name: 'repeated leading dot slash is stripped', file: '././scripts/gauntlet/proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },
+  { name: 'absolute path under root becomes relative', file: `${REPO_ROOT}/scripts/gauntlet/proc.py`, expected: { file: 'scripts/gauntlet/proc.py' } },
+  { name: 'absolute path under slash root becomes relative', root: '/', file: '/proc.py', expected: { file: 'proc.py' } },
+  { name: 'absolute dot slash is normalized', file: `${REPO_ROOT}/./scripts/gauntlet/proc.py`, expected: { file: 'scripts/gauntlet/proc.py' } },
+  { name: 'absolute path equal to root is rejected', file: REPO_ROOT, expected: { reason: 'absolute file path resolves to repoRoot' } },
+  { name: 'absolute path outside root is rejected', file: '/private/tmp/wt-410-evil/proc.py', expected: { reason: 'absolute file path is outside repoRoot' } },
+  { name: 'relative traversal is rejected', file: '../proc.py', expected: { reason: 'file path contains a .. segment' } },
+  { name: 'absolute traversal is rejected', file: `${REPO_ROOT}/../proc.py`, expected: { reason: 'file path contains a .. segment' } },
+  { name: 'backslash path is rejected', file: 'scripts\\proc.py', expected: { reason: 'file path contains a backslash' } },
+  { name: 'invalid root is rejected for an absolute file', root: 'repo', file: '/repo/proc.py', expected: { reason: 'repoRoot must be an absolute path without .. segments or backslashes' } },
+  { name: 'empty file is rejected', file: '', expected: { reason: 'file must be a non-empty string' } },
+];
+for (const c of REPO_RELATIVE_CASES) {
+  test(`repoRelativeFindingPath: ${c.name}`, () => {
+    assert.deepEqual(repoRelativeFindingPath(c.root ?? REPO_ROOT, c.file), c.expected);
+  });
+}
 
 test('requireAbsoluteOutputDir: absolute ok; relative / missing throw distinct message', () => {
   assert.equal(requireAbsoluteOutputDir(ROOT), ROOT);

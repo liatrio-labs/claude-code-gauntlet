@@ -17,7 +17,8 @@
 // survives, the merge or single-call result is null, or any summarize dispatch throws.
 // No wall-clock, no import at runtime.
 import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
-import { merge } from './mergeFindings.js';
+import { merge, normalizeFindingPaths } from './mergeFindings.js';
+import { normalizeAbsoluteRoot, pathUnderRoot } from './paths.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
@@ -822,22 +823,8 @@ export function mergeStage(discoverOut, meta) {
     ndjsonContents[a] = group.map((f) => JSON.stringify(f)).join('\n');
   }
 
-  // agents drives merge()'s per-agent iteration AND methodology.agents_dispatched — and
-  // merge()'s injectAgentField RE-STAMPS every finding's `.agent` to whichever string is
-  // in this list. discover() now injects the SHORT agent name onto findings (FIX 1: the
-  // full 'code-gauntlet:' prefix broke filterFindings' short-name matching), so this list
-  // must match that short form too, or the `nd[agent]` lookup below misses for every
-  // agent (silently dropping all its findings) and injectAgentField would re-inject the
-  // long prefix, undoing FIX 1 downstream. discover()'s own fan-out list (`dispatched`)
-  // is still the full 'code-gauntlet:<agent>' agentType (unaffected by FIX 1), so it is
-  // normalized here — Object.keys(ndjsonContents) is already short (built straight from
-  // findings' own .agent) and needs no normalization.
-  //
-  // Prefer discover()'s own fan-out list (`dispatched`) so a zero-finding agent is
-  // still counted as dispatched, distinguishable from one never dispatched at all
-  // (disabled via agentFlags). Older/synthetic callers that omit `dispatched` fall back
-  // to the agents that actually produced findings, and finally the full roster so an
-  // empty run still yields an envelope.
+  // Merge uses the short agent names stamped on findings, while dispatched carries the
+  // full agent types. Keep the roster so zero-finding agents remain visible in methodology.
   const shortAgentName = (a) => (typeof a === 'string' ? a.split(':').pop() : a);
   const agents = Array.isArray(out.dispatched)
     ? out.dispatched.map(shortAgentName)
@@ -2148,62 +2135,11 @@ const WRITTEN_SCHEMA = {
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
 
-// Issue #148: Persist outputDir-prefix fence. One predicate for stamp throws and
-// writer-echo gaps. Sandbox has no fs/realpath — string normalize then prefix only.
-// Deliberately do NOT collapse `//` (still under the fence; collapsing it would be a
-// separate normalizer that tests would then need to pin). Reject `..` outright — do not
-// resolve it textually (symlinks make a/b/../c ≠ a/c). Reject `\` so a Windows separator
-// cannot sail past a /-based prefix test.
-
-/** Gap token for writer-reported paths outside outputDir. Registered in docs/machine-parsed-strings.md; G3 still keys off the surrounding `(partial-artifacts)` suffix. */
+/** Gap token for writer-reported paths outside outputDir. */
 export const PATH_ESCAPE_TOKEN = 'path-escape';
 
-function collapseDotSlash(p) {
-  let out = p;
-  for (;;) {
-    const next = out.replace(/\/\.\//g, '/');
-    if (next === out) return out;
-    out = next;
-  }
-}
-
-function stripTrailingSlashes(p) {
-  let out = p;
-  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
-  return out;
-}
-
-// Collapse `/./` then strip trailing `/` (and a leftover trailing `/.` from `..././`).
-// Deliberately does NOT collapse `//` — still under the fence; see #148 design.
-function normalizePathString(p) {
-  let out = p;
-  for (;;) {
-    let next = stripTrailingSlashes(collapseDotSlash(out));
-    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
-    next = stripTrailingSlashes(next);
-    if (next === out) return next;
-    out = next;
-  }
-}
-
-function hasBackslash(s) {
-  return s.includes('\\');
-}
-
-function hasDotDotSegment(s) {
-  return s.split('/').includes('..');
-}
-
-// Normalize an absolute confined root, or null if it fails the absolute/root arms.
-export function normalizeOutputDirRoot(outputDir) {
-  if (typeof outputDir !== 'string' || outputDir === '') return null;
-  const root = normalizePathString(outputDir);
-  if (!root.startsWith('/') || hasBackslash(root) || hasDotDotSegment(root)) return null;
-  return root;
-}
-
 export function requireAbsoluteOutputDir(outputDir) {
-  const root = normalizeOutputDirRoot(outputDir);
+  const root = normalizeAbsoluteRoot(outputDir);
   if (root === null) {
     throw new Error(
       `outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
@@ -2212,20 +2148,8 @@ export function requireAbsoluteOutputDir(outputDir) {
   return root;
 }
 
-// True iff path is under the absolute outputDir root after the shared normalize arms.
-// Empty / null / undefined path → false (gap, not TypeError). Bad root → false.
-export function pathUnderOutputDir(outputDir, path) {
-  const root = normalizeOutputDirRoot(outputDir);
-  if (root === null) return false;
-  if (typeof path !== 'string' || path === '') return false;
-  const p = normalizePathString(path);
-  if (!p.startsWith('/') || hasBackslash(p) || hasDotDotSegment(p)) return false;
-  // Equality arm: path === root must pass (startsWith(root + '/') alone would reject it).
-  return p === root || p.startsWith(`${root}/`);
-}
-
 function assertPlannedPathUnderOutputDir(outputDir, path) {
-  if (!pathUnderOutputDir(outputDir, path)) {
+  if (!pathUnderRoot(outputDir, path)) {
     throw new Error(`planned artifact path escapes outputDir: ${path}`);
   }
 }
@@ -2238,7 +2162,7 @@ function pathEscapeReason(outputDir, fields) {
   const escaped = [];
   for (const { name, path, present } of fields) {
     if (!present) continue;
-    if (!pathUnderOutputDir(outputDir, path)) {
+    if (!pathUnderRoot(outputDir, path)) {
       escaped.push(`${name}=${path == null ? String(path) : path}`);
     }
   }
@@ -2249,8 +2173,7 @@ function pathEscapeReason(outputDir, fields) {
 // The four artifacts writeArtifacts plans (and asks the writer to echo). Exported so a
 // faithful mock/recorder echoes the SAME paths the write-proof gate checks against — the
 // gate rejects any echo that fails to account for all four planned paths.
-// Issue #148: requires absolute outputDir; every stamped path must pass pathUnderOutputDir
-// or this throws (programming-error / stamp regression — not a partial-artifacts gap).
+// Every stamped path must remain under the absolute output directory.
 export function plannedArtifactPaths(outputDir, sha) {
   const root = requireAbsoluteOutputDir(outputDir);
   const paths = {
@@ -4007,9 +3930,44 @@ export async function runWith(ctx, rawArgs) {
   // Resume: a phase whose checkpoint is present reuses that output instead of
   // dispatching. Either way the phase counts as reached, and its output is recorded
   // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
+  const normalizeReplayedFindings = (name, out) => {
+    if (!out || typeof out !== 'object') return;
+    const fields = {
+      merge: ['findings'],
+      verify: ['findings'],
+      validate: ['findings'],
+      filter: ['filtered'],
+      challenge: ['findings', 'unverified', 'eliminated'],
+    }[name] || [];
+    const warnings = [];
+    for (const field of fields) {
+      if (!Array.isArray(out[field])) continue;
+      const normalized = normalizeFindingPaths(out[field], A.repoRoot);
+      out[field] = normalized.valid;
+      warnings.push(...normalized.warnings);
+    }
+    if (!warnings.length) return;
+    if (name === 'merge') {
+      const methodology = out.methodology && typeof out.methodology === 'object' ? out.methodology : {};
+      out.methodology = {
+        ...methodology,
+        validation_warnings: [
+          ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
+          ...warnings,
+        ],
+      };
+      return;
+    }
+    out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
+    // Filter gaps are not otherwise aggregated by runWith.
+    if (name === 'filter') gaps.push(...warnings);
+  };
+
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
-    const out = checkpoints[name] !== undefined ? checkpoints[name] : await thunk();
+    const replayed = checkpoints[name] !== undefined;
+    const out = replayed ? checkpoints[name] : await thunk();
+    if (replayed) normalizeReplayedFindings(name, out);
     phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -4121,7 +4079,7 @@ export async function runWith(ctx, rawArgs) {
     }
 
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
-      base_branch: A.baseBranch, head_sha: A.headShaShort,
+      base_branch: A.baseBranch, head_sha: A.headShaShort, repoRoot: A.repoRoot,
     }));
 
     // The finding count now exists — re-coarsen so verify slices, validate batches,

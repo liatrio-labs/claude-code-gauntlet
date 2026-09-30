@@ -436,6 +436,22 @@ test('a long description survives merge->verify->validate->filter->challenge->pe
   );
 });
 
+test('runWith passes repoRoot to merge so absolute discovery paths persist relative', async () => {
+  const args = validArgs();
+  const finding = makeFinding('ABSOLUTE_DISCOVERY', { file: `${args.repoRoot}/src/module.js` });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, {
+    findings: [finding],
+    onPersist: (payload) => { persisted = payload; },
+  }), args);
+
+  assert.equal(out.ok, true);
+  assert.deepEqual(persisted.findings.map((item) => [item.id, item.file]), [
+    ['ABSOLUTE_DISCOVERY', 'src/module.js'],
+  ]);
+  assert.equal(out.stats.merge.validation_warnings, 1);
+});
+
 // --- Replayed empty-report recovery -----------------------------------------
 
 test('resume replaying an empty report checkpoint re-runs report+persist (not skipped)', async () => {
@@ -496,6 +512,56 @@ test('replayed malformed challenge findings are refused before delivery persiste
   assert.ok(shapeGap.includes('challenge.findings[0].severity'), shapeGap);
   assert.ok(out.error.includes(shapeGap), `error must carry the first shape gap, got: ${out.error}`);
   assert.equal(persisted, null, 'checkpoint refusal must not write a post-review payload');
+});
+
+test('replayed challenge finding paths are normalized or rejected before delivery', async () => {
+  const args = validArgs({
+    checkpoints: {
+      challenge: {
+        findings: [
+          makeFinding('REPLAY_UNDER', { file: '/repo/scripts/gauntlet/proc.py' }),
+          makeFinding('REPLAY_OUTSIDE', { file: '/private/tmp/other/proc.py' }),
+        ],
+        unverified: [],
+        eliminated: [],
+        gaps: [],
+        stats: {},
+      },
+    },
+  });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+
+  assert.equal(out.ok, true);
+  assert.deepEqual(persisted.findings.map((item) => [item.id, item.file]), [
+    ['REPLAY_UNDER', 'scripts/gauntlet/proc.py'],
+  ]);
+  assert.deepEqual(persisted.postReview.map((item) => item.id), ['REPLAY_UNDER']);
+  assert.ok(out.gaps.some((gap) => gap.includes('[REPLAY_UNDER]') && gap.includes('rewritten')));
+  assert.ok(out.gaps.some((gap) => gap.includes('[REPLAY_OUTSIDE]') && gap.includes('outside repoRoot') && gap.includes('rejected')));
+});
+
+test('replayed filter findings are normalized before challenge dispatch', async () => {
+  const args = validArgs({
+    checkpoints: {
+      filter: {
+        filtered: [
+          makeFinding('FILTER_UNDER', { file: '/repo/scripts/gauntlet/proc.py' }),
+          makeFinding('FILTER_OUTSIDE', { file: '/private/tmp/other/proc.py' }),
+        ],
+        gaps: [],
+      },
+    },
+  });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+
+  assert.equal(out.ok, true);
+  assert.deepEqual(persisted.findings.map((item) => [item.id, item.file]), [
+    ['FILTER_UNDER', 'scripts/gauntlet/proc.py'],
+  ]);
+  assert.ok(out.gaps.some((gap) => gap.includes('[FILTER_UNDER]') && gap.includes('rewritten')));
+  assert.ok(out.gaps.some((gap) => gap.includes('[FILTER_OUTSIDE]') && gap.includes('outside repoRoot') && gap.includes('rejected')));
 });
 
 // --- Top-level catch --------------------------------------------------------
