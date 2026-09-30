@@ -74,7 +74,7 @@ def test_repo_root_falls_back_when_git_probe_fails(monkeypatch):
 
 # Absolute path to the script file, for the delta-echo tests that must invoke the REAL
 # CLI as a subprocess rather than calling main() in-process with a patched argv: the
-# result key ORDER on disk and the sibling assemble_artifacts import both depend on how
+# result key ORDER on disk and the sibling gauntlet.jsjson import both depend on how
 # the interpreter actually loads and runs this file, which an in-process main() call
 # (used by TestReceipt above) cannot exercise.
 SCRIPT = os.path.abspath(

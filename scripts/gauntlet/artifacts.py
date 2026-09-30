@@ -71,7 +71,7 @@ So the plan carries a checksum of itself. The construction has to be unambiguous
 in BOTH runtimes (the workflow sandbox computes it, this script recomputes it):
 
   1. Take the plan object exactly as parsed. JS orders array-index keys first on
-     parse and on stringify; `gauntlet.jsjson` applies the same order, so both
+     parse and on stringify; `gauntlet.jsjson.js_stringify_pretty` applies the same order, so both
      runtimes serialize the parsed plan identically.
   2. Remove the single key `planChecksum`. The pipeline appends it LAST (it is
      computed before the key exists), so removing it restores the exact
@@ -80,9 +80,9 @@ in BOTH runtimes (the workflow sandbox computes it, this script recomputes it):
      the JS side and `gauntlet.jsjson.js_stringify_pretty` here — then take
      `fnv1a32` of the result.
 
-Because step 3 reuses the derived-artifact serializer, the plan checksum detects
-if `gauntlet.jsjson.js_stringify_pretty` stops matching `JSON.stringify` over the
-plan's content.
+Because step 3 reuses the derived-artifact serializer, the plan checksum fails
+before any derived artifact is written if `gauntlet.jsjson.js_stringify_pretty`
+stops matching `JSON.stringify` over the plan's content.
 
 WHY THE ID LISTS STAY. The obvious reaction to "the id list is the weak point" is
 to replace it with a more robust encoding. Nothing removes the failure mode:

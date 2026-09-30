@@ -1,7 +1,6 @@
-"""FIX-task renderer behavior and CLI contract."""
+"""Deterministic FIX-task renderer behavior, in-process and through its CLI."""
 
 import ast
-import errno
 import json
 import os
 import re
@@ -19,10 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def test_sibling_index_missing_git_keeps_file_not_found_error(monkeypatch):
-    def missing(*_args, **_kwargs):
-        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "git")
-
-    monkeypatch.setattr(renderer.proc, "run_bytes", missing)
+    monkeypatch.setattr(renderer.proc, "which", lambda _name: None)
     assert renderer.SiblingIndex("/repo").error == (
         "could not list tracked files: FileNotFoundError"
     )

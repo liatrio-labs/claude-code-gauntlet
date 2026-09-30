@@ -2914,8 +2914,8 @@ export function fnv1a32(s) {
 
 // Strip a UTF-8 BOM and AT MOST ONE trailing newline before checksumming. The Write
 // tool may normalise a trailing newline or prepend a BOM, and a false content-proof
-// degrade must not cost a run its artifacts. Applied on BOTH sides (here and in
-// scripts/gauntlet/jsjson.py) so the tolerance is symmetric; two trailing newlines is a
+// degrade must not cost a run its artifacts. Applied on BOTH sides (here and by the
+// assembler through gauntlet.jsjson.normalize_content) so the tolerance is symmetric; two trailing newlines is a
 // REAL difference and still reports as a mismatch.
 export function normalizeForChecksum(s) {
   let out = typeof s === 'string' ? s : '';
@@ -3071,7 +3071,7 @@ export function persistPlan(inp, paths) {
     return { path, chars: normalized.length, checksum: fnv1a32(normalized) };
   };
   // The derived documents, as the pipeline itself would serialize them — the same pretty
-  // printer in scripts/gauntlet/jsjson.py reproduces (js_stringify_pretty) and the same source
+  // printer that js_stringify_pretty in scripts/gauntlet/jsjson.py reproduces, and the same source
   // (writerPayload) the legacy by-value path persists. Only their chars/checksum travel.
   const held = writerPayload(inp || {});
   const plan = {
