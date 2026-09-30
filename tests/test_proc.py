@@ -1,16 +1,20 @@
 """Shared command execution and missing-tool behavior."""
 
+import os
 import subprocess
 import sys
 
 import pytest
 from gauntlet import proc
 
+# proc runs a resolved command by its absolute path, which carries a drive on Windows.
+TOOL = os.path.abspath("/tools/git")
+
 
 def test_run_resolves_executable_and_preserves_original_arguments(monkeypatch):
     calls = []
     monkeypatch.setattr(proc.sys, "platform", "win32")
-    monkeypatch.setattr(proc, "which", lambda name: "/tools/git")
+    monkeypatch.setattr(proc, "which", lambda name: TOOL)
 
     def child(argv, **options):
         calls.append((argv, options))
@@ -21,7 +25,7 @@ def test_run_resolves_executable_and_preserves_original_arguments(monkeypatch):
     assert result.stdout == "ok"
     assert calls == [
         (
-            ["/tools/git", "status"],
+            [TOOL, "status"],
             {
                 "cwd": "/repo",
                 "timeout": 3,
@@ -67,11 +71,11 @@ def test_run_binary_output_and_text_replacement(monkeypatch):
 
 def test_child_oserror_names_requested_executable(monkeypatch, tmp_path):
     monkeypatch.setattr(proc.sys, "platform", "win32")
-    monkeypatch.setattr(proc, "which", lambda _name: "/tools/git")
+    monkeypatch.setattr(proc, "which", lambda _name: TOOL)
     monkeypatch.setenv("PATH", str(tmp_path))
 
     def denied(*_args, **_options):
-        raise PermissionError(13, "denied", "/tools/git")
+        raise PermissionError(13, "denied", TOOL)
 
     monkeypatch.setattr(proc.subprocess, "run", denied)
     with pytest.raises(PermissionError) as caught:
@@ -81,7 +85,7 @@ def test_child_oserror_names_requested_executable(monkeypatch, tmp_path):
 
 
 def test_missing_cwd_keeps_directory_as_oserror_filename(monkeypatch, tmp_path):
-    monkeypatch.setattr(proc, "which", lambda _name: "/tools/git")
+    monkeypatch.setattr(proc, "which", lambda _name: TOOL)
     missing = tmp_path / "missing"
     with pytest.raises(OSError) as caught:
         proc.run(["git", "status"], cwd=str(missing))
@@ -127,11 +131,12 @@ def test_windows_which_uses_path_without_implicit_cwd(tmp_path, monkeypatch):
 
 def test_relative_path_resolution_is_anchored_before_child_cwd(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    executable = tmp_path / "bin" / "tool"
+    executable = tmp_path / "bin" / ("tool.EXE" if sys.platform == "win32" else "tool")
     executable.parent.mkdir()
     executable.write_text("", encoding="utf-8")
     executable.chmod(0o755)
     monkeypatch.setenv("PATH", "bin")
+    monkeypatch.setenv("PATHEXT", ".EXE")
     calls = []
 
     def child(argv, **options):
@@ -141,14 +146,16 @@ def test_relative_path_resolution_is_anchored_before_child_cwd(monkeypatch, tmp_
     monkeypatch.setattr(proc.subprocess, "run", child)
     child_cwd = str(tmp_path / "child")
     proc.run(["tool"], cwd=child_cwd)
-    assert calls[0][0] == [str(executable)]
+    (command,) = calls[0][0]
+    assert os.path.isabs(command)
+    assert os.path.samefile(command, executable)
     assert calls[0][1]["cwd"] == child_cwd
 
 
 @pytest.mark.parametrize("failure", ["timeout", "checked_exit"])
 def test_run_preserves_subprocess_failure_types(monkeypatch, tmp_path, failure):
     monkeypatch.setattr(proc.sys, "platform", "win32")
-    monkeypatch.setattr(proc, "which", lambda _name: "/tools/git")
+    monkeypatch.setattr(proc, "which", lambda _name: TOOL)
     monkeypatch.setenv("PATH", str(tmp_path))
 
     def child(argv, **_options):
