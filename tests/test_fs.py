@@ -165,12 +165,13 @@ def test_symlink_capability_probe_only_skips_on_failure(
     calls = []
 
     def create(self, target, target_is_directory=False):
-        if self.name in {"file-link", "directory-link"}:
-            calls.append(target_is_directory)
-            if not capable:
-                raise OSError("symlinks unavailable")
-            return
-        return original(self, target, target_is_directory=target_is_directory)
+        # tmp_path_factory links its own "current" directory through this method too.
+        if self.name not in {"file-link", "directory-link"}:
+            return original(self, target, target_is_directory)
+        calls.append((self.name, target_is_directory))
+        if not capable:
+            raise OSError("symlinks unavailable")
+        return None
 
     monkeypatch.setattr(Path, "symlink_to", create)
     if capable:
@@ -178,8 +179,8 @@ def test_symlink_capability_probe_only_skips_on_failure(
             probe_symlinks(tmp_path_factory)
         except pytest.skip.Exception:
             pytest.fail("a working symlink probe must not skip")
-        assert calls == [False, True]
+        assert calls == [("file-link", False), ("directory-link", True)]
     else:
         with pytest.raises(pytest.skip.Exception):
             probe_symlinks(tmp_path_factory)
-        assert calls == [False]
+        assert calls == [("file-link", False)]

@@ -1,5 +1,6 @@
 """Shared command execution and missing-tool behavior."""
 
+import errno
 import os
 import subprocess
 import sys
@@ -39,7 +40,9 @@ def test_run_resolves_executable_and_preserves_original_arguments(monkeypatch):
     ]
 
 
-def test_missing_executable_raises_tool_error_before_child_runs(monkeypatch, tmp_path):
+def test_missing_executable_raises_file_not_found_before_child_runs(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(proc.sys, "platform", "win32")
     monkeypatch.setattr(proc, "which", lambda _name: None)
     (tmp_path / "unavailable.EXE").write_text("", encoding="utf-8")
@@ -50,9 +53,11 @@ def test_missing_executable_raises_tool_error_before_child_runs(monkeypatch, tmp
         "run",
         lambda *_args, **_kwargs: pytest.fail("missing tool reached child"),
     )
-    with pytest.raises(proc.ToolError) as caught:
+    with pytest.raises(FileNotFoundError) as caught:
         proc.run(["unavailable", "arg"])
-    assert isinstance(caught.value, FileNotFoundError)
+    assert type(caught.value) is FileNotFoundError
+    assert caught.value.errno == errno.ENOENT
+    assert caught.value.strerror == os.strerror(errno.ENOENT)
     assert caught.value.filename == "unavailable"
     assert "'unavailable'" in str(caught.value)
 

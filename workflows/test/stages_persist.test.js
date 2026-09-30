@@ -168,7 +168,7 @@ const labels = (ctx) => ctx.calls.map((c) => c.label);
 
 // --- Checksum ---------------------------------------------------------------
 
-// Vectors produced by scripts/gauntlet/artifacts.py's fnv1a32 (the Python twin).
+// Vectors produced by scripts/gauntlet/jsjson.py's fnv1a32 (the Python twin).
 // tests/fixtures/cross_runtime/fnv1a32.json pins both runtimes over the same class of
 // inputs; these constants pin the checksums of this module's own fixtures.
 const CHECKSUM_VECTORS = [

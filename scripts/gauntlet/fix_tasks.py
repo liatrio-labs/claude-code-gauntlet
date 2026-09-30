@@ -214,12 +214,7 @@ class SiblingIndex:
         try:
             result = proc.run_bytes(["git", "ls-files", "-z"], cwd=root, timeout=10)
         except (OSError, proc.TimeoutExpired) as exc:
-            name = (
-                "FileNotFoundError"
-                if isinstance(exc, proc.ToolError)
-                else type(exc).__name__
-            )
-            self.error = f"could not list tracked files: {name}"
+            self.error = f"could not list tracked files: {type(exc).__name__}"
             return
         if result.returncode != 0:
             self.error = "could not list tracked files: git ls-files failed"

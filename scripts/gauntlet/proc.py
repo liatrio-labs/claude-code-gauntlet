@@ -18,13 +18,6 @@ CalledProcessError = subprocess.CalledProcessError
 _DEFAULT_PATHEXT = [".COM", ".EXE", ".BAT", ".CMD"]
 
 
-class ToolError(FileNotFoundError):
-    """The requested executable is unavailable on PATH."""
-
-    def __init__(self, command: Sequence[str]) -> None:
-        super().__init__(errno.ENOENT, os.strerror(errno.ENOENT), command[0])
-
-
 def which(name: str) -> str | None:
     if sys.platform != "win32":
         return shutil.which(name)
@@ -48,7 +41,7 @@ def _resolve(argv: Sequence[str]) -> list[str]:
         return list(argv)
     resolved = which(argv[0])
     if resolved is None:
-        raise ToolError(argv)
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), argv[0])
     # Anchor relative PATH entries before the child's cwd changes their base.
     return [os.path.abspath(resolved), *argv[1:]]
 

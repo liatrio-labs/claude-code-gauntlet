@@ -96,6 +96,41 @@ def test_check_tool_uses_path_lookup(name, available, monkeypatch, capsys):
     assert calls == [name]
 
 
+@pytest.mark.parametrize(
+    ("case", "message"),
+    [
+        ("missing", "Findings file not found:"),
+        ("invalid_json", "Invalid JSON in findings file:"),
+        ("invalid_utf8", None),
+    ],
+    ids=["missing", "invalid-json", "invalid-utf8"],
+)
+def test_main_handles_findings_file_read_errors(
+    case, message, monkeypatch, tmp_path, capsys
+):
+    findings_path = tmp_path / "findings.json"
+    if case == "invalid_json":
+        findings_path.write_text("{", encoding="utf-8")
+    elif case == "invalid_utf8":
+        findings_path.write_bytes(b"\xff")
+
+    monkeypatch.setattr(sys, "argv", ["post_review.py", str(findings_path)])
+    if case == "invalid_utf8":
+        with pytest.raises(UnicodeDecodeError):
+            post_review.main()
+        return
+
+    with pytest.raises(SystemExit) as caught:
+        post_review.main()
+
+    assert caught.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert message in captured.err
+    if case == "missing":
+        assert captured.err == f"ERROR: Findings file not found: {findings_path}\n"
+
+
 def _severity_matrix():
     """Return fixed public-seam oracles for closed, total severity rendering."""
     low = "\U0001f4a1"

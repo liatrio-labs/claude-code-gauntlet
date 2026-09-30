@@ -1,6 +1,7 @@
-"""Unittest coverage for the deterministic FIX-task renderer."""
+"""FIX-task renderer behavior and CLI contract."""
 
 import ast
+import errno
 import json
 import os
 import re
@@ -13,14 +14,13 @@ from unittest.mock import patch
 
 import pytest
 from gauntlet import fix_tasks as renderer
-from gauntlet.proc import ToolError
 
 REPO = Path(__file__).resolve().parents[1]
 
 
 def test_sibling_index_missing_git_keeps_file_not_found_error(monkeypatch):
     def missing(*_args, **_kwargs):
-        raise ToolError(["git", "ls-files", "-z"])
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "git")
 
     monkeypatch.setattr(renderer.proc, "run_bytes", missing)
     assert renderer.SiblingIndex("/repo").error == (

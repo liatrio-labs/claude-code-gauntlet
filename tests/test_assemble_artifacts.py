@@ -32,6 +32,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import gauntlet.artifacts as artifacts
 import pytest
 from gauntlet.artifacts import (
     assemble,
@@ -540,6 +541,47 @@ class TestStructuralHardFailures(unittest.TestCase):
             receipt = json.loads(proc.stdout)
             self.assertFalse(receipt["ok"])
             self.assertEqual(receipt["written"], [])
+
+
+@pytest.mark.parametrize(
+    ("parse_site", "error_text"),
+    [
+        ("source", "source is not valid JSON"),
+        ("plan", "plan is not valid JSON"),
+        ("expected", "expected artifact is not valid JSON"),
+    ],
+    ids=["source-json", "plan-json", "expected-artifact-json"],
+)
+def test_recursion_errors_during_json_parsing_are_structural(
+    monkeypatch, parse_site, error_text
+):
+    with _Workspace() as ws:
+        plan = ws.plan()
+        if parse_site == "source":
+            plan["expect"] = [
+                entry for entry in plan["expect"] if entry["path"] != ws.findings_path
+            ]
+        plan_path = ws.write_plan(plan)
+        failing_text = ws.read(plan_path) if parse_site == "plan" else ws.findings_json
+
+        original_loads = json.loads
+        raised = False
+
+        def loads_with_targeted_recursion_error(content, *args, **kwargs):
+            nonlocal raised
+            if content == failing_text and not raised:
+                raised = True
+                raise RecursionError("injected parser depth failure")
+            return original_loads(content, *args, **kwargs)
+
+        monkeypatch.setattr(
+            artifacts.json, "loads", loads_with_targeted_recursion_error
+        )
+        receipt = assemble(plan_path)
+
+    assert raised
+    assert not receipt["ok"]
+    assert any(error_text in error for error in receipt["errors"])
 
 
 class TestChecksumMismatchIsNotFatal(unittest.TestCase):
