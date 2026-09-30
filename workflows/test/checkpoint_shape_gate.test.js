@@ -20,7 +20,7 @@
 //                                  REQUIRED, with the same finding field checks);
 //                                  unverified (array, elements TOLERATED, optional, but
 //                                  object elements get the same finding field checks);
-//                                  eliminated is WHOLLY ungated (not in the table at all)
+//                                  eliminated (array, elements tolerated, optional)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -286,12 +286,12 @@ test('checkpointShapeErrors: challenge.unverified [null, real] is ACCEPTED (elem
   assert.deepEqual(checkpointShapeErrors(cp), []);
 });
 
-test('checkpointShapeErrors: challenge.eliminated "not-an-array" is ACCEPTED (wholly ungated)', () => {
+test('checkpointShapeErrors: challenge.eliminated must be an array', () => {
   const cp = {
     ...wellFormedCheckpoints(),
     challenge: { ...wellFormedCheckpoints().challenge, eliminated: 'not-an-array' },
   };
-  assert.deepEqual(checkpointShapeErrors(cp), []);
+  assert.ok(checkpointShapeErrors(cp).some((e) => e.includes('challenge.eliminated must be an array')));
 });
 
 test('checkpointShapeErrors: unknown checkpoint keys are inert', () => {

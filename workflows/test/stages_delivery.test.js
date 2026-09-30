@@ -762,12 +762,7 @@ test('runWith replay belt: a non-object replayed challenge checkpoint is now REF
   assert.equal(ctx.calls.length, 0, 'nothing dispatched -- the gate runs before any phase is attempted');
 });
 
-test('runWith replay belt: a non-array field on an otherwise-valid replayed checkpoint passes through untouched (#213)', async () => {
-  // Bugbot, round-2 review: `(challengeOut.eliminated || []).map(...)` throws when
-  // `eliminated` is present but TRUTHY and non-array (`.map` is undefined on a string) --
-  // a shape this run has never validated (nothing ever indexed into it before the belt),
-  // so a malformed field here must not turn a run failure. The belt now passes a
-  // non-array value through UNCHANGED (never coerced to `[]`) rather than crashing.
+test('runWith refuses a replayed non-array eliminated field before persistence', async () => {
   const checkpoint = {
     findings: [makeFinding('M1', { severity: 'critical', confidence: 95, report_tag: 'main', report_destination: 'main' })],
     unverified: [],
@@ -780,12 +775,10 @@ test('runWith replay belt: a non-array field on an otherwise-valid replayed chec
   let persisted = null;
   const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
   const out = await runWith(ctx, args);
-  assert.equal(out.ok, true, 'a non-array eliminated field must not turn into a run failure');
-  assert.equal(
-    persisted.checkpoints.phases.challenge.eliminated,
-    'not-an-array',
-    'the malformed field is carried through byte-for-byte, not coerced to []',
-  );
+  assert.equal(out.ok, false);
+  assert.equal(out.failingPhase, 'checkpoints');
+  assert.ok(out.gaps.some((gap) => gap.includes('challenge.eliminated must be an array')));
+  assert.equal(persisted, null);
 });
 
 test('runWith replay belt: a null element alongside a real finding in the SAME list is passed through untouched, the real one still stripped (#213)', async () => {
@@ -1014,68 +1007,24 @@ test('runWith replay belt: the call site is structurally confidence-free -- a sh
   assert.equal(out.stats.challenge.replay_belt_eliminated, 1, 'exactly one (BAD1) belt elimination, not two');
 });
 
-function nonArrayEliminatedWithBeltEliminationChallengeCheckpoint() {
-  return {
-    findings: [
-      makeFinding('M1', { severity: 'critical', confidence: 95 }),
-      makeFinding('BAD1', { description: REPLAY_SHELL_PAYLOAD }),
-    ],
+test('runWith refuses a replayed eliminated object holding an absolute file', async () => {
+  const absolute = '/private/tmp/host-secret/file.js';
+  const args = validArgs({ checkpoints: { challenge: {
+    findings: [makeFinding('M1')],
     unverified: [],
-    eliminated: 'not-an-array',
+    eliminated: { file: absolute },
     gaps: [],
-    stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 2 },
-    generated_at: '2026-07-18T00:00:00Z',
-  };
-}
-
-test('runWith replay belt: a belt elimination against a malformed (non-array) .eliminated is dropped and disclosed, never silently lost (#253)', async () => {
-  const args = validArgs({ checkpoints: { challenge: nonArrayEliminatedWithBeltEliminationChallengeCheckpoint() } });
+    stats: {},
+  } } });
   let persisted = null;
   const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
   const out = await runWith(ctx, args);
 
-  assert.equal(out.ok, true, 'a malformed eliminated bucket must not turn into a run failure');
-  // The belt still shrinks .findings -- it just cannot record WHERE the
-  // eliminated finding went, since there is no array to append to.
-  assert.ok(!persisted.postReview.some((f) => f.id === 'BAD1'));
-  assert.equal(
-    persisted.checkpoints.phases.challenge.eliminated,
-    'not-an-array',
-    'the malformed field is carried through byte-for-byte (the pre-existing #213 tolerance), never coerced to []',
-  );
-  assert.equal(out.stats.challenge.final_count, 1, 'stats still reflect the actual shrunken findings array');
-
-  const dropGap = out.gaps.find((g) => g.startsWith('replay-filter:'));
-  assert.ok(dropGap, `expected a replay-filter drop gap, got: ${JSON.stringify(out.gaps)}`);
-  assert.match(dropGap, /could not record them/);
-  assert.doesNotMatch(dropGap.toLowerCase(), /no write proof|partial-artifacts/, 'forbidden substrings (D12)');
-  assert.equal(out.stats.challenge.replay_belt_dropped, 1, 'durable drop counter stamped on run 1');
-});
-
-test('runWith replay belt: the DROP gap (malformed .eliminated) is derived from a DURABLE accumulated stats.replay_belt_dropped counter, so it SURVIVES a resume-of-a-resume even though this call eliminates nothing new (#253/D4/D7)', async () => {
-  const args1 = validArgs({ checkpoints: { challenge: nonArrayEliminatedWithBeltEliminationChallengeCheckpoint() } });
-  let persisted1 = null;
-  const out1 = await runWith(makeCtx(args1, { onPersist: (p) => { persisted1 = p; } }), args1);
-  assert.equal(out1.ok, true);
-  const dropGap1 = out1.gaps.find((g) => g.startsWith('replay-filter:') && /could not record/.test(g));
-  assert.ok(dropGap1, `expected a drop gap on run 1, got: ${JSON.stringify(out1.gaps)}`);
-  assert.equal(out1.stats.challenge.replay_belt_dropped, 1);
-
-  // Resume-of-a-resume: feed run 1's OWN persisted challenge checkpoint straight back
-  // in. The belt eliminates NOTHING NEW this time (BAD1 is already gone from
-  // .findings) and .eliminated is STILL the malformed 'not-an-array' -- there was never
-  // anywhere to persist a residue, unlike the well-formed markedCount path. Before the
-  // durable-counter fix, this call's own droppedCount (0) made the gap silently vanish
-  // on exactly this second resume, even though the finding is still unrecoverably
-  // unrecorded.
-  const resumedChallenge = persisted1.checkpoints.phases.challenge;
-  const args2 = validArgs({ checkpoints: { challenge: resumedChallenge } });
-  const out2 = await runWith(makeCtx(args2), args2);
-  assert.equal(out2.ok, true);
-  const dropGap2 = out2.gaps.find((g) => g.startsWith('replay-filter:') && /could not record/.test(g));
-  assert.ok(dropGap2, `expected the drop gap to SURVIVE a resume-of-a-resume, got: ${JSON.stringify(out2.gaps)}`);
-  assert.equal(out2.stats.challenge.replay_belt_dropped, 1, 'accumulated counter carries forward unchanged -- no NEW drop this call');
-  assert.equal(out2.stats.challenge.replay_belt_eliminated, 0, 'zero NEW eliminations on this call');
+  assert.equal(out.ok, false);
+  assert.equal(out.failingPhase, 'checkpoints');
+  assert.ok(out.gaps.some((gap) => gap.includes('challenge.eliminated must be an array')));
+  assert.ok(!JSON.stringify(out).includes(absolute));
+  assert.equal(persisted, null);
 });
 
 function beltEliminatedWithClaudeMdRuleChallengeCheckpoint() {

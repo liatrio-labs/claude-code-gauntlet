@@ -63,9 +63,14 @@ const REPO_RELATIVE_CASES = [
   { name: 'relative path stays relative', file: 'scripts/gauntlet/proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },
   { name: 'leading dot slash is stripped', file: './scripts/gauntlet/proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },
   { name: 'repeated leading dot slash is stripped', file: '././scripts/gauntlet/proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },
+  { name: 'relative interior dot slash is collapsed', file: 'scripts/./gauntlet/proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },
+  { name: 'relative repeated slashes are collapsed', file: 'scripts//gauntlet///proc.py', expected: { file: 'scripts/gauntlet/proc.py' } },
+  { name: 'relative trailing slash is stripped', file: 'scripts/gauntlet/', expected: { file: 'scripts/gauntlet' } },
+  { name: 'relative trailing dot is stripped', file: 'scripts/gauntlet/.', expected: { file: 'scripts/gauntlet' } },
   { name: 'absolute path under root becomes relative', file: `${REPO_ROOT}/scripts/gauntlet/proc.py`, expected: { file: 'scripts/gauntlet/proc.py' } },
   { name: 'absolute path under slash root becomes relative', root: '/', file: '/proc.py', expected: { file: 'proc.py' } },
   { name: 'absolute dot slash is normalized', file: `${REPO_ROOT}/./scripts/gauntlet/proc.py`, expected: { file: 'scripts/gauntlet/proc.py' } },
+  { name: 'absolute repeated slashes are collapsed', file: `${REPO_ROOT}//scripts///proc.py/`, expected: { file: 'scripts/proc.py' } },
   { name: 'absolute path equal to root is rejected', file: REPO_ROOT, expected: { reason: 'absolute file path resolves to repoRoot' } },
   { name: 'absolute path outside root is rejected', file: '/private/tmp/wt-410-evil/proc.py', expected: { reason: 'absolute file path is outside repoRoot' } },
   { name: 'relative traversal is rejected', file: '../proc.py', expected: { reason: 'file path contains a .. segment' } },
@@ -73,6 +78,10 @@ const REPO_RELATIVE_CASES = [
   { name: 'backslash path is rejected', file: 'scripts\\proc.py', expected: { reason: 'file path contains a backslash' } },
   { name: 'invalid root is rejected for an absolute file', root: 'repo', file: '/repo/proc.py', expected: { reason: 'repoRoot must be an absolute path without .. segments or backslashes' } },
   { name: 'empty file is rejected', file: '', expected: { reason: 'file must be a non-empty string' } },
+  { name: 'dot file is rejected', file: '.', expected: { reason: 'file path does not name a repository file' } },
+  { name: 'dot slash file is rejected', file: './', expected: { reason: 'file path does not name a repository file' } },
+  { name: 'leading drive letter is rejected', file: 'C:/users/lee/file.js', expected: { reason: 'file path has a leading drive letter' } },
+  { name: 'leading drive letter after dot slash is rejected', file: './C:file.js', expected: { reason: 'file path has a leading drive letter' } },
 ];
 for (const c of REPO_RELATIVE_CASES) {
   test(`repoRelativeFindingPath: ${c.name}`, () => {

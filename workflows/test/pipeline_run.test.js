@@ -450,7 +450,59 @@ test('runWith passes repoRoot to merge so absolute discovery paths persist relat
     ['ABSOLUTE_DISCOVERY', 'src/module.js'],
   ]);
   assert.equal(out.stats.merge.validation_warnings, 1);
+  assert.ok(!JSON.stringify(persisted).includes(`${args.repoRoot}/src/module.js`));
+  assert.ok(!JSON.stringify(out).includes(`${args.repoRoot}/src/module.js`));
 });
+
+const REPLAY_PATH_FIELDS = [
+  ['merge', 'findings'],
+  ['verify', 'findings'],
+  ['validate', 'findings'],
+  ['filter', 'filtered'],
+  ['challenge', 'findings'],
+  ['challenge', 'unverified'],
+  ['challenge', 'eliminated'],
+];
+for (const [phase, field] of REPLAY_PATH_FIELDS) {
+  test(`replayed ${phase}.${field} paths are sanitized in the persisted payload and envelope`, async () => {
+    const under = '/repo/src/replayed.js';
+    const outside = '/private/tmp/host-secret/replayed.js';
+    const checkpoint = {
+      ...(phase === 'challenge' ? { findings: [], unverified: [], eliminated: [], stats: {} } : {}),
+      [field]: [
+        makeFinding('REPLAY_UNDER', { file: under }),
+        makeFinding('REPLAY_OUTSIDE', { file: outside }),
+      ],
+      gaps: [],
+      ...(phase === 'merge' ? { methodology: {
+        findings_per_channel: { ndjson: 2, text_fallback: 0 },
+        validation_warnings: [],
+      } } : {}),
+    };
+    const args = validArgs({ checkpoints: { [phase]: checkpoint } });
+    let persisted = null;
+    const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+
+    assert.equal(out.ok, true, JSON.stringify(out));
+    const retained = phase === 'challenge'
+      ? persisted.checkpoints.phases.challenge[field]
+      : persisted.findings;
+    assert.deepEqual(retained.map((finding) => [finding.id, finding.file]), [
+      ['REPLAY_UNDER', 'src/replayed.js'],
+    ]);
+    assert.ok(!JSON.stringify(persisted).includes(under));
+    assert.ok(!JSON.stringify(persisted).includes(outside));
+    assert.ok(!JSON.stringify(out).includes(under));
+    assert.ok(!JSON.stringify(out).includes(outside));
+    if (phase === 'merge') {
+      assert.deepEqual(out.stats.merge.findings_per_channel, {
+        ndjson: 1, text_fallback: 0,
+      });
+      assert.equal(out.stats.merge.validation_warnings, 2);
+      assert.ok(persisted.report.includes('merge: per-channel: ndjson=1, text_fallback=0'));
+    }
+  });
+}
 
 // --- Replayed empty-report recovery -----------------------------------------
 

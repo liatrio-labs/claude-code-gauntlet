@@ -166,7 +166,7 @@ function normalizeFindingPath(finding, repoRoot) {
     finding.file = result.file;
     return {
       valid: true,
-      warning: `[${fid}] File path rewritten from '${original}' to '${result.file}'`,
+      warning: `[${fid}] File path rewritten to '${result.file}'`,
     };
   }
   return { valid: true, warning: null };

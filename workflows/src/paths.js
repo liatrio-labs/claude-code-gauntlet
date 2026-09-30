@@ -16,7 +16,7 @@ function stripTrailingSlashes(path) {
 function normalizePathString(path) {
   let out = path;
   for (;;) {
-    let next = stripTrailingSlashes(collapseDotSlash(out));
+    let next = stripTrailingSlashes(collapseDotSlash(out.replace(/\/{2,}/g, '/')));
     if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
     next = stripTrailingSlashes(next);
     if (next === out) return next;
@@ -57,7 +57,9 @@ export function repoRelativeFindingPath(repoRoot, file) {
   if (!file.startsWith('/')) {
     let relative = file;
     while (relative.startsWith('./')) relative = relative.slice(2);
-    if (relative === '') return { reason: 'file path does not name a repository file' };
+    relative = normalizePathString(relative);
+    if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
+    if (/^[A-Za-z]:/.test(relative)) return { reason: 'file path has a leading drive letter' };
     return { file: relative };
   }
 

@@ -3389,10 +3389,8 @@ function checkpointDiscardGap(topLevelCheckpoints) {
 // tolerance is otherwise reserved for challenge.unverified, whose null-element tolerance is
 // a pinned, correct, fully-delivering degradation (stages_delivery.test.js:514-542: the
 // belt's `{raw: el}` positions and dimensionsSummaryTable are all null-safe for that one
-// field). challenge.eliminated is deliberately ABSENT from
-// this table -- it never reaches rankFindings, and the belt owns its own malformed
-// shapes with a disclosed drop path (`stats.replay_belt_dropped`, the `replay-filter:`
-// gap) -- so it is wholly ungated here, by omission, not by an explicit skip.
+// field). challenge.eliminated also tolerates elements, but its container must be
+// an array before path normalization or persistence can safely use it.
 const CHECKPOINT_ARRAY_STRICT = 'strict';
 const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
 // Exported for checkpoint_shape_gate.test.js, which derives the strict rows from it so a
@@ -3414,6 +3412,7 @@ export const CHECKPOINT_PHASE_SHAPE_TABLE = {
   challenge: {
     findings: CHECKPOINT_ARRAY_STRICT,
     unverified: CHECKPOINT_ARRAY_TOLERANT,
+    eliminated: CHECKPOINT_ARRAY_TOLERANT,
     gaps: CHECKPOINT_ARRAY_TOLERANT,
   },
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
@@ -3756,16 +3755,12 @@ function beltPartitionList(list) {
   return { list: splicedList, eliminated: eliminatedOut };
 }
 
-// stripEliminatedList(list) -> the #213-established element tolerance,
-// reused by the #253 belt for the FINAL .eliminated strip (see the
-// append-then-strip ordering at the call site, D2): a non-array `list`
-// passes through untouched, a non-object element passes through untouched,
-// every other element is run through applyInjectedProseStrip (idempotent --
-// a no-op on an already-stripped finding, so a resume-of-a-resume is safe).
+// A fresh challenge can omit eliminated; replayed containers are shape-gated.
+// Preserve non-object elements while stripping injected prose from finding objects.
 function stripEliminatedList(list) {
   return Array.isArray(list)
     ? list.map((f) => ((f && typeof f === 'object') ? applyInjectedProseStrip(f) : f))
-    : list;
+    : [];
 }
 
 // #181: merge()'s per-agent channel/dedup/validation-warning granularity — the only
@@ -3946,11 +3941,18 @@ export async function runWith(ctx, rawArgs) {
       out[field] = normalized.valid;
       warnings.push(...normalized.warnings);
     }
-    if (!warnings.length) return;
     if (name === 'merge') {
+      if (!warnings.length) return;
       const methodology = out.methodology && typeof out.methodology === 'object' ? out.methodology : {};
+      const channels = methodology.findings_per_channel;
+      const surviving = out.findings.length;
+      const ndjson = Math.min(Math.max(0, channels?.ndjson || 0), surviving);
+      const textFallback = Math.min(Math.max(0, channels?.text_fallback || 0), surviving - ndjson);
       out.methodology = {
         ...methodology,
+        ...(channels && typeof channels === 'object' ? { findings_per_channel: {
+          ...channels, ndjson, text_fallback: textFallback,
+        } } : {}),
         validation_warnings: [
           ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
           ...warnings,
@@ -3958,6 +3960,7 @@ export async function runWith(ctx, rawArgs) {
       };
       return;
     }
+    if (!warnings.length) return;
     out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
     // Filter gaps are not otherwise aggregated by runWith.
     if (name === 'filter') gaps.push(...warnings);
@@ -4155,10 +4158,8 @@ export async function runWith(ctx, rawArgs) {
     // (checkpointShapeErrors + makeCheckpointShapeRejectEnvelope, above runWith's try
     // block) already refuses a non-array phases.challenge.findings/.unverified before any
     // phase runs. It stays live only for a non-replay caller of beltPartitionList directly
-    // -- stages_delivery.test.js:488-512's non-array `.eliminated` (wholly ungated by the
-    // shape table, so still reachable via replay) is the closest surviving oracle for the
-    // same code shape. See beltPartitionList's own doc comment for the splice mechanics
-    // and stripEliminatedList's for the #213 element tolerance it reuses.
+    // -- a fresh challenge result can still have a malformed eliminated field.
+    // See beltPartitionList's own doc comment for the splice mechanics.
     //
     // .eliminated: newly-belt-eliminated entries APPEND first, then the WHOLE resulting
     // array runs through stripEliminatedList (order is the defence, D2): appending
@@ -4167,10 +4168,8 @@ export async function runWith(ctx, rawArgs) {
     // its kept path does), and a finding can be eliminated by its description while
     // ALSO carrying an unrelated payload in one of those three fields; stripping the
     // whole array only after the append is what keeps that second payload out of
-    // checkpoint-all.json. undefined/null .eliminated becomes a fresh array only when
-    // there is something to put in it; any OTHER non-array (a malformed checkpoint) is
-    // left untouched -- the append cannot happen, so the drop is disclosed on its own
-    // gap line below instead of silently losing the eliminations.
+    // checkpoint-all.json. A malformed non-array eliminated value is discarded with
+    // a gap before persistence; an append failure also discloses lost eliminations.
     //
     // Rewrites challengeOut's OWN findings/unverified/eliminated/stats IN PLACE (not
     // threaded through locals): every existing downstream reader (selectDelivery/
@@ -4212,16 +4211,17 @@ export async function runWith(ctx, rawArgs) {
       challengeOut.unverified = unverifiedResult.list;
       const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
 
+      if (challengeOut.eliminated !== undefined && !Array.isArray(challengeOut.eliminated)) {
+        gaps.push('challenge-shape: eliminated must be an array; malformed value dropped');
+      }
       let droppedCount = 0;
       if (Array.isArray(challengeOut.eliminated)) {
         challengeOut.eliminated = [...challengeOut.eliminated, ...newlyEliminated];
       } else if ((challengeOut.eliminated === undefined || challengeOut.eliminated === null) && newlyEliminated.length) {
         challengeOut.eliminated = newlyEliminated;
       } else if (newlyEliminated.length) {
-        // A malformed .eliminated that is truthy and non-array (e.g. the string
-        // 'not-an-array', per the #213 tolerance test) cannot receive an append --
-        // these eliminations are dropped, not delivered and not persisted anywhere,
-        // and disclosed on their own gap line below (there is nothing to append to).
+        // A malformed eliminated bucket cannot receive new eliminations. The
+        // loss is counted and disclosed below.
         droppedCount = newlyEliminated.length;
       }
       challengeOut.eliminated = stripEliminatedList(challengeOut.eliminated);
