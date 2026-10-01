@@ -71,6 +71,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
   "gauntlet.cli",
+  "gauntlet.forge",
   "gauntlet.paths",
   "gauntlet.jsjson",
   "gauntlet.numstat",

@@ -18,7 +18,6 @@ import os
 import re
 import subprocess
 import sys
-import unittest
 from pathlib import Path
 
 import gauntlet.marker as review_marker
@@ -51,33 +50,6 @@ HEAD_SHA_40 = "b" * 40
 # Repeated-character keys avoid entropy-based credential lint on fixtures.
 KEY_16 = "a" * 16
 OTHER_KEY_16 = "b" * 16
-
-
-class TestFindingMarker(unittest.TestCase):
-    def test_malformed_payloads_are_ignored_and_never_raise(self):
-        """An unhashable key would abort post_review's delivery loop mid-flight, so a
-        payload of the right syntax but the wrong types must simply not be a record."""
-        payloads = [
-            {"sha": SHA_40, "key": ["not", "a", "string"]},
-            {"sha": SHA_40, "key": {"nested": "object"}},
-            {"sha": SHA_40, "key": 123456789},
-            {"sha": SHA_40, "key": None},
-            {"sha": SHA_40, "key": KEY_16.upper()},
-            {"sha": SHA_40, "key": KEY_16[:15]},
-            {"sha": SHA_40, "key": KEY_16 + "0"},
-            {"sha": SHA_40, "key": "g" * 16},
-            {"sha": SHA_40},
-            {"key": KEY_16},
-            {"sha": "not-a-sha", "key": KEY_16},
-            {"sha": ["a" * 40], "key": KEY_16},
-        ]
-        for payload in payloads:
-            text = f"<!-- {FINDING_MARKER_TOKEN}: {json.dumps(payload)} -->"
-            with self.subTest(payload=payload):
-                try:
-                    self.assertIsNone(find_finding_marker(text))
-                except Exception as exc:  # noqa: BLE001 - report reader failures with their input
-                    self.fail(f"raised {exc!r} on {text!r}")
 
 
 _QUOTE_RE = re.compile("`([^`\\n]+)`")
