@@ -15,7 +15,7 @@ from gauntlet import cli, marker, prior_review, proc
 from gauntlet.forge import GitHub
 from gauntlet.paths import ENTRY_ROOT
 
-from tests.support.forge import FakeForge
+from tests.support.forge import FakeForge, ForgeCall
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORDED = json.loads(
@@ -25,6 +25,84 @@ RECORDED = json.loads(
 )
 SHA = "abc1234"
 FULL = "a" * 40
+
+
+@pytest.mark.usefixtures("poster_state")
+@pytest.mark.parametrize(
+    "mode, flag, dry_run",
+    [
+        pytest.param(None, False, False, id="default-live"),
+        pytest.param("live", False, False, id="env-live"),
+        pytest.param("dry-run", False, True, id="env-dry-run"),
+        pytest.param(None, True, True, id="flag-dry-run"),
+        pytest.param("live", True, True, id="flag-beats-env-live"),
+    ],
+)
+def test_poster_mode_stdout(
+    mode, flag, dry_run, tmp_path, invoke, forge_factory, monkeypatch
+):
+    data = {
+        "platform": "github",
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": FULL,
+        "review_body": "Summary",
+        "findings": [
+            {
+                "file": "foo.py",
+                "line": 2,
+                "severity": "high",
+                "title": "Bug A",
+                "body": "Body A",
+            }
+        ],
+    }
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    fake = forge_factory.configure(
+        FakeForge(
+            diffs=[
+                (
+                    "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -1,1 +1,2 @@\n context\n+added\n",
+                    "",
+                    0,
+                )
+            ]
+        )
+    )
+    if mode is None:
+        monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+    else:
+        monkeypatch.setenv("CODE_GAUNTLET_POST_MODE", mode)
+    monkeypatch.setattr(proc, "run", lambda *a, **k: pytest.fail("Unexpected Git call"))
+    result = invoke(
+        "post_review", [str(path)] + (["--dry-run"] if flag else []), tmp_path
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert forge_factory.calls == ["github"]
+    writes = [call for call in fake.calls if call.method == "submit"]
+    artifact = tmp_path / "post-review-payload.json"
+    if dry_run:
+        assert writes == []
+        assert artifact.exists()
+        payload = json.loads(artifact.read_text(encoding="utf-8"))
+        assert payload["platform"] == "github"
+        assert payload["payload"]["comments"][0]["line"] == 2
+        assert b"captured" in result.stdout
+        assert b"Review posted:" not in result.stdout
+        assert b"inline comment(s) posted." not in result.stdout
+    else:
+        assert len(writes) == 1
+        assert writes[0].request.endpoint == "repos/o/r/pulls/5/reviews"
+        assert writes[0].request.payload["event"] == "COMMENT"
+        assert writes[0].request.payload["comments"][0]["line"] == 2
+        assert not artifact.exists()
+        assert b"Review posted:" in result.stdout
+        assert b"inline comment(s) posted." in result.stdout
+        assert b"captured" not in result.stdout
+    assert fake.calls[0] == ForgeCall("diff", fake.calls[0].target)
 
 
 def _git_result(command, **kwargs):

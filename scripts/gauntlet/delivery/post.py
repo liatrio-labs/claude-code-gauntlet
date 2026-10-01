@@ -119,7 +119,7 @@ from gauntlet.marker import (
     build_prose_footer,
     is_sha_shaped,
 )
-from gauntlet.prior_review import gitlab_prior_delivery_state
+from gauntlet.prior_review import PriorDelivery, gitlab_prior_delivery_state
 from gauntlet.registry import (
     BRAND_MARK,
     BRAND_NAME,
@@ -2797,7 +2797,9 @@ def fetch_gitlab_shas(target: ReviewTarget, *, forge: GitLab):
     )
 
 
-def gitlab_prior_delivery(owner, repo, mr_iid, sha, *, forge: Forge):
+def gitlab_prior_delivery(
+    owner: str, repo: str, mr_iid: int | str, sha: object, *, forge: Forge
+) -> PriorDelivery:
     """Read this SHA's summary, finding keys, and legacy group keys from one snapshot.
 
     Dry-run skips the read so every finding is captured and the summary stays first.
@@ -2805,17 +2807,14 @@ def gitlab_prior_delivery(owner, repo, mr_iid, sha, *, forge: Forge):
     because a possible duplicate beats a silently dropped review.
     """
     if DRY_RUN or not is_sha_shaped(sha):
-        return False, frozenset(), frozenset()
-    summary_posted, keys, legacy_group_keys, error = gitlab_prior_delivery_state(
-        owner, repo, mr_iid, sha, forge=forge
-    )
-    if error:
+        return PriorDelivery(False, frozenset(), frozenset(), None)
+    state = gitlab_prior_delivery_state(owner, repo, mr_iid, sha, forge=forge)
+    if state.error:
         warn(
             f"could not check for an existing summary note or already-delivered inline "
-            f"discussions ({error}); posting them."
+            f"discussions ({state.error}); posting them."
         )
-        return False, frozenset(), frozenset()
-    return summary_posted, keys, legacy_group_keys
+    return state
 
 
 def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: GitLab):
@@ -2952,16 +2951,15 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
         sha=sha,
     )
 
-    # Post the review summary as a top-level MR note first
     summary_payload = {"body": composed.body}
-    summary_posted, delivered_keys, legacy_group_keys = gitlab_prior_delivery(
-        owner, repo, mr_iid, sha, forge=forge
-    )
+    prior = gitlab_prior_delivery(owner, repo, mr_iid, sha, forge=forge)
+    delivered_keys = prior.finding_keys
+    legacy_group_keys = prior.legacy_group_keys
     # Same predicate that makes gitlab_prior_delivery skip the fetch: a marker built
     # from a non-SHA-shaped sha (get_head_sha's "unknown" fallback) is one
     # find_finding_marker is guaranteed to reject, so appending it would leave an
     # unreadable comment on every discussion and dedup nothing.
-    if summary_posted:
+    if prior.summary_posted:
         print(f"MR summary note for {sha} already on the MR — skipping.")
     else:
         _refuse_over_limit(composed.body, "gitlab")

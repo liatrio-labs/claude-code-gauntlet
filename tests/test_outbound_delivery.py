@@ -17,6 +17,7 @@ import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
 import pytest
 from gauntlet.forge import PostResult
+from gauntlet.prior_review import PriorDelivery
 
 from tests.support.forge import FakeForge, FakeGitLab
 from tests.test_outbound_contract import _assert_outbound_string_invariant
@@ -73,7 +74,7 @@ def _capture_dry_run(platform, findings, review_body=""):
         ),
         patch(
             "gauntlet.delivery.post.gitlab_prior_delivery",
-            return_value=(False, set(), set()),
+            return_value=PriorDelivery(False, frozenset(), frozenset(), None),
         ),
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(io.StringIO()),
@@ -759,7 +760,7 @@ class TestDeliveryTitleKeys(unittest.TestCase):
             ),
             patch(
                 "gauntlet.delivery.post.gitlab_prior_delivery",
-                return_value=(False, set(), set()),
+                return_value=PriorDelivery(False, frozenset(), frozenset(), None),
             ),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
@@ -874,7 +875,7 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
             ),
             patch(
                 "gauntlet.delivery.post.gitlab_prior_delivery",
-                return_value=(False, set(), set()),
+                return_value=PriorDelivery(False, frozenset(), frozenset(), None),
             ),
             patch("gauntlet.delivery.post.validate_position", return_value=[]),
             contextlib.redirect_stdout(io.StringIO()),
@@ -1259,7 +1260,7 @@ def test_gitlab_live_fallback_contracts__rejected_group_position_falls_back_to_a
     )
     calls, lookup = _gitlab_live_fallback_contracts_post_live(
         [primary, corroborator],
-        (False, set(), set()),
+        PriorDelivery(False, frozenset(), frozenset(), None),
         reject_first_discussion=True,
     )
     discussions = [
@@ -1306,7 +1307,7 @@ def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_
     assert hashlib.sha256(old_material.encode()).hexdigest()[:16] == old_key
     assert hashlib.sha256(new_material.encode()).hexdigest()[:16] == new_key
     first_calls, _ = _gitlab_live_fallback_contracts_post_live(
-        [finding], (True, {old_key}, set())
+        [finding], PriorDelivery(True, frozenset({old_key}), frozenset(), None)
     )
     discussions = [
         request.payload
@@ -1316,7 +1317,7 @@ def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_
     assert len(discussions) == 1
     assert review_marker.find_finding_marker(discussions[0]["body"])["key"] == new_key
     second_calls, _ = _gitlab_live_fallback_contracts_post_live(
-        [finding], (True, {old_key, new_key}, set())
+        [finding], PriorDelivery(True, frozenset({old_key, new_key}), frozenset(), None)
     )
     assert not (second_calls)
 
@@ -1345,7 +1346,8 @@ def test_gitlab_live_fallback_contracts__partial_prior_delivery_posts_only_the_m
         consolidation_primary=False,
     )
     calls, lookup = _gitlab_live_fallback_contracts_post_live(
-        [primary, corroborator], (True, {prior_key}, set())
+        [primary, corroborator],
+        PriorDelivery(True, frozenset({prior_key}), frozenset(), None),
     )
     assert len(calls) == 1
     request = calls[0]
@@ -1427,7 +1429,9 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
     primary["consolidation_key"] = "poison-group"
     corroborator["consolidation_key"] = "poison-group"
     rejected_calls = _poisoned_outbound_sinks_capture_live_gitlab(
-        [primary, corroborator], (False, set(), set()), reject_first=True
+        [primary, corroborator],
+        PriorDelivery(False, frozenset(), frozenset(), None),
+        reject_first=True,
     )
     discussions = [
         request.payload
@@ -1454,7 +1458,8 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
         ),
     ):
         note_calls = _poisoned_outbound_sinks_capture_live_gitlab(
-            [primary, corroborator], (True, {"1" * 16}, set())
+            [primary, corroborator],
+            PriorDelivery(True, frozenset({"1" * 16}), frozenset(), None),
         )
     assert len(note_calls) == 1
     request = note_calls[0]

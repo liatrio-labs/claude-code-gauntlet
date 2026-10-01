@@ -8,6 +8,7 @@ import argparse
 import json
 import sys
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Literal, TypedDict, cast
 
 from gauntlet import forge as forge_api
@@ -41,6 +42,14 @@ class PriorReviewWire(TypedDict):
     marker: Mapping[str, object] | None
     scanned: dict[str, int]
     errors: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class PriorDelivery:
+    summary_posted: bool
+    finding_keys: frozenset[str]
+    legacy_group_keys: frozenset[str]
+    error: str | None
 
 
 GIT_TIMEOUT_SECONDS = 10
@@ -98,7 +107,7 @@ def fetch_entries(
 
 def gitlab_prior_delivery_state(
     owner: str, repo: str, number: int | str, sha: object, *, forge: Forge
-) -> tuple[bool, set[str], set[str], str | None]:
+) -> PriorDelivery:
     """Read summary, finding keys and group coverage from one flat-note snapshot.
 
     A second fetch can see a different MR. Nested discussion objects have no
@@ -106,13 +115,8 @@ def gitlab_prior_delivery_state(
     """
     entries, errors = fetch_entries(owner, repo, number, forge=forge)
     if errors:
-        return False, set(), set(), errors[0]
-    return (
-        entries_carry_sha(entries, sha),
-        finding_keys_for_sha(entries, sha),
-        legacy_group_keys_for_sha(entries, sha),
-        None,
-    )
+        return PriorDelivery(False, frozenset(), frozenset(), errors[0])
+    return prior_delivery_from_entries(entries, sha)
 
 
 def _entries_from(
@@ -181,13 +185,7 @@ def entries_carry_sha(entries: Iterable[object] | None, sha: object) -> bool:
     suppress this one. A non-SHA-shaped *sha* simply never matches: detect_signal only
     ever returns SHA-shaped values, so no separate guard is needed here.
     """
-    for entry in entries or []:
-        if not isinstance(entry, dict):
-            continue
-        signal = detect_signal(entry.get("body"))
-        if signal and signal.get("sha") == sha:
-            return True
-    return False
+    return prior_delivery_from_entries(entries, sha).summary_posted
 
 
 def finding_keys_for_sha(entries: Iterable[object] | None, sha: object) -> set[str]:
@@ -204,14 +202,7 @@ def finding_keys_for_sha(entries: Iterable[object] | None, sha: object) -> set[s
     weaker GitHub surface was dropped rather than tolerated), so per-finding keys add no
     capability an attacker does not already have here.
     """
-    keys: set[str] = set()
-    for entry in entries or []:
-        if not isinstance(entry, dict):
-            continue
-        for marker in find_finding_markers(entry.get("body")):
-            if marker["sha"] == sha:
-                keys.add(marker["key"])
-    return keys
+    return set(prior_delivery_from_entries(entries, sha).finding_keys)
 
 
 # A consolidation group's body renders one of these per corroborator, verbatim from
@@ -242,15 +233,34 @@ def legacy_group_keys_for_sha(
     key this sha's markers do not carry (see
     :func:`_is_legacy_undermarked_group_body`).
     """
+    return set(prior_delivery_from_entries(entries, sha).legacy_group_keys)
+
+
+def prior_delivery_from_entries(
+    entries: Iterable[object] | None, sha: object
+) -> PriorDelivery:
+    """Extract exact-SHA state, parsing each body's finding markers once.
+
+    Marker counts include duplicates; unique keys alone would misclassify a
+    fully marked group as legacy and suppress an undelivered member.
+    """
+    summary_posted = False
     keys: set[str] = set()
+    legacy_keys: set[str] = set()
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
         body = entry.get("body")
-        matched = [m["key"] for m in find_finding_markers(body) if m["sha"] == sha]
+        signal = detect_signal(body)
+        if signal and signal.get("sha") == sha:
+            summary_posted = True
+        matched: list[str] = [
+            m["key"] for m in find_finding_markers(body) if m["sha"] == sha
+        ]
+        keys.update(matched)
         if matched and _is_legacy_undermarked_group_body(body, len(matched)):
-            keys.update(matched)
-    return keys
+            legacy_keys.update(matched)
+    return PriorDelivery(summary_posted, frozenset(keys), frozenset(legacy_keys), None)
 
 
 def count_by_source(entries: Iterable[ReviewEntryWire]) -> dict[str, int]:

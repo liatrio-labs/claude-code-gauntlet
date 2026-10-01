@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
-from unittest.mock import ANY, patch
+from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
@@ -64,8 +64,10 @@ from gauntlet.forge import (
     ReviewTarget,
     github_review_request,
 )
+from gauntlet.prior_review import PriorDelivery
 
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
+from tests.support.prior import prior_notes
 
 
 def test_prior_delivery_uses_injected_forge(forge_factory, monkeypatch):
@@ -77,11 +79,9 @@ def test_prior_delivery_uses_injected_forge(forge_factory, monkeypatch):
         )
     )
     monkeypatch.setattr(post_review, "DRY_RUN", False)
-    assert post_review.gitlab_prior_delivery("o", "r", 5, "a" * 40, forge=fake) == (
-        True,
-        set(),
-        set(),
-    )
+    assert post_review.gitlab_prior_delivery(
+        "o", "r", 5, "a" * 40, forge=fake
+    ) == PriorDelivery(True, frozenset(), frozenset(), None)
     assert forge_factory.calls == []
     assert fake.calls == [ForgeCall("review_entries", ReviewTarget("o", "r", 5))]
 
@@ -1929,7 +1929,7 @@ class TestGitlabPositionPayload(unittest.TestCase):
             ),
             patch(
                 "gauntlet.delivery.post.gitlab_prior_delivery_state",
-                return_value=(False, set(), frozenset(), None),
+                return_value=PriorDelivery(False, frozenset(), frozenset(), None),
             ),
         ):
             post_gitlab(data, valid_lines, new_files, {}, {}, forge=fake)
@@ -2523,6 +2523,7 @@ def _poster_run(
     discussion_rcs=None,
     calls=None,
     payloads=None,
+    entries=None,
 ):
     reply = (diff, "fatal: could not read the diff" if diff_rc else "", diff_rc)
     # A group may attempt its discussion and then each member's fallback.
@@ -2546,6 +2547,7 @@ def _poster_run(
             diffs=[reply],
             refs=[JsonFetch(versions if versions is not None else [], None)],
             submissions={"notes": notes, "discussions": discussions},
+            entries=[entries] if entries is not None else None,
         )
     )
     observed = _ObservedForgeCalls(calls=[])
@@ -2581,11 +2583,7 @@ def _gitlab_posts(run, suffix):
 
 
 def _normalize_prior(prior):
-    """Accept summary/keys/error or summary/keys/legacy/error fixture input."""
-    if len(prior) == 4:
-        return prior
-    summary_posted, keys, error = prior
-    return summary_posted, keys, frozenset(), error
+    return prior
 
 
 def _discussion_posts(mock_run):
@@ -2815,7 +2813,9 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
             "findings": [primary, note, sibling],
         }
         self._write(data)
-        prior = (False, {finding_key_for_test(primary)}, frozenset())
+        prior = PriorDelivery(
+            False, frozenset({finding_key_for_test(primary)}), frozenset(), None
+        )
         with (
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
@@ -3414,43 +3414,6 @@ class TestDryRunStdout(_DryRunTestBase):
         self.assertIn("inline discussion(s) captured.", out)
 
 
-class TestLivePathStdout(_DryRunTestBase):
-    """The live path's stdout is unchanged: it still claims posts."""
-
-    def test_github_live_path_prints_posted(self):
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [
-                    {
-                        "file": "foo.py",
-                        "line": 2,
-                        "severity": "high",
-                        "title": "Bug A",
-                        "body": "Body A",
-                    }
-                ],
-            }
-        )
-        stdout = io.StringIO()
-        with (
-            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
-            patch.dict(os.environ, {}, clear=False),
-            _poster_run(self.forge_factory, diff=GH_DIFF),
-            contextlib.redirect_stdout(stdout),
-        ):
-            os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
-            post_review.main()
-        out = stdout.getvalue()
-        self.assertIn("Review posted:", out)
-        self.assertIn("inline comment(s) posted.", out)
-        self.assertNotIn("captured", out)
-
-
 # ---------------------------------------------------------------------------
 # CODE_GAUNTLET_POST_MODE env-enforced dry-run
 # ---------------------------------------------------------------------------
@@ -3777,12 +3740,7 @@ def test_skipped_group_warning_member_labels(dry_run_payload, members, suffix):
 
 
 class _GitlabLiveRunBase(_DryRunTestBase):
-    """Drives post_review.main() over the GitLab contract fixtures.
-
-    Carries no tests of its own — a subclass of a TestCase inherits its tests, and
-    the classes below need the same runner for different subjects (the position gate,
-    per-finding fault tolerance, and per-finding idempotency).
-    """
+    """Share input snapshots across position, failure and retry tests."""
 
     def _run_main(
         self,
@@ -3814,19 +3772,11 @@ class _GitlabLiveRunBase(_DryRunTestBase):
         with (
             patch.object(sys, "argv", argv),
             patch.dict(os.environ, {}, clear=False),
-            # The idempotency fetch defaults to "nothing delivered yet" so every run
-            # reaches the per-finding loop; TestGitlabInlineDiscussionIdempotency
-            # steers it to exercise the dedup gate.
-            patch(
-                "gauntlet.delivery.post.gitlab_prior_delivery_state",
-                return_value=(False, set(), frozenset(), None)
-                if prior is None
-                else _normalize_prior(prior),
-            ) as mock_prior,
             _poster_run(
                 self.forge_factory,
                 diff=GL_DIFF_CONTRACT,
                 versions=GL_CONTRACT_VERSIONS if versions is None else versions,
+                entries=prior_notes(prior, sha or "a" * 40),
                 **fake_run_kwargs,
             ) as mock_run,
             contextlib.redirect_stdout(stdout),
@@ -3839,7 +3789,6 @@ class _GitlabLiveRunBase(_DryRunTestBase):
                 exit_code = exc.code
         return SimpleNamespace(
             mock_run=mock_run,
-            mock_prior=mock_prior,
             out=stdout.getvalue(),
             err=stderr.getvalue(),
             exit_code=exit_code,
@@ -4013,7 +3962,12 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         corroborator = _gl_corroborator("A", 61)
         run = self._run_main(
             findings=[primary, corroborator],
-            prior=(True, {_member_key(primary), _member_key(corroborator)}, None),
+            prior=PriorDelivery(
+                True,
+                frozenset({_member_key(primary), _member_key(corroborator)}),
+                frozenset(),
+                None,
+            ),
         )
         self.assertIsNone(run.exit_code)
         self.assertEqual(_discussion_posts(run.mock_run), [])
@@ -4027,7 +3981,10 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         primary = _gl_primary()
         corrs = [_gl_corroborator("A", 61), _gl_corroborator("B", 62)]
         keys = {_member_key(m) for m in [primary, *corrs]}
-        run = self._run_main(findings=[primary, *corrs], prior=(True, keys, None))
+        run = self._run_main(
+            findings=[primary, *corrs],
+            prior=PriorDelivery(True, frozenset(keys), frozenset(), None),
+        )
         self.assertIsNone(run.exit_code)
         self.assertEqual(len(_discussion_posts(run.mock_run)), 0)
         self.assertIn(
@@ -4063,12 +4020,11 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         state = detect_prior_review.gitlab_prior_delivery_state(
             "o", "r", 5, "a" * 40, forge=FakeGitLab(entries=[JsonFetch(entries, None)])
         )
-        summary_posted, delivered_keys, legacy_group_keys, error = state
-        self.assertTrue(summary_posted)
-        self.assertEqual(delivered_keys, expected_keys)
-        self.assertEqual(len(delivered_keys), 40)
-        self.assertEqual(legacy_group_keys, set())
-        self.assertIsNone(error)
+        self.assertTrue(state.summary_posted)
+        self.assertEqual(state.finding_keys, expected_keys)
+        self.assertEqual(len(state.finding_keys), 40)
+        self.assertEqual(state.legacy_group_keys, set())
+        self.assertIsNone(state.error)
 
         rerun = self._run_main(findings=members, prior=state)
         self.assertIsNone(rerun.exit_code)
@@ -4089,7 +4045,9 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         payloads = []
         run = self._run_main(
             findings=[primary, *corrs],
-            prior=(True, {_member_key(c) for c in corrs}, None),
+            prior=PriorDelivery(
+                True, frozenset(_member_key(c) for c in corrs), frozenset(), None
+            ),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -4136,7 +4094,10 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
             review_marker.find_finding_marker(discussion["body"]),
             {"sha": "a" * 40, "key": expected_key},
         )
-        rerun = self._run_main(findings=[finding], prior=(True, {expected_key}, None))
+        rerun = self._run_main(
+            findings=[finding],
+            prior=PriorDelivery(True, frozenset({expected_key}), frozenset(), None),
+        )
         self.assertIsNone(rerun.exit_code)
         self.assertEqual(_discussion_posts(rerun.mock_run), [])
 
@@ -4164,7 +4125,10 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         primary = _gl_primary()
         unanchored = _gl_corroborator("A", None)
         keys = {_member_key(primary), _member_key(unanchored)}
-        run = self._run_main(findings=[primary, unanchored], prior=(True, keys, None))
+        run = self._run_main(
+            findings=[primary, unanchored],
+            prior=PriorDelivery(True, frozenset(keys), frozenset(), None),
+        )
         self.assertIsNone(run.exit_code)
         self.assertEqual(_discussion_posts(run.mock_run), [])
         self.assertIn(
@@ -4183,7 +4147,9 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         payloads = []
         run = self._run_main(
             findings=[primary, unanchored],
-            prior=(True, {_member_key(primary)}, None),
+            prior=PriorDelivery(
+                True, frozenset({_member_key(primary)}), frozenset(), None
+            ),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -4223,7 +4189,9 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                 payloads = []
                 run = self._run_main(
                     findings=[primary, unanchored, GL_CONTRACT_FINDINGS[1]],
-                    prior=(True, {_member_key(primary)}, None),
+                    prior=PriorDelivery(
+                        True, frozenset({_member_key(primary)}), frozenset(), None
+                    ),
                     payloads=payloads,
                 )
                 self.assertIsNone(run.exit_code)
@@ -4279,7 +4247,9 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                 ):
                     run = self._run_main(
                         findings=findings,
-                        prior=(True, {primary_key}, None),
+                        prior=PriorDelivery(
+                            True, frozenset({primary_key}), frozenset(), None
+                        ),
                         payloads=payloads,
                     )
 
@@ -4320,7 +4290,12 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
             # decided this is a legacy under-marked group body. delivered_keys
             # carries ONLY the primary's key too — the unanchorable member's
             # key was never written by the pre-fix code that posted this note.
-            prior=(True, {_member_key(primary)}, {_member_key(primary)}, None),
+            prior=PriorDelivery(
+                True,
+                frozenset({_member_key(primary)}),
+                frozenset({_member_key(primary)}),
+                None,
+            ),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -4346,7 +4321,9 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         payloads = []
         run = self._run_main(
             findings=[primary, unanchored],
-            prior=(True, {_member_key(primary)}, set(), None),
+            prior=PriorDelivery(
+                True, frozenset({_member_key(primary)}), frozenset(), None
+            ),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -4456,10 +4433,7 @@ class TestGitlabFaultTolerance(_GitlabLiveRunBase):
 
 
 class TestGitlabSummaryIdempotency(_DryRunTestBase):
-    """A rerun after a partial delivery must not stack a second summary note.
-
-    These tests patch the state reader as bound by the delivery module.
-    """
+    """A partial-delivery retry reads one snapshot and preserves its summary."""
 
     def _run_main(self, prior, data=None, dry_run=False, head_sha="deadbeefcafe\n"):
         return _gitlab_summary_idempotency_run_main(
@@ -4472,29 +4446,37 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
         )
 
     def test_summary_skipped_when_this_shas_marker_is_already_on_the_mr(self):
-        run = self._run_main(prior=(True, set(), None))
+        run = self._run_main(prior=PriorDelivery(True, frozenset(), frozenset(), None))
         self.assertEqual(_note_posts(run.mock_run), [])
         # The retry still delivers the inline comments — that is the whole point.
         self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
         self.assertIn("already on the MR", run.out)
         self.assertNotIn("MR summary note posted.", run.out)
-        run.mock_prior.assert_called_once_with("o", "r", 5, "a" * 40, forge=ANY)
+        self.assertEqual(
+            [c for c in run.mock_run.calls if c.method == "review_entries"],
+            [ForgeCall("review_entries", ReviewTarget("o", "r", 5))],
+        )
 
     def test_summary_posted_when_the_marker_records_a_different_sha(self):
-        run = self._run_main(prior=(False, set(), None))
+        run = self._run_main(prior=PriorDelivery(False, frozenset(), frozenset(), None))
         self.assertEqual(len(_note_posts(run.mock_run)), 1)
         self.assertIn("MR summary note posted.", run.out)
 
     def test_one_fetch_serves_both_idempotency_checks(self):
-        """Issue #132: the summary check and the finding-key set come from ONE fetch.
-        A second round trip would also be a second, possibly inconsistent view of the
-        MR — one where the summary is already there but the discussions are not."""
-        run = self._run_main(prior=(True, set(), None))
-        self.assertEqual(run.mock_prior.call_count, 1)
+        """Two reads could observe summary and discussions from different snapshots."""
+        run = self._run_main(prior=PriorDelivery(True, frozenset(), frozenset(), None))
+        self.assertEqual(
+            len([c for c in run.mock_run.calls if c.method == "review_entries"]), 1
+        )
 
     def test_notes_fetch_failure_degrades_to_posting(self):
         run = self._run_main(
-            prior=(False, set(), "gitlab notes: fetch failed (exit 1): boom")
+            prior=PriorDelivery(
+                False,
+                frozenset(),
+                frozenset(),
+                "gitlab notes: fetch failed (exit 1): boom",
+            )
         )
         self.assertEqual(len(_note_posts(run.mock_run)), 1)
         self.assertIn("could not check for an existing summary note", run.err)
@@ -4503,7 +4485,7 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
     def test_unresolvable_sha_skips_the_check_and_posts(self):
         """get_head_sha's "unknown" fallback is not a usable dedup key."""
         run = self._run_main(
-            prior=(True, set(), None),
+            prior=PriorDelivery(True, frozenset(), frozenset(), None),
             data={
                 "platform": "gitlab",
                 "owner": "o",
@@ -4514,7 +4496,9 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
             },
             head_sha="unknown\n",
         )
-        run.mock_prior.assert_not_called()
+        self.assertEqual(
+            [c for c in run.mock_run.calls if c.method == "review_entries"], []
+        )
         self.assertEqual(len(_note_posts(run.mock_run)), 1)
 
     def test_summary_check_delegates_to_the_reader_module(self):
@@ -4568,7 +4552,10 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
     def test_a_finding_already_on_the_mr_is_not_reposted(self):
         payloads = []
         run = self._run_main(
-            prior=(True, {self.CONTEXT_LINE_KEY}, None), payloads=payloads
+            prior=PriorDelivery(
+                True, frozenset({self.CONTEXT_LINE_KEY}), frozenset(), None
+            ),
+            payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
         self.assertEqual(len(_discussion_posts(run.mock_run)), 2)
@@ -4584,7 +4571,9 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         self.assertNotIn("rejected", run.out)
 
     def test_rerun_with_everything_already_present_posts_nothing_and_exits_zero(self):
-        run = self._run_main(prior=(True, set(self.ALL_KEYS), None))
+        run = self._run_main(
+            prior=PriorDelivery(True, frozenset(set(self.ALL_KEYS)), frozenset(), None)
+        )
         self.assertIsNone(run.exit_code, "a fully-delivered rerun is a success")
         self.assertEqual(_discussion_posts(run.mock_run), [])
         self.assertEqual(_note_posts(run.mock_run), [])
@@ -4596,7 +4585,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         key = finding_key_for_test(finding)
         run = self._run_main(
             findings=[finding],
-            prior=(True, {key}, None),
+            prior=PriorDelivery(True, frozenset({key}), frozenset(), None),
         )
         self.assertIsNone(run.exit_code)
         self.assertEqual(_discussion_posts(run.mock_run), [])
@@ -4608,7 +4597,12 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         rejection out of three findings is not "all", and two of this review's
         discussions ARE on the MR."""
         run = self._run_main(
-            prior=(True, {self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY}, None),
+            prior=PriorDelivery(
+                True,
+                frozenset({self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY}),
+                frozenset(),
+                None,
+            ),
             discussion_rcs=[1],
         )
         self.assertEqual(run.exit_code, 1)
@@ -4627,7 +4621,12 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
                 GL_CONTRACT_FINDINGS[1],
                 dict(GL_CONTRACT_FINDINGS[2], line=1.0),
             ],
-            prior=(True, {self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY}, None),
+            prior=PriorDelivery(
+                True,
+                frozenset({self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY}),
+                frozenset(),
+                None,
+            ),
         )
         self.assertEqual(run.exit_code, 1)
         self.assertEqual(_discussion_posts(run.mock_run), [])
@@ -4644,7 +4643,12 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
                 GL_CONTRACT_FINDINGS[1],
                 dict(GL_CONTRACT_FINDINGS[2], line=1.0, body="x" * 1000001),
             ],
-            prior=(True, {self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY}, None),
+            prior=PriorDelivery(
+                True,
+                frozenset({self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY}),
+                frozenset(),
+                None,
+            ),
         )
         self.assertEqual(_discussion_posts(run.mock_run), [])
         self.assertIn("had a malformed position", run.err)
@@ -4654,7 +4658,12 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         """Availability over dedup: a failed read must never be taken for "already
         delivered" — a possible duplicate beats a silently dropped review."""
         run = self._run_main(
-            prior=(False, set(), "gitlab notes: fetch failed (exit 1): boom")
+            prior=PriorDelivery(
+                False,
+                frozenset(),
+                frozenset(),
+                "gitlab notes: fetch failed (exit 1): boom",
+            )
         )
         self.assertIsNone(run.exit_code)
         self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
@@ -4708,7 +4717,9 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         payloads = []
         run = self._run_main(sha=None, head_sha="unknown\n", payloads=payloads)
         self.assertIsNone(run.exit_code)
-        run.mock_prior.assert_not_called()
+        self.assertEqual(
+            [c for c in run.mock_run.calls if c.method == "review_entries"], []
+        )
         bodies = [p["body"] for p in self._discussion_payloads(payloads)]
         self.assertEqual(len(bodies), 3)
         for body, finding in zip(bodies, GL_CONTRACT_FINDINGS, strict=True):
@@ -4752,9 +4763,9 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         for findings, keys, prior_key in cases:
             with self.subTest(keys=keys):
                 dry_prior = (
-                    (False, {prior_key}, frozenset())
+                    PriorDelivery(False, frozenset({prior_key}), frozenset(), None)
                     if prior_key
-                    else (False, set(), frozenset())
+                    else PriorDelivery(False, frozenset(), frozenset(), None)
                 )
                 with (
                     patch(
@@ -4781,7 +4792,11 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
                 )
 
                 live_payloads = []
-                live_prior = (False, {prior_key}, None) if prior_key else None
+                live_prior = (
+                    PriorDelivery(False, frozenset({prior_key}), frozenset(), None)
+                    if prior_key
+                    else None
+                )
                 with (
                     patch.dict(
                         post_review.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"][
@@ -4818,8 +4833,13 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         """bench pins dry-run and scores the captured bodies as candidate text, so a
         marker in a capture would change what is scored. The capture must also ignore
         the dedup state entirely — every finding is captured, none deduped away."""
-        run = self._run_main(dry_run=True, prior=(True, set(self.ALL_KEYS), None))
-        run.mock_prior.assert_not_called()
+        run = self._run_main(
+            dry_run=True,
+            prior=PriorDelivery(True, frozenset(set(self.ALL_KEYS)), frozenset(), None),
+        )
+        self.assertEqual(
+            [c for c in run.mock_run.calls if c.method == "review_entries"], []
+        )
         captured = self._payload()
         self.assertEqual(len(captured["discussions"]), 3)
         for disc, finding in zip(
@@ -5335,7 +5355,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             ),
             patch(
                 "gauntlet.delivery.post.gitlab_prior_delivery",
-                return_value=(prior, set(), frozenset()),
+                return_value=PriorDelivery(prior, frozenset(), frozenset(), None),
             ),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
@@ -7901,17 +7921,12 @@ class _FixGateRunBase(_DryRunTestBase):
         with (
             patch.object(sys, "argv", argv),
             patch.dict(os.environ, {}, clear=False),
-            patch(
-                "gauntlet.delivery.post.gitlab_prior_delivery_state",
-                return_value=(False, set(), frozenset(), None)
-                if prior is None
-                else prior,
-            ),
             _poster_run(
                 self.forge_factory,
                 diff=self.DIFF if diff is None else diff,
                 versions=versions,
                 payloads=payloads,
+                entries=prior_notes(prior, "a" * 40),
                 **fake_run_kwargs,
             ) as mock_run,
             contextlib.redirect_stdout(stdout),
@@ -8338,7 +8353,9 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
         run = self._run(
             [finding],
             dry_run=False,
-            prior=(True, {self.RANGE_BUG_KEY}, frozenset(), None),
+            prior=PriorDelivery(
+                True, frozenset({self.RANGE_BUG_KEY}), frozenset(), None
+            ),
         )
         self.assertIn("  0 inline discussion(s) posted.", run.out)
         self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
@@ -8423,7 +8440,9 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
         run = self._run(
             [finding],
             dry_run=False,
-            prior=(True, {self.RANGE_BUG_KEY}, frozenset(), None),
+            prior=PriorDelivery(
+                True, frozenset({self.RANGE_BUG_KEY}), frozenset(), None
+            ),
         )
         self.assertIn("  0 inline discussion(s) posted.", run.out)
         self.assertIn("  1 inline discussion(s) already on the MR", run.out)
@@ -8503,7 +8522,9 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
             [primary, unanchored],
             dry_run=False,
             payloads=payloads,
-            prior=(True, {self.PRIMARY_A_KEY}, frozenset(), None),
+            prior=PriorDelivery(
+                True, frozenset({self.PRIMARY_A_KEY}), frozenset(), None
+            ),
         )
         notes = [p["body"] for p in payloads if "position" not in p]
         unanchored_notes = [b for b in notes if "Unanchored" in b]
@@ -8886,7 +8907,7 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
         run = self._run(
             [a, b],
             dry_run=False,
-            prior=(True, {self.FIRST_KEY}, frozenset(), None),
+            prior=PriorDelivery(True, frozenset({self.FIRST_KEY}), frozenset(), None),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -8949,7 +8970,9 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
             dry_run=False,
             # Only the corroborator's key is already delivered — P's own key
             # is not, so k1's "some but not all" branch delivers P alone.
-            prior=(True, {self.CORROBORATOR_KEY}, frozenset(), None),
+            prior=PriorDelivery(
+                True, frozenset({self.CORROBORATOR_KEY}), frozenset(), None
+            ),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -9004,7 +9027,7 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
             # Primary already delivered; corroborator is not — the "some but
             # not all" split that routes the corroborator through
             # deliver_corroborator instead of the group's own discussion.
-            prior=(True, {self.PRIMARY_KEY}, frozenset(), None),
+            prior=PriorDelivery(True, frozenset({self.PRIMARY_KEY}), frozenset(), None),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -9058,7 +9081,7 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
             # P's own key is already delivered — its group never re-renders,
             # but the corroborator's key is not, so it splits off through
             # deliver_corroborator.
-            prior=(True, {self.SECOND_KEY}, frozenset(), None),
+            prior=PriorDelivery(True, frozenset({self.SECOND_KEY}), frozenset(), None),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -9833,25 +9856,6 @@ def _submit_calls(run):
     return [call for call in run.calls if call.method == "submit"]
 
 
-def _env_findings():
-    return {
-        "platform": "github",
-        "owner": "o",
-        "repo": "r",
-        "pr_number": 5,
-        "review_body": "Summary",
-        "findings": [
-            {
-                "file": "foo.py",
-                "line": 2,
-                "severity": "high",
-                "title": "Bug A",
-                "body": "Body A",
-            }
-        ],
-    }
-
-
 def test_review_marker_round_trip_through_real_poster__github_empty_review_body(
     tmp_path, forge_factory, monkeypatch
 ):
@@ -10043,7 +10047,7 @@ def test_skip_warning_diagnostics__github_skip_no_diag_when_valid_lines_none(
 # from a unit test.
 @patch(
     "gauntlet.delivery.post.gitlab_prior_delivery_state",
-    return_value=(False, set(), frozenset(), None),
+    return_value=PriorDelivery(False, frozenset(), frozenset(), None),
 )
 @patch("gauntlet.delivery.post.warn")
 def test_skip_warning_diagnostics__gitlab_skip_includes_valid_lines(
@@ -10568,99 +10572,6 @@ def test_git_lab_delivery_consolidation__no_line_primary_degrades_whole_group_in
     )
 
 
-def test_live_path_unchanged__without_flag_posts_and_writes_no_payload_file(
-    tmp_path, forge_factory
-):
-    finding_a = {
-        "file": "foo.py",
-        "line": 2,
-        "severity": "high",
-        "title": "Bug A",
-        "body": "Body A",
-    }
-    _write_findings(
-        tmp_path,
-        {
-            "platform": "github",
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 5,
-            "review_body": "Summary",
-            "findings": [finding_a],
-        },
-    )
-    # Pin CODE_GAUNTLET_POST_MODE off so an ambient bench value (the harness pins it
-    # to dry-run) cannot flip this live-path assertion.
-    with (
-        patch.object(sys, "argv", ["post_review.py", str(tmp_path / "findings.json")]),
-        patch.dict(os.environ, {}, clear=False),
-        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
-    ):
-        os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
-        post_review.main()
-
-    post_calls = [c for c in mock_run.calls if c.method == "submit"]
-    assert post_calls, "live path must issue the reviews POST"
-    assert not (os.path.exists(os.path.join(str(tmp_path), "post-review-payload.json")))
-
-
-def test_post_mode_env__env_dry_run_alone_captures_payload_no_posts(
-    tmp_path, forge_factory
-):
-    _write_findings(tmp_path, _env_findings())
-    with (
-        patch.object(sys, "argv", ["post_review.py", str(tmp_path / "findings.json")]),
-        patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "dry-run"}),
-        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
-    ):
-        post_review.main()
-    assert _submit_calls(mock_run) == [], "env dry-run must issue no POST"
-    assert (tmp_path / "post-review-payload.json").exists()
-    assert _read_payload(tmp_path)["platform"] == "github"
-
-
-def test_post_mode_env__flag_alone_dry_run_when_env_unset(tmp_path, forge_factory):
-    _write_findings(tmp_path, _env_findings())
-    with (
-        patch.object(
-            sys,
-            "argv",
-            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
-        ),
-        patch.dict(os.environ, {}, clear=False),
-        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
-    ):
-        os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
-        post_review.main()
-    assert _submit_calls(mock_run) == []
-    assert (tmp_path / "post-review-payload.json").exists()
-
-
-def test_post_mode_env__neither_flag_nor_env_posts_live(tmp_path, forge_factory):
-    _write_findings(tmp_path, _env_findings())
-    with (
-        patch.object(sys, "argv", ["post_review.py", str(tmp_path / "findings.json")]),
-        patch.dict(os.environ, {}, clear=False),
-        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
-    ):
-        os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
-        post_review.main()
-    assert _submit_calls(mock_run), "live path must issue the reviews POST"
-    assert not ((tmp_path / "post-review-payload.json").exists())
-
-
-def test_post_mode_env__env_live_without_flag_posts_live(tmp_path, forge_factory):
-    _write_findings(tmp_path, _env_findings())
-    with (
-        patch.object(sys, "argv", ["post_review.py", str(tmp_path / "findings.json")]),
-        patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "live"}),
-        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
-    ):
-        post_review.main()
-    assert _submit_calls(mock_run), "env=live with no flag must post live"
-    assert not ((tmp_path / "post-review-payload.json").exists())
-
-
 def test_writer_wrapper_byte_parity__wrapper_platform_survives_an_unrecognized_self_hosted_remote(
     tmp_path, forge_factory
 ):
@@ -10998,15 +10909,12 @@ def _gitlab_summary_idempotency_run_main(
     with (
         patch.object(sys, "argv", argv),
         patch.dict(os.environ, {}, clear=False),
-        patch(
-            "gauntlet.delivery.post.gitlab_prior_delivery_state",
-            return_value=_normalize_prior(prior),
-        ) as mock_prior,
         _poster_run(
             forge_factory,
             diff=GL_DIFF_CONTRACT,
             versions=GL_CONTRACT_VERSIONS,
             head_sha=head_sha,
+            entries=prior_notes(prior, "a" * 40),
         ) as mock_run,
         contextlib.redirect_stdout(stdout),
         contextlib.redirect_stderr(stderr),
@@ -11014,7 +10922,6 @@ def _gitlab_summary_idempotency_run_main(
         os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
         post_review.main()
     return SimpleNamespace(
-        mock_prior=mock_prior,
         mock_run=mock_run,
         out=stdout.getvalue(),
         err=stderr.getvalue(),
@@ -11028,9 +10935,12 @@ def test_gitlab_summary_idempotency__dry_run_makes_no_idempotency_call_and_alway
     consulted, and build_dry_run_payload's "first capture is the summary" shape
     depends on the note being captured regardless."""
     run = _gitlab_summary_idempotency_run_main(
-        tmp_path, forge_factory, prior=(True, set(), None), dry_run=True
+        tmp_path,
+        forge_factory,
+        prior=PriorDelivery(True, frozenset(), frozenset(), None),
+        dry_run=True,
     )
-    run.mock_prior.assert_not_called()
+    assert [c for c in run.mock_run.calls if c.method == "review_entries"] == []
     assert "code-gauntlet-findings:" in _read_payload(tmp_path)["summary"]["body"]
     assert (
         post_review._CAPTURED[0].payload["body"]
@@ -11074,7 +10984,7 @@ def test_summary_body_budget__gitlab_guard_stops_before_post_json(
         patch("gauntlet.delivery.post.fetch_gitlab_shas", return_value=("b", "h", "s")),
         patch(
             "gauntlet.delivery.post.gitlab_prior_delivery_state",
-            return_value=(False, set(), frozenset(), None),
+            return_value=PriorDelivery(False, frozenset(), frozenset(), None),
         ),
         patch(
             "gauntlet.delivery.post.compose_review_body",
@@ -11711,7 +11621,7 @@ def test_skipped_section_forgery_resistance__gitlab_validation_skipped_posts_eve
         ),
         patch(
             "gauntlet.delivery.post.gitlab_prior_delivery_state",
-            return_value=(False, set(), frozenset(), None),
+            return_value=PriorDelivery(False, frozenset(), frozenset(), None),
         ),
         _poster_run(forge_factory, versions=GL_CONTRACT_VERSIONS, payloads=payloads),
     ):
