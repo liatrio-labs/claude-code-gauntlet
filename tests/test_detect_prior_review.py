@@ -14,6 +14,10 @@ from unittest.mock import patch
 import gauntlet.marker as review_marker
 import gauntlet.prior_review as detect_prior_review
 import pytest
+from gauntlet import proc
+from gauntlet.forge import JsonFetch, ReviewTarget
+
+from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 
 # Hex-only fixed SHAs (valid under review_marker.SHA_RE regardless of context).
 FULL_SHA = "a" * 40
@@ -22,27 +26,9 @@ SHORT_SHA = FULL_SHA[:8]
 
 
 def _run_main(argv):
-    """Run detect_prior_review.main() with *argv*, capturing stdout.
-
-    Returns (stdout, exit_code). main() may return None (implicit success) or
-    raise SystemExit (argparse errors, or an explicit exit call) — either way
-    this normalizes to a plain (stdout, code) pair so callers don't need to
-    know which convention the implementation picked.
-    """
     stdout = io.StringIO()
-    code = 0
-    with (
-        patch.object(sys, "argv", ["detect_prior_review.py", *list(argv)]),
-        contextlib.redirect_stdout(stdout),
-    ):
-        try:
-            detect_prior_review.main()
-        except SystemExit as exc:
-            code = (
-                exc.code
-                if isinstance(exc.code, int)
-                else (0 if exc.code is None else 1)
-            )
+    with contextlib.redirect_stdout(stdout):
+        code = detect_prior_review.CLI.invoke(argv)
     return stdout.getvalue(), code
 
 
@@ -50,11 +36,243 @@ def _result(out="", err="", rc=0):
     return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
 
 
+def _legacy_group_note(primary_key, corroborator_titles, sha=FULL_SHA, note_id=1):
+    """Render all group members while keying only the primary."""
+    sections = "\n\n".join(
+        f"**Corroborating finding — bug-detector (correctness, confidence 70):**\n\n"
+        f"**{title}**\n\nBody {title}"
+        for title in corroborator_titles
+    )
+    body = (
+        "**🟡 [MEDIUM] Finding**\n\nDetail.\n\n---\n\n"
+        + sections
+        + "\n\n"
+        + review_marker.build_finding_marker(sha, primary_key)
+    )
+    return {"id": note_id, "body": body, "created_at": "2026-08-03T00:02:00Z"}
+
+
+@pytest.mark.parametrize("forge_factory", [detect_prior_review], indirect=True)
+@pytest.mark.parametrize(
+    "platform, bodies, error, expected_sha",
+    [
+        pytest.param(
+            "github",
+            [review_marker.build_footer(3, FULL_SHA)],
+            None,
+            FULL_SHA,
+            id="github-review",
+        ),
+        pytest.param(
+            "gitlab",
+            [review_marker.build_marker(FULL_SHA, 1)],
+            None,
+            FULL_SHA,
+            id="gitlab-note",
+        ),
+        pytest.param(
+            "github",
+            [],
+            "github reviews: fetch failed (exit 1): gh: fetch failed",
+            None,
+            id="github-failure",
+        ),
+        pytest.param(
+            "gitlab",
+            [],
+            "gitlab notes: fetch failed (exit 1): glab: fetch failed",
+            None,
+            id="gitlab-failure",
+        ),
+        pytest.param(
+            "github",
+            [
+                review_marker.build_marker("c" * 40, 1),
+                review_marker.build_marker("d" * 40, 2),
+            ],
+            None,
+            "d" * 40,
+            id="newest-entry",
+        ),
+    ],
+)
+def test_network_scan(
+    platform, bodies, error, expected_sha, forge_factory, monkeypatch
+):
+    timestamp_key = "submitted_at" if platform == "github" else "created_at"
+    payload = [
+        {"id": index, "body": body, timestamp_key: f"2026-0{index + 1}-01T00:00:00Z"}
+        for index, body in enumerate(bodies)
+    ]
+    fake = forge_factory.configure(
+        FakeForge(platform, entries=[JsonFetch(payload, error)])
+    )
+    monkeypatch.setattr(detect_prior_review.proc, "run", _fake_git_run())
+    out, code = _run_main(
+        ["--platform", platform, "--owner", "o", "--repo", "r", "--number", "5"]
+    )
+    result = json.loads(out)
+    source = "review" if platform == "github" else "note"
+    assert code == 0
+    assert result["previously_reviewed"] is (expected_sha is not None)
+    assert result["last_reviewed_sha"] == expected_sha
+    assert result["signal"] == ("marker" if expected_sha else None)
+    assert result["source"] == (source if expected_sha else None)
+    assert result["scanned"] == {source: len(bodies)}
+    assert result["errors"] == ([error] if error else [])
+    assert result["incremental_safe"] is (expected_sha is not None)
+    assert forge_factory.calls == [platform]
+    assert fake.calls == [ForgeCall("review_entries", ReviewTarget("o", "r", "5"))]
+
+
+@pytest.mark.parametrize(
+    "notes, error, expected",
+    [
+        pytest.param(
+            [{"body": review_marker.build_footer(3, FULL_SHA)}],
+            None,
+            (True, set(), set(), None),
+            id="summary",
+        ),
+        pytest.param(
+            [{"body": review_marker.build_footer(3, HEAD_SHA)}],
+            None,
+            (False, set(), set(), None),
+            id="other-summary-sha",
+        ),
+        pytest.param(
+            [{"body": "Nice work"}, {"body": "LGTM"}],
+            None,
+            (False, set(), set(), None),
+            id="no-signal",
+        ),
+        pytest.param(
+            [{"body": "Generated by code-gauntlet | Reviewed up to: " + FULL_SHA}],
+            None,
+            (True, set(), set(), None),
+            id="prose-only",
+        ),
+        pytest.param(
+            [],
+            "gitlab notes: fetch failed (exit 1): boom",
+            (False, set(), set(), "gitlab notes: fetch failed (exit 1): boom"),
+            id="fetch-error",
+        ),
+        pytest.param(
+            [
+                {"body": review_marker.build_footer(2, FULL_SHA)},
+                {"body": review_marker.build_finding_marker(FULL_SHA, "c" * 16)},
+                {"body": review_marker.build_finding_marker(FULL_SHA, "d" * 16)},
+            ],
+            None,
+            (True, {"c" * 16, "d" * 16}, set(), None),
+            id="summary-and-keys",
+        ),
+        pytest.param(
+            [{"body": review_marker.build_finding_marker(HEAD_SHA, "c" * 16)}],
+            None,
+            (False, set(), set(), None),
+            id="other-key-sha",
+        ),
+        pytest.param(
+            [
+                {
+                    "id": "8f4a",
+                    "individual_note": False,
+                    "notes": [
+                        {"body": review_marker.build_finding_marker(FULL_SHA, "c" * 16)}
+                    ],
+                }
+            ],
+            None,
+            (False, set(), set(), None),
+            id="nested-discussions",
+        ),
+        pytest.param(
+            [
+                {
+                    "body": '<!-- code-gauntlet-finding-key: {"sha":"'
+                    + FULL_SHA
+                    + '","key":["oops"]} -->'
+                }
+            ],
+            None,
+            (False, set(), set(), None),
+            id="malformed-key",
+        ),
+        pytest.param(
+            [_legacy_group_note("c" * 16, ["Corroborator A"])],
+            None,
+            (False, {"c" * 16}, {"c" * 16}, None),
+            id="legacy-group",
+        ),
+    ],
+)
+def test_prior_state(notes, error, expected):
+    fake = FakeGitLab(entries=[JsonFetch(notes, error)])
+    assert (
+        detect_prior_review.gitlab_prior_delivery_state(
+            "o", "r", 5, FULL_SHA, forge=fake
+        )
+        == expected
+    )
+    assert fake.calls == [ForgeCall("review_entries", ReviewTarget("o", "r", 5))]
+
+
+@pytest.mark.parametrize("forge_factory", [detect_prior_review], indirect=True)
+@pytest.mark.parametrize(
+    "outcome", ["missing-git", "timeout", "nonzero", "nonutf8-unusable", "nonutf8-slug"]
+)
+def test_detector_origin_receipt(outcome, forge_factory, monkeypatch):
+    real_run = detect_prior_review.proc.run
+    fake = forge_factory.configure(FakeForge())
+    calls = []
+
+    def run(command, **kwargs):
+        if command[1:4] != ["remote", "get-url", "origin"]:
+            return _fake_git_run()(command, **kwargs)
+        calls.append((command, kwargs))
+        if outcome == "missing-git":
+            raise FileNotFoundError("missing git")
+        if outcome == "timeout":
+            raise detect_prior_review.proc.TimeoutExpired(command, kwargs["timeout"])
+        if outcome.startswith("nonutf8"):
+            child = (
+                r'import sys; sys.stdout.buffer.write(b"https://github.com/o/r\xff.git\n")'
+                if outcome == "nonutf8-slug"
+                else r'import sys; sys.stdout.buffer.write(b"\xff\xfe not a remote")'
+            )
+            return real_run([sys.executable, "-c", child], **kwargs)
+        return _result(rc=1)
+
+    monkeypatch.setattr(detect_prior_review.proc, "run", run)
+    out, code = _run_main(["--platform", "github", "--number", "5"])
+    result = json.loads(out)
+    assert code == 0
+    assert result["previously_reviewed"] is False
+    assert forge_factory.calls == ["github"]
+    assert calls == [
+        (
+            ["git", "remote", "get-url", "origin"],
+            {"cwd": None, "timeout": 10, "errors": "replace"},
+        )
+    ]
+    if outcome == "nonutf8-slug":
+        assert result["errors"] == []
+        assert result["scanned"] == {"review": 0}
+        assert fake.calls == [
+            ForgeCall("review_entries", ReviewTarget("o", "r\ufffd", "5"))
+        ]
+    else:
+        assert result["errors"][0].startswith("could not determine owner/repo:")
+        assert fake.calls == []
+
+
 @pytest.mark.parametrize(
     ("failure", "expected"),
     [
         (
-            detect_prior_review.proc.TimeoutExpired(["git"], 3),
+            proc.TimeoutExpired(["git"], 3),
             ("", "timed out after 3s", -1),
         ),
         (OSError("denied"), ("", "denied", -1)),
@@ -123,37 +341,7 @@ def _fake_git_run(
             )
         if "rev-list" in cmd:
             return _result(out=f"{commit_count}\n")
-        return _result(out="{}")
-
-    return _run
-
-
-def _fake_gh_glab_and_git_run(
-    reviews=None, notes=None, reviews_rc=0, notes_rc=0, git_run=None
-):
-    """A combined side_effect for the fetch + SHA-resolution subprocess calls.
-
-    Only two API surfaces exist post-contract-change: github `pulls/{n}/reviews`
-    and gitlab `merge_requests/{n}/notes`. There is no `issues/{n}/comments`
-    branch to fake here — that surface was dropped from the script entirely
-    (nothing ever wrote the signal there, and any read-access user could post a
-    forged marker to it).
-    """
-    git_run = git_run or _fake_git_run()
-
-    def _run(cmd, *a, **k):
-        joined = " ".join(cmd)
-        if "pulls" in joined and "reviews" in joined:
-            if reviews_rc != 0:
-                return _result(err="gh: fetch failed", rc=reviews_rc)
-            return _result(out=json.dumps(reviews if reviews is not None else []))
-        if "merge_requests" in joined and "notes" in joined:
-            if notes_rc != 0:
-                return _result(err="glab: fetch failed", rc=notes_rc)
-            return _result(out=json.dumps(notes if notes is not None else []))
-        if cmd and cmd[0] == "git":
-            return git_run(cmd, *a, **k)
-        return _result(out="{}")
+        raise AssertionError(f"Unexpected Git call: {cmd}")
 
     return _run
 
@@ -164,8 +352,7 @@ def _fake_gh_glab_and_git_run(
 
 
 class TestCollectEntriesGithub(unittest.TestCase):
-    """collect_entries_github now takes a single argument (payload_reviews) —
-    the issues/{n}/comments surface was dropped."""
+    """Only poster-written review bodies may influence detection."""
 
     def test_maps_reviews_to_entry_shape(self):
         reviews = [
@@ -192,55 +379,6 @@ class TestCollectEntriesGithub(unittest.TestCase):
         self.assertEqual(detect_prior_review.collect_entries_github([]), [])
 
 
-class TestFetchEntriesGithubSingleSurface(unittest.TestCase):
-    """Pins the security decision behind dropping issues/{n}/comments: nothing
-    ever wrote the signal there, while any user with read access could post to
-    it, and since the newest signal wins, a forged marker there could aim a
-    rerun at an attacker-chosen SHA. fetch_entries_github must therefore issue
-    exactly one fetch, and it must be the reviews endpoint."""
-
-    def test_issues_exactly_one_fetch_and_it_is_the_reviews_endpoint(self):
-        calls = []
-
-        def fake_run(cmd, *a, **k):
-            calls.append(cmd)
-            return SimpleNamespace(stdout="[]", stderr="", returncode=0)
-
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            entries, errors = detect_prior_review.fetch_entries_github("o", "r", 5)
-
-        self.assertEqual(len(calls), 1, "exactly one fetch must be issued")
-        joined = " ".join(calls[0])
-        self.assertIn("pulls/", joined)
-        self.assertIn("reviews", joined)
-        self.assertNotIn("issues/", joined)
-        self.assertEqual(entries, [])
-        self.assertEqual(errors, [])
-
-
-class TestFetchEntriesGithubPagination(unittest.TestCase):
-    """Mirrors TestFetchEntriesGitlabPagination below: GitHub returns PR
-    reviews oldest-first at 30/page (gh's default page size), so an
-    unpaginated fetch on any PR with more than 30 reviews would silently lose
-    the newest marker — the same class of bug --paginate fixes on the GitLab
-    side, previously unpinned on this side."""
-
-    def test_paginate_flag_is_present_in_gh_argv(self):
-        calls = []
-
-        def fake_run(cmd, *a, **k):
-            calls.append(cmd)
-            return SimpleNamespace(stdout="[]", stderr="", returncode=0)
-
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            detect_prior_review.fetch_entries_github("o", "r", 5)
-
-        self.assertEqual(len(calls), 1)
-        self.assertIn("--paginate", calls[0])
-        joined = " ".join(calls[0])
-        self.assertIn("pulls/5/reviews", joined)
-
-
 class TestCollectEntriesGitlab(unittest.TestCase):
     def test_maps_notes_to_entry_shape(self):
         notes = [
@@ -257,30 +395,8 @@ class TestCollectEntriesGitlab(unittest.TestCase):
         self.assertEqual(detect_prior_review.collect_entries_gitlab([]), [])
 
 
-class TestFetchEntriesGitlabPagination(unittest.TestCase):
-    """Pins a real shipped bug: GitLab returns 20 notes/page and post_gitlab
-    posts the marker-bearing summary note FIRST, so without --paginate the
-    marker is invisible on any MR with more than 20 notes."""
-
-    def test_paginate_flag_is_present_in_glab_argv(self):
-        calls = []
-
-        def fake_run(cmd, *a, **k):
-            calls.append(cmd)
-            return SimpleNamespace(stdout="[]", stderr="", returncode=0)
-
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            detect_prior_review.fetch_entries_gitlab("o", "r", 5)
-
-        self.assertEqual(len(calls), 1)
-        self.assertIn("--paginate", calls[0])
-        joined = " ".join(calls[0])
-        self.assertIn("merge_requests/5/notes", joined)
-
-
 # ---------------------------------------------------------------------------
-# gitlab_prior_delivery_state — the idempotency read: summary note (issue #127 D4)
-# and per-finding delivery keys (issue #132), from ONE fetch.
+# One snapshot supplies summary and finding-key state.
 # ---------------------------------------------------------------------------
 
 # Single-character keys, like the SHAs above: a full-alphabet 16-hex fixture reads
@@ -299,25 +415,6 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
     ``post_review`` actually posts.
     """
 
-    def _fake_notes_run(self, notes, rc=0, stderr="", calls=None):
-        """A ``subprocess.run`` side_effect serving *notes* as the glab notes response."""
-
-        def fake_run(cmd, *a, **k):
-            if calls is not None:
-                calls.append(cmd)
-            if rc != 0:
-                return SimpleNamespace(stdout="", stderr=stderr, returncode=rc)
-            return SimpleNamespace(stdout=json.dumps(notes), stderr="", returncode=0)
-
-        return fake_run
-
-    def _state(self, notes, sha, rc=0, stderr="", calls=None):
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=self._fake_notes_run(notes, rc=rc, stderr=stderr, calls=calls),
-        ):
-            return detect_prior_review.gitlab_prior_delivery_state("o", "r", 5, sha)
-
     @staticmethod
     def _discussion_note(key, sha=FULL_SHA, note_id=1):
         """A note as post_review posts one: rendered body, blank line, delivery marker."""
@@ -327,139 +424,6 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
             + review_marker.build_finding_marker(sha, key),
             "created_at": "2026-08-03T00:02:00Z",
         }
-
-    def test_true_when_a_note_carries_this_shas_marker(self):
-        calls = []
-        notes = [
-            {
-                "id": 1,
-                "body": "Summary" + review_marker.build_footer(3, FULL_SHA),
-                "created_at": "2026-08-03T00:00:00Z",
-            }
-        ]
-        summary_posted, keys, _legacy, error = self._state(notes, FULL_SHA, calls=calls)
-        self.assertTrue(summary_posted)
-        self.assertEqual(keys, set())
-        self.assertIsNone(error)
-        # GitLab serves 20 notes per page and the summary is posted FIRST, so an
-        # unpaginated fetch would answer "not posted" and duplicate it on every retry.
-        self.assertIn("--paginate", calls[0])
-
-    def test_false_when_the_only_marker_records_another_sha(self):
-        notes = [
-            {
-                "id": 1,
-                "body": "Summary" + review_marker.build_footer(3, "b" * 40),
-                "created_at": "2026-08-03T00:00:00Z",
-            }
-        ]
-        summary_posted, _keys, _legacy, error = self._state(notes, FULL_SHA)
-        self.assertFalse(summary_posted)
-        self.assertIsNone(error)
-
-    def test_false_when_no_note_carries_a_signal(self):
-        notes = [
-            {"id": 1, "body": "Nice work", "created_at": "2026-08-03T00:00:00Z"},
-            {"id": 2, "body": "LGTM", "created_at": "2026-08-03T00:01:00Z"},
-        ]
-        summary_posted, keys, _legacy, error = self._state(notes, FULL_SHA)
-        self.assertFalse(summary_posted)
-        self.assertEqual(keys, set())
-        self.assertIsNone(error)
-
-    def test_prose_footer_only_note_is_recognized(self):
-        """Half the signal is still the signal: reuse detect_signal's marker-then-prose
-        fallback rather than a substring match on the HTML marker."""
-        notes = [
-            {
-                "id": 1,
-                "body": "---\nGenerated by code-gauntlet | Reviewed up to: " + FULL_SHA,
-                "created_at": "2026-08-03T00:00:00Z",
-            }
-        ]
-        summary_posted, _keys, _legacy, error = self._state(notes, FULL_SHA)
-        self.assertTrue(summary_posted)
-        self.assertIsNone(error)
-
-    def test_fetch_failure_returns_the_error_and_not_a_false_negative(self):
-        summary_posted, keys, _legacy, error = self._state(
-            [], FULL_SHA, rc=1, stderr="boom"
-        )
-        self.assertFalse(summary_posted)
-        self.assertEqual(keys, set())
-        self.assertTrue(error)
-        self.assertIn("boom", error)
-
-    def test_delivery_keys_are_collected_from_inline_discussion_notes(self):
-        """Issue #132: the keys of the discussions already on the MR, from the SAME
-        fetch that answers the summary question — no second round trip."""
-        calls = []
-        notes = [
-            {
-                "id": 1,
-                "body": "Summary" + review_marker.build_footer(2, FULL_SHA),
-                "created_at": "2026-08-03T00:00:00Z",
-            },
-            self._discussion_note(FINDING_KEY, note_id=2),
-            self._discussion_note(OTHER_FINDING_KEY, note_id=3),
-        ]
-        summary_posted, keys, _legacy, error = self._state(notes, FULL_SHA, calls=calls)
-        self.assertTrue(summary_posted)
-        self.assertEqual(keys, {FINDING_KEY, OTHER_FINDING_KEY})
-        self.assertIsNone(error)
-        self.assertEqual(len(calls), 1, "one fetch must answer both questions")
-        self.assertIn("--paginate", calls[0])
-
-    def test_keys_recorded_against_another_sha_are_not_collected(self):
-        """A discussion from a review of a DIFFERENT commit must not suppress this
-        run's finding — the comment is anchored to a diff that has since moved."""
-        notes = [self._discussion_note(FINDING_KEY, sha="b" * 40)]
-        _summary, keys, _legacy, _error = self._state(notes, FULL_SHA)
-        self.assertEqual(keys, set())
-
-    def test_notes_endpoint_is_what_is_fetched_not_discussions(self):
-        """Pins the endpoint decision. ``/discussions`` returns DISCUSSION objects —
-        a nested ``notes[]`` array and no top-level ``body`` — which ``_entries_from``
-        drops, so the key set would come back empty and dedup would never fire. The
-        notes an inline discussion is made of DO appear in the flat ``/notes`` list.
-        """
-        calls = []
-        discussions_shape = [
-            {
-                "id": "8f4a",
-                "individual_note": False,
-                "notes": [self._discussion_note(FINDING_KEY, note_id=2)],
-            }
-        ]
-        _summary, keys, _legacy, error = self._state(
-            discussions_shape, FULL_SHA, calls=calls
-        )
-        self.assertIsNone(error)
-        self.assertEqual(
-            keys,
-            set(),
-            "a discussions-shaped response yields nothing — which is why the flat "
-            "notes endpoint is the one fetched",
-        )
-        joined = " ".join(calls[0])
-        self.assertIn("merge_requests/5/notes", joined)
-        self.assertNotIn("/discussions", joined)
-
-    def test_malformed_key_payload_is_ignored_rather_than_collected(self):
-        """A finding's own title/body reaches the wire unsanitized, so a marker-shaped
-        forgery is reachable input. An unhashable key would abort delivery mid-loop."""
-        notes = [
-            {
-                "id": 1,
-                "body": '<!-- code-gauntlet-finding-key: {"sha":"'
-                + FULL_SHA
-                + '","key":["oops"]} -->',
-                "created_at": "2026-08-03T00:00:00Z",
-            }
-        ]
-        _summary, keys, _legacy, error = self._state(notes, FULL_SHA)
-        self.assertEqual(keys, set())
-        self.assertIsNone(error)
 
     def test_no_prefix_match(self):
         """EXACT equality: a prefix match would let a review of a DIFFERENT commit
@@ -486,7 +450,7 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
     def test_finding_keys_for_sha_collects_every_key_in_one_body(self):
         """One discussion can deliver a whole consolidation group, carrying a marker
         per member. Collecting only the last one would leave the rest looking
-        undelivered, and the next run would repost them (issue #132)."""
+        undelivered, and the next run would repost them."""
         other = "d" * 16
         entry = self._discussion_note(FINDING_KEY)
         entry["body"] += "\n" + review_marker.build_finding_marker(FULL_SHA, other)
@@ -497,9 +461,8 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
 
     def test_finding_keys_for_sha_collects_large_group_body(self):
         """A large consolidation group keeps every marker in one discussion body."""
-        # 40 members: more than the 32-candidate window the old slice scanned. The
-        # finding reader has no cap now, so the size is a literal on purpose, not
-        # derived from review_marker._MAX_MARKER_SCANS (which governs find_marker alone).
+        # Forty members exceed the summary reader's 32-candidate bound. Finding
+        # keys have no cap, so this count is independent of that implementation.
         n = 40
         sha = "a" * 40
         keys = [f"{i:016x}" for i in range(n)]
@@ -531,36 +494,12 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# legacy_group_keys_for_sha — recognizing a pre-#208 group body that rendered a
-# corroborator's content without ever giving it its own key (unanchored
-# corroborators lost on rerun).
+# A rendered member without its own marker still counts as delivered.
 # ---------------------------------------------------------------------------
 
 
-def _legacy_group_note(primary_key, corroborator_titles, sha=FULL_SHA, note_id=1):
-    """A group discussion exactly as PRE-#208 ``post_gitlab`` would have posted one:
-    the primary's render, one ``"Corroborating finding — "`` section per corroborator
-    (``render_group_body``'s shape), but a marker for the primary ONLY — the bug
-    being pinned is that the old code never keyed an unanchorable corroborator, even
-    though it fully rendered that corroborator's content into its own section here.
-    """
-    sections = "\n\n".join(
-        f"**Corroborating finding — bug-detector (correctness, confidence 70):**\n\n"
-        f"**{title}**\n\nBody {title}"
-        for title in corroborator_titles
-    )
-    body = (
-        "**🟡 [MEDIUM] Finding**\n\nDetail.\n\n---\n\n"
-        + sections
-        + "\n\n"
-        + review_marker.build_finding_marker(sha, primary_key)
-    )
-    return {"id": note_id, "body": body, "created_at": "2026-08-03T00:02:00Z"}
-
-
 class TestLegacyGroupKeysForSha(unittest.TestCase):
-    """Pins the detection ``gitlab_prior_delivery_state`` uses to recognize a
-    pre-#208 group body as already carrying every member it renders."""
+    """Rendered group members count as delivered even when a member key is absent."""
 
     def test_undermarked_group_body_yields_the_primary_key(self):
         note = _legacy_group_note(FINDING_KEY, ["Corroborator A"])
@@ -570,10 +509,7 @@ class TestLegacyGroupKeysForSha(unittest.TestCase):
         )
 
     def test_fully_marked_group_body_is_not_flagged_legacy(self):
-        """A group body carrying a marker for every member it renders (the #208
-        fix's own shape) must NOT be treated as legacy — it is already exactly
-        accounted for by ``finding_keys_for_sha``, so flagging it here too would
-        just be redundant, not wrong, but the shape check must not over-fire."""
+        """A fully marked body needs no inferred group coverage."""
         note = _legacy_group_note(FINDING_KEY, ["Corroborator A"])
         note["body"] += "\n" + review_marker.build_finding_marker(
             FULL_SHA, OTHER_FINDING_KEY
@@ -605,23 +541,6 @@ class TestLegacyGroupKeysForSha(unittest.TestCase):
         self.assertEqual(
             detect_prior_review.legacy_group_keys_for_sha([note], FULL_SHA), set()
         )
-
-    def test_gitlab_prior_delivery_state_surfaces_legacy_group_keys(self):
-        """The one fetch that answers summary/keys questions answers this one too."""
-        note = _legacy_group_note(FINDING_KEY, ["Corroborator A"])
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=lambda cmd, *a, **k: SimpleNamespace(
-                stdout=json.dumps([note]), stderr="", returncode=0
-            ),
-        ):
-            summary_posted, keys, legacy_group_keys, error = (
-                detect_prior_review.gitlab_prior_delivery_state("o", "r", 5, FULL_SHA)
-            )
-        self.assertFalse(summary_posted)
-        self.assertEqual(keys, {FINDING_KEY})
-        self.assertEqual(legacy_group_keys, {FINDING_KEY})
-        self.assertIsNone(error)
 
 
 # ---------------------------------------------------------------------------
@@ -915,7 +834,7 @@ class TestResolveGitFactsErrorMessages(unittest.TestCase):
     """resolve_git_facts appends a human-readable explanation to errors[] in
     two situations: the head commit cannot be resolved at all, and the
     last-reviewed commit is absent from this clone. Both strings feed the
-    caller's degradation disclosure and were previously unpinned."""
+    caller's degradation disclosure."""
 
     def test_head_unresolvable_appends_explanation(self):
         def fake_run(cmd, *a, **k):
@@ -1132,294 +1051,6 @@ class TestCliBodiesFile(_CliTestBase):
         result = json.loads(out.strip())
         self.assertEqual(result["head_sha"], override_head)
 
-    def test_stdout_is_exactly_one_json_object(self):
-        entries = [
-            {
-                "body": review_marker.build_marker(FULL_SHA, 1),
-                "timestamp": "2026-01-01T00:00:00Z",
-                "source": "review",
-                "id": 1,
-            }
-        ]
-        bodies_path = self._bodies_file(entries)
-        argv = self._base_argv(bodies_path)
-
-        with patch("gauntlet.prior_review.proc.run", side_effect=_fake_git_run()):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        # A single json.loads over the *entire* stripped stdout must succeed and
-        # must not leave trailing content — i.e. exactly one JSON object, no more.
-        decoder = json.JSONDecoder()
-        obj, end = decoder.raw_decode(out.strip())
-        self.assertIsInstance(obj, dict)
-        self.assertEqual(end, len(out.strip()))
-
-
-class TestNonAsciiOutputIsAsciiSafe(_CliTestBase):
-    """Output is printed with json.dumps(result, indent=2) and the default
-    ensure_ascii=True, so non-ASCII content anywhere in the payload — a marker
-    key name or version, or gh/glab stderr text surfaced into errors[] — cannot
-    raise UnicodeEncodeError under an ASCII stdout. Pinned by asserting stdout
-    contains only ASCII codepoints yet still round-trips through json.loads to
-    the original unicode values."""
-
-    def test_marker_key_and_version_with_non_ascii_print_parseable_ascii_safe_json(
-        self,
-    ):
-        # Mutation: change the CLI print to ensure_ascii=False; the ASCII assertion
-        # must go red while the unicode key name and version still round-trip.
-        unknown_key = "future_é"
-        version = "3.0 café 🐛"
-        payload = {
-            "version": version,
-            "findings_count": 1,
-            "sha": FULL_SHA,
-            unknown_key: "ignored",
-        }
-        marker_body = (
-            f"<!-- {review_marker.MARKER_TOKEN}: "
-            f"{json.dumps(payload, separators=(',', ':'))} -->"
-        )
-        entries = [
-            {
-                "body": marker_body,
-                "timestamp": "2026-01-01T00:00:00Z",
-                "source": "review",
-                "id": 1,
-            }
-        ]
-        bodies_path = self._bodies_file(entries)
-        argv = self._base_argv(bodies_path)
-
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=_fake_git_run(resolvable=True),
-        ):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        raw = out.strip()
-        self.assertTrue(
-            all(ord(c) < 128 for c in raw),
-            "stdout must be pure ASCII under ensure_ascii=True",
-        )
-        result = json.loads(raw)
-        self.assertEqual(result["marker"]["version"], version)
-        self.assertEqual(result["marker"]["unknown_keys"], [unknown_key])
-
-    def test_bodies_file_read_error_with_non_ascii_path_is_ascii_safe(self):
-        missing_path = os.path.join(self.tmp, "café-missing.json")
-        argv = self._base_argv(missing_path)
-
-        with patch("gauntlet.prior_review.proc.run", side_effect=_fake_git_run()):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        raw = out.strip()
-        self.assertTrue(
-            all(ord(c) < 128 for c in raw),
-            "stdout must be pure ASCII under ensure_ascii=True",
-        )
-        result = json.loads(raw)
-        self.assertFalse(result["previously_reviewed"])
-        self.assertTrue(result["errors"])
-
-
-# ---------------------------------------------------------------------------
-# remote_slug() — accepted URL forms.
-# ---------------------------------------------------------------------------
-
-
-class TestRemoteSlug(unittest.TestCase):
-    """remote_slug() parses the 'origin' remote URL. Accepted forms: scp-style
-    git@host:owner/repo(.git), and any scheme with optional user@ and :port —
-    https://, http://, ssh://, git://, git+ssh:// — plus an optional trailing
-    slash. A GitLab subgroup path keeps its subgroups in *repo*."""
-
-    def _slug_for(self, url):
-        def fake_run(cmd, *a, **k):
-            return SimpleNamespace(stdout=url + "\n", stderr="", returncode=0)
-
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            return detect_prior_review.remote_slug()
-
-    def test_accepted_url_forms(self):
-        cases = [
-            ("git@github.com:o/r.git", ("o", "r")),
-            ("https://github.com/o/r.git", ("o", "r")),
-            ("https://github.com/o/r", ("o", "r")),
-            ("ssh://git@github.com/o/r.git", ("o", "r")),
-            ("ssh://git@github.com:2222/o/r.git", ("o", "r")),
-            ("git://host/o/r.git", ("o", "r")),
-            ("git+ssh://git@host/o/r", ("o", "r")),
-            ("https://gitlab.com/group/sub/proj.git", ("group", "sub/proj")),
-            ("not a remote url at all", (None, None)),
-        ]
-        for url, expected in cases:
-            with self.subTest(url=url):
-                self.assertEqual(self._slug_for(url), expected)
-
-
-# ---------------------------------------------------------------------------
-# Fetch failures — D8: detection never blocks a review.
-# ---------------------------------------------------------------------------
-
-
-class TestFetchFailureDegradation(_CliTestBase):
-    """GitHub and GitLab each scan exactly one surface now (the github
-    issues/{n}/comments surface was dropped). 'One surface failing' therefore
-    means the whole platform fetch failed — there is no second surface left to
-    fall back to. These replace the old multi-surface-fallback assertions with
-    the single-surface reality; coverage of "a fetch failure degrades to exit 0
-    with errors populated" is retained for both platforms."""
-
-    def test_github_fetch_failing_yields_exit_zero_with_errors_and_no_signal(self):
-        argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=_fake_gh_glab_and_git_run(
-                reviews_rc=1, git_run=_fake_git_run(resolvable=True)
-            ),
-        ):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertFalse(result["previously_reviewed"])
-        self.assertIsNone(result["signal"])
-        self.assertFalse(result["incremental_safe"])
-        self.assertEqual(
-            len(result["errors"]),
-            1,
-            "the single github surface's failure must be recorded",
-        )
-        self.assertIn("scanned", result)
-
-    def test_gitlab_fetch_failing_yields_exit_zero_with_errors_and_no_signal(self):
-        argv = ["--platform", "gitlab", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=_fake_gh_glab_and_git_run(
-                notes_rc=1, git_run=_fake_git_run(resolvable=True)
-            ),
-        ):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertFalse(result["previously_reviewed"])
-        self.assertIsNone(result["signal"])
-        self.assertFalse(result["incremental_safe"])
-        self.assertEqual(
-            len(result["errors"]),
-            1,
-            "the single gitlab surface's failure must be recorded",
-        )
-        self.assertIn("scanned", result)
-
-
-class TestGitlabFetch(_CliTestBase):
-    def test_gitlab_notes_are_fetched_and_a_signal_is_recovered(self):
-        marker_body = review_marker.build_marker(FULL_SHA, 1)
-        notes = [{"id": 5, "body": marker_body, "created_at": "2026-01-01T00:00:00Z"}]
-
-        argv = ["--platform", "gitlab", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=_fake_gh_glab_and_git_run(
-                notes=notes, git_run=_fake_git_run(resolvable=True)
-            ),
-        ):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertTrue(result["previously_reviewed"])
-        self.assertEqual(result["last_reviewed_sha"], FULL_SHA)
-
-
-class TestGithubFetch(_CliTestBase):
-    """GitHub happy-path coverage, mirroring TestGitlabFetch above — until now
-    GitHub (the primary platform) had only failure-path coverage in this file."""
-
-    def test_github_reviews_are_fetched_and_a_signal_is_recovered(self):
-        review_body = "## Summary\nSome pre-existing narrative text.\n"
-        review_body += review_marker.build_footer(3, FULL_SHA, body=review_body)
-        reviews = [
-            {"id": 9, "body": review_body, "submitted_at": "2026-01-01T00:00:00Z"}
-        ]
-
-        argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=_fake_gh_glab_and_git_run(
-                reviews=reviews, git_run=_fake_git_run(resolvable=True)
-            ),
-        ):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertTrue(result["previously_reviewed"])
-        self.assertEqual(result["signal"], "marker")
-        self.assertEqual(result["source"], "review")
-        self.assertEqual(result["last_reviewed_sha"], FULL_SHA)
-
-    def test_paginated_concatenated_json_arrays_are_flattened_and_newest_marker_wins(
-        self,
-    ):
-        """``gh api --paginate`` emits one JSON array per page, concatenated back
-        to back in the raw stdout — not one merged array (see
-        detect_prior_review._parse_json_array's own docstring). Build the fake
-        stdout as two literal concatenated arrays, an older marker on 'page 1'
-        and a newer one on 'page 2', and prove both pages' entries are flattened
-        into the scan and the timestamp-newest signal wins regardless of which
-        page carried it."""
-        older_sha = "c" * 40
-        newer_sha = "d" * 40
-        page1 = json.dumps(
-            [
-                {
-                    "id": 1,
-                    "body": review_marker.build_marker(older_sha, 1),
-                    "submitted_at": "2026-01-01T00:00:00Z",
-                },
-            ]
-        )
-        page2 = json.dumps(
-            [
-                {
-                    "id": 2,
-                    "body": review_marker.build_marker(newer_sha, 2),
-                    "submitted_at": "2026-06-01T00:00:00Z",
-                },
-            ]
-        )
-        concatenated = (
-            page1 + page2
-        )  # exactly what --paginate emits: arrays back to back
-
-        def fake_run(cmd, *a, **k):
-            joined = " ".join(cmd)
-            if "pulls" in joined and "reviews" in joined:
-                return SimpleNamespace(stdout=concatenated, stderr="", returncode=0)
-            if cmd and cmd[0] == "git":
-                return _fake_git_run(resolvable=True)(cmd, *a, **k)
-            return SimpleNamespace(stdout="{}", stderr="", returncode=0)
-
-        argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertTrue(result["previously_reviewed"])
-        self.assertEqual(result["last_reviewed_sha"], newer_sha)
-        self.assertEqual(
-            result["scanned"], {"review": 2}, "both pages' entries must be counted"
-        )
-
 
 class TestSanitizeMarker(unittest.TestCase):
     """sanitize_marker allow-lists echoed marker keys, lists unknown key NAMES
@@ -1520,72 +1151,6 @@ class TestSanitizeMarker(unittest.TestCase):
         self.assertIsNone(detect_prior_review.sanitize_marker(None))
         self.assertIsNone(detect_prior_review.sanitize_marker("not a dict"))
         self.assertIsNone(detect_prior_review.sanitize_marker([1, 2, 3]))
-
-
-class TestRunSurvivesNonUtf8Stdout(unittest.TestCase):
-    """Undecodable CLI bytes must preserve the detector's exit-zero contract."""
-
-    def test_cli_end_to_end_non_utf8_fetch_still_exits_zero_with_valid_json(self):
-        """A real child with undecodable output still yields a JSON receipt."""
-
-        def fake_fetch_entries_github(owner, repo, number):
-            cmd = [
-                sys.executable,
-                "-c",
-                r"import sys; sys.stdout.buffer.write(b'\xff\xfe' + b'not json')",
-            ]
-            stdout, _, _ = detect_prior_review.run(cmd, timeout=10)
-            items = detect_prior_review._parse_json_array(stdout)
-            if items is None:
-                return [], [f"github reviews: response was not JSON: {stdout[:60]!r}"]
-            return detect_prior_review.collect_entries_github(items), []
-
-        argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch.object(
-            detect_prior_review,
-            "fetch_entries_github",
-            side_effect=fake_fetch_entries_github,
-        ):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        decoder = json.JSONDecoder()
-        obj, end = decoder.raw_decode(out.strip())
-        self.assertIsInstance(obj, dict)
-        self.assertEqual(end, len(out.strip()))
-        self.assertFalse(obj["previously_reviewed"])
-        self.assertTrue(obj["errors"])
-
-
-# ---------------------------------------------------------------------------
-# Argparse usage errors vs. recoverable outcomes.
-# ---------------------------------------------------------------------------
-
-
-class TestArgparseUsageErrors(unittest.TestCase):
-    def test_missing_required_platform_is_nonzero_exit(self):
-        _, code = _run_main(["--owner", "o", "--repo", "r", "--number", "5"])
-        self.assertNotEqual(code, 0)
-
-    def test_missing_number_without_bodies_file_degrades_to_exit_zero_with_errors(self):
-        """A missing --number (no --bodies-file either) is a RECOVERABLE
-        outcome, not an argparse usage error: exit 0, valid JSON on stdout,
-        previously_reviewed false, and a non-empty errors[]. gather_entries no
-        longer calls parser.error for this case."""
-        with patch("gauntlet.prior_review.proc.run", side_effect=_fake_git_run()):
-            out, code = _run_main(["--platform", "github"])
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertFalse(result["previously_reviewed"])
-        self.assertTrue(result["errors"])
-
-    def test_unknown_flag_is_nonzero_exit(self):
-        """A genuinely malformed flag is still an argparse usage error — only
-        the recoverable, data-dependent failures (missing --number, an
-        unparseable remote) were moved to exit-0-with-errors."""
-        _, code = _run_main(["--platform", "github", "--nope", "wat"])
-        self.assertNotEqual(code, 0)
 
 
 class TestRound3And4FixRegressions(unittest.TestCase):

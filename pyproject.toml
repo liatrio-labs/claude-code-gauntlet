@@ -72,6 +72,9 @@ ignore_missing_imports = true
 module = [
   "gauntlet.cli",
   "gauntlet.forge",
+  "gauntlet.prior_review",
+  "gauntlet.pr_identity",
+  "gauntlet.marker",
   "gauntlet.paths",
   "gauntlet.jsjson",
   "gauntlet.numstat",

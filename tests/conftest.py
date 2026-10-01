@@ -73,7 +73,7 @@ def forge_factory(monkeypatch, request):
 
     from tests.support.forge import install_forge_factory
 
-    factory = install_forge_factory(monkeypatch, post)
+    factory = install_forge_factory(monkeypatch, getattr(request, "param", post))
     if request.instance is not None:
         request.instance.forge_factory = factory
     return factory

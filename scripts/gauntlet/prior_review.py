@@ -1,89 +1,59 @@
 #!/usr/bin/env python3
-"""
-detect_prior_review.py — Has code-gauntlet reviewed this PR/MR before, and up to which commit?
-
-Usage:
-    python3 detect_prior_review.py --platform {github|gitlab} --number N
-                                   [--owner O] [--repo R] [--head-sha SHA]
-                                   [--bodies-file PATH]
-
-Reads the prior-review signal that ``gauntlet.delivery.post`` leaves on a PR/MR summary —
-both halves are parsed by ``gauntlet.marker``, which is the single source of truth
-for the format. Nothing here branches on the marker's ``version`` field.
-
-    --platform     REQUIRED. The orchestrator has already resolved the PR with
-                   gh/glab, so the platform is known; guessing it for a
-                   self-hosted host would be a coin flip.
-    --owner/--repo Optional — parsed from the `origin` remote when omitted, so
-                   the usual call needs only --platform and --number.
-    --head-sha     Use this instead of `git rev-parse HEAD` for the comparison.
-    --bodies-file  Offline/test hook: a JSON array of
-                   {"body","timestamp","source","id"} entries used INSTEAD of any
-                   network fetch. Makes the CLI end-to-end testable with no network
-                   and gives self-hosted users an escape hatch.
-
-Surfaces scanned (read-only; these are exactly the surfaces gauntlet.delivery.post writes to):
-    github — repos/{owner}/{repo}/pulls/{n}/reviews      (source "review")
-    gitlab — projects/{id}/merge_requests/{n}/notes      (source "note")
-
-Only the surfaces gauntlet.delivery.post actually writes to are scanned. A surface we
-never write to can yield no true positive, but anyone with read access can post
-to it — and since the newest signal wins, that is a way to aim a rerun at an
-attacker-chosen SHA. Note the residual risk: both scanned surfaces are still
-user-writable, so a forged signal can at worst cause a rerun to offer/take an
-incremental scope. The interactive gate surfaces this to a human; headless
-`CODE_GAUNTLET_REVIEWED_POLICY=skip` is the configuration to think twice about.
-
-Output — exactly one JSON object on stdout:
-    {
-        "previously_reviewed": true,
-        "signal": "marker",              # or "footer" / null
-        "source": "review",              # which surface carried it / null
-        "legacy": false,                 # pre-rename token or product name
-        "last_reviewed_sha": "<full>",   # expanded when resolvable, else as recorded
-        "last_reviewed_sha_short": "<8>",
-        "sha_resolvable": true,          # the object exists in this clone
-        "sha_is_ancestor": true,         # ...and is an ancestor of head_sha
-        "head_sha": "<full>",
-        "head_advanced": true,
-        "new_commit_count": 3,           # null when the SHA is unresolvable
-        "incremental_safe": true,        # sha_resolvable and head_advanced
-        "marker": {...},                 # full parsed payload / null
-        "scanned": {"review": 4},
-        "errors": []
-    }
-
-Exit codes:
-    0 for EVERY outcome — "found nothing", "all fetches failed", a missing
-    --number, an unparseable remote. The caller reads "errors". Detection is an
-    optimization; a review must never fail because a comment fetch 404'd, and a
-    non-zero exit with empty stdout would leave the caller nothing to degrade on.
-    argparse still rejects a malformed flag (unknown option, bad --platform).
-
-No external Python dependencies — stdlib only.
+"""Detect prior summary reviews; marker.version never selects a reader.
+Scan only poster-written reviews/flat notes to bound forged-signal exposure.
+Recoverable fetch/Git errors stay in one ASCII receipt with exit zero.
 """
 
 import argparse
 import json
-import re
+import sys
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Literal, TypedDict, cast
 
+from gauntlet import forge as forge_api
 from gauntlet import proc
-from gauntlet.cli import Command
+from gauntlet.cli import Command, Parser
+from gauntlet.forge import Forge, Platform, ReviewTarget
 from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import detect_signal, find_finding_markers, select_latest
 
-FETCH_TIMEOUT_SECONDS = 30
+
+class ReviewEntryWire(TypedDict):
+    body: str
+    timestamp: str | None
+    source: str
+    id: object
+
+
+class PriorReviewWire(TypedDict):
+    previously_reviewed: bool
+    signal: Literal["marker", "footer"] | None
+    source: str | None
+    legacy: bool
+    last_reviewed_sha: str | None
+    last_reviewed_sha_short: str | None
+    sha_resolvable: bool
+    sha_is_ancestor: bool
+    head_sha: str | None
+    head_advanced: bool
+    new_commit_count: int | None
+    incremental_safe: bool
+    marker: Mapping[str, object] | None
+    scanned: dict[str, int]
+    errors: list[str]
+
+
 GIT_TIMEOUT_SECONDS = 10
 
 # The surfaces each platform exposes, in scan order. Used to seed "scanned" so the
 # key set is stable even when a fetch fails or returns nothing.
-PLATFORM_SOURCES = {
+PLATFORM_SOURCES: dict[Platform, tuple[str, ...]] = {
     "github": ("review",),
     "gitlab": ("note",),
 }
 
 
-def run(cmd, timeout=None):
+def run(cmd: Sequence[str], timeout: float | None = None) -> tuple[str, str, int]:
     """Return a failure sentinel when a fetch cannot run."""
     try:
         # Strict decoding raises UnicodeDecodeError outside the OSError exit-zero path.
@@ -94,164 +64,47 @@ def run(cmd, timeout=None):
         return "", str(exc), -1
 
 
-def _parse_json_array(text):
-    """Parse *text* as a JSON array of objects. Returns a list, or None on failure.
-
-    ``gh api --paginate`` merges pages into a single array, but a client that
-    emits one array per page must not defeat detection, so concatenated documents
-    are tolerated and flattened.
-    """
-    text = text.strip()
-    if not text:
-        return []
-    decoder = json.JSONDecoder()
-    items = []
-    idx = 0
-    while idx < len(text):
-        while idx < len(text) and text[idx] in " \t\r\n":
-            idx += 1
-        if idx >= len(text):
-            break
-        try:
-            doc, end = decoder.raw_decode(text, idx)
-        except (ValueError, RecursionError):
-            return items if items else None
-        if isinstance(doc, list):
-            items.extend(doc)
-        else:
-            items.append(doc)
-        idx = end
-    return items
-
-
-def fetch_json(cmd, label):
-    """Run *cmd* and parse its stdout as a JSON array.
-
-    Returns ``(items, error)`` — exactly one of which is meaningful. Never raises;
-    a failure is a string for ``errors[]``, not an exception.
-    """
-    stdout, stderr, rc = run(cmd, timeout=FETCH_TIMEOUT_SECONDS)
-    if rc != 0:
-        detail = (stderr.strip() or stdout.strip())[:300]
-        return [], f"{label}: fetch failed (exit {rc}): {detail}"
-    items = _parse_json_array(stdout)
-    if items is None:
-        return [], f"{label}: response was not JSON: {stdout.strip()[:120]}"
-    return items, None
-
-
-def git_rev_parse(rev):
+def git_rev_parse(rev: str) -> str | None:
     """Return the full object id for *rev*, or None."""
     stdout, _, rc = run(["git", "rev-parse", rev], timeout=GIT_TIMEOUT_SECONDS)
     value = stdout.strip()
     return value if rc == 0 and value else None
 
 
-# ---------------------------------------------------------------------------
-# Fetch — one call per surface; each failure is independent
-# ---------------------------------------------------------------------------
+def make_forge(platform: Platform) -> Forge:
+    return forge_api.make_forge(platform)
 
 
-def gitlab_project_id(owner, repo):
-    """Return the URL-encoded project path (mirrors gauntlet.delivery.post.gitlab_project_id)."""
-    return f"{owner}/{repo}".replace("/", "%2F")
-
-
-def remote_slug():
-    """Return ``(owner, repo)`` parsed from ``origin``, or ``(None, None)``.
-
-    Lets the caller pass only ``--platform`` and ``--number``: composing an
-    owner/repo lookup was one more CLI incantation for the orchestrator to get
-    wrong, and this is the same remote parse ``gauntlet.delivery.post.detect_platform``
-    performs (SSH ``git@host:path`` and http(s) ``host/path``, ``.git`` stripped).
-    A namespaced GitLab path keeps its subgroups in *repo*, which is correct —
-    ``gitlab_project_id`` re-joins and encodes the whole path.
-    """
-    stdout, _, rc = run(
-        ["git", "remote", "get-url", "origin"], timeout=GIT_TIMEOUT_SECONDS
-    )
-    if rc != 0:
+def remote_slug() -> tuple[str | None, str | None]:
+    """Keep replacement decoding and exit-zero degradation for origin lookup."""
+    try:
+        remote = forge_api.origin_remote(timeout=GIT_TIMEOUT_SECONDS, errors="replace")
+    except (OSError, proc.TimeoutExpired):
         return None, None
-    url = stdout.strip()
-    match = (
-        # scp-style: git@host:owner/repo(.git)
-        re.match(r"[^@/]+@[^:/]+:(.+?)(?:\.git)?/?$", url)
-        # any scheme, with optional user@ and :port —
-        # https://, http://, ssh://, git://, git+ssh://
-        or re.match(
-            r"[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?[^/]+/(.+?)(?:\.git)?/?$", url
-        )
+    slug = forge_api.remote_slug(remote)
+    return (slug.owner, slug.repo) if slug else (None, None)
+
+
+def fetch_entries(
+    owner: str, repo: str, number: int | str, *, forge: Forge
+) -> tuple[list[ReviewEntryWire], list[str]]:
+    """Scan only the surface the poster writes; broader reads allow forged signals."""
+    fetched = forge.review_entries(ReviewTarget(owner, repo, number))
+    collector = (
+        collect_entries_github if forge.platform == "github" else collect_entries_gitlab
     )
-    if not match:
-        return None, None
-    owner, sep, repo = match.group(1).strip("/").partition("/")
-    if not sep or not owner or not repo:
-        return None, None
-    return owner, repo
+    return collector(fetched.payload), [fetched.error] if fetched.error else []
 
 
-def fetch_entries_github(owner, repo, number):
-    """Return ``(entries, errors)`` for the GitHub PR-reviews surface.
+def gitlab_prior_delivery_state(
+    owner: str, repo: str, number: int | str, sha: object, *, forge: Forge
+) -> tuple[bool, set[str], set[str], str | None]:
+    """Read summary, finding keys and group coverage from one flat-note snapshot.
 
-    Only ``pulls/{n}/reviews`` is scanned — the exact endpoint ``gauntlet.delivery.post``
-    POSTs to. ``issues/{n}/comments`` was deliberately dropped: nothing has ever
-    written the signal there, so it could contribute no true positive, while any
-    user with read access can post an issue comment carrying a forged marker.
-    Since the newest signal wins, that surface was a way to point a rerun at an
-    attacker-chosen SHA and skip review of the commits after it.
+    A second fetch can see a different MR. Nested discussion objects have no
+    top-level body. Fetch failure must remain distinct from an empty success.
     """
-    reviews, err = fetch_json(
-        ["gh", "api", "--paginate", f"repos/{owner}/{repo}/pulls/{number}/reviews"],
-        "github reviews",
-    )
-    return collect_entries_github(reviews), ([err] if err else [])
-
-
-def fetch_entries_gitlab(owner, repo, number):
-    """Return ``(entries, errors)`` for the GitLab MR notes surface.
-
-    ``--paginate`` is required, not optional: GitLab returns 20 notes per page,
-    and ``post_gitlab`` posts the marker-bearing summary note FIRST and then one
-    inline discussion note per finding. On any MR with more than 20 notes the
-    summary is off page 1, so an unpaginated fetch would make every GitLab rerun
-    look fresh — the very bug this script exists to fix.
-    """
-    project_id = gitlab_project_id(owner, repo)
-    notes, err = fetch_json(
-        [
-            "glab",
-            "api",
-            "--paginate",
-            f"projects/{project_id}/merge_requests/{number}/notes",
-        ],
-        "gitlab notes",
-    )
-    return collect_entries_gitlab(notes), ([err] if err else [])
-
-
-def gitlab_prior_delivery_state(owner, repo, number, sha):
-    """Return ``(summary_posted, finding_keys, legacy_group_keys, error)`` — what *sha*'s
-    review left here.
-
-    ``gauntlet.delivery.post.post_gitlab`` asks three questions before delivering: is my summary
-    note already on the MR, which of my inline discussions did a
-    partially-failed delivery already place, and — of those — which stand
-    for a WHOLE consolidation group because an older group body rendered
-    a corroborator without its own key. ONE fetch answers all three — a second round trip would also be a
-    second, possibly inconsistent view of the MR. The read lives here because this
-    module is the only reader; gauntlet.delivery.post writes the signal and never parses it.
-
-    Goes through :func:`fetch_entries_gitlab`, so the ``--paginate`` requirement
-    documented there applies unchanged, and so does its endpoint: the flat
-    ``merge_requests/{n}/notes`` list, NOT ``/discussions``. A discussion object nests
-    its text under ``notes[]`` and has no top-level ``body``, which ``_entries_from``
-    drops — the key set would come back empty and dedup would never fire. The notes an
-    inline discussion is made of DO appear in the flat list.
-
-    ``error`` is a string when the fetch failed; the caller degrades (delivers) rather
-    than reading a fetch failure as "already posted".
-    """
-    entries, errors = fetch_entries_gitlab(owner, repo, number)
+    entries, errors = fetch_entries(owner, repo, number, forge=forge)
     if errors:
         return False, set(), set(), errors[0]
     return (
@@ -262,14 +115,11 @@ def gitlab_prior_delivery_state(owner, repo, number, sha):
     )
 
 
-# ---------------------------------------------------------------------------
-# Pure collectors
-# ---------------------------------------------------------------------------
-
-
-def _entries_from(payload, source, timestamp_key):
+def _entries_from(
+    payload: object, source: str, timestamp_key: str
+) -> list[ReviewEntryWire]:
     """Map an API array into the entry shape gauntlet.marker.select_latest consumes."""
-    entries = []
+    entries: list[ReviewEntryWire] = []
     if not isinstance(payload, list):
         return entries
     for item in payload:
@@ -290,19 +140,19 @@ def _entries_from(payload, source, timestamp_key):
     return entries
 
 
-def collect_entries_github(payload_reviews):
+def collect_entries_github(payload_reviews: object) -> list[ReviewEntryWire]:
     """PR reviews, keyed on ``submitted_at`` — the only surface we write to."""
     return _entries_from(payload_reviews, "review", "submitted_at")
 
 
-def collect_entries_gitlab(payload_notes):
+def collect_entries_gitlab(payload_notes: object) -> list[ReviewEntryWire]:
     """MR notes (``created_at``)."""
     return _entries_from(payload_notes, "note", "created_at")
 
 
-def collect_entries_file(payload):
+def collect_entries_file(payload: object) -> list[ReviewEntryWire]:
     """Map a ``--bodies-file`` array into the entry shape. Unknown sources pass through."""
-    entries = []
+    entries: list[ReviewEntryWire] = []
     if not isinstance(payload, list):
         return entries
     for item in payload:
@@ -324,7 +174,7 @@ def collect_entries_file(payload):
     return entries
 
 
-def entries_carry_sha(entries, sha):
+def entries_carry_sha(entries: Iterable[object] | None, sha: object) -> bool:
     """True when any entry's body carries a prior-review signal recording *sha*.
 
     EXACT sha equality — a prefix match would let a review of a DIFFERENT commit
@@ -340,7 +190,7 @@ def entries_carry_sha(entries, sha):
     return False
 
 
-def finding_keys_for_sha(entries, sha):
+def finding_keys_for_sha(entries: Iterable[object] | None, sha: object) -> set[str]:
     """Return the set of per-finding delivery keys recorded for *sha* in *entries*.
 
     EXACT sha equality, same rule and reason as :func:`entries_carry_sha`: a key left by
@@ -350,11 +200,11 @@ def finding_keys_for_sha(entries, sha):
     The notes surface carries every MR participant's notes, so anyone with write access
     can suppress one finding on the next run by pasting that finding's key into a note.
     Accepted knowingly: this endpoint already carries the summary signal, where the same
-    forgery suppresses the WHOLE re-review (see :func:`fetch_entries_github` for why the
+    forgery suppresses the WHOLE re-review (see :func:`fetch_entries` for why the
     weaker GitHub surface was dropped rather than tolerated), so per-finding keys add no
     capability an attacker does not already have here.
     """
-    keys = set()
+    keys: set[str] = set()
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
@@ -369,25 +219,11 @@ def finding_keys_for_sha(entries, sha):
 _CORROBORATION_HEADER = "Corroborating finding — "
 
 
-def _is_legacy_undermarked_group_body(body, matched_marker_count):
-    """True when *body* renders more consolidation-group members than it carries keys for.
+def _is_legacy_undermarked_group_body(body: object, matched_marker_count: int) -> bool:
+    """A rendered group member was delivered even when its own key is absent.
 
-    Older ``post_gitlab`` bodies did not give an unanchorable corroborator (no
-    line, or a line outside the diff) a delivery key — even though it fully rendered that
-    member's content into the body's ``"Corroborating finding — "`` section. Such a body
-    is proof BY CONSTRUCTION that every member it renders already reached the MR, even
-    the one(s) whose key is missing: the body is the finding's only delivery vehicle, and
-    it is right there in the text.
-
-    Detected narrowly, by shape, not by a version field (no marker in this pipeline ever
-    carried one for this): a group body carries one corroboration header per corroborator
-    and, pre-fix, a marker only for the primary and the anchorable ones — so a legacy
-    group short a member's key has fewer matched markers than ``1 (primary) +
-    len(corroborators)``. A fixed-format group body always carries exactly that many, so
-    it never matches. Neither does an individually-posted primary's own fallback
-    discussion (the group's OTHER degraded shape): it carries no corroboration header at
-    all, so ``section_count`` is 0 and the check short-circuits before ever looking at
-    the (deliberately mismatched, single-finding) marker count.
+    Count markers, including duplicates, against rendered members. Individual
+    fallback bodies have no corroboration header and cannot cover a group.
     """
     if not isinstance(body, str):
         return False
@@ -395,7 +231,9 @@ def _is_legacy_undermarked_group_body(body, matched_marker_count):
     return section_count > 0 and matched_marker_count < 1 + section_count
 
 
-def legacy_group_keys_for_sha(entries, sha):
+def legacy_group_keys_for_sha(
+    entries: Iterable[object] | None, sha: object
+) -> set[str]:
     """Return delivery keys found in *sha*'s legacy under-marked group bodies.
 
     A subset of :func:`finding_keys_for_sha`'s result (every key here is a real,
@@ -404,7 +242,7 @@ def legacy_group_keys_for_sha(entries, sha):
     key this sha's markers do not carry (see
     :func:`_is_legacy_undermarked_group_body`).
     """
-    keys = set()
+    keys: set[str] = set()
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
@@ -415,16 +253,16 @@ def legacy_group_keys_for_sha(entries, sha):
     return keys
 
 
-def count_by_source(entries):
+def count_by_source(entries: Iterable[ReviewEntryWire]) -> dict[str, int]:
     """Return ``{source: count}`` over *entries*."""
-    counts = {}
+    counts: dict[str, int] = {}
     for entry in entries:
         source = entry.get("source")
         counts[source] = counts.get(source, 0) + 1
     return counts
 
 
-def load_bodies_file(path):
+def load_bodies_file(path: str) -> tuple[list[ReviewEntryWire], list[str]]:
     """Return ``(entries, errors)`` from the offline hook file. Never raises."""
     try:
         payload = read_json(path)
@@ -435,12 +273,9 @@ def load_bodies_file(path):
     return collect_entries_file(payload), []
 
 
-# ---------------------------------------------------------------------------
-# Git facts + result assembly
-# ---------------------------------------------------------------------------
-
-
-def resolve_git_facts(sha, head_sha=None, errors=None):
+def resolve_git_facts(
+    sha: object, head_sha: str | None = None, errors: list[str] | None = None
+) -> dict[str, object]:
     """Return the git-derived facts about *sha* relative to the head. Never raises.
 
     ``sha_resolvable`` is False when the recorded object is not present in this
@@ -471,17 +306,18 @@ def resolve_git_facts(sha, head_sha=None, errors=None):
             "git: could not resolve the head commit "
             "(not a git repository, an unborn branch, or git is unavailable)"
         )
-    facts = {
+    reviewed_sha = sha if isinstance(sha, str) and sha else None
+    facts: dict[str, object] = {
         "head_sha": head or "unknown",
-        "last_reviewed_sha": sha if isinstance(sha, str) and sha else None,
+        "last_reviewed_sha": reviewed_sha,
         "last_reviewed_sha_short": None,
         "sha_resolvable": False,
         "sha_is_ancestor": False,
         "new_commit_count": None,
     }
-    if not facts["last_reviewed_sha"]:
+    if not reviewed_sha:
         return facts
-    facts["last_reviewed_sha_short"] = facts["last_reviewed_sha"][:8]
+    facts["last_reviewed_sha_short"] = reviewed_sha[:8]
 
     _, cat_err, rc = run(
         ["git", "cat-file", "-e", f"{sha}^{{commit}}"], timeout=GIT_TIMEOUT_SECONDS
@@ -494,7 +330,7 @@ def resolve_git_facts(sha, head_sha=None, errors=None):
         return facts
     facts["sha_resolvable"] = True
 
-    full = git_rev_parse(sha) or sha
+    full = git_rev_parse(reviewed_sha) or reviewed_sha
     facts["last_reviewed_sha"] = full
     facts["last_reviewed_sha_short"] = full[:8]
 
@@ -505,7 +341,7 @@ def resolve_git_facts(sha, head_sha=None, errors=None):
     # have been pushed since" and hand `git diff <sha>...HEAD` an empty diff.
     if head:
         _, _, anc_rc = run(
-            ["git", "merge-base", "--is-ancestor", sha, head],
+            ["git", "merge-base", "--is-ancestor", reviewed_sha, head],
             timeout=GIT_TIMEOUT_SECONDS,
         )
         facts["sha_is_ancestor"] = anc_rc == 0
@@ -536,7 +372,7 @@ _MARKER_ECHO_KEYS = (
 _MARKER_ECHO_MAX_CHARS = 4096
 
 
-def _bounded(value, limit=512):
+def _bounded(value: object, limit: int = 512) -> object:
     """Return *value* with any string/collection clipped to a printable bound."""
     if isinstance(value, str):
         return value if len(value) <= limit else value[:limit] + "...[truncated]"
@@ -556,17 +392,17 @@ def _bounded(value, limit=512):
     return f"[{type(value).__name__} truncated, {len(encoded)} chars]"
 
 
-def sanitize_marker(marker):
+def sanitize_marker(marker: object) -> dict[str, object] | None:
     """Return a size-bounded, allow-listed view of a parsed marker payload.
 
-    Every echoed VALUE is bounded too, not just the key set: an allow-listed key
-    is still attacker-controlled, so an unbounded `version` string was a way to
-    pipe arbitrary text into the orchestrator's context through a key that
-    passed the allow-list.
+    Allow-listed values are attacker-controlled too; bound them before the
+    orchestrator consumes the receipt.
     """
     if not isinstance(marker, dict):
         return None
-    out = {k: _bounded(marker[k]) for k in _MARKER_ECHO_KEYS if k in marker}
+    out: dict[str, object] = {
+        k: _bounded(marker[k]) for k in _MARKER_ECHO_KEYS if k in marker
+    }
     # Key NAMES are attacker-authored strings too — capping their count alone
     # still let kilobytes of free text through the "names only" guarantee.
     extra = sorted(
@@ -594,7 +430,12 @@ def sanitize_marker(marker):
     return out
 
 
-def build_result(signal, git_facts, scanned=None, errors=None):
+def build_result(
+    signal: Mapping[str, object] | None,
+    git_facts: Mapping[str, object] | None,
+    scanned: Mapping[str, int] | None = None,
+    errors: Iterable[str] | None = None,
+) -> PriorReviewWire:
     """Assemble the output object. Pure — no subprocess, no I/O.
 
     ``incremental_safe`` is exactly ``sha_resolvable and head_advanced``, and
@@ -606,13 +447,10 @@ def build_result(signal, git_facts, scanned=None, errors=None):
     scanned = dict(scanned or {})
     errors = list(errors or [])
     git_facts = git_facts or {}
-    head_sha = git_facts.get("head_sha")
+    head_sha = cast(str | None, git_facts.get("head_sha"))
 
-    # The full 15-key output contract, defaulted to the "nothing found" shape.
-    # The signal-found branch below only overrides the keys that actually
-    # differ, so the two outcomes cannot drift apart on field names — a key
-    # added to one is a key added to both, by construction.
-    result = {
+    # One default receipt keeps found and absent outcomes on the same wire shape.
+    result: PriorReviewWire = {
         "previously_reviewed": False,
         "signal": None,
         "source": None,
@@ -633,7 +471,9 @@ def build_result(signal, git_facts, scanned=None, errors=None):
         return result
 
     sha_resolvable = bool(git_facts.get("sha_resolvable"))
-    last_reviewed_sha = git_facts.get("last_reviewed_sha") or signal.get("sha")
+    last_reviewed_sha = cast(
+        str | None, git_facts.get("last_reviewed_sha") or signal.get("sha")
+    )
     # An unusable head ("unknown", i.e. `git rev-parse HEAD` failed) must never
     # read as "advanced" — that would offer an incremental diff against nothing.
     head_known = bool(head_sha) and head_sha != "unknown"
@@ -644,15 +484,17 @@ def build_result(signal, git_facts, scanned=None, errors=None):
     result.update(
         {
             "previously_reviewed": True,
-            "signal": signal.get("signal"),
-            "source": signal.get("source"),
+            "signal": cast(Literal["marker", "footer"] | None, signal.get("signal")),
+            "source": cast(str | None, signal.get("source")),
             "legacy": bool(signal.get("legacy")),
             "last_reviewed_sha": last_reviewed_sha,
-            "last_reviewed_sha_short": git_facts.get("last_reviewed_sha_short"),
+            "last_reviewed_sha_short": cast(
+                str | None, git_facts.get("last_reviewed_sha_short")
+            ),
             "sha_resolvable": sha_resolvable,
             "sha_is_ancestor": is_ancestor,
             "head_advanced": head_advanced,
-            "new_commit_count": git_facts.get("new_commit_count"),
+            "new_commit_count": cast(int | None, git_facts.get("new_commit_count")),
             "incremental_safe": bool(sha_resolvable and head_advanced),
             "marker": sanitize_marker(signal.get("marker")),
         }
@@ -660,12 +502,9 @@ def build_result(signal, git_facts, scanned=None, errors=None):
     return result
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
-def gather_entries(args):
+def gather_entries(
+    args: argparse.Namespace, *, forge: Forge
+) -> tuple[list[ReviewEntryWire], list[str], dict[str, int]]:
     """Return ``(entries, errors, scanned)`` for the requested source of bodies."""
     if args.bodies_file:
         entries, errors = load_bodies_file(args.bodies_file)
@@ -693,19 +532,17 @@ def gather_entries(args):
             {},
         )
 
-    if args.platform == "github":
-        entries, errors = fetch_entries_github(owner, repo, args.number)
-    else:
-        entries, errors = fetch_entries_gitlab(owner, repo, args.number)
+    entries, errors = fetch_entries(owner, repo, args.number, forge=forge)
 
     scanned = {source: 0 for source in PLATFORM_SOURCES[args.platform]}
     scanned.update(count_by_source(entries))
     return entries, errors, scanned
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Detect whether code-gauntlet has already reviewed this PR/MR."
+def _parser() -> Parser:
+    parser = Parser(
+        prog="detect_prior_review",
+        description="Detect whether code-gauntlet has already reviewed this PR/MR.",
     )
     parser.add_argument(
         "--platform",
@@ -733,9 +570,12 @@ def main():
         help="JSON array of {body,timestamp,source,id} entries to scan INSTEAD of "
         "fetching. Offline/test hook.",
     )
-    args = parser.parse_args()
+    return parser
 
-    entries, errors, scanned = gather_entries(args)
+
+def _handle(args: argparse.Namespace) -> tuple[PriorReviewWire, int]:
+    forge = make_forge(args.platform)
+    entries, errors, scanned = gather_entries(args, forge=forge)
 
     try:
         signal = select_latest(entries)
@@ -747,11 +587,12 @@ def main():
         signal.get("sha") if signal else None, args.head_sha, errors
     )
     result = build_result(signal, git_facts, scanned, errors)
-    # ensure_ascii=True: `marker` echoes unknown keys verbatim and `errors`
-    # carries raw gh/glab stderr, so the payload can hold text outside the
-    # terminal encoding. Escaping it keeps stdout printable under an ASCII
-    # locale instead of dying with UnicodeEncodeError and no JSON at all.
-    print(json.dumps(result, indent=2))
+    return result, 0
 
 
-CLI = Command.legacy(main, prog="detect_prior_review.py")
+def main() -> int:
+    return CLI.invoke(sys.argv[1:])
+
+
+# ASCII escaping keeps marker names and remote errors printable under any terminal encoding.
+CLI = Command(parser=_parser(), main=_handle, indent=2)

@@ -58,6 +58,7 @@ class Command:
     failure_receipt: Callable[[str], Mapping[str, object]] | None = None
     ascii: bool = True
     compact: bool = False
+    indent: int | None = None
     fallback_receipt: Callable[[Exception], Mapping[str, object]] | None = None
     fallback_line: str = '{"ok": false, "errors": ["receipt serialization failed"]}'
     fallback_code: int = 1
@@ -107,7 +108,11 @@ class Command:
             return outcome
         receipt, code = outcome
         try:
-            print(dumps(receipt, ascii=self.ascii, compact=self.compact))
+            print(
+                dumps(
+                    receipt, ascii=self.ascii, compact=self.compact, indent=self.indent
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - receipt serialization must have a fallback
             line = self.fallback_line
             try:

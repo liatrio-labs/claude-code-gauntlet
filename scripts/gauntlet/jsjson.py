@@ -5,10 +5,18 @@ import struct
 from typing import Any
 
 
-def dumps(obj: Any, *, ascii: bool = True, compact: bool = False) -> str:
+def dumps(
+    obj: Any, *, ascii: bool = True, compact: bool = False, indent: int | None = None
+) -> str:
     separators = (",", ":") if compact else None
     return escape_lone_surrogates(
-        json.dumps(obj, ensure_ascii=ascii, allow_nan=False, separators=separators)
+        json.dumps(
+            obj,
+            ensure_ascii=ascii,
+            allow_nan=False,
+            separators=separators,
+            indent=indent,
+        )
     )
 
 

@@ -640,6 +640,11 @@ def test_remote_classification(url, expected):
             "alice@host:group/sub/repo.git", ("group", "sub/repo"), id="subgroups"
         ),
         pytest.param("https://host/owner/repo", ("owner", "repo"), id="no-suffix"),
+        pytest.param("ssh://git@host/owner/repo.git", ("owner", "repo"), id="ssh-url"),
+        pytest.param(
+            "ssh://git@host:2222/owner/repo.git", ("owner", "repo"), id="ssh-port"
+        ),
+        pytest.param("git://host/owner/repo.git", ("owner", "repo"), id="git-scheme"),
         pytest.param(
             "https://host/owner/repo.git/", ("owner", "repo"), id="one-trailing-slash"
         ),
@@ -966,6 +971,18 @@ def test_paginated_read_argv(adapter, argv, monkeypatch):
             id="pages-and-documents",
         ),
         pytest.param("[1]  invalid", "", 0, [1], None, id="prefix-malformed-tail"),
+        pytest.param(
+            '[{"body":"older","submitted_at":"2026-01-01T00:00:00Z"}]'
+            '[{"body":"newer","submitted_at":"2026-06-01T00:00:00Z"}]',
+            "",
+            0,
+            [
+                {"body": "older", "submitted_at": "2026-01-01T00:00:00Z"},
+                {"body": "newer", "submitted_at": "2026-06-01T00:00:00Z"},
+            ],
+            None,
+            id="paged-newest",
+        ),
         pytest.param(
             "[]  invalid",
             "",

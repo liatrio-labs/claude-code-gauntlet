@@ -98,6 +98,7 @@ from typing import NamedTuple
 from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
+from gauntlet.forge import make_forge
 from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import (
     FINDING_MARKER_TOKEN,
@@ -2883,7 +2884,7 @@ def gitlab_prior_delivery(owner, repo, mr_iid, sha):
     if DRY_RUN or not is_sha_shaped(sha):
         return False, frozenset(), frozenset()
     summary_posted, keys, legacy_group_keys, error = gitlab_prior_delivery_state(
-        owner, repo, mr_iid, sha
+        owner, repo, mr_iid, sha, forge=make_forge("gitlab")
     )
     if error:
         warn(

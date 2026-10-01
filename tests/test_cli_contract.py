@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from gauntlet import cli, marker, prior_review
+from gauntlet.forge import GitHub
 from gauntlet.paths import ENTRY_ROOT
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +23,274 @@ RECORDED = json.loads(
 )
 SHA = "abc1234"
 FULL = "a" * 40
+
+
+def _git_result(command, **kwargs):
+    assert command[0] == "git"
+    if command[1] == "rev-parse":
+        return prior_review.proc.CompletedProcess(
+            command, 0, ("b" * 40 if command[-1] == "HEAD" else command[-1]) + "\n", ""
+        )
+    if command[1:3] in (["cat-file", "-e"], ["merge-base", "--is-ancestor"]):
+        return prior_review.proc.CompletedProcess(command, 0, "", "")
+    if command[1:3] == ["rev-list", "--count"]:
+        return prior_review.proc.CompletedProcess(command, 0, "3\n", "")
+    raise AssertionError(f"Unexpected Git call: {command}")
+
+
+@pytest.mark.parametrize("case", ["offline", "unicode-marker", "unicode-read-error"])
+def test_detector_receipt(case, tmp_path, invoke, monkeypatch):
+    path = tmp_path / "caf\u00e9-missing.json"
+    version = "3.0 caf\u00e9 \U0001f41b"
+    unknown_key = "future_\u00e9"
+    payload = {
+        "version": version,
+        "findings_count": 1,
+        "sha": FULL,
+        unknown_key: "ignored",
+    }
+    body = (
+        f"<!-- {marker.MARKER_TOKEN}: {json.dumps(payload)} -->"
+        if case == "unicode-marker"
+        else marker.build_marker(FULL, 1)
+    )
+    if case != "unicode-read-error":
+        path.write_text(
+            json.dumps(
+                [
+                    {
+                        "body": body,
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "source": "review",
+                        "id": 101,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(prior_review.proc, "run", _git_result)
+    result = invoke(
+        "detect_prior_review",
+        ["--platform", "github", "--bodies-file", str(path)],
+        tmp_path,
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout.isascii()
+    assert result.stdout.endswith(b"\n")
+    text = result.stdout.decode().strip()
+    receipt, end = json.JSONDecoder().raw_decode(text)
+    assert isinstance(receipt, dict)
+    assert end == len(text)
+    if case == "unicode-read-error":
+        assert receipt["previously_reviewed"] is False
+        assert receipt["errors"]
+    else:
+        assert receipt["previously_reviewed"] is True
+        if case == "unicode-marker":
+            assert receipt["marker"]["version"] == version
+            assert receipt["marker"]["unknown_keys"] == [unknown_key]
+
+
+@pytest.mark.parametrize(
+    "argv, code, error",
+    [
+        pytest.param(
+            ["--owner", "o", "--repo", "r", "--number", "5"],
+            2,
+            "the following arguments are required: --platform",
+            id="missing-platform",
+        ),
+        pytest.param(["--platform", "github"], 0, None, id="missing-number"),
+        pytest.param(
+            ["--platform", "github", "--nope", "wat"],
+            2,
+            "unrecognized arguments: --nope wat",
+            id="unknown-flag",
+        ),
+    ],
+)
+def test_detector_usage(argv, code, error, tmp_path, invoke, monkeypatch):
+    monkeypatch.setattr(prior_review.proc, "run", _git_result)
+    result = invoke("detect_prior_review", argv, tmp_path)
+    assert result.returncode == code
+    if error is not None:
+        assert result.stdout == b""
+        assert result.stderr == f"detect_prior_review: {error}\n".encode()
+    else:
+        receipt = json.loads(result.stdout)
+        assert receipt["previously_reviewed"] is False
+        assert receipt["errors"] == [
+            "usage: --number is required unless --bodies-file is given"
+        ]
+
+
+def test_identity_unicode_receipt(tmp_path, invoke):
+    result = invoke(
+        "resolve_pr_identity",
+        [
+            "--platform",
+            "github",
+            "--url",
+            "https://github.com/OpenAI/codex/pull/278",
+            "--sha",
+            FULL,
+            "--title",
+            "A caf\u00e9 fix",
+        ],
+        tmp_path,
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == (
+        b'{"owner": "OpenAI", "repo": "codex", "pr_number": 278, "sha_full": "'
+        + FULL.encode()
+        + b'", "platform": "github", "web_origin": "https://github.com", "title": "A caf\\u00e9 fix"}\n'
+    )
+
+
+@pytest.mark.parametrize(
+    "url, sha, error",
+    [
+        pytest.param(
+            "https://gitlab.com/a/r/-/merge_requests/3",
+            FULL,
+            "URL path does not match a github PR URL",
+            id="wrong-platform",
+        ),
+        pytest.param(
+            "https://github.com/a/r/pull/3",
+            "a" * 39,
+            "sha must be a 40-character lowercase hex commit id",
+            id="short-sha",
+        ),
+        pytest.param(
+            "https://github.com/a/r/pull/3",
+            "A" * 40,
+            "sha must be a 40-character lowercase hex commit id",
+            id="uppercase-sha",
+        ),
+    ],
+)
+def test_identity_data_error(url, sha, error, tmp_path, invoke):
+    result = invoke(
+        "resolve_pr_identity",
+        ["--platform", "github", "--url", url, "--sha", sha],
+        tmp_path,
+    )
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert result.stderr == f"resolve_pr_identity: {error}\n".encode()
+
+
+@pytest.mark.parametrize(
+    "name, argv",
+    [
+        ("detect_prior_review", ["--platform", "github"]),
+        (
+            "resolve_pr_identity",
+            [
+                "--platform",
+                "github",
+                "--url",
+                "https://github.com/o/r/pull/5",
+                "--sha",
+                FULL,
+            ],
+        ),
+    ],
+    ids=["detector", "identity"],
+)
+def test_converted_serialization_fallback(name, argv, tmp_path, invoke, monkeypatch):
+    def fail(*args, **kwargs):
+        raise TypeError("injected serialization failure")
+
+    monkeypatch.setattr(prior_review.proc, "run", _git_result)
+    monkeypatch.setattr(cli, "dumps", fail)
+    result = invoke(name, argv, tmp_path)
+    assert result.returncode == 1
+    assert (
+        result.stdout == b'{"ok": false, "errors": ["receipt serialization failed"]}\n'
+    )
+    assert result.stderr == b""
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["NaN", "Infinity", "-Infinity", "1e999", "-1e999", "1E999"],
+    ids=[
+        "nan",
+        "positive-infinity",
+        "negative-infinity",
+        "positive-overflow",
+        "negative-overflow",
+        "uppercase-exponent-overflow",
+    ],
+)
+def test_detector_nonfinite_marker_exit_zero(token, tmp_path, invoke, monkeypatch):
+    body = (
+        '<!-- code-gauntlet-findings: {"sha":"'
+        + FULL
+        + '","findings_count":'
+        + token
+        + "} -->"
+    )
+    path = tmp_path / "bodies.json"
+    path.write_text(json.dumps([{"body": body}]), encoding="utf-8")
+    monkeypatch.setattr(prior_review.proc, "run", _git_result)
+    result = invoke(
+        "detect_prior_review",
+        ["--platform", "github", "--bodies-file", str(path)],
+        tmp_path,
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+
+    def reject_constant(value):
+        raise ValueError(value)
+
+    receipt = json.loads(result.stdout, parse_constant=reject_constant)
+    assert receipt["marker"] is None
+    assert receipt["previously_reviewed"] is False
+    assert receipt["errors"] == []
+    assert (
+        result.stdout != b'{"ok": false, "errors": ["receipt serialization failed"]}\n'
+    )
+
+
+def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
+    real_run = prior_review.proc.run
+    calls = []
+    child = r"import sys; sys.stdout.buffer.write(b'\xff\xfe' + b'not json')"
+
+    def child_run(command, **kwargs):
+        if command[0] == "git":
+            return _git_result(command, **kwargs)
+        calls.append((command, kwargs))
+        return real_run([sys.executable, "-c", child], **kwargs)
+
+    monkeypatch.setattr(prior_review.proc, "run", child_run)
+    monkeypatch.setattr(prior_review, "make_forge", lambda platform: GitHub())
+    result = invoke(
+        "detect_prior_review",
+        ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"],
+        tmp_path,
+    )
+    obj, end = json.JSONDecoder().raw_decode(result.stdout.decode().strip())
+    assert result.returncode == 0
+    assert end == len(result.stdout.decode().strip())
+    assert obj["previously_reviewed"] is False
+    assert obj["errors"] == [
+        "github reviews: response was not JSON: \ufffd\ufffdnot json"
+    ]
+    assert calls == [
+        (
+            ["gh", "api", "--paginate", "repos/o/r/pulls/5/reviews"],
+            {"cwd": None, "timeout": 30, "errors": "replace"},
+        )
+    ]
+
+
 PATCH = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 # argv strings split on spaces before placeholders expand, so paths may hold spaces.
 MAIN_FAILURE = {

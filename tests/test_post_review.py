@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
@@ -56,6 +56,28 @@ from gauntlet.delivery.post import (
     valid_lines_for_file,
     validate_position,
 )
+from gauntlet.forge import JsonFetch, ReviewTarget
+
+from tests.support.forge import FakeGitLab, ForgeCall
+
+
+def test_interim_prior_delivery_uses_selected_forge(forge_factory, monkeypatch):
+    fake = forge_factory.configure(
+        FakeGitLab(
+            entries=[
+                JsonFetch([{"body": review_marker.build_footer(1, "a" * 40)}], None)
+            ]
+        )
+    )
+    monkeypatch.setattr(post_review, "DRY_RUN", False)
+    assert post_review.gitlab_prior_delivery("o", "r", 5, "a" * 40) == (
+        True,
+        set(),
+        set(),
+    )
+    assert forge_factory.calls == ["gitlab"]
+    assert fake.calls == [ForgeCall("review_entries", ReviewTarget("o", "r", 5))]
+
 
 REPO = Path(__file__).resolve().parents[1]
 _MISSING_SEVERITY = object()
@@ -5606,13 +5628,9 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         )
 
         entries = [{"body": payload["body"]} for payload in payloads]
-        with patch(
-            "gauntlet.prior_review.fetch_entries_gitlab",
-            return_value=(entries, []),
-        ):
-            state = detect_prior_review.gitlab_prior_delivery_state(
-                "o", "r", 5, "a" * 40
-            )
+        state = detect_prior_review.gitlab_prior_delivery_state(
+            "o", "r", 5, "a" * 40, forge=FakeGitLab(entries=[JsonFetch(entries, None)])
+        )
         summary_posted, delivered_keys, legacy_group_keys, error = state
         self.assertTrue(summary_posted)
         self.assertEqual(delivered_keys, expected_keys)
@@ -6063,7 +6081,7 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
         self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
         self.assertIn("already on the MR", run.out)
         self.assertNotIn("MR summary note posted.", run.out)
-        run.mock_prior.assert_called_once_with("o", "r", 5, "a" * 40)
+        run.mock_prior.assert_called_once_with("o", "r", 5, "a" * 40, forge=ANY)
 
     def test_summary_posted_when_the_marker_records_a_different_sha(self):
         run = self._run_main(prior=(False, set(), None))
