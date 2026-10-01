@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v3.42.16 (2026-10-01)
+
+### Bug Fixes
+
+- Disclose host paths in finding free text with a gap
+  ([#447](https://github.com/liatrio-labs/claude-code-gauntlet/pull/447),
+  [`f2c0093`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f2c0093c2d25c5e250d2ca5f4dc2afece5d53474))
+
+- Disclose host paths in finding free text with a gap (#443)
+  ([#447](https://github.com/liatrio-labs/claude-code-gauntlet/pull/447),
+  [`f2c0093`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f2c0093c2d25c5e250d2ca5f4dc2afece5d53474))
+
+- Review round 1 for host path disclosure
+  ([#447](https://github.com/liatrio-labs/claude-code-gauntlet/pull/447),
+  [`f2c0093`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f2c0093c2d25c5e250d2ca5f4dc2afece5d53474))
+
+- Review round 2 for host path disclosure
+  ([#447](https://github.com/liatrio-labs/claude-code-gauntlet/pull/447),
+  [`f2c0093`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f2c0093c2d25c5e250d2ca5f4dc2afece5d53474))
+
+### Chores
+
+- Drop the unused AGENT_LABELS import from stages.js
+  ([#447](https://github.com/liatrio-labs/claude-code-gauntlet/pull/447),
+  [`f2c0093`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f2c0093c2d25c5e250d2ca5f4dc2afece5d53474))
+
+
 ## v3.42.15 (2026-10-01)
 
 ### Bug Fixes
