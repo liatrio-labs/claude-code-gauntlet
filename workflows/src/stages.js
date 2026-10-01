@@ -16,7 +16,7 @@
 // bucket members without per-bucket gaps, and emits one generic gap if no partial
 // survives, the merge or single-call result is null, or any summarize dispatch throws.
 // No wall-clock, no import at runtime.
-import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, FINDING_TEXT_FIELD_NAMES, conditionalSchemaActive } from './registry.js';
+import { DIMENSIONS, AGENTS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, FINDING_TEXT_FIELD_NAMES, conditionalSchemaActive } from './registry.js';
 import { merge, normalizeFindingPaths } from './mergeFindings.js';
 import { mentionsHostRoot, normalizeAbsoluteRoot, pathUnderRoot, safeFindingLabel } from './paths.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
