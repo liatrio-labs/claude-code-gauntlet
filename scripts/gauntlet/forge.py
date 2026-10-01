@@ -7,7 +7,7 @@ import os
 import re
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
@@ -282,7 +282,19 @@ def origin_remote(
     stdout, _, status = proc.output(
         ["git", "remote", "get-url", "origin"], timeout=timeout, errors=errors
     )
-    return parse_remote(stdout.strip()) if status == 0 else None
+    if status != 0:
+        return None
+    remote = parse_remote(stdout.strip())
+    if remote is None:
+        return None
+    # Git frames the URL with one newline. Legacy slug trimming must not validate
+    # whitespace or controls in the original authority.
+    original = parse_remote(stdout.removesuffix("\n").removesuffix("\r"))
+    return replace(
+        remote,
+        authority=original.authority if original else remote.authority,
+        hostname=original.hostname if original else None,
+    )
 
 
 def _parse_pages(text: str) -> list[object] | None:

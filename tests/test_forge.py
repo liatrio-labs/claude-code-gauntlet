@@ -1,484 +1,453 @@
-"""Forge policy and transport contracts, plus the current poster characterization."""
+"""Forge policy, transport and wired poster contracts."""
 
+import ast
 import sys
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import MappingProxyType
 
 import pytest
+from _pytest.mark.structures import ParameterSet
 from gauntlet import forge, prior_review, proc
 from gauntlet.delivery import post
 
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall, install_forge_factory
 
+HOST_CASES: list[ParameterSet] = [
+    pytest.param(
+        "https://github.com/o/r.git", 0, ("github", "github.com"), id="github-https"
+    ),
+    pytest.param(
+        "git@github.com:o/r.git", 0, ("github", "github.com"), id="github-scp"
+    ),
+    pytest.param(
+        "https://gitlab.com/g/r.git", 0, ("gitlab", "gitlab.com"), id="gitlab-https"
+    ),
+    pytest.param(
+        "git@gitlab.com:g/r.git", 0, ("gitlab", "gitlab.com"), id="gitlab-scp"
+    ),
+    pytest.param(
+        "https://api.github.com/o/r.git",
+        0,
+        ("github", "api.github.com"),
+        id="github-subdomain",
+    ),
+    pytest.param(
+        "https://sub.gitlab.com/g/r.git",
+        0,
+        ("gitlab", "sub.gitlab.com"),
+        id="gitlab-subdomain",
+    ),
+    pytest.param(
+        "https://evilgithub.com/o/r.git",
+        0,
+        (None, "evilgithub.com"),
+        id="github-prefix",
+    ),
+    pytest.param(
+        "https://github.com.example.net/o/r.git",
+        0,
+        (None, "github.com.example.net"),
+        id="github-suffix",
+    ),
+    pytest.param(
+        "https://evilgitlab.com/g/r.git",
+        0,
+        (None, "evilgitlab.com"),
+        id="gitlab-prefix",
+    ),
+    pytest.param(
+        "https://gitlab.com.example.net/g/r.git",
+        0,
+        (None, "gitlab.com.example.net"),
+        id="gitlab-suffix",
+    ),
+    pytest.param(
+        "git@gitlab.internal.company.com:g/r.git",
+        0,
+        (None, "gitlab.internal.company.com"),
+        id="private-gitlab",
+    ),
+    pytest.param(
+        "https://code.example.org/g/r.git",
+        0,
+        (None, "code.example.org"),
+        id="private-code",
+    ),
+    pytest.param(
+        "https://ghe.example.org/o/r.git",
+        0,
+        (None, "ghe.example.org"),
+        id="enterprise-server",
+    ),
+    pytest.param(
+        "https://tenant.ghe.com/o/r.git",
+        0,
+        (None, "tenant.ghe.com"),
+        id="enterprise-cloud",
+    ),
+    pytest.param(
+        "https://bitbucket.org/o/r.git", 0, (None, "bitbucket.org"), id="other-forge"
+    ),
+    pytest.param("", 0, (None, None), id="empty"),
+    pytest.param("not-a-url", 0, (None, None), id="malformed"),
+    pytest.param("", 1, (None, None), id="remote-nonzero"),
+    pytest.param(
+        "https://github.com:8443/o/r.git", 0, ("github", "github.com"), id="github-port"
+    ),
+    pytest.param(
+        "https://gitlab.com:8443/g/r.git", 0, ("gitlab", "gitlab.com"), id="gitlab-port"
+    ),
+    pytest.param(
+        "ssh://git@github.com:2222/o/r.git",
+        0,
+        ("github", "github.com"),
+        id="github-ssh-url",
+    ),
+    pytest.param(
+        "ssh://git@gitlab.com:2222/g/r.git",
+        0,
+        ("gitlab", "gitlab.com"),
+        id="gitlab-ssh-url",
+    ),
+    pytest.param(
+        "https://GITHUB.COM/o/r.git", 0, ("github", "github.com"), id="uppercase-host"
+    ),
+    pytest.param(
+        "HTTPS://GITHUB.COM/o/r.git", 0, ("github", "github.com"), id="uppercase-scheme"
+    ),
+    pytest.param(
+        "git@GitLab.COM:g/r.git", 0, ("gitlab", "gitlab.com"), id="mixedcase-scp"
+    ),
+    pytest.param(
+        "alice@github.com:o/r.git", 0, ("github", "github.com"), id="non-git-user"
+    ),
+    pytest.param(
+        "https://github.com@evil.example/o/r.git",
+        0,
+        (None, "evil.example"),
+        id="userinfo-lookalike",
+    ),
+    pytest.param(
+        "https://github.com.example.net:443/o/r.git",
+        0,
+        (None, "github.com.example.net"),
+        id="suffix-port",
+    ),
+    pytest.param("https://github.com:bad/o/r.git", 0, (None, None), id="bad-port"),
+    pytest.param("https://github.com./o/r.git", 0, (None, None), id="trailing-dot"),
+    pytest.param("https://[::1]:8443/g/r.git", 0, (None, "::1"), id="ipv6"),
+    pytest.param("git://host/o/r.git", 0, (None, "host"), id="git-scheme"),
+    pytest.param("git+ssh://git@host/o/r", 0, (None, "host"), id="git-ssh-scheme"),
+    pytest.param(
+        "https://evil.example\\.github.com/o/r.git", 0, (None, None), id="backslash"
+    ),
+    pytest.param("https://evil.example .github.com/o/r", 0, (None, None), id="space"),
+    pytest.param(
+        "https://evil.example%23.github.com/o/r.git",
+        0,
+        (None, None),
+        id="percent-escape",
+    ),
+    pytest.param(
+        "https://evil.example;.github.com/o/r", 0, (None, None), id="semicolon"
+    ),
+    pytest.param("https://evil.example\t.github.com/o/r", 0, (None, None), id="tab"),
+    pytest.param("https://.github.com/o/r.git", 0, (None, None), id="leading-dot"),
+    pytest.param("https://x..github.com/o/r.git", 0, (None, None), id="empty-label"),
+    pytest.param(
+        "https://oauth2:fixture-token@gitlab.com/g/r.git",
+        0,
+        ("gitlab", "gitlab.com"),
+        id="credentialed-gitlab",
+    ),
+    pytest.param(
+        "https://fixture-user:fixture-token@github.com/o/r.git",
+        0,
+        ("github", "github.com"),
+        id="credentialed-github",
+    ),
+    pytest.param(
+        "https://evil.example@github.com/o/r.git",
+        0,
+        ("github", "github.com"),
+        id="userinfo-public-host",
+    ),
+    pytest.param(
+        "https://gitlab.example@evil.example/o/r.git",
+        0,
+        (None, "evil.example"),
+        id="userinfo-private-lookalike",
+    ),
+    pytest.param(
+        "git@github.com@evil.example:o/r.git",
+        0,
+        (None, "evil.example"),
+        id="double-at-scp",
+    ),
+    pytest.param(
+        "https://fixture-user@github.com@evil.example/o/r.git",
+        0,
+        (None, "evil.example"),
+        id="double-at-https",
+    ),
+    pytest.param("github.com:o/r.git", 0, ("github", "github.com"), id="userless-scp"),
+    pytest.param(
+        "https://github.com", 0, ("github", "github.com"), id="pathless-https"
+    ),
+    pytest.param(
+        "ssh://git@gitlab.com", 0, ("gitlab", "gitlab.com"), id="pathless-ssh"
+    ),
+    pytest.param("git@github.com:", 0, ("github", "github.com"), id="pathless-scp"),
+    pytest.param("https://[::1/o/r", 0, (None, None), id="invalid-bracket"),
+    pytest.param(
+        "https://evil.example\\.gitlab.com/o/r.git",
+        0,
+        (None, None),
+        id="gitlab-backslash",
+    ),
+    pytest.param(
+        "https://evil.example .gitlab.com/o/r", 0, (None, None), id="gitlab-space"
+    ),
+    pytest.param(
+        "https://evil.example%23.gitlab.com/o/r.git",
+        0,
+        (None, None),
+        id="gitlab-percent-escape",
+    ),
+    pytest.param(
+        "https://evil.example;.gitlab.com/o/r", 0, (None, None), id="gitlab-semicolon"
+    ),
+    pytest.param(
+        "https://evil.example\t.gitlab.com/o/r", 0, (None, None), id="gitlab-tab"
+    ),
+    pytest.param(
+        "https://.gitlab.com/o/r.git", 0, (None, None), id="gitlab-leading-dot"
+    ),
+    pytest.param(
+        "https://x..gitlab.com/o/r.git", 0, (None, None), id="gitlab-empty-label"
+    ),
+    pytest.param(
+        "https://gitlab.com./o/r.git", 0, (None, None), id="gitlab-trailing-dot"
+    ),
+    pytest.param(
+        "https://gitlab.com:bad/o/r.git", 0, (None, None), id="gitlab-bad-port"
+    ),
+    pytest.param(
+        "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.github.com/o/r",
+        0,
+        (None, None),
+        id="github-overlong-label",
+    ),
+    pytest.param(
+        "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.github.com/o/r",
+        0,
+        (None, None),
+        id="github-overlong-host",
+    ),
+    pytest.param(
+        "https://-x.github.com/o/r", 0, (None, None), id="github-leading-hyphen"
+    ),
+    pytest.param(
+        "https://x-.github.com/o/r", 0, (None, None), id="github-trailing-hyphen"
+    ),
+    pytest.param("https://x_y.github.com/o/r", 0, (None, None), id="github-underscore"),
+    pytest.param("https://github.com:/o/r", 0, (None, None), id="github-empty-port"),
+    pytest.param(
+        "https://github.com:-1/o/r", 0, (None, None), id="github-negative-port"
+    ),
+    pytest.param(
+        "https://github.com:65536/o/r", 0, (None, None), id="github-high-port"
+    ),
+    pytest.param("https://github.com:0/o/r", 0, (None, None), id="github-zero-port"),
+    pytest.param(
+        "https://github.com:65535/o/r",
+        0,
+        ("github", "github.com"),
+        id="github-max-port",
+    ),
+    pytest.param(
+        "https://evil\uff0f.github.com/o/r", 0, (None, None), id="github-nfkc-authority"
+    ),
+    pytest.param(
+        "https://github.com?query/o/r",
+        0,
+        ("github", "github.com"),
+        id="github-query-authority",
+    ),
+    pytest.param(
+        "https://github.com#fragment/o/r",
+        0,
+        ("github", "github.com"),
+        id="github-fragment-authority",
+    ),
+    pytest.param(
+        "github.com:o/r.git", 0, ("github", "github.com"), id="github-userless-scp"
+    ),
+    pytest.param(
+        "https://github.com", 0, ("github", "github.com"), id="github-pathless-https"
+    ),
+    pytest.param(
+        "ssh://git@github.com", 0, ("github", "github.com"), id="github-pathless-ssh"
+    ),
+    pytest.param(
+        "git@github.com:", 0, ("github", "github.com"), id="github-pathless-scp"
+    ),
+    pytest.param(
+        "ftp://github.com/o/r", 0, (None, "github.com"), id="github-unsupported-scheme"
+    ),
+    pytest.param(
+        "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.gitlab.com/o/r",
+        0,
+        (None, None),
+        id="gitlab-overlong-label",
+    ),
+    pytest.param(
+        "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.gitlab.com/o/r",
+        0,
+        (None, None),
+        id="gitlab-overlong-host",
+    ),
+    pytest.param(
+        "https://-x.gitlab.com/o/r", 0, (None, None), id="gitlab-leading-hyphen"
+    ),
+    pytest.param(
+        "https://x-.gitlab.com/o/r", 0, (None, None), id="gitlab-trailing-hyphen"
+    ),
+    pytest.param("https://x_y.gitlab.com/o/r", 0, (None, None), id="gitlab-underscore"),
+    pytest.param("https://gitlab.com:/o/r", 0, (None, None), id="gitlab-empty-port"),
+    pytest.param(
+        "https://gitlab.com:-1/o/r", 0, (None, None), id="gitlab-negative-port"
+    ),
+    pytest.param(
+        "https://gitlab.com:65536/o/r", 0, (None, None), id="gitlab-high-port"
+    ),
+    pytest.param("https://gitlab.com:0/o/r", 0, (None, None), id="gitlab-zero-port"),
+    pytest.param(
+        "https://gitlab.com:65535/o/r",
+        0,
+        ("gitlab", "gitlab.com"),
+        id="gitlab-max-port",
+    ),
+    pytest.param(
+        "https://evil\uff0f.gitlab.com/o/r", 0, (None, None), id="gitlab-nfkc-authority"
+    ),
+    pytest.param(
+        "https://gitlab.com?query/o/r",
+        0,
+        ("gitlab", "gitlab.com"),
+        id="gitlab-query-authority",
+    ),
+    pytest.param(
+        "https://gitlab.com#fragment/o/r",
+        0,
+        ("gitlab", "gitlab.com"),
+        id="gitlab-fragment-authority",
+    ),
+    pytest.param(
+        "gitlab.com:o/r.git", 0, ("gitlab", "gitlab.com"), id="gitlab-userless-scp"
+    ),
+    pytest.param(
+        "https://gitlab.com", 0, ("gitlab", "gitlab.com"), id="gitlab-pathless-https"
+    ),
+    pytest.param(
+        "ssh://git@gitlab.com", 0, ("gitlab", "gitlab.com"), id="gitlab-pathless-ssh"
+    ),
+    pytest.param(
+        "git@gitlab.com:", 0, ("gitlab", "gitlab.com"), id="gitlab-pathless-scp"
+    ),
+    pytest.param(
+        "ftp://gitlab.com/o/r", 0, (None, "gitlab.com"), id="gitlab-unsupported-scheme"
+    ),
+    pytest.param(
+        "https://fixture%40user@github.com/o/r",
+        0,
+        ("github", "github.com"),
+        id="github-percent-userinfo",
+    ),
+    pytest.param(
+        "https://fixture\tuser@github.com/o/r",
+        0,
+        (None, None),
+        id="github-tab-userinfo",
+    ),
+    pytest.param(
+        "https://fixture\x00user@github.com/o/r",
+        0,
+        (None, None),
+        id="github-c0-userinfo",
+    ),
+    pytest.param(
+        "https://github.com:1/o/r", 0, ("github", "github.com"), id="github-min-port"
+    ),
+    pytest.param(
+        "git@github.com:o/r", 0, ("github", "github.com"), id="github-no-suffix"
+    ),
+    pytest.param(
+        "https://fixture%40user@gitlab.com/o/r",
+        0,
+        ("gitlab", "gitlab.com"),
+        id="gitlab-percent-userinfo",
+    ),
+    pytest.param(
+        "https://fixture\tuser@gitlab.com/o/r",
+        0,
+        (None, None),
+        id="gitlab-tab-userinfo",
+    ),
+    pytest.param(
+        "https://fixture\x00user@gitlab.com/o/r",
+        0,
+        (None, None),
+        id="gitlab-c0-userinfo",
+    ),
+    pytest.param(
+        "https://gitlab.com:1/o/r", 0, ("gitlab", "gitlab.com"), id="gitlab-min-port"
+    ),
+    pytest.param(
+        "git@gitlab.com:o/r", 0, ("gitlab", "gitlab.com"), id="gitlab-no-suffix"
+    ),
+    pytest.param("C:/github.com/o/r", 0, (None, None), id="drive-forward"),
+    pytest.param("C:\\github.com\\o\\r", 0, (None, None), id="drive-backslash"),
+    pytest.param("directory/github.com:o/r", 0, (None, None), id="slash-before-colon"),
+    pytest.param("https://github.com\t\n", 0, (None, None), id="github-pathless-tab"),
+    pytest.param("https://gitlab.com \n", 0, (None, None), id="gitlab-pathless-space"),
+    pytest.param(
+        "https://github.com\n\n", 0, (None, None), id="github-pathless-newline"
+    ),
+]
 
-@pytest.mark.parametrize(
-    "remote, status, expected",
-    [
-        pytest.param(
-            "https://github.com/o/r.git", 0, ("github", "github.com"), id="github-https"
-        ),
-        pytest.param(
-            "git@github.com:o/r.git", 0, ("github", "github.com"), id="github-scp"
-        ),
-        pytest.param(
-            "https://gitlab.com/g/r.git", 0, ("gitlab", "gitlab.com"), id="gitlab-https"
-        ),
-        pytest.param(
-            "git@gitlab.com:g/r.git", 0, ("gitlab", "gitlab.com"), id="gitlab-scp"
-        ),
-        pytest.param(
-            "https://api.github.com/o/r.git",
-            0,
-            ("github", "api.github.com"),
-            id="github-subdomain",
-        ),
-        pytest.param(
-            "https://sub.gitlab.com/g/r.git",
-            0,
-            ("gitlab", "sub.gitlab.com"),
-            id="gitlab-subdomain",
-        ),
-        pytest.param(
-            "https://evilgithub.com/o/r.git",
-            0,
-            ("github", "evilgithub.com"),
-            id="github-prefix",
-        ),
-        pytest.param(
-            "https://github.com.example.net/o/r.git",
-            0,
-            ("github", "github.com.example.net"),
-            id="github-suffix",
-        ),
-        pytest.param(
-            "https://evilgitlab.com/g/r.git",
-            0,
-            ("gitlab", "evilgitlab.com"),
-            id="gitlab-prefix",
-        ),
-        pytest.param(
-            "https://gitlab.com.example.net/g/r.git",
-            0,
-            ("gitlab", "gitlab.com.example.net"),
-            id="gitlab-suffix",
-        ),
-        pytest.param(
-            "git@gitlab.internal.company.com:g/r.git",
-            0,
-            ("gitlab", "gitlab.internal.company.com"),
-            id="private-gitlab",
-        ),
-        pytest.param(
-            "https://code.example.org/g/r.git",
-            0,
-            (None, "code.example.org"),
-            id="private-code",
-        ),
-        pytest.param(
-            "https://ghe.example.org/o/r.git",
-            0,
-            (None, "ghe.example.org"),
-            id="enterprise-server",
-        ),
-        pytest.param(
-            "https://tenant.ghe.com/o/r.git",
-            0,
-            (None, "tenant.ghe.com"),
-            id="enterprise-cloud",
-        ),
-        pytest.param(
-            "https://bitbucket.org/o/r.git",
-            0,
-            (None, "bitbucket.org"),
-            id="other-forge",
-        ),
-        pytest.param("", 0, (None, None), id="empty"),
-        pytest.param("not-a-url", 0, (None, None), id="malformed"),
-        pytest.param("", 1, (None, None), id="remote-nonzero"),
-        pytest.param(
-            "https://github.com:8443/o/r.git",
-            0,
-            ("github", "github.com:8443"),
-            id="github-port",
-        ),
-        pytest.param(
-            "https://gitlab.com:8443/g/r.git",
-            0,
-            ("gitlab", "gitlab.com:8443"),
-            id="gitlab-port",
-        ),
-        pytest.param(
-            "ssh://git@github.com:2222/o/r.git", 0, (None, None), id="github-ssh-url"
-        ),
-        pytest.param(
-            "ssh://git@gitlab.com:2222/g/r.git", 0, (None, None), id="gitlab-ssh-url"
-        ),
-        pytest.param(
-            "https://GITHUB.COM/o/r.git", 0, (None, "GITHUB.COM"), id="uppercase-host"
-        ),
-        pytest.param(
-            "HTTPS://GITHUB.COM/o/r.git", 0, (None, None), id="uppercase-scheme"
-        ),
-        pytest.param(
-            "git@GitLab.COM:g/r.git", 0, (None, "GitLab.COM"), id="mixedcase-scp"
-        ),
-        pytest.param("alice@github.com:o/r.git", 0, (None, None), id="non-git-user"),
-        pytest.param(
-            "https://github.com@evil.example/o/r.git",
-            0,
-            ("github", "github.com@evil.example"),
-            id="userinfo-lookalike",
-        ),
-        pytest.param(
-            "https://github.com.example.net:443/o/r.git",
-            0,
-            ("github", "github.com.example.net:443"),
-            id="suffix-port",
-        ),
-        pytest.param(
-            "https://github.com:bad/o/r.git",
-            0,
-            ("github", "github.com:bad"),
-            id="bad-port",
-        ),
-        pytest.param(
-            "https://github.com./o/r.git",
-            0,
-            ("github", "github.com."),
-            id="trailing-dot",
-        ),
-        pytest.param("https://[::1]:8443/g/r.git", 0, (None, "[::1]:8443"), id="ipv6"),
-        pytest.param("git://host/o/r.git", 0, (None, None), id="git-scheme"),
-        pytest.param("git+ssh://git@host/o/r", 0, (None, None), id="git-ssh-scheme"),
-        pytest.param(
-            "https://evil.example\\.github.com/o/r.git",
-            0,
-            ("github", "evil.example\\.github.com"),
-            id="backslash",
-        ),
-        pytest.param(
-            "https://evil.example .github.com/o/r",
-            0,
-            ("github", "evil.example .github.com"),
-            id="space",
-        ),
-        pytest.param(
-            "https://evil.example%23.github.com/o/r.git",
-            0,
-            ("github", "evil.example%23.github.com"),
-            id="percent-escape",
-        ),
-        pytest.param(
-            "https://evil.example;.github.com/o/r",
-            0,
-            ("github", "evil.example;.github.com"),
-            id="semicolon",
-        ),
-        pytest.param(
-            "https://evil.example\t.github.com/o/r",
-            0,
-            ("github", "evil.example\t.github.com"),
-            id="tab",
-        ),
-        pytest.param(
-            "https://.github.com/o/r.git",
-            0,
-            ("github", ".github.com"),
-            id="leading-dot",
-        ),
-        pytest.param(
-            "https://x..github.com/o/r.git",
-            0,
-            ("github", "x..github.com"),
-            id="empty-label",
-        ),
-        pytest.param(
-            "https://oauth2:fixture-token@gitlab.com/g/r.git",
-            0,
-            ("gitlab", "oauth2:fixture-token@gitlab.com"),
-            id="credentialed-gitlab",
-        ),
-        pytest.param(
-            "https://fixture-user:fixture-token@github.com/o/r.git",
-            0,
-            ("github", "fixture-user:fixture-token@github.com"),
-            id="credentialed-github",
-        ),
-        pytest.param(
-            "https://evil.example@github.com/o/r.git",
-            0,
-            ("github", "evil.example@github.com"),
-            id="userinfo-public-host",
-        ),
-        pytest.param(
-            "https://gitlab.example@evil.example/o/r.git",
-            0,
-            ("gitlab", "gitlab.example@evil.example"),
-            id="userinfo-private-lookalike",
-        ),
-        pytest.param(
-            "git@github.com@evil.example:o/r.git",
-            0,
-            ("github", "github.com@evil.example"),
-            id="double-at-scp",
-        ),
-        pytest.param(
-            "https://fixture-user@github.com@evil.example/o/r.git",
-            0,
-            ("github", "fixture-user@github.com@evil.example"),
-            id="double-at-https",
-        ),
-        pytest.param("github.com:o/r.git", 0, (None, None), id="userless-scp"),
-        pytest.param("https://github.com", 0, (None, None), id="pathless-https"),
-        pytest.param("ssh://git@gitlab.com", 0, (None, None), id="pathless-ssh"),
-        pytest.param("git@github.com:", 0, (None, None), id="pathless-scp"),
-        pytest.param("https://[::1/o/r", 0, (None, "[::1"), id="invalid-bracket"),
-        pytest.param(
-            "https://evil.example\\.gitlab.com/o/r.git",
-            0,
-            ("gitlab", "evil.example\\.gitlab.com"),
-            id="gitlab-backslash",
-        ),
-        pytest.param(
-            "https://evil.example .gitlab.com/o/r",
-            0,
-            ("gitlab", "evil.example .gitlab.com"),
-            id="gitlab-space",
-        ),
-        pytest.param(
-            "https://evil.example%23.gitlab.com/o/r.git",
-            0,
-            ("gitlab", "evil.example%23.gitlab.com"),
-            id="gitlab-percent-escape",
-        ),
-        pytest.param(
-            "https://evil.example;.gitlab.com/o/r",
-            0,
-            ("gitlab", "evil.example;.gitlab.com"),
-            id="gitlab-semicolon",
-        ),
-        pytest.param(
-            "https://evil.example\t.gitlab.com/o/r",
-            0,
-            ("gitlab", "evil.example\t.gitlab.com"),
-            id="gitlab-tab",
-        ),
-        pytest.param(
-            "https://.gitlab.com/o/r.git",
-            0,
-            ("gitlab", ".gitlab.com"),
-            id="gitlab-leading-dot",
-        ),
-        pytest.param(
-            "https://x..gitlab.com/o/r.git",
-            0,
-            ("gitlab", "x..gitlab.com"),
-            id="gitlab-empty-label",
-        ),
-        pytest.param(
-            "https://gitlab.com./o/r.git",
-            0,
-            ("gitlab", "gitlab.com."),
-            id="gitlab-trailing-dot",
-        ),
-        pytest.param(
-            "https://gitlab.com:bad/o/r.git",
-            0,
-            ("gitlab", "gitlab.com:bad"),
-            id="gitlab-bad-port",
-        ),
-        pytest.param(
-            "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.github.com/o/r",
-            0,
-            (
-                "github",
-                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.github.com",
-            ),
-            id="github-overlong-label",
-        ),
-        pytest.param(
-            "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.github.com/o/r",
-            0,
-            (
-                "github",
-                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.github.com",
-            ),
-            id="github-overlong-host",
-        ),
-        pytest.param(
-            "https://-x.github.com/o/r",
-            0,
-            ("github", "-x.github.com"),
-            id="github-leading-hyphen",
-        ),
-        pytest.param(
-            "https://x-.github.com/o/r",
-            0,
-            ("github", "x-.github.com"),
-            id="github-trailing-hyphen",
-        ),
-        pytest.param(
-            "https://x_y.github.com/o/r",
-            0,
-            ("github", "x_y.github.com"),
-            id="github-underscore",
-        ),
-        pytest.param(
-            "https://github.com:/o/r",
-            0,
-            ("github", "github.com:"),
-            id="github-empty-port",
-        ),
-        pytest.param(
-            "https://github.com:-1/o/r",
-            0,
-            ("github", "github.com:-1"),
-            id="github-negative-port",
-        ),
-        pytest.param(
-            "https://github.com:65536/o/r",
-            0,
-            ("github", "github.com:65536"),
-            id="github-high-port",
-        ),
-        pytest.param(
-            "https://github.com:0/o/r",
-            0,
-            ("github", "github.com:0"),
-            id="github-zero-port",
-        ),
-        pytest.param(
-            "https://github.com:65535/o/r",
-            0,
-            ("github", "github.com:65535"),
-            id="github-max-port",
-        ),
-        pytest.param(
-            "https://evil\uff0f.github.com/o/r",
-            0,
-            ("github", "evil\uff0f.github.com"),
-            id="github-nfkc-authority",
-        ),
-        pytest.param(
-            "https://github.com?query/o/r",
-            0,
-            ("github", "github.com?query"),
-            id="github-query-authority",
-        ),
-        pytest.param(
-            "https://github.com#fragment/o/r",
-            0,
-            ("github", "github.com#fragment"),
-            id="github-fragment-authority",
-        ),
-        pytest.param("github.com:o/r.git", 0, (None, None), id="github-userless-scp"),
-        pytest.param("https://github.com", 0, (None, None), id="github-pathless-https"),
-        pytest.param("ssh://git@github.com", 0, (None, None), id="github-pathless-ssh"),
-        pytest.param("git@github.com:", 0, (None, None), id="github-pathless-scp"),
-        pytest.param(
-            "ftp://github.com/o/r", 0, (None, None), id="github-unsupported-scheme"
-        ),
-        pytest.param(
-            "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.gitlab.com/o/r",
-            0,
-            (
-                "gitlab",
-                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.gitlab.com",
-            ),
-            id="gitlab-overlong-label",
-        ),
-        pytest.param(
-            "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.gitlab.com/o/r",
-            0,
-            (
-                "gitlab",
-                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.gitlab.com",
-            ),
-            id="gitlab-overlong-host",
-        ),
-        pytest.param(
-            "https://-x.gitlab.com/o/r",
-            0,
-            ("gitlab", "-x.gitlab.com"),
-            id="gitlab-leading-hyphen",
-        ),
-        pytest.param(
-            "https://x-.gitlab.com/o/r",
-            0,
-            ("gitlab", "x-.gitlab.com"),
-            id="gitlab-trailing-hyphen",
-        ),
-        pytest.param(
-            "https://x_y.gitlab.com/o/r",
-            0,
-            ("gitlab", "x_y.gitlab.com"),
-            id="gitlab-underscore",
-        ),
-        pytest.param(
-            "https://gitlab.com:/o/r",
-            0,
-            ("gitlab", "gitlab.com:"),
-            id="gitlab-empty-port",
-        ),
-        pytest.param(
-            "https://gitlab.com:-1/o/r",
-            0,
-            ("gitlab", "gitlab.com:-1"),
-            id="gitlab-negative-port",
-        ),
-        pytest.param(
-            "https://gitlab.com:65536/o/r",
-            0,
-            ("gitlab", "gitlab.com:65536"),
-            id="gitlab-high-port",
-        ),
-        pytest.param(
-            "https://gitlab.com:0/o/r",
-            0,
-            ("gitlab", "gitlab.com:0"),
-            id="gitlab-zero-port",
-        ),
-        pytest.param(
-            "https://gitlab.com:65535/o/r",
-            0,
-            ("gitlab", "gitlab.com:65535"),
-            id="gitlab-max-port",
-        ),
-        pytest.param(
-            "https://evil\uff0f.gitlab.com/o/r",
-            0,
-            ("gitlab", "evil\uff0f.gitlab.com"),
-            id="gitlab-nfkc-authority",
-        ),
-        pytest.param(
-            "https://gitlab.com?query/o/r",
-            0,
-            ("gitlab", "gitlab.com?query"),
-            id="gitlab-query-authority",
-        ),
-        pytest.param(
-            "https://gitlab.com#fragment/o/r",
-            0,
-            ("gitlab", "gitlab.com#fragment"),
-            id="gitlab-fragment-authority",
-        ),
-        pytest.param("gitlab.com:o/r.git", 0, (None, None), id="gitlab-userless-scp"),
-        pytest.param("https://gitlab.com", 0, (None, None), id="gitlab-pathless-https"),
-        pytest.param("ssh://git@gitlab.com", 0, (None, None), id="gitlab-pathless-ssh"),
-        pytest.param("git@gitlab.com:", 0, (None, None), id="gitlab-pathless-scp"),
-        pytest.param(
-            "ftp://gitlab.com/o/r", 0, (None, None), id="gitlab-unsupported-scheme"
-        ),
-    ],
-)
-def test_current_platform_selection(remote, status, expected, monkeypatch):
-    def origin_output(argv):
+
+@pytest.mark.parametrize("remote, status, expected", HOST_CASES)
+def test_poster_platform_selection(remote, status, expected, monkeypatch):
+    def origin_output(argv, **kwargs):
         assert argv == ["git", "remote", "get-url", "origin"]
+        assert kwargs == {"timeout": None, "errors": "strict"}
         return remote, "", status
 
     monkeypatch.setattr(proc, "output", origin_output)
     assert post.detect_platform() == expected
+
+
+@pytest.mark.parametrize(
+    "stdout, host",
+    [
+        (" https://github.com/o/r.git \n", None),
+        ("https://github.com/o/r.git \n", "github.com"),
+        ("https://github.com/o/r.git\r\n", "github.com"),
+    ],
+    ids=["leading-space", "lexical-tail-space", "git-crlf"],
+)
+def test_origin_authority_validation_preserves_lexical_slug(stdout, host, monkeypatch):
+    monkeypatch.setattr(
+        proc,
+        "run",
+        lambda command, **kwargs: proc.CompletedProcess(command, 0, stdout, ""),
+    )
+    remote = forge.origin_remote()
+    assert remote is not None
+    assert remote.hostname == host
+    assert forge.remote_slug(remote) == forge.RepoSlug("o", "r")
 
 
 @pytest.mark.parametrize(
@@ -1582,3 +1551,151 @@ def test_shared_factory_fixture(forge_factory):
 def test_factory_requires_configuration(forge_factory):
     with pytest.raises(AssertionError, match=r"No fake configured for gitlab"):
         post.make_forge("gitlab")
+
+
+def _forge_ownership_violations(source: str, *, consumer: bool) -> list[int]:
+    tree = ast.parse(source)
+    names: dict[str, str] = {}
+
+    def literal(node: ast.expr) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Name):
+            return names.get(node.id)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = literal(node.left), literal(node.right)
+            return left + right if left is not None and right is not None else None
+        return None
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and (value := literal(node.value)) is not None:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names[target.id] = value
+    violations: list[int] = []
+    forge_aliases: set[str] = {"forge"}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.List, ast.Tuple))
+            and node.elts
+            and literal(node.elts[0]) in {"gh", "glab"}
+        ):
+            violations.append(node.lineno)
+        if not consumer:
+            continue
+        if isinstance(node, ast.ImportFrom):
+            if node.module == "subprocess":
+                violations.append(node.lineno)
+            if node.module == "gauntlet.forge" and any(
+                alias.name.startswith("_")
+                or alias.name in {"*", "run", "api", "run_api"}
+                for alias in node.names
+            ):
+                violations.append(node.lineno)
+            if node.module == "gauntlet":
+                forge_aliases.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if alias.name == "forge"
+                )
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "subprocess":
+                    violations.append(node.lineno)
+                elif alias.name == "gauntlet.forge":
+                    forge_aliases.add(alias.asname or "gauntlet.forge")
+        if (
+            isinstance(node, ast.Attribute)
+            and ast.unparse(node.value) in forge_aliases
+            and (node.attr.startswith("_") or node.attr in {"run", "api", "run_api"})
+        ):
+            violations.append(node.lineno)
+    return violations
+
+
+def test_executable_argv_ownership():
+    root = Path(__file__).resolve().parents[1] / "scripts" / "gauntlet"
+    paths: dict[str, Path] = {
+        path.relative_to(root).as_posix(): path for path in root.rglob("*.py")
+    }
+    consumers: set[str] = {"prior_review.py", "delivery/post.py"}
+    assert {"forge.py", *consumers} <= paths.keys()
+    violations: list[str] = []
+    for name, path in paths.items():
+        if name == "forge.py":
+            continue
+        violations.extend(
+            f"{name}:{line}"
+            for line in _forge_ownership_violations(
+                path.read_text(encoding="utf-8"), consumer=name in consumers
+            )
+        )
+    assert violations == []
+
+
+@pytest.mark.parametrize(
+    "source, invalid",
+    [
+        pytest.param('proc.output(["gh", "api", "fixture"])', True, id="gh-call"),
+        pytest.param('argv = ("glab", "mr", "diff")', True, id="glab-builder"),
+        pytest.param('tool = "gh"\nproc.output([tool, "api"])', True, id="named-tool"),
+        pytest.param('proc.output(["g" + "h", "api"])', True, id="literal-concat"),
+        pytest.param("from gauntlet.forge import _submit", True, id="generic-import"),
+        pytest.param(
+            "from gauntlet import forge as f\nf._submit(request)",
+            True,
+            id="generic-attribute",
+        ),
+        pytest.param(
+            "import subprocess\nsubprocess.run(command)", True, id="consumer-transport"
+        ),
+        pytest.param(
+            '# gh api fixture\n"""Example: ["gh", "api"]"""', False, id="documentation"
+        ),
+        pytest.param(
+            'from gauntlet import proc\nproc.output(["git", "rev-parse", "HEAD"])',
+            False,
+            id="local-git",
+        ),
+    ],
+)
+def test_ownership_guard_distinguishes_executable_text(source, invalid):
+    assert bool(_forge_ownership_violations(source, consumer=True)) == invalid
+
+
+@pytest.mark.parametrize(
+    "stdout, status, expected",
+    [(" abc1234\n", 0, "abc1234"), ("", 0, ""), ("abc1234", 1, "unknown")],
+    ids=["success", "empty-success", "nonzero"],
+)
+def test_poster_head_sha_uses_local_git(stdout, status, expected, monkeypatch):
+    calls: list[list[str]] = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        assert kwargs == {"cwd": None, "timeout": None, "errors": "strict"}
+        return proc.CompletedProcess(command, status, stdout, "")
+
+    monkeypatch.setattr(proc, "run", run)
+    assert post.get_head_sha() == expected
+    assert calls == [["git", "rev-parse", "HEAD"]]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        FileNotFoundError("missing git"),
+        proc.TimeoutExpired(["git"], 10),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
+    ],
+    ids=["missing-git", "timeout", "decode"],
+)
+def test_poster_head_sha_preserves_exceptions(failure, monkeypatch):
+    def run(command, **kwargs):
+        assert command == ["git", "rev-parse", "HEAD"]
+        assert kwargs == {"cwd": None, "timeout": None, "errors": "strict"}
+        raise failure
+
+    monkeypatch.setattr(proc, "run", run)
+    with pytest.raises(type(failure)):
+        post.get_head_sha()

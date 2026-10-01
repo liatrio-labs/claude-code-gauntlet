@@ -11,15 +11,16 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import ANY, patch
+from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
 import pytest
-from gauntlet.forge import PostResult
+from gauntlet.forge import PostResult, ReviewTarget
 from gauntlet.prior_review import PriorDelivery
 
-from tests.support.forge import FakeForge, FakeGitLab
+from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
+from tests.support.prior import prior_notes
 from tests.test_outbound_contract import _assert_outbound_string_invariant
 
 REPO = Path(__file__).resolve().parents[1]
@@ -758,10 +759,6 @@ class TestDeliveryTitleKeys(unittest.TestCase):
                 "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
             ),
-            patch(
-                "gauntlet.delivery.post.gitlab_prior_delivery",
-                return_value=PriorDelivery(False, frozenset(), frozenset(), None),
-            ),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
@@ -898,54 +895,6 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
                     data, valid_lines, set(), {}, line_texts, forge=FakeGitLab()
                 )
             return post_review.build_dry_run_payload(platform)
-
-    @staticmethod
-    def _capture_live_gitlab(findings, prior, *, reject_first=False):
-        success = PostResult({}, None, None)
-        fake = FakeGitLab(
-            submissions={
-                "notes": [success] * (len(findings) + 1),
-                "discussions": (
-                    [PostResult(None, "position rejected", None)]
-                    if reject_first
-                    else [success]
-                )
-                + [success] * (2 * len(findings)),
-            }
-        )
-        primary = findings[0]
-        filepath, line = primary.get("file"), primary.get("line")
-        valid_lines = {(filepath, line): None}
-        line_texts = {(filepath, line): "context"}
-
-        post_review._CAPTURED.clear()
-        with (
-            patch.object(post_review, "DRY_RUN", False),
-            patch(
-                "gauntlet.delivery.post.fetch_gitlab_shas",
-                return_value=("base", "head", "start"),
-            ),
-            patch("gauntlet.delivery.post.gitlab_prior_delivery", return_value=prior),
-            patch("gauntlet.delivery.post.validate_position", return_value=[]),
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            post_review.post_gitlab(
-                {
-                    "owner": "o",
-                    "repo": "r",
-                    "pr_number": 7,
-                    "sha": SHA,
-                    "review_body": _poison("review_body"),
-                    "findings": findings,
-                },
-                valid_lines,
-                set(),
-                {filepath: filepath},
-                line_texts,
-                forge=fake,
-            )
-        return [call.request for call in fake.calls if call.method == "submit"]
 
     def test_poisoned_python_fields_never_reach_any_comment_sink(self):
         property_names = set(_js_finding_property_union()) | {
@@ -1093,6 +1042,30 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
         self.assertIsNone(review_marker.find_marker(body))
 
 
+@pytest.mark.parametrize(
+    "title", [None, 7, "", " \t\n "], ids=["null", "nonstring", "empty", "whitespace"]
+)
+def test_title_key_helper_reads_prior_snapshot(title, monkeypatch):
+    finding: dict[str, object] = {
+        "file": "src/edited.py",
+        "line": 61,
+        "severity": "high",
+        "title": title,
+        "body": "Body one",
+    }
+    fake = FakeGitLab(
+        entries=[prior_notes(PriorDelivery(True, frozenset(), frozenset(), None), SHA)]
+    )
+    monkeypatch.setattr(sys.modules[__name__], "FakeGitLab", lambda: fake)
+    TestDeliveryTitleKeys._live_key(finding)
+    assert [call for call in fake.calls if call.method == "review_entries"] == [
+        ForgeCall("review_entries", ReviewTarget("o", "r", 7))
+    ]
+    writes = [call.request for call in fake.calls if call.method == "submit"]
+    assert len(writes) == 1
+    assert writes[0].endpoint.endswith("/discussions")
+
+
 def _assert_prepared_poison(body, property_names, expected_markers=()):
     location_names = {"file", "line", "end_line", "line_start", "line_end"}
     patch_name = "suggested_fix_code"
@@ -1196,6 +1169,7 @@ def _gitlab_live_fallback_contracts_post_live(
 ):
     success = PostResult({}, None, None)
     fake = FakeGitLab(
+        entries=[prior_notes(prior, SHA)],
         submissions={
             "notes": [success] * (len(findings) + 1),
             "discussions": (
@@ -1204,7 +1178,7 @@ def _gitlab_live_fallback_contracts_post_live(
                 else [success]
             )
             + [success] * (2 * len(findings)),
-        }
+        },
     )
 
     valid_lines = {
@@ -1222,9 +1196,6 @@ def _gitlab_live_fallback_contracts_post_live(
             "gauntlet.delivery.post.fetch_gitlab_shas",
             return_value=("base", "head", "start"),
         ),
-        patch(
-            "gauntlet.delivery.post.gitlab_prior_delivery", return_value=prior
-        ) as lookup,
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(io.StringIO()),
     ):
@@ -1242,7 +1213,10 @@ def _gitlab_live_fallback_contracts_post_live(
             line_texts,
             forge=fake,
         )
-    return [call.request for call in fake.calls if call.method == "submit"], lookup
+    return (
+        [call.request for call in fake.calls if call.method == "submit"],
+        [call for call in fake.calls if call.method == "review_entries"],
+    )
 
 
 def test_gitlab_live_fallback_contracts__rejected_group_position_falls_back_to_a_prepared_discussion(
@@ -1277,7 +1251,7 @@ def test_gitlab_live_fallback_contracts__rejected_group_position_falls_back_to_a
     assert markers[0]["sha"] == SHA
     assert markers[0]["key"] != "0123456789abcdef"
     _assert_prepared_body(fallback_body, expected_markers=markers)
-    lookup.assert_called_once_with("o", "r", 7, SHA, forge=ANY)
+    assert lookup == [ForgeCall("review_entries", ReviewTarget("o", "r", 7))]
 
 
 def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_old_key(
@@ -1358,7 +1332,7 @@ def test_gitlab_live_fallback_contracts__partial_prior_delivery_posts_only_the_m
     assert len(markers) == 1
     assert markers[0]["key"] != prior_key
     _assert_prepared_body(body, expected_markers=markers)
-    lookup.assert_called_once_with("o", "r", 7, SHA, forge=ANY)
+    assert lookup == [ForgeCall("review_entries", ReviewTarget("o", "r", 7))]
 
 
 def _poisoned_outbound_sinks_capture_live_gitlab(
@@ -1366,6 +1340,7 @@ def _poisoned_outbound_sinks_capture_live_gitlab(
 ):
     success = PostResult({}, None, None)
     fake = FakeGitLab(
+        entries=[prior_notes(prior, SHA)],
         submissions={
             "notes": [success] * (len(findings) + 1),
             "discussions": (
@@ -1374,7 +1349,7 @@ def _poisoned_outbound_sinks_capture_live_gitlab(
                 else [success]
             )
             + [success] * (2 * len(findings)),
-        }
+        },
     )
     primary = findings[0]
     filepath, line = primary.get("file"), primary.get("line")
@@ -1388,7 +1363,6 @@ def _poisoned_outbound_sinks_capture_live_gitlab(
             "gauntlet.delivery.post.fetch_gitlab_shas",
             return_value=("base", "head", "start"),
         ),
-        patch("gauntlet.delivery.post.gitlab_prior_delivery", return_value=prior),
         patch("gauntlet.delivery.post.validate_position", return_value=[]),
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(io.StringIO()),

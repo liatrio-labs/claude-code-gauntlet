@@ -54,7 +54,7 @@ Input JSON schema:
     }
 
 Platform detection:
-    Parses git remote URL to detect github.com vs gitlab.com vs self-hosted.
+    Recognizes validated public github.com/gitlab.com hosts and dot subdomains.
     Override with "platform" field: "github" or "gitlab".
 
 GitHub path:
@@ -107,6 +107,10 @@ from gauntlet.forge import (
     gitlab_discussion_request,
     gitlab_note_request,
     make_forge,
+    origin_remote,
+)
+from gauntlet.forge import (
+    detect_platform as forge_detect_platform,
 )
 from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import (
@@ -177,10 +181,6 @@ def ensure_available(forge: Forge) -> None:
         die(str(exc))
 
 
-def run_api(cmd):
-    return proc.output(cmd)
-
-
 def try_post_json(request: PostRequest, *, forge: Forge):
     """Return response/error without stranding siblings after a rejected position."""
     if DRY_RUN:
@@ -206,30 +206,8 @@ def post_json(request: PostRequest, *, forge: Forge):
 
 
 def detect_platform():
-    """Parse git remote URL to detect github.com vs gitlab.com vs self-hosted."""
-    stdout, _, rc = run_api(["git", "remote", "get-url", "origin"])
-    if rc != 0:
-        return None, None
-    url = stdout.strip()
-
-    # Normalize SSH git@host:path to https-style for parsing
-    # git@github.com:owner/repo.git  ->  github.com/owner/repo
-    ssh_match = re.match(r"git@([^:]+):(.+?)(?:\.git)?$", url)
-    if ssh_match:
-        host = ssh_match.group(1)
-    else:
-        # https://host/path or http://host/path
-        https_match = re.match(r"https?://([^/]+)/(.+?)(?:\.git)?$", url)
-        if not https_match:
-            return None, None
-        host = https_match.group(1)
-
-    if "github.com" in host:
-        return "github", host
-    if "gitlab.com" in host or "gitlab" in host:
-        return "gitlab", host
-    # Unknown host — return host so caller can decide
-    return None, host
+    result = forge_detect_platform(origin_remote())
+    return result.platform, result.host
 
 
 # ---------------------------------------------------------------------------
@@ -2566,7 +2544,7 @@ def finding_key(filepath, line, title, body):
 
 
 def get_head_sha():
-    stdout, _, rc = run_api(["git", "rev-parse", "HEAD"])
+    stdout, _, rc = proc.output(["git", "rev-parse", "HEAD"])
     return stdout.strip() if rc == 0 else "unknown"
 
 
@@ -3466,7 +3444,6 @@ def main():
     DRY_RUN = args.dry_run or os.environ.get("CODE_GAUNTLET_POST_MODE") == "dry-run"
     reset_run_state()
 
-    # Load input
     try:
         loaded = read_json(args.findings_json)
     except JsonReadError as exc:
@@ -3511,12 +3488,10 @@ def main():
         except FileNotFoundError:
             die(f"Report file not found: {args.report}")
 
-    # Validate required fields
     for field in ("owner", "repo", "pr_number"):
         if field not in data:
             die(f"Missing required field in findings JSON: '{field}'")
 
-    # Determine platform
     platform = data.get("platform")
     if platform:
         platform = platform.lower()

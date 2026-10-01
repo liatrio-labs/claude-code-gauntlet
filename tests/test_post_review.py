@@ -42,7 +42,6 @@ from gauntlet.delivery.post import (
     compose_inline_body,
     compose_review_body,
     consolidate_delivery,
-    detect_platform,
     diff_path_spelling,
     gitlab_project_id,
     is_line_valid,
@@ -400,83 +399,6 @@ def _severity_matrix():
         for char in python_only_chars
     )
     return matrix
-
-
-# ---------------------------------------------------------------------------
-# detect_platform
-# ---------------------------------------------------------------------------
-
-
-class TestDetectPlatform(unittest.TestCase):
-    @patch("gauntlet.delivery.post.run_api")
-    def test_github_ssh(self, mock_run):
-        mock_run.return_value = ("git@github.com:myorg/myrepo.git\n", "", 0)
-        platform, host = detect_platform()
-        self.assertEqual(platform, "github")
-        self.assertEqual(host, "github.com")
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_github_https(self, mock_run):
-        mock_run.return_value = ("https://github.com/myorg/myrepo.git\n", "", 0)
-        platform, host = detect_platform()
-        self.assertEqual(platform, "github")
-        self.assertIn("github.com", host)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_gitlab_ssh(self, mock_run):
-        mock_run.return_value = ("git@gitlab.com:team/project.git\n", "", 0)
-        platform, host = detect_platform()
-        self.assertEqual(platform, "gitlab")
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_gitlab_https(self, mock_run):
-        mock_run.return_value = ("https://gitlab.com/team/project.git\n", "", 0)
-        platform, host = detect_platform()
-        self.assertEqual(platform, "gitlab")
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_self_hosted_gitlab(self, mock_run):
-        mock_run.return_value = (
-            "git@gitlab.internal.company.com:team/project.git\n",
-            "",
-            0,
-        )
-        platform, host = detect_platform()
-        self.assertEqual(platform, "gitlab")
-        self.assertEqual(host, "gitlab.internal.company.com")
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_unknown_host(self, mock_run):
-        mock_run.return_value = ("https://bitbucket.org/team/repo.git\n", "", 0)
-        platform, host = detect_platform()
-        self.assertIsNone(platform)
-        self.assertEqual(host, "bitbucket.org")
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_git_remote_failure(self, mock_run):
-        mock_run.return_value = ("", "fatal: not a git repository", 128)
-        platform, host = detect_platform()
-        self.assertIsNone(platform)
-        self.assertIsNone(host)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_malformed_url(self, mock_run):
-        mock_run.return_value = ("not-a-url\n", "", 0)
-        platform, host = detect_platform()
-        self.assertIsNone(platform)
-        self.assertIsNone(host)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_github_ssh_without_git_suffix(self, mock_run):
-        mock_run.return_value = ("git@github.com:myorg/myrepo\n", "", 0)
-        platform, host = detect_platform()
-        self.assertEqual(platform, "github")
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_github_https_without_git_suffix(self, mock_run):
-        mock_run.return_value = ("https://github.com/myorg/myrepo\n", "", 0)
-        platform, host = detect_platform()
-        self.assertEqual(platform, "github")
 
 
 # ---------------------------------------------------------------------------
@@ -2580,10 +2502,6 @@ def _gitlab_posts(run, suffix):
         for call in run.calls
         if call.method == "submit" and call.request.endpoint.endswith(suffix)
     ]
-
-
-def _normalize_prior(prior):
-    return prior
 
 
 def _discussion_posts(mock_run):
@@ -10796,12 +10714,7 @@ def test_both_footer_halves_posted__review_body_with_a_stale_prose_sha_still_get
 def test_gitlab_real_a_directory_path__gitlab_real_a_directory_path_is_preserved(
     tmp_path, forge_factory
 ):
-    with patch(
-        "gauntlet.delivery.post.run_api", return_value=(GL_DIFF_REAL_A_DIR, "", 0)
-    ):
-        valid_lines, new_files, old_paths, _ = parse_diff_text(
-            "gitlab", GL_DIFF_REAL_A_DIR
-        )
+    valid_lines, new_files, old_paths, _ = parse_diff_text("gitlab", GL_DIFF_REAL_A_DIR)
     assert ("a/foo.py", 1) in valid_lines
     assert new_files == set()
     assert old_paths == {"a/foo.py": "a/foo.py"}

@@ -16,7 +16,7 @@ import gauntlet.prior_review as detect_prior_review
 import pytest
 from gauntlet import proc
 from gauntlet.forge import JsonFetch, ReviewTarget
-from gauntlet.prior_review import PriorDelivery
+from gauntlet.prior_review import GitFacts, PriorDelivery
 
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 
@@ -599,324 +599,27 @@ class TestLegacyGroupKeysForSha(unittest.TestCase):
 
 
 def _git_facts(
-    sha_resolvable,
-    last_reviewed_sha,
-    last_reviewed_sha_short,
-    head_sha,
-    sha_is_ancestor,
-    new_commit_count,
-):
-    """Build a git_facts dict from ONLY the six keys resolve_git_facts ever
-    emits: head_sha, last_reviewed_sha, last_reviewed_sha_short,
-    sha_resolvable, sha_is_ancestor, new_commit_count. head_advanced and
-    incremental_safe are NOT among them — those are build_result's OWN
-    outputs, computed from these six plus the signal. Fabricating them here
-    as fixture inputs would let this fixture drift away from what
-    resolve_git_facts actually returns without any test noticing."""
-    return {
-        "sha_resolvable": sha_resolvable,
-        "last_reviewed_sha": last_reviewed_sha,
-        "last_reviewed_sha_short": last_reviewed_sha_short,
-        "head_sha": head_sha,
-        "sha_is_ancestor": sha_is_ancestor,
-        "new_commit_count": new_commit_count,
-    }
-
-
-class TestBuildResult(unittest.TestCase):
-    def test_found_and_head_advanced(self):
-        signal = {
-            "sha": FULL_SHA,
-            "signal": "marker",
-            "legacy": False,
-            "source": "review",
-            "marker": {"version": "3.0", "findings_count": 4, "sha": FULL_SHA},
-        }
-        facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 3)
-        result = detect_prior_review.build_result(signal, facts)
-
-        self.assertTrue(result["previously_reviewed"])
-        self.assertEqual(result["signal"], "marker")
-        self.assertEqual(result["source"], "review")
-        self.assertFalse(result["legacy"])
-        self.assertEqual(result["last_reviewed_sha"], FULL_SHA)
-        self.assertEqual(result["last_reviewed_sha_short"], SHORT_SHA)
-        self.assertTrue(result["sha_resolvable"])
-        self.assertTrue(result["sha_is_ancestor"])
-        self.assertEqual(result["head_sha"], HEAD_SHA)
-        self.assertTrue(result["head_advanced"])
-        self.assertEqual(result["new_commit_count"], 3)
-        self.assertTrue(result["incremental_safe"])
-        self.assertEqual(result["marker"], signal["marker"])
-        self.assertEqual(
-            result["incremental_safe"],
-            result["sha_resolvable"] and result["head_advanced"],
-        )
-
-    def test_found_and_head_not_advanced(self):
-        # Same sha as head: previously-reviewed commit is trivially its own
-        # ancestor, but there is nothing new to review.
-        signal = {
-            "sha": FULL_SHA,
-            "signal": "footer",
-            "legacy": False,
-            "source": "issue_comment",
-            "marker": None,
-        }
-        facts = _git_facts(True, FULL_SHA, SHORT_SHA, FULL_SHA, True, 0)
-        result = detect_prior_review.build_result(signal, facts)
-
-        self.assertTrue(result["previously_reviewed"])
-        self.assertTrue(result["sha_resolvable"])
-        self.assertTrue(result["sha_is_ancestor"])
-        self.assertFalse(result["head_advanced"])
-        self.assertFalse(result["incremental_safe"])
-        self.assertEqual(
-            result["incremental_safe"],
-            result["sha_resolvable"] and result["head_advanced"],
-        )
-
-    def test_found_but_sha_unresolvable(self):
-        raw_sha = "c" * 40
-        signal = {
-            "sha": raw_sha,
-            "signal": "marker",
-            "legacy": True,
-            "source": "note",
-            "marker": {"version": "3.0", "sha": raw_sha},
-        }
-        facts = _git_facts(False, raw_sha, raw_sha[:8], HEAD_SHA, False, None)
-        result = detect_prior_review.build_result(signal, facts)
-
-        self.assertTrue(result["previously_reviewed"])
-        self.assertFalse(result["sha_resolvable"])
-        self.assertFalse(result["sha_is_ancestor"])
-        self.assertFalse(result["head_advanced"])
-        self.assertFalse(result["incremental_safe"])
-        self.assertEqual(
-            result["last_reviewed_sha"], raw_sha, "raw value is kept when unresolvable"
-        )
-        self.assertIsNone(result["new_commit_count"])
-        self.assertTrue(result["legacy"])
-        self.assertEqual(
-            result["incremental_safe"],
-            result["sha_resolvable"] and result["head_advanced"],
-        )
-
-    def test_found_resolvable_but_not_ancestor_head_not_advanced(self):
-        """A branch force-pushed BACKWARDS: the old commit is still present in
-        the object DB (sha_resolvable True) but is no longer an ancestor of
-        head. An inequality test alone would call this "advanced" with
-        new_commit_count 0 — head_advanced and incremental_safe must both stay
-        False even though sha_resolvable is True and the shas differ."""
-        signal = {
-            "sha": FULL_SHA,
-            "signal": "marker",
-            "legacy": False,
-            "source": "review",
-            "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
-        }
-        facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, False, 0)
-        result = detect_prior_review.build_result(signal, facts)
-
-        self.assertTrue(result["sha_resolvable"])
-        self.assertFalse(result["sha_is_ancestor"])
-        self.assertFalse(result["head_advanced"])
-        self.assertFalse(result["incremental_safe"])
-        self.assertEqual(
-            result["incremental_safe"],
-            result["sha_resolvable"] and result["head_advanced"],
-        )
-
-    def test_not_found(self):
-        result = detect_prior_review.build_result(None, None)
-
-        self.assertFalse(result["previously_reviewed"])
-        self.assertIsNone(result["signal"])
-        self.assertIsNone(result["source"])
-        self.assertIsNone(result["marker"])
-        self.assertIsNone(result["last_reviewed_sha"])
-        self.assertFalse(result["sha_is_ancestor"])
-        self.assertFalse(result["incremental_safe"])
-
-    def test_found_and_not_found_branches_share_the_same_key_set(self):
-        """Both outcomes are one 15-key output contract, not two independently
-        hand-written dict literals — pinned here so a future edit that adds a
-        field to only one branch (schema drift between "found" and "not
-        found") fails this test instead of round-tripping silently through
-        both callers."""
-        not_found = detect_prior_review.build_result(None, None)
-        signal = {
-            "sha": FULL_SHA,
-            "signal": "marker",
-            "legacy": False,
-            "source": "review",
-            "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
-        }
-        found = detect_prior_review.build_result(
-            signal,
-            _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 1),
-        )
-        self.assertEqual(set(not_found.keys()), set(found.keys()))
-        self.assertEqual(len(found), 15)
-
-
-class TestBuildResultWithRealResolveGitFacts(unittest.TestCase):
-    """End-to-end: a REAL resolve_git_facts() result (git subprocess calls
-    patched) piped directly into build_result — proving the two functions'
-    dict shapes are actually compatible, rather than assumed via the
-    hand-built _git_facts() fixture used by TestBuildResult above. Includes
-    the non-ancestor (rebase/force-push) case, which nothing previously
-    exercised end to end."""
-
-    def _signal(self, sha):
-        return {
-            "sha": sha,
-            "signal": "marker",
-            "legacy": False,
-            "source": "review",
-            "marker": {"version": "3.0", "findings_count": 1, "sha": sha},
-        }
-
-    def test_forward_moving_branch_is_incremental_safe(self):
-        fake_run = _fake_git_run(
-            resolvable=True,
-            full_sha=FULL_SHA,
-            head_sha=HEAD_SHA,
-            commit_count=3,
-            ancestor=True,
-        )
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-
-        result = detect_prior_review.build_result(self._signal(FULL_SHA), git_facts)
-
-        self.assertTrue(result["previously_reviewed"])
-        self.assertTrue(result["sha_resolvable"])
-        self.assertTrue(result["sha_is_ancestor"])
-        self.assertTrue(result["head_advanced"])
-        self.assertTrue(result["incremental_safe"])
-        self.assertEqual(result["new_commit_count"], 3)
-
-    def test_non_ancestor_rebase_or_force_push_is_not_incremental_safe(self):
-        """The reviewed commit still exists in the object DB (sha_resolvable
-        True) but a backwards force-push/rebase has moved it off head's
-        ancestry. TestBuildResult covers this branch against a hand-built
-        fixture; this proves the SAME outcome against resolve_git_facts'
-        actual output — the case the module docstring calls out as never
-        exercised end to end."""
-        fake_run = _fake_git_run(
-            resolvable=True,
-            full_sha=FULL_SHA,
-            head_sha=HEAD_SHA,
-            commit_count=0,
-            ancestor=False,
-        )
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-
-        result = detect_prior_review.build_result(self._signal(FULL_SHA), git_facts)
-
-        self.assertTrue(result["previously_reviewed"])
-        self.assertTrue(result["sha_resolvable"])
-        self.assertFalse(result["sha_is_ancestor"])
-        self.assertFalse(result["head_advanced"])
-        self.assertFalse(result["incremental_safe"])
-
-    def test_sha_unresolvable_is_not_incremental_safe(self):
-        fake_run = _fake_git_run(resolvable=False, head_sha=HEAD_SHA)
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-
-        result = detect_prior_review.build_result(self._signal(FULL_SHA), git_facts)
-
-        self.assertTrue(result["previously_reviewed"])
-        self.assertFalse(result["sha_resolvable"])
-        self.assertFalse(result["incremental_safe"])
+    sha_resolvable: bool,
+    last_reviewed_sha: str | None,
+    last_reviewed_sha_short: str | None,
+    head_sha: str,
+    sha_is_ancestor: bool,
+    new_commit_count: int | None,
+) -> GitFacts:
+    return GitFacts(
+        head_sha,
+        last_reviewed_sha,
+        last_reviewed_sha_short,
+        sha_resolvable,
+        sha_is_ancestor,
+        new_commit_count,
+    )
 
 
 # ---------------------------------------------------------------------------
 # resolve_git_facts — proves the merge-base --is-ancestor call is made and its
 # exit code drives sha_is_ancestor.
 # ---------------------------------------------------------------------------
-
-
-class TestResolveGitFactsMergeBase(unittest.TestCase):
-    def _tracked(self, **kwargs):
-        calls = []
-        inner = _fake_git_run(**kwargs)
-
-        def _run(cmd, *a, **k):
-            calls.append(cmd)
-            return inner(cmd, *a, **k)
-
-        return _run, calls
-
-    def test_is_ancestor_call_made_with_sha_and_head_and_true_exit_sets_field_true(
-        self,
-    ):
-        fake_run, calls = self._tracked(resolvable=True, ancestor=True)
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-
-        merge_base_calls = [c for c in calls if "merge-base" in c]
-        self.assertEqual(
-            len(merge_base_calls),
-            1,
-            "merge-base --is-ancestor must be called exactly once",
-        )
-        self.assertIn("--is-ancestor", merge_base_calls[0])
-        self.assertIn(FULL_SHA, merge_base_calls[0])
-        self.assertIn(HEAD_SHA, merge_base_calls[0])
-        self.assertTrue(facts["sha_is_ancestor"])
-
-    def test_is_ancestor_false_exit_sets_field_false(self):
-        fake_run, calls = self._tracked(resolvable=True, ancestor=False)
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-
-        merge_base_calls = [c for c in calls if "merge-base" in c]
-        self.assertEqual(len(merge_base_calls), 1)
-        self.assertFalse(facts["sha_is_ancestor"])
-
-
-class TestResolveGitFactsErrorMessages(unittest.TestCase):
-    """resolve_git_facts appends a human-readable explanation to errors[] in
-    two situations: the head commit cannot be resolved at all, and the
-    last-reviewed commit is absent from this clone. Both strings feed the
-    caller's degradation disclosure."""
-
-    def test_head_unresolvable_appends_explanation(self):
-        def fake_run(cmd, *a, **k):
-            if cmd[:2] == ["git", "rev-parse"]:
-                return SimpleNamespace(
-                    stdout="", stderr="fatal: not a git repository", returncode=128
-                )
-            return SimpleNamespace(stdout="", stderr="", returncode=0)
-
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            errors = []
-            facts = detect_prior_review.resolve_git_facts(None, None, errors)
-
-        self.assertEqual(facts["head_sha"], "unknown")
-        self.assertTrue(
-            any("could not resolve the head commit" in e for e in errors), errors
-        )
-
-    def test_last_reviewed_commit_absent_appends_explanation(self):
-        fake_run = _fake_git_run(resolvable=False)
-        with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-            errors = []
-            facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA, errors)
-
-        self.assertFalse(facts["sha_resolvable"])
-        self.assertTrue(
-            any("is not present in this clone" in e for e in errors), errors
-        )
-        self.assertTrue(
-            any(FULL_SHA[:8] in e for e in errors),
-            "the short sha should be named in the explanation",
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1265,3 +968,240 @@ class TestRound3And4FixRegressions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_build_result__found_and_head_advanced():
+    signal: dict[str, object] = {
+        "sha": FULL_SHA,
+        "signal": "marker",
+        "legacy": False,
+        "source": "review",
+        "marker": {"version": "3.0", "findings_count": 4, "sha": FULL_SHA},
+    }
+    facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 3)
+    result = detect_prior_review.build_result(signal, facts)
+    assert result["previously_reviewed"]
+    assert result["signal"] == "marker"
+    assert result["source"] == "review"
+    assert not result["legacy"]
+    assert result["last_reviewed_sha"] == FULL_SHA
+    assert result["last_reviewed_sha_short"] == SHORT_SHA
+    assert result["sha_resolvable"]
+    assert result["sha_is_ancestor"]
+    assert result["head_sha"] == HEAD_SHA
+    assert result["head_advanced"]
+    assert result["new_commit_count"] == 3
+    assert result["incremental_safe"]
+    assert result["marker"] == signal["marker"]
+    assert result["incremental_safe"] == (
+        result["sha_resolvable"] and result["head_advanced"]
+    )
+
+
+def test_build_result__found_and_head_not_advanced():
+    signal: dict[str, object] = {
+        "sha": FULL_SHA,
+        "signal": "footer",
+        "legacy": False,
+        "source": "issue_comment",
+        "marker": None,
+    }
+    facts = _git_facts(True, FULL_SHA, SHORT_SHA, FULL_SHA, True, 0)
+    result = detect_prior_review.build_result(signal, facts)
+    assert result["previously_reviewed"]
+    assert result["sha_resolvable"]
+    assert result["sha_is_ancestor"]
+    assert not result["head_advanced"]
+    assert not result["incremental_safe"]
+    assert result["incremental_safe"] == (
+        result["sha_resolvable"] and result["head_advanced"]
+    )
+
+
+def test_build_result__found_but_sha_unresolvable():
+    raw_sha = "c" * 40
+    signal: dict[str, object] = {
+        "sha": raw_sha,
+        "signal": "marker",
+        "legacy": True,
+        "source": "note",
+        "marker": {"version": "3.0", "sha": raw_sha},
+    }
+    facts = _git_facts(False, raw_sha, raw_sha[:8], HEAD_SHA, False, None)
+    result = detect_prior_review.build_result(signal, facts)
+    assert result["previously_reviewed"]
+    assert not result["sha_resolvable"]
+    assert not result["sha_is_ancestor"]
+    assert not result["head_advanced"]
+    assert not result["incremental_safe"]
+    assert result["last_reviewed_sha"] == raw_sha, "raw value is kept when unresolvable"
+    assert result["new_commit_count"] is None
+    assert result["legacy"]
+    assert result["incremental_safe"] == (
+        result["sha_resolvable"] and result["head_advanced"]
+    )
+
+
+def test_build_result__found_resolvable_but_not_ancestor_head_not_advanced():
+    signal: dict[str, object] = {
+        "sha": FULL_SHA,
+        "signal": "marker",
+        "legacy": False,
+        "source": "review",
+        "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
+    }
+    facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, False, 0)
+    result = detect_prior_review.build_result(signal, facts)
+    assert result["sha_resolvable"]
+    assert not result["sha_is_ancestor"]
+    assert not result["head_advanced"]
+    assert not result["incremental_safe"]
+    assert result["incremental_safe"] == (
+        result["sha_resolvable"] and result["head_advanced"]
+    )
+
+
+def test_build_result__not_found():
+    result = detect_prior_review.build_result(None, None)
+    assert not result["previously_reviewed"]
+    assert result["signal"] is None
+    assert result["source"] is None
+    assert result["marker"] is None
+    assert result["last_reviewed_sha"] is None
+    assert not result["sha_is_ancestor"]
+    assert not result["incremental_safe"]
+
+
+def test_build_result__found_and_not_found_branches_share_the_same_key_set():
+    not_found = detect_prior_review.build_result(None, None)
+    signal: dict[str, object] = {
+        "sha": FULL_SHA,
+        "signal": "marker",
+        "legacy": False,
+        "source": "review",
+        "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
+    }
+    found = detect_prior_review.build_result(
+        signal, _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 1)
+    )
+    assert set(not_found.keys()) == set(found.keys())
+    assert len(found) == 15
+
+
+def _facts_signal(sha):
+    return {
+        "sha": sha,
+        "signal": "marker",
+        "legacy": False,
+        "source": "review",
+        "marker": {"version": "3.0", "findings_count": 1, "sha": sha},
+    }
+
+
+def test_build_result_with_real_resolve_git_facts__forward_moving_branch_is_incremental_safe():
+    fake_run = _fake_git_run(
+        resolvable=True,
+        full_sha=FULL_SHA,
+        head_sha=HEAD_SHA,
+        commit_count=3,
+        ancestor=True,
+    )
+    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
+        git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
+    result = detect_prior_review.build_result(_facts_signal(FULL_SHA), git_facts)
+    assert result["previously_reviewed"]
+    assert result["sha_resolvable"]
+    assert result["sha_is_ancestor"]
+    assert result["head_advanced"]
+    assert result["incremental_safe"]
+    assert result["new_commit_count"] == 3
+
+
+def test_build_result_with_real_resolve_git_facts__non_ancestor_rebase_or_force_push_is_not_incremental_safe():
+    fake_run = _fake_git_run(
+        resolvable=True,
+        full_sha=FULL_SHA,
+        head_sha=HEAD_SHA,
+        commit_count=0,
+        ancestor=False,
+    )
+    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
+        git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
+    result = detect_prior_review.build_result(_facts_signal(FULL_SHA), git_facts)
+    assert result["previously_reviewed"]
+    assert result["sha_resolvable"]
+    assert not result["sha_is_ancestor"]
+    assert not result["head_advanced"]
+    assert not result["incremental_safe"]
+
+
+def test_build_result_with_real_resolve_git_facts__sha_unresolvable_is_not_incremental_safe():
+    fake_run = _fake_git_run(resolvable=False, head_sha=HEAD_SHA)
+    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
+        git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
+    result = detect_prior_review.build_result(_facts_signal(FULL_SHA), git_facts)
+    assert result["previously_reviewed"]
+    assert not result["sha_resolvable"]
+    assert not result["incremental_safe"]
+
+
+def _facts_tracked(**kwargs):
+    calls: list[list[str]] = []
+    inner = _fake_git_run(**kwargs)
+
+    def _run(cmd, *a, **k):
+        calls.append(cmd)
+        return inner(cmd, *a, **k)
+
+    return (_run, calls)
+
+
+def test_resolve_git_facts_merge_base__is_ancestor_call_made_with_sha_and_head_and_true_exit_sets_field_true():
+    fake_run, calls = _facts_tracked(resolvable=True, ancestor=True)
+    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
+        facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
+    merge_base_calls = [c for c in calls if "merge-base" in c]
+    assert len(merge_base_calls) == 1, (
+        "merge-base --is-ancestor must be called exactly once"
+    )
+    assert "--is-ancestor" in merge_base_calls[0]
+    assert FULL_SHA in merge_base_calls[0]
+    assert HEAD_SHA in merge_base_calls[0]
+    assert facts.sha_is_ancestor
+
+
+def test_resolve_git_facts_merge_base__is_ancestor_false_exit_sets_field_false():
+    fake_run, calls = _facts_tracked(resolvable=True, ancestor=False)
+    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
+        facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
+    merge_base_calls = [c for c in calls if "merge-base" in c]
+    assert len(merge_base_calls) == 1
+    assert not facts.sha_is_ancestor
+
+
+def test_resolve_git_facts_error_messages__head_unresolvable_appends_explanation():
+
+    def fake_run(cmd, *a, **k):
+        if cmd[:2] == ["git", "rev-parse"]:
+            return SimpleNamespace(
+                stdout="", stderr="fatal: not a git repository", returncode=128
+            )
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
+        errors: list[str] = []
+        facts = detect_prior_review.resolve_git_facts(None, None, errors)
+    assert facts.head_sha == "unknown"
+    assert any("could not resolve the head commit" in e for e in errors), errors
+
+
+def test_resolve_git_facts_error_messages__last_reviewed_commit_absent_appends_explanation():
+    fake_run = _fake_git_run(resolvable=False)
+    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
+        errors: list[str] = []
+        facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA, errors)
+    assert not facts.sha_resolvable
+    assert any("is not present in this clone" in e for e in errors), errors
+    assert any(FULL_SHA[:8] in e for e in errors), (
+        "the short sha should be named in the explanation"
+    )

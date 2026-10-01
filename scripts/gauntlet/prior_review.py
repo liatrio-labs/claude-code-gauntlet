@@ -52,6 +52,16 @@ class PriorDelivery:
     error: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class GitFacts:
+    head_sha: str
+    last_reviewed_sha: str | None
+    last_reviewed_sha_short: str | None
+    sha_resolvable: bool
+    sha_is_ancestor: bool
+    new_commit_count: int | None
+
+
 GIT_TIMEOUT_SECONDS = 10
 
 # The surfaces each platform exposes, in scan order. Used to seed "scanned" so the
@@ -285,7 +295,7 @@ def load_bodies_file(path: str) -> tuple[list[ReviewEntryWire], list[str]]:
 
 def resolve_git_facts(
     sha: object, head_sha: str | None = None, errors: list[str] | None = None
-) -> dict[str, object]:
+) -> GitFacts:
     """Return the git-derived facts about *sha* relative to the head. Never raises.
 
     ``sha_resolvable`` is False when the recorded object is not present in this
@@ -309,61 +319,50 @@ def resolve_git_facts(
     else:
         head = git_rev_parse("HEAD")
     if not head:
-        # Without a head there is nothing to compare against; say why, so the
-        # caller's "detection unavailable" disclosure names the real reason
-        # instead of reporting a bare "no prior review".
+        # The receipt must disclose unavailable Git instead of a false negative.
         errors.append(
             "git: could not resolve the head commit "
             "(not a git repository, an unborn branch, or git is unavailable)"
         )
     reviewed_sha = sha if isinstance(sha, str) and sha else None
-    facts: dict[str, object] = {
-        "head_sha": head or "unknown",
-        "last_reviewed_sha": reviewed_sha,
-        "last_reviewed_sha_short": None,
-        "sha_resolvable": False,
-        "sha_is_ancestor": False,
-        "new_commit_count": None,
-    }
     if not reviewed_sha:
-        return facts
-    facts["last_reviewed_sha_short"] = reviewed_sha[:8]
+        return GitFacts(head or "unknown", None, None, False, False, None)
 
     _, cat_err, rc = run(
         ["git", "cat-file", "-e", f"{sha}^{{commit}}"], timeout=GIT_TIMEOUT_SECONDS
     )
     if rc != 0:
         errors.append(
-            f"git: the last-reviewed commit {facts['last_reviewed_sha_short']} is not "
+            f"git: the last-reviewed commit {reviewed_sha[:8]} is not "
             f"present in this clone{': ' + cat_err.strip() if cat_err.strip() else ''}"
         )
-        return facts
-    facts["sha_resolvable"] = True
+        return GitFacts(
+            head or "unknown", reviewed_sha, reviewed_sha[:8], False, False, None
+        )
 
     full = git_rev_parse(reviewed_sha) or reviewed_sha
-    facts["last_reviewed_sha"] = full
-    facts["last_reviewed_sha_short"] = full[:8]
-
-    # The reviewed commit must be an ANCESTOR of the head, not merely a different
-    # object. After a branch is force-pushed backwards the old commit still exists
-    # in the object DB, so an inequality test alone reports "advanced" while
-    # `rev-list --count` correctly says 0 — which would render as "0 new commits
-    # have been pushed since" and hand `git diff <sha>...HEAD` an empty diff.
+    # Object existence alone cannot make a backwards force-push incremental-safe.
+    is_ancestor = False
     if head:
         _, _, anc_rc = run(
             ["git", "merge-base", "--is-ancestor", reviewed_sha, head],
             timeout=GIT_TIMEOUT_SECONDS,
         )
-        facts["sha_is_ancestor"] = anc_rc == 0
+        is_ancestor = anc_rc == 0
 
     stdout, _, rc = run(
         ["git", "rev-list", "--count", f"{sha}..{head or 'HEAD'}"],
         timeout=GIT_TIMEOUT_SECONDS,
     )
     count = stdout.strip()
-    if rc == 0 and count.isdigit():
-        facts["new_commit_count"] = int(count)
-    return facts
+    return GitFacts(
+        head or "unknown",
+        full,
+        full[:8],
+        True,
+        is_ancestor,
+        int(count) if rc == 0 and count.isdigit() else None,
+    )
 
 
 #: Keys echoed back from a parsed marker. The payload is attacker-controllable —
@@ -442,7 +441,7 @@ def sanitize_marker(marker: object) -> dict[str, object] | None:
 
 def build_result(
     signal: Mapping[str, object] | None,
-    git_facts: Mapping[str, object] | None,
+    git_facts: GitFacts | None,
     scanned: Mapping[str, int] | None = None,
     errors: Iterable[str] | None = None,
 ) -> PriorReviewWire:
@@ -456,8 +455,7 @@ def build_result(
     """
     scanned = dict(scanned or {})
     errors = list(errors or [])
-    git_facts = git_facts or {}
-    head_sha = cast(str | None, git_facts.get("head_sha"))
+    head_sha = git_facts.head_sha if git_facts else None
 
     # One default receipt keeps found and absent outcomes on the same wire shape.
     result: PriorReviewWire = {
@@ -480,14 +478,15 @@ def build_result(
     if not signal:
         return result
 
-    sha_resolvable = bool(git_facts.get("sha_resolvable"))
+    sha_resolvable = git_facts.sha_resolvable if git_facts else False
     last_reviewed_sha = cast(
-        str | None, git_facts.get("last_reviewed_sha") or signal.get("sha")
+        str | None,
+        (git_facts.last_reviewed_sha if git_facts else None) or signal.get("sha"),
     )
     # An unusable head ("unknown", i.e. `git rev-parse HEAD` failed) must never
     # read as "advanced" — that would offer an incremental diff against nothing.
     head_known = bool(head_sha) and head_sha != "unknown"
-    is_ancestor = bool(git_facts.get("sha_is_ancestor"))
+    is_ancestor = git_facts.sha_is_ancestor if git_facts else False
     head_advanced = bool(
         sha_resolvable and head_known and is_ancestor and last_reviewed_sha != head_sha
     )
@@ -498,13 +497,13 @@ def build_result(
             "source": cast(str | None, signal.get("source")),
             "legacy": bool(signal.get("legacy")),
             "last_reviewed_sha": last_reviewed_sha,
-            "last_reviewed_sha_short": cast(
-                str | None, git_facts.get("last_reviewed_sha_short")
-            ),
+            "last_reviewed_sha_short": git_facts.last_reviewed_sha_short
+            if git_facts
+            else None,
             "sha_resolvable": sha_resolvable,
             "sha_is_ancestor": is_ancestor,
             "head_advanced": head_advanced,
-            "new_commit_count": cast(int | None, git_facts.get("new_commit_count")),
+            "new_commit_count": git_facts.new_commit_count if git_facts else None,
             "incremental_safe": bool(sha_resolvable and head_advanced),
             "marker": sanitize_marker(signal.get("marker")),
         }

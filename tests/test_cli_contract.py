@@ -12,10 +12,11 @@ from unittest.mock import patch
 
 import pytest
 from gauntlet import cli, marker, prior_review, proc
-from gauntlet.forge import GitHub
+from gauntlet.forge import GitHub, JsonFetch
 from gauntlet.paths import ENTRY_ROOT
 
-from tests.support.forge import FakeForge, ForgeCall
+from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
+from tests.test_forge import HOST_CASES
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORDED = json.loads(
@@ -725,3 +726,211 @@ def test_entry_runs_from_foreign_cwd(name, tmp_path):
         timeout=30,
     )
     _assert_recorded(name, "success", result.returncode, result.stdout, tmp_path)
+
+
+@pytest.mark.parametrize("remote, status, expected", HOST_CASES)
+def test_poster_auto_detection(
+    remote, status, expected, tmp_path, invoke, forge_factory, monkeypatch
+):
+    data: dict[str, object] = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": FULL,
+        "findings": [],
+    }
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    platform, host = expected
+    fake = (
+        FakeForge(diffs=[("", "", 0)])
+        if platform == "github"
+        else FakeGitLab(
+            diffs=[("", "", 0)],
+            refs=[
+                JsonFetch(
+                    [
+                        {
+                            "base_commit_sha": "base",
+                            "head_commit_sha": "head",
+                            "start_commit_sha": "start",
+                        }
+                    ],
+                    None,
+                )
+            ],
+        )
+    )
+    forge_factory.configure(fake)
+    origins: list[list[str]] = []
+
+    def run(command, **kwargs):
+        assert command == ["git", "remote", "get-url", "origin"]
+        assert kwargs == {"cwd": None, "timeout": None, "errors": "strict"}
+        origins.append(command)
+        return proc.CompletedProcess(command, status, remote, "")
+
+    monkeypatch.setattr(proc, "run", run)
+    monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+    result = invoke("post_review", [str(path), "--dry-run"], tmp_path)
+    assert origins == [["git", "remote", "get-url", "origin"]]
+    artifact = tmp_path / "post-review-payload.json"
+    if platform:
+        assert result.returncode == 0
+        assert result.stderr == b""
+        assert result.stdout.startswith(
+            f"Detected platform: {platform} (from git remote: {host})\n".encode()
+        )
+        assert forge_factory.calls == [platform]
+        assert json.loads(artifact.read_text(encoding="utf-8"))["platform"] == platform
+        assert all(call.method != "submit" for call in fake.calls)
+        assert len([call for call in fake.calls if call.method == "diff"]) == 1
+    else:
+        assert result.returncode == 1
+        assert result.stdout == b""
+        assert result.stderr == (
+            b"ERROR: Could not detect platform from git remote. "
+            b"Set 'platform' field in findings JSON to 'github' or 'gitlab'.\n"
+        )
+        assert forge_factory.calls == []
+        assert fake.calls == []
+        assert not artifact.exists()
+
+
+@pytest.mark.parametrize(
+    "payload_platform, override, selected, origin_reads, error",
+    [
+        pytest.param("gitlab", "github", "github", 0, None, id="cli-beats-payload"),
+        pytest.param("github", None, "github", 0, None, id="payload-github"),
+        pytest.param("gitlab", None, "gitlab", 0, None, id="payload-gitlab"),
+        pytest.param("GiTHuB", None, "github", 0, None, id="mixedcase-github"),
+        pytest.param("GitLab", None, "gitlab", 0, None, id="mixedcase-gitlab"),
+        pytest.param("BitBucket", None, None, 0, "bitbucket", id="invalid-payload"),
+        pytest.param("github", "BiTBucket", None, 0, "bitbucket", id="invalid-cli"),
+        pytest.param("", None, None, 1, "unknown", id="empty-payload"),
+        pytest.param(None, None, None, 1, "unknown", id="null-payload"),
+        pytest.param("github", "", None, 1, "unknown", id="empty-cli"),
+        pytest.param(7, None, None, 0, "nonstring", id="truthy-nonstring"),
+    ],
+)
+@pytest.mark.parametrize(
+    "remote",
+    ["git@gitlab.internal.company.com:o/r", "https://[::1]:8443/o/r"],
+    ids=["private-gitlab", "ipv6"],
+)
+def test_explicit_platform(
+    payload_platform,
+    override,
+    selected,
+    origin_reads,
+    error,
+    remote,
+    tmp_path,
+    invoke,
+    forge_factory,
+    monkeypatch,
+):
+    data: dict[str, object] = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": FULL,
+        "findings": [],
+        "platform": payload_platform,
+    }
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    github = forge_factory.configure(FakeForge(diffs=[("", "", 0)]))
+    gitlab = forge_factory.configure(
+        FakeGitLab(
+            diffs=[("", "", 0)],
+            refs=[
+                JsonFetch(
+                    [
+                        {
+                            "base_commit_sha": "base",
+                            "head_commit_sha": "head",
+                            "start_commit_sha": "start",
+                        }
+                    ],
+                    None,
+                )
+            ],
+        )
+    )
+    origins: list[list[str]] = []
+
+    def run(command, **kwargs):
+        assert command == ["git", "remote", "get-url", "origin"]
+        origins.append(command)
+        return proc.CompletedProcess(command, 0, remote, "")
+
+    monkeypatch.setattr(proc, "run", run)
+    monkeypatch.setenv("GH_HOST", "github.com")
+    monkeypatch.setenv("GITLAB_HOST", "gitlab.com")
+    result = invoke(
+        "post_review",
+        [str(path), "--dry-run"]
+        + (["--platform", override] if override is not None else []),
+        tmp_path,
+    )
+    assert len(origins) == origin_reads
+    assert forge_factory.calls == ([selected] if selected else [])
+    if selected:
+        assert result.returncode == 0
+        assert result.stderr == b""
+        assert b"Detected platform:" not in result.stdout
+        assert (
+            json.loads(
+                (tmp_path / "post-review-payload.json").read_text(encoding="utf-8")
+            )["platform"]
+            == selected
+        )
+        fake = github if selected == "github" else gitlab
+        assert len([call for call in fake.calls if call.method == "diff"]) == 1
+    else:
+        assert result.returncode == 1
+        assert result.stdout == b""
+        if error == "unknown":
+            assert result.stderr == (
+                b"ERROR: Could not detect platform from git remote. "
+                b"Set 'platform' field in findings JSON to 'github' or 'gitlab'.\n"
+            )
+        elif error == "nonstring":
+            assert (
+                result.stderr
+                == b"AttributeError: 'int' object has no attribute 'lower'\n"
+            )
+        else:
+            assert (
+                result.stderr
+                == f"ERROR: Unsupported platform: '{error}'. Use 'github' or 'gitlab'.\n".encode()
+            )
+        assert github.calls == [] and gitlab.calls == []
+
+
+@pytest.mark.parametrize("outcome", ["missing-git", "nonutf8", "timeout"])
+def test_poster_implicit_origin_exceptions(
+    outcome, tmp_path, forge_factory, monkeypatch
+):
+    from gauntlet.delivery import post
+
+    data: dict[str, object] = {"owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    failures: dict[str, Exception] = {
+        "missing-git": FileNotFoundError("missing git"),
+        "nonutf8": UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
+        "timeout": proc.TimeoutExpired(["git"], None),
+    }
+
+    def run(command, **kwargs):
+        assert command == ["git", "remote", "get-url", "origin"]
+        assert kwargs == {"cwd": None, "timeout": None, "errors": "strict"}
+        raise failures[outcome]
+
+    monkeypatch.setattr(proc, "run", run)
+    monkeypatch.setattr(sys, "argv", ["post_review.py", str(path)])
+    with pytest.raises(type(failures[outcome])):
+        post.main()
+    assert forge_factory.calls == []

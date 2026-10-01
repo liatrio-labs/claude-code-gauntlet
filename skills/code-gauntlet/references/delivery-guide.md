@@ -208,7 +208,7 @@ Nested-quote shorthand such as `>>> text` displays literally.
 - `owner` — repository owner (GitHub org/user or GitLab group)
 - `repo` — repository name
 - `pr_number` — GitHub PR number or GitLab MR IID
-- `platform` — optional; "github" or "gitlab". Auto-detected from git remote if omitted.
+- `platform` — optional; "github" or "gitlab". If omitted, the poster recognizes validated `github.com`/`gitlab.com` hosts and their dot subdomains from git remote. Other hosts must set `platform` explicitly.
 - `sha` — optional; the full commit the review actually ran against. `post_review.py` stamps this into the prior-review marker, falling back to `git rev-parse HEAD` when absent. Always set it (the workflow's `prIdentity` wrapper already carries it) — if HEAD moved between the review and the post, the fallback records a commit no review examined, and the next run's incremental diff is scoped against it.
 
 **Example workflow:**
