@@ -8,10 +8,55 @@ import {
   PATH_ESCAPE_TOKEN,
   runWith,
 } from '../src/stages.js';
-import { normalizeAbsoluteRoot, pathUnderRoot, repoRelativeFindingPath } from '../src/paths.js';
+import { mentionsHostRoot, normalizeAbsoluteRoot, pathUnderRoot, repoRelativeFindingPath } from '../src/paths.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
 const ROOT = '/repo/.code-gauntlet';
+
+const HOST_PATH_CASES = [
+  { name: 'does not match a nested short-root path', text: 'packages/web/src/index.js', roots: ['/src'], expected: false },
+  { name: 'does not match a package path before a short root', text: 'src/app/main.js', roots: ['/app'], expected: false },
+  { name: 'does not match a URL path before a short root', text: 'https://example.com/app/docs', roots: ['/app'], expected: false },
+  { name: 'does not match a GitHub URL path before a short root', text: 'https://github.com/acme/app/pull/1', roots: ['/app'], expected: false },
+  { name: 'does not match a longer segment after a root', text: '/home/u/repo2/x', roots: ['/home/u/repo'], expected: false },
+  { name: 'does not match a hyphenated sibling', text: '/repo-other/x', roots: ['/repo'], expected: false },
+  { name: 'does not match a longer repository name', text: '/repository/y', roots: ['/repo'], expected: false },
+  { name: 'does not match a nested one-segment root', text: 'src/a.js', roots: ['/a'], expected: false },
+  { name: 'does not match a dotted sibling path', text: '/home/u/repo.bak/x', roots: ['/home/u/repo'], expected: false },
+  { name: 'skips the filesystem root', text: '/', roots: ['/'], expected: false },
+  { name: 'matches a bare root', text: '/home/u/repo', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches a root with a tail', text: '/home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches repeated and dot separators', text: '/home//u/./repo/a.js', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches a trailing slash', text: '/home/u/repo/', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches a file URL', text: 'file:///home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches an include flag path', text: '-I/home/u/repo/include', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches an scp-style path', text: 'user@host:/home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches a short root after whitespace', text: 'WORKDIR /app', roots: ['/app'], expected: true },
+  { name: 'matches a short root after a quote', text: 'fetch("/app/api")', roots: ['/app'], expected: true },
+  ...[' ', '"', "'", '`', '(', '[', '{', '<', '=', ',', ';'].map((prefix) => ({
+    name: `matches a short root after ${JSON.stringify(prefix)}`,
+    text: `${prefix}/app`, roots: ['/app'], expected: true,
+  })),
+  { name: 'matches the macOS spelling for a private root', text: '/tmp/x/y', roots: ['/private/tmp/x'], expected: true },
+  { name: 'matches the private spelling for a temp root', text: '/private/tmp/x/y', roots: ['/tmp/x'], expected: true },
+  { name: 'matches a root with spaces', text: '/Users/Lee Personal/repo/src/a.js', roots: ['/Users/Lee Personal/repo'], expected: true },
+  { name: 'does not treat a root dot as a wildcard', text: '/tmp/aXb', roots: ['/tmp/a.b'], expected: false },
+  { name: 'matches a root followed by a comma', text: '/home/u/repo,', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches a root followed by a sentence period', text: '/home/u/repo.', roots: ['/home/u/repo'], expected: true },
+  { name: 'does not match a root continued by punctuation inside a path token', text: '/home/u/repo.bak', roots: ['/home/u/repo'], expected: false },
+  { name: 'ignores invalid and slash roots', text: '/repo/a', roots: [null, 'relative', '/repo/../bad', '/'], expected: false },
+];
+
+for (const { name, text, roots, expected } of HOST_PATH_CASES) {
+  test(`mentionsHostRoot: ${name}`, () => {
+    assert.equal(mentionsHostRoot(text, roots), expected);
+  });
+}
+
+test('mentionsHostRoot rejects non-string text and non-array roots', () => {
+  assert.equal(mentionsHostRoot(null, ['/repo']), false);
+  assert.equal(mentionsHostRoot('/repo/a', '/repo'), false);
+});
 
 // --- pathUnderRoot matrix ----------------------------------------------------
 

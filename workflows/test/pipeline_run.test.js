@@ -657,6 +657,88 @@ test('structural normalization preserves free-text host paths, URLs and markdown
   assert.ok(persisted.report.includes(evidence));
 });
 
+test('runWith discloses host paths in stored text once without rewriting it', async () => {
+  const args = validArgs();
+  const summary = 'The change summary cites /repo/src/summary.js and leaves the wording intact.';
+  const findings = [makeFinding('/repo/unsafe-id', {
+    file: 'src/finding.js',
+    title: 'Finding with a path-bearing id',
+    description: 'Description preserves /repo/src/finding.js exactly.',
+    evidence: 'Evidence preserves /plugin/agents/reviewer.md exactly.',
+    suggested_fix_code: 'const source = "/repo/src/finding.js";',
+    validation_justification: 'Validator cites /plugin/workflows/src/validate.js.',
+    'unknown-field': { nested: ['Unknown data cites /repo/custom/path.json.'] },
+    code: 'const safe = true;',
+  })];
+  const unverified = [makeFinding('UNVERIFIED_TEXT', {
+    file: 'src/unverified.js',
+    challenge_justification: 'Challenge notes /repo/src/unverified.js.',
+  })];
+  const eliminated = [makeFinding('ELIMINATED_TEXT', {
+    file: 'src/eliminated.js',
+    elimination_reason: 'Elimination cites /repo/src/eliminated.js.',
+  })];
+  const challenge = { findings, unverified, eliminated, gaps: [], stats: {} };
+  const expectedHostGaps = [
+    'host-path-text: finding #1 of findings mentions a host path in description, evidence, id, other, suggested_fix_code, validation_justification - text left unchanged',
+    'host-path-text: finding UNVERIFIED_TEXT mentions a host path in challenge_justification - text left unchanged',
+    'host-path-text: finding ELIMINATED_TEXT mentions a host path in elimination_reason - text left unchanged',
+    'host-path-text: change summary mentions a host path - text left unchanged',
+  ];
+
+  const run = async (runArgs) => {
+    let persisted = null;
+    const ctx = makeCtx(runArgs, {
+      onPersist: (payload) => { persisted = payload; },
+    });
+    const agent = ctx.agent;
+    ctx.agent = async (prompt, dispatch) => dispatch.label.startsWith('summarize')
+      ? { summary }
+      : agent(prompt, dispatch);
+    const out = await runWith(ctx, runArgs);
+    return { out, persisted };
+  };
+
+  const firstArgs = validArgs({ checkpoints: { challenge: JSON.parse(JSON.stringify(challenge)) } });
+  const first = await run(firstArgs);
+  const repeated = await run(validArgs({ checkpoints: { challenge: JSON.parse(JSON.stringify(challenge)) } }));
+  assert.equal(first.out.ok, true, JSON.stringify(first.out));
+  assert.equal(repeated.out.ok, true, JSON.stringify(repeated.out));
+  const firstHostGaps = first.out.gaps.filter((gap) => gap.startsWith('host-path-text:'));
+  assert.deepEqual(firstHostGaps, expectedHostGaps);
+  assert.deepEqual(repeated.out.gaps, first.out.gaps);
+  assert.deepEqual(repeated.out.gaps.filter((gap) => gap.startsWith('host-path-text:')), expectedHostGaps);
+  assert.equal(first.out.gaps.filter((gap) => gap === expectedHostGaps[0]).length, 1);
+  assert.ok(firstHostGaps.every((gap) => !['/repo', '/plugin', args.outputDir].some((root) => gap.includes(root))));
+  assert.ok(firstHostGaps.every((gap) => !/no write proof|partial-artifacts/i.test(gap)));
+
+  const storedChallenge = first.persisted.checkpoints.phases.challenge;
+  assert.deepEqual(storedChallenge.findings[0], findings[0]);
+  assert.deepEqual(storedChallenge.unverified, unverified);
+  assert.deepEqual(storedChallenge.eliminated, eliminated);
+  assert.deepEqual(storedChallenge.gaps, []);
+  assert.ok(first.persisted.report.includes(summary));
+  const gapRow = first.persisted.report.match(/^\| Gaps \| (\d+) \|$/m);
+  assert.equal(Number(gapRow[1]), first.out.gaps.length);
+
+  const resumedArgs = validArgs({ checkpoints: first.persisted.checkpoints });
+  const resumed = await run(resumedArgs);
+  assert.equal(resumed.out.ok, true, JSON.stringify(resumed.out));
+  assert.deepEqual(resumed.out.gaps, first.out.gaps);
+  assert.deepEqual(resumed.out.gaps.filter((gap) => gap.startsWith('host-path-text:')), expectedHostGaps);
+  assert.equal(resumed.out.gaps.filter((gap) => gap === expectedHostGaps[0]).length, 1);
+  assert.deepEqual(resumed.persisted.checkpoints.phases.challenge.findings[0], findings[0]);
+  assert.deepEqual(resumed.persisted.checkpoints.phases.challenge.unverified, unverified);
+  assert.deepEqual(resumed.persisted.checkpoints.phases.challenge.eliminated, eliminated);
+});
+
+test('runWith emits no host-path-text gap for clean text', async () => {
+  const args = validArgs();
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(out.gaps.some((gap) => gap.startsWith('host-path-text:')), false);
+});
+
 for (const [label, methodology, file, expected] of [
   ['string with path warnings', '/repo/raw-methodology', '/repo/src/a.js', {}],
   ['array with path warnings', ['/repo/raw-methodology'], '/repo/src/a.js', {}],

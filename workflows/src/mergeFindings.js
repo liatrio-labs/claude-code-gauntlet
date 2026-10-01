@@ -1,6 +1,6 @@
 // Merge structured and text-channel findings into the Phase 4 envelope.
 import { dedupById } from './findingDedup.js';
-import { repoRelativeFindingPath } from './paths.js';
+import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
 import { FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 
 const KNOWN_DIMENSIONS = new Set([
@@ -156,15 +156,18 @@ export function injectAgentField(findings, agent) {
 
 // --- Validation -------------------------------------------------------------
 
-function invalidFindingPathWarning(finding, field, reason, action) {
-  return `[${finding.id ?? '<no id>'}] Invalid ${field} path: ${reason} - ${action}`;
+function invalidFindingPathWarning(finding, field, reason, action, repoRoot) {
+  const label = finding.id == null
+    ? '<no id>'
+    : safeFindingLabel(finding.id, [repoRoot], '<unsafe id>');
+  return `[${label}] Invalid ${field} path: ${reason} - ${action}`;
 }
 
 function normalizeFindingPath(finding, repoRoot) {
   const original = finding.file;
   const result = repoRelativeFindingPath(repoRoot, original);
   if ('reason' in result) {
-    return { valid: false, warning: invalidFindingPathWarning(finding, 'file', result.reason, 'finding rejected') };
+    return { valid: false, warning: invalidFindingPathWarning(finding, 'file', result.reason, 'finding rejected', repoRoot) };
   }
   if (result.file !== original) {
     finding.file = result.file;
@@ -196,14 +199,14 @@ export function normalizeFindingPaths(findings, repoRoot) {
       if (!(field in finding)) continue;
       if (!Array.isArray(finding[field])) {
         delete finding[field];
-        warnings.push(invalidFindingPathWarning(finding, field, 'expected an array', 'field dropped'));
+        warnings.push(invalidFindingPathWarning(finding, field, 'expected an array', 'field dropped', repoRoot));
         continue;
       }
       const refs = [];
       for (const ref of finding[field]) {
         const normalized = repoRelativeFindingPath(repoRoot, ref);
         if ('reason' in normalized) {
-          warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped'));
+          warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped', repoRoot));
         } else {
           refs.push(normalized.file);
           if (normalized.file !== ref) pathRewrites += 1;

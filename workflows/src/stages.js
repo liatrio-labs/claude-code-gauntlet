@@ -18,7 +18,7 @@
 // No wall-clock, no import at runtime.
 import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { merge, normalizeFindingPaths } from './mergeFindings.js';
-import { normalizeAbsoluteRoot, pathUnderRoot } from './paths.js';
+import { mentionsHostRoot, normalizeAbsoluteRoot, pathUnderRoot, safeFindingLabel } from './paths.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
@@ -34,6 +34,54 @@ function defaultCtx() {
     pipeline: typeof pipeline === 'function' ? pipeline : undefined,
     pipelineVersion: null,
   };
+}
+
+const SAFE_FINDING_FIELD_RE = /^[a-z_]{1,40}$/;
+
+function hostPathFindingFields(finding, roots) {
+  const fields = new Set();
+  const seen = new Set();
+  const visit = (value, field) => {
+    if (typeof value === 'string') {
+      if (mentionsHostRoot(value, roots)) fields.add(field);
+      return;
+    }
+    if (value === null || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry, field);
+      return;
+    }
+    for (const [key, entry] of Object.entries(value)) {
+      visit(entry, field ?? (SAFE_FINDING_FIELD_RE.test(key) ? key : 'other'));
+    }
+  };
+  if (finding && typeof finding === 'object' && !Array.isArray(finding)) {
+    for (const [key, value] of Object.entries(finding)) {
+      visit(value, SAFE_FINDING_FIELD_RE.test(key) ? key : 'other');
+    }
+  } else {
+    visit(finding, 'other');
+  }
+  return [...fields].sort();
+}
+
+function hostPathTextGaps(challengeOut, summary, roots) {
+  const gaps = [];
+  for (const bucket of ['findings', 'unverified', 'eliminated']) {
+    const findings = Array.isArray(challengeOut?.[bucket]) ? challengeOut[bucket] : [];
+    findings.forEach((finding, index) => {
+      const fields = hostPathFindingFields(finding, roots);
+      if (fields.length === 0) return;
+      const fallback = `#${index + 1} of ${bucket}`;
+      const label = safeFindingLabel(finding && finding.id, roots, fallback);
+      gaps.push(`host-path-text: finding ${label} mentions a host path in ${fields.join(', ')} - text left unchanged`);
+    });
+  }
+  if (mentionsHostRoot(summary, roots)) {
+    gaps.push('host-path-text: change summary mentions a host path - text left unchanged');
+  }
+  return gaps;
 }
 
 // Resolve the dispatch model for an agent type from the args-waist policy object —
@@ -3770,35 +3818,11 @@ export function compactMethodology(m) {
 // The return is compact by design: counts + artifact paths + gaps, never the raw
 // findings bulk.
 export async function runWith(ctx, rawArgs) {
-  // Two seams into args handling, one message (issue #27). pipeline_entry.js's
-  // parseEntryArgs is the live naked-call path and THROWS on a refusal — a throw is the
-  // only signal the platform renders as a failure (a returned ok:false reports as
-  // <status>completed</status>, identical to success; see args.js's parseEntryArgs
-  // comment). This arm exists because runWith's OWN contract is throw-free (this doc
-  // comment already promised it "NEVER lets a throw escape") and empirically was not:
-  // normalizeArgsReport's JSON.parse below used to sit outside any try/catch, so
-  // `runWith(undefined, 'PR 310')` escaped as an uncaught native SyntaxError. So a refusal
-  // here RETURNS the same entryArgs(rawArgs) refusal instead of throwing — same
-  // refusalFrom wording as the entry, wrapped in makeArgsRejectEnvelope, so the wording
-  // cannot drift between the two signals (pinned by a test). This arm is defensive, not
-  // the primary guard: in production the entry throws first, so a live naked call never
-  // reaches here. It is still worth fixing — runWith is exported, directly unit-tested,
-  // and documented as throw-free.
+  // Keep this seam throw-free for direct callers while returning the entry's refusal shape.
   const entry = entryArgs(rawArgs);
   if (!entry.ok) return entry.envelope;
-  // Normalization is TOLERANT of a stamped null for the narrow NULLABLE_TOP_LEVEL allowlist
-  // (issue #38 A1 — a rejected dispatch cost a 21.3s round trip). Tolerance without
-  // disclosure would be a silent config substitution, though: a mis-stamped
-  // `reviewConfig: null` reviews on the Filter stage's built-in 55/70 instead of the
-  // operator's REVIEW.md thresholds, changing the DELIVERED set. So every drop that actually
-  // tolerated something becomes an operator-actionable gap here — the one place that owns the
-  // returned envelope — and it rides on BOTH exits below (the reject envelope and the success
-  // envelope). Drops validateArgs would have ACCEPTED anyway (`checkpoints`, which has no
-  // shape check at all) are filtered out by nullToleranceRejectedKeys: nothing was tolerated,
-  // so claiming a degradation would be gap-channel noise on a previously valid, silent run.
-  // Normalize from entry.waist, not rawArgs: entryArgs has already unwrapped every JSON
-  // layer, and normalizeArgsReport peels exactly one — re-normalizing the raw value would
-  // hand validateArgs a string for any waist encoded more than once.
+  // Tolerated nulls and respellings can change the effective configuration, so disclose
+  // each actual substitution on both exits. Use the waist entryArgs already unwrapped.
   const {
     args: A,
     dropped: droppedNulls,
@@ -3811,50 +3835,27 @@ export async function runWith(ctx, rawArgs) {
   ];
   const check = validateArgs(A);
   if (!check.ok) {
-    // The field list says WHAT is wrong; SKILL_RECOVERY_LINE says where the fields come
-    // from. A naked caller that hand-built an object reads only this string (the platform
-    // reports the run as completed either way), so it has to carry both. Shape comes from
-    // makeArgsRejectEnvelope — same factory entryArgs uses for its refusal arm.
+    // Direct callers need both the invalid fields and the recovery location in this envelope.
     return makeArgsRejectEnvelope(
       `invalid args: ${check.errors.join('; ')}. ${SKILL_RECOVERY_LINE}`,
       [...nullArgGaps, ...check.errors],
     );
   }
 
-  // The bundle entry injects only pipelineVersion; retain the host globals from the default
-  // context while allowing source tests and callers to override any seam explicitly.
+  // Keep runtime globals while letting callers replace individual seams.
   const c = { ...defaultCtx(), ...(ctx || {}) };
-  // Agent-count guard: coarsenLimits is applied at the two points its inputs exist.
-  // The changed-file count is known at entry (bounds the summarize term); the finding
-  // count exists only after merge, where the verify/validate/challenge terms get
-  // re-coarsened. At or below benchmark scale the worst case sits far under the guard,
-  // so both calls return the limits values unchanged.
+  // Coarsen once with the changed-file count and again after merge knows the finding count.
   const nChangedFiles = (A.changedFiles || []).length;
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
-  // The context file's own size, measured by the skill right after it writes the file
-  // (the workflow has no disk and cannot measure it). Feeds contextReadPlan, which turns
-  // it into the exact Read calls the prompt enumerates — issue #48. Both are OPTIONAL
-  // because Phase 2 is model-executed and can skip the stamp; hard-failing there would
-  // trade a partial read for a dead review. Absent (or unplannable) measurement falls
-  // back to the count-free read-to-end wording — disclosed via a gap below, never silent.
-  // Built ONCE, here, and threaded to the stages as a plain string. The stages are given
-  // no path and no size, so none of them CAN name the shared context file without the read
-  // plan — the invariant is structural, not asserted over this file's source text.
+  // The host measures this file. Its line and character counts form the read plan; agents
+  // receive the resulting sentence, not the path or measurements.
   const contextPlan = contextReadPlan(A.contextLines, A.contextChars);
   const contextLine = sharedContextLine({
     contextPath, contextLines: A.contextLines, contextChars: A.contextChars,
   });
-  // DEGRADED IS NOT SILENT. Falling back to the count-free wording is legal (hard-failing
-  // would trade a partial read for a dead run — a worse deal), but it drops the pipeline
-  // back to the agent's own judgment about when it has read enough, which is exactly the
-  // judgment that failed in #48. Two producers of that fallback must both disclose:
-  //   1. contextLines absent — Phase 2 skipped the stamp (live; model-executed).
-  //   2. contextLines stamped but contextReadPlan returns [] — the size clears the waist
-  //      ceiling (5M lines) yet exceeds READ_PLAN_MAX_CHUNKS (~1.5M at the line cap). Checking
-  //      only `=== undefined` left that second path silent: same fallback wording, zero gaps.
-  // Same contract args.js states for a tolerated null: what was lost, and what to do about it.
+  // Missing and unplannable counts use the same count-free fallback, and both need disclosure.
   const contextSizeGap = A.contextLines === undefined
     ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
       + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
@@ -3868,20 +3869,10 @@ export async function runWith(ctx, rawArgs) {
         + 'That restores the failure mode of issue #48 for an oversized context. Shrink the shared context '
         + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
       : []);
-  // checkpoint-discarded (#268): computed EARLY, alongside contextSizeGap and before
-  // readCheckpoints/the shape gate below, from the TOP-LEVEL `A.checkpoints` the operator
-  // actually stamped -- not from the resolved map, which has already thrown the distinction
-  // away by the time readCheckpoints returns. Disclose-not-abort, the same class as
-  // contextSizeGap: readCheckpoints's existing fallback to {} on an unusable value is
-  // correct behavior (never abort a review over a bad resume input), it was just silent.
+  // Inspect the stamped checkpoint waist before readCheckpoints can discard its shape.
   const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(c, A);
-  // Pre-dispatch, outside the try block: a malformed replayed checkpoint value is
-  // refused loud instead of reaching a phase's unconditional downstream read (#248 +
-  // #250). Nothing has dispatched yet -- the earliest phase promise is created below,
-  // inside the try -- so this can never abandon in-flight work. nullArgGaps is already
-  // computed above (before validateArgs) and threaded through so a tolerated-null
-  // disclosure still rides on THIS exit too, not just the args-reject and success exits.
+  // Refuse malformed replay data before any phase can read it or dispatch work.
   const checkpointShapeViolations = checkpointShapeErrors(checkpoints);
   if (checkpointShapeViolations.length) {
     return makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap, discardGap);
@@ -3889,15 +3880,12 @@ export async function runWith(ctx, rawArgs) {
 
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
-  const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
+  const phaseOutputs = {};
   let phaseReached = 'start';
-  // The phase currently being ATTEMPTED — distinct from phaseReached (last COMPLETED).
-  // On a throw, phaseReached names the phase BEFORE the one that blew up; narrating the
-  // crash from it misattributes the failure (live run: a Filter throw reported as
-  // "failed during Validate"). The catch envelope carries both.
+  // Track the attempted phase separately so a failure names the phase that threw.
   let phaseAttempting = null;
 
-  // Replayed checkpoints need the same finding-path validation as fresh output.
+  // Replayed findings need the same path validation as fresh output.
   const normalizePhaseFindings = (name, out, replayed) => {
     if (!out || typeof out !== 'object') return;
     const warnings = [];
@@ -3944,9 +3932,7 @@ export async function runWith(ctx, rawArgs) {
     out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
   };
 
-  // Resume: a phase whose checkpoint is present reuses that output instead of
-  // dispatching. Either way the phase counts as reached, and its output is recorded
-  // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
+  // Reuse checkpoint outputs without dispatching, while recording each reached phase.
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;
@@ -3959,20 +3945,8 @@ export async function runWith(ctx, rawArgs) {
     return out;
   };
 
-  // Summarize and Discover have NO data dependency: summarize's output is first read at
-  // reportInput, and discover's input is built only from the derived scope flags / limits /
-  // policy / contextPath — `limits` being coarsenLimits(A.limits, nChangedFiles, 0), computed above,
-  // before either. So both are STARTED here and awaited in order below. Four properties are
-  // load-bearing and each is pinned by a test in stages_latency.test.js:
-  //   1. Checkpoint semantics: a phase whose checkpoint is present must NOT dispatch, so the
-  //      promise is only created when checkpoints[name] === undefined (null = replay it).
-  //   2. Record ORDER: summarize is still awaited (and so recorded into phaseOutputs /
-  //      completed / counts) BEFORE discover — both are consumer-visible in the artifact.
-  //   3. No unhandled rejection: `settle` attaches its handlers the instant the promise is
-  //      created, so a discover rejection arriving while summarize is still being awaited is
-  //      captured, never floating. It is re-thrown at the point the phase is awaited.
-  //   4. Error attribution: because the re-throw happens inside runPhase's thunk, a discover
-  //      failure is still attributed to failingPhase 'discover', never 'summarize'.
+  // Start independent work together, but await it in phase order and attach rejection
+  // handlers immediately so errors stay attributed to the phase that failed.
   // settle(p) -> Promise<thunk>: the thunk returns the value or re-throws the error.
   const settle = (p) => p.then((value) => () => value, (error) => () => { throw error; });
   const replay = (name) => checkpoints[name] !== undefined;
@@ -3981,10 +3955,7 @@ export async function runWith(ctx, rawArgs) {
     const summarizeSettled = replay('summarize') ? null : settle(summarize(c, {
       changedFiles: A.changedFiles || [], changedLines: A.changedLines || 0, limits, policy, contextLine,
     }));
-    // Issue #24 req 1/4/5 (PR3): the scope-gating map is DERIVED here, deterministically,
-    // from the waist's riskTable/changedLines/scopeAnswer — never read from a caller-stamped
-    // agentFlags (validateArgs above hard-rejects one). Single call, echoed below in
-    // stats.scope so the resolved decision is verifiable post-hoc.
+    // Derive scope flags from validated inputs so callers cannot stamp a different decision.
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
       agentFlags: derivedAgentFlags, limits, policy, contextLine,
@@ -3996,54 +3967,9 @@ export async function runWith(ctx, rawArgs) {
     const discoverOut = await runPhase('discover', async () => (await discoverSettled)());
     gaps.push(...(discoverOut.gaps || []));
 
-    // All-degraded guard (issue #178, live Bedrock incident 2026-08-11: invalid model ID,
-    // 2s run, 0 findings, ok:true). Fail loud here rather than degraded-but-disclosed: an
-    // all-degraded discover output means NOTHING was reviewed, so letting the pipeline run
-    // on to a report is not a partial review with a gap attached, it is an EMPTY report
-    // dressed as ok:true — the exact silent-success class the gap channel exists to
-    // prevent. Partial degradation (some but not all active dimensions failing) is
-    // unaffected: this only fires when the intersection of dispatched and degraded is total.
-    //
-    // Placed AFTER the gap merge above, not before: this guard fires whether discoverOut
-    // came from a fresh dispatch or a REPLAYED checkpoint (the `runPhase` resume branch
-    // returns the same shape either way), so a stale checkpoint that recorded an
-    // all-degraded discover never gets to replay its emptiness into another ok:true run.
-    // The per-agent 'agent returned null' gaps pushed just above still ride the returned
-    // envelope, so the operator sees exactly which agents failed, not just that they did.
-    //
-    // The discover phase is dropped from the returned resume checkpoints (never from
-    // phaseOutputs, which the catch-path/failure envelope still needs whole): a checkpoint
-    // that resumes straight into a replay of this same degraded-to-nothing output would
-    // reproduce the failure forever. Dropping it forces a retry to re-dispatch discovery —
-    // the one phase a corrected model/provider policy can actually fix.
-    //
-    // stats.degraded and resolvedPolicy ride this failure envelope even though the
-    // top-level catch below carries neither: they are the operator's diagnosis. degraded
-    // names which dimensions came back empty and resolvedPolicy names the model/provider
-    // this run actually resolved to, so "why did discovery fail" is answerable from the
-    // envelope alone — a mismatch between resolvedPolicy and the intended model is the
-    // most common root cause (this guard's own incident was exactly that).
-    //
-    // Two more conjuncts guard this trip, both added after the helper's fail-closed arm
-    // above (issue #178 follow-up):
-    //   (a) `(discoverOut.findings || []).length === 0` — on a SAME-VERSION discover
-    //       output this is vacuously true (a degraded agent contributes no findings by
-    //       construction), so it changes nothing there. It exists solely so the helper's
-    //       fail-closed arm never aborts a VERSION-SKEW replay (a renamed/unresolvable
-    //       agentType in `dispatched`) that still carries real findings from before the
-    //       rename — those findings are real work product, not the silent emptiness this
-    //       guard exists to catch.
-    //   (b) `checkpoints.challenge === undefined` — a replayable challenge checkpoint
-    //       (PERSISTED_RESUME_PHASES) means a PRIOR attempt already reviewed and its
-    //       delivered set is sitting in `checkpoints.challenge`. Aborting here would drop
-    //       that checkpoint from the returned resume map (this branch strips `discover`,
-    //       not `challenge`, but returning early never reaches the phase that would carry
-    //       it forward) and report "no review was performed" about a run that already
-    //       delivered one. So a totally re-degraded fresh discovery on such a resume must
-    //       NOT abort — it stays degraded-but-disclosed (the per-agent gaps and
-    //       stats.degraded above still say so) and the run proceeds to replay and deliver
-    //       the prior challenge output; the pure renderer below rebuilds the persisted report
-    //       from that output, including the zero-finding case.
+    // Fail loud when nothing was reviewed, but preserve a replayable challenge result or
+    // findings from a version-skew checkpoint. Drop a failed discovery checkpoint so a
+    // retry dispatches it again; carry dimension and policy details for diagnosis.
     if (allActiveDimensionsDegraded(discoverOut.dispatched, discoverOut.degraded)
       && (discoverOut.findings || []).length === 0
       && checkpoints.challenge === undefined) {
@@ -4083,11 +4009,7 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(validateOut.gaps || []));
 
-    // resolveReviewConfig (issue #24 PR2): a strict superset of the old A.reviewConfig ||
-    // {} / A.exclusionPatterns || [] passthrough — when A.reviewMd/A.exclusionsText are
-    // absent this resolves to exactly that, unchanged. filterStage's own input shape
-    // ({findings, reviewConfig, exclusionPatterns, generatedAt}) stays untouched (parity
-    // seam, issue #24 req 9).
+    // Resolve both parsed and raw review configuration once for filtering and reporting.
     const resolvedReview = resolveReviewConfig(A);
     const reviewMdSubtrees = (Array.isArray(resolvedReview.reviewConfig.scopes)
       ? resolvedReview.reviewConfig.scopes
@@ -4103,82 +4025,18 @@ export async function runWith(ctx, rawArgs) {
     gaps.push(...(filterOut.gaps || []));
 
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
-      // No context line: challengeStage never read one, and challengePrompt takes only the
-      // finding — the challenger is structurally blind (it gets title/description/location
-      // and opens the code itself). A dead contextPath was threaded here until issue #48;
-      // passing context to a stage that must not use it invites a future edit to "use the
-      // context we already have" and quietly break the blindness the round exists for.
+      // The challenge prompt is limited to each finding's claim and location; shared context
+      // would weaken that independent check.
       findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
     }));
     gaps.push(...(challengeOut.gaps || []));
 
-    // #253 replay filtering belt (v2): rebuilds the #213 belt above on a sounder
-    // callable unit. A red-team of the #213 shape (redteam253.md) found that
-    // straight-generalizing it to applyInjectionFilter was unsound: heuristic 4
-    // (short description + high confidence) reads finding.confidence, a field
-    // detectDisagreement mutates IN PLACE (the +10 consensus boost) AFTER filterStage's
-    // own scan runs, so re-running the FULL filter here would eliminate a
-    // legitimately-corroborated finding on a fresh run, not just a replay. The fix is
-    // structural, not caller discipline: applyReplayInjectionScan (filterFindings.js)
-    // is the same 10-heuristic core with heuristic 4 excluded by construction, so this
-    // belt cannot reintroduce that failure mode no matter how it is called.
-    //
-    // Rationale for running it at all: a REPLAYED checkpoint.challenge (runPhase reuses
-    // checkpoints.challenge verbatim, never re-dispatching challengeStage) bypasses this
-    // run's filterStage scan entirely, so an OLDER checkpoint's findings can carry a
-    // content pattern the CURRENT injection filter (whatever #256/#254/a later PR added)
-    // would have caught. Runs for BOTH fresh and replay (no replay('challenge') gate):
-    // on a fresh run every surviving finding already passed this exact scan (minus
-    // heuristic 4) at filter time THIS run, so it is a no-op by construction there.
-    //
-    // Position-preserving partition, single walk per list (findings, then unverified):
-    // beltPartitionList normalizes and re-scans the objects as one ordered list because
-    // heuristic 10's dedup state makes scan order load-bearing. Replay normalization
-    // drops non-object entries before this scan.
-    // See beltPartitionList's own doc comment for the splice mechanics.
-    //
-    // .eliminated: newly-belt-eliminated entries APPEND first, then the WHOLE resulting
-    // array runs through stripEliminatedList (order is the defence, D2): appending
-    // eliminated findings straight from the scan carries their claude_md_rule/
-    // suggestion/spec_text RAW (the scan's eliminated path never strips those -- only
-    // its kept path does), and a finding can be eliminated by its description while
-    // ALSO carrying an unrelated payload in one of those three fields; stripping the
-    // whole array only after the append is what keeps that second payload out of
-    // checkpoint-all.json.
-    //
-    // Rewrites challengeOut's OWN findings/unverified/eliminated/stats IN PLACE (not
-    // threaded through locals): every existing downstream reader (selectDelivery/
-    // reportInput below, writeArtifacts's `findings:` param, phaseOutputs.challenge ===
-    // challengeOut already recorded by runPhase above) is automatically correct with no
-    // second call site to keep in sync, and slimPersistedCheckpoints persists the
-    // partitioned set so a future resume-of-a-resume replays an already-partitioned
-    // checkpoint. Sharper invariant than the #213 `.map()` (same length, same order):
-    // this REPLACES the three arrays wholesale, so a future reader inserted between
-    // runPhase('challenge') and this belt would silently see the pre-partition arrays --
-    // nothing today holds such a reference, but a later edit must not add one without
-    // moving it below this block.
-    //
-    // Guard: `challengeOut && typeof challengeOut === 'object'` below. A MALFORMED
-    // replayed checkpoint (checkpoints.challenge a non-object -- string/number/boolean)
-    // can no longer reach this belt at all: the pre-dispatch checkpoint-shape gate
-    // (checkpointShapeErrors + makeCheckpointShapeRejectEnvelope, above runWith's try
-    // block) already refuses any non-object phases.challenge before any phase is
-    // attempted, so runPhase('challenge') never hands this function a primitive on a
-    // replay. This guard is retained as DEFENSE-IN-DEPTH only, for a source the gate does
-    // not cover -- a fresh (non-replayed) challengeStage() call returning something other
-    // than an object, or a future caller of this belt outside runWith's replay path.
-    // Every challengeOut.PROPERTY *read* below already returns undefined on a primitive
-    // (JS property access, not assignment), and the `|| []` fallbacks downstream turn that
-    // into an empty, ok:true review. Property ASSIGNMENT on a primitive throws in strict
-    // mode (this file is an ES module), which the belt would otherwise introduce as the
-    // FIRST write ever made to challengeOut, turning a tolerated malformed value into an
-    // uncaught throw -- so the belt still guards itself to a no-op when challengeOut is
-    // not an object, exactly as before.
-    //
-    // The belt may remove replayed findings while preserving their disclosure in the
-    // replay-filter gap and eliminated bucket. If it removes the whole delivered set, the
-    // pure renderer still produces the canonical zero-finding report; no second report
-    // decision is needed here.
+    // Replay skips the fresh filter stage, so re-scan challenge findings on both paths.
+    // Exclude the confidence heuristic because later confidence adjustments can change its result.
+    // Scan each list in order so the dedup heuristic sees the same sequence on replay.
+    // Strip eliminated entries after combining them so no eliminated-only payload survives.
+    // Replace the challenge arrays in place so reporting, delivery, and persistence share them.
+    // Keep this guard for malformed fresh stage output; replay checkpoints are shape-gated.
     if (challengeOut && typeof challengeOut === 'object') {
       const findingsResult = beltPartitionList(challengeOut.findings);
       const unverifiedResult = beltPartitionList(challengeOut.unverified);
@@ -4189,26 +4047,7 @@ export async function runWith(ctx, rawArgs) {
       const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
       challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
 
-      // stats: final_count/skipped are the two numeric keys whose value IS the length
-      // of an array this belt just rewrote (challengeOut.findings / .unverified), so
-      // they are set BY ASSIGNMENT from those arrays' actual post-belt lengths -- never
-      // by subtracting this call's elimination count from whatever the replayed
-      // checkpoint claimed, which would only preserve (and on a stale/hand-edited
-      // checkpoint, compound) a pre-existing drift instead of correcting it. This makes
-      // the #192 principle ("a stale challengeOut.stats never claims more survivors
-      // than are actually in the arrays it sits next to") structural rather than
-      // arithmetic. NOT exhaustive, and not claimed to be: challenge_survived/
-      // challenge_contested/challenge_downgraded/unchallenged are untouched here --
-      // they are applyChallenges' PRE-belt per-outcome counts of what the challenge
-      // stage itself decided, and this belt's elimination is a LATER, separate cut over
-      // the same .findings/.unverified arrays, so after a belt elimination those
-      // buckets no longer sum to final_count. A reader of stats.challenge must treat
-      // them as pre-belt context, not a live survivor breakdown. reportInput and the
-      // envelope both read challengeOut.stats BY REFERENCE (this same object, further
-      // down in this function), so this mutation is visible to both for free.
-      // replay_belt_eliminated is this CALL's own total (not a cross-resume running
-      // total -- the gap line below is the resume-safe signal for that). Stamp zero so a reader never has to distinguish
-      // "zero eliminations" from "key absent".
+      // Counts that mirror rewritten arrays come from their actual post-scan lengths.
       if (challengeOut.stats && typeof challengeOut.stats === 'object') {
         const k1 = findingsResult.eliminated.length;
         const k2 = unverifiedResult.eliminated.length;
@@ -4221,21 +4060,20 @@ export async function runWith(ctx, rawArgs) {
         challengeOut.stats.replay_belt_eliminated = k1 + k2;
       }
 
-      // Disclosure -- idempotent BY DERIVATION, not by counting this call's own
-      // eliminations: counts replay_belt-marked entries actually sitting in
-      // .eliminated right now, newly appended this run PLUS any carried over from a
-      // PRIOR resume's belt run (persisted verbatim in the checkpoint). A
-      // resume-of-a-resume that eliminates nothing NEW still discloses the full
-      // loss this way, rather than the gap silently vanishing on the second resume.
-      // Pushed to runWith's own top-level `gaps` (below), never `challengeOut.gaps`
-      // (which rides into the persisted checkpoint and would double-count on the
-      // NEXT resume's re-derivation of this same count).
+      // Derive from the carried eliminated entries so resumes disclose the same loss.
+      // Keep this gap outside challengeOut because that object is persisted and re-scanned.
       const markedCount = challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
       if (markedCount > 0) {
         gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
       }
 
     }
+
+    gaps.push(...hostPathTextGaps(
+      challengeOut,
+      summaryOut.summary,
+      [A.repoRoot, A.pluginRoot, A.outputDir],
+    ));
 
     // Deterministic delivery selection: the challenge-survivors filtered by the user-chosen
     // delivery TIER (args.delivery.tier — 'all' by default, 'main_only' to withhold
@@ -4274,11 +4112,7 @@ export async function runWith(ctx, rawArgs) {
         challenge: challengeOut.stats,
         merge: compactMethodology(mergeOut.methodology),
       },
-      // discover()'s own fan-out list and degraded-dimensions list (issue #89) — feeds
-      // dimensionsSummaryTable inside renderReport. `dispatched` already excludes any
-      // agent scope-gated out via agentFlags (agentSpecs().filter(agentActive) runs
-      // before discover() builds its spec list), so a light-scope run's skipped agents
-      // are absent from `dispatched`, not merely present-but-empty.
+      // The report needs the actual dispatched and degraded dimensions to describe scope.
       dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [] },
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
@@ -4294,17 +4128,7 @@ export async function runWith(ctx, rawArgs) {
       gapCount: gaps.length,
     };
     const reviewBody = renderSummaryBody(reportInput);
-    // Phase 8's report is a PURE FUNCTION of the pipeline's own output (issue #36) — no
-    // agent, no prompt, no schema, no segmentation, no fallback. Four measured failure
-    // modes died with the dispatch: a title that was never twice the same (0 of 115
-    // persisted reports matched the documented format, 66 distinct first lines), a
-    // markdown document returned JSON-wrapped, fields the contract named rendered
-    // stochastically (evidence 9-13%), and headline counts the model computed wrong
-    // (2 of 6). The renderer's section list is pinned to references/report-format.md by
-    // a generated fence.
-    //
-    // Review Methodology, including the identity receipt, is rendered by renderReport as
-    // part of the report primary. Nothing after materialization appends to report.md.
+    // Render from current pipeline data so report structure and counts are deterministic.
     let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
     const reportGaps = reportOut.gaps || [];
     gaps.push(...reportGaps);
@@ -4335,9 +4159,7 @@ export async function runWith(ctx, rawArgs) {
       // The run's own id, echoed in persistReturn so the materializer can find this
       // run's task output file by content when no task id is in hand.
       nonce: A.nonce,
-      // Optional (issue #38, D3.4): with an assembleScriptPath the writer persists only
-      // the unique content and the executor derives the two projections on disk. Absent
-      // (bench, older callers) -> the legacy full by-value path, no gap.
+      // When an assembler is supplied, the writer saves unique content and derives projections.
       persist: A.persist,
       policy,
     });
@@ -4363,20 +4185,12 @@ export async function runWith(ctx, rawArgs) {
         degraded: discoverOut.degraded || [],
         validate: validateOut.stats,
         filter: filterOut.stats,
-        // Compact provenance echo (issue #24 PR2): names/counts only, never bulk content —
-        // no raw REVIEW.md text, no full config object. Two independent per-axis signals,
-        // each 'reviewMd'/'exclusionsText' | 'preParsed' | 'none'; see resolveReviewConfig's
-        // doc comment (args.js) for the full contract.
+        // Expose provenance labels and counts without returning review document contents.
         reviewConfigSource: resolvedReview.reviewConfigSource,
         exclusionsSource: resolvedReview.exclusionsSource,
         reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
-        // This echo describes THIS run's resolution, not necessarily the resolution that
-        // produced a replayed filter checkpoint; reviewMdEntryCount has the same property.
         reviewMdSubtrees,
-        // Compact scope-decision echo (issue #24 req 3, PR3): names/bools only, so adherence
-        // to the derived scope decision is verifiable post-hoc without re-deriving it from
-        // riskTable. scopeAnswer is null (never omitted) when the gate was not asked, mirroring
-        // how riskTable/reviewConfigSource echo "no signal" as an explicit value, not a hole.
+        // Echo the derived decision so a reader can verify scope without recomputing it.
         scope: {
           lightEligible: computeLightEligible(A.riskTable, A.changedLines),
           scopeAnswer: A.scopeAnswer !== undefined ? A.scopeAnswer : null,
@@ -4392,11 +4206,7 @@ export async function runWith(ctx, rawArgs) {
       // names+truncated when it would exceed the budget) so the skill can still resume.
       checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
       gaps,
-      // The RETURN persist channel's payload — the three primaries, verbatim, for Phase 8
-      // to materialize (absent on every other path). It rides LAST on purpose: it is the
-      // one field measured in tens of KB, and a reader that truncates gets the counts,
-      // paths and gaps before it rather than after. scripts/gauntlet/awaiting.py elides its
-      // `entries[].text` so the bulk never enters the orchestrator's context at all.
+      // Keep bulk persistence data last so a truncated return still includes status and gaps.
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
     };
   } catch (e) {

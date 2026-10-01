@@ -55,6 +55,62 @@ export function normalizeAbsoluteRoot(root) {
   return normalized;
 }
 
+const HOST_PATH_SEGMENT_SEPARATOR = '(?:/+|/\\./)+';
+const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
+const HOST_PATH_SINGLE_SEGMENT_LEFT_RE = /^[\s"'`()\[\]{}<=,;]$/;
+const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+function hostPathSpellings(root) {
+  const normalized = normalizeAbsoluteRoot(root);
+  if (normalized === null || normalized === '/') return [];
+  const spellings = [normalized];
+  if (normalized.startsWith('/private/')) spellings.push(normalized.slice('/private'.length));
+  else spellings.push(`/private${normalized}`);
+  return [...new Set(spellings)];
+}
+
+function hostPathPattern(root) {
+  const segments = root.slice(1).split('/');
+  const body = `/${segments.map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join(HOST_PATH_SEGMENT_SEPARATOR)}`;
+  return { segments, matcher: new RegExp(body, 'y') };
+}
+
+function hostPathRightBoundary(text, end) {
+  const next = text[end];
+  if (next === undefined || next === '/') return true;
+  if (!HOST_PATH_RIGHT_CONTINUATION_RE.test(next)) return true;
+  return next === '.' && (text[end + 1] === undefined || /\s/.test(text[end + 1]));
+}
+
+function hostPathLeftBoundary(text, start, segmentCount) {
+  if (segmentCount > 1 || start === 0) return true;
+  return HOST_PATH_SINGLE_SEGMENT_LEFT_RE.test(text[start - 1]);
+}
+
+export function mentionsHostRoot(text, roots) {
+  if (typeof text !== 'string' || !Array.isArray(roots)) return false;
+  const patterns = [];
+  for (const root of roots) {
+    for (const spelling of hostPathSpellings(root)) patterns.push(hostPathPattern(spelling));
+  }
+  for (let start = text.indexOf('/'); start !== -1; start = text.indexOf('/', start + 1)) {
+    for (const { segments, matcher } of patterns) {
+      if (!hostPathLeftBoundary(text, start, segments.length)) continue;
+      matcher.lastIndex = start;
+      const match = matcher.exec(text);
+      if (match && hostPathRightBoundary(text, matcher.lastIndex)) return true;
+    }
+  }
+  return false;
+}
+
+export function safeFindingLabel(value, roots, fallback = null) {
+  if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value) || mentionsHostRoot(value, roots)) {
+    return fallback;
+  }
+  return value;
+}
+
 export function pathUnderRoot(root, path) {
   const normalizedRoot = normalizeAbsoluteRoot(root);
   if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;

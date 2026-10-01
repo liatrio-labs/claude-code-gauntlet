@@ -161,6 +161,16 @@ test('normalizeFindingPaths: file and reference warnings share the missing-id fa
   }
 });
 
+test('normalizeFindingPaths warnings replace unsafe finding ids with a safe label', () => {
+  const out = normalizeFindingPaths([
+    finding({ id: '/repo/private-name', file: '/outside/a.js' }),
+  ], '/repo');
+  assert.deepEqual(out.warnings, [
+    '[<unsafe id>] Invalid file path: absolute file path is outside repoRoot - finding rejected',
+  ]);
+  assert.ok(!out.warnings[0].includes('/repo/private-name'));
+});
+
 for (const [key, expected] of [
   ['/repo/src/a.js:0', 'src/a.js:0'],
   ['/repo/src/a.js-extra:0', '/repo/src/a.js-extra:0'],
