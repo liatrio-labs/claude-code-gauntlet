@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v3.42.17 (2026-10-01)
+
+### Bug Fixes
+
+- Derived home wins, one sticky matcher per spelling, scheme-token boundary for file:
+  ([#448](https://github.com/liatrio-labs/claude-code-gauntlet/pull/448),
+  [`9c38e92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c38e92eb9cb3030f4a604109d2d5d78decd421e))
+
+- Keep the host-path scan linear on slash runs and pin the option-flag rules
+  ([#448](https://github.com/liatrio-labs/claude-code-gauntlet/pull/448),
+  [`9c38e92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c38e92eb9cb3030f4a604109d2d5d78decd421e))
+
+- Widen host-path-text detection to home, case and percent-encoded spellings
+  ([#448](https://github.com/liatrio-labs/claude-code-gauntlet/pull/448),
+  [`9c38e92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c38e92eb9cb3030f4a604109d2d5d78decd421e))
+
+- Widen host-path-text detection to home, case and percent-encoded spellings (#446)
+  ([#448](https://github.com/liatrio-labs/claude-code-gauntlet/pull/448),
+  [`9c38e92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c38e92eb9cb3030f4a604109d2d5d78decd421e))
+
+### Documentation
+
+- Describe the wider host-path-text trigger
+  ([#448](https://github.com/liatrio-labs/claude-code-gauntlet/pull/448),
+  [`9c38e92`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9c38e92eb9cb3030f4a604109d2d5d78decd421e))
+
+
 ## v3.42.16 (2026-10-01)
 
 ### Bug Fixes
