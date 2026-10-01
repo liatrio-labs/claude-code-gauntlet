@@ -44,11 +44,37 @@ const HOST_PATH_CASES = [
   { name: 'skips the filesystem root', text: '/', roots: ['/'], expected: false },
   { name: 'matches a bare root', text: '/home/u/repo', roots: ['/home/u/repo'], expected: true },
   { name: 'matches a root with a tail', text: '/home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
+  { name: 'rejects a URL host prefix before a multi-segment root', text: 'https://host/home/u/repo/a', roots: ['/home/u/repo'], expected: false },
+  { name: 'rejects a URL host prefix before a derived home', text: 'https://host/Users/lee/x', roots: ['/Users/lee/repo'], expected: false },
+  { name: 'rejects a fixture directory prefix before a multi-segment root', text: 'tests/fixtures/home/runner/x.json', roots: ['/home/runner/repo'], expected: false },
+  { name: 'rejects a relative dot prefix before a multi-segment root', text: './src/app/main.ts', roots: ['/src/app'], expected: false },
   { name: 'matches repeated and dot separators', text: '/home//u/./repo/a.js', roots: ['/home/u/repo'], expected: true },
   { name: 'matches a trailing slash', text: '/home/u/repo/', roots: ['/home/u/repo'], expected: true },
   { name: 'matches a file URL', text: 'file:///home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
   { name: 'matches an include flag path', text: '-I/home/u/repo/include', roots: ['/home/u/repo'], expected: true },
   { name: 'matches an scp-style path', text: 'user@host:/home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches an ASCII-case variant of a multi-segment root', text: '/USERS/LEE/REPO/a.js', roots: ['/Users/lee/repo'], expected: true },
+  { name: 'keeps a one-segment root case-sensitive', text: '/App/x', roots: ['/app'], expected: false },
+  { name: 'matches an encoded root letter in a file URL', text: 'file:///opt/team/%63lient/src/a.js', roots: ['/opt/team/client'], expected: true },
+  { name: 'matches a root fully spelled with ASCII escapes', text: '%2Fhome%2Fu%2Frepo%2Fx', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches an escaped slash before an unescaped high-byte escape', text: '%2Fhome%2Fu%2Frepo%2Fx%FF', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches a root containing an escaped space in text', text: '/opt/team/My%20Projects/repo/a', roots: ['/opt/team/My Projects/repo'], expected: true },
+  { name: 'matches a root when its following slash is escaped', text: '/opt/team/repo%2Fx', roots: ['/opt/team/repo'], expected: true },
+  { name: 'rejects an escaped space as a root continuation', text: '/home/u/repo%20x', roots: ['/home/u/repo'], expected: false },
+  { name: 'rejects an escaped quote as a root continuation', text: '/opt/repo%22x', roots: ['/opt/repo'], expected: false },
+  { name: 'leaves a high-byte escape encoded at the root boundary', text: '/opt/repo%FF', roots: ['/opt/repo'], expected: false },
+  { name: 'does not decode malformed escapes', text: '/opt/repo%2Gx', roots: ['/opt/repo\u0002x'], expected: false },
+  { name: 'does not decode a non-ASCII escape into a root character', text: '/opt/%FF/repo/a', roots: ['/opt/ÿ/repo'], expected: false },
+  { name: 'decodes escaped bytes only once', text: '%252Fhome%252Fu%252Frepo%252Fx', roots: ['/home/u/repo'], expected: false },
+  { name: 'derives a case-sensitive home prefix for a sibling checkout', text: '/Users/lee/other/a.js', roots: ['/Users/lee/repo'], expected: true },
+  { name: 'derives a case-sensitive Linux home prefix for a sibling checkout', text: '/home/u/other/a.js', roots: ['/home/u/repo'], expected: true },
+  { name: 'keeps a derived home prefix case-sensitive', text: 'GET /users/lee/repos', roots: ['/Users/lee/repo'], expected: false },
+  { name: 'does not case-fold an unrelated child of the derived home', text: '/users/lee/other/a.js', roots: ['/Users/lee/repo'], expected: false },
+  { name: 'keeps a Linux derived home prefix case-sensitive', text: '/HOME/u/other/a.js', roots: ['/home/u/repo'], expected: false },
+  { name: 'does not derive a home prefix from an unrelated user', text: '/Users/other/repo/a.js', roots: ['/Users/lee/repo'], expected: false },
+  { name: 'does not match paths outside known roots or their home', text: '/tmp/other/a.js', roots: ['/Users/lee/repo'], expected: false },
+  { name: 'rejects non-string text', text: null, roots: ['/repo'], expected: false },
+  { name: 'rejects non-array roots', text: '/repo/a', roots: '/repo', expected: false },
   { name: 'matches a short root after whitespace', text: 'WORKDIR /app', roots: ['/app'], expected: true },
   { name: 'matches a short root after a quote', text: 'fetch("/app/api")', roots: ['/app'], expected: true },
   ...[' ', '"', "'", '`', '(', ')', '[', ']', '{', '}', '\t', '\n', '<', '=', ',', ';'].map((prefix) => ({
@@ -56,6 +82,7 @@ const HOST_PATH_CASES = [
     text: `${prefix}/app`, roots: ['/app'], expected: true,
   })),
   { name: 'matches the macOS spelling for a private root', text: '/tmp/x/y', roots: ['/private/tmp/x'], expected: true },
+  { name: 'matches the macOS alias for a differently cased private prefix', text: '/tmp/repo/a', roots: ['/PRIVATE/tmp/repo'], expected: true },
   { name: 'matches the private spelling for a temp root', text: '/private/tmp/x/y', roots: ['/tmp/x'], expected: true },
   { name: 'matches a one-segment private alias', text: 'see /private/tmp', roots: ['/tmp'], expected: true },
   { name: 'matches consecutive dot separators', text: '/Users/././lee/repo', roots: ['/Users/lee/repo'], expected: true },
@@ -89,18 +116,22 @@ for (const { name, text, roots, expected } of HOST_PATH_CASES) {
   });
 }
 
-test('mentionsHostRoot handles long separators promptly on matches and misses', { timeout: 2000 }, () => {
+test('mentionsHostRoot scans long separator and percent runs promptly', { timeout: 2000 }, () => {
   // A process deadline catches synchronous regex backtracking that blocks test timers.
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { mentionsHostRoot } from ${JSON.stringify(new URL('../src/paths.js', import.meta.url).href)};
     const results = [64, 5000].flatMap((count) => [
       mentionsHostRoot('/abc' + '/'.repeat(count) + 'X', ['/abc/end']),
       mentionsHostRoot('/abc' + '/'.repeat(count) + 'end/a', ['/abc/end']),
+      mentionsHostRoot('/abc' + '%2F'.repeat(count) + 'X', ['/abc/end']),
+      mentionsHostRoot('/abc' + '%2F'.repeat(count) + 'end/a', ['/abc/end']),
+      mentionsHostRoot('/abc' + '%25'.repeat(count) + 'X', ['/abc/end']),
+      mentionsHostRoot('/abc' + '%25'.repeat(count) + 'end/a', ['/abc/end']),
     ]);
     console.log(JSON.stringify(results));
   `], { encoding: 'utf8', timeout: 1000 });
   assert.equal(result.status, 0, `separator matching must complete within one second: ${result.error || result.stderr}`);
-  assert.deepEqual(JSON.parse(result.stdout), [false, true, false, true]);
+  assert.deepEqual(JSON.parse(result.stdout), [false, true, false, true, false, false, false, true, false, true, false, false]);
 });
 
 for (const [value, expected] of [
@@ -114,11 +145,6 @@ for (const [value, expected] of [
 
 test('safeFindingLabel defaults to null for unsafe ids', () => {
   assert.equal(safeFindingLabel('x y'), null);
-});
-
-test('mentionsHostRoot rejects non-string text and non-array roots', () => {
-  assert.equal(mentionsHostRoot(null, ['/repo']), false);
-  assert.equal(mentionsHostRoot('/repo/a', '/repo'), false);
 });
 
 // --- pathUnderRoot matrix ----------------------------------------------------
