@@ -2750,12 +2750,6 @@ def post_github(data, valid_lines, line_texts, *, forge: Forge):
 # ---------------------------------------------------------------------------
 
 
-def gitlab_project_id(owner, repo):
-    """Return URL-encoded project path for use in GitLab API."""
-    path = f"{owner}/{repo}"
-    return path.replace("/", "%2F")
-
-
 def fetch_gitlab_shas(target: ReviewTarget, *, forge: GitLab):
     """Fetch latest MR version SHAs from GitLab."""
     ensure_available(forge)

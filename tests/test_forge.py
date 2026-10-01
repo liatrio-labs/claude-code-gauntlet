@@ -5,6 +5,7 @@ import sys
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import MappingProxyType
+from typing import Literal, TypedDict
 
 import pytest
 from _pytest.mark.structures import ParameterSet
@@ -415,6 +416,78 @@ HOST_CASES: list[ParameterSet] = [
     pytest.param(
         "https://github.com\n\n", 0, (None, None), id="github-pathless-newline"
     ),
+    pytest.param(
+        "git@evil.example:x@github.com/r",
+        0,
+        (None, "evil.example"),
+        id="github-at-in-path",
+    ),
+    pytest.param(
+        "evil.example:x@github.com/r",
+        0,
+        (None, "evil.example"),
+        id="github-at-in-userless-path",
+    ),
+    pytest.param(
+        "git@evil.example:x@github.com:o/r",
+        0,
+        (None, "evil.example"),
+        id="github-colon-in-path",
+    ),
+    pytest.param(
+        "evil.example:x@github.com:o/r",
+        0,
+        (None, "evil.example"),
+        id="github-colon-in-userless-path",
+    ),
+    pytest.param(
+        "git@evil.example:x@gitlab.com/r",
+        0,
+        (None, "evil.example"),
+        id="gitlab-at-in-path",
+    ),
+    pytest.param(
+        "evil.example:x@gitlab.com/r",
+        0,
+        (None, "evil.example"),
+        id="gitlab-at-in-userless-path",
+    ),
+    pytest.param(
+        "git@evil.example:x@gitlab.com:o/r",
+        0,
+        (None, "evil.example"),
+        id="gitlab-colon-in-path",
+    ),
+    pytest.param(
+        "evil.example:x@gitlab.com:o/r",
+        0,
+        (None, "evil.example"),
+        id="gitlab-colon-in-userless-path",
+    ),
+    pytest.param(
+        "git@github.com:own@er/repo",
+        0,
+        ("github", "github.com"),
+        id="github-at-in-owner",
+    ),
+    pytest.param(
+        "git@gitlab.com:own@er/repo",
+        0,
+        ("gitlab", "gitlab.com"),
+        id="gitlab-at-in-owner",
+    ),
+    pytest.param(
+        "https://[v1.github.com]/o/r.git", 0, (None, None), id="github-ipvfuture"
+    ),
+    pytest.param(
+        "https://[v1.gitlab.com]/o/r.git", 0, (None, None), id="gitlab-ipvfuture"
+    ),
+    pytest.param(
+        "git@[v1.github.com]:o/r.git", 0, (None, None), id="github-ipvfuture-scp"
+    ),
+    pytest.param(
+        "git@[v1.gitlab.com]:o/r.git", 0, (None, None), id="gitlab-ipvfuture-scp"
+    ),
 ]
 
 
@@ -647,6 +720,23 @@ def test_remote_classification(url, expected):
         pytest.param("https://host/owner", None, id="missing-repo"),
         pytest.param("https://host", None, id="pathless"),
         pytest.param("not-a-url", None, id="malformed"),
+        pytest.param("git@host:own@er/repo", ("own@er", "repo"), id="scp-at-in-owner"),
+        pytest.param("git@host:a@b/c.git", ("a@b", "c"), id="scp-at-in-owner-suffix"),
+        pytest.param(
+            "org-123@git.example.com:team@x/r.git", ("team@x", "r"), id="scp-at-in-team"
+        ),
+        pytest.param(
+            "git@github.com:own@er/repo",
+            ("own@er", "repo"),
+            id="public-scp-at-in-owner",
+        ),
+        pytest.param("@host:o/r", None, id="empty-user"),
+        pytest.param("git@:o/r", None, id="empty-host"),
+        pytest.param("user@host:o/r\nx", None, id="newline-in-path"),
+        pytest.param("\\\\srv@h:o/r", ("o", "r"), id="unc-lexical-slug"),
+        pytest.param("C:x@h:o/r", ("o", "r"), id="drive-lexical-slug"),
+        pytest.param("git@h:o/r://x", ("o", "r://x"), id="scheme-token-in-path"),
+        pytest.param("user@host:o/r\n", ("o", "r"), id="terminal-newline"),
     ],
 )
 def test_remote_slug(url, expected):
@@ -670,7 +760,7 @@ def test_remote_record_keeps_original_authority_and_lexical_path():
     [
         (
             "fixture:token@github.com:owner/repo.git",
-            "github.com",
+            "fixture",
             forge.RepoSlug("owner", "repo"),
         ),
         (
@@ -770,6 +860,7 @@ def test_parse_pr_url_unparseable(url):
 @pytest.mark.parametrize(
     "owner, repo, expected",
     [
+        ("myorg", "myrepo", "myorg%2Fmyrepo"),
         ("group/sub", "repo", "group%2Fsub%2Frepo"),
         ("group%2Fsub", "a b%repo", "group%2Fsub%2Fa b%repo"),
     ],
@@ -1059,78 +1150,141 @@ def test_non_utf8_read_child(adapter, monkeypatch):
     assert calls[0][1] == {"cwd": None, "timeout": 30, "errors": "replace"}
 
 
-@pytest.mark.parametrize(
-    "caller", ["poster", "detector", "helper-poster", "helper-detector"]
-)
-@pytest.mark.parametrize(
-    "outcome", ["missing-git", "nonutf8-unusable", "nonutf8-slug", "timeout", "nonzero"]
-)
-def test_origin_policy(caller, outcome, monkeypatch):
-    real_run = proc.run
-    calls = []
+class OriginKwargs(TypedDict, total=False):
+    timeout: float | None
+    errors: Literal["strict", "replace"]
 
-    def run(command, **kwargs):
-        calls.append((command, kwargs))
-        if outcome == "missing-git":
-            raise FileNotFoundError("missing git")
-        if outcome == "timeout":
-            raise proc.TimeoutExpired(command, kwargs["timeout"])
-        if outcome.startswith("nonutf8"):
-            child = (
-                r'import sys; sys.stdout.buffer.write(b"https://github.com/o/r\xff.git\n")'
-                if outcome == "nonutf8-slug"
-                else r'import sys; sys.stdout.buffer.write(b"\xff\xfe not a remote")'
-            )
-            return real_run([sys.executable, "-c", child], **kwargs)
-        return proc.CompletedProcess(
-            command, 1, "https://github.com/o/r.git", "rejected"
+
+@pytest.mark.parametrize(
+    "kwargs, outcome, expected, call_kwargs",
+    [
+        pytest.param(
+            {},
+            FileNotFoundError("missing git"),
+            FileNotFoundError,
+            {"cwd": None, "timeout": None, "errors": "strict"},
+            id="missing-git-strict",
+        ),
+        pytest.param(
+            {"timeout": 10, "errors": "replace"},
+            FileNotFoundError("missing git"),
+            FileNotFoundError,
+            {"cwd": None, "timeout": 10, "errors": "replace"},
+            id="missing-git-replace",
+        ),
+        pytest.param(
+            {},
+            UnicodeDecodeError(
+                "utf-8", b"\xff\xfe not a remote", 0, 1, "invalid start byte"
+            ),
+            UnicodeDecodeError,
+            {"cwd": None, "timeout": None, "errors": "strict"},
+            id="nonutf8-unusable-strict",
+        ),
+        pytest.param(
+            {},
+            UnicodeDecodeError(
+                "utf-8", b"https://github.com/o/r\xff.git", 22, 23, "invalid start byte"
+            ),
+            UnicodeDecodeError,
+            {"cwd": None, "timeout": None, "errors": "strict"},
+            id="nonutf8-slug-strict",
+        ),
+        pytest.param(
+            {"timeout": 10, "errors": "replace"},
+            ("\ufffd\ufffd not a remote", "", 0),
+            None,
+            {"cwd": None, "timeout": 10, "errors": "replace"},
+            id="nonutf8-unusable-replace",
+        ),
+        pytest.param(
+            {"timeout": 10, "errors": "replace"},
+            ("https://github.com/o/r\ufffd.git\n", "", 0),
+            forge.RepoSlug("o", "r\ufffd"),
+            {"cwd": None, "timeout": 10, "errors": "replace"},
+            id="nonutf8-slug-replace",
+        ),
+        pytest.param(
+            {},
+            proc.TimeoutExpired(["git", "remote", "get-url", "origin"], 10),
+            proc.TimeoutExpired,
+            {"cwd": None, "timeout": None, "errors": "strict"},
+            id="timeout-strict",
+        ),
+        pytest.param(
+            {"timeout": 10, "errors": "replace"},
+            proc.TimeoutExpired(["git", "remote", "get-url", "origin"], 10),
+            proc.TimeoutExpired,
+            {"cwd": None, "timeout": 10, "errors": "replace"},
+            id="timeout-replace",
+        ),
+        pytest.param(
+            {},
+            ("https://github.com/o/r.git", "rejected", 1),
+            None,
+            {"cwd": None, "timeout": None, "errors": "strict"},
+            id="nonzero-strict",
+        ),
+        pytest.param(
+            {"timeout": 10, "errors": "replace"},
+            ("https://github.com/o/r.git", "rejected", 1),
+            None,
+            {"cwd": None, "timeout": 10, "errors": "replace"},
+            id="nonzero-replace",
+        ),
+    ],
+)
+def test_origin_policy(
+    kwargs: OriginKwargs,
+    outcome: Exception | tuple[str, str, int],
+    expected: type[Exception] | forge.RepoSlug | None,
+    call_kwargs: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, dict[str, object]]] = []
+
+    def run(command: list[str], **options: object) -> proc.CompletedProcess[str]:
+        calls.append((command, options))
+        if isinstance(outcome, Exception):
+            raise outcome
+        stdout, stderr, status = outcome
+        return proc.CompletedProcess(command, status, stdout, stderr)
+
+    monkeypatch.setattr(proc, "run", run)
+    if isinstance(expected, type):
+        with pytest.raises(expected) as exc:
+            forge.origin_remote(**kwargs)
+        assert exc.value is outcome
+    else:
+        assert forge.remote_slug(forge.origin_remote(**kwargs)) == expected
+    assert calls == [(["git", "remote", "get-url", "origin"], call_kwargs)]
+
+
+def test_origin_replacement_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_run = proc.run
+    calls: list[tuple[object, dict[str, object]]] = []
+    child = r'import sys; sys.stdout.buffer.write(b"https://github.com/o/r\xff.git\n")'
+
+    def run(
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        timeout: float | None = None,
+        errors: Literal["strict", "replace"] = "strict",
+    ) -> proc.CompletedProcess[str]:
+        calls.append((command, {"cwd": cwd, "timeout": timeout, "errors": errors}))
+        return real_run(
+            [sys.executable, "-c", child], cwd=cwd, timeout=timeout, errors=errors
         )
 
     monkeypatch.setattr(proc, "run", run)
-
-    def call():
-        if caller == "poster":
-            return post.detect_platform()
-        if caller == "detector":
-            return prior_review.remote_slug()
-        remote = (
-            forge.origin_remote(timeout=10, errors="replace")
-            if caller == "helper-detector"
-            else forge.origin_remote()
-        )
-        return forge.remote_slug(remote)
-
-    detector = caller.endswith("detector")
-    raises = (outcome in {"missing-git", "timeout"} and caller != "detector") or (
-        outcome.startswith("nonutf8") and not detector
-    )
-    if raises:
-        error = {
-            "missing-git": FileNotFoundError,
-            "timeout": proc.TimeoutExpired,
-        }.get(outcome, UnicodeDecodeError)
-        with pytest.raises(error):
-            call()
-    else:
-        value = call()
-        if caller == "detector":
-            assert value == (
-                ("o", "r\ufffd") if outcome == "nonutf8-slug" else (None, None)
-            )
-        elif caller == "poster":
-            assert value == (None, None)
-        else:
-            assert value == (
-                forge.RepoSlug("o", "r\ufffd") if outcome == "nonutf8-slug" else None
-            )
+    assert forge.remote_slug(
+        forge.origin_remote(timeout=10, errors="replace")
+    ) == forge.RepoSlug("o", "r\ufffd")
     assert calls == [
         (
             ["git", "remote", "get-url", "origin"],
-            {
-                "cwd": None,
-                "timeout": 10 if detector else None,
-                "errors": "replace" if detector else "strict",
-            },
+            {"cwd": None, "timeout": 10, "errors": "replace"},
         )
     ]
 
@@ -1295,6 +1449,45 @@ def test_submit_transport(adapter, builder, argv, monkeypatch, tmp_path):
     assert len(paths) == len(calls) == 1
     assert calls[0][1] == {"cwd": None, "timeout": None, "errors": "strict"}
     assert not paths[0].exists()
+
+
+@pytest.mark.parametrize(
+    "adapter, post_request",
+    [
+        pytest.param(
+            forge.GitHub,
+            forge.PostRequest("gitlab", "projects/1", "DELETE", (), {}),
+            id="github-refuses-gitlab",
+        ),
+        pytest.param(
+            forge.GitLab,
+            forge.PostRequest("github", "repos/o/r", "DELETE", (), {}),
+            id="gitlab-refuses-github",
+        ),
+    ],
+)
+def test_submit_refuses_foreign_platform(
+    adapter: type[forge.GitHub] | type[forge.GitLab],
+    post_request: forge.PostRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    def output(*args: object, **kwargs: object) -> tuple[str, str, int]:
+        calls.append((args, kwargs))
+        return "{}", "", 0
+
+    def mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        calls.append((args, kwargs))
+        raise AssertionError("Foreign request must be refused before temp creation")
+
+    monkeypatch.setattr(proc, "output", output)
+    monkeypatch.setattr("tempfile.mkstemp", mkstemp)
+    with pytest.raises(
+        ValueError, match=r"^Request platform does not match forge platform$"
+    ):
+        adapter().submit(post_request)
+    assert calls == []
 
 
 @pytest.mark.parametrize(
@@ -1555,6 +1748,17 @@ def test_factory_requires_configuration(forge_factory):
 
 def _forge_ownership_violations(source: str, *, consumer: bool) -> list[int]:
     tree = ast.parse(source)
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        )
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
     names: dict[str, str] = {}
 
     def literal(node: ast.expr) -> str | None:
@@ -1575,6 +1779,13 @@ def _forge_ownership_violations(source: str, *, consumer: bool) -> list[int]:
     violations: list[int] = []
     forge_aliases: set[str] = {"forge"}
     for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value in {"gh", "glab"}
+            and id(node) not in docstrings
+        ):
+            violations.append(node.lineno)
         if (
             isinstance(node, (ast.List, ast.Tuple))
             and node.elts
@@ -1640,6 +1851,23 @@ def test_executable_argv_ownership():
         pytest.param('argv = ("glab", "mr", "diff")', True, id="glab-builder"),
         pytest.param('tool = "gh"\nproc.output([tool, "api"])', True, id="named-tool"),
         pytest.param('proc.output(["g" + "h", "api"])', True, id="literal-concat"),
+        pytest.param(
+            'tool: str = "gh"\nproc.output([tool, "api"])', True, id="annotated-tool"
+        ),
+        pytest.param(
+            'tool = "gh" if p == "github" else "glab"\nproc.output([tool, "api", e])',
+            True,
+            id="conditional-tool",
+        ),
+        pytest.param(
+            'proc.output([{"github": "gh"}[p], "api", e])', True, id="dict-tool"
+        ),
+        pytest.param('tool = "gh"', True, id="bare-tool"),
+        pytest.param('"gh"', False, id="module-docstring"),
+        pytest.param('class Tool:\n    "glab"', False, id="class-docstring"),
+        pytest.param('def tool():\n    "gh"', False, id="function-docstring"),
+        pytest.param('async def tool():\n    "glab"', False, id="async-docstring"),
+        pytest.param('"documentation"\n"gh"', True, id="non-docstring-expression"),
         pytest.param("from gauntlet.forge import _submit", True, id="generic-import"),
         pytest.param(
             "from gauntlet import forge as f\nf._submit(request)",

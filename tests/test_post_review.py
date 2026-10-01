@@ -43,7 +43,6 @@ from gauntlet.delivery.post import (
     compose_review_body,
     consolidate_delivery,
     diff_path_spelling,
-    gitlab_project_id,
     is_line_valid,
     old_line_for,
     parse_diff_lines,
@@ -1410,21 +1409,6 @@ class TestResolveMarkerSha(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Review-marker round trip through the REAL poster (Issue #39 Requirement 6)
 # ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# gitlab_project_id
-# ---------------------------------------------------------------------------
-
-
-class TestGitlabProjectId(unittest.TestCase):
-    def test_simple_path(self):
-        result = gitlab_project_id("myorg", "myrepo")
-        self.assertEqual(result, "myorg%2Fmyrepo")
-
-    def test_nested_path(self):
-        result = gitlab_project_id("myorg/team", "myrepo")
-        self.assertEqual(result, "myorg%2Fteam%2Fmyrepo")
 
 
 # ---------------------------------------------------------------------------

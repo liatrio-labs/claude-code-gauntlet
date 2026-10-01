@@ -66,6 +66,8 @@ GIT_TIMEOUT_SECONDS = 10
 
 # The surfaces each platform exposes, in scan order. Used to seed "scanned" so the
 # key set is stable even when a fetch fails or returns nothing.
+# Both surfaces stay user-writable: a forged signal can narrow a rerun to
+# incremental scope; headless CODE_GAUNTLET_REVIEWED_POLICY=skip hides it from humans.
 PLATFORM_SOURCES: dict[Platform, tuple[str, ...]] = {
     "github": ("review",),
     "gitlab": ("note",),
@@ -107,7 +109,9 @@ def remote_slug() -> tuple[str | None, str | None]:
 def fetch_entries(
     owner: str, repo: str, number: int | str, *, forge: Forge
 ) -> tuple[list[ReviewEntryWire], list[str]]:
-    """Scan only the surface the poster writes; broader reads allow forged signals."""
+    """Scan poster-written surfaces. GitHub issue comments are excluded because
+    nothing writes the signal there and any reader can post a forged signal.
+    """
     fetched = forge.review_entries(ReviewTarget(owner, repo, number))
     collector = (
         collect_entries_github if forge.platform == "github" else collect_entries_gitlab
@@ -208,8 +212,8 @@ def finding_keys_for_sha(entries: Iterable[object] | None, sha: object) -> set[s
     The notes surface carries every MR participant's notes, so anyone with write access
     can suppress one finding on the next run by pasting that finding's key into a note.
     Accepted knowingly: this endpoint already carries the summary signal, where the same
-    forgery suppresses the WHOLE re-review (see :func:`fetch_entries` for why the
-    weaker GitHub surface was dropped rather than tolerated), so per-finding keys add no
+    forgery suppresses the WHOLE re-review (see :func:`fetch_entries` for why
+    GitHub issue comments are excluded), so per-finding keys add no
     capability an attacker does not already have here.
     """
     return set(prior_delivery_from_entries(entries, sha).finding_keys)

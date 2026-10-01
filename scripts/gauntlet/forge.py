@@ -8,7 +8,8 @@ import re
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, Protocol
+from ipaddress import IPv6Address
+from typing import ClassVar, Literal, Protocol
 from urllib.parse import urlsplit
 
 from gauntlet import proc
@@ -111,7 +112,16 @@ def _remote_hostname(authority: str) -> str | None:
     if host_port.startswith("["):
         close = host_port.find("]")
         suffix = host_port[close + 1 :]
-        if suffix and not re.fullmatch(r":[0-9]+", suffix):
+        if (
+            close <= 0
+            or (suffix and not re.fullmatch(r":[0-9]+", suffix))
+            or not re.fullmatch(r"[0-9A-Fa-f:.]{2,45}", hostname)
+            or ":" not in hostname
+        ):
+            return None
+        try:
+            IPv6Address(hostname)
+        except ValueError:
             return None
     elif (
         host_port.count(":") > 1
@@ -124,37 +134,37 @@ def _remote_hostname(authority: str) -> str | None:
 
 
 def parse_remote(url: str) -> Remote | None:
+    # Slug extraction is lexical even when the host syntax cannot be recognized.
+    match = _SCP_PATH_RE.match(url) or _URL_PATH_RE.match(url)
+    path = match.group(1) if match else ""
+    unknown = Remote("", None, path, None) if path else None
     if url.startswith(("/", "\\", "./", "../")):
-        return None
+        return unknown
     if "://" in url:
         scheme, tail = url.split("://", 1)
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme):
-            return None
+            return unknown
         authority = re.split(r"[/?#]", tail, maxsplit=1)[0]
-        match = _URL_PATH_RE.fullmatch(url)
-        path = match.group(1) if match else ""
         return Remote(authority, _remote_hostname(authority), path, scheme.lower())
     if re.match(r"^[A-Za-z]:", url):
-        return None
-    prefix = url.split("/", 1)[0]
+        return unknown
+    prefix = url.split(":", 1)[0]
     host_start = prefix.rfind("@") + 1
     if url[host_start:].startswith("["):
         close = url.find("]", host_start)
         colon = close + 1 if close >= 0 and url[close + 1 :].startswith(":") else -1
     else:
-        colon = url.find(":", host_start)
+        colon = url.find(":")
     slash = url.find("/")
     if colon < 0 or (slash >= 0 and colon > slash):
-        return None
+        return unknown
     authority = url[:colon]
-    match = _SCP_PATH_RE.fullmatch(url)
-    path = match.group(1) if match else url[colon + 1 :]
     return Remote(authority, _remote_hostname(authority), path, None)
 
 
 def remote_slug(remote: Remote | None) -> RepoSlug | None:
     # Host validation must not discard a detector's usable lexical slug.
-    if remote is None or (remote.scheme is None and "@" not in remote.authority):
+    if remote is None:
         return None
     owner, sep, repo = remote.path.strip("/").partition("/")
     return RepoSlug(owner, repo) if sep and owner and repo else None
@@ -165,7 +175,7 @@ def detect_platform(remote: Remote | None) -> PlatformDetection:
         return PlatformDetection(None, None)
     host = remote.hostname
     platform: Platform | None = None
-    if remote.scheme in {None, "http", "https", "ssh"}:
+    if ":" not in host and remote.scheme in {None, "http", "https", "ssh"}:
         if host == "github.com" or host.endswith(".github.com"):
             platform = "github"
         elif host == "gitlab.com" or host.endswith(".gitlab.com"):
@@ -216,6 +226,8 @@ def parse_pr_url(platform: Platform, url: str) -> ParsedPrUrl:
         target = "PR" if platform == "github" else "MR"
         raise ValueError(f"URL path does not match a {platform} {target} URL")
     owner, repo, number_text = match.groups()
+    if len(number_text) > 16:
+        raise ValueError("PR/MR number must be a positive safe integer")
     number = int(number_text)
     if number > 9007199254740991:
         raise ValueError("PR/MR number must be a positive safe integer")
@@ -287,8 +299,8 @@ def origin_remote(
     remote = parse_remote(stdout.strip())
     if remote is None:
         return None
-    # Git frames the URL with one newline. Legacy slug trimming must not validate
-    # whitespace or controls in the original authority.
+    # Extract the slug from the stripped URL to preserve its bytes. For the host,
+    # remove only Git's trailing newline so stray whitespace or controls make it unknown.
     original = parse_remote(stdout.removesuffix("\n").removesuffix("\r"))
     return replace(
         remote,
@@ -335,10 +347,7 @@ def _review_entries(command: Sequence[str], label: str) -> JsonFetch:
     return JsonFetch(items, None)
 
 
-def _submit(request: PostRequest) -> PostResult:
-    tool, header_flag = (
-        ("gh", "-H") if request.platform == "github" else ("glab", "--header")
-    )
+def _submit(tool: str, header_flag: str, request: PostRequest) -> PostResult:
     command = [tool, "api", "--method", request.method]
     for header in request.headers:
         command.extend([header_flag, header])
@@ -376,6 +385,8 @@ def _submit(request: PostRequest) -> PostResult:
 
 class GitHub:
     platform: Platform = "github"
+    _tool: ClassVar[str] = "gh"
+    _header_flag: ClassVar[str] = "-H"
 
     def ensure_available(self) -> None:
         _ensure_available("gh")
@@ -404,19 +415,27 @@ class GitHub:
         )
 
     def submit(self, request: PostRequest) -> PostResult:
-        return _submit(request)
+        if request.platform != self.platform:
+            raise ValueError("Request platform does not match forge platform")
+        return _submit(self._tool, self._header_flag, request)
 
 
 class GitLab:
     platform: Platform = "gitlab"
+    _tool: ClassVar[str] = "glab"
+    _header_flag: ClassVar[str] = "--header"
 
     def ensure_available(self) -> None:
         _ensure_available("glab")
 
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:
+        # Plain glab mr diff, never --raw or --repo: tests/fixtures/glab_diff/
+        # records both output shapes, which parse_diff_text distinguishes per file.
         return proc.output(["glab", "mr", "diff", str(target.number)])
 
     def review_entries(self, target: ReviewTarget) -> JsonFetch:
+        # GitLab pages notes at 20 and the summary is posted first, so an
+        # unpaginated read loses the summary past 20 notes.
         project = gitlab_project_id(target.owner, target.repo)
         return _review_entries(
             [
@@ -452,7 +471,9 @@ class GitLab:
         return JsonFetch(payload, None)
 
     def submit(self, request: PostRequest) -> PostResult:
-        return _submit(request)
+        if request.platform != self.platform:
+            raise ValueError("Request platform does not match forge platform")
+        return _submit(self._tool, self._header_flag, request)
 
 
 def make_forge(platform: Platform) -> GitHub | GitLab:

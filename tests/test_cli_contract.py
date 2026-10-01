@@ -240,6 +240,12 @@ def test_identity_unicode_receipt(tmp_path, invoke):
             id="wrong-platform",
         ),
         pytest.param(
+            "https://github.com/a/r/pull/" + "9" * 5000,
+            FULL,
+            "PR/MR number must be a positive safe integer",
+            id="overlong-number",
+        ),
+        pytest.param(
             "https://github.com/a/r/pull/3",
             "a" * 39,
             "sha must be a 40-character lowercase hex commit id",
