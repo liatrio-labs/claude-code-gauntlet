@@ -732,6 +732,22 @@ test('runWith discloses host paths in stored text once without rewriting it', as
   assert.deepEqual(resumed.persisted.checkpoints.phases.challenge.eliminated, eliminated);
 });
 
+test('runWith discloses a sibling-checkout path with the established gap wording', async () => {
+  const finding = makeFinding('SIBLING_TEXT', {
+    description: 'The related checkout is /Users/lee/other/a.js.',
+  });
+  const args = validArgs({ repoRoot: '/Users/lee/repo', checkpoints: { challenge: {
+    findings: [finding], unverified: [], eliminated: [], gaps: [], stats: {},
+  } } });
+  let persisted;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), [
+    'host-path-text: finding SIBLING_TEXT mentions a host path in description - text left unchanged',
+  ]);
+  assert.equal(persisted.checkpoints.phases.challenge.findings[0].description, finding.description);
+});
+
 test('runWith emits no host-path-text gap for clean text', async () => {
   const args = validArgs();
   const out = await runWith(makeCtx(args), args);

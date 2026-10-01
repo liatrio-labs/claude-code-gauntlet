@@ -9,7 +9,7 @@ import {
   PATH_ESCAPE_TOKEN,
   runWith,
 } from '../src/stages.js';
-import { mentionsHostRoot, normalizeAbsoluteRoot, pathUnderRoot, repoRelativeFindingPath, safeFindingLabel } from '../src/paths.js';
+import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, repoRelativeFindingPath, safeFindingLabel } from '../src/paths.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
 const ROOT = '/repo/.code-gauntlet';
@@ -36,19 +36,62 @@ const HOST_PATH_CASES = [
   ].map(([text, expected]) => ({
     name: `one-segment left boundary ${JSON.stringify(text)}`, text, roots: ['/app'], expected,
   })),
-  { name: 'does not match a longer segment after a root', text: '/home/u/repo2/x', roots: ['/home/u/repo'], expected: false },
+  { name: 'does not match a longer segment after a root', text: '/opt/team/repo2/x', roots: ['/opt/team/repo'], expected: false },
   { name: 'does not match a hyphenated sibling', text: '/repo-other/x', roots: ['/repo'], expected: false },
   { name: 'does not match a longer repository name', text: '/repository/y', roots: ['/repo'], expected: false },
   { name: 'does not match a nested one-segment root', text: 'src/a.js', roots: ['/a'], expected: false },
-  { name: 'does not match a dotted sibling path', text: '/home/u/repo.bak/x', roots: ['/home/u/repo'], expected: false },
+  { name: 'does not match a dotted sibling path', text: '/opt/team/repo.bak/x', roots: ['/opt/team/repo'], expected: false },
   { name: 'skips the filesystem root', text: '/', roots: ['/'], expected: false },
   { name: 'matches a bare root', text: '/home/u/repo', roots: ['/home/u/repo'], expected: true },
   { name: 'matches a root with a tail', text: '/home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
+  { name: 'rejects a URL host prefix before a multi-segment root', text: 'https://host/home/u/repo/a', roots: ['/home/u/repo'], expected: false },
+  { name: 'rejects a URL host prefix before a derived home', text: 'https://host/Users/lee/x', roots: ['/Users/lee/repo'], expected: false },
+  { name: 'rejects a fixture directory prefix before a derived home', text: 'tests/fixtures/home/runner/x.json', roots: ['/home/runner/repo'], expected: false },
+  { name: 'rejects a relative dot prefix before a multi-segment root', text: './src/app/main.ts', roots: ['/src/app'], expected: false },
   { name: 'matches repeated and dot separators', text: '/home//u/./repo/a.js', roots: ['/home/u/repo'], expected: true },
   { name: 'matches a trailing slash', text: '/home/u/repo/', roots: ['/home/u/repo'], expected: true },
   { name: 'matches a file URL', text: 'file:///home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
+  ...['x-file', 'a+file', '1file', 'my.file'].map((scheme) => ({
+    name: `rejects file suffix in scheme token ${scheme}`, text: `${scheme}:///home/u/repo/a`, roots: ['/home/u/repo'], expected: false,
+  })),
+  { name: 'rejects an escaped file scheme letter', text: 'f%69le:///opt/team/repo/a', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects an escaped boundary before a file scheme', text: '%28file:///opt/team/repo/a', roots: ['/opt/team/repo'], expected: false },
   { name: 'matches an include flag path', text: '-I/home/u/repo/include', roots: ['/home/u/repo'], expected: true },
+  { name: 'rejects an option flag inside a relative token', text: 'src-I/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects an option path without a dash', text: 'ab/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects a numeric option flag letter', text: '-1/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects an option flag after a slash', text: 'a/-I/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects an escaped option flag dash', text: '%2DI/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects an escaped option flag letter', text: '-%49/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects an escaped boundary before an option flag', text: '%28-I/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
   { name: 'matches an scp-style path', text: 'user@host:/home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
+  { name: 'matches a case-insensitive variant of a multi-segment root', text: '/USERS/LEE/REPO/a.js', roots: ['/Users/lee/repo'], expected: true },
+  { name: 'keeps a one-segment root case-sensitive', text: '/App/x', roots: ['/app'], expected: false },
+  { name: 'keeps a one-segment private alias case-sensitive', text: '/App/x', roots: ['/private/app'], expected: false },
+  { name: 'matches an encoded root letter in a file URL', text: 'file:///opt/team/%63lient/src/a.js', roots: ['/opt/team/client'], expected: true },
+  { name: 'matches a root fully spelled with ASCII escapes', text: '%2Fhome%2Fu%2Frepo%2Fx', roots: ['/home/u/repo'], expected: true },
+  { name: 'leaves a high-byte root character encoded after escaped slashes', text: '%2Fopt%2F%FF%2Frepo/a', roots: ['/opt/\u00ff/repo'], expected: false },
+  { name: 'matches a root containing an escaped space in text', text: '/opt/team/My%20Projects/repo/a', roots: ['/opt/team/My Projects/repo'], expected: true },
+  { name: 'matches a root when its following slash is escaped', text: '/opt/team/repo%2Fx', roots: ['/opt/team/repo'], expected: true },
+  { name: 'rejects an escaped space as a root continuation', text: '/opt/team/repo%20x', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects an escaped quote as a root continuation', text: '/opt/repo%22x', roots: ['/opt/repo'], expected: false },
+  { name: 'rejects an escaped dot as a root continuation', text: '%2Fopt%2Fteam%2Frepo%2E', roots: ['/opt/team/repo'], expected: false },
+  { name: 'does not decode malformed escapes', text: '/opt/repo%2Gx', roots: ['/opt/repo\u0002x'], expected: false },
+  { name: 'decodes escaped bytes only once', text: '%252Fhome%252Fu%252Frepo%252Fx', roots: ['/home/u/repo'], expected: false },
+  { name: 'derives a case-sensitive home prefix for a sibling checkout', text: '/Users/lee/other/a.js', roots: ['/Users/lee/repo'], expected: true },
+  { name: 'derives a case-sensitive Linux home prefix for a sibling checkout', text: '/home/u/other/a.js', roots: ['/home/u/repo'], expected: true },
+  ...['/Users/lee/repo-old/a.js', '/Users/lee/.claude.json'].map((text) => ({
+    name: `derived home includes ${text}`, text, roots: ['/Users/lee/repo'], expected: true,
+  })),
+  { name: 'derived home includes an escaped repository continuation', text: '/home/u/repo%20x', roots: ['/home/u/repo'], expected: true },
+  { name: 'derives nothing but homes', text: '/opt/x', roots: ['/opt/repo'], expected: false },
+  { name: 'does not add a private alias to a derived home', text: '/private/Users/lee/other/a.js', roots: ['/Users/lee/repo'], expected: false },
+  { name: 'strips private before deriving a home', text: '/home/u/other/a', roots: ['/private/home/u/repo'], expected: true },
+  { name: 'keeps a derived home prefix case-sensitive', text: 'GET /users/lee/repos', roots: ['/Users/lee/repo'], expected: false },
+  { name: 'does not derive a home prefix from an unrelated user', text: '/Users/other/repo/a.js', roots: ['/Users/lee/repo'], expected: false },
+  { name: 'does not match paths outside known roots or their home', text: '/tmp/other/a.js', roots: ['/Users/lee/repo'], expected: false },
+  { name: 'rejects non-string text', text: null, roots: ['/repo'], expected: false },
+  { name: 'rejects non-array roots', text: '/repo/a', roots: null, expected: false },
   { name: 'matches a short root after whitespace', text: 'WORKDIR /app', roots: ['/app'], expected: true },
   { name: 'matches a short root after a quote', text: 'fetch("/app/api")', roots: ['/app'], expected: true },
   ...[' ', '"', "'", '`', '(', ')', '[', ']', '{', '}', '\t', '\n', '<', '=', ',', ';'].map((prefix) => ({
@@ -56,6 +99,7 @@ const HOST_PATH_CASES = [
     text: `${prefix}/app`, roots: ['/app'], expected: true,
   })),
   { name: 'matches the macOS spelling for a private root', text: '/tmp/x/y', roots: ['/private/tmp/x'], expected: true },
+  { name: 'matches the macOS alias for a differently cased private prefix', text: '/tmp/repo/a', roots: ['/PRIVATE/tmp/repo'], expected: true },
   { name: 'matches the private spelling for a temp root', text: '/private/tmp/x/y', roots: ['/tmp/x'], expected: true },
   { name: 'matches a one-segment private alias', text: 'see /private/tmp', roots: ['/tmp'], expected: true },
   { name: 'matches consecutive dot separators', text: '/Users/././lee/repo', roots: ['/Users/lee/repo'], expected: true },
@@ -65,42 +109,47 @@ const HOST_PATH_CASES = [
   ...['.)', '."', '. Next'].map((tail) => ({
     name: `matches sentence ending ${tail}`, text: `(see /home/u/repo${tail}`, roots: ['/home/u/repo'], expected: true,
   })),
-  ...['.git', '~x', '+x', '@x', '%20x', '_x'].map((tail) => ({
-    name: `rejects root continuation ${tail}`, text: `/home/u/repo${tail}`, roots: ['/home/u/repo'], expected: false,
+  ...['.git', '~x', '+x', '@x', '_x'].map((tail) => ({
+    name: `rejects root continuation ${tail}`, text: `/opt/team/repo${tail}`, roots: ['/opt/team/repo'], expected: false,
   })),
   { name: 'matches a root with spaces', text: '/Users/Lee Personal/repo/src/a.js', roots: ['/Users/Lee Personal/repo'], expected: true },
   { name: 'does not treat a root dot as a wildcard', text: '/tmp/aXb', roots: ['/tmp/a.b'], expected: false },
   { name: 'matches a root followed by a comma', text: '/home/u/repo,', roots: ['/home/u/repo'], expected: true },
   { name: 'matches a root followed by a sentence period', text: '/home/u/repo.', roots: ['/home/u/repo'], expected: true },
   ...[
-    ['under /home/u/repo...', true],
-    ['/home/u/repo.bak', false],
-    ['/home/u/repo..bak', false],
-    ['/home/u/repo... Next', true],
+    ['under /opt/team/repo...', true],
+    ['/opt/team/repo.bak', false],
+    ['/opt/team/repo..bak', false],
+    ['/opt/team/repo... Next', true],
   ].map(([text, expected]) => ({
-    name: `dot-run right boundary ${JSON.stringify(text)}`, text, roots: ['/home/u/repo'], expected,
+    name: `dot-run right boundary ${JSON.stringify(text)}`, text, roots: ['/opt/team/repo'], expected,
   })),
   { name: 'ignores invalid and slash roots', text: '/repo/a', roots: [null, 'relative', '/repo/../bad', '/'], expected: false },
 ];
 
 for (const { name, text, roots, expected } of HOST_PATH_CASES) {
-  test(`mentionsHostRoot: ${name}`, () => {
-    assert.equal(mentionsHostRoot(text, roots), expected);
+  test(`mentionsPreparedHostRoot: ${name}`, () => {
+    assert.equal(mentionsPreparedHostRoot(text, prepareHostRootPatterns(roots)), expected);
   });
 }
 
-test('mentionsHostRoot handles long separators promptly on matches and misses', { timeout: 2000 }, () => {
+test('mentionsPreparedHostRoot scans long separator and percent runs promptly', { timeout: 2000 }, () => {
   // A process deadline catches synchronous regex backtracking that blocks test timers.
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
-    import { mentionsHostRoot } from ${JSON.stringify(new URL('../src/paths.js', import.meta.url).href)};
-    const results = [64, 5000].flatMap((count) => [
+    import { mentionsPreparedHostRoot, prepareHostRootPatterns } from ${JSON.stringify(new URL('../src/paths.js', import.meta.url).href)};
+    const mentionsHostRoot = (text, roots) => mentionsPreparedHostRoot(text, prepareHostRootPatterns(roots));
+    const results = [64, 200000].flatMap((count) => [
       mentionsHostRoot('/abc' + '/'.repeat(count) + 'X', ['/abc/end']),
       mentionsHostRoot('/abc' + '/'.repeat(count) + 'end/a', ['/abc/end']),
+      mentionsHostRoot('/abc' + '%2F'.repeat(count) + 'X', ['/abc/end']),
+      mentionsHostRoot('/abc' + '%2F'.repeat(count) + 'end/a', ['/abc/end']),
+      mentionsHostRoot('/abc' + '%25'.repeat(count) + 'X', ['/abc/end']),
+      mentionsHostRoot('/abc' + '%25'.repeat(count) + 'end/a', ['/abc/end']),
     ]);
     console.log(JSON.stringify(results));
   `], { encoding: 'utf8', timeout: 1000 });
   assert.equal(result.status, 0, `separator matching must complete within one second: ${result.error || result.stderr}`);
-  assert.deepEqual(JSON.parse(result.stdout), [false, true, false, true]);
+  assert.deepEqual(JSON.parse(result.stdout), [false, true, false, true, false, false, false, true, false, true, false, false]);
 });
 
 for (const [value, expected] of [
@@ -114,11 +163,6 @@ for (const [value, expected] of [
 
 test('safeFindingLabel defaults to null for unsafe ids', () => {
   assert.equal(safeFindingLabel('x y'), null);
-});
-
-test('mentionsHostRoot rejects non-string text and non-array roots', () => {
-  assert.equal(mentionsHostRoot(null, ['/repo']), false);
-  assert.equal(mentionsHostRoot('/repo/a', '/repo'), false);
 });
 
 // --- pathUnderRoot matrix ----------------------------------------------------

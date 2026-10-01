@@ -199,52 +199,108 @@ function normalizeAbsoluteRoot(root) {
   if (!isSafeAbsolutePath(normalized)) return null;
   return normalized;
 }
-const HOST_PATH_SEGMENT_SEPARATOR = '/(?:/|\\./)*';
 const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
 const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+const HOST_PATH_HEX_RE = /^[0-9A-Fa-f]{2}$/;
+const HOST_PATH_HOME_RE = /^\/(?:Users|home)\/([^/]+)\//;
 function hostPathSpellings(root) {
-  const normalized = normalizeAbsoluteRoot(root);
-  if (normalized === null || normalized === '/') return [];
-  const spellings = [normalized];
-  if (normalized.startsWith('/private/')) spellings.push(normalized.slice('/private'.length));
-  else spellings.push(`/private${normalized}`);
-  return [...new Set(spellings)];
+  const hasPrivatePrefix = root.slice(0, '/private/'.length).toLowerCase() === '/private/';
+  const alias = hasPrivatePrefix
+    ? root.slice('/private'.length)
+    : `/private${root}`;
+  return [root, alias];
 }
-function hostPathPattern(root) {
-  const segments = root.slice(1).split('/');
-  const body = `/${segments.map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join(HOST_PATH_SEGMENT_SEPARATOR)}`;
-  return { segments, matcher: new RegExp(body, 'y') };
+function hostPathRegexEscape(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-function hostPathRightBoundary(text, end) {
-  while (text[end] === '.') end += 1;
-  const next = text[end];
-  return next === undefined || !HOST_PATH_RIGHT_CONTINUATION_RE.test(next);
+function hostPathPattern(root, caseInsensitive) {
+  const source = root.slice(1).split('/').map(hostPathRegexEscape).join('/(?:/|\\./)*');
+  return new RegExp(`/${source}`, caseInsensitive ? 'iy' : 'y');
 }
-function hostPathLeftBoundary(text, start, segmentCount) {
-  if (segmentCount > 1 || start === 0) return true;
-  if (HOST_PATH_RIGHT_CONTINUATION_RE.test(text[start - 1])) return false;
-  if (text[start - 1] !== '/') return true;
-  let prefixEnd = start;
-  while (text[prefixEnd - 1] === '/') prefixEnd -= 1;
-  const prefixStart = prefixEnd - 5;
-  return prefixStart >= 0 && text.slice(prefixStart, prefixEnd).toLowerCase() === 'file:'
-    && (prefixStart === 0 || !/[A-Za-z]/.test(text[prefixStart - 1]));
-}
-function mentionsHostRoot(text, roots) {
-  if (typeof text !== 'string' || !Array.isArray(roots)) return false;
+function prepareHostRootPatterns(roots) {
   const patterns = [];
+  const derivedHomes = new Set();
+  if (!Array.isArray(roots)) return patterns;
   for (const root of roots) {
-    for (const spelling of hostPathSpellings(root)) patterns.push(hostPathPattern(spelling));
+    const normalized = normalizeAbsoluteRoot(root);
+    if (normalized === null || normalized === '/') continue;
+    for (const spelling of hostPathSpellings(normalized)) {
+      const caseInsensitive = spelling.slice(1).split('/').length > 1;
+      patterns.push(hostPathPattern(spelling, caseInsensitive));
+    }
+    const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
+    const home = unaliased.match(HOST_PATH_HOME_RE);
+    if (home) derivedHomes.add(home[0].slice(0, -1));
   }
-  for (let start = text.indexOf('/'); start !== -1; start = text.indexOf('/', start + 1)) {
-    for (const { segments, matcher } of patterns) {
+  for (const home of derivedHomes) patterns.push(hostPathPattern(home, false));
+  return patterns;
+}
+function decodeAsciiEscapes(text) {
+  const chars = [];
+  const escaped = [];
+  for (let index = 0; index < text.length;) {
+    const digits = text.slice(index + 1, index + 3);
+    const byte = text[index] === '%' && HOST_PATH_HEX_RE.test(digits) ? parseInt(digits, 16) : -1;
+    if (byte >= 0 && byte < 0x80) {
+      chars.push(String.fromCharCode(byte));
+      escaped.push(true);
+      index += 3;
+    } else {
+      chars.push(text[index]);
+      escaped.push(false);
+      index += 1;
+    }
+  }
+  return { text: chars.join(''), escaped };
+}
+function isPathContinuation(view, index) {
+  const char = view.text[index];
+  return char !== '/' && (view.escaped[index] === true || HOST_PATH_RIGHT_CONTINUATION_RE.test(char));
+}
+function hostPathFileSchemePrefix(view, slashRunEnd) {
+  let prefixEnd = slashRunEnd;
+  while (view.text[prefixEnd - 1] === '/') prefixEnd -= 1;
+  const prefixStart = prefixEnd - 5;
+  if (prefixStart < 0 || view.text.slice(prefixStart, prefixEnd).toLowerCase() !== 'file:') return false;
+  for (let index = prefixStart; index < prefixEnd; index += 1) {
+    if (view.escaped[index] === true) return false;
+  }
+  return prefixStart === 0
+    || (view.escaped[prefixStart - 1] !== true && !/[A-Za-z0-9+.-]/.test(view.text[prefixStart - 1]));
+}
+function hostPathOptionFlag(view, start) {
+  const letter = start - 1;
+  const dash = start - 2;
+  if (view.text[dash] !== '-' || !/[A-Za-z]/.test(view.text[letter])
+    || view.escaped[dash] === true || view.escaped[letter] === true) return false;
+  return dash === 0 || (view.escaped[dash - 1] !== true
+    && view.text[dash - 1] !== '/' && !HOST_PATH_RIGHT_CONTINUATION_RE.test(view.text[dash - 1]));
+}
+function hostPathLeftBoundary(view, start) {
+  const previous = view.text[start - 1];
+  if (isPathContinuation(view, start - 1)) return hostPathOptionFlag(view, start);
+  if (previous !== '/') return true;
+  return hostPathFileSchemePrefix(view, start);
+}
+function hostPathRightBoundary(view, end) {
+  while (view.text[end] === '.' && view.escaped[end] !== true) end += 1;
+  return !isPathContinuation(view, end);
+}
+function mentionsInView(view, patterns) {
+  for (let start = view.text.indexOf('/'); start !== -1; start = view.text.indexOf('/', start + 1)) {
+    for (const matcher of patterns) {
       matcher.lastIndex = start;
-      const match = matcher.exec(text);
-      if (match && hostPathLeftBoundary(text, start, segments.length)
-        && hostPathRightBoundary(text, matcher.lastIndex)) return true;
+      if (matcher.exec(view.text) && hostPathLeftBoundary(view, start)
+        && hostPathRightBoundary(view, matcher.lastIndex)) return true;
     }
   }
   return false;
+}
+function mentionsPreparedHostRoot(text, patterns) {
+  if (typeof text !== 'string') return false;
+  const raw = { text, escaped: [] };
+  if (mentionsInView(raw, patterns)) return true;
+  return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), patterns);
 }
 function safeFindingLabel(value, fallback = null) {
   if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value)) {
@@ -3822,11 +3878,11 @@ function defaultCtx() {
     pipelineVersion: null,
   };
 }
-function hostPathTextFields(value, roots) {
+function hostPathTextFields(value, patterns) {
   const fields = new Set();
   const visit = (value, field) => {
     if (typeof value === 'string') {
-      if (mentionsHostRoot(value, roots)) fields.add(field ?? 'other');
+      if (mentionsPreparedHostRoot(value, patterns)) fields.add(field ?? 'other');
       return;
     }
     if (value === null || typeof value !== 'object') return;
@@ -3845,10 +3901,11 @@ function hostPathTextFields(value, roots) {
 }
 function hostPathTextGaps(challengeOut, summaryOut, roots) {
   const gaps = [];
+  const patterns = prepareHostRootPatterns(roots);
   for (const bucket of ['findings', 'unverified', 'eliminated']) {
     const findings = Array.isArray(challengeOut?.[bucket]) ? challengeOut[bucket] : [];
     findings.forEach((finding, index) => {
-      const fields = hostPathTextFields(finding, roots);
+      const fields = hostPathTextFields(finding, patterns);
       if (fields.length === 0) return;
       const fallback = `#${index + 1} of ${bucket}`;
       const label = safeFindingLabel(finding && finding.id, fallback);
@@ -3856,7 +3913,7 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
     });
   }
   const summaryText = Object.fromEntries(Object.entries(summaryOut).filter(([key]) => key !== 'gaps'));
-  if (hostPathTextFields(summaryText, roots).length > 0) {
+  if (hostPathTextFields(summaryText, patterns).length > 0) {
     gaps.push('host-path-text: change summary mentions a host path - text left unchanged');
   }
   return gaps;
