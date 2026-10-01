@@ -18,7 +18,7 @@
 // No wall-clock, no import at runtime.
 import { DIMENSIONS, AGENTS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, FINDING_TEXT_FIELD_NAMES, conditionalSchemaActive } from './registry.js';
 import { merge, normalizeFindingPaths } from './mergeFindings.js';
-import { mentionsHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, safeFindingLabel } from './paths.js';
+import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, safeFindingLabel } from './paths.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
@@ -36,11 +36,11 @@ function defaultCtx() {
   };
 }
 
-function hostPathTextFields(value, roots, patterns) {
+function hostPathTextFields(value, patterns) {
   const fields = new Set();
   const visit = (value, field) => {
     if (typeof value === 'string') {
-      if (mentionsHostRoot(value, roots, patterns)) fields.add(field ?? 'other');
+      if (mentionsPreparedHostRoot(value, patterns)) fields.add(field ?? 'other');
       return;
     }
     if (value === null || typeof value !== 'object') return;
@@ -64,7 +64,7 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
   for (const bucket of ['findings', 'unverified', 'eliminated']) {
     const findings = Array.isArray(challengeOut?.[bucket]) ? challengeOut[bucket] : [];
     findings.forEach((finding, index) => {
-      const fields = hostPathTextFields(finding, roots, patterns);
+      const fields = hostPathTextFields(finding, patterns);
       if (fields.length === 0) return;
       const fallback = `#${index + 1} of ${bucket}`;
       const label = safeFindingLabel(finding && finding.id, fallback);
@@ -72,7 +72,7 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
     });
   }
   const summaryText = Object.fromEntries(Object.entries(summaryOut).filter(([key]) => key !== 'gaps'));
-  if (hostPathTextFields(summaryText, roots, patterns).length > 0) {
+  if (hostPathTextFields(summaryText, patterns).length > 0) {
     gaps.push('host-path-text: change summary mentions a host path - text left unchanged');
   }
   return gaps;

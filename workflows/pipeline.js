@@ -204,33 +204,22 @@ const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const HOST_PATH_HEX_RE = /^[0-9A-Fa-f]{2}$/;
 const HOST_PATH_HOME_RE = /^\/(?:Users|home)\/([^/]+)\//;
 function hostPathSpellings(root) {
-  const normalized = normalizeAbsoluteRoot(root);
-  if (normalized === null || normalized === '/') return [];
-  const hasPrivatePrefix = normalized.slice(0, '/private/'.length).toLowerCase() === '/private/';
+  const hasPrivatePrefix = root.slice(0, '/private/'.length).toLowerCase() === '/private/';
   const alias = hasPrivatePrefix
-    ? normalized.slice('/private'.length)
-    : `/private${normalized}`;
-  return [...new Set([normalized, alias])];
+    ? root.slice('/private'.length)
+    : `/private${root}`;
+  return [root, alias];
 }
-function hostPathPattern(root, caseInsensitive, derived = false, protectedChildren = []) {
-  const segments = root.slice(1).split('/');
-  const flags = `${caseInsensitive ? 'i' : ''}y`;
-  return {
-    segments: segments.map((segment) => new RegExp(segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags)),
-    derived,
-    protectedChildren: protectedChildren.map((segment) => new RegExp(segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iy')),
-  };
+function hostPathRegexEscape(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-function derivedHostHome(root) {
-  const normalized = root.startsWith('/private/') ? root.slice('/private'.length) : root;
-  const match = normalized.match(HOST_PATH_HOME_RE);
-  if (!match) return null;
-  const home = normalized.slice(0, match[0].length - 1);
-  return { home, child: normalized.slice(home.length + 1).split('/')[0] };
+function hostPathPattern(root, caseInsensitive) {
+  const source = root.slice(1).split('/').map(hostPathRegexEscape).join('/(?:/|\\./)*');
+  return new RegExp(`/${source}`, caseInsensitive ? 'iy' : 'y');
 }
 function prepareHostRootPatterns(roots) {
   const patterns = [];
-  const derivedHomes = [];
+  const derivedHomes = new Set();
   if (!Array.isArray(roots)) return patterns;
   for (const root of roots) {
     const normalized = normalizeAbsoluteRoot(root);
@@ -239,19 +228,11 @@ function prepareHostRootPatterns(roots) {
     for (const spelling of hostPathSpellings(normalized)) {
       patterns.push(hostPathPattern(spelling, caseInsensitive));
     }
-    const derived = derivedHostHome(normalized);
-    if (derived !== null) {
-      let entry = derivedHomes.find((candidate) => candidate.home === derived.home);
-      if (!entry) {
-        entry = { home: derived.home, children: [] };
-        derivedHomes.push(entry);
-      }
-      entry.children.push(derived.child);
-    }
+    const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
+    const home = unaliased.match(HOST_PATH_HOME_RE);
+    if (home) derivedHomes.add(home[0].slice(0, -1));
   }
-  for (const { home, children } of derivedHomes) {
-    patterns.push(hostPathPattern(home, false, true, [...new Set(children)]));
-  }
+  for (const home of derivedHomes) patterns.push(hostPathPattern(home, false));
   return patterns;
 }
 function decodeAsciiEscapes(text) {
@@ -272,12 +253,9 @@ function decodeAsciiEscapes(text) {
   }
   return { text: chars.join(''), escaped };
 }
-function isEscaped(view, index) {
-  return view.escaped[index] === true;
-}
 function isPathContinuation(view, index) {
   const char = view.text[index];
-  return char !== '/' && (isEscaped(view, index) || HOST_PATH_RIGHT_CONTINUATION_RE.test(char));
+  return char !== '/' && (view.escaped[index] === true || HOST_PATH_RIGHT_CONTINUATION_RE.test(char));
 }
 function hostPathFileSchemePrefix(view, slashRunEnd) {
   let prefixEnd = slashRunEnd;
@@ -285,17 +263,17 @@ function hostPathFileSchemePrefix(view, slashRunEnd) {
   const prefixStart = prefixEnd - 5;
   if (prefixStart < 0 || view.text.slice(prefixStart, prefixEnd).toLowerCase() !== 'file:') return false;
   for (let index = prefixStart; index < prefixEnd; index += 1) {
-    if (isEscaped(view, index)) return false;
+    if (view.escaped[index] === true) return false;
   }
   return prefixStart === 0
-    || (!isEscaped(view, prefixStart - 1) && !/[A-Za-z]/.test(view.text[prefixStart - 1]));
+    || (view.escaped[prefixStart - 1] !== true && !/[A-Za-z0-9+.-]/.test(view.text[prefixStart - 1]));
 }
 function hostPathOptionFlag(view, start) {
   const letter = start - 1;
   const dash = start - 2;
   if (dash < 0 || view.text[dash] !== '-' || !/[A-Za-z]/.test(view.text[letter])
-    || isEscaped(view, dash) || isEscaped(view, letter)) return false;
-  return dash === 0 || (!isEscaped(view, dash - 1)
+    || view.escaped[dash] === true || view.escaped[letter] === true) return false;
+  return dash === 0 || (view.escaped[dash - 1] !== true
     && view.text[dash - 1] !== '/' && !HOST_PATH_RIGHT_CONTINUATION_RE.test(view.text[dash - 1]));
 }
 function hostPathLeftBoundary(view, start) {
@@ -306,54 +284,21 @@ function hostPathLeftBoundary(view, start) {
   return hostPathFileSchemePrefix(view, start);
 }
 function hostPathRightBoundary(view, end) {
-  while (view.text[end] === '.' && !isEscaped(view, end)) end += 1;
+  while (view.text[end] === '.' && view.escaped[end] !== true) end += 1;
   return view.text[end] === undefined || !isPathContinuation(view, end);
-}
-function hostPathMatchEnd(view, start, pattern) {
-  let index = start + 1;
-  for (let segmentIndex = 0; segmentIndex < pattern.segments.length; segmentIndex += 1) {
-    const segment = pattern.segments[segmentIndex];
-    segment.lastIndex = index;
-    if (!segment.exec(view.text)) return -1;
-    index = segment.lastIndex;
-    if (segmentIndex === pattern.segments.length - 1) break;
-    index = hostPathNextSegment(view, index);
-    if (index === -1) return -1;
-  }
-  return index;
-}
-function hostPathNextSegment(view, index) {
-  if (view.text[index] !== '/') return -1;
-  index += 1;
-  while (view.text[index] === '/' || (view.text[index] === '.' && view.text[index + 1] === '/')) {
-    index += view.text[index] === '/' ? 1 : 2;
-  }
-  return index;
-}
-function hasProtectedHomeChildContinuation(view, end, pattern) {
-  if (!pattern.derived || pattern.protectedChildren.length === 0) return false;
-  const childStart = hostPathNextSegment(view, end);
-  if (childStart === -1) return false;
-  for (const child of pattern.protectedChildren) {
-    child.lastIndex = childStart;
-    if (child.exec(view.text) && isPathContinuation(view, child.lastIndex)) return true;
-  }
-  return false;
 }
 function mentionsInView(view, patterns) {
   for (let start = view.text.indexOf('/'); start !== -1; start = view.text.indexOf('/', start + 1)) {
-    if (view.text[start + 1] === '/' || !hostPathLeftBoundary(view, start)) continue;
-    for (const pattern of patterns) {
-      const end = hostPathMatchEnd(view, start, pattern);
-      if (end !== -1 && !hasProtectedHomeChildContinuation(view, end, pattern)
-        && hostPathRightBoundary(view, end)) return true;
+    if (!hostPathLeftBoundary(view, start)) continue;
+    for (const matcher of patterns) {
+      matcher.lastIndex = start;
+      if (matcher.exec(view.text) && hostPathRightBoundary(view, matcher.lastIndex)) return true;
     }
   }
   return false;
 }
-function mentionsHostRoot(text, roots, preparedPatterns = null) {
-  if (typeof text !== 'string' || !Array.isArray(roots)) return false;
-  const patterns = preparedPatterns || prepareHostRootPatterns(roots);
+function mentionsPreparedHostRoot(text, patterns) {
+  if (typeof text !== 'string') return false;
   const raw = { text, escaped: [] };
   if (mentionsInView(raw, patterns)) return true;
   return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), patterns);
@@ -3934,11 +3879,11 @@ function defaultCtx() {
     pipelineVersion: null,
   };
 }
-function hostPathTextFields(value, roots, patterns) {
+function hostPathTextFields(value, patterns) {
   const fields = new Set();
   const visit = (value, field) => {
     if (typeof value === 'string') {
-      if (mentionsHostRoot(value, roots, patterns)) fields.add(field ?? 'other');
+      if (mentionsPreparedHostRoot(value, patterns)) fields.add(field ?? 'other');
       return;
     }
     if (value === null || typeof value !== 'object') return;
@@ -3961,7 +3906,7 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
   for (const bucket of ['findings', 'unverified', 'eliminated']) {
     const findings = Array.isArray(challengeOut?.[bucket]) ? challengeOut[bucket] : [];
     findings.forEach((finding, index) => {
-      const fields = hostPathTextFields(finding, roots, patterns);
+      const fields = hostPathTextFields(finding, patterns);
       if (fields.length === 0) return;
       const fallback = `#${index + 1} of ${bucket}`;
       const label = safeFindingLabel(finding && finding.id, fallback);
@@ -3969,7 +3914,7 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
     });
   }
   const summaryText = Object.fromEntries(Object.entries(summaryOut).filter(([key]) => key !== 'gaps'));
-  if (hostPathTextFields(summaryText, roots, patterns).length > 0) {
+  if (hostPathTextFields(summaryText, patterns).length > 0) {
     gaps.push('host-path-text: change summary mentions a host path - text left unchanged');
   }
   return gaps;
