@@ -224,8 +224,8 @@ function prepareHostRootPatterns(roots) {
   for (const root of roots) {
     const normalized = normalizeAbsoluteRoot(root);
     if (normalized === null || normalized === '/') continue;
-    const caseInsensitive = normalized.slice(1).split('/').length > 1;
     for (const spelling of hostPathSpellings(normalized)) {
+      const caseInsensitive = spelling.slice(1).split('/').length > 1;
       patterns.push(hostPathPattern(spelling, caseInsensitive));
     }
     const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
@@ -271,13 +271,12 @@ function hostPathFileSchemePrefix(view, slashRunEnd) {
 function hostPathOptionFlag(view, start) {
   const letter = start - 1;
   const dash = start - 2;
-  if (dash < 0 || view.text[dash] !== '-' || !/[A-Za-z]/.test(view.text[letter])
+  if (view.text[dash] !== '-' || !/[A-Za-z]/.test(view.text[letter])
     || view.escaped[dash] === true || view.escaped[letter] === true) return false;
   return dash === 0 || (view.escaped[dash - 1] !== true
     && view.text[dash - 1] !== '/' && !HOST_PATH_RIGHT_CONTINUATION_RE.test(view.text[dash - 1]));
 }
 function hostPathLeftBoundary(view, start) {
-  if (start === 0) return true;
   const previous = view.text[start - 1];
   if (isPathContinuation(view, start - 1)) return hostPathOptionFlag(view, start);
   if (previous !== '/') return true;
@@ -285,14 +284,14 @@ function hostPathLeftBoundary(view, start) {
 }
 function hostPathRightBoundary(view, end) {
   while (view.text[end] === '.' && view.escaped[end] !== true) end += 1;
-  return view.text[end] === undefined || !isPathContinuation(view, end);
+  return !isPathContinuation(view, end);
 }
 function mentionsInView(view, patterns) {
   for (let start = view.text.indexOf('/'); start !== -1; start = view.text.indexOf('/', start + 1)) {
-    if (!hostPathLeftBoundary(view, start)) continue;
     for (const matcher of patterns) {
       matcher.lastIndex = start;
-      if (matcher.exec(view.text) && hostPathRightBoundary(view, matcher.lastIndex)) return true;
+      if (matcher.exec(view.text) && hostPathLeftBoundary(view, start)
+        && hostPathRightBoundary(view, matcher.lastIndex)) return true;
     }
   }
   return false;

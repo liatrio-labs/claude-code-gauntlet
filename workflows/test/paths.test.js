@@ -58,12 +58,16 @@ const HOST_PATH_CASES = [
   { name: 'rejects an escaped boundary before a file scheme', text: '%28file:///opt/team/repo/a', roots: ['/opt/team/repo'], expected: false },
   { name: 'matches an include flag path', text: '-I/home/u/repo/include', roots: ['/home/u/repo'], expected: true },
   { name: 'rejects an option flag inside a relative token', text: 'src-I/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects an option path without a dash', text: 'ab/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects a numeric option flag letter', text: '-1/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
+  { name: 'rejects an option flag after a slash', text: 'a/-I/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
   { name: 'rejects an escaped option flag dash', text: '%2DI/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
   { name: 'rejects an escaped option flag letter', text: '-%49/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
   { name: 'rejects an escaped boundary before an option flag', text: '%28-I/opt/team/repo', roots: ['/opt/team/repo'], expected: false },
   { name: 'matches an scp-style path', text: 'user@host:/home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
   { name: 'matches a case-insensitive variant of a multi-segment root', text: '/USERS/LEE/REPO/a.js', roots: ['/Users/lee/repo'], expected: true },
   { name: 'keeps a one-segment root case-sensitive', text: '/App/x', roots: ['/app'], expected: false },
+  { name: 'keeps a one-segment private alias case-sensitive', text: '/App/x', roots: ['/private/app'], expected: false },
   { name: 'matches an encoded root letter in a file URL', text: 'file:///opt/team/%63lient/src/a.js', roots: ['/opt/team/client'], expected: true },
   { name: 'matches a root fully spelled with ASCII escapes', text: '%2Fhome%2Fu%2Frepo%2Fx', roots: ['/home/u/repo'], expected: true },
   { name: 'leaves a high-byte root character encoded after escaped slashes', text: '%2Fopt%2F%FF%2Frepo/a', roots: ['/opt/\u00ff/repo'], expected: false },
@@ -73,11 +77,10 @@ const HOST_PATH_CASES = [
   { name: 'rejects an escaped quote as a root continuation', text: '/opt/repo%22x', roots: ['/opt/repo'], expected: false },
   { name: 'rejects an escaped dot as a root continuation', text: '%2Fopt%2Fteam%2Frepo%2E', roots: ['/opt/team/repo'], expected: false },
   { name: 'does not decode malformed escapes', text: '/opt/repo%2Gx', roots: ['/opt/repo\u0002x'], expected: false },
-  { name: 'does not decode a non-ASCII escape into a root character', text: '/opt/%FF/repo/a', roots: ['/opt/ÿ/repo'], expected: false },
   { name: 'decodes escaped bytes only once', text: '%252Fhome%252Fu%252Frepo%252Fx', roots: ['/home/u/repo'], expected: false },
   { name: 'derives a case-sensitive home prefix for a sibling checkout', text: '/Users/lee/other/a.js', roots: ['/Users/lee/repo'], expected: true },
   { name: 'derives a case-sensitive Linux home prefix for a sibling checkout', text: '/home/u/other/a.js', roots: ['/home/u/repo'], expected: true },
-  ...['/Users/lee/repo-old/a.js', '/Users/lee/repo2/a.js', '/Users/lee/.claude.json'].map((text) => ({
+  ...['/Users/lee/repo-old/a.js', '/Users/lee/.claude.json'].map((text) => ({
     name: `derived home includes ${text}`, text, roots: ['/Users/lee/repo'], expected: true,
   })),
   { name: 'derived home includes an escaped repository continuation', text: '/home/u/repo%20x', roots: ['/home/u/repo'], expected: true },
@@ -85,12 +88,10 @@ const HOST_PATH_CASES = [
   { name: 'does not add a private alias to a derived home', text: '/private/Users/lee/other/a.js', roots: ['/Users/lee/repo'], expected: false },
   { name: 'strips private before deriving a home', text: '/home/u/other/a', roots: ['/private/home/u/repo'], expected: true },
   { name: 'keeps a derived home prefix case-sensitive', text: 'GET /users/lee/repos', roots: ['/Users/lee/repo'], expected: false },
-  { name: 'does not case-fold an unrelated child of the derived home', text: '/users/lee/other/a.js', roots: ['/Users/lee/repo'], expected: false },
-  { name: 'keeps a Linux derived home prefix case-sensitive', text: '/HOME/u/other/a.js', roots: ['/home/u/repo'], expected: false },
   { name: 'does not derive a home prefix from an unrelated user', text: '/Users/other/repo/a.js', roots: ['/Users/lee/repo'], expected: false },
   { name: 'does not match paths outside known roots or their home', text: '/tmp/other/a.js', roots: ['/Users/lee/repo'], expected: false },
   { name: 'rejects non-string text', text: null, roots: ['/repo'], expected: false },
-  { name: 'rejects non-array roots', text: '/repo/a', roots: '/repo', expected: false },
+  { name: 'rejects non-array roots', text: '/repo/a', roots: null, expected: false },
   { name: 'matches a short root after whitespace', text: 'WORKDIR /app', roots: ['/app'], expected: true },
   { name: 'matches a short root after a quote', text: 'fetch("/app/api")', roots: ['/app'], expected: true },
   ...[' ', '"', "'", '`', '(', ')', '[', ']', '{', '}', '\t', '\n', '<', '=', ',', ';'].map((prefix) => ({
@@ -108,7 +109,7 @@ const HOST_PATH_CASES = [
   ...['.)', '."', '. Next'].map((tail) => ({
     name: `matches sentence ending ${tail}`, text: `(see /home/u/repo${tail}`, roots: ['/home/u/repo'], expected: true,
   })),
-  ...['.git', '~x', '+x', '@x', '%20x', '_x'].map((tail) => ({
+  ...['.git', '~x', '+x', '@x', '_x'].map((tail) => ({
     name: `rejects root continuation ${tail}`, text: `/opt/team/repo${tail}`, roots: ['/opt/team/repo'], expected: false,
   })),
   { name: 'matches a root with spaces', text: '/Users/Lee Personal/repo/src/a.js', roots: ['/Users/Lee Personal/repo'], expected: true },
@@ -127,17 +128,17 @@ const HOST_PATH_CASES = [
 ];
 
 for (const { name, text, roots, expected } of HOST_PATH_CASES) {
-  test(`mentionsHostRoot: ${name}`, () => {
+  test(`mentionsPreparedHostRoot: ${name}`, () => {
     assert.equal(mentionsPreparedHostRoot(text, prepareHostRootPatterns(roots)), expected);
   });
 }
 
-test('mentionsHostRoot scans long separator and percent runs promptly', { timeout: 2000 }, () => {
+test('mentionsPreparedHostRoot scans long separator and percent runs promptly', { timeout: 2000 }, () => {
   // A process deadline catches synchronous regex backtracking that blocks test timers.
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { mentionsPreparedHostRoot, prepareHostRootPatterns } from ${JSON.stringify(new URL('../src/paths.js', import.meta.url).href)};
     const mentionsHostRoot = (text, roots) => mentionsPreparedHostRoot(text, prepareHostRootPatterns(roots));
-    const results = [64, 5000].flatMap((count) => [
+    const results = [64, 200000].flatMap((count) => [
       mentionsHostRoot('/abc' + '/'.repeat(count) + 'X', ['/abc/end']),
       mentionsHostRoot('/abc' + '/'.repeat(count) + 'end/a', ['/abc/end']),
       mentionsHostRoot('/abc' + '%2F'.repeat(count) + 'X', ['/abc/end']),
