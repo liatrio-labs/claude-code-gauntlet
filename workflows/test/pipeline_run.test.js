@@ -763,6 +763,25 @@ for (const [name, extra, field] of [
   });
 }
 
+for (const [summary, expectedCount] of [
+  ['ok', 0],
+  ['path at /repo/q', 1],
+]) {
+  test(`runWith excludes summarize gaps from change-summary disclosure: ${summary}`, async () => {
+    const summaryOut = { summary, gaps: ['boom at /repo/q'] };
+    const args = validArgs({ checkpoints: { summarize: summaryOut } });
+    let persisted;
+    const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), Array(expectedCount).fill(
+      'host-path-text: change summary mentions a host path - text left unchanged',
+    ));
+    assert.ok(out.gaps.includes('boom at /repo/q'));
+    assert.ok(persisted.report.includes(summary));
+    assert.deepEqual(args.checkpoints.summarize, summaryOut);
+  });
+}
+
 for (const summaryOut of [
   { summary: ['/repo/private.txt', { nested: '/repo/another.txt' }] },
   { summary: 'clean summary', details: [{ '/repo/private.txt': 'clean value' }, '/plugin/private.txt'] },

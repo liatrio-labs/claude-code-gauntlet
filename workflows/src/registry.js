@@ -234,6 +234,7 @@ export const DIMENSIONS = [
 ];
 
 // Pipeline stamps belong here so disclosure names remain code-owned.
+// A stamped field missing from this set prints as `other` in a host-path-text gap, which is the safe fallback.
 export const PIPELINE_FINDING_FIELDS = new Set([
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',

@@ -201,7 +201,6 @@ function normalizeAbsoluteRoot(root) {
 }
 const HOST_PATH_SEGMENT_SEPARATOR = '/(?:/|\\./)*';
 const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
-const HOST_PATH_SINGLE_SEGMENT_LEFT_RE = /^[\s"'`()\[\]{}<=,;:]$/;
 const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 function hostPathSpellings(root) {
   const normalized = normalizeAbsoluteRoot(root);
@@ -217,17 +216,19 @@ function hostPathPattern(root) {
   return { segments, matcher: new RegExp(body, 'y') };
 }
 function hostPathRightBoundary(text, end) {
+  while (text[end] === '.') end += 1;
   const next = text[end];
-  if (next === undefined || next === '/') return true;
-  if (!HOST_PATH_RIGHT_CONTINUATION_RE.test(next)) return true;
-  return next === '.' && (text[end + 1] === undefined || !HOST_PATH_RIGHT_CONTINUATION_RE.test(text[end + 1]));
+  return next === undefined || !HOST_PATH_RIGHT_CONTINUATION_RE.test(next);
 }
 function hostPathLeftBoundary(text, start, segmentCount) {
   if (segmentCount > 1 || start === 0) return true;
-  if (HOST_PATH_SINGLE_SEGMENT_LEFT_RE.test(text[start - 1])) return true;
+  if (HOST_PATH_RIGHT_CONTINUATION_RE.test(text[start - 1])) return false;
+  if (text[start - 1] !== '/') return true;
   let prefixEnd = start;
   while (text[prefixEnd - 1] === '/') prefixEnd -= 1;
-  return text.slice(Math.max(0, prefixEnd - 5), prefixEnd).toLowerCase() === 'file:';
+  const prefixStart = prefixEnd - 5;
+  return prefixStart >= 0 && text.slice(prefixStart, prefixEnd).toLowerCase() === 'file:'
+    && (prefixStart === 0 || !/[A-Za-z]/.test(text[prefixStart - 1]));
 }
 function mentionsHostRoot(text, roots) {
   if (typeof text !== 'string' || !Array.isArray(roots)) return false;
@@ -3823,14 +3824,12 @@ function defaultCtx() {
 }
 function hostPathTextFields(value, roots) {
   const fields = new Set();
-  const seen = new Set();
   const visit = (value, field) => {
     if (typeof value === 'string') {
       if (mentionsHostRoot(value, roots)) fields.add(field ?? 'other');
       return;
     }
-    if (value === null || typeof value !== 'object' || seen.has(value)) return;
-    seen.add(value);
+    if (value === null || typeof value !== 'object') return;
     if (Array.isArray(value)) {
       for (const entry of value) visit(entry, field);
       return;
@@ -3856,7 +3855,8 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
       gaps.push(`host-path-text: finding ${label} mentions a host path in ${fields.join(', ')} - text left unchanged`);
     });
   }
-  if (hostPathTextFields(summaryOut, roots).length > 0) {
+  const summaryText = Object.fromEntries(Object.entries(summaryOut).filter(([key]) => key !== 'gaps'));
+  if (hostPathTextFields(summaryText, roots).length > 0) {
     gaps.push('host-path-text: change summary mentions a host path - text left unchanged');
   }
   return gaps;

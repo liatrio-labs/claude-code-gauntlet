@@ -38,14 +38,12 @@ function defaultCtx() {
 
 function hostPathTextFields(value, roots) {
   const fields = new Set();
-  const seen = new Set();
   const visit = (value, field) => {
     if (typeof value === 'string') {
       if (mentionsHostRoot(value, roots)) fields.add(field ?? 'other');
       return;
     }
-    if (value === null || typeof value !== 'object' || seen.has(value)) return;
-    seen.add(value);
+    if (value === null || typeof value !== 'object') return;
     if (Array.isArray(value)) {
       for (const entry of value) visit(entry, field);
       return;
@@ -72,7 +70,8 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
       gaps.push(`host-path-text: finding ${label} mentions a host path in ${fields.join(', ')} - text left unchanged`);
     });
   }
-  if (hostPathTextFields(summaryOut, roots).length > 0) {
+  const summaryText = Object.fromEntries(Object.entries(summaryOut).filter(([key]) => key !== 'gaps'));
+  if (hostPathTextFields(summaryText, roots).length > 0) {
     gaps.push('host-path-text: change summary mentions a host path - text left unchanged');
   }
   return gaps;
@@ -4113,7 +4112,8 @@ export async function runWith(ctx, rawArgs) {
         merge: compactMethodology(mergeOut.methodology),
       },
       // The report needs the actual dispatched and degraded dimensions to describe scope.
-      // dispatched holds only agents activated this run.
+      // dispatched lists the agents discovery recorded as activated, possibly from a replayed checkpoint;
+      // a scope-gated agent is absent, not present with empty results.
       dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [] },
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,

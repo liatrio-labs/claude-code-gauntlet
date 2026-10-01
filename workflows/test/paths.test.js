@@ -16,9 +16,26 @@ const ROOT = '/repo/.code-gauntlet';
 
 const HOST_PATH_CASES = [
   { name: 'does not match a nested short-root path', text: 'packages/web/src/index.js', roots: ['/src'], expected: false },
-  { name: 'does not match a package path before a short root', text: 'src/app/main.js', roots: ['/app'], expected: false },
-  { name: 'does not match a URL path before a short root', text: 'https://example.com/app/docs', roots: ['/app'], expected: false },
-  { name: 'does not match a GitHub URL path before a short root', text: 'https://github.com/acme/app/pull/1', roots: ['/app'], expected: false },
+  ...[
+    ['\u201c/app/src/a.js\u201d', true],
+    ['**/app/src/a.js**', true],
+    ['cat x >/app/out.log', true],
+    ['|/app/a.js|', true],
+    ['\u2014/app', true],
+    ['cwd:/app/file.js', true],
+    ['file:///app/a.js', true],
+    ['FILE:///app/a.js', true],
+    ['profile://app', false],
+    ['https://example.com/app/docs', false],
+    ['https://github.com/acme/app/pull/1', false],
+    ['src/app/main.js', false],
+    ['packages/web/app/x', false],
+    ['(file:///app/a.js)', true],
+    ['xFILE:///app/a.js', false],
+    ...['a', 'Z', '0', '.', '_', '~', '+', '%', '@', '-', '/'].map((prefix) => [`${prefix}/app`, false]),
+  ].map(([text, expected]) => ({
+    name: `one-segment left boundary ${JSON.stringify(text)}`, text, roots: ['/app'], expected,
+  })),
   { name: 'does not match a longer segment after a root', text: '/home/u/repo2/x', roots: ['/home/u/repo'], expected: false },
   { name: 'does not match a hyphenated sibling', text: '/repo-other/x', roots: ['/repo'], expected: false },
   { name: 'does not match a longer repository name', text: '/repository/y', roots: ['/repo'], expected: false },
@@ -42,7 +59,7 @@ const HOST_PATH_CASES = [
   { name: 'matches the private spelling for a temp root', text: '/private/tmp/x/y', roots: ['/tmp/x'], expected: true },
   { name: 'matches a one-segment private alias', text: 'see /private/tmp', roots: ['/tmp'], expected: true },
   { name: 'matches consecutive dot separators', text: '/Users/././lee/repo', roots: ['/Users/lee/repo'], expected: true },
-  ...['cwd:/app/file.js', 'user@host:/app/a.js', 'file:/app/a', 'file:///app/a.js'].map((text) => ({
+  ...['user@host:/app/a.js', 'file:/app/a'].map((text) => ({
     name: `matches one-segment colon or file URL ${text}`, text, roots: ['/app'], expected: true,
   })),
   ...['.)', '."', '. Next'].map((tail) => ({
@@ -55,7 +72,14 @@ const HOST_PATH_CASES = [
   { name: 'does not treat a root dot as a wildcard', text: '/tmp/aXb', roots: ['/tmp/a.b'], expected: false },
   { name: 'matches a root followed by a comma', text: '/home/u/repo,', roots: ['/home/u/repo'], expected: true },
   { name: 'matches a root followed by a sentence period', text: '/home/u/repo.', roots: ['/home/u/repo'], expected: true },
-  { name: 'does not match a root continued by punctuation inside a path token', text: '/home/u/repo.bak', roots: ['/home/u/repo'], expected: false },
+  ...[
+    ['under /home/u/repo...', true],
+    ['/home/u/repo.bak', false],
+    ['/home/u/repo..bak', false],
+    ['/home/u/repo... Next', true],
+  ].map(([text, expected]) => ({
+    name: `dot-run right boundary ${JSON.stringify(text)}`, text, roots: ['/home/u/repo'], expected,
+  })),
   { name: 'ignores invalid and slash roots', text: '/repo/a', roots: [null, 'relative', '/repo/../bad', '/'], expected: false },
 ];
 
