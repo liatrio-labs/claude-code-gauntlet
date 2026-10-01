@@ -2,10 +2,11 @@
 
 import ast
 import sys
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 import pytest
 from _pytest.mark.structures import ParameterSet
@@ -13,6 +14,93 @@ from gauntlet import forge, prior_review, proc
 from gauntlet.delivery import post
 
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall, install_forge_factory
+
+PUBLIC_HOST_CASES: list[ParameterSet] = [
+    pytest.param("https://{host}/o/r.git", True, "{host}", id="https"),
+    pytest.param("http://{host}/o/r", True, "{host}", id="http"),
+    pytest.param("ssh://git@{host}:2222/o/r", True, "{host}", id="ssh"),
+    pytest.param("alice@{host}:o/r.git", True, "{host}", id="scp-user"),
+    pytest.param("{host}:o/r.git", True, "{host}", id="userless-scp"),
+    pytest.param("https://{host}", True, "{host}", id="pathless-url"),
+    pytest.param("git@{host}:", True, "{host}", id="pathless-scp"),
+    pytest.param("https://sub.{host}/o/r", True, "sub.{host}", id="subdomain"),
+    pytest.param("https://evil{host}/o/r", False, "evil{host}", id="prefix"),
+    pytest.param("https://{host}.example/o/r", False, "{host}.example", id="suffix"),
+    pytest.param("ftp://{host}/o/r", False, "{host}", id="ftp"),
+    pytest.param("git://{host}/o/r", False, "{host}", id="git-scheme"),
+    pytest.param("git+ssh://git@{host}/o/r", False, "{host}", id="git-ssh"),
+    pytest.param("HTTPS://{host}/o/r", True, "{host}", id="uppercase-scheme"),
+    pytest.param(
+        "https://fixture-user:fixture-token@{host}/o/r",
+        True,
+        "{host}",
+        id="userinfo",
+    ),
+    pytest.param(
+        "https://fixture%40user@{host}/o/r", True, "{host}", id="percent-userinfo"
+    ),
+    pytest.param(
+        "https://fixture\\user;name@{host}/o/r",
+        True,
+        "{host}",
+        id="lexical-userinfo",
+    ),
+    pytest.param("https://fixture\tuser@{host}/o/r", False, None, id="tab-userinfo"),
+    pytest.param(
+        "https://fixture\nuser@{host}/o/r", False, None, id="newline-userinfo"
+    ),
+    pytest.param("https://fixture\x00user@{host}/o/r", False, None, id="c0-userinfo"),
+    pytest.param(
+        "https://fixture\uff0fuser@{host}/o/r", False, None, id="nfkc-userinfo"
+    ),
+    pytest.param(
+        "https://{host}@evil.example/o/r",
+        False,
+        "evil.example",
+        id="host-in-userinfo",
+    ),
+    pytest.param(
+        "git@{host}@evil.example:o/r", False, "evil.example", id="double-at-scp"
+    ),
+    pytest.param(
+        "https://fixture@{host}@evil.example/o/r",
+        False,
+        "evil.example",
+        id="double-at-url",
+    ),
+    pytest.param("https://{host}?query/o/r", True, "{host}", id="query-delimiter"),
+    pytest.param(
+        "https://{host}#fragment/o/r", True, "{host}", id="fragment-delimiter"
+    ),
+    pytest.param("https://{host}:1/o/r", True, "{host}", id="min-port"),
+    pytest.param("https://{host}:65535/o/r", True, "{host}", id="max-port"),
+    pytest.param("https://{host}:0/o/r", False, None, id="zero-port"),
+    pytest.param("https://{host}:65536/o/r", False, None, id="high-port"),
+    pytest.param("https://{host}:-1/o/r", False, None, id="negative-port"),
+    pytest.param("https://{host}:bad/o/r", False, None, id="bad-port"),
+    pytest.param("https://{host}:/o/r", False, None, id="empty-port"),
+    pytest.param("https://{host}./o/r", False, None, id="trailing-dot"),
+    pytest.param("https://.{host}/o/r", False, None, id="leading-dot"),
+    pytest.param("https://x..{host}/o/r", False, None, id="empty-label"),
+    pytest.param("https://x_y.{host}/o/r", False, None, id="underscore"),
+    pytest.param("https://-x.{host}/o/r", False, None, id="leading-hyphen"),
+    pytest.param("https://x-.{host}/o/r", False, None, id="trailing-hyphen"),
+    pytest.param("https://evil\\.{host}/o/r", False, None, id="backslash"),
+    pytest.param("https://evil .{host}/o/r", False, None, id="space"),
+    pytest.param("https://evil\t.{host}/o/r", False, None, id="tab"),
+    pytest.param("https://evil%23.{host}/o/r", False, None, id="percent-host"),
+    pytest.param("https://evil;.{host}/o/r", False, None, id="semicolon"),
+    pytest.param("https://evil\uff0f.{host}/o/r", False, None, id="nfkc-host"),
+    pytest.param(
+        "https://" + "x" * 64 + ".{host}/o/r", False, None, id="overlong-label"
+    ),
+    pytest.param(
+        "https://" + ("x" * 63 + ".") * 4 + "{host}/o/r",
+        False,
+        None,
+        id="overlong-host",
+    ),
+]
 
 HOST_CASES: list[ParameterSet] = [
     pytest.param(
@@ -202,211 +290,7 @@ HOST_CASES: list[ParameterSet] = [
     pytest.param("git@github.com:", 0, ("github", "github.com"), id="pathless-scp"),
     pytest.param("https://[::1/o/r", 0, (None, None), id="invalid-bracket"),
     pytest.param(
-        "https://evil.example\\.gitlab.com/o/r.git",
-        0,
-        (None, None),
-        id="gitlab-backslash",
-    ),
-    pytest.param(
-        "https://evil.example .gitlab.com/o/r", 0, (None, None), id="gitlab-space"
-    ),
-    pytest.param(
-        "https://evil.example%23.gitlab.com/o/r.git",
-        0,
-        (None, None),
-        id="gitlab-percent-escape",
-    ),
-    pytest.param(
-        "https://evil.example;.gitlab.com/o/r", 0, (None, None), id="gitlab-semicolon"
-    ),
-    pytest.param(
-        "https://evil.example\t.gitlab.com/o/r", 0, (None, None), id="gitlab-tab"
-    ),
-    pytest.param(
-        "https://.gitlab.com/o/r.git", 0, (None, None), id="gitlab-leading-dot"
-    ),
-    pytest.param(
-        "https://x..gitlab.com/o/r.git", 0, (None, None), id="gitlab-empty-label"
-    ),
-    pytest.param(
-        "https://gitlab.com./o/r.git", 0, (None, None), id="gitlab-trailing-dot"
-    ),
-    pytest.param(
-        "https://gitlab.com:bad/o/r.git", 0, (None, None), id="gitlab-bad-port"
-    ),
-    pytest.param(
-        "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.github.com/o/r",
-        0,
-        (None, None),
-        id="github-overlong-label",
-    ),
-    pytest.param(
-        "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.github.com/o/r",
-        0,
-        (None, None),
-        id="github-overlong-host",
-    ),
-    pytest.param(
-        "https://-x.github.com/o/r", 0, (None, None), id="github-leading-hyphen"
-    ),
-    pytest.param(
-        "https://x-.github.com/o/r", 0, (None, None), id="github-trailing-hyphen"
-    ),
-    pytest.param("https://x_y.github.com/o/r", 0, (None, None), id="github-underscore"),
-    pytest.param("https://github.com:/o/r", 0, (None, None), id="github-empty-port"),
-    pytest.param(
-        "https://github.com:-1/o/r", 0, (None, None), id="github-negative-port"
-    ),
-    pytest.param(
-        "https://github.com:65536/o/r", 0, (None, None), id="github-high-port"
-    ),
-    pytest.param("https://github.com:0/o/r", 0, (None, None), id="github-zero-port"),
-    pytest.param(
-        "https://github.com:65535/o/r",
-        0,
-        ("github", "github.com"),
-        id="github-max-port",
-    ),
-    pytest.param(
-        "https://evil\uff0f.github.com/o/r", 0, (None, None), id="github-nfkc-authority"
-    ),
-    pytest.param(
-        "https://github.com?query/o/r",
-        0,
-        ("github", "github.com"),
-        id="github-query-authority",
-    ),
-    pytest.param(
-        "https://github.com#fragment/o/r",
-        0,
-        ("github", "github.com"),
-        id="github-fragment-authority",
-    ),
-    pytest.param(
-        "github.com:o/r.git", 0, ("github", "github.com"), id="github-userless-scp"
-    ),
-    pytest.param(
-        "https://github.com", 0, ("github", "github.com"), id="github-pathless-https"
-    ),
-    pytest.param(
         "ssh://git@github.com", 0, ("github", "github.com"), id="github-pathless-ssh"
-    ),
-    pytest.param(
-        "git@github.com:", 0, ("github", "github.com"), id="github-pathless-scp"
-    ),
-    pytest.param(
-        "ftp://github.com/o/r", 0, (None, "github.com"), id="github-unsupported-scheme"
-    ),
-    pytest.param(
-        "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.gitlab.com/o/r",
-        0,
-        (None, None),
-        id="gitlab-overlong-label",
-    ),
-    pytest.param(
-        "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.gitlab.com/o/r",
-        0,
-        (None, None),
-        id="gitlab-overlong-host",
-    ),
-    pytest.param(
-        "https://-x.gitlab.com/o/r", 0, (None, None), id="gitlab-leading-hyphen"
-    ),
-    pytest.param(
-        "https://x-.gitlab.com/o/r", 0, (None, None), id="gitlab-trailing-hyphen"
-    ),
-    pytest.param("https://x_y.gitlab.com/o/r", 0, (None, None), id="gitlab-underscore"),
-    pytest.param("https://gitlab.com:/o/r", 0, (None, None), id="gitlab-empty-port"),
-    pytest.param(
-        "https://gitlab.com:-1/o/r", 0, (None, None), id="gitlab-negative-port"
-    ),
-    pytest.param(
-        "https://gitlab.com:65536/o/r", 0, (None, None), id="gitlab-high-port"
-    ),
-    pytest.param("https://gitlab.com:0/o/r", 0, (None, None), id="gitlab-zero-port"),
-    pytest.param(
-        "https://gitlab.com:65535/o/r",
-        0,
-        ("gitlab", "gitlab.com"),
-        id="gitlab-max-port",
-    ),
-    pytest.param(
-        "https://evil\uff0f.gitlab.com/o/r", 0, (None, None), id="gitlab-nfkc-authority"
-    ),
-    pytest.param(
-        "https://gitlab.com?query/o/r",
-        0,
-        ("gitlab", "gitlab.com"),
-        id="gitlab-query-authority",
-    ),
-    pytest.param(
-        "https://gitlab.com#fragment/o/r",
-        0,
-        ("gitlab", "gitlab.com"),
-        id="gitlab-fragment-authority",
-    ),
-    pytest.param(
-        "gitlab.com:o/r.git", 0, ("gitlab", "gitlab.com"), id="gitlab-userless-scp"
-    ),
-    pytest.param(
-        "https://gitlab.com", 0, ("gitlab", "gitlab.com"), id="gitlab-pathless-https"
-    ),
-    pytest.param(
-        "ssh://git@gitlab.com", 0, ("gitlab", "gitlab.com"), id="gitlab-pathless-ssh"
-    ),
-    pytest.param(
-        "git@gitlab.com:", 0, ("gitlab", "gitlab.com"), id="gitlab-pathless-scp"
-    ),
-    pytest.param(
-        "ftp://gitlab.com/o/r", 0, (None, "gitlab.com"), id="gitlab-unsupported-scheme"
-    ),
-    pytest.param(
-        "https://fixture%40user@github.com/o/r",
-        0,
-        ("github", "github.com"),
-        id="github-percent-userinfo",
-    ),
-    pytest.param(
-        "https://fixture\tuser@github.com/o/r",
-        0,
-        (None, None),
-        id="github-tab-userinfo",
-    ),
-    pytest.param(
-        "https://fixture\x00user@github.com/o/r",
-        0,
-        (None, None),
-        id="github-c0-userinfo",
-    ),
-    pytest.param(
-        "https://github.com:1/o/r", 0, ("github", "github.com"), id="github-min-port"
-    ),
-    pytest.param(
-        "git@github.com:o/r", 0, ("github", "github.com"), id="github-no-suffix"
-    ),
-    pytest.param(
-        "https://fixture%40user@gitlab.com/o/r",
-        0,
-        ("gitlab", "gitlab.com"),
-        id="gitlab-percent-userinfo",
-    ),
-    pytest.param(
-        "https://fixture\tuser@gitlab.com/o/r",
-        0,
-        (None, None),
-        id="gitlab-tab-userinfo",
-    ),
-    pytest.param(
-        "https://fixture\x00user@gitlab.com/o/r",
-        0,
-        (None, None),
-        id="gitlab-c0-userinfo",
-    ),
-    pytest.param(
-        "https://gitlab.com:1/o/r", 0, ("gitlab", "gitlab.com"), id="gitlab-min-port"
-    ),
-    pytest.param(
-        "git@gitlab.com:o/r", 0, ("gitlab", "gitlab.com"), id="gitlab-no-suffix"
     ),
     pytest.param("C:/github.com/o/r", 0, (None, None), id="drive-forward"),
     pytest.param("C:\\github.com\\o\\r", 0, (None, None), id="drive-backslash"),
@@ -490,6 +374,23 @@ HOST_CASES: list[ParameterSet] = [
     ),
 ]
 
+_HOST_TRANSITION_REMOTES = {case.values[0] for case in HOST_CASES}
+HOST_CASES += [
+    pytest.param(
+        template.format(host=host),
+        0,
+        (
+            platform if selected else None,
+            host_template.format(host=host) if host_template else None,
+        ),
+        id=f"policy-{platform}-{row.id}",
+    )
+    for platform, host in (("github", "github.com"), ("gitlab", "gitlab.com"))
+    for row in PUBLIC_HOST_CASES
+    for template, selected, host_template in [cast("tuple[str, bool, str]", row.values)]
+    if template.format(host=host) not in _HOST_TRANSITION_REMOTES
+]
+
 
 @pytest.mark.parametrize("remote, status, expected", HOST_CASES)
 def test_poster_platform_selection(remote, status, expected, monkeypatch):
@@ -526,101 +427,7 @@ def test_origin_authority_validation_preserves_lexical_slug(stdout, host, monkey
 @pytest.mark.parametrize(
     "platform, host", [("github", "github.com"), ("gitlab", "gitlab.com")]
 )
-@pytest.mark.parametrize(
-    "template, selected, host_template",
-    [
-        pytest.param("https://{host}/o/r.git", True, "{host}", id="https"),
-        pytest.param("http://{host}/o/r", True, "{host}", id="http"),
-        pytest.param("ssh://git@{host}:2222/o/r", True, "{host}", id="ssh"),
-        pytest.param("alice@{host}:o/r.git", True, "{host}", id="scp-user"),
-        pytest.param("{host}:o/r.git", True, "{host}", id="userless-scp"),
-        pytest.param("https://{host}", True, "{host}", id="pathless-url"),
-        pytest.param("git@{host}:", True, "{host}", id="pathless-scp"),
-        pytest.param("https://sub.{host}/o/r", True, "sub.{host}", id="subdomain"),
-        pytest.param("https://evil{host}/o/r", False, "evil{host}", id="prefix"),
-        pytest.param(
-            "https://{host}.example/o/r", False, "{host}.example", id="suffix"
-        ),
-        pytest.param("ftp://{host}/o/r", False, "{host}", id="ftp"),
-        pytest.param("git://{host}/o/r", False, "{host}", id="git-scheme"),
-        pytest.param("git+ssh://git@{host}/o/r", False, "{host}", id="git-ssh"),
-        pytest.param("HTTPS://{host}/o/r", True, "{host}", id="uppercase-scheme"),
-        pytest.param(
-            "https://fixture-user:fixture-token@{host}/o/r",
-            True,
-            "{host}",
-            id="userinfo",
-        ),
-        pytest.param(
-            "https://fixture%40user@{host}/o/r", True, "{host}", id="percent-userinfo"
-        ),
-        pytest.param(
-            "https://fixture\\user;name@{host}/o/r",
-            True,
-            "{host}",
-            id="lexical-userinfo",
-        ),
-        pytest.param(
-            "https://fixture\tuser@{host}/o/r", False, None, id="tab-userinfo"
-        ),
-        pytest.param(
-            "https://fixture\nuser@{host}/o/r", False, None, id="newline-userinfo"
-        ),
-        pytest.param(
-            "https://fixture\x00user@{host}/o/r", False, None, id="c0-userinfo"
-        ),
-        pytest.param(
-            "https://fixture\uff0fuser@{host}/o/r", False, None, id="nfkc-userinfo"
-        ),
-        pytest.param(
-            "https://{host}@evil.example/o/r",
-            False,
-            "evil.example",
-            id="host-in-userinfo",
-        ),
-        pytest.param(
-            "git@{host}@evil.example:o/r", False, "evil.example", id="double-at-scp"
-        ),
-        pytest.param(
-            "https://fixture@{host}@evil.example/o/r",
-            False,
-            "evil.example",
-            id="double-at-url",
-        ),
-        pytest.param("https://{host}?query/o/r", True, "{host}", id="query-delimiter"),
-        pytest.param(
-            "https://{host}#fragment/o/r", True, "{host}", id="fragment-delimiter"
-        ),
-        pytest.param("https://{host}:1/o/r", True, "{host}", id="min-port"),
-        pytest.param("https://{host}:65535/o/r", True, "{host}", id="max-port"),
-        pytest.param("https://{host}:0/o/r", False, None, id="zero-port"),
-        pytest.param("https://{host}:65536/o/r", False, None, id="high-port"),
-        pytest.param("https://{host}:-1/o/r", False, None, id="negative-port"),
-        pytest.param("https://{host}:bad/o/r", False, None, id="bad-port"),
-        pytest.param("https://{host}:/o/r", False, None, id="empty-port"),
-        pytest.param("https://{host}./o/r", False, None, id="trailing-dot"),
-        pytest.param("https://.{host}/o/r", False, None, id="leading-dot"),
-        pytest.param("https://x..{host}/o/r", False, None, id="empty-label"),
-        pytest.param("https://x_y.{host}/o/r", False, None, id="underscore"),
-        pytest.param("https://-x.{host}/o/r", False, None, id="leading-hyphen"),
-        pytest.param("https://x-.{host}/o/r", False, None, id="trailing-hyphen"),
-        pytest.param("https://evil\\.{host}/o/r", False, None, id="backslash"),
-        pytest.param("https://evil .{host}/o/r", False, None, id="space"),
-        pytest.param("https://evil\t.{host}/o/r", False, None, id="tab"),
-        pytest.param("https://evil%23.{host}/o/r", False, None, id="percent-host"),
-        pytest.param("https://evil;.{host}/o/r", False, None, id="semicolon"),
-        pytest.param("https://evil\uff0f.{host}/o/r", False, None, id="nfkc-host"),
-        pytest.param(
-            "https://" + "x" * 64 + ".{host}/o/r", False, None, id="overlong-label"
-        ),
-        pytest.param(
-            "https://" + ("x" * 63 + ".") * 4 + "{host}/o/r",
-            False,
-            None,
-            id="overlong-host",
-        ),
-    ],
-)
+@pytest.mark.parametrize("template, selected, host_template", PUBLIC_HOST_CASES)
 def test_public_host_policy(platform, host, template, selected, host_template):
     remote = forge.parse_remote(template.format(host=host))
     assert forge.detect_platform(remote) == forge.PlatformDetection(
@@ -949,28 +756,6 @@ def test_diff_policy(adapter, argv, status, monkeypatch):
     monkeypatch.setattr(proc, "run", run)
     assert adapter().diff(TARGET) == ("diff\r\n\u00e9\n", " stderr ", status)
     assert calls == [(argv, {"cwd": None, "timeout": None, "errors": "strict"})]
-
-
-@pytest.mark.parametrize(
-    "adapter", [forge.GitHub, forge.GitLab], ids=["github", "gitlab"]
-)
-@pytest.mark.parametrize(
-    "failure",
-    [
-        FileNotFoundError("missing"),
-        proc.TimeoutExpired(["fixture"], 4),
-        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"),
-    ],
-    ids=["oserror", "timeout", "unicode-error"],
-)
-def test_diff_exceptions_propagate(adapter, failure, monkeypatch):
-    def run(*args, **kwargs):
-        raise failure
-
-    monkeypatch.setattr(proc, "run", run)
-    with pytest.raises(type(failure)) as exc:
-        adapter().diff(TARGET)
-    assert exc.value is failure
 
 
 @pytest.mark.parametrize(
@@ -1359,25 +1144,6 @@ def test_versions_policy(stdout, stderr, status, expected, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "failure",
-    [
-        OSError("missing"),
-        proc.TimeoutExpired(["glab"], 2),
-        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"),
-    ],
-    ids=["oserror", "timeout", "unicode-error"],
-)
-def test_versions_exceptions_propagate(failure, monkeypatch):
-    def run(*args, **kwargs):
-        raise failure
-
-    monkeypatch.setattr(proc, "run", run)
-    with pytest.raises(type(failure)) as exc:
-        forge.GitLab().diff_refs(TARGET)
-    assert exc.value is failure
-
-
-@pytest.mark.parametrize(
     "adapter, builder, argv",
     [
         (
@@ -1571,6 +1337,37 @@ def test_submit_failure_cleans_temp(failure, monkeypatch, tmp_path):
     assert not paths[0].exists()
 
 
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda: forge.GitHub().diff(TARGET), id="github-diff"),
+        pytest.param(lambda: forge.GitLab().diff(TARGET), id="gitlab-diff"),
+        pytest.param(lambda: forge.GitLab().diff_refs(TARGET), id="gitlab-versions"),
+        pytest.param(post.get_head_sha, id="local-head-sha"),
+    ],
+)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        FileNotFoundError("missing"),
+        proc.TimeoutExpired(["fixture"], 4),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"),
+    ],
+    ids=["oserror", "timeout", "unicode-error"],
+)
+def test_process_exceptions_propagate(
+    call: Callable[[], object], failure: Exception, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def run(command: object, **kwargs: object) -> proc.CompletedProcess[str]:
+        assert kwargs == {"cwd": None, "timeout": None, "errors": "strict"}
+        raise failure
+
+    monkeypatch.setattr(proc, "run", run)
+    with pytest.raises(type(failure)) as exc:
+        call()
+    assert exc.value is failure
+
+
 def test_submit_encoding_failure_cleans_temp(monkeypatch, tmp_path):
     paths = []
     real_mkstemp = forge.tempfile.mkstemp
@@ -1602,13 +1399,19 @@ def test_factory(platform, expected):
 
 @pytest.mark.parametrize("fake", [FakeForge, FakeGitLab], ids=["github", "gitlab"])
 @pytest.mark.parametrize("queue_shape", ["ordered", "by-surface"])
-def test_fake_queues_and_semantic_log(fake, queue_shape, monkeypatch):
-    def transport(*args, **kwargs):
+def test_fake_queues_and_semantic_log(
+    fake: type[FakeForge],
+    queue_shape: Literal["ordered", "by-surface"],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def transport(*args: object, **kwargs: object) -> None:
         pytest.fail("fake must never use production transport")
 
     monkeypatch.setattr(proc, "run", transport)
     monkeypatch.setattr(proc, "which", transport)
-    replies = [
+    failure = OSError("fixture failure")
+    replies: list[forge.PostResult | Exception] = [
+        failure,
         forge.PostResult(None, "rejected", None),
         forge.PostResult({"id": 2}, None, None),
     ]
@@ -1628,6 +1431,9 @@ def test_fake_queues_and_semantic_log(fake, queue_shape, monkeypatch):
     request = forge.PostRequest(
         adapter.platform, "handwritten endpoint", "POST", (), {"body": "review"}
     )
+    with pytest.raises(OSError) as exc:
+        adapter.submit(request)
+    assert exc.value is failure
     assert adapter.submit(request) == forge.PostResult(None, "rejected", None)
     assert adapter.submit(request) == forge.PostResult({"id": 2}, None, None)
     assert adapter.calls == [
@@ -1637,12 +1443,14 @@ def test_fake_queues_and_semantic_log(fake, queue_shape, monkeypatch):
         ForgeCall("review_entries", target=TARGET),
         ForgeCall("submit", request=request),
         ForgeCall("submit", request=request),
+        ForgeCall("submit", request=request),
     ]
-    for method, argument in [
+    exhausted: list[tuple[Callable[[Any], object], object]] = [
         (adapter.diff, TARGET),
         (adapter.review_entries, TARGET),
         (adapter.submit, request),
-    ]:
+    ]
+    for method, argument in exhausted:
         with pytest.raises(AssertionError, match=r"queue exhausted"):
             method(argument)
     if queue_shape == "by-surface":
@@ -1669,29 +1477,6 @@ def test_fake_gitlab_refs_and_no_inherited_transport(monkeypatch):
     assert fake.calls == [ForgeCall("diff_refs", target=TARGET)] * 3
 
 
-@pytest.mark.parametrize(
-    "operation", ["ensure_available", "diff", "review_entries", "submit"]
-)
-def test_fake_queued_exception(operation):
-    failure = OSError("fixture failure")
-    fake = FakeForge(
-        availability=[failure],
-        diffs=[failure],
-        entries=[failure],
-        submissions=[failure],
-    )
-    args = (
-        ()
-        if operation == "ensure_available"
-        else (forge.github_review_request(TARGET, {}),)
-        if operation == "submit"
-        else (TARGET,)
-    )
-    with pytest.raises(OSError) as exc:
-        getattr(fake, operation)(*args)
-    assert exc.value is failure
-
-
 def test_fake_defaults_and_payload_snapshot():
     fake = FakeForge()
     assert fake.review_entries(TARGET) == forge.JsonFetch([], None)
@@ -1700,8 +1485,6 @@ def test_fake_defaults_and_payload_snapshot():
     assert fake.submit(request) == forge.PostResult({}, None, None)
     payload["comments"][0]["body"] = "after"
     assert fake.calls[-1].request.payload == {"comments": [{"body": "before"}]}
-    with pytest.raises(AssertionError, match=r"queue exhausted"):
-        fake.diff(TARGET)
 
 
 def test_submit_and_fake_accept_mapping_payload(monkeypatch):
@@ -1733,12 +1516,6 @@ def test_factory_installer_targets_consumer_and_restores(monkeypatch):
             assert module.make_forge("github") is github
             assert factory.calls == ["gitlab", "github"]
         assert getattr(module, "make_forge", None) is original
-
-
-def test_shared_factory_fixture(forge_factory):
-    fake = forge_factory.configure(FakeForge())
-    assert post.make_forge("github") is fake
-    assert forge_factory.calls == ["github"]
 
 
 def test_factory_requires_configuration(forge_factory):
@@ -1889,41 +1666,3 @@ def test_executable_argv_ownership():
 )
 def test_ownership_guard_distinguishes_executable_text(source, invalid):
     assert bool(_forge_ownership_violations(source, consumer=True)) == invalid
-
-
-@pytest.mark.parametrize(
-    "stdout, status, expected",
-    [(" abc1234\n", 0, "abc1234"), ("", 0, ""), ("abc1234", 1, "unknown")],
-    ids=["success", "empty-success", "nonzero"],
-)
-def test_poster_head_sha_uses_local_git(stdout, status, expected, monkeypatch):
-    calls: list[list[str]] = []
-
-    def run(command, **kwargs):
-        calls.append(command)
-        assert kwargs == {"cwd": None, "timeout": None, "errors": "strict"}
-        return proc.CompletedProcess(command, status, stdout, "")
-
-    monkeypatch.setattr(proc, "run", run)
-    assert post.get_head_sha() == expected
-    assert calls == [["git", "rev-parse", "HEAD"]]
-
-
-@pytest.mark.parametrize(
-    "failure",
-    [
-        FileNotFoundError("missing git"),
-        proc.TimeoutExpired(["git"], 10),
-        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
-    ],
-    ids=["missing-git", "timeout", "decode"],
-)
-def test_poster_head_sha_preserves_exceptions(failure, monkeypatch):
-    def run(command, **kwargs):
-        assert command == ["git", "rev-parse", "HEAD"]
-        assert kwargs == {"cwd": None, "timeout": None, "errors": "strict"}
-        raise failure
-
-    monkeypatch.setattr(proc, "run", run)
-    with pytest.raises(type(failure)):
-        post.get_head_sha()

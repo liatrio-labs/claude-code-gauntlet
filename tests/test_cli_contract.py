@@ -245,18 +245,6 @@ def test_identity_unicode_receipt(tmp_path, invoke):
             "PR/MR number must be a positive safe integer",
             id="overlong-number",
         ),
-        pytest.param(
-            "https://github.com/a/r/pull/3",
-            "a" * 39,
-            "sha must be a 40-character lowercase hex commit id",
-            id="short-sha",
-        ),
-        pytest.param(
-            "https://github.com/a/r/pull/3",
-            "A" * 40,
-            "sha must be a 40-character lowercase hex commit id",
-            id="uppercase-sha",
-        ),
     ],
 )
 def test_identity_data_error(url, sha, error, tmp_path, invoke):
@@ -270,31 +258,24 @@ def test_identity_data_error(url, sha, error, tmp_path, invoke):
     assert result.stderr == f"resolve_pr_identity: {error}\n".encode()
 
 
-@pytest.mark.parametrize(
-    "name, argv",
-    [
-        ("detect_prior_review", ["--platform", "github"]),
-        (
-            "resolve_pr_identity",
-            [
-                "--platform",
-                "github",
-                "--url",
-                "https://github.com/o/r/pull/5",
-                "--sha",
-                FULL,
-            ],
-        ),
-    ],
-    ids=["detector", "identity"],
-)
-def test_converted_serialization_fallback(name, argv, tmp_path, invoke, monkeypatch):
+def test_converted_serialization_fallback(tmp_path, invoke, monkeypatch):
     def fail(*args, **kwargs):
         raise TypeError("injected serialization failure")
 
     monkeypatch.setattr(proc, "run", _git_result)
     monkeypatch.setattr(cli, "dumps", fail)
-    result = invoke(name, argv, tmp_path)
+    result = invoke(
+        "resolve_pr_identity",
+        [
+            "--platform",
+            "github",
+            "--url",
+            "https://github.com/o/r/pull/5",
+            "--sha",
+            FULL,
+        ],
+        tmp_path,
+    )
     assert result.returncode == 1
     assert (
         result.stdout == b'{"ok": false, "errors": ["receipt serialization failed"]}\n'

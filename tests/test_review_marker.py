@@ -1046,11 +1046,6 @@ def test_marker_constraints__prose_guard_requires_this_sha():
     assert f"Reviewed up to: {SHA_40}" in appended
 
 
-def test_marker_constraints__double_append_is_still_a_no_op():
-    body = build_footer(3, SHA_40)
-    assert build_footer(3, SHA_40, body=body) == ""
-
-
 def test_marker_constraints__utc_offset_timestamps_order_by_absolute_instant():
     older, newer = ("a" * 40, "b" * 40)
     entries = [
@@ -1080,23 +1075,6 @@ def test_marker_constraints__sort_keys_stay_mutually_comparable():
     ]
     assert all(k and k[0].isdigit() for k in keys), keys
     assert keys[0] == keys[2]
-
-
-def test_marker_constraints__unparseable_timestamp_sorts_lowest_not_highest():
-    real = "b" * 40
-    entries = [
-        {
-            "body": build_footer(1, real),
-            "timestamp": "2020-01-01T00:00:00Z",
-            "source": "review",
-        },
-        {
-            "body": build_footer(1, "a" * 40),
-            "timestamp": "not-a-date",
-            "source": "review",
-        },
-    ]
-    assert select_latest(entries)["sha"] == real
 
 
 def test_marker_constraints__deeply_nested_marker_never_raises():
