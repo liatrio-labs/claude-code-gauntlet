@@ -16,7 +16,7 @@
 // bucket members without per-bucket gaps, and emits one generic gap if no partial
 // survives, the merge or single-call result is null, or any summarize dispatch throws.
 // No wall-clock, no import at runtime.
-import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, FINDING_TEXT_FIELD_NAMES, conditionalSchemaActive } from './registry.js';
 import { merge, normalizeFindingPaths } from './mergeFindings.js';
 import { mentionsHostRoot, normalizeAbsoluteRoot, pathUnderRoot, safeFindingLabel } from './paths.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
@@ -36,14 +36,12 @@ function defaultCtx() {
   };
 }
 
-const SAFE_FINDING_FIELD_RE = /^[a-z_]{1,40}$/;
-
-function hostPathFindingFields(finding, roots) {
+function hostPathTextFields(value, roots) {
   const fields = new Set();
   const seen = new Set();
   const visit = (value, field) => {
     if (typeof value === 'string') {
-      if (mentionsHostRoot(value, roots)) fields.add(field);
+      if (mentionsHostRoot(value, roots)) fields.add(field ?? 'other');
       return;
     }
     if (value === null || typeof value !== 'object' || seen.has(value)) return;
@@ -53,32 +51,28 @@ function hostPathFindingFields(finding, roots) {
       return;
     }
     for (const [key, entry] of Object.entries(value)) {
-      visit(entry, field ?? (SAFE_FINDING_FIELD_RE.test(key) ? key : 'other'));
+      const name = field ?? (FINDING_TEXT_FIELD_NAMES.has(key) ? key : 'other');
+      visit(key, name);
+      visit(entry, name);
     }
   };
-  if (finding && typeof finding === 'object' && !Array.isArray(finding)) {
-    for (const [key, value] of Object.entries(finding)) {
-      visit(value, SAFE_FINDING_FIELD_RE.test(key) ? key : 'other');
-    }
-  } else {
-    visit(finding, 'other');
-  }
+  visit(value, null);
   return [...fields].sort();
 }
 
-function hostPathTextGaps(challengeOut, summary, roots) {
+function hostPathTextGaps(challengeOut, summaryOut, roots) {
   const gaps = [];
   for (const bucket of ['findings', 'unverified', 'eliminated']) {
     const findings = Array.isArray(challengeOut?.[bucket]) ? challengeOut[bucket] : [];
     findings.forEach((finding, index) => {
-      const fields = hostPathFindingFields(finding, roots);
+      const fields = hostPathTextFields(finding, roots);
       if (fields.length === 0) return;
       const fallback = `#${index + 1} of ${bucket}`;
-      const label = safeFindingLabel(finding && finding.id, roots, fallback);
+      const label = safeFindingLabel(finding && finding.id, fallback);
       gaps.push(`host-path-text: finding ${label} mentions a host path in ${fields.join(', ')} - text left unchanged`);
     });
   }
-  if (mentionsHostRoot(summary, roots)) {
+  if (hostPathTextFields(summaryOut, roots).length > 0) {
     gaps.push('host-path-text: change summary mentions a host path - text left unchanged');
   }
   return gaps;
@@ -3933,6 +3927,7 @@ export async function runWith(ctx, rawArgs) {
   };
 
   // Reuse checkpoint outputs without dispatching, while recording each reached phase.
+  // Only undefined dispatches; null means replay and is refused by the shape gate.
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;
@@ -3947,6 +3942,7 @@ export async function runWith(ctx, rawArgs) {
 
   // Start independent work together, but await it in phase order and attach rejection
   // handlers immediately so errors stay attributed to the phase that failed.
+  // stages_latency.test.js pins overlap, phase order, replay, and rejection attribution.
   // settle(p) -> Promise<thunk>: the thunk returns the value or re-throws the error.
   const settle = (p) => p.then((value) => () => value, (error) => () => { throw error; });
   const replay = (name) => checkpoints[name] !== undefined;
@@ -3975,6 +3971,7 @@ export async function runWith(ctx, rawArgs) {
       && checkpoints.challenge === undefined) {
       gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
       const resumable = { ...phaseOutputs };
+      // Drop discover only from returned checkpoints, never from phaseOutputs.
       delete resumable.discover; // a degraded-to-nothing discover output must never replay on resume — a retry re-dispatches discovery under (possibly corrected) policy
       return {
         ok: false,
@@ -4031,6 +4028,7 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(challengeOut.gaps || []));
 
+    // No finding reader may sit between runPhase('challenge') and this belt.
     // Replay skips the fresh filter stage, so re-scan challenge findings on both paths.
     // Exclude the confidence heuristic because later confidence adjustments can change its result.
     // Scan each list in order so the dedup heuristic sees the same sequence on replay.
@@ -4048,6 +4046,8 @@ export async function runWith(ctx, rawArgs) {
       challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
 
       // Counts that mirror rewritten arrays come from their actual post-scan lengths.
+      // challenge_survived/contested/downgraded/unchallenged are pre-belt and need not sum to final_count.
+      // replay_belt_eliminated is this call's total, including zero.
       if (challengeOut.stats && typeof challengeOut.stats === 'object') {
         const k1 = findingsResult.eliminated.length;
         const k2 = unverifiedResult.eliminated.length;
@@ -4071,7 +4071,7 @@ export async function runWith(ctx, rawArgs) {
 
     gaps.push(...hostPathTextGaps(
       challengeOut,
-      summaryOut.summary,
+      summaryOut,
       [A.repoRoot, A.pluginRoot, A.outputDir],
     ));
 
@@ -4113,6 +4113,7 @@ export async function runWith(ctx, rawArgs) {
         merge: compactMethodology(mergeOut.methodology),
       },
       // The report needs the actual dispatched and degraded dimensions to describe scope.
+      // dispatched holds only agents activated this run.
       dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [] },
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
@@ -4129,6 +4130,7 @@ export async function runWith(ctx, rawArgs) {
     };
     const reviewBody = renderSummaryBody(reportInput);
     // Render from current pipeline data so report structure and counts are deterministic.
+    // The report is code-rendered; a generated fence pins its sections to report-format.md.
     let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
     const reportGaps = reportOut.gaps || [];
     gaps.push(...reportGaps);
@@ -4186,6 +4188,7 @@ export async function runWith(ctx, rawArgs) {
         validate: validateOut.stats,
         filter: filterOut.stats,
         // Expose provenance labels and counts without returning review document contents.
+        // Review provenance stats describe this run, not a replayed filter checkpoint.
         reviewConfigSource: resolvedReview.reviewConfigSource,
         exclusionsSource: resolvedReview.exclusionsSource,
         reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
@@ -4207,6 +4210,7 @@ export async function runWith(ctx, rawArgs) {
       checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
       gaps,
       // Keep bulk persistence data last so a truncated return still includes status and gaps.
+      // Twin: scripts/gauntlet/awaiting.py elides persistReturn.entries[].text.
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
     };
   } catch (e) {

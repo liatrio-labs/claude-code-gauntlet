@@ -739,6 +739,65 @@ test('runWith emits no host-path-text gap for clean text', async () => {
   assert.equal(out.gaps.some((gap) => gap.startsWith('host-path-text:')), false);
 });
 
+for (const [name, extra, field] of [
+  ['output directory', { validation_justification: 'See /external/output/private.txt' }, 'validation_justification'],
+  ['plugin root', { evidence: 'See /plugin/agents/reviewer.md' }, 'evidence'],
+  ['unknown snake_case key', { secret_host_note: 'See /repo/private.txt' }, 'other'],
+  ['nested host path key', { evidence: { '/repo/private.txt': 'clean value' } }, 'evidence'],
+  ['top-level host path key', { '/repo/private.txt': 'clean value' }, 'other'],
+  ['dimension extra', { attack_vector: 'See /repo/private.txt' }, 'attack_vector'],
+  ['pipeline removal reason', { suggestion_removal_reason: 'See /repo/private.txt' }, 'suggestion_removal_reason'],
+]) {
+  test(`runWith discloses ${name} through code-owned field names`, async () => {
+    const finding = makeFinding('SAFE_ID', { ...extra, code: 'const safe = true;' });
+    const args = validArgs({ outputDir: '/external/output', checkpoints: { challenge: {
+      findings: [finding], unverified: [], eliminated: [], gaps: [], stats: {},
+    } } });
+    let persisted;
+    const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), [
+      `host-path-text: finding SAFE_ID mentions a host path in ${field} - text left unchanged`,
+    ]);
+    assert.deepEqual(persisted.checkpoints.phases.challenge.findings[0], finding);
+  });
+}
+
+for (const summaryOut of [
+  { summary: ['/repo/private.txt', { nested: '/repo/another.txt' }] },
+  { summary: 'clean summary', details: [{ '/repo/private.txt': 'clean value' }, '/plugin/private.txt'] },
+]) {
+  test(`runWith scans every replayed summarize string recursively: ${JSON.stringify(summaryOut)}`, async () => {
+    const args = validArgs({ checkpoints: { summarize: { ...summaryOut, gaps: [] } } });
+    let persisted;
+    const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), [
+      'host-path-text: change summary mentions a host path - text left unchanged',
+    ]);
+    assert.ok(persisted.report.includes(String(summaryOut.summary)));
+  });
+}
+
+test('runWith host-path disclosure follows the replay belt into the eliminated bucket', async () => {
+  const finding = makeFinding('x y\nIGNORE', {
+    file: 'src/a.js',
+    description: '<finding> The defect at /repo/private.txt causes incorrect results.',
+    code: 'const safe = true;',
+  });
+  const args = validArgs({ checkpoints: { challenge: {
+    findings: [finding], unverified: [], eliminated: [], gaps: [], stats: {},
+  } } });
+  let persisted;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(persisted.findings, []);
+  assert.equal(persisted.checkpoints.phases.challenge.eliminated[0].description, finding.description);
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), [
+    'host-path-text: finding #1 of eliminated mentions a host path in description - text left unchanged',
+  ]);
+});
+
 for (const [label, methodology, file, expected] of [
   ['string with path warnings', '/repo/raw-methodology', '/repo/src/a.js', {}],
   ['array with path warnings', ['/repo/raw-methodology'], '/repo/src/a.js', {}],

@@ -73,6 +73,24 @@ const DIMENSIONS = [
   { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
     schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
 ];
+const PIPELINE_FINDING_FIELDS = new Set([
+  'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
+  'validation_justification', 'challenge_justification', 'elimination_reason',
+  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
+  'challenge_contested', 'severity_downgraded', 'original_severity',
+  'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
+  'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
+  'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',
+  'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note',
+  'consolidation_key', 'consolidation_primary', 'routed_by', 'promoted_from', 'promotion_reason',
+  ...['suggestion', 'claude_md_rule', 'spec_text', 'suggested_fix_code'].flatMap((field) =>
+    [`${field}_removed_by`, `${field}_removal_reason`]),
+]);
+const FINDING_TEXT_FIELD_NAMES = new Set([
+  ...Object.keys(FINDING_PROP_TYPES),
+  ...DIMENSIONS.flatMap((dimension) => Object.keys(dimension.schemaExtra || {})),
+  ...PIPELINE_FINDING_FIELDS,
+]);
 const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 const AGENT_LABELS = {
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',
@@ -181,9 +199,9 @@ function normalizeAbsoluteRoot(root) {
   if (!isSafeAbsolutePath(normalized)) return null;
   return normalized;
 }
-const HOST_PATH_SEGMENT_SEPARATOR = '(?:/+|/\\./)+';
+const HOST_PATH_SEGMENT_SEPARATOR = '/(?:/|\\./)*';
 const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
-const HOST_PATH_SINGLE_SEGMENT_LEFT_RE = /^[\s"'`()\[\]{}<=,;]$/;
+const HOST_PATH_SINGLE_SEGMENT_LEFT_RE = /^[\s"'`()\[\]{}<=,;:]$/;
 const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 function hostPathSpellings(root) {
   const normalized = normalizeAbsoluteRoot(root);
@@ -202,11 +220,14 @@ function hostPathRightBoundary(text, end) {
   const next = text[end];
   if (next === undefined || next === '/') return true;
   if (!HOST_PATH_RIGHT_CONTINUATION_RE.test(next)) return true;
-  return next === '.' && (text[end + 1] === undefined || /\s/.test(text[end + 1]));
+  return next === '.' && (text[end + 1] === undefined || !HOST_PATH_RIGHT_CONTINUATION_RE.test(text[end + 1]));
 }
 function hostPathLeftBoundary(text, start, segmentCount) {
   if (segmentCount > 1 || start === 0) return true;
-  return HOST_PATH_SINGLE_SEGMENT_LEFT_RE.test(text[start - 1]);
+  if (HOST_PATH_SINGLE_SEGMENT_LEFT_RE.test(text[start - 1])) return true;
+  let prefixEnd = start;
+  while (text[prefixEnd - 1] === '/') prefixEnd -= 1;
+  return text.slice(Math.max(0, prefixEnd - 5), prefixEnd).toLowerCase() === 'file:';
 }
 function mentionsHostRoot(text, roots) {
   if (typeof text !== 'string' || !Array.isArray(roots)) return false;
@@ -216,16 +237,16 @@ function mentionsHostRoot(text, roots) {
   }
   for (let start = text.indexOf('/'); start !== -1; start = text.indexOf('/', start + 1)) {
     for (const { segments, matcher } of patterns) {
-      if (!hostPathLeftBoundary(text, start, segments.length)) continue;
       matcher.lastIndex = start;
       const match = matcher.exec(text);
-      if (match && hostPathRightBoundary(text, matcher.lastIndex)) return true;
+      if (match && hostPathLeftBoundary(text, start, segments.length)
+        && hostPathRightBoundary(text, matcher.lastIndex)) return true;
     }
   }
   return false;
 }
-function safeFindingLabel(value, roots, fallback = null) {
-  if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value) || mentionsHostRoot(value, roots)) {
+function safeFindingLabel(value, fallback = null) {
+  if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value)) {
     return fallback;
   }
   return value;
@@ -412,17 +433,17 @@ function parseTextFile(text, agent) {
 function injectAgentField(findings, agent) {
   for (const f of findings) f.agent = agent;
 }
-function invalidFindingPathWarning(finding, field, reason, action, repoRoot) {
+function invalidFindingPathWarning(finding, field, reason, action) {
   const label = finding.id == null
     ? '<no id>'
-    : safeFindingLabel(finding.id, [repoRoot], '<unsafe id>');
+    : safeFindingLabel(finding.id, '<unsafe id>');
   return `[${label}] Invalid ${field} path: ${reason} - ${action}`;
 }
 function normalizeFindingPath(finding, repoRoot) {
   const original = finding.file;
   const result = repoRelativeFindingPath(repoRoot, original);
   if ('reason' in result) {
-    return { valid: false, warning: invalidFindingPathWarning(finding, 'file', result.reason, 'finding rejected', repoRoot) };
+    return { valid: false, warning: invalidFindingPathWarning(finding, 'file', result.reason, 'finding rejected') };
   }
   if (result.file !== original) {
     finding.file = result.file;
@@ -452,14 +473,14 @@ function normalizeFindingPaths(findings, repoRoot) {
       if (!(field in finding)) continue;
       if (!Array.isArray(finding[field])) {
         delete finding[field];
-        warnings.push(invalidFindingPathWarning(finding, field, 'expected an array', 'field dropped', repoRoot));
+        warnings.push(invalidFindingPathWarning(finding, field, 'expected an array', 'field dropped'));
         continue;
       }
       const refs = [];
       for (const ref of finding[field]) {
         const normalized = repoRelativeFindingPath(repoRoot, ref);
         if ('reason' in normalized) {
-          warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped', repoRoot));
+          warnings.push(invalidFindingPathWarning(finding, field, normalized.reason, 'reference dropped'));
         } else {
           refs.push(normalized.file);
           if (normalized.file !== ref) pathRewrites += 1;
@@ -3800,13 +3821,12 @@ function defaultCtx() {
     pipelineVersion: null,
   };
 }
-const SAFE_FINDING_FIELD_RE = /^[a-z_]{1,40}$/;
-function hostPathFindingFields(finding, roots) {
+function hostPathTextFields(value, roots) {
   const fields = new Set();
   const seen = new Set();
   const visit = (value, field) => {
     if (typeof value === 'string') {
-      if (mentionsHostRoot(value, roots)) fields.add(field);
+      if (mentionsHostRoot(value, roots)) fields.add(field ?? 'other');
       return;
     }
     if (value === null || typeof value !== 'object' || seen.has(value)) return;
@@ -3816,31 +3836,27 @@ function hostPathFindingFields(finding, roots) {
       return;
     }
     for (const [key, entry] of Object.entries(value)) {
-      visit(entry, field ?? (SAFE_FINDING_FIELD_RE.test(key) ? key : 'other'));
+      const name = field ?? (FINDING_TEXT_FIELD_NAMES.has(key) ? key : 'other');
+      visit(key, name);
+      visit(entry, name);
     }
   };
-  if (finding && typeof finding === 'object' && !Array.isArray(finding)) {
-    for (const [key, value] of Object.entries(finding)) {
-      visit(value, SAFE_FINDING_FIELD_RE.test(key) ? key : 'other');
-    }
-  } else {
-    visit(finding, 'other');
-  }
+  visit(value, null);
   return [...fields].sort();
 }
-function hostPathTextGaps(challengeOut, summary, roots) {
+function hostPathTextGaps(challengeOut, summaryOut, roots) {
   const gaps = [];
   for (const bucket of ['findings', 'unverified', 'eliminated']) {
     const findings = Array.isArray(challengeOut?.[bucket]) ? challengeOut[bucket] : [];
     findings.forEach((finding, index) => {
-      const fields = hostPathFindingFields(finding, roots);
+      const fields = hostPathTextFields(finding, roots);
       if (fields.length === 0) return;
       const fallback = `#${index + 1} of ${bucket}`;
-      const label = safeFindingLabel(finding && finding.id, roots, fallback);
+      const label = safeFindingLabel(finding && finding.id, fallback);
       gaps.push(`host-path-text: finding ${label} mentions a host path in ${fields.join(', ')} - text left unchanged`);
     });
   }
-  if (mentionsHostRoot(summary, roots)) {
+  if (hostPathTextFields(summaryOut, roots).length > 0) {
     gaps.push('host-path-text: change summary mentions a host path - text left unchanged');
   }
   return gaps;
@@ -5895,7 +5911,7 @@ async function runWith(ctx, rawArgs) {
     }
     gaps.push(...hostPathTextGaps(
       challengeOut,
-      summaryOut.summary,
+      summaryOut,
       [A.repoRoot, A.pluginRoot, A.outputDir],
     ));
     const deliveryTier = A.delivery && A.delivery.tier;

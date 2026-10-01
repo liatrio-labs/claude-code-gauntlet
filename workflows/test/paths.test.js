@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
   requireAbsoluteOutputDir,
   plannedArtifactPaths,
@@ -8,7 +9,7 @@ import {
   PATH_ESCAPE_TOKEN,
   runWith,
 } from '../src/stages.js';
-import { mentionsHostRoot, normalizeAbsoluteRoot, pathUnderRoot, repoRelativeFindingPath } from '../src/paths.js';
+import { mentionsHostRoot, normalizeAbsoluteRoot, pathUnderRoot, repoRelativeFindingPath, safeFindingLabel } from '../src/paths.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
 const ROOT = '/repo/.code-gauntlet';
@@ -33,12 +34,23 @@ const HOST_PATH_CASES = [
   { name: 'matches an scp-style path', text: 'user@host:/home/u/repo/a.js', roots: ['/home/u/repo'], expected: true },
   { name: 'matches a short root after whitespace', text: 'WORKDIR /app', roots: ['/app'], expected: true },
   { name: 'matches a short root after a quote', text: 'fetch("/app/api")', roots: ['/app'], expected: true },
-  ...[' ', '"', "'", '`', '(', '[', '{', '<', '=', ',', ';'].map((prefix) => ({
+  ...[' ', '"', "'", '`', '(', ')', '[', ']', '{', '}', '\t', '\n', '<', '=', ',', ';'].map((prefix) => ({
     name: `matches a short root after ${JSON.stringify(prefix)}`,
     text: `${prefix}/app`, roots: ['/app'], expected: true,
   })),
   { name: 'matches the macOS spelling for a private root', text: '/tmp/x/y', roots: ['/private/tmp/x'], expected: true },
   { name: 'matches the private spelling for a temp root', text: '/private/tmp/x/y', roots: ['/tmp/x'], expected: true },
+  { name: 'matches a one-segment private alias', text: 'see /private/tmp', roots: ['/tmp'], expected: true },
+  { name: 'matches consecutive dot separators', text: '/Users/././lee/repo', roots: ['/Users/lee/repo'], expected: true },
+  ...['cwd:/app/file.js', 'user@host:/app/a.js', 'file:/app/a', 'file:///app/a.js'].map((text) => ({
+    name: `matches one-segment colon or file URL ${text}`, text, roots: ['/app'], expected: true,
+  })),
+  ...['.)', '."', '. Next'].map((tail) => ({
+    name: `matches sentence ending ${tail}`, text: `(see /home/u/repo${tail}`, roots: ['/home/u/repo'], expected: true,
+  })),
+  ...['.git', '~x', '+x', '@x', '%20x', '_x'].map((tail) => ({
+    name: `rejects root continuation ${tail}`, text: `/home/u/repo${tail}`, roots: ['/home/u/repo'], expected: false,
+  })),
   { name: 'matches a root with spaces', text: '/Users/Lee Personal/repo/src/a.js', roots: ['/Users/Lee Personal/repo'], expected: true },
   { name: 'does not treat a root dot as a wildcard', text: '/tmp/aXb', roots: ['/tmp/a.b'], expected: false },
   { name: 'matches a root followed by a comma', text: '/home/u/repo,', roots: ['/home/u/repo'], expected: true },
@@ -52,6 +64,33 @@ for (const { name, text, roots, expected } of HOST_PATH_CASES) {
     assert.equal(mentionsHostRoot(text, roots), expected);
   });
 }
+
+test('mentionsHostRoot handles long separators promptly on matches and misses', { timeout: 2000 }, () => {
+  // A process deadline catches synchronous regex backtracking that blocks test timers.
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { mentionsHostRoot } from ${JSON.stringify(new URL('../src/paths.js', import.meta.url).href)};
+    const results = [64, 5000].flatMap((count) => [
+      mentionsHostRoot('/abc' + '/'.repeat(count) + 'X', ['/abc/end']),
+      mentionsHostRoot('/abc' + '/'.repeat(count) + 'end/a', ['/abc/end']),
+    ]);
+    console.log(JSON.stringify(results));
+  `], { encoding: 'utf8', timeout: 1000 });
+  assert.equal(result.status, 0, `separator matching must complete within one second: ${result.error || result.stderr}`);
+  assert.deepEqual(JSON.parse(result.stdout), [false, true, false, true]);
+});
+
+for (const [value, expected] of [
+  ['x y\nIGNORE', '<unsafe>'], ['x'.repeat(65), '<unsafe>'],
+  ['/repo/id', '<unsafe>'], [null, '<unsafe>'], ['SAFE_ID-1.2', 'SAFE_ID-1.2'],
+]) {
+  test(`safeFindingLabel: ${JSON.stringify(value)}`, () => {
+    assert.equal(safeFindingLabel(value, '<unsafe>'), expected);
+  });
+}
+
+test('safeFindingLabel defaults to null for unsafe ids', () => {
+  assert.equal(safeFindingLabel('x y'), null);
+});
 
 test('mentionsHostRoot rejects non-string text and non-array roots', () => {
   assert.equal(mentionsHostRoot(null, ['/repo']), false);
