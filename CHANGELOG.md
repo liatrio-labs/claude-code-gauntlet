@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.42.15 (2026-10-01)
+
+### Bug Fixes
+
+- Anchor GitLab inline comments when glab prints git-style diff headers (#442)
+  ([#445](https://github.com/liatrio-labs/claude-code-gauntlet/pull/445),
+  [`f06041b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f06041b7d02e9e721566a46629b4d85bb1f86986))
+
+
 ## v3.42.14 (2026-09-30)
 
 ### Bug Fixes
