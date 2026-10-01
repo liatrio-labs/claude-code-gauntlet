@@ -1,6 +1,6 @@
 """Semantic forge queues and the shared consumer factory installer."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from types import ModuleType
@@ -17,6 +17,9 @@ from gauntlet.forge import (
 
 Method = Literal["ensure_available", "diff", "review_entries", "diff_refs", "submit"]
 Reply = TypeVar("Reply")
+Submissions = (
+    Iterable[PostResult | Exception] | Mapping[str, Iterable[PostResult | Exception]]
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,14 +46,24 @@ class FakeForge:
         availability: Iterable[Exception | None] | None = None,
         diffs: Iterable[tuple[str, str, int] | Exception] = (),
         entries: Iterable[JsonFetch | Exception] | None = None,
-        submissions: Iterable[PostResult | Exception] | None = None,
+        submissions: Submissions | None = None,
     ) -> None:
         self.platform = platform
         self.calls: list[ForgeCall] = []
         self._availability = list(availability) if availability is not None else None
         self._diffs = list(diffs)
         self._entries = list(entries) if entries is not None else None
-        self._submissions = list(submissions) if submissions is not None else None
+        self._submissions: (
+            dict[str, list[PostResult | Exception]]
+            | list[PostResult | Exception]
+            | None
+        ) = (
+            {surface: list(replies) for surface, replies in submissions.items()}
+            if isinstance(submissions, Mapping)
+            else list(submissions)
+            if submissions is not None
+            else None
+        )
 
     def ensure_available(self) -> None:
         self.calls.append(ForgeCall("ensure_available"))
@@ -76,6 +89,11 @@ class FakeForge:
                 request=replace(request, payload=deepcopy(dict(request.payload))),
             )
         )
+        if isinstance(self._submissions, dict):
+            surface = request.endpoint.rsplit("/", 1)[-1]
+            if surface not in self._submissions:
+                raise AssertionError(f"Unexpected submit surface: {surface}")
+            return _reply(self._submissions[surface], "submit")
         return (
             _reply(self._submissions, "submit")
             if self._submissions is not None
@@ -91,7 +109,7 @@ class FakeGitLab(FakeForge, GitLab):
         availability: Iterable[Exception | None] | None = None,
         diffs: Iterable[tuple[str, str, int] | Exception] = (),
         entries: Iterable[JsonFetch | Exception] | None = None,
-        submissions: Iterable[PostResult | Exception] | None = None,
+        submissions: Submissions | None = None,
     ) -> None:
         super().__init__(
             "gitlab",

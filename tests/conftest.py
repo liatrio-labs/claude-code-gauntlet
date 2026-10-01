@@ -77,3 +77,20 @@ def forge_factory(monkeypatch, request):
     if request.instance is not None:
         request.instance.forge_factory = factory
     return factory
+
+
+@pytest.fixture
+def poster_state(monkeypatch):
+    from gauntlet.delivery import post
+
+    post.reset_run_state()
+    monkeypatch.setattr(post, "DRY_RUN", False)
+    yield
+    post.reset_run_state()
+
+
+@pytest.fixture
+def poster_workspace(tmp_path, request):
+    if request.instance is not None:
+        request.instance.tmp = str(tmp_path)
+        request.instance.findings_path = str(tmp_path / "findings.json")

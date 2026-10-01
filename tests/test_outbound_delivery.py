@@ -11,11 +11,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
+import pytest
+from gauntlet.forge import PostResult
 
+from tests.support.forge import FakeForge, FakeGitLab
 from tests.test_outbound_contract import _assert_outbound_string_invariant
 
 REPO = Path(__file__).resolve().parents[1]
@@ -64,7 +67,6 @@ def _capture_dry_run(platform, findings, review_body=""):
     post_review._SKIP_WARNINGS.clear()
     with (
         patch.object(post_review, "DRY_RUN", True),
-        patch("gauntlet.delivery.post.check_tool"),
         patch(
             "gauntlet.delivery.post.fetch_gitlab_shas",
             return_value=("base", "head", "start"),
@@ -77,9 +79,11 @@ def _capture_dry_run(platform, findings, review_body=""):
         contextlib.redirect_stderr(io.StringIO()),
     ):
         if platform == "github":
-            post_review.post_github(data, valid_lines, line_texts)
+            post_review.post_github(data, valid_lines, line_texts, forge=FakeForge())
         else:
-            post_review.post_gitlab(data, valid_lines, set(), {}, line_texts)
+            post_review.post_gitlab(
+                data, valid_lines, set(), {}, line_texts, forge=FakeGitLab()
+            )
         payload = post_review.build_dry_run_payload(platform)
     post_review._CAPTURED.clear()
     post_review._SKIP_WARNINGS.clear()
@@ -234,6 +238,7 @@ def _assert_poison_containment(test, body, property_names, expected_markers=()):
     _assert_outbound_string_invariant(without_live_markers)
 
 
+@pytest.mark.usefixtures("forge_factory", "poster_state")
 class TestOutboundComposerContracts(unittest.TestCase):
     def test_poisoned_field_does_not_reach_code_owned_backticks_in_its_paragraph(self):
         title = "Title @title <b>"
@@ -577,61 +582,6 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
         self.assertIn("could not be anchored inline", summary)
         self.assertEqual(review_marker.find_marker(summary)["sha"], SHA)
 
-    def test_legacy_report_summary_is_guarded_on_the_real_cli_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            findings_path = Path(tmp) / "findings.json"
-            report_path = Path(tmp) / "report.md"
-            payload_path = Path(tmp) / "post-review-payload.json"
-            findings_path.write_text(
-                json.dumps(
-                    {
-                        "owner": "o",
-                        "repo": "r",
-                        "pr_number": 7,
-                        "platform": "github",
-                        "sha": SHA,
-                        "findings": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            report_path.write_text(
-                "## Summary\n\n"
-                f"@zz363sentinel <table><tr><td> report {FAKE_FINDING_MARKER}\n"
-                "/close\n>>>\n\n"
-                "## Findings\n\n",
-                encoding="utf-8",
-            )
-            original_report = report_path.read_bytes()
-            with (
-                patch.object(
-                    sys,
-                    "argv",
-                    [
-                        "post_review.py",
-                        str(findings_path),
-                        "--dry-run",
-                        "--report",
-                        str(report_path),
-                    ],
-                ),
-                patch("gauntlet.delivery.post.check_tool"),
-                patch(
-                    "gauntlet.delivery.post.parse_diff_lines",
-                    return_value=({}, set(), {}, {}),
-                ),
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                post_review.main()
-            self.assertEqual(report_path.read_bytes(), original_report)
-            payload = json.loads(payload_path.read_text(encoding="utf-8"))
-        review_body = payload["payload"]["body"]
-        _assert_no_hostile_prose(self, review_body)
-        invariant_body = review_body.replace(review_marker.build_marker(SHA, 0), "")
-        _assert_outbound_string_invariant(invariant_body)
-        self.assertIn("\uff20zz363sentinel", review_body)
-        self.assertIn("\\/close\n\\>>>", review_body)
-
 
 class TestFoldAndGateContracts(unittest.TestCase):
     def test_forced_review_folds_keep_escaped_lines_at_the_cut(self):
@@ -797,17 +747,12 @@ class TestFoldAndGateContracts(unittest.TestCase):
 class TestDeliveryTitleKeys(unittest.TestCase):
     @staticmethod
     def _live_key(finding):
-        calls = []
+        fake = FakeGitLab()
         filepath = finding["file"]
         line = finding["line"]
 
-        def fake_try_post_json(_cmd, payload):
-            calls.append(payload)
-            return {}, None
-
         with (
             patch.object(post_review, "DRY_RUN", False),
-            patch("gauntlet.delivery.post.check_tool"),
             patch(
                 "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
@@ -815,9 +760,6 @@ class TestDeliveryTitleKeys(unittest.TestCase):
             patch(
                 "gauntlet.delivery.post.gitlab_prior_delivery",
                 return_value=(False, set(), set()),
-            ),
-            patch(
-                "gauntlet.delivery.post.try_post_json", side_effect=fake_try_post_json
             ),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
@@ -834,8 +776,13 @@ class TestDeliveryTitleKeys(unittest.TestCase):
                 set(),
                 {filepath: filepath},
                 {(filepath, line): "context"},
+                forge=fake,
             )
-        discussion = next(payload for payload in calls if "position" in payload)
+        discussion = next(
+            call.request.payload
+            for call in fake.calls
+            if call.method == "submit" and "position" in call.request.payload
+        )
         return review_marker.find_finding_marker(discussion["body"])["key"]
 
     def test_absent_title_key_is_pinned(self):
@@ -906,171 +853,10 @@ class TestDeliveryTitleKeys(unittest.TestCase):
         self.assertEqual(key, "f87d51ec25846a5e")
 
 
-class TestGitlabLiveFallbackContracts(unittest.TestCase):
-    @staticmethod
-    def _post_live(findings, prior, *, reject_first_discussion=False):
-        calls = []
-        discussion_attempts = 0
-
-        def fake_try_post_json(cmd, payload):
-            nonlocal discussion_attempts
-            calls.append((cmd, payload))
-            if cmd[-1].endswith("/discussions"):
-                discussion_attempts += 1
-                if reject_first_discussion and discussion_attempts == 1:
-                    return None, "position rejected"
-            return {}, None
-
-        valid_lines = {
-            ("src/edited.py", 2): None,
-            ("src/edited.py", 3): None,
-        }
-        line_texts = {
-            ("src/edited.py", 2): "primary",
-            ("src/edited.py", 3): "corroborator",
-        }
-        post_review._CAPTURED.clear()
-        with (
-            patch.object(post_review, "DRY_RUN", False),
-            patch("gauntlet.delivery.post.check_tool"),
-            patch(
-                "gauntlet.delivery.post.fetch_gitlab_shas",
-                return_value=("base", "head", "start"),
-            ),
-            patch(
-                "gauntlet.delivery.post.gitlab_prior_delivery", return_value=prior
-            ) as lookup,
-            patch(
-                "gauntlet.delivery.post.try_post_json", side_effect=fake_try_post_json
-            ),
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            post_review.post_gitlab(
-                {
-                    "owner": "o",
-                    "repo": "r",
-                    "pr_number": 7,
-                    "sha": SHA,
-                    "findings": findings,
-                },
-                valid_lines,
-                set(),
-                {"src/edited.py": "src/edited.py"},
-                line_texts,
-            )
-        return calls, lookup
-
-    def test_rejected_group_position_falls_back_to_a_prepared_discussion(self):
-        primary = _hostile_finding(
-            consolidation_key="src/edited.py:2", consolidation_primary=True
-        )
-        corroborator = _hostile_finding(
-            line=3,
-            title="@zz363sentinel <table><tr><td> fallback title",
-            body="@zz363sentinel <table><tr><td> fallback body",
-            consolidation_key="src/edited.py:2",
-            consolidation_primary=False,
-        )
-        calls, lookup = self._post_live(
-            [primary, corroborator],
-            (False, set(), set()),
-            reject_first_discussion=True,
-        )
-        discussions = [
-            payload for cmd, payload in calls if cmd[-1].endswith("/discussions")
-        ]
-        self.assertEqual(len(discussions), 2)
-        self.assertIn("Corroborating finding", discussions[0]["body"])
-        fallback_body = discussions[1]["body"]
-        self.assertNotIn("Corroborating finding", fallback_body)
-        markers = review_marker.find_finding_markers(fallback_body)
-        self.assertEqual(len(markers), 1)
-        self.assertEqual(markers[0]["sha"], SHA)
-        self.assertNotEqual(markers[0]["key"], "0123456789abcdef")
-        _assert_no_hostile_prose(self, fallback_body, expected_markers=markers)
-        lookup.assert_called_once_with("o", "r", 7, SHA)
-
-    def test_changed_content_key_reposts_once_after_old_key(self):
-        finding = {
-            "file": "src/edited.py",
-            "line": 2,
-            "severity": "high",
-            "title": "@leehopper <table>",
-            "body": "Body one",
-        }
-        old_material = (
-            "src/edited.py\0"
-            "2\0"
-            "@leehopper <table>\0"
-            "**🟠 [HIGH] @leehopper <table>**\n\nBody one"
-        )
-        new_material = (
-            "src/edited.py\0"
-            "2\0"
-            "\uff20leehopper &lt;table>\0"
-            "**🟠 [HIGH] \uff20leehopper &lt;table>**\n\nBody one"
-        )
-        old_key = "13c2bc08cfac5226"
-        new_key = "6970f2dcb5f585fd"
-        self.assertEqual(
-            hashlib.sha256(old_material.encode()).hexdigest()[:16], old_key
-        )
-        self.assertEqual(
-            hashlib.sha256(new_material.encode()).hexdigest()[:16], new_key
-        )
-        first_calls, _ = self._post_live([finding], (True, {old_key}, set()))
-        discussions = [
-            payload for cmd, payload in first_calls if cmd[-1].endswith("/discussions")
-        ]
-        self.assertEqual(len(discussions), 1)
-        self.assertEqual(
-            review_marker.find_finding_marker(discussions[0]["body"])["key"], new_key
-        )
-        second_calls, _ = self._post_live([finding], (True, {old_key, new_key}, set()))
-        self.assertFalse(second_calls)
-
-    def test_partial_prior_delivery_posts_only_the_missing_corroborator(self):
-        primary = _hostile_finding(
-            consolidation_key="src/edited.py:2", consolidation_primary=True
-        )
-        title = post_review.prepare_line(primary["title"])
-        prior_key = post_review.finding_key(
-            primary["file"],
-            primary["line"],
-            title,
-            post_review.key_material_body(primary),
-        )
-        for line, endpoint in ((3, "/discussions"), (None, "/notes")):
-            with self.subTest(line=line):
-                corroborator = _hostile_finding(
-                    line=line,
-                    consolidation_key="src/edited.py:2",
-                    consolidation_primary=False,
-                )
-                calls, lookup = self._post_live(
-                    [primary, corroborator], (True, {prior_key}, set())
-                )
-                self.assertEqual(len(calls), 1)
-                cmd, payload = calls[0]
-                self.assertTrue(cmd[-1].endswith(endpoint))
-                body = payload["body"]
-                markers = review_marker.find_finding_markers(body)
-                self.assertEqual(len(markers), 1)
-                self.assertNotEqual(markers[0]["key"], prior_key)
-                _assert_no_hostile_prose(self, body, expected_markers=markers)
-                lookup.assert_called_once_with("o", "r", 7, SHA)
-
-
 class TestPoisonedOutboundSinks(unittest.TestCase):
     @staticmethod
     def _finding(property_names, reads, *, primary=False):
-        finding = _RecordingFinding(
-            {key: _poison(key) for key in property_names}, reads=reads
-        )
-        finding["consolidation_key"] = "poison-group"
-        finding["consolidation_primary"] = primary
-        return finding
+        return _poisoned_outbound_sinks_finding(property_names, reads, primary=primary)
 
     @staticmethod
     def _capture(platform, findings, *, anchored):
@@ -1082,7 +868,6 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
         post_review._SKIP_WARNINGS.clear()
         with (
             patch.object(post_review, "DRY_RUN", True),
-            patch("gauntlet.delivery.post.check_tool"),
             patch(
                 "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
@@ -1104,42 +889,43 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
                 "findings": findings,
             }
             if platform == "github":
-                post_review.post_github(data, valid_lines, line_texts)
+                post_review.post_github(
+                    data, valid_lines, line_texts, forge=FakeForge()
+                )
             else:
-                post_review.post_gitlab(data, valid_lines, set(), {}, line_texts)
+                post_review.post_gitlab(
+                    data, valid_lines, set(), {}, line_texts, forge=FakeGitLab()
+                )
             return post_review.build_dry_run_payload(platform)
 
     @staticmethod
     def _capture_live_gitlab(findings, prior, *, reject_first=False):
-        calls = []
-        discussion_count = 0
+        success = PostResult({}, None, None)
+        fake = FakeGitLab(
+            submissions={
+                "notes": [success] * (len(findings) + 1),
+                "discussions": (
+                    [PostResult(None, "position rejected", None)]
+                    if reject_first
+                    else [success]
+                )
+                + [success] * (2 * len(findings)),
+            }
+        )
         primary = findings[0]
         filepath, line = primary.get("file"), primary.get("line")
         valid_lines = {(filepath, line): None}
         line_texts = {(filepath, line): "context"}
 
-        def fake_try_post_json(cmd, payload):
-            nonlocal discussion_count
-            calls.append((cmd, payload))
-            if cmd[-1].endswith("/discussions"):
-                discussion_count += 1
-                if reject_first and discussion_count == 1:
-                    return None, "position rejected"
-            return {}, None
-
         post_review._CAPTURED.clear()
         with (
             patch.object(post_review, "DRY_RUN", False),
-            patch("gauntlet.delivery.post.check_tool"),
             patch(
                 "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
             ),
             patch("gauntlet.delivery.post.gitlab_prior_delivery", return_value=prior),
             patch("gauntlet.delivery.post.validate_position", return_value=[]),
-            patch(
-                "gauntlet.delivery.post.try_post_json", side_effect=fake_try_post_json
-            ),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
@@ -1156,8 +942,9 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
                 set(),
                 {filepath: filepath},
                 line_texts,
+                forge=fake,
             )
-        return calls
+        return [call.request for call in fake.calls if call.method == "submit"]
 
     def test_poisoned_python_fields_never_reach_any_comment_sink(self):
         property_names = set(_js_finding_property_union()) | {
@@ -1304,48 +1091,378 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
         self.assertEqual(review_marker.find_finding_markers(body), [])
         self.assertIsNone(review_marker.find_marker(body))
 
-    def test_poisoned_gitlab_live_fallback_discussion_and_note(self):
-        property_names = set(_js_finding_property_union()) | {"unknown_key"}
-        primary = self._finding(property_names, set(), primary=True)
-        corroborator = self._finding(property_names, set())
-        primary["consolidation_key"] = "poison-group"
-        corroborator["consolidation_key"] = "poison-group"
-        rejected_calls = self._capture_live_gitlab(
-            [primary, corroborator], (False, set(), set()), reject_first=True
-        )
-        discussions = [
-            payload
-            for cmd, payload in rejected_calls
-            if cmd[-1].endswith("/discussions")
-        ]
-        self.assertEqual(len(discussions), 2)
-        fallback_body = discussions[-1]["body"]
-        fallback_markers = review_marker.find_finding_markers(fallback_body)
-        self.assertEqual(len(fallback_markers), 1)
-        _assert_poison_containment(
-            self, fallback_body, property_names, expected_markers=fallback_markers
-        )
 
-        primary = self._finding(property_names, set(), primary=True)
-        corroborator = self._finding(property_names, set())
-        primary["consolidation_key"] = "poison-group"
-        corroborator["consolidation_key"] = "poison-group"
-        corroborator["line"] = None
-        with patch(
-            "gauntlet.delivery.post.finding_key",
-            side_effect=lambda _file, member_line, _title, _body: (
-                "1" * 16 if member_line is not None else "2" * 16
+def _assert_prepared_poison(body, property_names, expected_markers=()):
+    location_names = {"file", "line", "end_line", "line_start", "line_end"}
+    patch_name = "suggested_fix_code"
+    for key in property_names:
+        for visible in (f"@zz363{key}", f"\uff20zz363{key}"):
+            if key in location_names:
+                if visible in body:
+                    assert _contains_code_span(body, visible), key
+            elif key == patch_name:
+                if visible in body:
+                    suggestion_blocks = re.findall(
+                        r"(?ms)^`{3,}suggestion[^\n]*\n.*?^`{3,}\s*$", body
+                    )
+                    assert any(visible in block for block in suggestion_blocks)
+            else:
+                assert f"@zz363{key}" not in body, key
+        if key not in location_names and key != patch_name:
+            assert f"<ins data-zz363{key}" not in body, key
+    assert "@zz363unknown_key" not in body
+    assert "&;zz363" not in body
+    assert review_marker.find_finding_markers(body) == list(expected_markers)
+    without_live_markers = body
+    summary_marker = review_marker.find_marker(body)
+    if summary_marker is not None:
+        without_live_markers = without_live_markers.replace(
+            review_marker.build_marker(
+                summary_marker["sha"], summary_marker["findings_count"]
             ),
-        ):
-            note_calls = self._capture_live_gitlab(
-                [primary, corroborator], (True, {"1" * 16}, set())
-            )
-        self.assertEqual(len(note_calls), 1)
-        cmd, payload = note_calls[0]
-        self.assertTrue(cmd[-1].endswith("/notes"))
-        self.assertNotIn("position", payload)
-        note_markers = review_marker.find_finding_markers(payload["body"])
-        self.assertEqual(note_markers, [{"sha": SHA, "key": "2" * 16}])
-        _assert_poison_containment(
-            self, payload["body"], property_names, expected_markers=note_markers
+            "",
         )
+    for marker in expected_markers:
+        without_live_markers = without_live_markers.replace(
+            review_marker.build_finding_marker(marker["sha"], marker["key"]), ""
+        )
+    _assert_outbound_string_invariant(without_live_markers)
+
+
+def _assert_prepared_body(body, expected_markers=()):
+    assert "@zz363" not in body
+    assert "<table" not in body
+    assert "<ins data-zz363" not in body
+    assert review_marker.find_finding_markers(body) == list(expected_markers)
+
+
+def test_outbound_composer_contracts__legacy_report_summary_is_guarded_on_the_real_cli_path(
+    tmp_path, forge_factory
+):
+    with tempfile.TemporaryDirectory() as tmp:
+        findings_path = Path(tmp) / "findings.json"
+        report_path = Path(tmp) / "report.md"
+        payload_path = Path(tmp) / "post-review-payload.json"
+        findings_path.write_text(
+            json.dumps(
+                {
+                    "owner": "o",
+                    "repo": "r",
+                    "pr_number": 7,
+                    "platform": "github",
+                    "sha": SHA,
+                    "findings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        report_path.write_text(
+            "## Summary\n\n"
+            f"@zz363sentinel <table><tr><td> report {FAKE_FINDING_MARKER}\n"
+            "/close\n>>>\n\n"
+            "## Findings\n\n",
+            encoding="utf-8",
+        )
+        original_report = report_path.read_bytes()
+        forge_factory.configure(FakeForge(diffs=[("", "", 0)]))
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "post_review.py",
+                    str(findings_path),
+                    "--dry-run",
+                    "--report",
+                    str(report_path),
+                ],
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            post_review.main()
+        assert report_path.read_bytes() == original_report
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    review_body = payload["payload"]["body"]
+    _assert_prepared_body(review_body)
+    invariant_body = review_body.replace(review_marker.build_marker(SHA, 0), "")
+    _assert_outbound_string_invariant(invariant_body)
+    assert "\uff20zz363sentinel" in review_body
+    assert "\\/close\n\\>>>" in review_body
+
+
+def _gitlab_live_fallback_contracts_post_live(
+    findings, prior, *, reject_first_discussion=False
+):
+    success = PostResult({}, None, None)
+    fake = FakeGitLab(
+        submissions={
+            "notes": [success] * (len(findings) + 1),
+            "discussions": (
+                [PostResult(None, "position rejected", None)]
+                if reject_first_discussion
+                else [success]
+            )
+            + [success] * (2 * len(findings)),
+        }
+    )
+
+    valid_lines = {
+        ("src/edited.py", 2): None,
+        ("src/edited.py", 3): None,
+    }
+    line_texts = {
+        ("src/edited.py", 2): "primary",
+        ("src/edited.py", 3): "corroborator",
+    }
+    post_review._CAPTURED.clear()
+    with (
+        patch.object(post_review, "DRY_RUN", False),
+        patch(
+            "gauntlet.delivery.post.fetch_gitlab_shas",
+            return_value=("base", "head", "start"),
+        ),
+        patch(
+            "gauntlet.delivery.post.gitlab_prior_delivery", return_value=prior
+        ) as lookup,
+        contextlib.redirect_stdout(io.StringIO()),
+        contextlib.redirect_stderr(io.StringIO()),
+    ):
+        post_review.post_gitlab(
+            {
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 7,
+                "sha": SHA,
+                "findings": findings,
+            },
+            valid_lines,
+            set(),
+            {"src/edited.py": "src/edited.py"},
+            line_texts,
+            forge=fake,
+        )
+    return [call.request for call in fake.calls if call.method == "submit"], lookup
+
+
+def test_gitlab_live_fallback_contracts__rejected_group_position_falls_back_to_a_prepared_discussion(
+    tmp_path, forge_factory
+):
+    primary = _hostile_finding(
+        consolidation_key="src/edited.py:2", consolidation_primary=True
+    )
+    corroborator = _hostile_finding(
+        line=3,
+        title="@zz363sentinel <table><tr><td> fallback title",
+        body="@zz363sentinel <table><tr><td> fallback body",
+        consolidation_key="src/edited.py:2",
+        consolidation_primary=False,
+    )
+    calls, lookup = _gitlab_live_fallback_contracts_post_live(
+        [primary, corroborator],
+        (False, set(), set()),
+        reject_first_discussion=True,
+    )
+    discussions = [
+        request.payload
+        for request in calls
+        if request.endpoint.endswith("/discussions")
+    ]
+    assert len(discussions) == 2
+    assert "Corroborating finding" in discussions[0]["body"]
+    fallback_body = discussions[1]["body"]
+    assert "Corroborating finding" not in fallback_body
+    markers = review_marker.find_finding_markers(fallback_body)
+    assert len(markers) == 1
+    assert markers[0]["sha"] == SHA
+    assert markers[0]["key"] != "0123456789abcdef"
+    _assert_prepared_body(fallback_body, expected_markers=markers)
+    lookup.assert_called_once_with("o", "r", 7, SHA, forge=ANY)
+
+
+def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_old_key(
+    tmp_path, forge_factory
+):
+    finding = {
+        "file": "src/edited.py",
+        "line": 2,
+        "severity": "high",
+        "title": "@leehopper <table>",
+        "body": "Body one",
+    }
+    old_material = (
+        "src/edited.py\0"
+        "2\0"
+        "@leehopper <table>\0"
+        "**🟠 [HIGH] @leehopper <table>**\n\nBody one"
+    )
+    new_material = (
+        "src/edited.py\0"
+        "2\0"
+        "\uff20leehopper &lt;table>\0"
+        "**🟠 [HIGH] \uff20leehopper &lt;table>**\n\nBody one"
+    )
+    old_key = "13c2bc08cfac5226"
+    new_key = "6970f2dcb5f585fd"
+    assert hashlib.sha256(old_material.encode()).hexdigest()[:16] == old_key
+    assert hashlib.sha256(new_material.encode()).hexdigest()[:16] == new_key
+    first_calls, _ = _gitlab_live_fallback_contracts_post_live(
+        [finding], (True, {old_key}, set())
+    )
+    discussions = [
+        request.payload
+        for request in first_calls
+        if request.endpoint.endswith("/discussions")
+    ]
+    assert len(discussions) == 1
+    assert review_marker.find_finding_marker(discussions[0]["body"])["key"] == new_key
+    second_calls, _ = _gitlab_live_fallback_contracts_post_live(
+        [finding], (True, {old_key, new_key}, set())
+    )
+    assert not (second_calls)
+
+
+@pytest.mark.parametrize(
+    "line, endpoint",
+    [(3, "/discussions"), (None, "/notes")],
+    ids=["anchored-discussion", "unanchored-note"],
+)
+def test_gitlab_live_fallback_contracts__partial_prior_delivery_posts_only_the_missing_corroborator(
+    tmp_path, forge_factory, line, endpoint
+):
+    primary = _hostile_finding(
+        consolidation_key="src/edited.py:2", consolidation_primary=True
+    )
+    title = post_review.prepare_line(primary["title"])
+    prior_key = post_review.finding_key(
+        primary["file"],
+        primary["line"],
+        title,
+        post_review.key_material_body(primary),
+    )
+    corroborator = _hostile_finding(
+        line=line,
+        consolidation_key="src/edited.py:2",
+        consolidation_primary=False,
+    )
+    calls, lookup = _gitlab_live_fallback_contracts_post_live(
+        [primary, corroborator], (True, {prior_key}, set())
+    )
+    assert len(calls) == 1
+    request = calls[0]
+    payload = request.payload
+    assert request.endpoint.endswith(endpoint)
+    body = payload["body"]
+    markers = review_marker.find_finding_markers(body)
+    assert len(markers) == 1
+    assert markers[0]["key"] != prior_key
+    _assert_prepared_body(body, expected_markers=markers)
+    lookup.assert_called_once_with("o", "r", 7, SHA, forge=ANY)
+
+
+def _poisoned_outbound_sinks_capture_live_gitlab(
+    findings, prior, *, reject_first=False
+):
+    success = PostResult({}, None, None)
+    fake = FakeGitLab(
+        submissions={
+            "notes": [success] * (len(findings) + 1),
+            "discussions": (
+                [PostResult(None, "position rejected", None)]
+                if reject_first
+                else [success]
+            )
+            + [success] * (2 * len(findings)),
+        }
+    )
+    primary = findings[0]
+    filepath, line = primary.get("file"), primary.get("line")
+    valid_lines = {(filepath, line): None}
+    line_texts = {(filepath, line): "context"}
+
+    post_review._CAPTURED.clear()
+    with (
+        patch.object(post_review, "DRY_RUN", False),
+        patch(
+            "gauntlet.delivery.post.fetch_gitlab_shas",
+            return_value=("base", "head", "start"),
+        ),
+        patch("gauntlet.delivery.post.gitlab_prior_delivery", return_value=prior),
+        patch("gauntlet.delivery.post.validate_position", return_value=[]),
+        contextlib.redirect_stdout(io.StringIO()),
+        contextlib.redirect_stderr(io.StringIO()),
+    ):
+        post_review.post_gitlab(
+            {
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 7,
+                "sha": SHA,
+                "review_body": _poison("review_body"),
+                "findings": findings,
+            },
+            valid_lines,
+            set(),
+            {filepath: filepath},
+            line_texts,
+            forge=fake,
+        )
+    return [call.request for call in fake.calls if call.method == "submit"]
+
+
+def _poisoned_outbound_sinks_finding(property_names, reads, *, primary=False):
+    finding = _RecordingFinding(
+        {key: _poison(key) for key in property_names}, reads=reads
+    )
+    finding["consolidation_key"] = "poison-group"
+    finding["consolidation_primary"] = primary
+    return finding
+
+
+def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_note(
+    tmp_path, forge_factory
+):
+    property_names = set(_js_finding_property_union()) | {"unknown_key"}
+    primary = _poisoned_outbound_sinks_finding(property_names, set(), primary=True)
+    corroborator = _poisoned_outbound_sinks_finding(property_names, set())
+    primary["consolidation_key"] = "poison-group"
+    corroborator["consolidation_key"] = "poison-group"
+    rejected_calls = _poisoned_outbound_sinks_capture_live_gitlab(
+        [primary, corroborator], (False, set(), set()), reject_first=True
+    )
+    discussions = [
+        request.payload
+        for request in rejected_calls
+        if request.endpoint.endswith("/discussions")
+    ]
+    assert len(discussions) == 2
+    fallback_body = discussions[-1]["body"]
+    fallback_markers = review_marker.find_finding_markers(fallback_body)
+    assert len(fallback_markers) == 1
+    _assert_prepared_poison(
+        fallback_body, property_names, expected_markers=fallback_markers
+    )
+
+    primary = _poisoned_outbound_sinks_finding(property_names, set(), primary=True)
+    corroborator = _poisoned_outbound_sinks_finding(property_names, set())
+    primary["consolidation_key"] = "poison-group"
+    corroborator["consolidation_key"] = "poison-group"
+    corroborator["line"] = None
+    with patch(
+        "gauntlet.delivery.post.finding_key",
+        side_effect=lambda _file, member_line, _title, _body: (
+            "1" * 16 if member_line is not None else "2" * 16
+        ),
+    ):
+        note_calls = _poisoned_outbound_sinks_capture_live_gitlab(
+            [primary, corroborator], (True, {"1" * 16}, set())
+        )
+    assert len(note_calls) == 1
+    request = note_calls[0]
+    payload = request.payload
+    assert request.endpoint.endswith("/notes")
+    assert "position" not in payload
+    note_markers = review_marker.find_finding_markers(payload["body"])
+    assert note_markers == [{"sha": SHA, "key": "2" * 16}]
+    _assert_prepared_poison(
+        payload["body"], property_names, expected_markers=note_markers
+    )

@@ -477,7 +477,7 @@ def test_current_platform_selection(remote, status, expected, monkeypatch):
         assert argv == ["git", "remote", "get-url", "origin"]
         return remote, "", status
 
-    monkeypatch.setattr(post.proc, "output", origin_output)
+    monkeypatch.setattr(proc, "output", origin_output)
     assert post.detect_platform() == expected
 
 
@@ -857,7 +857,7 @@ def test_availability(adapter, tool, available, monkeypatch, tmp_path):
         looked_up.append(name)
         return str(tmp_path / name) if available else None
 
-    monkeypatch.setattr(forge.proc, "which", which)
+    monkeypatch.setattr(proc, "which", which)
     if available:
         assert adapter().ensure_available() is None
     else:
@@ -884,11 +884,9 @@ def test_diff_policy(adapter, argv, status, monkeypatch):
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
-        return forge.proc.CompletedProcess(
-            command, status, "diff\r\n\u00e9\n", " stderr "
-        )
+        return proc.CompletedProcess(command, status, "diff\r\n\u00e9\n", " stderr ")
 
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
     assert adapter().diff(TARGET) == ("diff\r\n\u00e9\n", " stderr ", status)
     assert calls == [(argv, {"cwd": None, "timeout": None, "errors": "strict"})]
 
@@ -909,7 +907,7 @@ def test_diff_exceptions_propagate(adapter, failure, monkeypatch):
     def run(*args, **kwargs):
         raise failure
 
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
     with pytest.raises(type(failure)) as exc:
         adapter().diff(TARGET)
     assert exc.value is failure
@@ -939,13 +937,13 @@ def test_paginated_read_argv(adapter, argv, monkeypatch):
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
-        return forge.proc.CompletedProcess(command, 0, '[{"id":1}]\n[{"id":2}]', "")
+        return proc.CompletedProcess(command, 0, '[{"id":1}]\n[{"id":2}]', "")
 
     def which(name):
         pytest.fail("review reads must not precheck availability")
 
-    monkeypatch.setattr(forge.proc, "which", which)
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "which", which)
+    monkeypatch.setattr(proc, "run", run)
     assert adapter().review_entries(TARGET) == forge.JsonFetch(
         [{"id": 1}, {"id": 2}], None
     )
@@ -1040,9 +1038,9 @@ def test_paginated_read_result(
     adapter, label, stdout, stderr, status, payload, error_tail, monkeypatch
 ):
     monkeypatch.setattr(
-        forge.proc,
+        proc,
         "run",
-        lambda cmd, **kw: forge.proc.CompletedProcess(cmd, status, stdout, stderr),
+        lambda cmd, **kw: proc.CompletedProcess(cmd, status, stdout, stderr),
     )
     assert adapter().review_entries(TARGET) == forge.JsonFetch(
         payload, f"{label}: {error_tail}" if error_tail else None
@@ -1066,7 +1064,7 @@ def test_read_failure_translation(adapter, label, failure, detail, monkeypatch):
     def run(*args, **kwargs):
         raise failure
 
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
     assert adapter().review_entries(TARGET) == forge.JsonFetch(
         [], f"{label}: fetch failed (exit -1): {detail}"
     )
@@ -1076,7 +1074,7 @@ def test_read_failure_translation(adapter, label, failure, detail, monkeypatch):
     "adapter", [forge.GitHub, forge.GitLab], ids=["github", "gitlab"]
 )
 def test_non_utf8_read_child(adapter, monkeypatch):
-    real_run = forge.proc.run
+    real_run = proc.run
     calls = []
     child = r'import sys; sys.stdout.buffer.write(b"[{\"body\":\"bad\xff\"}]\n[{\"body\":\"tail\"}]")'
 
@@ -1084,7 +1082,7 @@ def test_non_utf8_read_child(adapter, monkeypatch):
         calls.append((command, kwargs))
         return real_run([sys.executable, "-c", child], **kwargs)
 
-    monkeypatch.setattr(forge.proc, "run", child_run)
+    monkeypatch.setattr(proc, "run", child_run)
     assert adapter().review_entries(TARGET) == forge.JsonFetch(
         [{"body": "bad\ufffd"}, {"body": "tail"}], None
     )
@@ -1099,7 +1097,7 @@ def test_non_utf8_read_child(adapter, monkeypatch):
     "outcome", ["missing-git", "nonutf8-unusable", "nonutf8-slug", "timeout", "nonzero"]
 )
 def test_origin_policy(caller, outcome, monkeypatch):
-    real_run = forge.proc.run
+    real_run = proc.run
     calls = []
 
     def run(command, **kwargs):
@@ -1115,11 +1113,11 @@ def test_origin_policy(caller, outcome, monkeypatch):
                 else r'import sys; sys.stdout.buffer.write(b"\xff\xfe not a remote")'
             )
             return real_run([sys.executable, "-c", child], **kwargs)
-        return forge.proc.CompletedProcess(
+        return proc.CompletedProcess(
             command, 1, "https://github.com/o/r.git", "rejected"
         )
 
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
 
     def call():
         if caller == "poster":
@@ -1225,9 +1223,9 @@ def test_versions_policy(stdout, stderr, status, expected, monkeypatch):
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
-        return forge.proc.CompletedProcess(command, status, stdout, stderr)
+        return proc.CompletedProcess(command, status, stdout, stderr)
 
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
     assert forge.GitLab().diff_refs(TARGET) == expected
     assert calls == [
         (
@@ -1250,7 +1248,7 @@ def test_versions_exceptions_propagate(failure, monkeypatch):
     def run(*args, **kwargs):
         raise failure
 
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
     with pytest.raises(type(failure)) as exc:
         forge.GitLab().diff_refs(TARGET)
     assert exc.value is failure
@@ -1318,10 +1316,10 @@ def test_submit_transport(adapter, builder, argv, monkeypatch, tmp_path):
             paths[0].read_bytes()
             == b'{"body": "caf\xc3\xa9\\nline", "event": "COMMENT", "comments": []}'
         )
-        return forge.proc.CompletedProcess(command, 0, '{"id":7}', "")
+        return proc.CompletedProcess(command, 0, '{"id":7}', "")
 
     monkeypatch.setattr(forge.tempfile, "mkstemp", mkstemp)
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
     assert adapter().submit(
         builder(TARGET, {"body": "caf\u00e9\nline", "event": "COMMENT", "comments": []})
     ) == forge.PostResult({"id": 7}, None, None)
@@ -1357,9 +1355,9 @@ def test_submit_transport(adapter, builder, argv, monkeypatch, tmp_path):
 )
 def test_submit_response(stdout, expected, monkeypatch):
     monkeypatch.setattr(
-        forge.proc,
+        proc,
         "run",
-        lambda cmd, **kw: forge.proc.CompletedProcess(cmd, 0, stdout, ""),
+        lambda cmd, **kw: proc.CompletedProcess(cmd, 0, stdout, ""),
     )
     assert forge.GitHub().submit(forge.github_review_request(TARGET, {})) == expected
 
@@ -1389,10 +1387,10 @@ def test_submit_failure_cleans_temp(failure, monkeypatch, tmp_path):
         assert paths[0].exists()
         if failure:
             raise failure
-        return forge.proc.CompletedProcess(command, 5, "ignored stdout", " rejected \n")
+        return proc.CompletedProcess(command, 5, "ignored stdout", " rejected \n")
 
     monkeypatch.setattr(forge.tempfile, "mkstemp", mkstemp)
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
     request = forge.gitlab_note_request(TARGET, {"body": "review"})
     if failure:
         with pytest.raises(type(failure)) as exc:
@@ -1424,7 +1422,7 @@ def test_submit_encoding_failure_cleans_temp(monkeypatch, tmp_path):
         pytest.fail("an unencodable payload must not run the CLI")
 
     monkeypatch.setattr(forge.tempfile, "mkstemp", mkstemp)
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
     with pytest.raises(TypeError):
         forge.GitHub().submit(forge.github_review_request(TARGET, {"bad": object()}))
     assert len(paths) == 1
@@ -1441,19 +1439,23 @@ def test_factory(platform, expected):
 
 
 @pytest.mark.parametrize("fake", [FakeForge, FakeGitLab], ids=["github", "gitlab"])
-def test_fake_queues_and_semantic_log(fake, monkeypatch):
+@pytest.mark.parametrize("queue_shape", ["ordered", "by-surface"])
+def test_fake_queues_and_semantic_log(fake, queue_shape, monkeypatch):
     def transport(*args, **kwargs):
         pytest.fail("fake must never use production transport")
 
-    monkeypatch.setattr(forge.proc, "run", transport)
-    monkeypatch.setattr(forge.proc, "which", transport)
+    monkeypatch.setattr(proc, "run", transport)
+    monkeypatch.setattr(proc, "which", transport)
+    replies = [
+        forge.PostResult(None, "rejected", None),
+        forge.PostResult({"id": 2}, None, None),
+    ]
     adapter = fake(
         diffs=[("", "", 0), ("", "rejected", 1)],
         entries=[forge.JsonFetch([{"body": "summary"}], None)],
-        submissions=[
-            forge.PostResult(None, "rejected", None),
-            forge.PostResult({"id": 2}, None, None),
-        ],
+        submissions=replies
+        if queue_shape == "ordered"
+        else {"handwritten endpoint": replies},
     )
     adapter.ensure_available()
     assert adapter.diff(TARGET) == ("", "", 0)
@@ -1481,13 +1483,18 @@ def test_fake_queues_and_semantic_log(fake, monkeypatch):
     ]:
         with pytest.raises(AssertionError, match=r"queue exhausted"):
             method(argument)
+    if queue_shape == "by-surface":
+        with pytest.raises(AssertionError, match="Unexpected submit surface"):
+            adapter.submit(
+                forge.PostRequest(adapter.platform, "unconfigured", "POST", (), {})
+            )
 
 
 def test_fake_gitlab_refs_and_no_inherited_transport(monkeypatch):
     def transport(*args, **kwargs):
         pytest.fail("fake must never inherit transport")
 
-    monkeypatch.setattr(forge.proc, "run", transport)
+    monkeypatch.setattr(proc, "run", transport)
     failure = RuntimeError("rejected")
     fake = FakeGitLab(refs=[forge.JsonFetch([], None), failure])
     assert isinstance(fake, forge.GitLab)
@@ -1542,9 +1549,9 @@ def test_submit_and_fake_accept_mapping_payload(monkeypatch):
 
     def run(command, **kwargs):
         recorded.append(Path(command[-1]).read_bytes())
-        return forge.proc.CompletedProcess(command, 0, "{}", "")
+        return proc.CompletedProcess(command, 0, "{}", "")
 
-    monkeypatch.setattr(forge.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
     assert forge.GitHub().submit(request) == forge.PostResult({}, None, None)
     assert recorded == [b'{"body": "review"}']
     fake = FakeForge()

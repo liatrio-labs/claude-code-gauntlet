@@ -107,7 +107,7 @@ def test_network_scan(
     fake = forge_factory.configure(
         FakeForge(platform, entries=[JsonFetch(payload, error)])
     )
-    monkeypatch.setattr(detect_prior_review.proc, "run", _fake_git_run())
+    monkeypatch.setattr(proc, "run", _fake_git_run())
     out, code = _run_main(
         ["--platform", platform, "--owner", "o", "--repo", "r", "--number", "5"]
     )
@@ -224,7 +224,7 @@ def test_prior_state(notes, error, expected):
     "outcome", ["missing-git", "timeout", "nonzero", "nonutf8-unusable", "nonutf8-slug"]
 )
 def test_detector_origin_receipt(outcome, forge_factory, monkeypatch):
-    real_run = detect_prior_review.proc.run
+    real_run = proc.run
     fake = forge_factory.configure(FakeForge())
     calls = []
 
@@ -235,7 +235,7 @@ def test_detector_origin_receipt(outcome, forge_factory, monkeypatch):
         if outcome == "missing-git":
             raise FileNotFoundError("missing git")
         if outcome == "timeout":
-            raise detect_prior_review.proc.TimeoutExpired(command, kwargs["timeout"])
+            raise proc.TimeoutExpired(command, kwargs["timeout"])
         if outcome.startswith("nonutf8"):
             child = (
                 r'import sys; sys.stdout.buffer.write(b"https://github.com/o/r\xff.git\n")'
@@ -245,7 +245,7 @@ def test_detector_origin_receipt(outcome, forge_factory, monkeypatch):
             return real_run([sys.executable, "-c", child], **kwargs)
         return _result(rc=1)
 
-    monkeypatch.setattr(detect_prior_review.proc, "run", run)
+    monkeypatch.setattr(proc, "run", run)
     out, code = _run_main(["--platform", "github", "--number", "5"])
     result = json.loads(out)
     assert code == 0
@@ -282,7 +282,7 @@ def test_run_maps_process_failures_to_exact_sentinels(monkeypatch, failure, expe
     def fail(*_args, **_kwargs):
         raise failure
 
-    monkeypatch.setattr(detect_prior_review.proc, "output", fail)
+    monkeypatch.setattr(proc, "output", fail)
     assert detect_prior_review.run(["git", "status"], timeout=3) == expected
 
 

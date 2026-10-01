@@ -8,11 +8,10 @@ import io
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
@@ -22,6 +21,7 @@ import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
 import gauntlet.prior_review as detect_prior_review
 import pytest
+from gauntlet import proc
 from gauntlet.delivery.post import (
     _blockquote,
     _cap_rule_text,
@@ -56,12 +56,19 @@ from gauntlet.delivery.post import (
     valid_lines_for_file,
     validate_position,
 )
-from gauntlet.forge import JsonFetch, ReviewTarget
+from gauntlet.forge import (
+    ForgeUnavailable,
+    JsonFetch,
+    PostRequest,
+    PostResult,
+    ReviewTarget,
+    github_review_request,
+)
 
-from tests.support.forge import FakeGitLab, ForgeCall
+from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 
 
-def test_interim_prior_delivery_uses_selected_forge(forge_factory, monkeypatch):
+def test_prior_delivery_uses_injected_forge(forge_factory, monkeypatch):
     fake = forge_factory.configure(
         FakeGitLab(
             entries=[
@@ -70,53 +77,227 @@ def test_interim_prior_delivery_uses_selected_forge(forge_factory, monkeypatch):
         )
     )
     monkeypatch.setattr(post_review, "DRY_RUN", False)
-    assert post_review.gitlab_prior_delivery("o", "r", 5, "a" * 40) == (
+    assert post_review.gitlab_prior_delivery("o", "r", 5, "a" * 40, forge=fake) == (
         True,
         set(),
         set(),
     )
-    assert forge_factory.calls == ["gitlab"]
+    assert forge_factory.calls == []
     assert fake.calls == [ForgeCall("review_entries", ReviewTarget("o", "r", 5))]
+
+
+pytestmark = pytest.mark.usefixtures(
+    "forge_factory", "poster_state", "poster_workspace"
+)
 
 
 REPO = Path(__file__).resolve().parents[1]
 _MISSING_SEVERITY = object()
 
 
-@pytest.fixture(autouse=True)
-def _available_cli_tools(monkeypatch):
-    lookup = shutil.which
-    monkeypatch.setattr(
-        post_review.proc,
-        "which",
-        lambda name: (
-            lookup(name) or (f"/mock/{name}" if name in {"gh", "glab"} else None)
+@pytest.mark.parametrize(
+    "platform, diff, expected, new_files, old_paths, texts",
+    [
+        (
+            "github",
+            "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -1,1 +1,2 @@\n existing\n+added\n",
+            {("foo.py", 1): 1, ("foo.py", 2): None},
+            set(),
+            {"foo.py": "foo.py"},
+            {("foo.py", 1): "existing", ("foo.py", 2): "added"},
         ),
-    )
-
-
-@pytest.mark.parametrize("name", ["gh", "glab"])
-@pytest.mark.parametrize("available", [True, False])
-def test_check_tool_uses_path_lookup(name, available, monkeypatch, capsys):
-    calls = []
-
-    def lookup(executable):
-        calls.append(executable)
-        return f"/tools/{executable}" if available else None
-
-    monkeypatch.setattr(post_review.proc, "which", lookup)
-    if available:
-        post_review.check_tool(name)
-        assert capsys.readouterr().err == ""
-    else:
-        with pytest.raises(SystemExit) as caught:
-            post_review.check_tool(name)
-        assert caught.value.code == 1
+        (
+            "gitlab",
+            "--- bar.py\n+++ bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n",
+            {("bar.py", 5): 5, ("bar.py", 6): None},
+            set(),
+            {"bar.py": "bar.py"},
+            {("bar.py", 5): "ctx", ("bar.py", 6): "new_line"},
+        ),
+    ],
+    ids=["github-dispatches-to-gh-pr-diff", "gitlab-dispatches-to-glab-mr-diff"],
+)
+@pytest.mark.parametrize("status", [0, 128], ids=["success", "nonzero"])
+def test_diff_fetch_integration(
+    platform, diff, expected, new_files, old_paths, texts, status, capsys
+):
+    fake = FakeForge(platform, diffs=[(diff, "fatal: not a git repository", status)])
+    target = ReviewTarget("myorg", "myrepo", 42)
+    got = parse_diff_lines(target, forge=fake)
+    assert fake.calls == [ForgeCall("diff", target)]
+    if status:
+        assert got == (None, None, None, None)
         assert capsys.readouterr().err == (
-            f"ERROR: '{name}' CLI tool not found. Install it and ensure it is "
-            "authenticated before running this script.\n"
+            "WARNING: Could not fetch diff (exit 128): fatal: not a git repository. "
+            "Skipping line validation \u2014 all findings will be posted.\n"
         )
-    assert calls == [name]
+    else:
+        assert got == (expected, new_files, old_paths, texts)
+        assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "function",
+    [
+        post_review.post_github,
+        post_review.post_gitlab,
+        parse_diff_lines,
+        post_review.fetch_gitlab_shas,
+    ],
+    ids=["github-poster", "gitlab-poster", "diff-fetch", "versions-fetch"],
+)
+def test_required_keyword_forge(function):
+    parameter = inspect.signature(function).parameters["forge"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+def test_missing_forge_tool(platform, capsys):
+    tool = "gh" if platform == "github" else "glab"
+    message = f"'{tool}' CLI tool not found. Install it and ensure it is authenticated before running this script."
+    fake = (FakeForge if platform == "github" else FakeGitLab)(
+        availability=[ForgeUnavailable(message)]
+    )
+    data = {"owner": "o", "repo": "r", "pr_number": 1}
+    with pytest.raises(SystemExit) as exc:
+        if platform == "github":
+            post_review.post_github(data, {}, {}, forge=fake)
+        else:
+            post_review.post_gitlab(data, {}, set(), {}, {}, forge=fake)
+    assert exc.value.code == 1
+    assert capsys.readouterr().err == f"ERROR: {message}\n"
+    assert fake.calls == [ForgeCall("ensure_available")]
+
+
+@pytest.mark.parametrize(
+    "result, message",
+    [
+        (JsonFetch([], None), "MR versions endpoint returned an empty list."),
+        (
+            JsonFetch(
+                None,
+                "Failed to fetch MR versions (exit 3): denied\nEnsure glab is authenticated and the MR IID is correct.",
+            ),
+            "Failed to fetch MR versions (exit 3): denied\nEnsure glab is authenticated and the MR IID is correct.",
+        ),
+        (
+            JsonFetch(None, "Could not parse MR versions response: bad json"),
+            "Could not parse MR versions response: bad json",
+        ),
+    ],
+    ids=["empty-list", "nonzero", "parse"],
+)
+def test_versions_refusal(result, message, capsys):
+    target = ReviewTarget("o", "r", 1)
+    fake = FakeGitLab(refs=[result])
+    with pytest.raises(SystemExit) as exc:
+        post_review.fetch_gitlab_shas(target, forge=fake)
+    assert exc.value.code == 1
+    assert capsys.readouterr().err == f"ERROR: {message}\n"
+    assert fake.calls == [ForgeCall("ensure_available"), ForgeCall("diff_refs", target)]
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["live", "dry-run"])
+@pytest.mark.parametrize("fatal", [False, True], ids=["tolerant", "fatal"])
+@pytest.mark.parametrize(
+    "result",
+    [
+        PostResult({"id": 7}, None, None),
+        PostResult({"raw": "text"}, None, "Could not parse API response as JSON: text"),
+        PostResult(None, "API call failed (exit 1).", None),
+    ],
+    ids=["success", "warning", "rejected"],
+)
+def test_semantic_post_policy(dry_run, fatal, result, monkeypatch, capsys):
+    monkeypatch.setattr(post_review, "DRY_RUN", dry_run)
+    request = github_review_request(
+        ReviewTarget("o", "r", 1), {"body": "review", "event": "COMMENT"}
+    )
+    fake = FakeForge(submissions=[result])
+    if fatal and result.error and not dry_run:
+        with pytest.raises(SystemExit) as exc:
+            post_review.post_json(request, forge=fake)
+        assert exc.value.code == 1
+        assert capsys.readouterr().err == f"ERROR: {result.error}\n"
+    else:
+        if fatal:
+            response = post_review.post_json(request, forge=fake)
+            assert response == ({} if dry_run else result.response)
+        else:
+            assert post_review.try_post_json(request, forge=fake) == (
+                ({}, None) if dry_run else (result.response, result.error)
+            )
+        assert capsys.readouterr().err == (
+            f"WARNING: {result.warning}\n" if result.warning and not dry_run else ""
+        )
+    assert ([request] if dry_run else []) == post_review._CAPTURED
+    assert fake.calls == ([] if dry_run else [ForgeCall("submit", request=request)])
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+def test_empty_semantic_capture_defaults(platform):
+    expected = {"platform": platform, "skipped": []}
+    if platform == "github":
+        expected.update(endpoint="", method="POST", payload={})
+    else:
+        expected.update(summary={}, discussions=[])
+    assert post_review.build_dry_run_payload(platform) == expected
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+@pytest.mark.parametrize("dry_run", [False, True], ids=["live", "dry-run"])
+def test_selected_forge_is_passed_through_main(
+    platform, dry_run, tmp_path, forge_factory, monkeypatch
+):
+    target = ReviewTarget("o", "r", 7)
+    path = tmp_path / "findings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "platform": platform,
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 7,
+                "sha": "a" * 40,
+                "findings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    refs = JsonFetch(
+        [{"base_commit_sha": "b", "head_commit_sha": "h", "start_commit_sha": "s"}],
+        None,
+    )
+    fake = forge_factory.configure(
+        FakeForge(diffs=[("", "", 0)])
+        if platform == "github"
+        else FakeGitLab(diffs=[("", "", 0)], refs=[refs])
+    )
+    argv = ["post_review.py", str(path)] + (["--dry-run"] if dry_run else [])
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+
+    def no_process(*args, **kwargs):
+        pytest.fail("explicit platform and SHA must use only the selected Forge")
+
+    monkeypatch.setattr(proc, "run", no_process)
+    post_review.main()
+    assert forge_factory.calls == [platform]
+    methods = ["diff", "ensure_available"]
+    if platform == "gitlab":
+        methods += ["ensure_available", "diff_refs"] + (
+            [] if dry_run else ["review_entries"]
+        )
+    if not dry_run:
+        methods.append("submit")
+    assert [call.method for call in fake.calls] == methods
+    assert all(call.target == target for call in fake.calls if call.target is not None)
+    writes = [call.request for call in fake.calls if call.method == "submit"]
+    requests = post_review._CAPTURED if dry_run else writes
+    assert len(requests) == 1
+    assert requests[0].method == "POST"
+    assert requests[0].platform == platform
 
 
 @pytest.mark.parametrize(
@@ -301,503 +482,6 @@ class TestDetectPlatform(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # parse_diff_lines (post_review version)
 # ---------------------------------------------------------------------------
-
-
-class TestParseDiffLinesPostReview(unittest.TestCase):
-    """Tests for parse_diff_lines in post_review, which dispatches via run_api."""
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_github_dispatches_to_gh_pr_diff(self, mock_run):
-        """platform='github' must call gh pr diff."""
-        diff = (
-            "diff --git a/foo.py b/foo.py\n"
-            "--- a/foo.py\n"
-            "+++ b/foo.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " existing\n"
-            "+added\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files, _, _ = parse_diff_lines("github", "myorg", "myrepo", 42)
-        self.assertIsNotNone(valid_lines)
-        self.assertEqual(new_files, set())
-        call_args = mock_run.call_args[0][0]
-        self.assertEqual(call_args[0], "gh")
-        self.assertEqual(call_args[1], "pr")
-        self.assertEqual(call_args[2], "diff")
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_gitlab_dispatches_to_glab_mr_diff(self, mock_run):
-        """platform='gitlab' must call glab mr diff."""
-        # glab-faithful: an unconditional `---`/`+++` pair, paths verbatim, no `a/`/`b/`.
-        diff = "--- bar.py\n+++ bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n"
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
-        self.assertIsNotNone(valid_lines)
-        call_args = mock_run.call_args[0][0]
-        self.assertEqual(call_args[0], "glab")
-        self.assertEqual(call_args[1], "mr")
-        self.assertEqual(call_args[2], "diff")
-        self.assertNotIn(
-            "--raw",
-            call_args,
-            "the parser reads glab's own reconstruction of the MR versions API; --raw "
-            "streams git's diff instead, reintroducing a/ b/ prefixes and /dev/null",
-        )
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_glab_no_prefix_headers_are_parsed(self, mock_run):
-        """`glab mr diff` emits headers without the `a/` / `b/` prefix.
-
-        Regression: the regex previously required ``+++ b/<path>`` and dropped
-        every header from glab, leaving valid_lines empty so all findings were
-        rejected as ``line not found in diff``.
-        """
-        diff = (
-            "diff --git a/src/app.py b/src/app.py\n"
-            "--- src/app.py\n"
-            "+++ src/app.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " ctx\n"
-            "+added\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertIn(("src/app.py", 1), valid_lines)
-        self.assertIn(("src/app.py", 2), valid_lines)
-        self.assertEqual(new_files, set())
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_github_diff_prefixes_are_still_stripped(self, mock_run):
-        """`gh pr diff` writes git's synthetic `a/` / `b/`: those ARE diff syntax.
-
-        The platform split that stopped stripping them on GitLab must not stop
-        stripping them here — the keys GitHub findings are matched against, and the
-        `path` shipped to its API, are prefix-free.
-        """
-        diff = (
-            "diff --git a/src/app.py b/src/app.py\n"
-            "--- a/src/app.py\n"
-            "+++ b/src/app.py\n"
-            "@@ -1,2 +1,2 @@\n"
-            " ctx\n"
-            "-x\n"
-            "+y\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, _, old_paths, _ = parse_diff_lines("github", "o", "r", 1)
-        self.assertIn(("src/app.py", 1), valid_lines)
-        self.assertEqual(old_paths, {"src/app.py": "src/app.py"})
-        self.assertEqual({fp for fp, _ in valid_lines}, {"src/app.py"})
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_new_file_detected_via_dev_null_old_header(self, mock_run):
-        """The ``/dev/null`` branch, exercised by header-shaped input with no hunk.
-
-        SYNTHETIC FIXTURE, stated honestly: real ``git`` emits NO ``---``/``+++`` lines at
-        all for an empty added file — just ``diff --git``, ``new file mode`` and ``index``
-        (verified against real git). So the shape below is not one gh is known to emit
-        today; the ``/dev/null`` branch is defence-in-depth for header-shaped input, and
-        it is the ``@@ -0,0`` hunk signal that real added-file diffs actually trigger.
-        The branch is still worth pinning: with a hunk present the ``-0,0`` signal alone
-        satisfies the assertion, so mutating ``current_file_is_new`` would otherwise leave
-        the suite green.
-        """
-        diff = (
-            "diff --git a/empty_new.py b/empty_new.py\n"
-            "new file mode 100644\n"
-            "index 0000000..e69de29\n"
-            "--- /dev/null\n"
-            "+++ b/empty_new.py\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        _, new_files, _, _ = parse_diff_lines("github", "o", "r", 1)
-        self.assertEqual(new_files, {"empty_new.py"})
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_new_file_detected_from_hunk_header_glab_style(self, mock_run):
-        """`glab mr diff` never writes `--- /dev/null` — it repeats the path on both
-        sides, so `@@ -0,0` is the only added-file signal.
-
-        The previous fixture paired a GitHub-only `/dev/null` header with glab-only
-        unprefixed paths, a combination neither CLI emits, which is why the suite passed
-        while `new_files` was permanently empty on GitLab (#127 D2).
-        """
-        diff = "--- src/added.py\n+++ src/added.py\n@@ -0,0 +1,1 @@\n+content\n"
-        mock_run.return_value = (diff, "", 0)
-        _, new_files, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertEqual(new_files, {"src/added.py"})
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_added_file_detected_end_of_multi_file_glab_diff(self, mock_run):
-        """The added file is the SECOND file in the diff, and the modified one that
-        precedes it must not be swept into new_files with it."""
-        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        _, new_files, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertEqual(new_files, {"src/app/clients/api/__init__.py"})
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_deleted_file_does_not_add_dev_null_to_valid_lines(self, mock_run):
-        """``+++ /dev/null`` (deleted file) must not produce phantom entries.
-
-        The ``@@ -1,2 +0,0 @@`` header must not read as an added file either: it is the
-        NEW side that is 0 here, and only an old-side start of 0 means "added".
-        """
-        diff = "--- a/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-line1\n-line2\n"
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files, _, _ = parse_diff_lines("github", "o", "r", 1)
-        self.assertIsInstance(valid_lines, dict)
-        self.assertEqual(valid_lines, {})
-        self.assertEqual(new_files, set())
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_empty_file_gaining_content_is_treated_as_added_a_known_limitation(
-        self, mock_run
-    ):
-        """A pre-existing EMPTY file gaining content emits `@@ -0,0 +1,N @@` with no
-        /dev/null — byte-identical to a real added file in plain `glab mr diff` output.
-
-        DOCUMENTED LIMITATION, pinned here deliberately: we read it as added, because
-        sending `old_path` into a genuinely new file is the documented HTTP 500 and real
-        added files are the common case (and the #127 defect).
-        """
-        diff = "--- a/empty.py\n+++ b/empty.py\n@@ -0,0 +1,2 @@\n+first\n+second\n"
-        mock_run.return_value = (diff, "", 0)
-        _, new_files, _, _ = parse_diff_lines("github", "o", "r", 1)
-        self.assertEqual(new_files, {"empty.py"})
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_omitted_hunk_counts_default_to_one(self, mock_run):
-        """``@@ -0,0 +1 @@`` — a one-line added file, as real git writes it.
-
-        A unified-diff count is omitted exactly when that side holds ONE line, so the
-        parser's ``1 if count is None else int(count)`` default carries real traffic.
-        Both defaults previously had zero coverage: mutating them to 0 left the whole
-        suite green, and under that mutation a one-line added file's only commentable
-        line vanishes from ``valid_lines`` — every finding on it silently dropped.
-        """
-        diff = "--- oneline.txt\n+++ oneline.txt\n@@ -0,0 +1 @@\n+only\n"
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertIn(("oneline.txt", 1), valid_lines)
-        self.assertIsNone(valid_lines[("oneline.txt", 1)])
-        self.assertIn("oneline.txt", new_files)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_deleted_file_body_drains_budgets_so_the_next_file_parses(self, mock_run):
-        """A deleted file's body must consume its budgets even though it records nothing.
-
-        ``+++ /dev/null`` leaves ``current_file`` None, but skipping the body outright
-        (``if current_file is None: continue``) leaves the old-side budget undrained, so
-        the NEXT file's headers arrive while the parser is still in the hunk-body zone —
-        where headers are not matched — and every comment target in that file is eaten.
-        """
-        diff = (
-            "diff --git a/gone.py b/gone.py\n"
-            "--- a/gone.py\n"
-            "+++ /dev/null\n"
-            "@@ -1,3 +0,0 @@\n"
-            "-a\n"
-            "-b\n"
-            "-c\n"
-            "diff --git a/next.py b/next.py\n"
-            "--- a/next.py\n"
-            "+++ b/next.py\n"
-            "@@ -5,2 +5,2 @@\n"
-            " keep\n"
-            "-x\n"
-            "+y\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("github", "o", "r", 1)
-        self.assertEqual(valid_lines[("next.py", 5)], 5)
-        self.assertIsNone(valid_lines[("next.py", 6)])
-        self.assertEqual([k for k in valid_lines if k[0] == "gone.py"], [])
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_gitlab_deleted_file_records_no_targets_of_its_own(self, mock_run):
-        """`glab mr diff` has no `+++ /dev/null`: a deletion repeats the path on BOTH
-        headers, so ``current_file`` stays LIVE through the deleted file's body.
-
-        On GitHub the new-side header blanks ``current_file``, and a mis-drained body can
-        only lose the NEXT file's lines. Here nothing blanks it, so the same fault also
-        writes keys onto a file that no longer exists — inline comments aimed at a
-        deleted path. Draining the old-side budget is the only thing that ends the body.
-        """
-        mock_run.return_value = (GL_DIFF_DELETED_THEN_MODIFIED, "", 0)
-        valid_lines, new_files, old_paths, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertEqual([k for k in valid_lines if k[0] == "src/removed.py"], [])
-        self.assertEqual(valid_lines[("src/edited.py", 61)], 50)
-        self.assertIsNone(valid_lines[("src/edited.py", 62)])
-        self.assertEqual(valid_lines[("src/edited.py", 63)], 52)
-        # `@@ -1,3 +0,0 @@` is a deletion: only an OLD-side start of 0 means added. The
-        # repeated path still yields an old_paths entry, harmlessly mapping to itself.
-        self.assertEqual(new_files, set())
-        self.assertEqual(
-            old_paths,
-            {"src/removed.py": "src/removed.py", "src/edited.py": "src/edited.py"},
-        )
-
-    # -- hunk-body budget tracking (headers are body content too) -----------
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_form_feed_line_content_does_not_split_the_hunk(self, mock_run):
-        """A form feed is diff CONTENT; it must not invent a line boundary.
-
-        ``str.splitlines()`` breaks on \\x0c (and \\x0b, \\x85, U+2028/U+2029) — git never
-        emitted a boundary there. The extra line drains the declared budgets one line
-        early, flips the header/body zone boundary, and ships a WRONG old_line for
-        everything after it: here the ADDED last line would be reported as context on
-        old line 3.
-        """
-        # Real `git diff` shape for changing p2 -> p2X in a file whose middle line is a
-        # form feed (built in Python so the control character is explicit).
-        diff = "--- ff.py\n+++ ff.py\n@@ -1,3 +1,3 @@\n p1\n \x0c\n-p2\n+p2X\n"
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertIn(("ff.py", 3), valid_lines)
-        self.assertIsNone(valid_lines[("ff.py", 3)])
-        self.assertEqual(valid_lines[("ff.py", 2)], 2)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_removed_line_content_starting_with_dashes_is_not_a_file_header(
-        self, mock_run
-    ):
-        """Removing `-- deprecated: drop me` renders `--- deprecated: drop me`.
-
-        Matched as an old-side file header it consumed no OLD number, desyncing
-        `old_line` for every later line of the hunk — a WRONG old_line on the wire,
-        worse than the 400 it replaces.
-        """
-        diff = (
-            "diff --git a/db/schema.sql b/db/schema.sql\n"
-            "--- db/schema.sql\n"
-            "+++ db/schema.sql\n"
-            "@@ -10,4 +10,3 @@\n"
-            " CREATE TABLE t (\n"
-            # A removed line whose CONTENT is `-- deprecated: drop me`.
-            "--- deprecated: drop me\n"
-            "   id INT,\n"
-            " );\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        # new 10 = old 10 (context), then the removal eats old 11 with no new number,
-        # so new 11 must map to old 12 — not to 11.
-        self.assertEqual(valid_lines[("db/schema.sql", 10)], 10)
-        self.assertEqual(valid_lines[("db/schema.sql", 11)], 12)
-        self.assertEqual(valid_lines[("db/schema.sql", 12)], 13)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_added_line_content_starting_with_pluses_is_not_a_file_header(
-        self, mock_run
-    ):
-        """Adding `++ x` renders `+++ x`. Matched as a new-side file header it
-        retargeted `current_file` at the literal text and reset both counters."""
-        diff = (
-            "diff --git a/src/app.c b/src/app.c\n"
-            "--- src/app.c\n"
-            "+++ src/app.c\n"
-            "@@ -20,2 +20,3 @@\n"
-            " int i = 0;\n"
-            "+++ x\n"
-            " use(i);\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertEqual(valid_lines[("src/app.c", 20)], 20)
-        self.assertIsNone(valid_lines[("src/app.c", 21)])
-        # The context line after it still records under the original file, with the
-        # numbers the added line advanced.
-        self.assertEqual(valid_lines[("src/app.c", 22)], 21)
-        self.assertEqual({fp for fp, _ in valid_lines}, {"src/app.c"})
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_binary_file_prose_is_not_admitted_as_a_valid_line(self, mock_run):
-        """`Binary files … differ` carries no hunk; it must not become a context line."""
-        diff = (
-            "diff --git a/img.png b/img.png\n"
-            "--- a/img.png\n"
-            "+++ b/img.png\n"
-            "Binary files a/img.png and b/img.png differ\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("github", "o", "r", 1)
-        self.assertEqual([k for k in valid_lines if k[0] == "img.png"], [])
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_between_hunk_lines_are_not_admitted(self, mock_run):
-        """Between-hunk lines are not commentable lines: the key set is EXACTLY the
-        hunk bodies' addressable lines, with nothing admitted from around them.
-
-        In plain `glab mr diff` the only lines between two hunks are the next file's
-        `---`/`+++` pair — an under-drained hunk budget reads them as body content and
-        admits a phantom target on the file before. Git's own decoration (`diff --git`,
-        `index`, `Binary files … differ`) never appears in this output; it reaches the
-        parser through `gh pr diff`, and the github-platform binary-prose test above
-        owns that arm of the same catch-all.
-        """
-        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertEqual(
-            sorted(valid_lines),
-            [("src/app/clients/api/__init__.py", n) for n in range(1, 17)]
-            + [
-                ("src/edited.py", 61),
-                ("src/edited.py", 62),
-                ("src/edited.py", 63),
-            ],
-        )
-
-    # -- old-side tracking (issue #127 D1) ---------------------------------
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_valid_lines_is_a_mapping_of_new_line_to_old_line(self, mock_run):
-        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertIsInstance(valid_lines, dict)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_context_line_maps_to_its_old_side_number(self, mock_run):
-        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertEqual(valid_lines[("src/edited.py", 61)], 50)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_added_line_maps_to_none(self, mock_run):
-        """An added line exists only on the new side — present as a key, valued None."""
-        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertIn(("src/edited.py", 62), valid_lines)
-        self.assertIsNone(valid_lines[("src/edited.py", 62)])
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_removed_line_advances_the_old_side_only(self, mock_run):
-        """52, not 51: the ``-removed`` line consumed an OLD number and no new one."""
-        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertEqual(valid_lines[("src/edited.py", 63)], 52)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_old_side_counter_resets_between_files(self, mock_run):
-        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertIsNone(valid_lines[("src/app/clients/api/__init__.py", 1)])
-        # The added file's `---`/`+++` headers sit between hunks. If the modified file's
-        # budgets under-drain, the parser is still in its body zone when they arrive and
-        # reads them as content — admitting a phantom target on the file before.
-        self.assertNotIn(("src/edited.py", 64), valid_lines)
-        self.assertEqual(
-            {
-                v
-                for (fp, _), v in valid_lines.items()
-                if fp == "src/app/clients/api/__init__.py"
-            },
-            {None},
-            "an added file's lines must carry no old-side leftovers from the file before",
-        )
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_no_newline_marker_advances_neither_counter(self, mock_run):
-        diff = (
-            "--- a/f.py\n"
-            "+++ b/f.py\n"
-            "@@ -1,2 +1,2 @@\n"
-            " a\n"
-            "\\ No newline at end of file\n"
-            " b\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _, _ = parse_diff_lines("github", "o", "r", 1)
-        self.assertEqual(valid_lines[("f.py", 2)], 2)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_renamed_file_old_side_path_is_captured(self, mock_run):
-        """A rename's `---` path must survive parsing keyed by the NEW path.
-
-        The parser previously read the old-side header only to compare it to
-        ``/dev/null`` and threw the path away, so a renamed file's position shipped the
-        post-rename path as ``old_path`` — a path that does not exist on the old side
-        (#130). A rename is the ONE case where glab's two headers name different paths;
-        it emits no `rename from`/`rename to`/`similarity index` lines to corroborate
-        them.
-        """
-        mock_run.return_value = (GL_DIFF_RENAME, "", 0)
-        valid_lines, _, old_paths, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertEqual(old_paths, {"new_name.py": "old_name.py"})
-        self.assertEqual(valid_lines[("new_name.py", 3)], 3)
-        # A BLANK context line is a lone space, and is addressable like any other.
-        self.assertEqual(valid_lines[("new_name.py", 6)], 6)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_added_file_absent_from_old_paths(self, mock_run):
-        """`--- /dev/null` means there is no old side — record no mapping at all."""
-        diff = (
-            "diff --git a/added.py b/added.py\n"
-            "new file mode 100644\n"
-            "--- /dev/null\n"
-            "+++ b/added.py\n"
-            "@@ -0,0 +1,1 @@\n"
-            "+content\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        _, new_files, old_paths, _ = parse_diff_lines("github", "o", "r", 1)
-        self.assertEqual(new_files, {"added.py"})
-        self.assertNotIn("added.py", old_paths)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_unrenamed_file_old_path_maps_to_itself(self, mock_run):
-        """For a plain modified file both sides name the same path — pin the coincide
-        case, so the mapping is provably a no-op there rather than accidentally right."""
-        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        _, _, old_paths, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertEqual(old_paths["src/edited.py"], "src/edited.py")
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_nonzero_rc_returns_none(self, mock_run):
-        """A non-zero exit code from the CLI tool must return (None, None, None)."""
-        mock_run.return_value = ("", "fatal: not a git repository", 128)
-        valid_lines, new_files, old_paths, _ = parse_diff_lines(
-            "github", "myorg", "myrepo", 1
-        )
-        self.assertIsNone(valid_lines)
-        self.assertIsNone(new_files)
-        self.assertIsNone(old_paths)
-
-    def test_unknown_platform_returns_none(self):
-        """An unknown platform must return (None, None, None) without calling run_api."""
-        valid_lines, new_files, old_paths, _ = parse_diff_lines(
-            "bitbucket", "myorg", "myrepo", 1
-        )
-        self.assertIsNone(valid_lines)
-        self.assertIsNone(new_files)
-        self.assertIsNone(old_paths)
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_delegates_to_parse_diff_text_for_a_github_diff(self, mock_run):
-        """A successful CLI fetch must hand the SAME bytes to
-        ``parse_diff_text(platform, stdout)`` and return exactly what it returns —
-        no second, divergent parse living inside the CLI wrapper."""
-        diff = (
-            "diff --git a/foo.py b/foo.py\n"
-            "--- a/foo.py\n"
-            "+++ b/foo.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " existing\n"
-            "+added\n"
-        )
-        mock_run.return_value = (diff, "", 0)
-        got = parse_diff_lines("github", "myorg", "myrepo", 42)
-        self.assertEqual(got, parse_diff_text("github", diff))
-
-    @patch("gauntlet.delivery.post.run_api")
-    def test_delegates_to_parse_diff_text_for_a_glab_fixture(self, mock_run):
-        """Same guarantee, for a real ``glab mr diff`` fixture (no ``diff --git``
-        line, unprefixed headers)."""
-        diff = _glab_fixture("modified.diff")
-        mock_run.return_value = (diff, "", 0)
-        got = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
-        self.assertEqual(got, parse_diff_text("gitlab", diff))
 
 
 # ---------------------------------------------------------------------------
@@ -1806,123 +1490,6 @@ class TestResolveMarkerSha(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
-    """THE test that discharges issue #39 requirement 6 unambiguously: the
-    "write signal == read signal" guarantee proven against the bytes
-    post_review.py actually posts.
-
-    tests/test_review_marker.py's TestRoundTrip re-implements post_github's
-    and post_gitlab's footer composition inline
-    (``review_body += build_footer(len(findings), sha, body=review_body)``)
-    and then parses ITS OWN re-implementation. That proves the
-    re-implementation round-trips — it would keep passing even if
-    post_github/post_gitlab stopped appending the footer entirely, since
-    nothing in that test ever calls the real posting functions.
-
-    This test instead drives the REAL ``post_review.post_github`` and
-    ``post_review.post_gitlab`` with ``DRY_RUN`` mode (the same capture
-    technique bench/tests/test_adapter.py's reference-payload builders use:
-    set ``post_review.DRY_RUN = True``, call the poster, then read
-    ``post_review._CAPTURED``), pulls the posted body straight out of the
-    captured payload — GitHub: ``_CAPTURED[0]["payload"]["body"]``; GitLab:
-    the summary note is the first capture, same path — and feeds THAT EXACT
-    STRING to ``gauntlet.marker.detect_signal``, asserting the
-    recovered sha equals the sha the poster was given. Covers both platforms
-    and both an empty ``review_body`` (the ``workflows/src/stages.js``
-    default) and a non-empty one. If post_github/post_gitlab stopped
-    appending the footer, THIS test would fail; the re-implementation-based
-    one would not.
-    """
-
-    def setUp(self):
-        post_review.DRY_RUN = True
-        post_review._CAPTURED.clear()
-        post_review._SKIP_WARNINGS.clear()
-
-    def tearDown(self):
-        post_review.DRY_RUN = False
-        post_review._CAPTURED.clear()
-        post_review._SKIP_WARNINGS.clear()
-
-    @patch("gauntlet.delivery.post.check_tool")
-    def test_github_empty_review_body(self, _tool):
-        sha = "a" * 40
-        data = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 1,
-            "sha": sha,
-            "review_body": "",
-            "findings": [],
-        }
-        post_review.post_github(data, {}, {})
-        body = post_review._CAPTURED[0]["payload"]["body"]
-        signal = review_marker.detect_signal(body)
-        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
-        self.assertEqual(signal["sha"], sha)
-
-    @patch("gauntlet.delivery.post.check_tool")
-    def test_github_non_empty_review_body(self, _tool):
-        sha = "b" * 40
-        data = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 1,
-            "sha": sha,
-            "review_body": "## Summary\nSome pre-existing narrative text.\n",
-            "findings": [],
-        }
-        post_review.post_github(data, {}, {})
-        body = post_review._CAPTURED[0]["payload"]["body"]
-        signal = review_marker.detect_signal(body)
-        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
-        self.assertEqual(signal["sha"], sha)
-
-    @patch("gauntlet.delivery.post.check_tool")
-    @patch(
-        "gauntlet.delivery.post.fetch_gitlab_shas",
-        return_value=("base", "head", "start"),
-    )
-    def test_gitlab_empty_review_body(self, _shas, _tool):
-        sha = "c" * 40
-        data = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 1,
-            "sha": sha,
-            "review_body": "",
-            "findings": [],
-        }
-        post_review.post_gitlab(data, {}, set(), {}, {})
-        # The summary note is posted before any per-finding discussion, so
-        # with findings=[] it is also the only capture.
-        body = post_review._CAPTURED[0]["payload"]["body"]
-        signal = review_marker.detect_signal(body)
-        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
-        self.assertEqual(signal["sha"], sha)
-
-    @patch("gauntlet.delivery.post.check_tool")
-    @patch(
-        "gauntlet.delivery.post.fetch_gitlab_shas",
-        return_value=("base", "head", "start"),
-    )
-    def test_gitlab_non_empty_review_body(self, _shas, _tool):
-        sha = "d" * 40
-        data = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 1,
-            "sha": sha,
-            "review_body": "## MR Review\nContext for the reviewer.\n",
-            "findings": [],
-        }
-        post_review.post_gitlab(data, {}, set(), {}, {})
-        body = post_review._CAPTURED[0]["payload"]["body"]
-        signal = review_marker.detect_signal(body)
-        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
-        self.assertEqual(signal["sha"], sha)
-
-
 # ---------------------------------------------------------------------------
 # gitlab_project_id
 # ---------------------------------------------------------------------------
@@ -1982,138 +1549,6 @@ class TestValidLinesForFile(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestSkipWarningDiagnostics(unittest.TestCase):
-    """Verify that skip warnings include valid-line diagnostics."""
-
-    @patch(
-        "gauntlet.delivery.post.get_head_sha",
-        return_value="abc1234def5678abc1234def5678abc1234def56",
-    )
-    @patch("gauntlet.delivery.post.check_tool")
-    @patch(
-        "gauntlet.delivery.post.post_json",
-        return_value={"html_url": "http://example.com"},
-    )
-    @patch("gauntlet.delivery.post.warn")
-    def test_github_skip_includes_valid_lines(self, mock_warn, _post, _tool, _sha):
-        from gauntlet.delivery.post import post_github
-
-        valid_lines = {("src/app.py", 10): 10, ("src/app.py", 20): None}
-        data = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 1,
-            "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
-        }
-        post_github(data, valid_lines, {})
-        mock_warn.assert_called_once()
-        msg = mock_warn.call_args[0][0]
-        self.assertIn("Valid lines for this file:", msg)
-        self.assertIn("10", msg)
-        self.assertIn("20", msg)
-
-    @patch(
-        "gauntlet.delivery.post.get_head_sha",
-        return_value="abc1234def5678abc1234def5678abc1234def56",
-    )
-    @patch("gauntlet.delivery.post.check_tool")
-    @patch(
-        "gauntlet.delivery.post.post_json",
-        return_value={"html_url": "http://example.com"},
-    )
-    @patch("gauntlet.delivery.post.warn")
-    def test_github_skip_empty_valid_lines_reports_an_empty_diag_list(
-        self, mock_warn, _post, _tool, _sha
-    ):
-        from gauntlet.delivery.post import post_github
-
-        data = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 1,
-            "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
-        }
-        # Empty mapping: validation ran and found nothing for this line → skip + empty diag.
-        post_github(data, {}, {})
-        mock_warn.assert_called_once()
-        msg = mock_warn.call_args[0][0]
-        self.assertIn("line not found in diff.", msg)
-        self.assertIn("Valid lines for this file: []", msg)
-
-    @patch(
-        "gauntlet.delivery.post.get_head_sha",
-        return_value="abc1234def5678abc1234def5678abc1234def56",
-    )
-    @patch("gauntlet.delivery.post.check_tool")
-    @patch(
-        "gauntlet.delivery.post.post_json",
-        return_value={"html_url": "http://example.com"},
-    )
-    @patch("gauntlet.delivery.post.warn")
-    def test_github_skip_no_diag_when_valid_lines_none(
-        self, mock_warn, mock_post, _tool, _sha
-    ):
-        from gauntlet.delivery.post import post_github
-
-        data = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 1,
-            "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
-        }
-        # valid_lines=None: validation skipped → is_line_valid returns True → finding posts.
-        post_github(data, None, None)
-        mock_post.assert_called_once()
-        payload = mock_post.call_args[0][1]
-        self.assertEqual(len(payload["comments"]), 1)
-        self.assertEqual(payload["comments"][0]["path"], "src/app.py")
-        self.assertEqual(payload["comments"][0]["line"], 99)
-        for call in mock_warn.call_args_list:
-            self.assertNotIn(
-                "Valid lines for this file:",
-                call[0][0],
-                "None must not emit a valid-lines diagnostic",
-            )
-
-    @patch(
-        "gauntlet.delivery.post.get_head_sha",
-        return_value="abc1234def5678abc1234def5678abc1234def56",
-    )
-    @patch("gauntlet.delivery.post.check_tool")
-    @patch("gauntlet.delivery.post.post_json", return_value={})
-    @patch("gauntlet.delivery.post.fetch_gitlab_shas", return_value=("b", "h", "s"))
-    # The live path now asks detect_prior_review what the MR already carries; that read
-    # shells out to `glab`, so it is stubbed here rather than left to reach a real forge
-    # from a unit test.
-    @patch(
-        "gauntlet.delivery.post.gitlab_prior_delivery_state",
-        return_value=(False, set(), frozenset(), None),
-    )
-    @patch("gauntlet.delivery.post.warn")
-    def test_gitlab_skip_includes_valid_lines(
-        self, mock_warn, _prior, _shas, _post, _tool, _sha
-    ):
-        from gauntlet.delivery.post import post_gitlab
-
-        valid_lines = {("src/app.py", 5): 5, ("src/app.py", 15): None}
-        data = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 1,
-            "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
-        }
-        post_gitlab(data, valid_lines, set(), {}, {})
-        # First call is for the summary note, skip warning is the second call
-        found_diag = False
-        for call in mock_warn.call_args_list:
-            msg = call[0][0]
-            if "Valid lines for this file:" in msg:
-                found_diag = True
-                self.assertIn("5", msg)
-                self.assertIn("15", msg)
-        self.assertTrue(found_diag, "Expected diagnostic in skip warning")
-
-
 # ---------------------------------------------------------------------------
 # is_new_file
 # ---------------------------------------------------------------------------
@@ -2168,14 +1603,8 @@ class TestIsNewFile(unittest.TestCase):
 
 
 def _parse_fixture(diff, platform="gitlab"):
-    """Return ``parse_diff_lines`` output for *diff*.
-
-    The ground truth a position is checked against comes from the REAL parser here: a
-    hand-written ``valid_lines`` would let the gate be tested against the answer the test
-    wanted rather than the one the pipeline produces.
-    """
-    with patch("gauntlet.delivery.post.run_api", return_value=(diff, "", 0)):
-        return parse_diff_lines(platform, "o", "r", 1)
+    """Use the real parser so position tests cannot invent the oracles they want."""
+    return parse_diff_text(platform, diff)
 
 
 _MR_SHAS = ("base1", "head1", "start1")
@@ -2490,45 +1919,26 @@ class TestGitlabPositionPayload(unittest.TestCase):
         """Run post_gitlab and return the position dict from the discussion call."""
         from gauntlet.delivery.post import post_gitlab
 
-        captured = []
-
-        # Patching the non-fatal core covers BOTH callers: the summary note still goes
-        # through the real post_json wrapper, and the per-finding loop calls this
-        # directly, so the capture order (summary, then discussions) is unchanged.
-        def fake_try_post_json(cmd_prefix, payload):
-            captured.append((cmd_prefix, payload))
-            return {}, None
-
-        # Faithful to real git: `git rev-parse HEAD` always yields either a
-        # full 40-hex-char object id or the literal "unknown" (get_head_sha's
-        # own fallback on failure) — never a 6-char string. "abc123" would be
-        # the same class of fidelity bug flagged elsewhere in this change (a
-        # get_head_sha mock only 6 hex chars long).
+        fake = FakeGitLab()
+        # Git yields a full object id or "unknown", never an abbreviated marker SHA.
         with (
             patch("gauntlet.delivery.post.get_head_sha", return_value="deadbeef" * 5),
-            patch("gauntlet.delivery.post.check_tool"),
             patch(
                 "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
             ),
             patch(
-                "gauntlet.delivery.post.try_post_json", side_effect=fake_try_post_json
-            ),
-            # The live path asks detect_prior_review what the MR already carries;
-            # that read shells out to `glab`, so it is stubbed rather than left to
-            # reach a real forge from a unit test.
-            patch(
                 "gauntlet.delivery.post.gitlab_prior_delivery_state",
                 return_value=(False, set(), frozenset(), None),
             ),
         ):
-            post_gitlab(data, valid_lines, new_files, {}, {})
+            post_gitlab(data, valid_lines, new_files, {}, {}, forge=fake)
 
-        # First post_json call is the summary note; second is the discussion.
+        captured = [call.request for call in fake.calls if call.method == "submit"]
         self.assertGreaterEqual(
             len(captured), 2, "expected summary + at least one discussion call"
         )
-        return captured[1][1]["position"]
+        return captured[1].payload["position"]
 
     def test_new_file_position_omits_old_path(self):
         data = {
@@ -3095,7 +2505,15 @@ GLAB_400_STDERR = (
 )
 
 
-def _fake_run(
+@dataclass(frozen=True, slots=True)
+class _ObservedForgeCalls:
+    calls: list[ForgeCall]
+
+
+@contextlib.contextmanager
+def _poster_run(
+    factory,
+    *,
     diff="",
     versions=None,
     remote="git@github.com:o/r.git\n",
@@ -3106,63 +2524,64 @@ def _fake_run(
     calls=None,
     payloads=None,
 ):
-    """Model read-only CLI calls and steer live GitLab POST failures.
-
-    A failed diff fetch removes the line oracle; an empty successful diff does not.
-    """
-    rcs = iter(discussion_rcs or [])
-
-    def _run(cmd, *a, **k):
-        def res(out="", err="", rc=0):
-            return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
-
-        if calls is not None:
-            calls.append(cmd)
-        if payloads is not None and "--input" in cmd:
-            # The live path hands its JSON to gh/glab through a temp file that is
-            # unlinked the moment the call returns, so reading it here is the only
-            # place a test can see the bytes that actually go on the wire.
-            with open(cmd[cmd.index("--input") + 1], encoding="utf-8") as fh:
-                payloads.append(json.load(fh))
-        if cmd[:3] == ["git", "remote", "get-url"]:
-            return res(out=remote)
-        if cmd[:2] == ["git", "rev-parse"]:
-            return res(out=head_sha)
-        if cmd[:3] == ["gh", "pr", "diff"] or cmd[:3] == ["glab", "mr", "diff"]:
-            if diff_rc:
-                return res(err="fatal: could not read the diff", rc=diff_rc)
-            return res(out=diff)
-        if cmd[:2] == ["glab", "api"] and "--method" in cmd:
-            if any(tok.endswith("/discussions") for tok in cmd):
-                rc = next(rcs, 0)
-                return res(out="{}") if rc == 0 else res(err=GLAB_400_STDERR, rc=rc)
-            if any(tok.endswith("/notes") for tok in cmd):
-                if note_rc:
-                    return res(err="glab: 401 Unauthorized (HTTP 401)", rc=note_rc)
-                return res(out="{}")
-        if cmd[:2] == ["glab", "api"] and cmd[-1].endswith("/versions"):
-            return res(out=json.dumps(versions if versions is not None else []))
-        return res(out="{}", rc=0)
-
-    return _run
+    reply = (diff, "fatal: could not read the diff" if diff_rc else "", diff_rc)
+    # A group may attempt its discussion and then each member's fallback.
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    findings = data if isinstance(data, list) else data.get("findings", [])
+    attempts = 2 * len(findings) + 1
+    rejected = iter(discussion_rcs or [])
+    success = PostResult({}, None, None)
+    notes = [
+        PostResult(None, "glab: 401 Unauthorized (HTTP 401)", None)
+        if note_rc
+        else success
+    ] * attempts
+    discussions = [
+        PostResult(None, GLAB_400_STDERR, None) if next(rejected, 0) else success
+        for _ in range(attempts)
+    ]
+    github = factory.configure(FakeForge(diffs=[reply]))
+    gitlab = factory.configure(
+        FakeGitLab(
+            diffs=[reply],
+            refs=[JsonFetch(versions if versions is not None else [], None)],
+            submissions={"notes": notes, "discussions": discussions},
+        )
+    )
+    observed = _ObservedForgeCalls(calls=[])
+    with patch("gauntlet.proc.run", side_effect=_git_run(remote, head_sha)):
+        try:
+            yield observed
+        finally:
+            observed.calls.extend(github.calls + gitlab.calls)
+            writes = [call for call in observed.calls if call.method == "submit"]
+            if calls is not None:
+                calls.extend(observed.calls)
+            if payloads is not None:
+                payloads.extend(call.request.payload for call in writes)
 
 
-def _gitlab_posts(mock_run, suffix):
-    """Calls on *mock_run* that POST to a GitLab endpoint whose path ends in *suffix*."""
+def _git_run(remote, head_sha):
+    def run(command, **kwargs):
+        if command[:3] == ["git", "remote", "get-url"]:
+            return proc.CompletedProcess(command, 0, remote, "")
+        if command[:2] == ["git", "rev-parse"]:
+            return proc.CompletedProcess(command, 0, head_sha, "")
+        raise AssertionError(f"Unexpected Git call: {command}")
+
+    return run
+
+
+def _gitlab_posts(run, suffix):
     return [
-        c
-        for c in mock_run.call_args_list
-        if "--method" in c.args[0] and any(t.endswith(suffix) for t in c.args[0])
+        call
+        for call in run.calls
+        if call.method == "submit" and call.request.endpoint.endswith(suffix)
     ]
 
 
 def _normalize_prior(prior):
-    """Pad a legacy 3-tuple ``(summary_posted, keys, error)`` ``prior`` fixture to the
-    current 4-tuple ``gitlab_prior_delivery_state`` contract — ``(summary_posted, keys,
-    legacy_group_keys, error)`` — so the many existing fixtures that predate legacy-group
-    -body detection don't all need rewriting. A 4-tuple (a test that DOES want to steer
-    legacy_group_keys) passes through unchanged.
-    """
+    """Accept summary/keys/error or summary/keys/legacy/error fixture input."""
     if len(prior) == 4:
         return prior
     summary_posted, keys, error = prior
@@ -3178,17 +2597,6 @@ def _note_posts(mock_run):
 
 
 class _DryRunTestBase(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        self.findings_path = os.path.join(self.tmp, "findings.json")
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
-        post_review.DRY_RUN = False
-        post_review._CAPTURED.clear()
-        post_review._SKIP_WARNINGS.clear()
-        post_review._FIX_COUNTS.update(kept=0, downgraded=0)
-
     def _write(self, data):
         with open(self.findings_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -3198,175 +2606,6 @@ class _DryRunTestBase(unittest.TestCase):
             os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"
         ) as f:
             return json.load(f)
-
-
-class TestDryRunGitHub(_DryRunTestBase):
-    def test_dry_run_captures_payload_and_makes_no_post(self):
-        finding_a = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "Bug A",
-            "body": "Body A",
-        }
-        finding_b = {
-            "file": "foo.py",
-            "line": 99,
-            "severity": "low",
-            "title": "Bug B",
-            "body": "Body B",
-        }
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [finding_a, finding_b],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ) as mock_run,
-        ):
-            post_review.main()
-
-        post_calls = [
-            c
-            for c in mock_run.call_args_list
-            if "--method" in c.args[0] and "POST" in c.args[0]
-        ]
-        self.assertEqual(post_calls, [], "no POST subprocess call in dry-run")
-
-        payload_path = os.path.join(self.tmp, "post-review-payload.json")
-        self.assertTrue(os.path.exists(payload_path))
-        cap = self._payload()
-
-        self.assertEqual(cap["platform"], "github")
-        self.assertEqual(cap["endpoint"], "repos/o/r/pulls/5/reviews")
-        self.assertEqual(cap["method"], "POST")
-        self.assertEqual(cap["payload"]["event"], "COMMENT")
-        # Comments must match the live-path rendering byte-for-byte.
-        self.assertEqual(len(cap["payload"]["comments"]), 1)
-        comment = cap["payload"]["comments"][0]
-        self.assertEqual(comment["body"], render_comment_body(finding_a))
-        self.assertEqual(comment["path"], "foo.py")
-        self.assertEqual(comment["line"], 2)
-        self.assertEqual(comment["side"], "RIGHT")
-
-    def test_invalid_line_lands_in_skipped_not_comments(self):
-        finding_a = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "Bug A",
-            "body": "Body A",
-        }
-        finding_b = {
-            "file": "foo.py",
-            "line": 99,
-            "severity": "low",
-            "title": "Bug B",
-            "body": "Body B",
-        }
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [finding_a, finding_b],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-
-        cap = self._payload()
-        expected = (
-            "Skipping finding 'Bug B' at foo.py:99 "
-            "— line not found in diff. Valid lines for this file: [1, 2]"
-        )
-        self.assertIn(expected, cap["skipped"])
-        bodies = [c["body"] for c in cap["payload"]["comments"]]
-        self.assertNotIn(render_comment_body(finding_b), bodies)
-
-
-class TestDryRunGitLab(_DryRunTestBase):
-    def test_dry_run_captures_summary_and_discussions(self):
-        finding_x = {
-            "file": "bar.py",
-            "line": 2,
-            "severity": "medium",
-            "title": "Issue X",
-            "body": "Desc X",
-        }
-        self._write(
-            {
-                "platform": "gitlab",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "MR review",
-                "findings": [finding_x],
-            }
-        )
-        versions = [
-            {
-                "base_commit_sha": "base1",
-                "head_commit_sha": "head1",
-                "start_commit_sha": "start1",
-            }
-        ]
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GL_DIFF, versions=versions),
-            ) as mock_run,
-        ):
-            post_review.main()
-
-        post_calls = [
-            c
-            for c in mock_run.call_args_list
-            if "--method" in c.args[0] and "POST" in c.args[0]
-        ]
-        self.assertEqual(post_calls, [], "no POST subprocess call in dry-run")
-
-        versions_calls = [
-            c
-            for c in mock_run.call_args_list
-            if c.args[0][:2] == ["glab", "api"] and c.args[0][-1].endswith("/versions")
-        ]
-        self.assertTrue(
-            versions_calls, "fetch_gitlab_shas versions GET must still run in dry-run"
-        )
-
-        cap = self._payload()
-        self.assertEqual(cap["platform"], "gitlab")
-        self.assertIn("MR review", cap["summary"]["body"])
-        self.assertEqual(len(cap["discussions"]), 1)
-        disc = cap["discussions"][0]
-        self.assertEqual(disc["body"], render_comment_body(finding_x))
-        self.assertEqual(disc["position"]["new_path"], "bar.py")
-        self.assertEqual(disc["position"]["new_line"], 2)
 
 
 class TestInlinePosterBoundaries(_DryRunTestBase):
@@ -3433,10 +2672,7 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=diff, versions=versions),
-            ),
+            _poster_run(self.forge_factory, diff=diff, versions=versions),
         ):
             post_review.main()
         return self._payload(), finding
@@ -3588,11 +2824,8 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 "gauntlet.delivery.post.gitlab_prior_delivery",
                 return_value=prior,
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
-                ),
+            _poster_run(
+                self.forge_factory, diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
             ),
         ):
             post_review.main()
@@ -3628,57 +2861,6 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                     set(payload), {"platform", "summary", "discussions", "skipped"}
                 )
                 self.assertEqual(set(notes[0]), {"body"})
-
-    def test_github_impossible_inline_envelope_dies_before_any_post(self):
-        # Mutation: bypass the final UTF-8 body-plus-marker check; post_json would
-        # then be called with the oversized review batch.
-        data = {
-            "platform": "github",
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 5,
-            "sha": self.SHA,
-            "review_body": "Summary",
-            "findings": [
-                {
-                    "file": "foo.py",
-                    "line": 1,
-                    "severity": "high",
-                    "title": "Too large",
-                    "body": "body",
-                },
-                {
-                    "file": "foo.py",
-                    "line": 2,
-                    "severity": "low",
-                    "title": "Healthy sibling",
-                    "body": "short body",
-                },
-            ],
-        }
-        self._write(data)
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with (
-            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
-            patch.dict(
-                post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
-                {"bytes": 20},
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-            patch("gauntlet.delivery.post.post_json") as post,
-            contextlib.redirect_stdout(stdout),
-            contextlib.redirect_stderr(stderr),
-            self.assertRaises(SystemExit) as raised,
-        ):
-            post_review.main()
-        self.assertEqual(raised.exception.code, 1)
-        post.assert_not_called()
-        self.assertIn("inline review comment", stderr.getvalue())
-        self.assertIn("20-byte GitHub body limit", stderr.getvalue())
-        self.assertIn("nothing was posted", stderr.getvalue())
 
 
 def finding_key_for_test(finding):
@@ -3737,11 +2919,10 @@ class TestSummaryBodyBrandHeader(_DryRunTestBase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=GL_DIFF if gitlab else GH_DIFF, versions=versions
-                ),
+            _poster_run(
+                self.forge_factory,
+                diff=GL_DIFF if gitlab else GH_DIFF,
+                versions=versions,
             ),
         ):
             post_review.main()
@@ -4162,309 +3343,6 @@ class TestDeliveryKeyStability(unittest.TestCase):
                     self.assertNotEqual(key, old_padded_key)
 
 
-class TestGitHubDeliveryConsolidation(_DryRunTestBase):
-    def _findings(self):
-        primary = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "A",
-            "body": "Body A",
-            "consolidation_key": "foo.py:0",
-            "consolidation_primary": True,
-        }
-        corroborator = {
-            "file": "foo.py",
-            "line": 3,
-            "severity": "medium",
-            "title": "B",
-            "body": "Body B",
-            "agent": "bug-detector",
-            "dimension": "correctness",
-            "confidence": 70,
-            "consolidation_key": "foo.py:0",
-            "consolidation_primary": False,
-        }
-        return primary, corroborator
-
-    def test_group_posts_as_one_comment_at_the_primarys_anchor(self):
-        primary, corroborator = self._findings()
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [primary, corroborator],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
-            ),
-        ):
-            post_review.main()
-
-        cap = self._payload()
-        comments = cap["payload"]["comments"]
-        self.assertEqual(len(comments), 1)
-        self.assertEqual(comments[0]["path"], "foo.py")
-        self.assertEqual(comments[0]["line"], 2)
-        self.assertEqual(
-            comments[0]["body"], render_group_body(primary, [corroborator])
-        )
-        self.assertNotIn("Bug B", str(cap["skipped"]))
-
-    def test_unanchorable_primary_degrades_whole_group_into_skipped_section(self):
-        primary, corroborator = self._findings()
-        primary["line"] = 999  # not in the diff
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [primary, corroborator],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
-            ),
-        ):
-            post_review.main()
-
-        cap = self._payload()
-        self.assertEqual(cap["payload"]["comments"], [])
-        body = cap["payload"]["body"]
-        self.assertIn("could not be anchored inline", body)
-        self.assertIn("A", body)
-        self.assertIn("B", body)
-        self.assertIn("Body A", body)
-        self.assertIn("Body B", body)
-
-    def test_no_line_primary_degrades_whole_group_into_skipped_section(self):
-        """The primary carries no line at all (distinct from a line the diff
-        doesn't touch) — the same whole-group degrade must fire on this branch
-        too, not just the invalid-line branch."""
-        primary, corroborator = self._findings()
-        del primary["line"]
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [primary, corroborator],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
-            ),
-        ):
-            post_review.main()
-
-        cap = self._payload()
-        self.assertEqual(cap["payload"]["comments"], [])
-        body = cap["payload"]["body"]
-        self.assertIn("A", body)
-        self.assertIn("B", body)
-        self.assertIn("Body A", body)
-        self.assertIn(
-            "Body B", body, "the corroborator must fan out into the skipped section too"
-        )
-
-
-class TestGitLabDeliveryConsolidation(_DryRunTestBase):
-    def _findings(self):
-        primary = {
-            "file": "bar.py",
-            "line": 1,
-            "severity": "high",
-            "title": "A",
-            "body": "Body A",
-            "consolidation_key": "bar.py:0",
-            "consolidation_primary": True,
-        }
-        corroborator = {
-            "file": "bar.py",
-            "line": 2,
-            "severity": "medium",
-            "title": "B",
-            "body": "Body B",
-            "agent": "bug-detector",
-            "dimension": "correctness",
-            "confidence": 70,
-            "consolidation_key": "bar.py:0",
-            "consolidation_primary": False,
-        }
-        return primary, corroborator
-
-    def _versions(self):
-        return [
-            {
-                "base_commit_sha": "base1",
-                "head_commit_sha": "head1",
-                "start_commit_sha": "start1",
-            }
-        ]
-
-    def test_group_posts_as_one_discussion_at_the_primarys_anchor(self):
-        primary, corroborator = self._findings()
-        self._write(
-            {
-                "platform": "gitlab",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "MR review",
-                "findings": [primary, corroborator],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
-            ),
-        ):
-            post_review.main()
-
-        cap = self._payload()
-        self.assertEqual(len(cap["discussions"]), 1)
-        disc = cap["discussions"][0]
-        self.assertEqual(disc["body"], render_group_body(primary, [corroborator]))
-        self.assertEqual(disc["position"]["new_path"], "bar.py")
-        self.assertEqual(disc["position"]["new_line"], 1)
-
-    def test_unanchorable_primary_degrades_whole_group_into_skipped_section(self):
-        primary, corroborator = self._findings()
-        primary["line"] = 999  # not in the diff
-        self._write(
-            {
-                "platform": "gitlab",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "MR review",
-                "findings": [primary, corroborator],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
-            ),
-        ):
-            post_review.main()
-
-        cap = self._payload()
-        self.assertEqual(cap["discussions"], [])
-        body = cap["summary"]["body"]
-        self.assertIn("could not be anchored inline", body)
-        self.assertIn("Body A", body)
-        self.assertIn("Body B", body)
-
-    def test_no_line_primary_degrades_whole_group_into_skipped_section(self):
-        """The primary carries no line at all (distinct from a line the diff
-        doesn't touch) — the same whole-group degrade must fire on this branch
-        too, not just the invalid-line branch."""
-        primary, corroborator = self._findings()
-        del primary["line"]
-        self._write(
-            {
-                "platform": "gitlab",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "MR review",
-                "findings": [primary, corroborator],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
-            ),
-        ):
-            post_review.main()
-
-        cap = self._payload()
-        self.assertEqual(cap["discussions"], [])
-        body = cap["summary"]["body"]
-        self.assertIn("Body A", body)
-        self.assertIn(
-            "Body B", body, "the corroborator must fan out into the skipped section too"
-        )
-
-
-class TestLivePathUnchanged(_DryRunTestBase):
-    def test_without_flag_posts_and_writes_no_payload_file(self):
-        finding_a = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "Bug A",
-            "body": "Body A",
-        }
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [finding_a],
-            }
-        )
-        # Pin CODE_GAUNTLET_POST_MODE off so an ambient bench value (the harness pins it
-        # to dry-run) cannot flip this live-path assertion.
-        with (
-            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
-            patch.dict(os.environ, {}, clear=False),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ) as mock_run,
-        ):
-            os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
-            post_review.main()
-
-        post_calls = [
-            c
-            for c in mock_run.call_args_list
-            if "--method" in c.args[0] and "POST" in c.args[0]
-        ]
-        self.assertTrue(post_calls, "live path must issue the reviews POST")
-        self.assertFalse(
-            os.path.exists(os.path.join(self.tmp, "post-review-payload.json"))
-        )
-
-
 class TestDryRunStdout(_DryRunTestBase):
     """In dry-run, the post paths must not claim anything was posted."""
 
@@ -4475,10 +3353,7 @@ class TestDryRunStdout(_DryRunTestBase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=diff, versions=versions),
-            ),
+            _poster_run(self.forge_factory, diff=diff, versions=versions),
             contextlib.redirect_stdout(stdout),
         ):
             post_review.main()
@@ -4565,10 +3440,7 @@ class TestLivePathStdout(_DryRunTestBase):
         with (
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch.dict(os.environ, {}, clear=False),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
+            _poster_run(self.forge_factory, diff=GH_DIFF),
             contextlib.redirect_stdout(stdout),
         ):
             os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
@@ -4582,113 +3454,6 @@ class TestLivePathStdout(_DryRunTestBase):
 # ---------------------------------------------------------------------------
 # CODE_GAUNTLET_POST_MODE env-enforced dry-run
 # ---------------------------------------------------------------------------
-
-
-class TestPostModeEnv(_DryRunTestBase):
-    """CODE_GAUNTLET_POST_MODE=dry-run self-enforces dry-run even without --dry-run.
-
-    The env var is part of the headless contract and the bench harness pins it to
-    dry-run; a headless Phase 8 invocation that omits the flag must still capture the
-    payload and post nothing. The flag wins when present; env "live" or unset changes
-    nothing on its own.
-    """
-
-    def _write_gh(self):
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [
-                    {
-                        "file": "foo.py",
-                        "line": 2,
-                        "severity": "high",
-                        "title": "Bug A",
-                        "body": "Body A",
-                    }
-                ],
-            }
-        )
-
-    def _post_calls(self, mock_run):
-        return [
-            c
-            for c in mock_run.call_args_list
-            if "--method" in c.args[0] and "POST" in c.args[0]
-        ]
-
-    def _payload_exists(self):
-        return os.path.exists(os.path.join(self.tmp, "post-review-payload.json"))
-
-    def test_env_dry_run_alone_captures_payload_no_posts(self):
-        self._write_gh()
-        with (
-            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
-            patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "dry-run"}),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ) as mock_run,
-        ):
-            post_review.main()
-        self.assertEqual(
-            self._post_calls(mock_run), [], "env dry-run must issue no POST"
-        )
-        self.assertTrue(self._payload_exists())
-        self.assertEqual(self._payload()["platform"], "github")
-
-    def test_flag_alone_dry_run_when_env_unset(self):
-        self._write_gh()
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch.dict(os.environ, {}, clear=False),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ) as mock_run,
-        ):
-            os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
-            post_review.main()
-        self.assertEqual(self._post_calls(mock_run), [])
-        self.assertTrue(self._payload_exists())
-
-    def test_neither_flag_nor_env_posts_live(self):
-        self._write_gh()
-        with (
-            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
-            patch.dict(os.environ, {}, clear=False),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ) as mock_run,
-        ):
-            os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
-            post_review.main()
-        self.assertTrue(
-            self._post_calls(mock_run), "live path must issue the reviews POST"
-        )
-        self.assertFalse(self._payload_exists())
-
-    def test_env_live_without_flag_posts_live(self):
-        self._write_gh()
-        with (
-            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
-            patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "live"}),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ) as mock_run,
-        ):
-            post_review.main()
-        self.assertTrue(
-            self._post_calls(mock_run), "env=live with no flag must post live"
-        )
-        self.assertFalse(self._payload_exists())
 
 
 class TestWriterWrapperByteParity(_DryRunTestBase):
@@ -4728,10 +3493,7 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
+            _poster_run(self.forge_factory, diff=GH_DIFF),
         ):
             post_review.main()
         payload_path = os.path.join(self.tmp, "post-review-payload.json")
@@ -4771,224 +3533,12 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
             "wrapper form must drive a byte-identical dry-run payload",
         )
 
-    def test_wrapper_platform_survives_an_unrecognized_self_hosted_remote(self):
-        # Mutation: ignore the wrapper's platform in main; the wrapper follows the
-        # manual form into the could-not-detect-platform refusal.
-        manual = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 5,
-            "sha": "0123456789abcdef0123456789abcdef01234567",
-            "review_body": "Summary",
-            "findings": self.FINDINGS,
-        }
-        self._write(manual)
-        stderr = io.StringIO()
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(remote="https://code.example/o/r.git\n"),
-            ),
-            contextlib.redirect_stderr(stderr),
-            self.assertRaises(SystemExit) as raised,
-        ):
-            post_review.main()
-        self.assertEqual(raised.exception.code, 1)
-        self.assertIn("Could not detect platform from git remote", stderr.getvalue())
-
-        wrapper = dict(manual)
-        wrapper["platform"] = "github"
-        self._write(wrapper)
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=GH_DIFF, remote="https://code.example/o/r.git\n"
-                ),
-            ),
-        ):
-            post_review.main()
-        self.assertEqual(self._payload()["platform"], "github")
-
 
 # ---------------------------------------------------------------------------
 # Both footer halves posted (Issue #39 D3) — GitHub review body and GitLab
 # summary note both get the prose footer AND the machine marker, and an
 # already-prose'd review_body does not get a duplicate.
 # ---------------------------------------------------------------------------
-
-
-class TestBothFooterHalvesPosted(_DryRunTestBase):
-    def test_github_review_body_contains_both_prose_and_marker(self):
-        finding_a = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "Bug A",
-            "body": "Body A",
-        }
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [finding_a],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-
-        body = self._payload()["payload"]["body"]
-        self.assertIn("Generated by code-gauntlet", body)
-        self.assertIn("Reviewed up to:", body)
-        self.assertIn("code-gauntlet-findings:", body)
-        self.assertIn("Summary", body, "the original review_body must still be present")
-
-    def test_gitlab_summary_note_contains_both_prose_and_marker(self):
-        finding_x = {
-            "file": "bar.py",
-            "line": 2,
-            "severity": "medium",
-            "title": "Issue X",
-            "body": "Desc X",
-        }
-        self._write(
-            {
-                "platform": "gitlab",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "MR review",
-                "findings": [finding_x],
-            }
-        )
-        versions = [
-            {
-                "base_commit_sha": "base1",
-                "head_commit_sha": "head1",
-                "start_commit_sha": "start1",
-            }
-        ]
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GL_DIFF, versions=versions),
-            ),
-        ):
-            post_review.main()
-
-        body = self._payload()["summary"]["body"]
-        self.assertIn("Generated by code-gauntlet", body)
-        self.assertIn("Reviewed up to:", body)
-        self.assertIn("code-gauntlet-findings:", body)
-        self.assertIn("MR review", body)
-
-    def test_review_body_with_the_same_prose_sha_gets_no_second_copy(self):
-        """The idempotence guard (Issue #39 D3): a footer already naming THIS
-        commit is left alone rather than duplicated."""
-        pre_existing = (
-            "Some notes.\n\n---\n"
-            "Generated by code-gauntlet | Reviewed up to: deadbeefcafe\n"
-        )
-        finding_a = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "Bug A",
-            "body": "Body A",
-        }
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": pre_existing,
-                "findings": [finding_a],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-        body = self._payload()["payload"]["body"]
-        self.assertEqual(
-            body.count("Generated by code-gauntlet"),
-            1,
-            f"an exact-sha match must not duplicate: {body!r}",
-        )
-
-    def test_review_body_with_a_stale_prose_sha_still_gets_the_real_one(self):
-        """A hand-composed footer naming a DIFFERENT commit must not suppress the
-        real one: suppressing it would leave the posted review advertising a
-        commit the review never examined. Two lines is the honest outcome — the
-        reader takes the last — and only an exact-sha match is deduplicated
-        (see test_review_body_with_the_same_prose_sha_gets_no_second_copy)."""
-        pre_existing = (
-            "Some notes.\n\nGenerated by code-gauntlet | Reviewed up to: abc1234\n"
-        )
-        finding_a = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "Bug A",
-            "body": "Body A",
-        }
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": pre_existing,
-                "findings": [finding_a],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-
-        body = self._payload()["payload"]["body"]
-        # The real head sha must be present and last, so parse_prose_footer (and
-        # any human) reads the commit actually reviewed, not the stale one.
-        self.assertIn("Reviewed up to: deadbeefcafe", body)
-        self.assertGreater(body.rindex("deadbeefcafe"), body.rindex("abc1234"))
-        signal = review_marker.detect_signal(body)
-        self.assertEqual(signal["sha"], "deadbeefcafe")
-        # The mechanical marker is still appended (the guards are independent).
-        self.assertIn("code-gauntlet-findings:", body)
 
 
 # ---------------------------------------------------------------------------
@@ -5022,11 +3572,8 @@ class TestGitlabPositionContract(_DryRunTestBase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
-                ),
+            _poster_run(
+                self.forge_factory, diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
             ),
             contextlib.redirect_stdout(io.StringIO()),
         ):
@@ -5060,7 +3607,7 @@ class TestGitlabPositionContract(_DryRunTestBase):
 
 
 @pytest.fixture
-def dry_run_payload(tmp_path):
+def dry_run_payload(forge_factory, tmp_path):
     """Run ``main()`` in dry-run over a diff and findings; return the captured payload.
 
     The real parser feeds the real poster, so every asserted key is one the production
@@ -5086,10 +3633,7 @@ def dry_run_payload(tmp_path):
             patch.object(
                 sys, "argv", ["post_review.py", str(findings_path), "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=diff, versions=GL_CONTRACT_VERSIONS),
-            ),
+            _poster_run(forge_factory, diff=diff, versions=GL_CONTRACT_VERSIONS),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             post_review.main()
@@ -5227,116 +3771,6 @@ def test_skipped_group_warning_member_labels(dry_run_payload, members, suffix):
     assert payload["skipped"] == [message + suffix]
 
 
-class TestGitlabRealADirectoryPath(_DryRunTestBase):
-    """A GitLab repo may contain a REAL top-level `a/` or `b/` directory.
-
-    `glab mr diff` never writes git's synthetic prefixes, so stripping `^[ab]/` on the
-    GitLab side — in the parser's header regexes AND unconditionally at the top of
-    post_gitlab's loop — truncated `a/foo.py` to `foo.py`. Pre-branch main shipped the
-    raw finding path and delivery worked; under the strip those findings 400 and get
-    warn-skipped. Parser key and shipped position are asserted together, so reverting
-    either half is red.
-    """
-
-    def test_gitlab_real_a_directory_path_is_preserved(self):
-        with patch(
-            "gauntlet.delivery.post.run_api", return_value=(GL_DIFF_REAL_A_DIR, "", 0)
-        ):
-            valid_lines, new_files, old_paths, _ = parse_diff_lines(
-                "gitlab", "o", "r", 1
-            )
-        self.assertIn(("a/foo.py", 1), valid_lines)
-        self.assertEqual(new_files, set())
-        self.assertEqual(old_paths, {"a/foo.py": "a/foo.py"})
-
-        self._write(
-            {
-                "platform": "gitlab",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "MR review",
-                "findings": [
-                    {
-                        "file": "a/foo.py",
-                        "line": 1,
-                        "severity": "high",
-                        "title": "Finding in a real a/ directory",
-                        "body": "Body",
-                    }
-                ],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=GL_DIFF_REAL_A_DIR, versions=GL_CONTRACT_VERSIONS
-                ),
-            ),
-            contextlib.redirect_stdout(io.StringIO()),
-        ):
-            post_review.main()
-        discussions = self._payload()["discussions"]
-        self.assertEqual(len(discussions), 1, "the finding must not be warn-skipped")
-        position = discussions[0]["position"]
-        self.assertEqual(position["new_path"], "a/foo.py")
-        self.assertEqual(position["old_path"], "a/foo.py")
-        self.assertEqual(position["old_line"], 1)
-
-
-class TestGitlabFindingPathNormalization(_DryRunTestBase):
-    """A `b/`-prefixed finding path must ship UNPREFIXED in the position.
-
-    `is_line_valid`/`old_line_for` strip the prefix for their lookups, so such a finding
-    passed validation and got a correct `old_line` — but the position then shipped the
-    raw `b/src/edited.py`, a path GitLab does not know. This now exercises the STRIPPED
-    FALLBACK arm of `diff_path_spelling`: the raw spelling is not a diff key, the
-    stripped one is, so the stripped one is what travels to the position, the lookup and
-    the warnings alike.
-    """
-
-    def test_prefixed_finding_path_ships_normalized_position(self):
-        self._write(
-            {
-                "platform": "gitlab",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "MR review",
-                "findings": [
-                    {
-                        "file": "b/src/edited.py",
-                        "line": 61,
-                        "severity": "high",
-                        "title": "Prefixed-path finding",
-                        "body": "Body",
-                    }
-                ],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
-                ),
-            ),
-            contextlib.redirect_stdout(io.StringIO()),
-        ):
-            post_review.main()
-        position = self._payload()["discussions"][0]["position"]
-        self.assertEqual(position["new_path"], "src/edited.py")
-        self.assertEqual(position["old_path"], "src/edited.py")
-        self.assertEqual(position["old_line"], 50)
-
-
 # ---------------------------------------------------------------------------
 # GitLab delivery outcomes, end-to-end through main()
 # ---------------------------------------------------------------------------
@@ -5389,13 +3823,11 @@ class _GitlabLiveRunBase(_DryRunTestBase):
                 if prior is None
                 else _normalize_prior(prior),
             ) as mock_prior,
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=GL_DIFF_CONTRACT,
-                    versions=GL_CONTRACT_VERSIONS if versions is None else versions,
-                    **fake_run_kwargs,
-                ),
+            _poster_run(
+                self.forge_factory,
+                diff=GL_DIFF_CONTRACT,
+                versions=GL_CONTRACT_VERSIONS if versions is None else versions,
+                **fake_run_kwargs,
             ) as mock_run,
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
@@ -6030,48 +4462,13 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
     """
 
     def _run_main(self, prior, data=None, dry_run=False, head_sha="deadbeefcafe\n"):
-        self._write(
-            {
-                "platform": "gitlab",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "sha": "a" * 40,
-                "review_body": "MR review",
-                "findings": GL_CONTRACT_FINDINGS,
-            }
-            if data is None
-            else data
-        )
-        argv = ["post_review.py", self.findings_path]
-        if dry_run:
-            argv.append("--dry-run")
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with (
-            patch.object(sys, "argv", argv),
-            patch.dict(os.environ, {}, clear=False),
-            patch(
-                "gauntlet.delivery.post.gitlab_prior_delivery_state",
-                return_value=_normalize_prior(prior),
-            ) as mock_prior,
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=GL_DIFF_CONTRACT,
-                    versions=GL_CONTRACT_VERSIONS,
-                    head_sha=head_sha,
-                ),
-            ) as mock_run,
-            contextlib.redirect_stdout(stdout),
-            contextlib.redirect_stderr(stderr),
-        ):
-            os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
-            post_review.main()
-        return SimpleNamespace(
-            mock_prior=mock_prior,
-            mock_run=mock_run,
-            out=stdout.getvalue(),
-            err=stderr.getvalue(),
+        return _gitlab_summary_idempotency_run_main(
+            Path(self.tmp),
+            self.forge_factory,
+            prior,
+            data=data,
+            dry_run=dry_run,
+            head_sha=head_sha,
         )
 
     def test_summary_skipped_when_this_shas_marker_is_already_on_the_mr(self):
@@ -6102,18 +4499,6 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
         self.assertEqual(len(_note_posts(run.mock_run)), 1)
         self.assertIn("could not check for an existing summary note", run.err)
         self.assertIn("boom", run.err)
-
-    def test_dry_run_makes_no_idempotency_call_and_always_captures_the_summary(self):
-        """The hard "no network in dry-run" pin: the check would say "skip" if it were
-        consulted, and build_dry_run_payload's "first capture is the summary" shape
-        depends on the note being captured regardless."""
-        run = self._run_main(prior=(True, set(), None), dry_run=True)
-        run.mock_prior.assert_not_called()
-        self.assertIn("code-gauntlet-findings:", self._payload()["summary"]["body"])
-        self.assertEqual(
-            post_review._CAPTURED[0]["payload"]["body"],
-            self._payload()["summary"]["body"],
-        )
 
     def test_unresolvable_sha_skips_the_check_and_posts(self):
         """get_head_sha's "unknown" fallback is not a usable dedup key."""
@@ -6943,11 +5328,10 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=GL_DIFF if gitlab else GH_DIFF, versions=versions
-                ),
+            _poster_run(
+                self.forge_factory,
+                diff=GL_DIFF if gitlab else GH_DIFF,
+                versions=versions,
             ),
             patch(
                 "gauntlet.delivery.post.gitlab_prior_delivery",
@@ -7712,59 +6096,6 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             "GitHub body limit; nothing was posted.\n",
         )
 
-    def test_github_guard_stops_before_post_json(self):
-        # Mutations: delete the GitHub guard, move it after post_json, or make
-        # _utf8_len return len; this multi-byte body then passes and turns red.
-        # GitHub: 21846 code points are 65538 UTF-8 bytes, over 65536.
-        oversized_github = post_review.ComposedBody("界" * 21846, 0, 0, 0, ())
-        with (
-            patch("gauntlet.delivery.post.check_tool"),
-            patch(
-                "gauntlet.delivery.post.compose_review_body",
-                return_value=oversized_github,
-            ),
-            patch("gauntlet.delivery.post.post_json") as github_post,
-            self.assertRaises(SystemExit) as github_exit,
-        ):
-            post_review.post_github(
-                {"owner": "o", "repo": "r", "pr_number": 1, "findings": []},
-                {},
-                {},
-            )
-        self.assertEqual(github_exit.exception.code, 1)
-        github_post.assert_not_called()
-
-    def test_gitlab_guard_stops_before_post_json(self):
-        # Mutations: delete the GitLab guard, move it after post_json, or make
-        # _utf8_len return len; this multi-byte body then passes and turns red.
-        # GitLab: 333334 code points are 1000002 UTF-8 bytes, over 1000000.
-        oversized_gitlab = post_review.ComposedBody("界" * 333334, 0, 0, 0, ())
-        with (
-            patch("gauntlet.delivery.post.check_tool"),
-            patch(
-                "gauntlet.delivery.post.fetch_gitlab_shas", return_value=("b", "h", "s")
-            ),
-            patch(
-                "gauntlet.delivery.post.gitlab_prior_delivery_state",
-                return_value=(False, set(), frozenset(), None),
-            ),
-            patch(
-                "gauntlet.delivery.post.compose_review_body",
-                return_value=oversized_gitlab,
-            ),
-            patch("gauntlet.delivery.post.post_json") as gitlab_post,
-            self.assertRaises(SystemExit) as gitlab_exit,
-        ):
-            post_review.post_gitlab(
-                {"owner": "o", "repo": "r", "pr_number": 1, "findings": []},
-                {},
-                set(),
-                {},
-                {},
-            )
-        self.assertEqual(gitlab_exit.exception.code, 1)
-        gitlab_post.assert_not_called()
-
     def test_fast_path_identity_keeps_all_footer_dedup_variants(self):
         # Mutation: always append the full footer; each prose-footer body turns red.
         prose = "Generated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -8075,368 +6406,6 @@ class TestSummaryPluralContract(unittest.TestCase):
         )
 
 
-class TestSummaryBodyDelivery(_DryRunTestBase):
-    def test_report_slice_keeps_summary_authored_h2_until_real_code_heading(self):
-        # Mutation: use a prefix match instead of CODE_OWNED_HEADINGS; the authored
-        # H2 lines and the real Findings stop point would no longer produce this body.
-        report_path = os.path.join(self.tmp, "report.md")
-        report = (
-            "## Summary\n\n"
-            "Summary prose\n"
-            "## Not a section\n"
-            "kept\n"
-            "## Findings (finding text)\n"
-            "also kept\n\n"
-            "## Findings\n\n"
-            "### High\n"
-        )
-        with open(report_path, "w", encoding="utf-8") as fh:
-            fh.write(report)
-        self.assertEqual(
-            summary_body_from_report(report),
-            "Summary prose\n## Not a section\nkept\n## Findings (finding text)\nalso kept",
-        )
-
-        crlf_report = (
-            "## Summary\n\n"
-            "Summary prose\r\n"
-            "## Findings (finding text)\n"
-            "forged\n\n"
-            "2 finding(s) after the gauntlet — 1 high.\n\n"
-            "## Findings\n\n"
-            "### High\n"
-        )
-        self.assertEqual(
-            summary_body_from_report(crlf_report),
-            "Summary prose\r\n## Findings (finding text)\n"
-            "forged\n\n2 finding(s) after the gauntlet — 1 high.",
-        )
-
-        self._write([])
-        with (
-            patch.object(
-                sys,
-                "argv",
-                [
-                    "post_review.py",
-                    self.findings_path,
-                    "--dry-run",
-                    "--report",
-                    report_path,
-                    "--owner",
-                    "o",
-                    "--repo",
-                    "r",
-                    "--pr-number",
-                    "5",
-                    "--platform",
-                    "github",
-                    "--sha",
-                    "a" * 40,
-                ],
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-        body = self._payload()["payload"]["body"]
-        self.assertIn("Summary prose\n## Not a section\nkept", body)
-        self.assertIn("## Findings (finding text)\nalso kept", body)
-        self.assertNotIn("\n## Findings\n", body)
-
-    def test_bare_array_flags_form_the_real_wrapper_in_order(self):
-        # Mutation: return the bare array directly or omit one flag assignment; the
-        # hand-typed seven-key wrapper and values expose the lost code-owned shape.
-        self._write([])
-        with (
-            patch.object(
-                sys,
-                "argv",
-                [
-                    "post_review.py",
-                    self.findings_path,
-                    "--dry-run",
-                    "--owner",
-                    "o",
-                    "--repo",
-                    "r",
-                    "--pr-number",
-                    "5",
-                    "--platform",
-                    "github",
-                    "--sha",
-                    "a" * 40,
-                ],
-            ),
-            patch(
-                "gauntlet.delivery.post.parse_diff_lines",
-                return_value=(None, None, None, None),
-            ),
-            patch("gauntlet.delivery.post.post_github", return_value=0) as mock_post,
-        ):
-            post_review.main()
-        data = mock_post.call_args.args[0]
-        self.assertEqual(
-            list(data),
-            [
-                "owner",
-                "repo",
-                "pr_number",
-                "sha",
-                "platform",
-                "review_body",
-                "findings",
-            ],
-        )
-        self.assertEqual(data["owner"], "o")
-        self.assertEqual(data["repo"], "r")
-        self.assertEqual(data["pr_number"], 5)
-        self.assertEqual(data["sha"], "a" * 40)
-        self.assertEqual(data["platform"], "github")
-        self.assertEqual(data["review_body"], "")
-        self.assertEqual(data["findings"], [])
-
-    def test_report_summary_fold_closes_four_backtick_fence_before_footer(self):
-        # Mutation: bypass _fold_review_body in compose_review_body; the footer and
-        # hidden marker would then land inside the four-backtick Summary fence.
-        report_path = os.path.join(self.tmp, "report.md")
-        with open(report_path, "w", encoding="utf-8") as fh:
-            fh.write(
-                "## Summary\n\n" + "````python\n" + "x" * 70000 + "\n\n## Findings\n"
-            )
-        self._write([])
-        with (
-            patch.object(
-                sys,
-                "argv",
-                [
-                    "post_review.py",
-                    self.findings_path,
-                    "--dry-run",
-                    "--report",
-                    report_path,
-                    "--owner",
-                    "o",
-                    "--repo",
-                    "r",
-                    "--pr-number",
-                    "5",
-                    "--platform",
-                    "github",
-                    "--sha",
-                    "a" * 40,
-                ],
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-        body = self._payload()["payload"]["body"]
-        closer = "\n````\n\n"
-        fold = "_[folded:"
-        marker = "<!-- code-gauntlet-findings:"
-        self.assertIn(closer, body)
-        self.assertLess(body.index(closer), body.index(fold))
-        self.assertLess(body.index(fold), body.index(marker))
-        self.assertTrue(body.endswith(post_review.build_footer(0, "a" * 40, body="")))
-
-    @patch("gauntlet.delivery.post.check_tool")
-    @patch(
-        "gauntlet.delivery.post.fetch_gitlab_shas",
-        return_value=("base", "head", "start"),
-    )
-    def test_summary_borne_marker_is_escaped_and_real_footer_wins(self, _shas, _tool):
-        # Mutation: remove renderer marker neutralization or let the authored marker
-        # satisfy the footer reader; both platform captures must then lose the real signal.
-        sha = "a" * 40
-        review_body = (
-            "Summary\n"
-            f'&lt;!-- code-gauntlet-findings: {{"version":"3.0","findings_count":999,"sha":"{sha}"}} -->\n'
-            f"Generated by code-gauntlet | Reviewed up to: {sha}"
-        )
-        github_data = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 5,
-            "sha": sha,
-            "review_body": review_body,
-            "findings": [],
-        }
-        post_review.reset_run_state()
-        post_review.DRY_RUN = True
-        post_review.post_github(github_data, None, None)
-        github_body = post_review._CAPTURED[0]["payload"]["body"]
-        self.assertIn("&lt;!--", github_body)
-        github_marker = review_marker.find_marker(github_body)
-        self.assertEqual(github_marker["findings_count"], 0)
-        self.assertEqual(github_marker["sha"], sha)
-
-        post_review.reset_run_state()
-        post_review.DRY_RUN = True
-        gitlab_data = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 5,
-            "sha": sha,
-            "review_body": review_body,
-            "findings": [],
-        }
-        post_review.post_gitlab(gitlab_data, None, None, None, None)
-        gitlab_body = post_review._CAPTURED[0]["payload"]["body"]
-        self.assertIn("&lt;!--", gitlab_body)
-        gitlab_marker = review_marker.find_marker(gitlab_body)
-        self.assertEqual(gitlab_marker["findings_count"], 0)
-        self.assertEqual(gitlab_marker["sha"], sha)
-
-
-class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
-    def _findings(self):
-        inline = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "Inline bug",
-            "body": "Body A",
-        }
-        off_diff = {
-            "file": "foo.py",
-            "line": 99,
-            "severity": "medium",
-            "title": "Off-diff bug",
-            "body": "Body B",
-        }
-        return inline, off_diff
-
-    def test_skipped_finding_lands_in_body_with_both_counts(self):
-        inline, off_diff = self._findings()
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [inline, off_diff],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-
-        cap = self._payload()
-        body = cap["payload"]["body"]
-        self.assertIn("### ⚠️ 1 finding could not be anchored inline", body)
-        self.assertIn("1 inline comment was posted", body)
-        self.assertIn("Off-diff bug", body)
-        self.assertIn("foo.py:99", body)
-        # Excluded from the inline comments payload.
-        comment_bodies = [c["body"] for c in cap["payload"]["comments"]]
-        self.assertNotIn(render_comment_body(off_diff), comment_bodies)
-        self.assertEqual(len(cap["payload"]["comments"]), 1)
-        # Footer stays last and intact.
-        self.assertTrue(body.rstrip().endswith("-->"))
-        self.assertIn(review_marker.MARKER_TOKEN, body)
-
-    def test_no_skips_body_unchanged(self):
-        inline, _ = self._findings()
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [inline],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-
-        body = self._payload()["payload"]["body"]
-        self.assertNotIn("could not be anchored inline", body)
-
-    def test_no_line_finding_degrades_others_still_post(self):
-        """post_github must mirror post_gitlab: a finding with no ``line`` key
-        (bare `f["line"]` subscript would raise KeyError and abort the whole run,
-        losing every finding) degrades into the skipped section instead."""
-        inline, _ = self._findings()
-        no_line = {"file": "foo.py", "title": "No-line bug", "body": "Body C"}
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [inline, no_line],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()  # must not raise
-
-        cap = self._payload()
-        body = cap["payload"]["body"]
-        self.assertIn("### ⚠️ 1 finding could not be anchored inline", body)
-        self.assertIn("No-line bug", body)
-        self.assertIn("`foo.py`", body)
-        self.assertEqual(len(cap["payload"]["comments"]), 1)
-
-    def test_no_line_no_file_finding_renders_placeholder_no_raise(self):
-        inline, _ = self._findings()
-        mystery = {"title": "Mystery bug", "body": "Body D"}
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [inline, mystery],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()  # must not raise
-
-        body = self._payload()["payload"]["body"]
-        self.assertIn("`?`", body)
-        self.assertIn("Mystery bug", body)
-
-
 # A five-line hunk so a multi-line comment's end_line can land either inside or
 # outside the same hunk as its (already-valid) start line.
 GH_DIFF_MULTILINE = (
@@ -8458,14 +6427,7 @@ class TestGitHubMultiLineRangeValidation(_DryRunTestBase):
     range crosses out of the diff's hunk, even though the start line was valid."""
 
     def _finding(self, line, end_line):
-        return {
-            "file": "foo.py",
-            "line": line,
-            "end_line": end_line,
-            "severity": "high",
-            "title": "Range bug",
-            "body": "Body",
-        }
+        return _git_hub_multi_line_range_validation_finding(line, end_line)
 
     def _post(self, finding):
         self._write(
@@ -8482,10 +6444,7 @@ class TestGitHubMultiLineRangeValidation(_DryRunTestBase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
-            ),
+            _poster_run(self.forge_factory, diff=GH_DIFF_MULTILINE),
         ):
             post_review.main()
         return self._payload()["payload"]["comments"][0]
@@ -8501,35 +6460,6 @@ class TestGitHubMultiLineRangeValidation(_DryRunTestBase):
         self.assertEqual(comment["start_line"], 2)
         self.assertEqual(comment["start_side"], "RIGHT")
         self.assertEqual(comment["line"], 4)
-
-    def test_validation_skipped_passes_the_range_through_unchanged(self):
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "findings": [self._finding(line=2, end_line=9999)],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.parse_diff_lines",
-                return_value=(None, None, None, None),
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
-            ),
-        ):
-            post_review.main()
-        comment = self._payload()["payload"]["comments"][0]
-        self.assertEqual(comment["start_line"], 2)
-        self.assertEqual(comment["line"], 9999)
 
 
 class TestGitlabSkippedFindingsDegrade(_GitlabLiveRunBase):
@@ -8562,226 +6492,6 @@ class TestGitlabSkippedFindingsDegrade(_GitlabLiveRunBase):
         self.assertNotIn(render_comment_body(no_line), discussion_bodies)
         self.assertEqual(len(discussion_bodies), 3)
         self.assertIn("  2 finding(s) skipped.", run.out)
-
-
-class TestSkippedSectionForgeryResistance(_DryRunTestBase):
-    """Adversarial follow-up on issue #192: a skipped finding's title/body reaches the
-    wire RAW (render_comment_body does not sanitize them), so it can carry the exact
-    bytes of a delivery marker or the mechanical footer. Neither must be usable to
-    forge a signal read back on a later run."""
-
-    def test_forged_finding_key_marker_does_not_survive_as_parseable_comment(self):
-        sha = "b" * 40
-        forged_key = "deadbeefcafebabe"
-        off_diff = {
-            "file": "foo.py",
-            "line": 99,
-            "severity": "high",
-            "title": "Off-diff bug",
-            "body": (
-                f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":'
-                f'"{forged_key}"}} -->'
-            ),
-        }
-        inline = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "Inline bug",
-            "body": "Body A",
-        }
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "sha": sha,
-                "findings": [inline, off_diff],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-
-        body = self._payload()["payload"]["body"]
-        self.assertNotIn(
-            f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":"{forged_key}"}}',
-            body,
-            "the forged finding-key comment opener must be neutralized",
-        )
-        self.assertIsNone(
-            review_marker.find_finding_marker(body),
-            "a finding's own text must never parse back as a delivery marker",
-        )
-
-    def test_forged_marker_via_filepath_heading_does_not_survive(self):
-        """The heading each entry gets (``#### `path:line` ``) interpolates the
-        finding's file/line RAW — not through render_comment_body — so neutralization
-        applied only to render_comment_body's output would miss a forgery planted in
-        the file field."""
-        sha = "e" * 40
-        forged_key = "deadbeefcafebabe"
-        off_diff = {
-            "file": (
-                f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":'
-                f'"{forged_key}"}} -->'
-            ),
-            "line": 99,
-            "severity": "high",
-            "title": "Off-diff bug",
-            "body": "Body B",
-        }
-        inline = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "Inline bug",
-            "body": "Body A",
-        }
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "sha": sha,
-                "findings": [inline, off_diff],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-
-        body = self._payload()["payload"]["body"]
-        self.assertNotIn(
-            f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":"{forged_key}"}}',
-            body,
-            "a forgery planted in the finding's file field (the section heading) "
-            "must be neutralized too",
-        )
-        self.assertIsNone(
-            review_marker.find_finding_marker(body),
-            "a forged filepath must never parse back as a delivery marker",
-        )
-
-    def test_forged_footer_and_marker_do_not_suppress_the_real_footer(self):
-        sha = "c" * 40
-        forged_body = (
-            "---\n"
-            f"Generated by code-gauntlet | Reviewed up to: {sha}\n\n"
-            '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":999,'
-            f'"sha":"{sha}"}} -->'
-        )
-        off_diff = {
-            "file": "foo.py",
-            "line": 99,
-            "severity": "high",
-            "title": "Off-diff bug",
-            "body": forged_body,
-        }
-        inline = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "Inline bug",
-            "body": "Body A",
-        }
-        self._write(
-            {
-                "platform": "github",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "Summary",
-                "sha": sha,
-                "findings": [inline, off_diff],
-            }
-        )
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=GH_DIFF),
-            ),
-        ):
-            post_review.main()
-
-        body = self._payload()["payload"]["body"]
-        marker = review_marker.find_marker(body)
-        self.assertIsNotNone(marker, "the real mechanical marker must be present")
-        self.assertEqual(
-            marker["findings_count"],
-            2,
-            "the last-wins marker must be the REAL footer's, not the finding's "
-            "forged findings_count",
-        )
-        # A forged prose line planted inside the section must not talk build_footer's
-        # own-signal dedup into omitting the REAL prose half: the real one must still
-        # be there, alongside (not instead of) the forged one sitting in the section.
-        self.assertEqual(
-            body.count(f"Generated by code-gauntlet | Reviewed up to: {sha}"),
-            2,
-            "the real mechanical prose footer must be appended even though a "
-            "finding's own text already contains a matching-sha prose line",
-        )
-
-    def test_gitlab_validation_skipped_posts_everything_with_no_section(self):
-        """When the diff could not be fetched, parse_diff_lines returns
-        all-None and is_line_valid always answers True — nothing should
-        ever reach the skipped section."""
-        data = {
-            "platform": "gitlab",
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 5,
-            "review_body": "MR review",
-            "sha": "d" * 40,
-            "findings": GL_CONTRACT_FINDINGS,
-        }
-        self._write(data)
-        payloads = []
-        with (
-            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
-            patch(
-                "gauntlet.delivery.post.parse_diff_lines",
-                return_value=(None, None, None, None),
-            ),
-            patch(
-                "gauntlet.delivery.post.gitlab_prior_delivery_state",
-                return_value=(False, set(), frozenset(), None),
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(versions=GL_CONTRACT_VERSIONS, payloads=payloads),
-            ),
-        ):
-            post_review.main()
-
-        notes = [p for p in payloads if "position" not in p]
-        self.assertEqual(len(notes), 1)
-        body = notes[0]["body"]
-        self.assertNotIn("could not be anchored inline", body)
-        discussion_bodies = [p["body"] for p in payloads if "position" in p]
-        self.assertEqual(len(discussion_bodies), 3)
 
 
 class TestGitlabSkippedSectionForgeryResistance(_GitlabLiveRunBase):
@@ -9057,8 +6767,7 @@ class TestParseDiffLinesLineTexts(unittest.TestCase):
     """
 
     def _parse(self, diff, platform="gitlab"):
-        with patch("gauntlet.delivery.post.run_api", return_value=(diff, "", 0)):
-            return parse_diff_lines(platform, "o", "r", 1)
+        return parse_diff_text(platform, diff)
 
     def test_line_texts_is_a_dict_parallel_to_valid_lines(self):
         """A PARALLEL dict, not a richer ``valid_lines`` value: every existing
@@ -9111,11 +6820,6 @@ class TestParseDiffLinesLineTexts(unittest.TestCase):
         _, _, _, line_texts = self._parse(GL_DIFF_DELETED_THEN_MODIFIED)
         self.assertEqual([k for k in line_texts if k[0] == "src/removed.py"], [])
 
-    def test_skipped_validation_returns_no_texts(self):
-        valid_lines, _, _, line_texts = parse_diff_lines("bitbucket", "o", "r", 1)
-        self.assertIsNone(valid_lines)
-        self.assertIsNone(line_texts)
-
 
 class TestParseDiffLinesHeaderDecoding(unittest.TestCase):
     """``parse_diff_lines`` now walks headers through ``gauntlet.diff.walk_diff``, which
@@ -9139,8 +6843,7 @@ class TestParseDiffLinesHeaderDecoding(unittest.TestCase):
     """
 
     def _parse(self, diff, platform="github"):
-        with patch("gauntlet.delivery.post.run_api", return_value=(diff, "", 0)):
-            return parse_diff_lines(platform, "o", "r", 1)
+        return parse_diff_text(platform, diff)
 
     def test_github_path_with_a_space_decodes_past_the_tab_terminator(self):
         """git appends a TAB after a header path containing a space, so the field
@@ -10204,14 +7907,12 @@ class _FixGateRunBase(_DryRunTestBase):
                 if prior is None
                 else prior,
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=self.DIFF if diff is None else diff,
-                    versions=versions,
-                    payloads=payloads,
-                    **fake_run_kwargs,
-                ),
+            _poster_run(
+                self.forge_factory,
+                diff=self.DIFF if diff is None else diff,
+                versions=versions,
+                payloads=payloads,
+                **fake_run_kwargs,
             ) as mock_run,
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
@@ -11677,72 +9378,6 @@ class TestFenceRun(unittest.TestCase):
             self.assertEqual(open_line, f"{fence}suggestion")
 
 
-class TestResetRunState(unittest.TestCase):
-    """``reset_run_state()`` — the one entry point that clears every
-    module-level counter/log a run accumulates (issue #226): main() calls it
-    instead of its old inline reset, and a second gate caller
-    (scripts/report_patches.py) that never calls main() calls it directly."""
-
-    def tearDown(self):
-        post_review.reset_run_state()
-
-    def test_clears_all_four(self):
-        post_review._CAPTURED.append({"poison": True})
-        post_review._SKIP_WARNINGS.append("poison")
-        post_review._FIX_COUNTS["kept"] = 7
-        post_review._FIX_COUNTS["downgraded"] = 3
-        post_review._FIX_REASON_COUNTS["empty"] = 5
-
-        post_review.reset_run_state()
-
-        self.assertEqual(post_review._CAPTURED, [])
-        self.assertEqual(post_review._SKIP_WARNINGS, [])
-        self.assertEqual(post_review._FIX_COUNTS, {"kept": 0, "downgraded": 0})
-        self.assertEqual(post_review._FIX_REASON_COUNTS, {})
-
-    def test_main_still_resets_stale_state_from_a_prior_call(self):
-        """Regression for a dropped reset_run_state() call in main(): pollute
-        every counter as a PRIOR run would have left them, then drive a real
-        (dry-run) main() call and assert nothing from the pollution survives
-        into this run's own capture. A main() missing the reset call would
-        leave the poison entries in place."""
-        post_review._CAPTURED.append({"cmd_prefix": "poison", "payload": {}})
-        post_review._SKIP_WARNINGS.append("poison warning from a prior run")
-        post_review._FIX_COUNTS["kept"] = 99
-        post_review._FIX_COUNTS["downgraded"] = 99
-        post_review._FIX_REASON_COUNTS["empty"] = 99
-
-        tmp = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        findings_path = os.path.join(tmp, "findings.json")
-        with open(findings_path, "w", encoding="utf-8") as fh:
-            json.dump(
-                {
-                    "platform": "github",
-                    "owner": "o",
-                    "repo": "r",
-                    "pr_number": 1,
-                    "review_body": "",
-                    "findings": [],
-                },
-                fh,
-            )
-
-        with (
-            patch.object(sys, "argv", ["post_review.py", findings_path, "--dry-run"]),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=""),
-            ),
-        ):
-            post_review.main()
-
-        self.assertNotIn({"cmd_prefix": "poison", "payload": {}}, post_review._CAPTURED)
-        self.assertNotIn("poison warning from a prior run", post_review._SKIP_WARNINGS)
-        self.assertEqual(post_review._FIX_COUNTS, {"kept": 0, "downgraded": 0})
-        self.assertEqual(post_review._FIX_REASON_COUNTS, {})
-
-
 class TestGatedFindingWarnLabel(unittest.TestCase):
     """``_gated_finding``'s ``warn_label`` keyword (issue #226): the default
     keeps delivery's warning bytes unchanged; a caller (the report-side gate)
@@ -11840,3 +9475,2303 @@ class TestFixReasonCounts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_parse_diff_lines_post_review__glab_no_prefix_headers_are_parsed():
+    """GitLab plain headers preserve paths and line facts without a/b prefixes."""
+    diff = (
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- src/app.py\n"
+        "+++ src/app.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        " ctx\n"
+        "+added\n"
+    )
+    valid_lines, new_files, _, _ = parse_diff_text("gitlab", diff)
+    assert ("src/app.py", 1) in valid_lines
+    assert ("src/app.py", 2) in valid_lines
+    assert new_files == set()
+
+
+def test_parse_diff_lines_post_review__github_diff_prefixes_are_still_stripped():
+    """`gh pr diff` writes git's synthetic `a/` / `b/`: those ARE diff syntax.
+
+    The platform split that stopped stripping them on GitLab must not stop
+    stripping them here — the keys GitHub findings are matched against, and the
+    `path` shipped to its API, are prefix-free.
+    """
+    diff = (
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- a/src/app.py\n"
+        "+++ b/src/app.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " ctx\n"
+        "-x\n"
+        "+y\n"
+    )
+    valid_lines, _, old_paths, _ = parse_diff_text("github", diff)
+    assert ("src/app.py", 1) in valid_lines
+    assert old_paths == {"src/app.py": "src/app.py"}
+    assert {fp for fp, _ in valid_lines} == {"src/app.py"}
+
+
+def test_parse_diff_lines_post_review__new_file_detected_via_dev_null_old_header():
+    """The ``/dev/null`` branch, exercised by header-shaped input with no hunk.
+
+    SYNTHETIC FIXTURE, stated honestly: real ``git`` emits NO ``---``/``+++`` lines at
+    all for an empty added file — just ``diff --git``, ``new file mode`` and ``index``
+    (verified against real git). So the shape below is not one gh is known to emit
+    today; the ``/dev/null`` branch is defence-in-depth for header-shaped input, and
+    it is the ``@@ -0,0`` hunk signal that real added-file diffs actually trigger.
+    The branch is still worth pinning: with a hunk present the ``-0,0`` signal alone
+    satisfies the assertion, so mutating ``current_file_is_new`` would otherwise leave
+    the suite green.
+    """
+    diff = (
+        "diff --git a/empty_new.py b/empty_new.py\n"
+        "new file mode 100644\n"
+        "index 0000000..e69de29\n"
+        "--- /dev/null\n"
+        "+++ b/empty_new.py\n"
+    )
+    _, new_files, _, _ = parse_diff_text("github", diff)
+    assert new_files == {"empty_new.py"}
+
+
+def test_parse_diff_lines_post_review__new_file_detected_from_hunk_header_glab_style():
+    """An old-side start of zero identifies an added file in plain GitLab output."""
+    diff = "--- src/added.py\n+++ src/added.py\n@@ -0,0 +1,1 @@\n+content\n"
+    _, new_files, _, _ = parse_diff_text("gitlab", diff)
+    assert new_files == {"src/added.py"}
+
+
+def test_parse_diff_lines_post_review__added_file_detected_end_of_multi_file_glab_diff():
+    """The added file is the SECOND file in the diff, and the modified one that
+    precedes it must not be swept into new_files with it."""
+    _, new_files, _, _ = parse_diff_text("gitlab", GL_DIFF_CONTRACT)
+    assert new_files == {"src/app/clients/api/__init__.py"}
+
+
+def test_parse_diff_lines_post_review__deleted_file_does_not_add_dev_null_to_valid_lines():
+    """``+++ /dev/null`` (deleted file) must not produce phantom entries.
+
+    The ``@@ -1,2 +0,0 @@`` header must not read as an added file either: it is the
+    NEW side that is 0 here, and only an old-side start of 0 means "added".
+    """
+    diff = "--- a/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-line1\n-line2\n"
+    valid_lines, new_files, _, _ = parse_diff_text("github", diff)
+    assert isinstance(valid_lines, dict)
+    assert valid_lines == {}
+    assert new_files == set()
+
+
+def test_parse_diff_lines_post_review__empty_file_gaining_content_is_treated_as_added_a_known_limitation():
+    """A pre-existing EMPTY file gaining content emits `@@ -0,0 +1,N @@` with no
+    /dev/null — byte-identical to a real added file in plain `glab mr diff` output.
+
+    DOCUMENTED LIMITATION, pinned here deliberately: we read it as added, because
+    sending `old_path` into a genuinely new file is the documented HTTP 500 and real
+    added files are the common case (and the  defect).
+    """
+    diff = "--- a/empty.py\n+++ b/empty.py\n@@ -0,0 +1,2 @@\n+first\n+second\n"
+    _, new_files, _, _ = parse_diff_text("github", diff)
+    assert new_files == {"empty.py"}
+
+
+def test_parse_diff_lines_post_review__omitted_hunk_counts_default_to_one():
+    """A unified-diff count is omitted exactly when that side holds one line."""
+    diff = "--- oneline.txt\n+++ oneline.txt\n@@ -0,0 +1 @@\n+only\n"
+    valid_lines, new_files, _, _ = parse_diff_text("gitlab", diff)
+    assert ("oneline.txt", 1) in valid_lines
+    assert valid_lines["oneline.txt", 1] is None
+    assert "oneline.txt" in new_files
+
+
+def test_parse_diff_lines_post_review__deleted_file_body_drains_budgets_so_the_next_file_parses():
+    """A deleted file's body must consume its budgets even though it records nothing.
+
+    ``+++ /dev/null`` leaves ``current_file`` None, but skipping the body outright
+    (``if current_file is None: continue``) leaves the old-side budget undrained, so
+    the NEXT file's headers arrive while the parser is still in the hunk-body zone —
+    where headers are not matched — and every comment target in that file is eaten.
+    """
+    diff = (
+        "diff --git a/gone.py b/gone.py\n"
+        "--- a/gone.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,3 +0,0 @@\n"
+        "-a\n"
+        "-b\n"
+        "-c\n"
+        "diff --git a/next.py b/next.py\n"
+        "--- a/next.py\n"
+        "+++ b/next.py\n"
+        "@@ -5,2 +5,2 @@\n"
+        " keep\n"
+        "-x\n"
+        "+y\n"
+    )
+    valid_lines, _, _, _ = parse_diff_text("github", diff)
+    assert valid_lines["next.py", 5] == 5
+    assert valid_lines["next.py", 6] is None
+    assert [k for k in valid_lines if k[0] == "gone.py"] == []
+
+
+def test_parse_diff_lines_post_review__gitlab_deleted_file_records_no_targets_of_its_own():
+    """`glab mr diff` has no `+++ /dev/null`: a deletion repeats the path on BOTH
+    headers, so ``current_file`` stays LIVE through the deleted file's body.
+
+    On GitHub the new-side header blanks ``current_file``, and a mis-drained body can
+    only lose the NEXT file's lines. Here nothing blanks it, so the same fault also
+    writes keys onto a file that no longer exists — inline comments aimed at a
+    deleted path. Draining the old-side budget is the only thing that ends the body.
+    """
+    valid_lines, new_files, old_paths, _ = parse_diff_text(
+        "gitlab", GL_DIFF_DELETED_THEN_MODIFIED
+    )
+    assert [k for k in valid_lines if k[0] == "src/removed.py"] == []
+    assert valid_lines["src/edited.py", 61] == 50
+    assert valid_lines["src/edited.py", 62] is None
+    assert valid_lines["src/edited.py", 63] == 52
+    # `@@ -1,3 +0,0 @@` is a deletion: only an OLD-side start of 0 means added. The
+    # repeated path still yields an old_paths entry, harmlessly mapping to itself.
+    assert new_files == set()
+    assert old_paths == {
+        "src/removed.py": "src/removed.py",
+        "src/edited.py": "src/edited.py",
+    }
+
+
+def test_parse_diff_lines_post_review__form_feed_line_content_does_not_split_the_hunk():
+    """A form feed is diff CONTENT; it must not invent a line boundary.
+
+    ``str.splitlines()`` breaks on \\x0c (and \\x0b, \\x85, U+2028/U+2029) — git never
+    emitted a boundary there. The extra line drains the declared budgets one line
+    early, flips the header/body zone boundary, and ships a WRONG old_line for
+    everything after it: here the ADDED last line would be reported as context on
+    old line 3.
+    """
+    # Real `git diff` shape for changing p2 -> p2X in a file whose middle line is a
+    # form feed (built in Python so the control character is explicit).
+    diff = "--- ff.py\n+++ ff.py\n@@ -1,3 +1,3 @@\n p1\n \x0c\n-p2\n+p2X\n"
+    valid_lines, _, _, _ = parse_diff_text("gitlab", diff)
+    assert ("ff.py", 3) in valid_lines
+    assert valid_lines["ff.py", 3] is None
+    assert valid_lines["ff.py", 2] == 2
+
+
+def test_parse_diff_lines_post_review__removed_line_content_starting_with_dashes_is_not_a_file_header():
+    """Removing `-- deprecated: drop me` renders `--- deprecated: drop me`.
+
+    Matched as an old-side file header it consumed no OLD number, desyncing
+    `old_line` for every later line of the hunk — a WRONG old_line on the wire,
+    worse than the 400 it replaces.
+    """
+    diff = (
+        "diff --git a/db/schema.sql b/db/schema.sql\n"
+        "--- db/schema.sql\n"
+        "+++ db/schema.sql\n"
+        "@@ -10,4 +10,3 @@\n"
+        " CREATE TABLE t (\n"
+        # A removed line whose CONTENT is `-- deprecated: drop me`.
+        "--- deprecated: drop me\n"
+        "   id INT,\n"
+        " );\n"
+    )
+    valid_lines, _, _, _ = parse_diff_text("gitlab", diff)
+    # new 10 = old 10 (context), then the removal eats old 11 with no new number,
+    # so new 11 must map to old 12 — not to 11.
+    assert valid_lines["db/schema.sql", 10] == 10
+    assert valid_lines["db/schema.sql", 11] == 12
+    assert valid_lines["db/schema.sql", 12] == 13
+
+
+def test_parse_diff_lines_post_review__added_line_content_starting_with_pluses_is_not_a_file_header():
+    """Adding `++ x` renders `+++ x`. Matched as a new-side file header it
+    retargeted `current_file` at the literal text and reset both counters."""
+    diff = (
+        "diff --git a/src/app.c b/src/app.c\n"
+        "--- src/app.c\n"
+        "+++ src/app.c\n"
+        "@@ -20,2 +20,3 @@\n"
+        " int i = 0;\n"
+        "+++ x\n"
+        " use(i);\n"
+    )
+    valid_lines, _, _, _ = parse_diff_text("gitlab", diff)
+    assert valid_lines["src/app.c", 20] == 20
+    assert valid_lines["src/app.c", 21] is None
+    # The context line after it still records under the original file, with the
+    # numbers the added line advanced.
+    assert valid_lines["src/app.c", 22] == 21
+    assert {fp for fp, _ in valid_lines} == {"src/app.c"}
+
+
+def test_parse_diff_lines_post_review__binary_file_prose_is_not_admitted_as_a_valid_line():
+    """`Binary files … differ` carries no hunk; it must not become a context line."""
+    diff = (
+        "diff --git a/img.png b/img.png\n"
+        "--- a/img.png\n"
+        "+++ b/img.png\n"
+        "Binary files a/img.png and b/img.png differ\n"
+    )
+    valid_lines, _, _, _ = parse_diff_text("github", diff)
+    assert [k for k in valid_lines if k[0] == "img.png"] == []
+
+
+def test_parse_diff_lines_post_review__between_hunk_lines_are_not_admitted():
+    """Between-hunk lines are not commentable lines: the key set is EXACTLY the
+    hunk bodies' addressable lines, with nothing admitted from around them.
+
+    In plain `glab mr diff` the only lines between two hunks are the next file's
+    `---`/`+++` pair — an under-drained hunk budget reads them as body content and
+    admits a phantom target on the file before. Git's own decoration (`diff --git`,
+    `index`, `Binary files … differ`) never appears in this output; it reaches the
+    parser through `gh pr diff`, and the github-platform binary-prose test above
+    owns that arm of the same catch-all.
+    """
+    valid_lines, _, _, _ = parse_diff_text("gitlab", GL_DIFF_CONTRACT)
+    assert sorted(valid_lines) == [
+        ("src/app/clients/api/__init__.py", n) for n in range(1, 17)
+    ] + [("src/edited.py", 61), ("src/edited.py", 62), ("src/edited.py", 63)]
+
+
+def test_parse_diff_lines_post_review__valid_lines_is_a_mapping_of_new_line_to_old_line():
+    valid_lines, _, _, _ = parse_diff_text("gitlab", GL_DIFF_CONTRACT)
+    assert isinstance(valid_lines, dict)
+
+
+def test_parse_diff_lines_post_review__context_line_maps_to_its_old_side_number():
+    valid_lines, _, _, _ = parse_diff_text("gitlab", GL_DIFF_CONTRACT)
+    assert valid_lines["src/edited.py", 61] == 50
+
+
+def test_parse_diff_lines_post_review__added_line_maps_to_none():
+    """An added line exists only on the new side — present as a key, valued None."""
+    valid_lines, _, _, _ = parse_diff_text("gitlab", GL_DIFF_CONTRACT)
+    assert ("src/edited.py", 62) in valid_lines
+    assert valid_lines["src/edited.py", 62] is None
+
+
+def test_parse_diff_lines_post_review__removed_line_advances_the_old_side_only():
+    """52, not 51: the ``-removed`` line consumed an OLD number and no new one."""
+    valid_lines, _, _, _ = parse_diff_text("gitlab", GL_DIFF_CONTRACT)
+    assert valid_lines["src/edited.py", 63] == 52
+
+
+def test_parse_diff_lines_post_review__old_side_counter_resets_between_files():
+    valid_lines, _, _, _ = parse_diff_text("gitlab", GL_DIFF_CONTRACT)
+    assert valid_lines["src/app/clients/api/__init__.py", 1] is None
+    # The added file's `---`/`+++` headers sit between hunks. If the modified file's
+    # budgets under-drain, the parser is still in its body zone when they arrive and
+    # reads them as content — admitting a phantom target on the file before.
+    assert ("src/edited.py", 64) not in valid_lines
+    assert {
+        v
+        for (fp, _), v in valid_lines.items()
+        if fp == "src/app/clients/api/__init__.py"
+    } == {None}, (
+        "an added file's lines must carry no old-side leftovers from the file before"
+    )
+
+
+def test_parse_diff_lines_post_review__no_newline_marker_advances_neither_counter():
+    diff = (
+        "--- a/f.py\n"
+        "+++ b/f.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " a\n"
+        "\\ No newline at end of file\n"
+        " b\n"
+    )
+    valid_lines, _, _, _ = parse_diff_text("github", diff)
+    assert valid_lines["f.py", 2] == 2
+
+
+def test_parse_diff_lines_post_review__renamed_file_old_side_path_is_captured():
+    """Retain the old path under the new key because GitLab emits no other rename metadata."""
+    valid_lines, _, old_paths, _ = parse_diff_text("gitlab", GL_DIFF_RENAME)
+    assert old_paths == {"new_name.py": "old_name.py"}
+    assert valid_lines["new_name.py", 3] == 3
+    # A BLANK context line is a lone space, and is addressable like any other.
+    assert valid_lines["new_name.py", 6] == 6
+
+
+def test_parse_diff_lines_post_review__added_file_absent_from_old_paths():
+    """`--- /dev/null` means there is no old side — record no mapping at all."""
+    diff = (
+        "diff --git a/added.py b/added.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/added.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+content\n"
+    )
+    _, new_files, old_paths, _ = parse_diff_text("github", diff)
+    assert new_files == {"added.py"}
+    assert "added.py" not in old_paths
+
+
+def test_parse_diff_lines_post_review__unrenamed_file_old_path_maps_to_itself():
+    """For a plain modified file both sides name the same path — pin the coincide
+    case, so the mapping is provably a no-op there rather than accidentally right."""
+    _, _, old_paths, _ = parse_diff_text("gitlab", GL_DIFF_CONTRACT)
+    assert old_paths["src/edited.py"] == "src/edited.py"
+
+
+def _write_findings(directory, data):
+    (directory / "findings.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def _read_payload(directory):
+    return json.loads(
+        (directory / "post-review-payload.json").read_text(encoding="utf-8")
+    )
+
+
+def _submit_calls(run):
+    return [call for call in run.calls if call.method == "submit"]
+
+
+def _env_findings():
+    return {
+        "platform": "github",
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "review_body": "Summary",
+        "findings": [
+            {
+                "file": "foo.py",
+                "line": 2,
+                "severity": "high",
+                "title": "Bug A",
+                "body": "Body A",
+            }
+        ],
+    }
+
+
+def test_review_marker_round_trip_through_real_poster__github_empty_review_body(
+    tmp_path, forge_factory, monkeypatch
+):
+    monkeypatch.setattr(post_review, "DRY_RUN", True)
+    sha = "a" * 40
+    data = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 1,
+        "sha": sha,
+        "review_body": "",
+        "findings": [],
+    }
+    post_review.post_github(data, {}, {}, forge=FakeForge())
+    body = post_review._CAPTURED[0].payload["body"]
+    signal = review_marker.detect_signal(body)
+    assert signal is not None, f"no signal recovered from posted body: {body!r}"
+    assert signal["sha"] == sha
+
+
+def test_review_marker_round_trip_through_real_poster__github_non_empty_review_body(
+    tmp_path, forge_factory, monkeypatch
+):
+    monkeypatch.setattr(post_review, "DRY_RUN", True)
+    sha = "b" * 40
+    data = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 1,
+        "sha": sha,
+        "review_body": "## Summary\nSome pre-existing narrative text.\n",
+        "findings": [],
+    }
+    post_review.post_github(data, {}, {}, forge=FakeForge())
+    body = post_review._CAPTURED[0].payload["body"]
+    signal = review_marker.detect_signal(body)
+    assert signal is not None, f"no signal recovered from posted body: {body!r}"
+    assert signal["sha"] == sha
+
+
+@patch(
+    "gauntlet.delivery.post.fetch_gitlab_shas",
+    return_value=("base", "head", "start"),
+)
+def test_review_marker_round_trip_through_real_poster__gitlab_empty_review_body(
+    _shas, tmp_path, forge_factory, monkeypatch
+):
+    monkeypatch.setattr(post_review, "DRY_RUN", True)
+    sha = "c" * 40
+    data = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 1,
+        "sha": sha,
+        "review_body": "",
+        "findings": [],
+    }
+    post_review.post_gitlab(data, {}, set(), {}, {}, forge=FakeGitLab())
+    # The summary note is posted before any per-finding discussion, so
+    # with findings=[] it is also the only capture.
+    body = post_review._CAPTURED[0].payload["body"]
+    signal = review_marker.detect_signal(body)
+    assert signal is not None, f"no signal recovered from posted body: {body!r}"
+    assert signal["sha"] == sha
+
+
+@patch(
+    "gauntlet.delivery.post.fetch_gitlab_shas",
+    return_value=("base", "head", "start"),
+)
+def test_review_marker_round_trip_through_real_poster__gitlab_non_empty_review_body(
+    _shas, tmp_path, forge_factory, monkeypatch
+):
+    monkeypatch.setattr(post_review, "DRY_RUN", True)
+    sha = "d" * 40
+    data = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 1,
+        "sha": sha,
+        "review_body": "## MR Review\nContext for the reviewer.\n",
+        "findings": [],
+    }
+    post_review.post_gitlab(data, {}, set(), {}, {}, forge=FakeGitLab())
+    body = post_review._CAPTURED[0].payload["body"]
+    signal = review_marker.detect_signal(body)
+    assert signal is not None, f"no signal recovered from posted body: {body!r}"
+    assert signal["sha"] == sha
+
+
+@patch(
+    "gauntlet.delivery.post.get_head_sha",
+    return_value="abc1234def5678abc1234def5678abc1234def56",
+)
+@patch(
+    "gauntlet.delivery.post.post_json",
+    return_value={"html_url": "http://example.com"},
+)
+@patch("gauntlet.delivery.post.warn")
+def test_skip_warning_diagnostics__github_skip_includes_valid_lines(
+    mock_warn, _post, _sha, tmp_path, forge_factory
+):
+    from gauntlet.delivery.post import post_github
+
+    valid_lines = {("src/app.py", 10): 10, ("src/app.py", 20): None}
+    data = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 1,
+        "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
+    }
+    post_github(data, valid_lines, {}, forge=FakeForge())
+    mock_warn.assert_called_once()
+    msg = mock_warn.call_args[0][0]
+    assert "Valid lines for this file:" in msg
+    assert "10" in msg
+    assert "20" in msg
+
+
+@patch(
+    "gauntlet.delivery.post.get_head_sha",
+    return_value="abc1234def5678abc1234def5678abc1234def56",
+)
+@patch(
+    "gauntlet.delivery.post.post_json",
+    return_value={"html_url": "http://example.com"},
+)
+@patch("gauntlet.delivery.post.warn")
+def test_skip_warning_diagnostics__github_skip_empty_valid_lines_reports_an_empty_diag_list(
+    mock_warn, _post, _sha, tmp_path, forge_factory
+):
+    from gauntlet.delivery.post import post_github
+
+    data = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 1,
+        "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
+    }
+    # Empty mapping: validation ran and found nothing for this line → skip + empty diag.
+    post_github(data, {}, {}, forge=FakeForge())
+    mock_warn.assert_called_once()
+    msg = mock_warn.call_args[0][0]
+    assert "line not found in diff." in msg
+    assert "Valid lines for this file: []" in msg
+
+
+@patch(
+    "gauntlet.delivery.post.get_head_sha",
+    return_value="abc1234def5678abc1234def5678abc1234def56",
+)
+@patch(
+    "gauntlet.delivery.post.post_json",
+    return_value={"html_url": "http://example.com"},
+)
+@patch("gauntlet.delivery.post.warn")
+def test_skip_warning_diagnostics__github_skip_no_diag_when_valid_lines_none(
+    mock_warn, mock_post, _sha, tmp_path, forge_factory
+):
+    from gauntlet.delivery.post import post_github
+
+    data = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 1,
+        "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
+    }
+    # valid_lines=None: validation skipped → is_line_valid returns True → finding posts.
+    post_github(data, None, None, forge=FakeForge())
+    mock_post.assert_called_once()
+    payload = mock_post.call_args[0][0].payload
+    assert len(payload["comments"]) == 1
+    assert payload["comments"][0]["path"] == "src/app.py"
+    assert payload["comments"][0]["line"] == 99
+    for call in mock_warn.call_args_list:
+        assert "Valid lines for this file:" not in call[0][0], (
+            "None must not emit a valid-lines diagnostic"
+        )
+
+
+@patch(
+    "gauntlet.delivery.post.get_head_sha",
+    return_value="abc1234def5678abc1234def5678abc1234def56",
+)
+@patch("gauntlet.delivery.post.post_json", return_value={})
+@patch("gauntlet.delivery.post.fetch_gitlab_shas", return_value=("b", "h", "s"))
+# The live path now asks detect_prior_review what the MR already carries; that read
+# shells out to `glab`, so it is stubbed here rather than left to reach a real forge
+# from a unit test.
+@patch(
+    "gauntlet.delivery.post.gitlab_prior_delivery_state",
+    return_value=(False, set(), frozenset(), None),
+)
+@patch("gauntlet.delivery.post.warn")
+def test_skip_warning_diagnostics__gitlab_skip_includes_valid_lines(
+    mock_warn, _prior, _shas, _post, _sha, tmp_path, forge_factory
+):
+    from gauntlet.delivery.post import post_gitlab
+
+    valid_lines = {("src/app.py", 5): 5, ("src/app.py", 15): None}
+    data = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 1,
+        "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
+    }
+    post_gitlab(data, valid_lines, set(), {}, {}, forge=FakeGitLab())
+    # First call is for the summary note, skip warning is the second call
+    found_diag = False
+    for call in mock_warn.call_args_list:
+        msg = call[0][0]
+        if "Valid lines for this file:" in msg:
+            found_diag = True
+            assert "5" in msg
+            assert "15" in msg
+    assert found_diag, "Expected diagnostic in skip warning"
+
+
+def test_dry_run_git_hub__dry_run_captures_payload_and_makes_no_post(
+    tmp_path, forge_factory
+):
+    finding_a = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Bug A",
+        "body": "Body A",
+    }
+    finding_b = {
+        "file": "foo.py",
+        "line": 99,
+        "severity": "low",
+        "title": "Bug B",
+        "body": "Body B",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [finding_a, finding_b],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
+    ):
+        post_review.main()
+
+    post_calls = [c for c in mock_run.calls if c.method == "submit"]
+    assert post_calls == [], "no POST subprocess call in dry-run"
+
+    payload_path = os.path.join(str(tmp_path), "post-review-payload.json")
+    assert os.path.exists(payload_path)
+    cap = _read_payload(tmp_path)
+
+    assert cap["platform"] == "github"
+    assert cap["endpoint"] == "repos/o/r/pulls/5/reviews"
+    assert cap["method"] == "POST"
+    assert cap["payload"]["event"] == "COMMENT"
+    # Comments must match the live-path rendering byte-for-byte.
+    assert len(cap["payload"]["comments"]) == 1
+    comment = cap["payload"]["comments"][0]
+    assert comment["body"] == render_comment_body(finding_a)
+    assert comment["path"] == "foo.py"
+    assert comment["line"] == 2
+    assert comment["side"] == "RIGHT"
+
+
+def test_dry_run_git_hub__invalid_line_lands_in_skipped_not_comments(
+    tmp_path, forge_factory
+):
+    finding_a = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Bug A",
+        "body": "Body A",
+    }
+    finding_b = {
+        "file": "foo.py",
+        "line": 99,
+        "severity": "low",
+        "title": "Bug B",
+        "body": "Body B",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [finding_a, finding_b],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+
+    cap = _read_payload(tmp_path)
+    expected = (
+        "Skipping finding 'Bug B' at foo.py:99 "
+        "— line not found in diff. Valid lines for this file: [1, 2]"
+    )
+    assert expected in cap["skipped"]
+    bodies = [c["body"] for c in cap["payload"]["comments"]]
+    assert render_comment_body(finding_b) not in bodies
+
+
+def test_dry_run_git_lab__dry_run_captures_summary_and_discussions(
+    tmp_path, forge_factory
+):
+    finding_x = {
+        "file": "bar.py",
+        "line": 2,
+        "severity": "medium",
+        "title": "Issue X",
+        "body": "Desc X",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "MR review",
+            "findings": [finding_x],
+        },
+    )
+    versions = [
+        {
+            "base_commit_sha": "base1",
+            "head_commit_sha": "head1",
+            "start_commit_sha": "start1",
+        }
+    ]
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GL_DIFF, versions=versions) as mock_run,
+    ):
+        post_review.main()
+
+    post_calls = [c for c in mock_run.calls if c.method == "submit"]
+    assert post_calls == [], "no POST subprocess call in dry-run"
+
+    versions_calls = [c for c in mock_run.calls if c.method == "diff_refs"]
+    assert versions_calls, "fetch_gitlab_shas versions GET must still run in dry-run"
+
+    cap = _read_payload(tmp_path)
+    assert cap["platform"] == "gitlab"
+    assert "MR review" in cap["summary"]["body"]
+    assert len(cap["discussions"]) == 1
+    disc = cap["discussions"][0]
+    assert disc["body"] == render_comment_body(finding_x)
+    assert disc["position"]["new_path"] == "bar.py"
+    assert disc["position"]["new_line"] == 2
+
+
+def test_inline_poster_boundaries__github_impossible_inline_envelope_dies_before_any_post(
+    tmp_path, forge_factory
+):
+    # Mutation: bypass the final UTF-8 body-plus-marker check; post_json would
+    # then be called with the oversized review batch.
+    data = {
+        "platform": "github",
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": TestInlinePosterBoundaries.SHA,
+        "review_body": "Summary",
+        "findings": [
+            {
+                "file": "foo.py",
+                "line": 1,
+                "severity": "high",
+                "title": "Too large",
+                "body": "body",
+            },
+            {
+                "file": "foo.py",
+                "line": 2,
+                "severity": "low",
+                "title": "Healthy sibling",
+                "body": "short body",
+            },
+        ],
+    }
+    _write_findings(tmp_path, data)
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with (
+        patch.object(sys, "argv", ["post_review.py", str(tmp_path / "findings.json")]),
+        patch.dict(
+            post_review.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
+            {"bytes": 20},
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+        patch("gauntlet.delivery.post.post_json") as post,
+        contextlib.redirect_stdout(stdout),
+        contextlib.redirect_stderr(stderr),
+        pytest.raises(SystemExit) as raised,
+    ):
+        post_review.main()
+    assert raised.value.code == 1
+    post.assert_not_called()
+    assert "inline review comment" in stderr.getvalue()
+    assert "20-byte GitHub body limit" in stderr.getvalue()
+    assert "nothing was posted" in stderr.getvalue()
+
+
+def _git_hub_delivery_consolidation_findings():
+    primary = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "A",
+        "body": "Body A",
+        "consolidation_key": "foo.py:0",
+        "consolidation_primary": True,
+    }
+    corroborator = {
+        "file": "foo.py",
+        "line": 3,
+        "severity": "medium",
+        "title": "B",
+        "body": "Body B",
+        "agent": "bug-detector",
+        "dimension": "correctness",
+        "confidence": 70,
+        "consolidation_key": "foo.py:0",
+        "consolidation_primary": False,
+    }
+    return primary, corroborator
+
+
+def test_git_hub_delivery_consolidation__group_posts_as_one_comment_at_the_primarys_anchor(
+    tmp_path, forge_factory
+):
+    primary, corroborator = _git_hub_delivery_consolidation_findings()
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [primary, corroborator],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF_MULTILINE),
+    ):
+        post_review.main()
+
+    cap = _read_payload(tmp_path)
+    comments = cap["payload"]["comments"]
+    assert len(comments) == 1
+    assert comments[0]["path"] == "foo.py"
+    assert comments[0]["line"] == 2
+    assert comments[0]["body"] == render_group_body(primary, [corroborator])
+    assert "Bug B" not in str(cap["skipped"])
+
+
+def test_git_hub_delivery_consolidation__unanchorable_primary_degrades_whole_group_into_skipped_section(
+    tmp_path, forge_factory
+):
+    primary, corroborator = _git_hub_delivery_consolidation_findings()
+    primary["line"] = 999  # not in the diff
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [primary, corroborator],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF_MULTILINE),
+    ):
+        post_review.main()
+
+    cap = _read_payload(tmp_path)
+    assert cap["payload"]["comments"] == []
+    body = cap["payload"]["body"]
+    assert "could not be anchored inline" in body
+    assert "A" in body
+    assert "B" in body
+    assert "Body A" in body
+    assert "Body B" in body
+
+
+def test_git_hub_delivery_consolidation__no_line_primary_degrades_whole_group_into_skipped_section(
+    tmp_path, forge_factory
+):
+    """The primary carries no line at all (distinct from a line the diff
+    doesn't touch) — the same whole-group degrade must fire on this branch
+    too, not just the invalid-line branch."""
+    primary, corroborator = _git_hub_delivery_consolidation_findings()
+    del primary["line"]
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [primary, corroborator],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF_MULTILINE),
+    ):
+        post_review.main()
+
+    cap = _read_payload(tmp_path)
+    assert cap["payload"]["comments"] == []
+    body = cap["payload"]["body"]
+    assert "A" in body
+    assert "B" in body
+    assert "Body A" in body
+    assert "Body B" in body, (
+        "the corroborator must fan out into the skipped section too"
+    )
+
+
+def _git_lab_delivery_consolidation_findings():
+    primary = {
+        "file": "bar.py",
+        "line": 1,
+        "severity": "high",
+        "title": "A",
+        "body": "Body A",
+        "consolidation_key": "bar.py:0",
+        "consolidation_primary": True,
+    }
+    corroborator = {
+        "file": "bar.py",
+        "line": 2,
+        "severity": "medium",
+        "title": "B",
+        "body": "Body B",
+        "agent": "bug-detector",
+        "dimension": "correctness",
+        "confidence": 70,
+        "consolidation_key": "bar.py:0",
+        "consolidation_primary": False,
+    }
+    return primary, corroborator
+
+
+def _git_lab_delivery_consolidation_versions():
+    return [
+        {
+            "base_commit_sha": "base1",
+            "head_commit_sha": "head1",
+            "start_commit_sha": "start1",
+        }
+    ]
+
+
+def test_git_lab_delivery_consolidation__group_posts_as_one_discussion_at_the_primarys_anchor(
+    tmp_path, forge_factory
+):
+    primary, corroborator = _git_lab_delivery_consolidation_findings()
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "MR review",
+            "findings": [primary, corroborator],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(
+            forge_factory,
+            diff=GL_DIFF,
+            versions=_git_lab_delivery_consolidation_versions(),
+        ),
+    ):
+        post_review.main()
+
+    cap = _read_payload(tmp_path)
+    assert len(cap["discussions"]) == 1
+    disc = cap["discussions"][0]
+    assert disc["body"] == render_group_body(primary, [corroborator])
+    assert disc["position"]["new_path"] == "bar.py"
+    assert disc["position"]["new_line"] == 1
+
+
+def test_git_lab_delivery_consolidation__unanchorable_primary_degrades_whole_group_into_skipped_section(
+    tmp_path, forge_factory
+):
+    primary, corroborator = _git_lab_delivery_consolidation_findings()
+    primary["line"] = 999  # not in the diff
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "MR review",
+            "findings": [primary, corroborator],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(
+            forge_factory,
+            diff=GL_DIFF,
+            versions=_git_lab_delivery_consolidation_versions(),
+        ),
+    ):
+        post_review.main()
+
+    cap = _read_payload(tmp_path)
+    assert cap["discussions"] == []
+    body = cap["summary"]["body"]
+    assert "could not be anchored inline" in body
+    assert "Body A" in body
+    assert "Body B" in body
+
+
+def test_git_lab_delivery_consolidation__no_line_primary_degrades_whole_group_into_skipped_section(
+    tmp_path, forge_factory
+):
+    """The primary carries no line at all (distinct from a line the diff
+    doesn't touch) — the same whole-group degrade must fire on this branch
+    too, not just the invalid-line branch."""
+    primary, corroborator = _git_lab_delivery_consolidation_findings()
+    del primary["line"]
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "MR review",
+            "findings": [primary, corroborator],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(
+            forge_factory,
+            diff=GL_DIFF,
+            versions=_git_lab_delivery_consolidation_versions(),
+        ),
+    ):
+        post_review.main()
+
+    cap = _read_payload(tmp_path)
+    assert cap["discussions"] == []
+    body = cap["summary"]["body"]
+    assert "Body A" in body
+    assert "Body B" in body, (
+        "the corroborator must fan out into the skipped section too"
+    )
+
+
+def test_live_path_unchanged__without_flag_posts_and_writes_no_payload_file(
+    tmp_path, forge_factory
+):
+    finding_a = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Bug A",
+        "body": "Body A",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [finding_a],
+        },
+    )
+    # Pin CODE_GAUNTLET_POST_MODE off so an ambient bench value (the harness pins it
+    # to dry-run) cannot flip this live-path assertion.
+    with (
+        patch.object(sys, "argv", ["post_review.py", str(tmp_path / "findings.json")]),
+        patch.dict(os.environ, {}, clear=False),
+        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
+    ):
+        os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
+        post_review.main()
+
+    post_calls = [c for c in mock_run.calls if c.method == "submit"]
+    assert post_calls, "live path must issue the reviews POST"
+    assert not (os.path.exists(os.path.join(str(tmp_path), "post-review-payload.json")))
+
+
+def test_post_mode_env__env_dry_run_alone_captures_payload_no_posts(
+    tmp_path, forge_factory
+):
+    _write_findings(tmp_path, _env_findings())
+    with (
+        patch.object(sys, "argv", ["post_review.py", str(tmp_path / "findings.json")]),
+        patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "dry-run"}),
+        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
+    ):
+        post_review.main()
+    assert _submit_calls(mock_run) == [], "env dry-run must issue no POST"
+    assert (tmp_path / "post-review-payload.json").exists()
+    assert _read_payload(tmp_path)["platform"] == "github"
+
+
+def test_post_mode_env__flag_alone_dry_run_when_env_unset(tmp_path, forge_factory):
+    _write_findings(tmp_path, _env_findings())
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        patch.dict(os.environ, {}, clear=False),
+        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
+    ):
+        os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
+        post_review.main()
+    assert _submit_calls(mock_run) == []
+    assert (tmp_path / "post-review-payload.json").exists()
+
+
+def test_post_mode_env__neither_flag_nor_env_posts_live(tmp_path, forge_factory):
+    _write_findings(tmp_path, _env_findings())
+    with (
+        patch.object(sys, "argv", ["post_review.py", str(tmp_path / "findings.json")]),
+        patch.dict(os.environ, {}, clear=False),
+        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
+    ):
+        os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
+        post_review.main()
+    assert _submit_calls(mock_run), "live path must issue the reviews POST"
+    assert not ((tmp_path / "post-review-payload.json").exists())
+
+
+def test_post_mode_env__env_live_without_flag_posts_live(tmp_path, forge_factory):
+    _write_findings(tmp_path, _env_findings())
+    with (
+        patch.object(sys, "argv", ["post_review.py", str(tmp_path / "findings.json")]),
+        patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "live"}),
+        _poster_run(forge_factory, diff=GH_DIFF) as mock_run,
+    ):
+        post_review.main()
+    assert _submit_calls(mock_run), "env=live with no flag must post live"
+    assert not ((tmp_path / "post-review-payload.json").exists())
+
+
+def test_writer_wrapper_byte_parity__wrapper_platform_survives_an_unrecognized_self_hosted_remote(
+    tmp_path, forge_factory
+):
+    # Mutation: ignore the wrapper's platform in main; the wrapper follows the
+    # manual form into the could-not-detect-platform refusal.
+    manual = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": "0123456789abcdef0123456789abcdef01234567",
+        "review_body": "Summary",
+        "findings": TestWriterWrapperByteParity.FINDINGS,
+    }
+    _write_findings(tmp_path, manual)
+    stderr = io.StringIO()
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, remote="https://code.example/o/r.git\n"),
+        contextlib.redirect_stderr(stderr),
+        pytest.raises(SystemExit) as raised,
+    ):
+        post_review.main()
+    assert raised.value.code == 1
+    assert "Could not detect platform from git remote" in stderr.getvalue()
+
+    wrapper = dict(manual)
+    wrapper["platform"] = "github"
+    _write_findings(tmp_path, wrapper)
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(
+            forge_factory, diff=GH_DIFF, remote="https://code.example/o/r.git\n"
+        ),
+    ):
+        post_review.main()
+    assert _read_payload(tmp_path)["platform"] == "github"
+
+
+def test_both_footer_halves_posted__github_review_body_contains_both_prose_and_marker(
+    tmp_path, forge_factory
+):
+    finding_a = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Bug A",
+        "body": "Body A",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [finding_a],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+
+    body = _read_payload(tmp_path)["payload"]["body"]
+    assert "Generated by code-gauntlet" in body
+    assert "Reviewed up to:" in body
+    assert "code-gauntlet-findings:" in body
+    assert "Summary" in body, "the original review_body must still be present"
+
+
+def test_both_footer_halves_posted__gitlab_summary_note_contains_both_prose_and_marker(
+    tmp_path, forge_factory
+):
+    finding_x = {
+        "file": "bar.py",
+        "line": 2,
+        "severity": "medium",
+        "title": "Issue X",
+        "body": "Desc X",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "MR review",
+            "findings": [finding_x],
+        },
+    )
+    versions = [
+        {
+            "base_commit_sha": "base1",
+            "head_commit_sha": "head1",
+            "start_commit_sha": "start1",
+        }
+    ]
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GL_DIFF, versions=versions),
+    ):
+        post_review.main()
+
+    body = _read_payload(tmp_path)["summary"]["body"]
+    assert "Generated by code-gauntlet" in body
+    assert "Reviewed up to:" in body
+    assert "code-gauntlet-findings:" in body
+    assert "MR review" in body
+
+
+def test_both_footer_halves_posted__review_body_with_the_same_prose_sha_gets_no_second_copy(
+    tmp_path, forge_factory
+):
+    """The idempotence guard (Issue : a footer already naming THIS
+    commit is left alone rather than duplicated."""
+    pre_existing = (
+        "Some notes.\n\n---\n"
+        "Generated by code-gauntlet | Reviewed up to: deadbeefcafe\n"
+    )
+    finding_a = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Bug A",
+        "body": "Body A",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": pre_existing,
+            "findings": [finding_a],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+    body = _read_payload(tmp_path)["payload"]["body"]
+    assert body.count("Generated by code-gauntlet") == 1, (
+        f"an exact-sha match must not duplicate: {body!r}"
+    )
+
+
+def test_both_footer_halves_posted__review_body_with_a_stale_prose_sha_still_gets_the_real_one(
+    tmp_path, forge_factory
+):
+    """A hand-composed footer naming a DIFFERENT commit must not suppress the
+    real one: suppressing it would leave the posted review advertising a
+    commit the review never examined. Two lines is the honest outcome — the
+    reader takes the last — and only an exact-sha match is deduplicated
+    (see test_review_body_with_the_same_prose_sha_gets_no_second_copy)."""
+    pre_existing = (
+        "Some notes.\n\nGenerated by code-gauntlet | Reviewed up to: abc1234\n"
+    )
+    finding_a = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Bug A",
+        "body": "Body A",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": pre_existing,
+            "findings": [finding_a],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+
+    body = _read_payload(tmp_path)["payload"]["body"]
+    # The real head sha must be present and last, so parse_prose_footer (and
+    # any human) reads the commit actually reviewed, not the stale one.
+    assert "Reviewed up to: deadbeefcafe" in body
+    assert body.rindex("deadbeefcafe") > body.rindex("abc1234")
+    signal = review_marker.detect_signal(body)
+    assert signal["sha"] == "deadbeefcafe"
+    # The mechanical marker is still appended (the guards are independent).
+    assert "code-gauntlet-findings:" in body
+
+
+def test_gitlab_real_a_directory_path__gitlab_real_a_directory_path_is_preserved(
+    tmp_path, forge_factory
+):
+    with patch(
+        "gauntlet.delivery.post.run_api", return_value=(GL_DIFF_REAL_A_DIR, "", 0)
+    ):
+        valid_lines, new_files, old_paths, _ = parse_diff_text(
+            "gitlab", GL_DIFF_REAL_A_DIR
+        )
+    assert ("a/foo.py", 1) in valid_lines
+    assert new_files == set()
+    assert old_paths == {"a/foo.py": "a/foo.py"}
+
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "MR review",
+            "findings": [
+                {
+                    "file": "a/foo.py",
+                    "line": 1,
+                    "severity": "high",
+                    "title": "Finding in a real a/ directory",
+                    "body": "Body",
+                }
+            ],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(
+            forge_factory, diff=GL_DIFF_REAL_A_DIR, versions=GL_CONTRACT_VERSIONS
+        ),
+        contextlib.redirect_stdout(io.StringIO()),
+    ):
+        post_review.main()
+    discussions = _read_payload(tmp_path)["discussions"]
+    assert len(discussions) == 1, "the finding must not be warn-skipped"
+    position = discussions[0]["position"]
+    assert position["new_path"] == "a/foo.py"
+    assert position["old_path"] == "a/foo.py"
+    assert position["old_line"] == 1
+
+
+def test_gitlab_finding_path_normalization__prefixed_finding_path_ships_normalized_position(
+    tmp_path, forge_factory
+):
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "MR review",
+            "findings": [
+                {
+                    "file": "b/src/edited.py",
+                    "line": 61,
+                    "severity": "high",
+                    "title": "Prefixed-path finding",
+                    "body": "Body",
+                }
+            ],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(
+            forge_factory, diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
+        ),
+        contextlib.redirect_stdout(io.StringIO()),
+    ):
+        post_review.main()
+    position = _read_payload(tmp_path)["discussions"][0]["position"]
+    assert position["new_path"] == "src/edited.py"
+    assert position["old_path"] == "src/edited.py"
+    assert position["old_line"] == 50
+
+
+def _gitlab_summary_idempotency_run_main(
+    tmp_path, forge_factory, prior, data=None, dry_run=False, head_sha="deadbeefcafe\n"
+):
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "sha": "a" * 40,
+            "review_body": "MR review",
+            "findings": GL_CONTRACT_FINDINGS,
+        }
+        if data is None
+        else data,
+    )
+    argv = ["post_review.py", str(tmp_path / "findings.json")]
+    if dry_run:
+        argv.append("--dry-run")
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with (
+        patch.object(sys, "argv", argv),
+        patch.dict(os.environ, {}, clear=False),
+        patch(
+            "gauntlet.delivery.post.gitlab_prior_delivery_state",
+            return_value=_normalize_prior(prior),
+        ) as mock_prior,
+        _poster_run(
+            forge_factory,
+            diff=GL_DIFF_CONTRACT,
+            versions=GL_CONTRACT_VERSIONS,
+            head_sha=head_sha,
+        ) as mock_run,
+        contextlib.redirect_stdout(stdout),
+        contextlib.redirect_stderr(stderr),
+    ):
+        os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
+        post_review.main()
+    return SimpleNamespace(
+        mock_prior=mock_prior,
+        mock_run=mock_run,
+        out=stdout.getvalue(),
+        err=stderr.getvalue(),
+    )
+
+
+def test_gitlab_summary_idempotency__dry_run_makes_no_idempotency_call_and_always_captures_the_summary(
+    tmp_path, forge_factory
+):
+    """The hard "no network in dry-run" pin: the check would say "skip" if it were
+    consulted, and build_dry_run_payload's "first capture is the summary" shape
+    depends on the note being captured regardless."""
+    run = _gitlab_summary_idempotency_run_main(
+        tmp_path, forge_factory, prior=(True, set(), None), dry_run=True
+    )
+    run.mock_prior.assert_not_called()
+    assert "code-gauntlet-findings:" in _read_payload(tmp_path)["summary"]["body"]
+    assert (
+        post_review._CAPTURED[0].payload["body"]
+        == _read_payload(tmp_path)["summary"]["body"]
+    )
+
+
+def test_summary_body_budget__github_guard_stops_before_post_json(
+    tmp_path, forge_factory
+):
+    # Mutations: delete the GitHub guard, move it after post_json, or make
+    # _utf8_len return len; this multi-byte body then passes and turns red.
+    # GitHub: 21846 code points are 65538 UTF-8 bytes, over 65536.
+    oversized_github = post_review.ComposedBody("界" * 21846, 0, 0, 0, ())
+    with (
+        patch(
+            "gauntlet.delivery.post.compose_review_body",
+            return_value=oversized_github,
+        ),
+        patch("gauntlet.delivery.post.post_json") as github_post,
+        pytest.raises(SystemExit) as github_exit,
+    ):
+        post_review.post_github(
+            {"owner": "o", "repo": "r", "pr_number": 1, "findings": []},
+            {},
+            {},
+            forge=FakeForge(),
+        )
+    assert github_exit.value.code == 1
+    github_post.assert_not_called()
+
+
+def test_summary_body_budget__gitlab_guard_stops_before_post_json(
+    tmp_path, forge_factory
+):
+    # Mutations: delete the GitLab guard, move it after post_json, or make
+    # _utf8_len return len; this multi-byte body then passes and turns red.
+    # GitLab: 333334 code points are 1000002 UTF-8 bytes, over 1000000.
+    oversized_gitlab = post_review.ComposedBody("界" * 333334, 0, 0, 0, ())
+    with (
+        patch("gauntlet.delivery.post.fetch_gitlab_shas", return_value=("b", "h", "s")),
+        patch(
+            "gauntlet.delivery.post.gitlab_prior_delivery_state",
+            return_value=(False, set(), frozenset(), None),
+        ),
+        patch(
+            "gauntlet.delivery.post.compose_review_body",
+            return_value=oversized_gitlab,
+        ),
+        patch("gauntlet.delivery.post.post_json") as gitlab_post,
+        pytest.raises(SystemExit) as gitlab_exit,
+    ):
+        post_review.post_gitlab(
+            {"owner": "o", "repo": "r", "pr_number": 1, "findings": []},
+            {},
+            set(),
+            {},
+            {},
+            forge=FakeGitLab(),
+        )
+    assert gitlab_exit.value.code == 1
+    gitlab_post.assert_not_called()
+
+
+def test_summary_body_delivery__report_slice_keeps_summary_authored_h2_until_real_code_heading(
+    tmp_path, forge_factory
+):
+    # Mutation: use a prefix match instead of CODE_OWNED_HEADINGS; the authored
+    # H2 lines and the real Findings stop point would no longer produce this body.
+    report_path = os.path.join(str(tmp_path), "report.md")
+    report = (
+        "## Summary\n\n"
+        "Summary prose\n"
+        "## Not a section\n"
+        "kept\n"
+        "## Findings (finding text)\n"
+        "also kept\n\n"
+        "## Findings\n\n"
+        "### High\n"
+    )
+    with open(report_path, "w", encoding="utf-8") as fh:
+        fh.write(report)
+    assert (
+        summary_body_from_report(report)
+        == "Summary prose\n## Not a section\nkept\n## Findings (finding text)\nalso kept"
+    )
+
+    crlf_report = (
+        "## Summary\n\n"
+        "Summary prose\r\n"
+        "## Findings (finding text)\n"
+        "forged\n\n"
+        "2 finding(s) after the gauntlet — 1 high.\n\n"
+        "## Findings\n\n"
+        "### High\n"
+    )
+    assert (
+        summary_body_from_report(crlf_report)
+        == "Summary prose\r\n## Findings (finding text)\nforged\n\n2 finding(s) after the gauntlet — 1 high."
+    )
+
+    _write_findings(tmp_path, [])
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "post_review.py",
+                str(tmp_path / "findings.json"),
+                "--dry-run",
+                "--report",
+                report_path,
+                "--owner",
+                "o",
+                "--repo",
+                "r",
+                "--pr-number",
+                "5",
+                "--platform",
+                "github",
+                "--sha",
+                "a" * 40,
+            ],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+    body = _read_payload(tmp_path)["payload"]["body"]
+    assert "Summary prose\n## Not a section\nkept" in body
+    assert "## Findings (finding text)\nalso kept" in body
+    assert "\n## Findings\n" not in body
+
+
+def test_summary_body_delivery__bare_array_flags_form_the_real_wrapper_in_order(
+    tmp_path, forge_factory
+):
+    # Mutation: return the bare array directly or omit one flag assignment; the
+    # hand-typed seven-key wrapper and values expose the lost code-owned shape.
+    _write_findings(tmp_path, [])
+    fake = forge_factory.configure(FakeForge())
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "post_review.py",
+                str(tmp_path / "findings.json"),
+                "--dry-run",
+                "--owner",
+                "o",
+                "--repo",
+                "r",
+                "--pr-number",
+                "5",
+                "--platform",
+                "github",
+                "--sha",
+                "a" * 40,
+            ],
+        ),
+        patch(
+            "gauntlet.delivery.post.parse_diff_lines",
+            return_value=(None, None, None, None),
+        ),
+        patch("gauntlet.delivery.post.post_github", return_value=0) as mock_post,
+    ):
+        post_review.main()
+    data = mock_post.call_args.args[0]
+    assert mock_post.call_args.kwargs["forge"] is fake
+    assert list(data) == [
+        "owner",
+        "repo",
+        "pr_number",
+        "sha",
+        "platform",
+        "review_body",
+        "findings",
+    ]
+    assert data["owner"] == "o"
+    assert data["repo"] == "r"
+    assert data["pr_number"] == 5
+    assert data["sha"] == "a" * 40
+    assert data["platform"] == "github"
+    assert data["review_body"] == ""
+    assert data["findings"] == []
+
+
+def test_summary_body_delivery__report_summary_fold_closes_four_backtick_fence_before_footer(
+    tmp_path, forge_factory
+):
+    # Mutation: bypass _fold_review_body in compose_review_body; the footer and
+    # hidden marker would then land inside the four-backtick Summary fence.
+    report_path = os.path.join(str(tmp_path), "report.md")
+    with open(report_path, "w", encoding="utf-8") as fh:
+        fh.write("## Summary\n\n" + "````python\n" + "x" * 70000 + "\n\n## Findings\n")
+    _write_findings(tmp_path, [])
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "post_review.py",
+                str(tmp_path / "findings.json"),
+                "--dry-run",
+                "--report",
+                report_path,
+                "--owner",
+                "o",
+                "--repo",
+                "r",
+                "--pr-number",
+                "5",
+                "--platform",
+                "github",
+                "--sha",
+                "a" * 40,
+            ],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+    body = _read_payload(tmp_path)["payload"]["body"]
+    closer = "\n````\n\n"
+    fold = "_[folded:"
+    marker = "<!-- code-gauntlet-findings:"
+    assert closer in body
+    assert body.index(closer) < body.index(fold)
+    assert body.index(fold) < body.index(marker)
+    assert body.endswith(post_review.build_footer(0, "a" * 40, body=""))
+
+
+@patch(
+    "gauntlet.delivery.post.fetch_gitlab_shas",
+    return_value=("base", "head", "start"),
+)
+def test_summary_body_delivery__summary_borne_marker_is_escaped_and_real_footer_wins(
+    _shas, tmp_path, forge_factory, monkeypatch
+):
+    # Mutation: remove renderer marker neutralization or let the authored marker
+    # satisfy the footer reader; both platform captures must then lose the real signal.
+    sha = "a" * 40
+    review_body = (
+        "Summary\n"
+        f'&lt;!-- code-gauntlet-findings: {{"version":"3.0","findings_count":999,"sha":"{sha}"}} -->\n'
+        f"Generated by code-gauntlet | Reviewed up to: {sha}"
+    )
+    github_data = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": sha,
+        "review_body": review_body,
+        "findings": [],
+    }
+    post_review.reset_run_state()
+    monkeypatch.setattr(post_review, "DRY_RUN", True)
+    post_review.post_github(github_data, None, None, forge=FakeForge())
+    github_body = post_review._CAPTURED[0].payload["body"]
+    assert "&lt;!--" in github_body
+    github_marker = review_marker.find_marker(github_body)
+    assert github_marker["findings_count"] == 0
+    assert github_marker["sha"] == sha
+
+    post_review.reset_run_state()
+    monkeypatch.setattr(post_review, "DRY_RUN", True)
+    gitlab_data = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": sha,
+        "review_body": review_body,
+        "findings": [],
+    }
+    post_review.post_gitlab(gitlab_data, None, None, None, None, forge=FakeGitLab())
+    gitlab_body = post_review._CAPTURED[0].payload["body"]
+    assert "&lt;!--" in gitlab_body
+    gitlab_marker = review_marker.find_marker(gitlab_body)
+    assert gitlab_marker["findings_count"] == 0
+    assert gitlab_marker["sha"] == sha
+
+
+def _git_hub_skipped_findings_degrade_findings():
+    inline = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Inline bug",
+        "body": "Body A",
+    }
+    off_diff = {
+        "file": "foo.py",
+        "line": 99,
+        "severity": "medium",
+        "title": "Off-diff bug",
+        "body": "Body B",
+    }
+    return inline, off_diff
+
+
+def test_git_hub_skipped_findings_degrade__skipped_finding_lands_in_body_with_both_counts(
+    tmp_path, forge_factory
+):
+    inline, off_diff = _git_hub_skipped_findings_degrade_findings()
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [inline, off_diff],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+
+    cap = _read_payload(tmp_path)
+    body = cap["payload"]["body"]
+    assert "### ⚠️ 1 finding could not be anchored inline" in body
+    assert "1 inline comment was posted" in body
+    assert "Off-diff bug" in body
+    assert "foo.py:99" in body
+    # Excluded from the inline comments payload.
+    comment_bodies = [c["body"] for c in cap["payload"]["comments"]]
+    assert render_comment_body(off_diff) not in comment_bodies
+    assert len(cap["payload"]["comments"]) == 1
+    # Footer stays last and intact.
+    assert body.rstrip().endswith("-->")
+    assert review_marker.MARKER_TOKEN in body
+
+
+def test_git_hub_skipped_findings_degrade__no_skips_body_unchanged(
+    tmp_path, forge_factory
+):
+    inline, _ = _git_hub_skipped_findings_degrade_findings()
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [inline],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+
+    body = _read_payload(tmp_path)["payload"]["body"]
+    assert "could not be anchored inline" not in body
+
+
+def test_git_hub_skipped_findings_degrade__no_line_finding_degrades_others_still_post(
+    tmp_path, forge_factory
+):
+    """post_github must mirror post_gitlab: a finding with no ``line`` key
+    (bare `f["line"]` subscript would raise KeyError and abort the whole run,
+    losing every finding) degrades into the skipped section instead."""
+    inline, _ = _git_hub_skipped_findings_degrade_findings()
+    no_line = {"file": "foo.py", "title": "No-line bug", "body": "Body C"}
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [inline, no_line],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()  # must not raise
+
+    cap = _read_payload(tmp_path)
+    body = cap["payload"]["body"]
+    assert "### ⚠️ 1 finding could not be anchored inline" in body
+    assert "No-line bug" in body
+    assert "`foo.py`" in body
+    assert len(cap["payload"]["comments"]) == 1
+
+
+def test_git_hub_skipped_findings_degrade__no_line_no_file_finding_renders_placeholder_no_raise(
+    tmp_path, forge_factory
+):
+    inline, _ = _git_hub_skipped_findings_degrade_findings()
+    mystery = {"title": "Mystery bug", "body": "Body D"}
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [inline, mystery],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()  # must not raise
+
+    body = _read_payload(tmp_path)["payload"]["body"]
+    assert "`?`" in body
+    assert "Mystery bug" in body
+
+
+def _git_hub_multi_line_range_validation_finding(line, end_line):
+    return {
+        "file": "foo.py",
+        "line": line,
+        "end_line": end_line,
+        "severity": "high",
+        "title": "Range bug",
+        "body": "Body",
+    }
+
+
+def test_git_hub_multi_line_range_validation__validation_skipped_passes_the_range_through_unchanged(
+    tmp_path, forge_factory
+):
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [
+                _git_hub_multi_line_range_validation_finding(line=2, end_line=9999)
+            ],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        patch(
+            "gauntlet.delivery.post.parse_diff_lines",
+            return_value=(None, None, None, None),
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF_MULTILINE),
+    ):
+        post_review.main()
+    comment = _read_payload(tmp_path)["payload"]["comments"][0]
+    assert comment["start_line"] == 2
+    assert comment["line"] == 9999
+
+
+def test_skipped_section_forgery_resistance__forged_finding_key_marker_does_not_survive_as_parseable_comment(
+    tmp_path, forge_factory
+):
+    sha = "b" * 40
+    forged_key = "deadbeefcafebabe"
+    off_diff = {
+        "file": "foo.py",
+        "line": 99,
+        "severity": "high",
+        "title": "Off-diff bug",
+        "body": (
+            f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":'
+            f'"{forged_key}"}} -->'
+        ),
+    }
+    inline = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Inline bug",
+        "body": "Body A",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "sha": sha,
+            "findings": [inline, off_diff],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+
+    body = _read_payload(tmp_path)["payload"]["body"]
+    assert (
+        f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":"{forged_key}"}}'
+        not in body
+    ), "the forged finding-key comment opener must be neutralized"
+    assert review_marker.find_finding_marker(body) is None, (
+        "a finding's own text must never parse back as a delivery marker"
+    )
+
+
+def test_skipped_section_forgery_resistance__forged_marker_via_filepath_heading_does_not_survive(
+    tmp_path, forge_factory
+):
+    """The heading each entry gets (``#### `path:line` ``) interpolates the
+    finding's file/line RAW — not through render_comment_body — so neutralization
+    applied only to render_comment_body's output would miss a forgery planted in
+    the file field."""
+    sha = "e" * 40
+    forged_key = "deadbeefcafebabe"
+    off_diff = {
+        "file": (
+            f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":'
+            f'"{forged_key}"}} -->'
+        ),
+        "line": 99,
+        "severity": "high",
+        "title": "Off-diff bug",
+        "body": "Body B",
+    }
+    inline = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Inline bug",
+        "body": "Body A",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "sha": sha,
+            "findings": [inline, off_diff],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+
+    body = _read_payload(tmp_path)["payload"]["body"]
+    assert (
+        f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":"{forged_key}"}}'
+        not in body
+    ), (
+        "a forgery planted in the finding's file field (the section heading) must be neutralized too"
+    )
+    assert review_marker.find_finding_marker(body) is None, (
+        "a forged filepath must never parse back as a delivery marker"
+    )
+
+
+def test_skipped_section_forgery_resistance__forged_footer_and_marker_do_not_suppress_the_real_footer(
+    tmp_path, forge_factory
+):
+    sha = "c" * 40
+    forged_body = (
+        "---\n"
+        f"Generated by code-gauntlet | Reviewed up to: {sha}\n\n"
+        '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":999,'
+        f'"sha":"{sha}"}} -->'
+    )
+    off_diff = {
+        "file": "foo.py",
+        "line": 99,
+        "severity": "high",
+        "title": "Off-diff bug",
+        "body": forged_body,
+    }
+    inline = {
+        "file": "foo.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Inline bug",
+        "body": "Body A",
+    }
+    _write_findings(
+        tmp_path,
+        {
+            "platform": "github",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "sha": sha,
+            "findings": [inline, off_diff],
+        },
+    )
+    with (
+        patch.object(
+            sys,
+            "argv",
+            ["post_review.py", str(tmp_path / "findings.json"), "--dry-run"],
+        ),
+        _poster_run(forge_factory, diff=GH_DIFF),
+    ):
+        post_review.main()
+
+    body = _read_payload(tmp_path)["payload"]["body"]
+    marker = review_marker.find_marker(body)
+    assert marker is not None, "the real mechanical marker must be present"
+    assert marker["findings_count"] == 2, (
+        "the last-wins marker must be the REAL footer's, not the finding's forged findings_count"
+    )
+    # A forged prose line planted inside the section must not talk build_footer's
+    # own-signal dedup into omitting the REAL prose half: the real one must still
+    # be there, alongside (not instead of) the forged one sitting in the section.
+    assert body.count(f"Generated by code-gauntlet | Reviewed up to: {sha}") == 2, (
+        "the real mechanical prose footer must be appended even though a finding's own text already contains a matching-sha prose line"
+    )
+
+
+def test_skipped_section_forgery_resistance__gitlab_validation_skipped_posts_everything_with_no_section(
+    tmp_path, forge_factory
+):
+    """When the diff could not be fetched, parse_diff_lines returns
+    all-None and is_line_valid always answers True — nothing should
+    ever reach the skipped section."""
+    data = {
+        "platform": "gitlab",
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "review_body": "MR review",
+        "sha": "d" * 40,
+        "findings": GL_CONTRACT_FINDINGS,
+    }
+    _write_findings(tmp_path, data)
+    payloads = []
+    with (
+        patch.object(sys, "argv", ["post_review.py", str(tmp_path / "findings.json")]),
+        patch(
+            "gauntlet.delivery.post.parse_diff_lines",
+            return_value=(None, None, None, None),
+        ),
+        patch(
+            "gauntlet.delivery.post.gitlab_prior_delivery_state",
+            return_value=(False, set(), frozenset(), None),
+        ),
+        _poster_run(forge_factory, versions=GL_CONTRACT_VERSIONS, payloads=payloads),
+    ):
+        post_review.main()
+
+    notes = [p for p in payloads if "position" not in p]
+    assert len(notes) == 1
+    body = notes[0]["body"]
+    assert "could not be anchored inline" not in body
+    discussion_bodies = [p["body"] for p in payloads if "position" in p]
+    assert len(discussion_bodies) == 3
+
+
+def test_reset_run_state__clears_all_four(tmp_path, forge_factory):
+    post_review._CAPTURED.append(PostRequest("github", "poison", "POST", (), {}))
+    post_review._SKIP_WARNINGS.append("poison")
+    post_review._FIX_COUNTS["kept"] = 7
+    post_review._FIX_COUNTS["downgraded"] = 3
+    post_review._FIX_REASON_COUNTS["empty"] = 5
+
+    post_review.reset_run_state()
+
+    assert post_review._CAPTURED == []
+    assert post_review._SKIP_WARNINGS == []
+    assert post_review._FIX_COUNTS == {"kept": 0, "downgraded": 0}
+    assert post_review._FIX_REASON_COUNTS == {}
+
+
+def test_reset_run_state__main_still_resets_stale_state_from_a_prior_call(
+    tmp_path, forge_factory
+):
+    """Main must discard every stale capture, warning, and fix counter before delivery."""
+    post_review._CAPTURED.append(PostRequest("github", "poison", "POST", (), {}))
+    post_review._SKIP_WARNINGS.append("poison warning from a prior run")
+    post_review._FIX_COUNTS["kept"] = 99
+    post_review._FIX_COUNTS["downgraded"] = 99
+    post_review._FIX_REASON_COUNTS["empty"] = 99
+
+    tmp = str(tmp_path)
+    findings_path = os.path.join(tmp, "findings.json")
+    with open(findings_path, "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 1,
+                "review_body": "",
+                "findings": [],
+            },
+            fh,
+        )
+
+    with (
+        patch.object(sys, "argv", ["post_review.py", findings_path, "--dry-run"]),
+        _poster_run(forge_factory, diff=""),
+    ):
+        post_review.main()
+
+    assert PostRequest("github", "poison", "POST", (), {}) not in post_review._CAPTURED
+    assert "poison warning from a prior run" not in post_review._SKIP_WARNINGS
+    assert post_review._FIX_COUNTS == {"kept": 0, "downgraded": 0}
+    assert post_review._FIX_REASON_COUNTS == {}

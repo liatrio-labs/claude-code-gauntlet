@@ -11,9 +11,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from gauntlet import cli, marker, prior_review
+from gauntlet import cli, marker, prior_review, proc
 from gauntlet.forge import GitHub
 from gauntlet.paths import ENTRY_ROOT
+
+from tests.support.forge import FakeForge
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORDED = json.loads(
@@ -28,13 +30,13 @@ FULL = "a" * 40
 def _git_result(command, **kwargs):
     assert command[0] == "git"
     if command[1] == "rev-parse":
-        return prior_review.proc.CompletedProcess(
+        return proc.CompletedProcess(
             command, 0, ("b" * 40 if command[-1] == "HEAD" else command[-1]) + "\n", ""
         )
     if command[1:3] in (["cat-file", "-e"], ["merge-base", "--is-ancestor"]):
-        return prior_review.proc.CompletedProcess(command, 0, "", "")
+        return proc.CompletedProcess(command, 0, "", "")
     if command[1:3] == ["rev-list", "--count"]:
-        return prior_review.proc.CompletedProcess(command, 0, "3\n", "")
+        return proc.CompletedProcess(command, 0, "3\n", "")
     raise AssertionError(f"Unexpected Git call: {command}")
 
 
@@ -68,7 +70,7 @@ def test_detector_receipt(case, tmp_path, invoke, monkeypatch):
             ),
             encoding="utf-8",
         )
-    monkeypatch.setattr(prior_review.proc, "run", _git_result)
+    monkeypatch.setattr(proc, "run", _git_result)
     result = invoke(
         "detect_prior_review",
         ["--platform", "github", "--bodies-file", str(path)],
@@ -111,7 +113,7 @@ def test_detector_receipt(case, tmp_path, invoke, monkeypatch):
     ],
 )
 def test_detector_usage(argv, code, error, tmp_path, invoke, monkeypatch):
-    monkeypatch.setattr(prior_review.proc, "run", _git_result)
+    monkeypatch.setattr(proc, "run", _git_result)
     result = invoke("detect_prior_review", argv, tmp_path)
     assert result.returncode == code
     if error is not None:
@@ -205,7 +207,7 @@ def test_converted_serialization_fallback(name, argv, tmp_path, invoke, monkeypa
     def fail(*args, **kwargs):
         raise TypeError("injected serialization failure")
 
-    monkeypatch.setattr(prior_review.proc, "run", _git_result)
+    monkeypatch.setattr(proc, "run", _git_result)
     monkeypatch.setattr(cli, "dumps", fail)
     result = invoke(name, argv, tmp_path)
     assert result.returncode == 1
@@ -237,7 +239,7 @@ def test_detector_nonfinite_marker_exit_zero(token, tmp_path, invoke, monkeypatc
     )
     path = tmp_path / "bodies.json"
     path.write_text(json.dumps([{"body": body}]), encoding="utf-8")
-    monkeypatch.setattr(prior_review.proc, "run", _git_result)
+    monkeypatch.setattr(proc, "run", _git_result)
     result = invoke(
         "detect_prior_review",
         ["--platform", "github", "--bodies-file", str(path)],
@@ -259,7 +261,7 @@ def test_detector_nonfinite_marker_exit_zero(token, tmp_path, invoke, monkeypatc
 
 
 def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
-    real_run = prior_review.proc.run
+    real_run = proc.run
     calls = []
     child = r"import sys; sys.stdout.buffer.write(b'\xff\xfe' + b'not json')"
 
@@ -269,7 +271,7 @@ def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
         calls.append((command, kwargs))
         return real_run([sys.executable, "-c", child], **kwargs)
 
-    monkeypatch.setattr(prior_review.proc, "run", child_run)
+    monkeypatch.setattr(proc, "run", child_run)
     monkeypatch.setattr(prior_review, "make_forge", lambda platform: GitHub())
     result = invoke(
         "detect_prior_review",
@@ -477,14 +479,15 @@ def _command_line(name, case, directory):
     }[case]
 
 
-def scenario(name, case, tmp_path):
+def scenario(name, case, tmp_path, *, shell_fixture=False):
     directory = tmp_path / name / case
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "invalid.json").write_text("not json", encoding="utf-8")
     fake_bin = directory / "bin"
     fake_bin.mkdir(exist_ok=True)
-    (fake_bin / "gh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    (fake_bin / "gh").chmod(0o755)
+    if shell_fixture and name == "post_review":
+        (fake_bin / "gh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake_bin / "gh").chmod(0o755)
     if case == "success" and name not in SUCCESS:
         argv = _built_success(name, directory)
     else:
@@ -592,7 +595,8 @@ def _assert_recorded(name, case, returncode, stdout, tmp_path):
 
 
 @pytest.mark.parametrize(("name", "case"), list(rows()))
-def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch):
+def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
+    forge_factory.configure(FakeForge(diffs=[("", "", 0)]))
     if reason := _windows_skip(name, case):
         pytest.skip(reason)
     monkeypatch.setenv("COLUMNS", "100")
@@ -623,7 +627,9 @@ def test_recording_covers_all_entry_files():
 def test_entry_runs_from_foreign_cwd(name, tmp_path):
     if reason := _windows_skip(name, "success"):
         pytest.skip(reason)
-    directory, argv, stdin, fake_bin = scenario(name, "success", tmp_path)
+    directory, argv, stdin, fake_bin = scenario(
+        name, "success", tmp_path, shell_fixture=True
+    )
     env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     env.update(
         PYTHONSAFEPATH="1",

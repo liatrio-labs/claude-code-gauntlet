@@ -41,8 +41,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import gauntlet.delivery.post as post_review  # noqa: E402
+from gauntlet.forge import (  # noqa: E402
+    ReviewTarget,
+    github_review_request,
+    gitlab_discussion_request,
+    gitlab_note_request,
+)
 
 from bench.adapter.adapt import merge_candidates, payload_to_candidates  # noqa: E402
+from tests.support.forge import FakeForge, FakeGitLab  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "adapter"
 
@@ -368,16 +375,10 @@ def build_reference_github_payload(
         inline_count=len(comments),
     ).body
     payload = {"body": body, "event": "COMMENT", "comments": comments}
-    cmd_prefix = [
-        "gh",
-        "api",
-        "--method",
-        "POST",
-        "-H",
-        "Accept: application/vnd.github+json",
-        f"repos/{owner}/{repo}/pulls/{pr_number}/reviews",
-    ]
-    post_review.post_json(cmd_prefix, payload)
+    post_review.post_json(
+        github_review_request(ReviewTarget(owner, repo, pr_number), payload),
+        forge=FakeForge(),
+    )
     for w in skip_warnings:
         post_review._SKIP_WARNINGS.append(w)
     out = post_review.build_dry_run_payload("github")
@@ -498,6 +499,7 @@ def build_reference_gitlab_payload(
     was always fully anchorable — so this builder never grew that parameter.
     """
     _reset_post_review()
+    owner, _, repo = project.rpartition("/")
     post_review.DRY_RUN = True
     skipped_groups = []  # singleton groups; this mirror models no consolidation
     remaining = []  # findings that reach the inline discussion loop
@@ -516,35 +518,29 @@ def build_reference_gitlab_payload(
         findings_count=total,
         sha=_GH_SHA,
     ).body
-    notes_cmd = [
-        "glab",
-        "api",
-        "--method",
-        "POST",
-        f"projects/{project}/merge_requests/{mr_iid}/notes",
-    ]
-    post_review.post_json(notes_cmd, {"body": body})
-    disc_cmd = [
-        "glab",
-        "api",
-        "--method",
-        "POST",
-        f"projects/{project}/merge_requests/{mr_iid}/discussions",
-    ]
+    post_review.post_json(
+        gitlab_note_request(ReviewTarget(owner, repo, mr_iid), {"body": body}),
+        forge=FakeGitLab(),
+    )
     losers = _gitlab_overlap_losers(remaining, valid_lines, line_texts)
     for index, f in enumerate(remaining):
         post_review.post_json(
-            disc_cmd,
-            _gitlab_discussion(
-                f,
-                new_files=new_files,
-                valid_lines=valid_lines,
-                line_texts=line_texts,
-                sha=sha,
-                demote_reason=(
-                    post_review._FIX_OVERLAPS_KEPT_FENCE if index in losers else None
+            gitlab_discussion_request(
+                ReviewTarget(owner, repo, mr_iid),
+                _gitlab_discussion(
+                    f,
+                    new_files=new_files,
+                    valid_lines=valid_lines,
+                    line_texts=line_texts,
+                    sha=sha,
+                    demote_reason=(
+                        post_review._FIX_OVERLAPS_KEPT_FENCE
+                        if index in losers
+                        else None
+                    ),
                 ),
             ),
+            forge=FakeGitLab(),
         )
     out = post_review.build_dry_run_payload("gitlab")
     _reset_post_review()
