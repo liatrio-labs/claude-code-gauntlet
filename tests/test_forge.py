@@ -20,6 +20,7 @@ PUBLIC_HOST_CASES: list[ParameterSet] = [
     pytest.param("http://{host}/o/r", True, "{host}", id="http"),
     pytest.param("ssh://git@{host}:2222/o/r", True, "{host}", id="ssh"),
     pytest.param("alice@{host}:o/r.git", True, "{host}", id="scp-user"),
+    pytest.param("git@{host}:o/r", True, "{host}", id="scp-no-suffix"),
     pytest.param("{host}:o/r.git", True, "{host}", id="userless-scp"),
     pytest.param("https://{host}", True, "{host}", id="pathless-url"),
     pytest.param("git@{host}:", True, "{host}", id="pathless-scp"),
@@ -62,6 +63,13 @@ PUBLIC_HOST_CASES: list[ParameterSet] = [
     pytest.param(
         "git@{host}@evil.example:o/r", False, "evil.example", id="double-at-scp"
     ),
+    pytest.param("git@{host}#@evil.example:o/r", False, None, id="scp-fragment-at"),
+    pytest.param("{host}?@evil.example:o/r", False, None, id="scp-query-at"),
+    pytest.param(
+        "ssh://git@{host}#@evil.example/o/r", False, None, id="ssh-fragment-at"
+    ),
+    pytest.param("ssh://{host}?@evil.example/o/r", False, None, id="ssh-query-at"),
+    pytest.param("git@{host}#.evil.example:o/r", False, None, id="scp-fragment-host"),
     pytest.param(
         "https://fixture@{host}@evil.example/o/r",
         False,
@@ -374,8 +382,8 @@ HOST_CASES: list[ParameterSet] = [
     ),
 ]
 
-_HOST_TRANSITION_REMOTES = {case.values[0] for case in HOST_CASES}
-HOST_CASES += [
+_HOST_TRANSITION_ROWS = {case.values[0]: case.values for case in HOST_CASES}
+_GENERATED_HOST_CASES = [
     pytest.param(
         template.format(host=host),
         0,
@@ -387,20 +395,36 @@ HOST_CASES += [
     )
     for platform, host in (("github", "github.com"), ("gitlab", "gitlab.com"))
     for row in PUBLIC_HOST_CASES
-    for template, selected, host_template in [cast("tuple[str, bool, str]", row.values)]
-    if template.format(host=host) not in _HOST_TRANSITION_REMOTES
+    for template, selected, host_template in [
+        cast("tuple[str, bool, str | None]", row.values)
+    ]
+]
+# A literal row may replace a generated twin only when its complete oracle agrees.
+for _case in _GENERATED_HOST_CASES:
+    if _case.values[0] in _HOST_TRANSITION_ROWS:
+        assert _HOST_TRANSITION_ROWS[_case.values[0]] == _case.values
+HOST_CASES += [
+    case
+    for case in _GENERATED_HOST_CASES
+    if case.values[0] not in _HOST_TRANSITION_ROWS
 ]
 
 
 @pytest.mark.parametrize("remote, status, expected", HOST_CASES)
-def test_poster_platform_selection(remote, status, expected, monkeypatch):
-    def origin_output(argv, **kwargs):
+def test_poster_platform_selection(
+    remote: str,
+    status: int,
+    expected: tuple[forge.Platform | None, str | None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def origin_output(argv: list[str], **kwargs: object) -> tuple[str, str, int]:
         assert argv == ["git", "remote", "get-url", "origin"]
         assert kwargs == {"timeout": None, "errors": "strict"}
         return remote, "", status
 
     monkeypatch.setattr(proc, "output", origin_output)
-    assert post.detect_platform() == expected
+    result = forge.detect_platform(forge.origin_remote())
+    assert (result.platform, result.host) == expected
 
 
 @pytest.mark.parametrize(
@@ -422,6 +446,27 @@ def test_origin_authority_validation_preserves_lexical_slug(stdout, host, monkey
     assert remote is not None
     assert remote.hostname == host
     assert forge.remote_slug(remote) == forge.RepoSlug("o", "r")
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("git@github.com#@evil.example:o/r", forge.RepoSlug("o", "r")),
+        ("github.com?@evil.example:o/r", forge.RepoSlug("o", "r")),
+        ("ssh://git@github.com#@evil.example/o/r", forge.RepoSlug("o", "r")),
+        ("ssh://github.com?@evil.example/o/r", forge.RepoSlug("o", "r")),
+        ("git@github.com#.evil.example:o/r", forge.RepoSlug("o", "r")),
+        ("git@gitlab.com#@evil.example:o/r", forge.RepoSlug("o", "r")),
+        ("gitlab.com?@evil.example:o/r", forge.RepoSlug("o", "r")),
+        ("ssh://git@gitlab.com#@evil.example/o/r", forge.RepoSlug("o", "r")),
+        ("ssh://gitlab.com?@evil.example/o/r", forge.RepoSlug("o", "r")),
+        ("git@gitlab.com#.evil.example:o/r", forge.RepoSlug("o", "r")),
+    ],
+)
+def test_ssh_authority_delimiters_preserve_slug(
+    url: str, expected: forge.RepoSlug
+) -> None:
+    assert forge.remote_slug(forge.parse_remote(url)) == expected
 
 
 @pytest.mark.parametrize(
@@ -1288,6 +1333,71 @@ def test_submit_response(stdout, expected, monkeypatch):
         lambda cmd, **kw: proc.CompletedProcess(cmd, 0, stdout, ""),
     )
     assert forge.GitHub().submit(forge.github_review_request(TARGET, {})) == expected
+
+
+@pytest.mark.parametrize(
+    "adapter, post_request, tool, argv",
+    [
+        pytest.param(
+            forge.GitHub,
+            forge.github_review_request(TARGET, {}),
+            "fixture-gh",
+            [
+                "fixture-gh",
+                "api",
+                "--method",
+                "POST",
+                "--fixture-header",
+                "Accept: application/vnd.github+json",
+                "repos/group/sub/repo/pulls/9/reviews",
+            ],
+            id="github",
+        ),
+        pytest.param(
+            forge.GitLab,
+            forge.gitlab_note_request(TARGET, {}),
+            "fixture-glab",
+            [
+                "fixture-glab",
+                "api",
+                "--method",
+                "POST",
+                "--fixture-header",
+                "Content-Type: application/json",
+                "projects/group%2Fsub%2Frepo/merge_requests/9/notes",
+            ],
+            id="gitlab",
+        ),
+    ],
+)
+def test_adapter_owns_transport_data(
+    adapter: type[forge.GitHub] | type[forge.GitLab],
+    post_request: forge.PostRequest,
+    tool: str,
+    argv: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    looked_up: list[str] = []
+    commands: list[list[str]] = []
+
+    def which(name: str) -> str:
+        looked_up.append(name)
+        return name
+
+    def output(command: list[str]) -> tuple[str, str, int]:
+        commands.append(command[:-2])
+        assert command[-2] == "--input"
+        return "{}", "", 0
+
+    monkeypatch.setattr(adapter, "_tool", tool)
+    monkeypatch.setattr(adapter, "_header_flag", "--fixture-header")
+    monkeypatch.setattr(proc, "which", which)
+    monkeypatch.setattr(proc, "output", output)
+    instance = adapter()
+    instance.ensure_available()
+    assert instance.submit(post_request) == forge.PostResult({}, None, None)
+    assert looked_up == [tool]
+    assert commands == [argv]
 
 
 @pytest.mark.parametrize(

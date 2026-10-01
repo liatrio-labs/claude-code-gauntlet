@@ -192,33 +192,6 @@ def collect_entries_file(payload: object) -> list[ReviewEntryWire]:
     return entries
 
 
-def entries_carry_sha(entries: Iterable[object] | None, sha: object) -> bool:
-    """True when any entry's body carries a prior-review signal recording *sha*.
-
-    EXACT sha equality — a prefix match would let a review of a DIFFERENT commit
-    suppress this one. A non-SHA-shaped *sha* simply never matches: detect_signal only
-    ever returns SHA-shaped values, so no separate guard is needed here.
-    """
-    return prior_delivery_from_entries(entries, sha).summary_posted
-
-
-def finding_keys_for_sha(entries: Iterable[object] | None, sha: object) -> set[str]:
-    """Return the set of per-finding delivery keys recorded for *sha* in *entries*.
-
-    EXACT sha equality, same rule and reason as :func:`entries_carry_sha`: a key left by
-    a review of a DIFFERENT commit must not suppress a finding for this one. A body with
-    no valid finding marker contributes nothing.
-
-    The notes surface carries every MR participant's notes, so anyone with write access
-    can suppress one finding on the next run by pasting that finding's key into a note.
-    Accepted knowingly: this endpoint already carries the summary signal, where the same
-    forgery suppresses the WHOLE re-review (see :func:`fetch_entries` for why
-    GitHub issue comments are excluded), so per-finding keys add no
-    capability an attacker does not already have here.
-    """
-    return set(prior_delivery_from_entries(entries, sha).finding_keys)
-
-
 # A consolidation group's body renders one of these per corroborator, verbatim from
 # gauntlet.delivery.post._render_corroboration — the only place this string is emitted.
 _CORROBORATION_HEADER = "Corroborating finding — "
@@ -236,24 +209,13 @@ def _is_legacy_undermarked_group_body(body: object, matched_marker_count: int) -
     return section_count > 0 and matched_marker_count < 1 + section_count
 
 
-def legacy_group_keys_for_sha(
-    entries: Iterable[object] | None, sha: object
-) -> set[str]:
-    """Return delivery keys found in *sha*'s legacy under-marked group bodies.
-
-    A subset of :func:`finding_keys_for_sha`'s result (every key here is a real,
-    found marker) — callers use this to recognize when a GROUP's primary key, if
-    present, stands for the whole group's delivery, including a member whose own
-    key this sha's markers do not carry (see
-    :func:`_is_legacy_undermarked_group_body`).
-    """
-    return set(prior_delivery_from_entries(entries, sha).legacy_group_keys)
-
-
 def prior_delivery_from_entries(
     entries: Iterable[object] | None, sha: object
 ) -> PriorDelivery:
-    """Extract exact-SHA state, parsing each body's finding markers once.
+    """Extract state with exact SHA equality; a prefix could suppress another commit.
+
+    Any MR participant can forge finding keys on the notes surface. This accepted
+    exposure adds no capability beyond forging a summary that suppresses all findings.
 
     Marker counts include duplicates; unique keys alone would misclassify a
     fully marked group as legacy and suppress an undelivered member.

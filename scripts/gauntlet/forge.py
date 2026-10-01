@@ -130,6 +130,14 @@ def _remote_hostname(authority: str) -> str | None:
         or not all(_DNS_LABEL_RE.fullmatch(label) for label in hostname.split("."))
     ):
         return None
+    # SSH splits at the last @; urlsplit may truncate the authority at ? or #.
+    host_text = (
+        host_port[1 : host_port.find("]")]
+        if host_port.startswith("[")
+        else host_port.partition(":")[0]
+    )
+    if host_text.casefold() != hostname:
+        return None
     return hostname.lower()
 
 
@@ -144,7 +152,8 @@ def parse_remote(url: str) -> Remote | None:
         scheme, tail = url.split("://", 1)
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme):
             return unknown
-        authority = re.split(r"[/?#]", tail, maxsplit=1)[0]
+        delimiter = r"[/?#]" if scheme.lower() in {"http", "https"} else r"/"
+        authority = re.split(delimiter, tail, maxsplit=1)[0]
         return Remote(authority, _remote_hostname(authority), path, scheme.lower())
     if re.match(r"^[A-Za-z]:", url):
         return unknown
@@ -250,30 +259,31 @@ def github_review_request(
     )
 
 
-def gitlab_note_request(
-    target: ReviewTarget, payload: Mapping[str, object]
+def _gitlab_request(
+    target: ReviewTarget,
+    surface: Literal["notes", "discussions"],
+    payload: Mapping[str, object],
 ) -> PostRequest:
     project = gitlab_project_id(target.owner, target.repo)
     return PostRequest(
         "gitlab",
-        f"projects/{project}/merge_requests/{target.number}/notes",
+        f"projects/{project}/merge_requests/{target.number}/{surface}",
         "POST",
         ("Content-Type: application/json",),
         payload,
     )
+
+
+def gitlab_note_request(
+    target: ReviewTarget, payload: Mapping[str, object]
+) -> PostRequest:
+    return _gitlab_request(target, "notes", payload)
 
 
 def gitlab_discussion_request(
     target: ReviewTarget, payload: Mapping[str, object]
 ) -> PostRequest:
-    project = gitlab_project_id(target.owner, target.repo)
-    return PostRequest(
-        "gitlab",
-        f"projects/{project}/merge_requests/{target.number}/discussions",
-        "POST",
-        ("Content-Type: application/json",),
-        payload,
-    )
+    return _gitlab_request(target, "discussions", payload)
 
 
 class ForgeUnavailable(RuntimeError):
@@ -383,18 +393,29 @@ def _submit(tool: str, header_flag: str, request: PostRequest) -> PostResult:
             os.unlink(path)
 
 
-class GitHub:
+class _ForgeAdapter:
+    platform: Platform
+    _tool: ClassVar[str]
+    _header_flag: ClassVar[str]
+
+    def ensure_available(self) -> None:
+        _ensure_available(self._tool)
+
+    def submit(self, request: PostRequest) -> PostResult:
+        if request.platform != self.platform:
+            raise ValueError("Request platform does not match forge platform")
+        return _submit(self._tool, self._header_flag, request)
+
+
+class GitHub(_ForgeAdapter):
     platform: Platform = "github"
     _tool: ClassVar[str] = "gh"
     _header_flag: ClassVar[str] = "-H"
 
-    def ensure_available(self) -> None:
-        _ensure_available("gh")
-
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:
         return proc.output(
             [
-                "gh",
+                self._tool,
                 "pr",
                 "diff",
                 str(target.number),
@@ -406,7 +427,7 @@ class GitHub:
     def review_entries(self, target: ReviewTarget) -> JsonFetch:
         return _review_entries(
             [
-                "gh",
+                self._tool,
                 "api",
                 "--paginate",
                 f"repos/{target.owner}/{target.repo}/pulls/{target.number}/reviews",
@@ -414,24 +435,16 @@ class GitHub:
             "github reviews",
         )
 
-    def submit(self, request: PostRequest) -> PostResult:
-        if request.platform != self.platform:
-            raise ValueError("Request platform does not match forge platform")
-        return _submit(self._tool, self._header_flag, request)
 
-
-class GitLab:
+class GitLab(_ForgeAdapter):
     platform: Platform = "gitlab"
     _tool: ClassVar[str] = "glab"
     _header_flag: ClassVar[str] = "--header"
 
-    def ensure_available(self) -> None:
-        _ensure_available("glab")
-
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:
         # Plain glab mr diff, never --raw or --repo: tests/fixtures/glab_diff/
         # records both output shapes, which parse_diff_text distinguishes per file.
-        return proc.output(["glab", "mr", "diff", str(target.number)])
+        return proc.output([self._tool, "mr", "diff", str(target.number)])
 
     def review_entries(self, target: ReviewTarget) -> JsonFetch:
         # GitLab pages notes at 20 and the summary is posted first, so an
@@ -439,7 +452,7 @@ class GitLab:
         project = gitlab_project_id(target.owner, target.repo)
         return _review_entries(
             [
-                "glab",
+                self._tool,
                 "api",
                 "--paginate",
                 f"projects/{project}/merge_requests/{target.number}/notes",
@@ -451,7 +464,7 @@ class GitLab:
         project = gitlab_project_id(target.owner, target.repo)
         stdout, stderr, status = proc.output(
             [
-                "glab",
+                self._tool,
                 "api",
                 f"projects/{project}/merge_requests/{target.number}/versions",
             ]
@@ -469,11 +482,6 @@ class GitLab:
                 None, f"Could not parse MR versions response: {stdout[:200]}"
             )
         return JsonFetch(payload, None)
-
-    def submit(self, request: PostRequest) -> PostResult:
-        if request.platform != self.platform:
-            raise ValueError("Request platform does not match forge platform")
-        return _submit(self._tool, self._header_flag, request)
 
 
 def make_forge(platform: Platform) -> GitHub | GitLab:

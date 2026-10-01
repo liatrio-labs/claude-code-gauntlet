@@ -455,142 +455,169 @@ FINDING_KEY = "c" * 16
 OTHER_FINDING_KEY = "d" * 16
 
 
-class TestGitlabPriorDeliveryState(unittest.TestCase):
-    """``post_review.post_gitlab`` asks THIS module what its own review already left on
-    the MR — the summary note, and which inline discussions a partially-failed delivery
-    placed — so a rerun stacks neither. The reader stays the only reader of the signals.
-
-    Note bodies are built with the REAL writers (``review_marker.build_footer`` /
-    ``build_finding_marker``), so the fixtures cannot drift from the bytes
-    ``post_review`` actually posts.
-    """
-
-    @staticmethod
-    def _discussion_note(key, sha=FULL_SHA, note_id=1):
-        """A note as post_review posts one: rendered body, blank line, delivery marker."""
-        return {
-            "id": note_id,
-            "body": "**🟡 [MEDIUM] Finding**\n\nDetail.\n\n"
-            + review_marker.build_finding_marker(sha, key),
-            "created_at": "2026-08-03T00:02:00Z",
-        }
-
-    def test_no_prefix_match(self):
-        """EXACT equality: a prefix match would let a review of a DIFFERENT commit
-        suppress this one (and vice versa)."""
-        long_marker = [
-            {"body": review_marker.build_footer(1, FULL_SHA), "timestamp": None}
-        ]
-        self.assertFalse(
-            detect_prior_review.entries_carry_sha(long_marker, FULL_SHA[:7])
-        )
-        short_marker = [
-            {"body": review_marker.build_footer(1, FULL_SHA[:7]), "timestamp": None}
-        ]
-        self.assertFalse(detect_prior_review.entries_carry_sha(short_marker, FULL_SHA))
-
-    def test_non_dict_entries_are_ignored(self):
-        entries = [
-            None,
-            "x",
-            {"body": review_marker.build_footer(1, FULL_SHA), "timestamp": None},
-        ]
-        self.assertTrue(detect_prior_review.entries_carry_sha(entries, FULL_SHA))
-
-    def test_finding_keys_for_sha_collects_every_key_in_one_body(self):
-        """One discussion can deliver a whole consolidation group, carrying a marker
-        per member. Collecting only the last one would leave the rest looking
-        undelivered, and the next run would repost them."""
-        other = "d" * 16
-        entry = self._discussion_note(FINDING_KEY)
-        entry["body"] += "\n" + review_marker.build_finding_marker(FULL_SHA, other)
-        self.assertEqual(
-            detect_prior_review.finding_keys_for_sha([entry], FULL_SHA),
-            {FINDING_KEY, other},
-        )
-
-    def test_finding_keys_for_sha_collects_large_group_body(self):
-        """A large consolidation group keeps every marker in one discussion body."""
-        # Forty members exceed the summary reader's 32-candidate bound. Finding
-        # keys have no cap, so this count is independent of that implementation.
-        n = 40
-        sha = "a" * 40
-        keys = [f"{i:016x}" for i in range(n)]
-        body = "Body\n\n" + "\n".join(
-            review_marker.build_finding_marker(sha, key) for key in keys
-        )
-        entry = {"body": body}
-
-        collected = detect_prior_review.finding_keys_for_sha([entry], sha)
-        self.assertEqual(collected, set(keys))
-        self.assertEqual(len(collected), n)
-        self.assertEqual(
-            detect_prior_review.finding_keys_for_sha([entry], "b" * 40), set()
-        )
-        self.assertEqual(
-            detect_prior_review.finding_keys_for_sha([entry], sha[:7]), set()
-        )
-
-    def test_finding_keys_for_sha_ignores_non_dict_and_body_less_entries(self):
-        entries = [
-            None,
-            "x",
-            {"body": None},
-            self._discussion_note(FINDING_KEY),
-        ]
-        self.assertEqual(
-            detect_prior_review.finding_keys_for_sha(entries, FULL_SHA), {FINDING_KEY}
-        )
+@pytest.mark.parametrize(
+    "entries, sha, expected",
+    [
+        pytest.param(
+            [{"body": review_marker.build_footer(1, FULL_SHA), "timestamp": None}],
+            FULL_SHA[:7],
+            False,
+            id="long-marker-short-sha",
+        ),
+        pytest.param(
+            [{"body": review_marker.build_footer(1, FULL_SHA[:7]), "timestamp": None}],
+            FULL_SHA,
+            False,
+            id="short-marker-long-sha",
+        ),
+        pytest.param(
+            [
+                None,
+                "x",
+                {"body": review_marker.build_footer(1, FULL_SHA), "timestamp": None},
+            ],
+            FULL_SHA,
+            True,
+            id="non-dict-entries",
+        ),
+    ],
+)
+def test_prior_delivery_summary(
+    entries: list[object], sha: str, expected: bool
+) -> None:
+    assert (
+        detect_prior_review.prior_delivery_from_entries(entries, sha).summary_posted
+        is expected
+    )
 
 
-# ---------------------------------------------------------------------------
-# A rendered member without its own marker still counts as delivered.
-# ---------------------------------------------------------------------------
+def _finding_note(keys: tuple[str, ...], sha: str = FULL_SHA) -> dict[str, str]:
+    return {
+        "body": "Detail.\n\n"
+        + "\n".join(review_marker.build_finding_marker(sha, key) for key in keys)
+    }
 
 
-class TestLegacyGroupKeysForSha(unittest.TestCase):
-    """Rendered group members count as delivered even when a member key is absent."""
+@pytest.mark.parametrize(
+    "entries, sha, expected",
+    [
+        pytest.param(
+            [_finding_note((FINDING_KEY, OTHER_FINDING_KEY))],
+            FULL_SHA,
+            {"cccccccccccccccc", "dddddddddddddddd"},
+            id="every-key-in-one-body",
+        ),
+        pytest.param(
+            [None, "x", {"body": None}, _finding_note((FINDING_KEY,))],
+            FULL_SHA,
+            {"cccccccccccccccc"},
+            id="non-dict-and-body-less-entries",
+        ),
+    ],
+)
+def test_prior_delivery_finding_keys(
+    entries: list[object], sha: str, expected: set[str]
+) -> None:
+    assert (
+        detect_prior_review.prior_delivery_from_entries(entries, sha).finding_keys
+        == expected
+    )
 
-    def test_undermarked_group_body_yields_the_primary_key(self):
-        note = _legacy_group_note(FINDING_KEY, ["Corroborator A"])
-        self.assertEqual(
-            detect_prior_review.legacy_group_keys_for_sha([note], FULL_SHA),
-            {FINDING_KEY},
-        )
 
-    def test_fully_marked_group_body_is_not_flagged_legacy(self):
-        """A fully marked body needs no inferred group coverage."""
-        note = _legacy_group_note(FINDING_KEY, ["Corroborator A"])
-        note["body"] += "\n" + review_marker.build_finding_marker(
-            FULL_SHA, OTHER_FINDING_KEY
-        )
-        self.assertEqual(
-            detect_prior_review.legacy_group_keys_for_sha([note], FULL_SHA), set()
-        )
+@pytest.mark.parametrize(
+    "sha, expected, count",
+    [
+        pytest.param(
+            FULL_SHA,
+            {
+                "0000000000000000",
+                "0000000000000001",
+                "0000000000000002",
+                "0000000000000003",
+                "0000000000000004",
+                "0000000000000005",
+                "0000000000000006",
+                "0000000000000007",
+                "0000000000000008",
+                "0000000000000009",
+                "000000000000000a",
+                "000000000000000b",
+                "000000000000000c",
+                "000000000000000d",
+                "000000000000000e",
+                "000000000000000f",
+                "0000000000000010",
+                "0000000000000011",
+                "0000000000000012",
+                "0000000000000013",
+                "0000000000000014",
+                "0000000000000015",
+                "0000000000000016",
+                "0000000000000017",
+                "0000000000000018",
+                "0000000000000019",
+                "000000000000001a",
+                "000000000000001b",
+                "000000000000001c",
+                "000000000000001d",
+                "000000000000001e",
+                "000000000000001f",
+                "0000000000000020",
+                "0000000000000021",
+                "0000000000000022",
+                "0000000000000023",
+                "0000000000000024",
+                "0000000000000025",
+                "0000000000000026",
+                "0000000000000027",
+            },
+            40,
+            id="large-group",
+        ),
+        pytest.param("b" * 40, set(), 0, id="large-group-different-sha"),
+        pytest.param(FULL_SHA[:7], set(), 0, id="large-group-sha-prefix"),
+    ],
+)
+def test_prior_delivery_large_group(sha: str, expected: set[str], count: int) -> None:
+    # Forty members exceed the summary reader's 32-candidate bound.
+    note = _finding_note(tuple(f"{i:016x}" for i in range(40)))
+    keys = detect_prior_review.prior_delivery_from_entries([note], sha).finding_keys
+    assert keys == expected
+    assert len(keys) == count
 
-    def test_individually_posted_primary_is_not_flagged_legacy(self):
-        """The OTHER degraded group shape — a corroborator's own fallback
-        discussion never carries a corroboration header at all — must not
-        false-positive as an under-marked group body."""
-        note = self._discussion_note(FINDING_KEY)
-        self.assertEqual(
-            detect_prior_review.legacy_group_keys_for_sha([note], FULL_SHA), set()
-        )
 
-    @staticmethod
-    def _discussion_note(key, sha=FULL_SHA, note_id=1):
-        return {
-            "id": note_id,
-            "body": "**🟡 [MEDIUM] Finding**\n\nDetail.\n\n"
-            + review_marker.build_finding_marker(sha, key),
-            "created_at": "2026-08-03T00:02:00Z",
-        }
-
-    def test_ignores_a_different_shas_marker(self):
-        note = _legacy_group_note(FINDING_KEY, ["Corroborator A"], sha="b" * 40)
-        self.assertEqual(
-            detect_prior_review.legacy_group_keys_for_sha([note], FULL_SHA), set()
-        )
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        pytest.param(
+            _legacy_group_note(FINDING_KEY, ["Corroborator A"])["body"],
+            {"cccccccccccccccc"},
+            id="undermarked-group",
+        ),
+        pytest.param(
+            _legacy_group_note(FINDING_KEY, ["Corroborator A"])["body"]
+            + "\n"
+            + review_marker.build_finding_marker(FULL_SHA, OTHER_FINDING_KEY),
+            set(),
+            id="fully-marked-group",
+        ),
+        pytest.param(
+            _finding_note((FINDING_KEY,))["body"], set(), id="individual-primary"
+        ),
+        pytest.param(
+            _legacy_group_note(FINDING_KEY, ["Corroborator A"], sha="b" * 40)["body"],
+            set(),
+            id="different-sha",
+        ),
+    ],
+)
+def test_prior_delivery_legacy_group_keys(body: str, expected: set[str]) -> None:
+    assert (
+        detect_prior_review.prior_delivery_from_entries(
+            [{"body": body}], FULL_SHA
+        ).legacy_group_keys
+        == expected
+    )
 
 
 # ---------------------------------------------------------------------------

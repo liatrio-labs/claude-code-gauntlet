@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +16,7 @@ from gauntlet import cli, marker, prior_review, proc
 from gauntlet.forge import GitHub, JsonFetch
 from gauntlet.paths import ENTRY_ROOT
 
+from tests.conftest import Invocation
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 from tests.test_forge import HOST_CASES
 
@@ -258,24 +260,37 @@ def test_identity_data_error(url, sha, error, tmp_path, invoke):
     assert result.stderr == f"resolve_pr_identity: {error}\n".encode()
 
 
-def test_converted_serialization_fallback(tmp_path, invoke, monkeypatch):
-    def fail(*args, **kwargs):
+@pytest.mark.parametrize(
+    "name, argv",
+    [
+        pytest.param("detect_prior_review", ["--platform", "github"], id="detector"),
+        pytest.param(
+            "resolve_pr_identity",
+            [
+                "--platform",
+                "github",
+                "--url",
+                "https://github.com/o/r/pull/5",
+                "--sha",
+                FULL,
+            ],
+            id="identity",
+        ),
+    ],
+)
+def test_converted_serialization_fallback(
+    name: str,
+    argv: list[str],
+    tmp_path: Path,
+    invoke: Callable[[str, list[str], Path], Invocation],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*args: object, **kwargs: object) -> str:
         raise TypeError("injected serialization failure")
 
     monkeypatch.setattr(proc, "run", _git_result)
     monkeypatch.setattr(cli, "dumps", fail)
-    result = invoke(
-        "resolve_pr_identity",
-        [
-            "--platform",
-            "github",
-            "--url",
-            "https://github.com/o/r/pull/5",
-            "--sha",
-            FULL,
-        ],
-        tmp_path,
-    )
+    result = invoke(name, argv, tmp_path)
     assert result.returncode == 1
     assert (
         result.stdout == b'{"ok": false, "errors": ["receipt serialization failed"]}\n'

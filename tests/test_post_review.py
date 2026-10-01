@@ -10977,6 +10977,7 @@ def test_skipped_section_forgery_resistance__forged_finding_key_marker_does_not_
             platform="github",
             sha=sha,
             findings=[inline, off_diff],
+            review_body="Summary",
         ),
         diff=GH_DIFF,
     )

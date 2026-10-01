@@ -103,14 +103,12 @@ from gauntlet.forge import (
     GitLab,
     PostRequest,
     ReviewTarget,
+    detect_platform,
     github_review_request,
     gitlab_discussion_request,
     gitlab_note_request,
     make_forge,
     origin_remote,
-)
-from gauntlet.forge import (
-    detect_platform as forge_detect_platform,
 )
 from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import (
@@ -198,16 +196,6 @@ def post_json(request: PostRequest, *, forge: Forge):
     if error is not None:
         die(error)
     return response
-
-
-# ---------------------------------------------------------------------------
-# Platform detection
-# ---------------------------------------------------------------------------
-
-
-def detect_platform():
-    result = forge_detect_platform(origin_remote())
-    return result.platform, result.host
 
 
 # ---------------------------------------------------------------------------
@@ -3220,7 +3208,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
         if primary_key in legacy_group_keys:
             # This group's primary key was found on an older group body that
             # rendered a corroborator's content without ever giving it a key of
-            # its own (see legacy_group_keys_for_sha). That body IS this group's
+            # its own (see prior_delivery_from_entries). That body IS this group's
             # whole delivery — every member it renders is provably already on
             # the MR, missing keys included — so treat the whole group as
             # already_present rather than let the "some but not all" branch
@@ -3490,10 +3478,10 @@ def main():
     if platform:
         platform = platform.lower()
     else:
-        detected, host = detect_platform()
-        if detected:
-            platform = detected
-            print(f"Detected platform: {platform} (from git remote: {host})")
+        detection = detect_platform(origin_remote())
+        if detection.platform:
+            platform = detection.platform
+            print(f"Detected platform: {platform} (from git remote: {detection.host})")
         else:
             die(
                 "Could not detect platform from git remote. "
