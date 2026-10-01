@@ -43,6 +43,7 @@ from gauntlet.delivery.post import (
     compose_review_body,
     consolidate_delivery,
     detect_platform,
+    diff_path_spelling,
     gitlab_project_id,
     is_line_valid,
     old_line_for,
@@ -2638,13 +2639,7 @@ _GLAB_FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "glab_di
 
 
 def _glab_fixture(name):
-    """Read one `glab mr diff` fixture verbatim.
-
-    The shape these files record — and which bytes of it are a real capture — is
-    documented in tests/fixtures/glab_diff/README.md. They are read rather than inlined
-    so the parser's contract has ONE spelling that a real capture can later replace
-    without touching a test.
-    """
+    """Read one byte-exact `glab mr diff` fixture."""
     with open(os.path.join(_GLAB_FIXTURE_DIR, name), encoding="utf-8") as fh:
         return fh.read()
 
@@ -2666,6 +2661,12 @@ GL_DIFF_DELETED_THEN_MODIFIED = _glab_fixture("deleted.diff") + _glab_fixture(
 # new 3 = old 3 (context), new 4 = added, new 5 = old 5 (context), new 6 = old 6 (a BLANK
 # context line, which a unified diff spells as a lone space).
 GL_DIFF_RENAME = _glab_fixture("rename.diff")
+
+# Real captures of glab's git-style shape. The first holds a file under a real
+# top-level `b/` directory, an added, an edited and a deleted file, and a rename; the
+# second holds paths with spaces and a non-ASCII name, which glab writes raw.
+GL_DIFF_GIT_STYLE = _glab_fixture("git_style.diff")
+GL_DIFF_GIT_STYLE_SPACES = _glab_fixture("git_style_spaces.diff")
 
 
 class TestGlabFixtureBytes(unittest.TestCase):
@@ -2705,15 +2706,8 @@ class TestGlabFixtureBytes(unittest.TestCase):
         )
 
     def test_every_fixture_ends_with_exactly_one_newline(self):
-        """glab appends no separator between two files: it writes the `---`/`+++` pair
-        and then the API's diff body, so one file's last line runs straight into the
-        next file's `---` unless that body is newline-terminated.
-
-        The multi-file constants above concatenate these files directly, which is real
-        output only under that property — the one part of the recorded shape that is
-        inferred rather than captured (see the fixture README). Asserting it here keeps
-        the concatenation from quietly becoming a shape no CLI emits.
-        """
+        """Plain-shape constants concatenate fixtures, so their final newline separates
+        one file's body from the next file's headers."""
         for name, text in self._fixtures():
             self.assertTrue(
                 text.endswith("\n"), f"{name}: file boundary needs a final newline"
@@ -2739,24 +2733,254 @@ GL_DIFF_REAL_A_DIR = (
     "+y\n"
 )
 
-# One finding on each position kind GL_DIFF_RENAME produces: a context line and an
-# added line, both inside the renamed file.
-GL_RENAME_FINDINGS = [
-    {
-        "file": "new_name.py",
-        "line": 3,
-        "severity": "high",
-        "title": "Context-line finding in a renamed file",
-        "body": "Body one",
-    },
-    {
-        "file": "new_name.py",
-        "line": 4,
-        "severity": "medium",
-        "title": "Added-line finding in a renamed file",
-        "body": "Body two",
-    },
-]
+
+def test_git_style_glab_capture_has_exact_file_and_line_metadata():
+    valid_lines, new_files, old_paths, _ = parse_diff_text("gitlab", GL_DIFF_GIT_STYLE)
+
+    expected_lines = {}
+    for filepath in ("b/inner.py", "src/edited.py"):
+        expected_lines.update(
+            {
+                (filepath, 2): 2,
+                (filepath, 3): 3,
+                (filepath, 4): 4,
+                (filepath, 5): None,
+                (filepath, 6): 6,
+                (filepath, 7): 7,
+                (filepath, 8): 8,
+            }
+        )
+    expected_lines.update(
+        {
+            ("src/added.py", 1): None,
+            ("src/added.py", 2): None,
+            ("new_name.py", 1): 1,
+            ("new_name.py", 2): None,
+            ("new_name.py", 3): 3,
+            ("new_name.py", 4): 4,
+        }
+    )
+    assert valid_lines == expected_lines
+    assert new_files == {"src/added.py"}
+    assert old_paths == {
+        "b/inner.py": "b/inner.py",
+        "src/edited.py": "src/edited.py",
+        "new_name.py": "old_name.py",
+    }
+
+
+def test_git_style_glab_capture_with_raw_spaces_has_exact_metadata():
+    valid_lines, new_files, old_paths, _ = parse_diff_text(
+        "gitlab", GL_DIFF_GIT_STYLE_SPACES
+    )
+
+    assert valid_lines == {
+        ("docs/user guide/x.md", 1): 1,
+        ("docs/user guide/x.md", 2): None,
+        ("café.py", 1): None,
+        ("my file.py", 1): None,
+        ("new name.py", 1): 1,
+        ("new name.py", 2): None,
+    }
+    assert new_files == {"café.py", "my file.py"}
+    assert old_paths == {
+        "docs/user guide/x.md": "docs/user guide/x.md",
+        "new name.py": "old name.py",
+    }
+
+
+@pytest.mark.parametrize(
+    ("diff", "filepath", "line", "old_line"),
+    [
+        (GL_DIFF_GIT_STYLE, "src/edited.py", 2, 2),
+        (GL_DIFF_GIT_STYLE, "b/inner.py", 2, 2),
+        (GL_DIFF_GIT_STYLE_SPACES, "docs/user guide/x.md", 1, 1),
+        (GL_DIFF_GIT_STYLE_SPACES, "my file.py", 1, None),
+        (GL_DIFF_GIT_STYLE_SPACES, "café.py", 1, None),
+        (GL_DIFF_GIT_STYLE_SPACES, "new name.py", 1, 1),
+    ],
+    ids=[
+        "edited-file",
+        "real-b-directory",
+        "directory-with-space",
+        "added-file-with-space",
+        "non-ascii",
+        "renamed-file-with-space",
+    ],
+)
+def test_git_style_glab_capture_finding_paths_anchor(diff, filepath, line, old_line):
+    valid_lines, _, _, _ = parse_diff_text("gitlab", diff)
+
+    assert is_line_valid(valid_lines, filepath, line)
+    assert diff_path_spelling(valid_lines, filepath, line) == filepath
+    assert old_line_for(valid_lines, filepath, line) == old_line
+
+
+def test_plain_glab_shape_keeps_a_real_b_directory_path():
+    diff = "--- b/inner.py\n+++ b/inner.py\n@@ -1 +1,2 @@\n ctx\n+added\n"
+    valid_lines, _, old_paths, _ = parse_diff_text("gitlab", diff)
+
+    assert valid_lines == {("b/inner.py", 1): 1, ("b/inner.py", 2): None}
+    assert old_paths == {"b/inner.py": "b/inner.py"}
+    assert is_line_valid(valid_lines, "b/inner.py", 1)
+    assert diff_path_spelling(valid_lines, "b/inner.py", 1) == "b/inner.py"
+    assert old_line_for(valid_lines, "b/inner.py", 1) == 1
+
+
+@pytest.mark.parametrize(
+    ("header", "old_header", "new_header", "expected_path", "expected_old"),
+    [
+        ("a/x b/y b/z", "--- a/x b/y", "+++ b/z", "z", "x b/y"),
+        ("a/bar.py b/bar.py", "--- bar.py", "+++ b/bar.py", "b/bar.py", "bar.py"),
+        ("a/bar.py b/bar.py", "--- a/bar.py", "+++ bar.py", "bar.py", "a/bar.py"),
+        (
+            "a/bar.py b/bar.py",
+            "--- a/other.py",
+            "+++ b/bar.py",
+            "b/bar.py",
+            "a/other.py",
+        ),
+        (
+            "a/bar.py b/bar.py",
+            "--- a/other.py",
+            "+++ b/other.py",
+            "b/other.py",
+            "a/other.py",
+        ),
+        (
+            '"a/old path.py" "b/new path.py"',
+            '--- "a/old path.py"',
+            '+++ "b/new path.py"',
+            "b/new path.py",
+            "a/old path.py",
+        ),
+        ("a/t\tx.py b/t\tx.py", "--- a/t\tx.py", "+++ b/t\tx.py", "b/t", "a/t"),
+    ],
+    ids=[
+        "agrees-with-a-prefix-lookalike-inside-the-old-name",
+        "old-unprefixed",
+        "new-unprefixed",
+        "old-names-another-file",
+        "both-name-another-file",
+        "c-quoted-header",
+        "tab-cut-path",
+    ],
+)
+def test_gitlab_prefixes_are_stripped_only_when_the_git_header_agrees(
+    header, old_header, new_header, expected_path, expected_old
+):
+    diff = (
+        f"diff --git {header}\n{old_header}\n{new_header}\n"
+        "@@ -1,1 +1,2 @@\n ctx\n+newline\n"
+    )
+    valid_lines, _, old_paths, _ = parse_diff_text("gitlab", diff)
+
+    assert valid_lines == {(expected_path, 1): 1, (expected_path, 2): None}
+    assert old_paths == {expected_path: expected_old}
+
+
+_HUNK = "@@ -1 +1 @@\n-o\n+n\n"
+
+
+@pytest.mark.parametrize(
+    ("diff", "paths", "new_files", "old_paths"),
+    [
+        (
+            f"diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n{_HUNK}"
+            f"--- a/x.py\n+++ b/x.py\n{_HUNK}",
+            {"x.py", "b/x.py"},
+            set(),
+            {"x.py": "x.py", "b/x.py": "a/x.py"},
+        ),
+        (
+            f"diff --git a/x.py b/x.py\n--- a/y.py\n+++ b/y.py\n{_HUNK}"
+            f"--- a/x.py\n+++ b/x.py\n{_HUNK}",
+            {"b/y.py", "b/x.py"},
+            set(),
+            {"b/y.py": "a/y.py", "b/x.py": "a/x.py"},
+        ),
+        (
+            "diff --git a/x.py b/x.py\n--- /dev/null\n"
+            f"diff --git a/y.py b/y.py\n+++ b/y.py\n{_HUNK}",
+            {"b/y.py"},
+            set(),
+            {},
+        ),
+    ],
+    ids=[
+        "plain-block-after-a-git-style-block",
+        "second-pair-under-one-header",
+        "old-path-cut-off-by-the-next-header",
+    ],
+)
+def test_one_git_header_proves_only_the_pair_that_follows_it(
+    diff, paths, new_files, old_paths
+):
+    valid_lines, parsed_new_files, parsed_old_paths, _ = parse_diff_text("gitlab", diff)
+
+    assert {path for path, _ in valid_lines} == paths
+    assert parsed_new_files == new_files
+    assert parsed_old_paths == old_paths
+
+
+_EMPTY_OLD_SIDE = "@@ -0,0 +1 @@\n+first\n"
+
+
+@pytest.mark.parametrize(
+    ("diff", "new_files", "old_paths"),
+    [
+        (
+            "diff --git a/empty.py b/empty.py\n--- a/empty.py\n+++ b/empty.py\n"
+            + _EMPTY_OLD_SIDE,
+            set(),
+            {"empty.py": "empty.py"},
+        ),
+        (
+            "--- empty.py\n+++ empty.py\n" + _EMPTY_OLD_SIDE,
+            {"empty.py"},
+            {"empty.py": "empty.py"},
+        ),
+        (
+            f"diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n{_HUNK}"
+            "--- empty.py\n+++ empty.py\n" + _EMPTY_OLD_SIDE,
+            {"empty.py"},
+            {"x.py": "x.py", "empty.py": "empty.py"},
+        ),
+    ],
+    ids=["git-style", "plain", "plain-after-git-style"],
+)
+def test_empty_old_side_means_added_only_where_dev_null_cannot_say_so(
+    diff, new_files, old_paths
+):
+    """A git-style block marks an added file with ``/dev/null``, so its ``@@ -0,0``
+    over a named old side is an edit of a file that was already empty. A plain block
+    has no such marker and reads the same hunk as an addition."""
+    _, parsed_new_files, parsed_old_paths, _ = parse_diff_text("gitlab", diff)
+
+    assert parsed_new_files == new_files
+    assert parsed_old_paths == old_paths
+
+
+@pytest.mark.parametrize(
+    ("platform", "path"), [("github", "x.py"), ("gitlab", "b/x.py")]
+)
+def test_new_path_without_an_old_path_records_no_old_path(platform, path):
+    valid_lines, new_files, old_paths, _ = parse_diff_text(
+        platform, f"diff --git a/x.py b/x.py\n+++ b/x.py\n{_HUNK}"
+    )
+
+    assert valid_lines == {(path, 1): None}
+    assert new_files == set()
+    assert old_paths == {}
+
+
+def test_orphan_new_path_does_not_reuse_the_previous_old_side():
+    diff = f"--- /dev/null\n+++ b/x.py\n{_HUNK}+++ b/y.py\n{_HUNK}--- a/z.py\n+++ b/z.py\n{_HUNK}+++ b/w.py\n{_HUNK}"
+    _, new_files, old_paths, _ = parse_diff_text("github", diff)
+
+    assert new_files == {"x.py"}
+    assert old_paths == {"z.py": "z.py"}
+
 
 GL_CONTRACT_VERSIONS = [
     {
@@ -4802,14 +5026,6 @@ class TestGitlabPositionContract(_DryRunTestBase):
         # The FILE is still modified, so old_path stays.
         self.assertEqual(position["old_path"], "src/edited.py")
 
-    def test_added_file_position_omits_old_path_and_old_line(self):
-        """The test the old suite could not provide: ``new_files`` comes from the
-        parser here, not from a fixture that asserted the conclusion."""
-        position = self._positions()[2]
-        self.assertEqual(position["new_path"], "src/app/clients/api/__init__.py")
-        self.assertNotIn("old_path", position)
-        self.assertNotIn("old_line", position)
-
     def test_line_code_never_appears_anywhere_in_the_gitlab_payload(self):
         """``line_code`` is derived server-side. Both documented attempts to compute it
         client-side (a position sibling, and inside ``line_range``) reproduced the
@@ -4821,55 +5037,172 @@ class TestGitlabPositionContract(_DryRunTestBase):
             self.assertIsInstance(position["new_line"], int)
 
 
-class TestGitlabRenamedFilePositionContract(_DryRunTestBase):
-    """A renamed file's position, end-to-end through the real parser (issue #130).
+@pytest.fixture
+def dry_run_payload(tmp_path):
+    """Run ``main()`` in dry-run over a diff and findings; return the captured payload.
 
-    ``old_path`` was hard-wired to the finding's (post-rename) path, which the old side
-    of the diff does not contain. Driving ``main()`` in dry-run against
-    ``GL_DIFF_RENAME`` proves the pre-rename path travels parser -> poster -> payload.
+    The real parser feeds the real poster, so every asserted key is one the production
+    chain emitted rather than one a test injected.
     """
 
-    def setUp(self):
-        super().setUp()
-        self._write(
-            {
-                "platform": "gitlab",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "review_body": "MR review",
-                "findings": GL_RENAME_FINDINGS,
-            }
+    def run(platform, diff, findings):
+        findings_path = tmp_path / "findings.json"
+        findings_path.write_text(
+            json.dumps(
+                {
+                    "platform": platform,
+                    "owner": "o",
+                    "repo": "r",
+                    "pr_number": 5,
+                    "review_body": "Review",
+                    "findings": findings,
+                }
+            ),
+            encoding="utf-8",
         )
         with (
             patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+                sys, "argv", ["post_review.py", str(findings_path), "--dry-run"]
             ),
             patch(
                 "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(
-                    diff=GL_DIFF_RENAME, versions=GL_CONTRACT_VERSIONS
-                ),
+                side_effect=_fake_run(diff=diff, versions=GL_CONTRACT_VERSIONS),
             ),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             post_review.main()
+        return json.loads(
+            (tmp_path / "post-review-payload.json").read_text(encoding="utf-8")
+        )
 
-    def _positions(self):
-        return [d["position"] for d in self._payload()["discussions"]]
+    yield run
+    post_review.DRY_RUN = False
+    post_review._CAPTURED.clear()
+    post_review._SKIP_WARNINGS.clear()
+    post_review._FIX_COUNTS.update(kept=0, downgraded=0)
 
-    def test_renamed_file_position_anchors_old_path_to_the_pre_rename_path(self):
-        position = self._positions()[0]
-        self.assertEqual(position["old_path"], "old_name.py")
-        self.assertEqual(position["new_path"], "new_name.py")
-        self.assertEqual(position["old_line"], 3)
-        self.assertEqual(position["new_line"], 3)
 
-    def test_added_line_in_a_renamed_file_keeps_the_pre_rename_old_path(self):
-        position = self._positions()[1]
-        self.assertEqual(position["old_path"], "old_name.py")
-        self.assertNotIn("old_line", position)
-        self.assertEqual(position["new_line"], 4)
+@pytest.mark.parametrize(
+    ("diff", "filepath", "line", "expected"),
+    [
+        (
+            GL_DIFF_RENAME,
+            "new_name.py",
+            3,
+            {"old_path": "old_name.py", "old_line": 3},
+        ),
+        (GL_DIFF_RENAME, "new_name.py", 4, {"old_path": "old_name.py"}),
+        (
+            GL_DIFF_GIT_STYLE,
+            "new_name.py",
+            3,
+            {"old_path": "old_name.py", "old_line": 3},
+        ),
+        (GL_DIFF_GIT_STYLE, "new_name.py", 2, {"old_path": "old_name.py"}),
+        (GL_DIFF_GIT_STYLE_SPACES, "new name.py", 2, {"old_path": "old name.py"}),
+        (GL_DIFF_CONTRACT, "src/app/clients/api/__init__.py", 1, {}),
+        (GL_DIFF_GIT_STYLE, "src/added.py", 1, {}),
+        (GL_DIFF_GIT_STYLE_SPACES, "my file.py", 1, {}),
+    ],
+    ids=[
+        "plain-rename-context-line",
+        "plain-rename-added-line",
+        "git-style-rename-context-line",
+        "git-style-rename-added-line",
+        "git-style-rename-with-spaces",
+        "plain-added-file",
+        "git-style-added-file",
+        "git-style-added-file-with-space",
+    ],
+)
+def test_gitlab_position_old_side_comes_from_the_parsed_diff(
+    dry_run_payload, diff, filepath, line, expected
+):
+    """GitLab needs a renamed file's PRE-rename path in ``old_path`` and answers HTTP
+    500 to any ``old_path`` on an added file. Both facts exist only in the diff."""
+    finding = {
+        "file": filepath,
+        "line": line,
+        "severity": "high",
+        "title": "Finding",
+        "body": "Body",
+    }
+    payload = dry_run_payload("gitlab", diff, [finding])
+
+    (discussion,) = payload["discussions"]
+    position = discussion["position"]
+    assert {
+        key: position[key] for key in ("old_path", "old_line") if key in position
+    } == expected
+    assert position["new_path"] == filepath
+    assert position["new_line"] == line
+
+
+def _skipped_group(line, members):
+    """A consolidation group that cannot anchor: *members* is ``(id, title)`` pairs,
+    primary first, ``id`` omitted when ``None``."""
+    findings = []
+    for index, (finding_id, title) in enumerate(members):
+        finding = {
+            "file": "missing.py",
+            "line": line,
+            "severity": "high",
+            "title": title,
+            "body": "body",
+            "consolidation_key": "same-location",
+        }
+        if finding_id is not None:
+            finding["id"] = finding_id
+        if index == 0:
+            finding["consolidation_primary"] = True
+        findings.append(finding)
+    return findings
+
+
+_SKIP_REASONS = {
+    "no-line": (None, "Finding 'Primary' has no line number — skipping."),
+    "line-not-in-diff": (
+        99,
+        "Skipping finding 'Primary' at missing.py:99 — line not found in diff."
+        " Valid lines for this file: []",
+    ),
+}
+
+
+@pytest.mark.parametrize("reason", sorted(_SKIP_REASONS))
+@pytest.mark.parametrize(
+    ("platform", "diff"),
+    [("github", GH_DIFF), ("gitlab", GL_DIFF_RENAME)],
+    ids=["github", "gitlab"],
+)
+def test_skipped_group_warning_names_every_member(
+    dry_run_payload, platform, diff, reason
+):
+    line, message = _SKIP_REASONS[reason]
+    members = [("finding-1", "Primary"), ("finding-2", "Corroborator")]
+
+    payload = dry_run_payload(platform, diff, _skipped_group(line, members))
+
+    assert payload["skipped"] == [f"{message} [group members: finding-1, finding-2]"]
+
+
+@pytest.mark.parametrize(
+    ("members", "suffix"),
+    [
+        ([("finding-1", "Primary")], ""),
+        (
+            [(None, "Primary"), ("finding-2", "Corroborator")],
+            " [group members: Primary, finding-2]",
+        ),
+    ],
+    ids=["single-member-is-unsuffixed", "id-less-member-falls-back-to-its-title"],
+)
+def test_skipped_group_warning_member_labels(dry_run_payload, members, suffix):
+    line, message = _SKIP_REASONS["line-not-in-diff"]
+
+    payload = dry_run_payload("gitlab", GL_DIFF_RENAME, _skipped_group(line, members))
+
+    assert payload["skipped"] == [message + suffix]
 
 
 class TestGitlabRealADirectoryPath(_DryRunTestBase):

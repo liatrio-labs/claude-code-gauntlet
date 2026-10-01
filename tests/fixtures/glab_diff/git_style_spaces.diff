@@ -1,0 +1,27 @@
+diff --git a/docs/user guide/x.md b/docs/user guide/x.md
+--- a/docs/user guide/x.md
++++ b/docs/user guide/x.md
+@@ -1 +1,2 @@
+ ctx
++new
+diff --git a/café.py b/café.py
+new file mode 100644
+--- /dev/null
++++ b/café.py
+@@ -0,0 +1 @@
++a
+diff --git a/my file.py b/my file.py
+new file mode 100644
+--- /dev/null
++++ b/my file.py
+@@ -0,0 +1 @@
++added_01
+diff --git a/old name.py b/new name.py
+rename from old name.py
+rename to new name.py
+--- a/old name.py
++++ b/new name.py
+@@ -1,2 +1,2 @@
+ ctx
+-x
++y

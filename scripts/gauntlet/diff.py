@@ -5,16 +5,17 @@ SCOPE SPLIT, and the whole reason this module is thin: THE WALK lives here —
 header zone vs. hunk-body zone, the per-hunk budgets that separate them, the
 old/new line-number advance, and the wire spelling of a header path (git's TAB
 terminator and C-quoting, which mean the same thing everywhere). HEADER SEMANTICS
-stay in the callers. What a path spelling means (git's synthetic ``a/``/``b/``
-prefixes are diff syntax under ``gh pr diff`` and a real top-level directory under
-``glab mr diff``, which writes paths verbatim), what ``/dev/null`` implies, and
-which lines are worth recording at all are decisions the two callers answer
+stay in the callers. What a path spelling means (``a/``/``b/`` are diff syntax under
+``gh pr diff`` and, under ``glab mr diff``, either diff syntax or a real top-level
+directory depending on which of its two shapes a file block has), what ``/dev/null``
+implies, and which lines are worth recording at all are decisions the callers answer
 differently — folding them in here would need a platform flag and would put one
 caller's answer on the other's path.
 
-The event vocabulary is the UNION of what both retained parsers need. The poster
-(``gauntlet.delivery.post.parse_diff_lines``) is a live reader of all three shapes: it
-keys its GitLab position fields off ``---``/``+++`` headers, reads a hunk's old count to
+The event vocabulary is the UNION of what the retained parsers need. The poster
+(``gauntlet.delivery.post.parse_diff_lines``) is a live reader of every kind: it
+keys its GitLab position fields off ``---``/``+++`` headers, reads a ``diff --git``
+line's raw text to prove which shape a file block has, reads a hunk's old count to
 recognise an added file (``@@ -0,0 +N,M @@``, the only added-file signal a verbatim-path
 diff carries), and reads a line's ``text`` as the content oracle its suggested-fix
 apply-check needs. A hunk event's ``new_count`` and ``new_line`` are still carried for
@@ -32,7 +33,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from typing import NamedTuple
+from typing import Literal, NamedTuple
+
+DiffEventKind = Literal["git_header", "old_path", "new_path", "hunk", "line"]
 
 
 class DiffEvent(NamedTuple):
@@ -40,6 +43,11 @@ class DiffEvent(NamedTuple):
 
     ``kind`` is one of:
 
+    * ``"git_header"`` — a ``diff --git`` line, matched only between hunks. ``text`` is
+      everything after ``diff --git ``, RAW: the two paths are not split and nothing is
+      decoded, because where one path ends is not decidable from this line alone (a
+      producer may write a path holding a space unquoted). A caller that needs the
+      paths reads them off the ``---``/``+++`` events and checks them against this.
     * ``"old_path"`` / ``"new_path"`` — a ``---`` / ``+++`` header, matched only
       between hunks. ``path`` is the header's text with git's wire spelling undone
       (see :func:`_decode_header_path`) and NOTHING else: no prefix stripped and
@@ -60,11 +68,11 @@ class DiffEvent(NamedTuple):
       eat its first character instead of its marker). A removed line carries ``text``
       too, despite having no ``new_line``: the walk stays lossless.
 
-    ``old_path`` / ``new_path`` / ``hunk`` events carry ``text=None`` — there is no body
-    line to hold text for.
+    ``text`` is a body line's content on a ``line`` event, the raw header remainder on
+    a ``git_header`` event, and ``None`` otherwise.
     """
 
-    kind: str
+    kind: DiffEventKind
     path: str | None = None
     old_line: int | None = None
     new_line: int | None = None
@@ -77,6 +85,7 @@ class DiffEvent(NamedTuple):
 # directory on the other, so the walk hands back what it read and the caller decides.
 _OLD_HEADER_RE = re.compile(r"^--- (.+)$")
 _NEW_HEADER_RE = re.compile(r"^\+\+\+ (.+)$")
+_GIT_HEADER_PREFIX = "diff --git "
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 # The escapes git's C-quoting spells with a letter; every other byte it escapes it
@@ -106,7 +115,7 @@ def _decode_header_path(field: str) -> str:
     C-quoted as a whole, with the quotes OUTSIDE the synthetic prefix and the tab, if
     any, after the closing quote: ``+++ "b/caf\\303\\251 x.py"<TAB>``. Both encodings
     are git's wire convention — how ``gh pr diff`` and plain ``git diff`` write a
-    header. ``glab mr diff`` reconstructs headers from the API with paths verbatim, so
+    header. ``glab mr diff`` composes its headers itself and writes every path raw, so
     on that producer the decode has nothing to undo and is a no-op for every path git
     could not have encoded — it mis-reads only a name that itself carries a literal TAB
     or is wrapped in double quotes, an accepted limitation (the poster's pre-migration
@@ -185,6 +194,10 @@ def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
     for raw_line in lines:
         if old_rem <= 0 and new_rem <= 0:
             # -- header zone -------------------------------------------------
+            if raw_line.startswith(_GIT_HEADER_PREFIX):
+                yield DiffEvent("git_header", text=raw_line[len(_GIT_HEADER_PREFIX) :])
+                continue
+
             old_match = _OLD_HEADER_RE.match(raw_line)
             if old_match:
                 yield DiffEvent(
@@ -215,7 +228,7 @@ def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
                 )
                 continue
 
-            # Anything else between hunks (`diff --git …`, `index …`, mode lines,
+            # Anything else between hunks (`index …`, mode lines, rename lines,
             # `Binary files … differ`) is noise. Reading it as body content is what
             # attributes a phantom line to whichever file was parsed last.
             continue

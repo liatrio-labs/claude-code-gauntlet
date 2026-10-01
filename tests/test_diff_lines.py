@@ -7,7 +7,8 @@ an unresolved hunk count) all show up as a wrong event somewhere in the middle o
 otherwise plausible list, which an assertIn-shaped test reads straight past.
 
 Covers:
-  - header zone: `---`/`+++`/`@@` recognition, verbatim paths, `/dev/null`, noise
+  - header zone: `---`/`+++`/`@@`/`diff --git` recognition, verbatim paths,
+    `/dev/null`, noise
   - header wire spelling: the TAB terminator and C-quoting git writes for a path
     holding a space, a control character or a non-ASCII byte
   - hunk budgets: resolved counts, omitted counts, drain across files
@@ -68,7 +69,7 @@ class TestHeaderZone(unittest.TestCase):
             ],
         )
 
-    def test_between_hunk_noise_yields_nothing(self):
+    def test_git_header_is_yielded_and_other_between_hunk_noise_is_not(self):
         diff = (
             "diff --git a/logo.png b/logo.png\n"
             "old mode 100644\n"
@@ -77,7 +78,17 @@ class TestHeaderZone(unittest.TestCase):
             "similarity index 94%\n"
             "Binary files a/logo.png and b/logo.png differ\n"
         )
-        self.assertEqual(events(diff), [])
+        self.assertEqual(
+            events(diff), [DiffEvent("git_header", text="a/logo.png b/logo.png")]
+        )
+
+    def test_git_header_text_is_raw(self):
+        # Neither split nor decoded: quotes, escapes, spaces and a TAB all survive.
+        diff = 'diff --git "a/caf\\303\\251.py" b/my file.py\tx\n'
+        self.assertEqual(
+            events(diff),
+            [DiffEvent("git_header", text='"a/caf\\303\\251.py" b/my file.py\tx')],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -404,12 +415,14 @@ class TestHunkBody(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
+                DiffEvent("git_header", text="a/gone.py b/gone.py"),
                 DiffEvent("old_path", path="a/gone.py"),
                 DiffEvent("new_path", path="/dev/null"),
                 DiffEvent("hunk", old_line=1, new_line=0, old_count=3, new_count=0),
                 DiffEvent("line", old_line=1, text="alpha"),
                 DiffEvent("line", old_line=2, text="beta"),
                 DiffEvent("line", old_line=3, text="gamma"),
+                DiffEvent("git_header", text="a/next.py b/next.py"),
                 DiffEvent("old_path", path="a/next.py"),
                 DiffEvent("new_path", path="b/next.py"),
                 DiffEvent("hunk", old_line=10, new_line=10, old_count=1, new_count=2),
