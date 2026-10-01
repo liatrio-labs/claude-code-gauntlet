@@ -2,6 +2,7 @@
 
 import ast
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -112,9 +113,6 @@ PUBLIC_HOST_CASES: list[ParameterSet] = [
 
 HOST_CASES: list[ParameterSet] = [
     pytest.param(
-        "https://github.com/o/r.git", 0, ("github", "github.com"), id="github-https"
-    ),
-    pytest.param(
         "git@github.com:o/r.git", 0, ("github", "github.com"), id="github-scp"
     ),
     pytest.param(
@@ -217,9 +215,6 @@ HOST_CASES: list[ParameterSet] = [
         "git@GitLab.COM:g/r.git", 0, ("gitlab", "gitlab.com"), id="mixedcase-scp"
     ),
     pytest.param(
-        "alice@github.com:o/r.git", 0, ("github", "github.com"), id="non-git-user"
-    ),
-    pytest.param(
         "https://github.com@evil.example/o/r.git",
         0,
         (None, "evil.example"),
@@ -288,14 +283,9 @@ HOST_CASES: list[ParameterSet] = [
         (None, "evil.example"),
         id="double-at-https",
     ),
-    pytest.param("github.com:o/r.git", 0, ("github", "github.com"), id="userless-scp"),
-    pytest.param(
-        "https://github.com", 0, ("github", "github.com"), id="pathless-https"
-    ),
     pytest.param(
         "ssh://git@gitlab.com", 0, ("gitlab", "gitlab.com"), id="pathless-ssh"
     ),
-    pytest.param("git@github.com:", 0, ("github", "github.com"), id="pathless-scp"),
     pytest.param("https://[::1/o/r", 0, (None, None), id="invalid-bracket"),
     pytest.param(
         "ssh://git@github.com", 0, ("github", "github.com"), id="github-pathless-ssh"
@@ -410,23 +400,6 @@ HOST_CASES += [
 ]
 
 
-@pytest.mark.parametrize("remote, status, expected", HOST_CASES)
-def test_poster_platform_selection(
-    remote: str,
-    status: int,
-    expected: tuple[forge.Platform | None, str | None],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def origin_output(argv: list[str], **kwargs: object) -> tuple[str, str, int]:
-        assert argv == ["git", "remote", "get-url", "origin"]
-        assert kwargs == {"timeout": None, "errors": "strict"}
-        return remote, "", status
-
-    monkeypatch.setattr(proc, "output", origin_output)
-    result = forge.detect_platform(forge.origin_remote())
-    assert (result.platform, result.host) == expected
-
-
 @pytest.mark.parametrize(
     "stdout, host",
     [
@@ -485,34 +458,13 @@ def test_public_host_policy(platform, host, template, selected, host_template):
     "url, expected",
     [
         pytest.param(
-            "https://GITHUB.COM/o/r.git", ("github", "github.com"), id="uppercase-host"
-        ),
-        pytest.param(
-            "git@GitLab.COM:o/r", ("gitlab", "gitlab.com"), id="mixedcase-scp"
-        ),
-        pytest.param(
-            "https://gitlab.internal.example/o/r",
-            (None, "gitlab.internal.example"),
-            id="private-gitlab",
-        ),
-        pytest.param(
-            "https://tenant.ghe.com/o/r", (None, "tenant.ghe.com"), id="enterprise"
-        ),
-        pytest.param("https://[::1]:8443/o/r", (None, "::1"), id="ipv6"),
-        pytest.param(
             "ssh://git@[2001:DB8::1]/o/r", (None, "2001:db8::1"), id="ipv6-case"
         ),
-        pytest.param("https://[::1/o/r", (None, None), id="unclosed-bracket"),
         pytest.param("https://[::1]extra/o/r", (None, None), id="bracket-suffix"),
         pytest.param("https://[127.0.0.1]/o/r", (None, None), id="bracketed-ipv4"),
         pytest.param("https://[::1%25fixture]/o/r", (None, None), id="ipv6-percent"),
         pytest.param("https://::1/o/r", (None, None), id="unbracketed-ipv6"),
-        pytest.param("", (None, None), id="empty"),
-        pytest.param("not-a-url", (None, None), id="malformed"),
-        pytest.param("C:/github.com/o/r", (None, None), id="drive-forward"),
-        pytest.param("C:\\github.com\\o\\r", (None, None), id="drive-backslash"),
         pytest.param("./github.com:o/r", (None, None), id="local-relative"),
-        pytest.param("directory/github.com:o/r", (None, None), id="slash-before-colon"),
         pytest.param(
             "https://x" + "a" * 62 + ".github.com/o/r",
             ("github", "x" + "a" * 62 + ".github.com"),
@@ -989,13 +941,6 @@ class OriginKwargs(TypedDict, total=False):
     "kwargs, outcome, expected, call_kwargs",
     [
         pytest.param(
-            {},
-            FileNotFoundError("missing git"),
-            FileNotFoundError,
-            {"cwd": None, "timeout": None, "errors": "strict"},
-            id="missing-git-strict",
-        ),
-        pytest.param(
             {"timeout": 10, "errors": "replace"},
             FileNotFoundError("missing git"),
             FileNotFoundError,
@@ -1003,36 +948,11 @@ class OriginKwargs(TypedDict, total=False):
             id="missing-git-replace",
         ),
         pytest.param(
-            {},
-            UnicodeDecodeError(
-                "utf-8", b"\xff\xfe not a remote", 0, 1, "invalid start byte"
-            ),
-            UnicodeDecodeError,
-            {"cwd": None, "timeout": None, "errors": "strict"},
-            id="nonutf8-unusable-strict",
-        ),
-        pytest.param(
-            {},
-            UnicodeDecodeError(
-                "utf-8", b"https://github.com/o/r\xff.git", 22, 23, "invalid start byte"
-            ),
-            UnicodeDecodeError,
-            {"cwd": None, "timeout": None, "errors": "strict"},
-            id="nonutf8-slug-strict",
-        ),
-        pytest.param(
             {"timeout": 10, "errors": "replace"},
             ("\ufffd\ufffd not a remote", "", 0),
             None,
             {"cwd": None, "timeout": 10, "errors": "replace"},
             id="nonutf8-unusable-replace",
-        ),
-        pytest.param(
-            {"timeout": 10, "errors": "replace"},
-            ("https://github.com/o/r\ufffd.git\n", "", 0),
-            forge.RepoSlug("o", "r\ufffd"),
-            {"cwd": None, "timeout": 10, "errors": "replace"},
-            id="nonutf8-slug-replace",
         ),
         pytest.param(
             {},
@@ -1188,6 +1108,20 @@ def test_versions_policy(stdout, stderr, status, expected, monkeypatch):
     ]
 
 
+@pytest.fixture
+def tracked_temp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[Path]:
+    paths: list[Path] = []
+    real_mkstemp = tempfile.mkstemp
+
+    def mkstemp(**kwargs: Any) -> tuple[int, str]:
+        fd, path = real_mkstemp(dir=tmp_path, **kwargs)
+        paths.append(Path(path))
+        return fd, path
+
+    monkeypatch.setattr(tempfile, "mkstemp", mkstemp)
+    return paths
+
+
 @pytest.mark.parametrize(
     "adapter, builder, argv",
     [
@@ -1217,31 +1151,12 @@ def test_versions_policy(stdout, stderr, status, expected, monkeypatch):
                 "projects/group%2Fsub%2Frepo/merge_requests/9/notes",
             ],
         ),
-        (
-            forge.GitLab,
-            forge.gitlab_discussion_request,
-            [
-                "glab",
-                "api",
-                "--method",
-                "POST",
-                "--header",
-                "Content-Type: application/json",
-                "projects/group%2Fsub%2Frepo/merge_requests/9/discussions",
-            ],
-        ),
     ],
-    ids=["github-review", "gitlab-note", "gitlab-discussion"],
+    ids=["github-review", "gitlab-note"],
 )
-def test_submit_transport(adapter, builder, argv, monkeypatch, tmp_path):
-    paths = []
+def test_submit_transport(adapter, builder, argv, monkeypatch, tracked_temp):
+    paths = tracked_temp
     calls = []
-    real_mkstemp = forge.tempfile.mkstemp
-
-    def mkstemp(**kwargs):
-        fd, path = real_mkstemp(dir=tmp_path, **kwargs)
-        paths.append(Path(path))
-        return fd, path
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
@@ -1252,7 +1167,6 @@ def test_submit_transport(adapter, builder, argv, monkeypatch, tmp_path):
         )
         return proc.CompletedProcess(command, 0, '{"id":7}', "")
 
-    monkeypatch.setattr(forge.tempfile, "mkstemp", mkstemp)
     monkeypatch.setattr(proc, "run", run)
     assert adapter().submit(
         builder(TARGET, {"body": "caf\u00e9\nline", "event": "COMMENT", "comments": []})
@@ -1401,42 +1315,53 @@ def test_adapter_owns_transport_data(
 
 
 @pytest.mark.parametrize(
-    "failure",
+    "failure, payload, expected_exception",
     [
-        None,
-        OSError("cannot run"),
-        proc.TimeoutExpired(["fixture"], 1),
-        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"),
+        pytest.param(None, {"body": "review"}, None, id="rejected"),
+        pytest.param(OSError("cannot run"), {"body": "review"}, OSError, id="oserror"),
+        pytest.param(
+            proc.TimeoutExpired(["fixture"], 1),
+            {"body": "review"},
+            proc.TimeoutExpired,
+            id="timeout",
+        ),
+        pytest.param(
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"),
+            {"body": "review"},
+            UnicodeDecodeError,
+            id="unicode-error",
+        ),
+        pytest.param("encoding", {"bad": object()}, TypeError, id="encoding"),
     ],
-    ids=["rejected", "oserror", "timeout", "unicode-error"],
 )
-def test_submit_failure_cleans_temp(failure, monkeypatch, tmp_path):
-    paths = []
-    real_mkstemp = forge.tempfile.mkstemp
-    command_seen = []
+def test_submit_failure_cleans_temp(
+    failure: Exception | Literal["encoding"] | None,
+    payload: dict[str, object],
+    expected_exception: type[Exception] | None,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_temp: list[Path],
+) -> None:
+    paths = tracked_temp
+    command_seen: list[str] = []
 
-    def mkstemp(**kwargs):
-        fd, path = real_mkstemp(dir=tmp_path, **kwargs)
-        paths.append(Path(path))
-        return fd, path
-
-    def run(command, **kwargs):
+    def run(command: list[str], **kwargs: object) -> proc.CompletedProcess[str]:
+        if failure == "encoding":
+            pytest.fail("an unencodable payload must not run the CLI")
         command_seen.extend(command)
         assert paths[0].exists()
-        if failure:
+        if isinstance(failure, Exception):
             raise failure
         return proc.CompletedProcess(command, 5, "ignored stdout", " rejected \n")
 
-    monkeypatch.setattr(forge.tempfile, "mkstemp", mkstemp)
     monkeypatch.setattr(proc, "run", run)
-    request = forge.gitlab_note_request(TARGET, {"body": "review"})
-    if failure:
-        with pytest.raises(type(failure)) as exc:
+    request = forge.gitlab_note_request(TARGET, payload)
+    if expected_exception is not None:
+        with pytest.raises(expected_exception) as exc:
             forge.GitLab().submit(request)
-        assert exc.value is failure
+        if isinstance(failure, Exception):
+            assert exc.value is failure
     else:
-        result = forge.GitLab().submit(request)
-        assert result == forge.PostResult(
+        assert forge.GitLab().submit(request) == forge.PostResult(
             None,
             "API call failed (exit 5).\nCommand: "
             + " ".join(command_seen)
@@ -1476,26 +1401,6 @@ def test_process_exceptions_propagate(
     with pytest.raises(type(failure)) as exc:
         call()
     assert exc.value is failure
-
-
-def test_submit_encoding_failure_cleans_temp(monkeypatch, tmp_path):
-    paths = []
-    real_mkstemp = forge.tempfile.mkstemp
-
-    def mkstemp(**kwargs):
-        fd, path = real_mkstemp(dir=tmp_path, **kwargs)
-        paths.append(Path(path))
-        return fd, path
-
-    def run(*args, **kwargs):
-        pytest.fail("an unencodable payload must not run the CLI")
-
-    monkeypatch.setattr(forge.tempfile, "mkstemp", mkstemp)
-    monkeypatch.setattr(proc, "run", run)
-    with pytest.raises(TypeError):
-        forge.GitHub().submit(forge.github_review_request(TARGET, {"bad": object()}))
-    assert len(paths) == 1
-    assert not paths[0].exists()
 
 
 @pytest.mark.parametrize(

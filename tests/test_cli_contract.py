@@ -730,6 +730,24 @@ def test_entry_runs_from_foreign_cwd(name, tmp_path):
     _assert_recorded(name, "success", result.returncode, result.stdout, tmp_path)
 
 
+def _gitlab_fake() -> FakeGitLab:
+    return FakeGitLab(
+        diffs=[("", "", 0)],
+        refs=[
+            JsonFetch(
+                [
+                    {
+                        "base_commit_sha": "base",
+                        "head_commit_sha": "head",
+                        "start_commit_sha": "start",
+                    }
+                ],
+                None,
+            )
+        ],
+    )
+
+
 @pytest.mark.parametrize("remote, status, expected", HOST_CASES)
 def test_poster_auto_detection(
     remote, status, expected, tmp_path, invoke, forge_factory, monkeypatch
@@ -744,25 +762,7 @@ def test_poster_auto_detection(
     path = tmp_path / "findings.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     platform, host = expected
-    fake = (
-        FakeForge(diffs=[("", "", 0)])
-        if platform == "github"
-        else FakeGitLab(
-            diffs=[("", "", 0)],
-            refs=[
-                JsonFetch(
-                    [
-                        {
-                            "base_commit_sha": "base",
-                            "head_commit_sha": "head",
-                            "start_commit_sha": "start",
-                        }
-                    ],
-                    None,
-                )
-            ],
-        )
-    )
+    fake = FakeForge(diffs=[("", "", 0)]) if platform == "github" else _gitlab_fake()
     forge_factory.configure(fake)
     origins: list[list[str]] = []
 
@@ -843,23 +843,7 @@ def test_explicit_platform(
     path = tmp_path / "findings.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     github = forge_factory.configure(FakeForge(diffs=[("", "", 0)]))
-    gitlab = forge_factory.configure(
-        FakeGitLab(
-            diffs=[("", "", 0)],
-            refs=[
-                JsonFetch(
-                    [
-                        {
-                            "base_commit_sha": "base",
-                            "head_commit_sha": "head",
-                            "start_commit_sha": "start",
-                        }
-                    ],
-                    None,
-                )
-            ],
-        )
-    )
+    gitlab = forge_factory.configure(_gitlab_fake())
     origins: list[list[str]] = []
 
     def run(command, **kwargs):

@@ -4,11 +4,13 @@ import contextlib
 import io
 import json
 import os
-import shutil
 import sys
 import tempfile
 import unittest
+from collections.abc import Mapping, Sequence
+from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import gauntlet.marker as review_marker
@@ -621,155 +623,114 @@ def test_prior_delivery_legacy_group_keys(body: str, expected: set[str]) -> None
 
 
 # ---------------------------------------------------------------------------
-# build_result — the branches.
-# ---------------------------------------------------------------------------
-
-
-def _git_facts(
-    sha_resolvable: bool,
-    last_reviewed_sha: str | None,
-    last_reviewed_sha_short: str | None,
-    head_sha: str,
-    sha_is_ancestor: bool,
-    new_commit_count: int | None,
-) -> GitFacts:
-    return GitFacts(
-        head_sha,
-        last_reviewed_sha,
-        last_reviewed_sha_short,
-        sha_resolvable,
-        sha_is_ancestor,
-        new_commit_count,
-    )
-
-
-# ---------------------------------------------------------------------------
-# resolve_git_facts — proves the merge-base --is-ancestor call is made and its
-# exit code drives sha_is_ancestor.
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # CLI end-to-end — --bodies-file, git calls patched.
 # ---------------------------------------------------------------------------
 
 
-class _CliTestBase(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def _bodies_file(self, entries):
-        path = os.path.join(self.tmp, "bodies.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(entries, f)
-        return path
-
-    def _base_argv(self, bodies_path, platform="github", **extra):
-        argv = [
-            "--platform",
-            platform,
-            "--owner",
-            "o",
-            "--repo",
-            "r",
-            "--number",
-            "5",
-            "--bodies-file",
-            bodies_path,
-        ]
-        for key, value in extra.items():
-            argv += [f"--{key.replace('_', '-')}", str(value)]
-        return argv
+def _bodies_file(tmp_path: Path, entries: Sequence[object]) -> Path:
+    path = tmp_path / "bodies.json"
+    path.write_text(json.dumps(entries), encoding="utf-8")
+    return path
 
 
-class TestCliBodiesFile(_CliTestBase):
-    def test_found_and_advanced_exits_zero_with_matching_fields(self):
-        marker_body = review_marker.build_marker(FULL_SHA, 4)
-        entries = [
+def _base_argv(bodies_path: Path, platform: str = "github", **extra: str) -> list[str]:
+    argv = [
+        "--platform",
+        platform,
+        "--owner",
+        "o",
+        "--repo",
+        "r",
+        "--number",
+        "5",
+        "--bodies-file",
+        str(bodies_path),
+    ]
+    for key, value in extra.items():
+        argv += [f"--{key.replace('_', '-')}", value]
+    return argv
+
+
+@pytest.mark.parametrize(
+    "marker_sha, git_kwargs, expected",
+    [
+        pytest.param(
+            FULL_SHA,
+            {"resolvable": True},
             {
-                "body": marker_body,
-                "timestamp": "2026-01-01T00:00:00Z",
+                "previously_reviewed": True,
+                "signal": "marker",
                 "source": "review",
-                "id": 101,
-            }
-        ]
-        bodies_path = self._bodies_file(entries)
-        argv = self._base_argv(bodies_path)
-
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=_fake_git_run(resolvable=True),
-        ):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertTrue(result["previously_reviewed"])
-        self.assertEqual(result["signal"], "marker")
-        self.assertEqual(result["last_reviewed_sha"], FULL_SHA)
-        self.assertTrue(result["sha_resolvable"])
-        self.assertEqual(result["head_sha"], HEAD_SHA)
-        self.assertTrue(result["head_advanced"])
-        self.assertTrue(result["incremental_safe"])
-        self.assertEqual(result["errors"], [])
-
-    def test_found_but_head_not_advanced(self):
-        # Marker's sha is the same as HEAD — nothing new to review.
-        marker_body = review_marker.build_marker(HEAD_SHA, 2)
-        entries = [
+                "last_reviewed_sha": FULL_SHA,
+                "sha_resolvable": True,
+                "sha_is_ancestor": True,
+                "head_sha": HEAD_SHA,
+                "head_advanced": True,
+                "new_commit_count": 3,
+                "incremental_safe": True,
+                "errors": [],
+            },
+            id="found-and-advanced",
+        ),
+        pytest.param(
+            HEAD_SHA,
             {
-                "body": marker_body,
-                "timestamp": "2026-01-01T00:00:00Z",
-                "source": "review",
-                "id": 1,
-            }
-        ]
-        bodies_path = self._bodies_file(entries)
-        argv = self._base_argv(bodies_path)
-
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=_fake_git_run(
-                resolvable=True, full_sha=HEAD_SHA, head_sha=HEAD_SHA, commit_count=0
-            ),
-        ):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertTrue(result["previously_reviewed"])
-        self.assertFalse(result["head_advanced"])
-        self.assertFalse(result["incremental_safe"])
-
-    def test_found_but_sha_unresolvable(self):
-        marker_body = review_marker.build_marker(FULL_SHA, 1)
-        entries = [
+                "resolvable": True,
+                "full_sha": HEAD_SHA,
+                "head_sha": HEAD_SHA,
+                "commit_count": 0,
+            },
             {
-                "body": marker_body,
-                "timestamp": "2026-01-01T00:00:00Z",
-                "source": "review",
-                "id": 1,
-            }
-        ]
-        bodies_path = self._bodies_file(entries)
-        argv = self._base_argv(bodies_path)
-
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=_fake_git_run(resolvable=False),
-        ):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertTrue(result["previously_reviewed"])
-        self.assertFalse(result["sha_resolvable"])
-        self.assertFalse(result["incremental_safe"])
-
-    def test_nothing_found_reports_previously_reviewed_false(self):
+                "previously_reviewed": True,
+                "head_advanced": False,
+                "incremental_safe": False,
+            },
+            id="found-and-not-advanced",
+        ),
+        pytest.param(
+            FULL_SHA,
+            {"resolvable": False},
+            {
+                "previously_reviewed": True,
+                "sha_resolvable": False,
+                "incremental_safe": False,
+            },
+            id="found-but-sha-unresolvable",
+        ),
+        pytest.param(
+            FULL_SHA,
+            {"resolvable": True, "ancestor": False, "commit_count": 0},
+            {
+                "previously_reviewed": True,
+                "sha_resolvable": True,
+                "sha_is_ancestor": False,
+                "head_advanced": False,
+                "incremental_safe": False,
+            },
+            id="found-but-not-ancestor",
+        ),
+        pytest.param(
+            None,
+            {},
+            {
+                "previously_reviewed": False,
+                "signal": None,
+                "source": None,
+                "marker": None,
+                "last_reviewed_sha": None,
+                "incremental_safe": False,
+            },
+            id="not-found",
+        ),
+    ],
+)
+def test_cli_bodies_file_receipt_outcomes(
+    tmp_path: Path,
+    marker_sha: str | None,
+    git_kwargs: dict[str, bool | str | int],
+    expected: dict[str, object],
+) -> None:
+    if marker_sha is None:
         entries = [
             {
                 "body": "just a plain unrelated comment",
@@ -778,58 +739,45 @@ class TestCliBodiesFile(_CliTestBase):
                 "id": 1,
             }
         ]
-        bodies_path = self._bodies_file(entries)
-        argv = self._base_argv(bodies_path)
-
-        with patch("gauntlet.prior_review.proc.run", side_effect=_fake_git_run()):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertFalse(result["previously_reviewed"])
-        self.assertIsNone(result["signal"])
-        self.assertIsNone(result["source"])
-        self.assertIsNone(result["marker"])
-        self.assertIsNone(result["last_reviewed_sha"])
-        self.assertFalse(result["incremental_safe"])
-
-    def test_no_bodies_at_all_reports_previously_reviewed_false(self):
-        bodies_path = self._bodies_file([])
-        argv = self._base_argv(bodies_path)
-
-        with patch("gauntlet.prior_review.proc.run", side_effect=_fake_git_run()):
-            out, code = _run_main(argv)
-
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertFalse(result["previously_reviewed"])
-
-    def test_head_sha_override_is_used_instead_of_git_rev_parse_head(self):
-        override_head = "d" * 40
-        marker_body = review_marker.build_marker(FULL_SHA, 1)
+    else:
         entries = [
             {
-                "body": marker_body,
+                "body": review_marker.build_marker(marker_sha, 4),
                 "timestamp": "2026-01-01T00:00:00Z",
                 "source": "review",
-                "id": 1,
+                "id": 101,
             }
         ]
-        bodies_path = self._bodies_file(entries)
-        argv = self._base_argv(bodies_path, **{"head_sha": override_head})
+    path = _bodies_file(tmp_path, entries)
+    with patch.object(proc, "run", side_effect=_fake_git_run(**git_kwargs)):
+        out, code = _run_main(_base_argv(path))
 
-        # The fake's "git rev-parse HEAD" branch would return HEAD_SHA (== b*40),
-        # which differs from override_head — if the result matches override_head,
-        # the flag was honored rather than shelling out for HEAD.
-        with patch(
-            "gauntlet.prior_review.proc.run",
-            side_effect=_fake_git_run(resolvable=True),
-        ):
-            out, code = _run_main(argv)
+    assert code == 0
+    result = json.loads(out.strip())
+    assert {key: result[key] for key in expected} == expected
 
-        self.assertEqual(code, 0)
-        result = json.loads(out.strip())
-        self.assertEqual(result["head_sha"], override_head)
+
+def test_cli_bodies_file_empty_list_reports_not_reviewed(tmp_path: Path) -> None:
+    path = _bodies_file(tmp_path, [])
+    with patch.object(proc, "run", side_effect=_fake_git_run()):
+        out, code = _run_main(_base_argv(path))
+    assert code == 0
+    result = json.loads(out.strip())
+    assert result["previously_reviewed"] is False
+    assert result["signal"] is None
+
+
+def test_cli_bodies_file_head_sha_override_is_used(tmp_path: Path) -> None:
+    override_head = "d" * 40
+    path = _bodies_file(
+        tmp_path,
+        [{"body": review_marker.build_marker(FULL_SHA, 1), "source": "review"}],
+    )
+    with patch.object(proc, "run", side_effect=_fake_git_run(resolvable=True)):
+        out, code = _run_main(_base_argv(path, head_sha=override_head))
+    assert code == 0
+    result = json.loads(out.strip())
+    assert result["head_sha"] == override_head
 
 
 class TestSanitizeMarker(unittest.TestCase):
@@ -993,110 +941,109 @@ class TestRound3And4FixRegressions(unittest.TestCase):
         self.assertIsNot(json.loads(out.strip()), None)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-def test_build_result__found_and_head_advanced():
-    signal: dict[str, object] = {
+def _facts_signal(**over: object) -> dict[str, object]:
+    return {
         "sha": FULL_SHA,
         "signal": "marker",
         "legacy": False,
         "source": "review",
         "marker": {"version": "3.0", "findings_count": 4, "sha": FULL_SHA},
+        **over,
     }
-    facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 3)
+
+
+@pytest.mark.parametrize(
+    "signal, facts, expected",
+    [
+        pytest.param(
+            _facts_signal(),
+            GitFacts(HEAD_SHA, FULL_SHA, SHORT_SHA, True, True, 3),
+            {
+                "previously_reviewed": True,
+                "signal": "marker",
+                "source": "review",
+                "legacy": False,
+                "last_reviewed_sha": FULL_SHA,
+                "last_reviewed_sha_short": SHORT_SHA,
+                "sha_resolvable": True,
+                "sha_is_ancestor": True,
+                "head_sha": HEAD_SHA,
+                "head_advanced": True,
+                "new_commit_count": 3,
+                "incremental_safe": True,
+                "marker": {"version": "3.0", "findings_count": 4, "sha": FULL_SHA},
+            },
+            id="found-and-advanced",
+        ),
+        pytest.param(
+            _facts_signal(signal="footer", source="issue_comment", marker=None),
+            GitFacts(FULL_SHA, FULL_SHA, SHORT_SHA, True, True, 0),
+            {
+                "previously_reviewed": True,
+                "sha_resolvable": True,
+                "sha_is_ancestor": True,
+                "head_advanced": False,
+                "incremental_safe": False,
+            },
+            id="found-and-not-advanced",
+        ),
+        pytest.param(
+            _facts_signal(
+                sha="c" * 40,
+                legacy=True,
+                source="note",
+                marker={"version": "3.0", "sha": "c" * 40},
+            ),
+            GitFacts(HEAD_SHA, "c" * 40, "c" * 8, False, False, None),
+            {
+                "previously_reviewed": True,
+                "sha_resolvable": False,
+                "sha_is_ancestor": False,
+                "head_advanced": False,
+                "incremental_safe": False,
+                "last_reviewed_sha": "c" * 40,
+                "new_commit_count": None,
+                "legacy": True,
+            },
+            id="found-but-sha-unresolvable",
+        ),
+        pytest.param(
+            _facts_signal(
+                marker={"version": "3.0", "findings_count": 1, "sha": FULL_SHA}
+            ),
+            GitFacts(HEAD_SHA, FULL_SHA, SHORT_SHA, True, False, 0),
+            {
+                "sha_resolvable": True,
+                "sha_is_ancestor": False,
+                "head_advanced": False,
+                "incremental_safe": False,
+            },
+            id="found-resolvable-but-not-ancestor",
+        ),
+        pytest.param(
+            None,
+            None,
+            {
+                "previously_reviewed": False,
+                "signal": None,
+                "source": None,
+                "marker": None,
+                "last_reviewed_sha": None,
+                "sha_is_ancestor": False,
+                "incremental_safe": False,
+            },
+            id="not-found",
+        ),
+    ],
+)
+def test_build_result_cases(
+    signal: dict[str, object] | None,
+    facts: GitFacts | None,
+    expected: dict[str, object],
+) -> None:
     result = detect_prior_review.build_result(signal, facts)
-    assert result["previously_reviewed"]
-    assert result["signal"] == "marker"
-    assert result["source"] == "review"
-    assert not result["legacy"]
-    assert result["last_reviewed_sha"] == FULL_SHA
-    assert result["last_reviewed_sha_short"] == SHORT_SHA
-    assert result["sha_resolvable"]
-    assert result["sha_is_ancestor"]
-    assert result["head_sha"] == HEAD_SHA
-    assert result["head_advanced"]
-    assert result["new_commit_count"] == 3
-    assert result["incremental_safe"]
-    assert result["marker"] == signal["marker"]
-    assert result["incremental_safe"] == (
-        result["sha_resolvable"] and result["head_advanced"]
-    )
-
-
-def test_build_result__found_and_head_not_advanced():
-    signal: dict[str, object] = {
-        "sha": FULL_SHA,
-        "signal": "footer",
-        "legacy": False,
-        "source": "issue_comment",
-        "marker": None,
-    }
-    facts = _git_facts(True, FULL_SHA, SHORT_SHA, FULL_SHA, True, 0)
-    result = detect_prior_review.build_result(signal, facts)
-    assert result["previously_reviewed"]
-    assert result["sha_resolvable"]
-    assert result["sha_is_ancestor"]
-    assert not result["head_advanced"]
-    assert not result["incremental_safe"]
-    assert result["incremental_safe"] == (
-        result["sha_resolvable"] and result["head_advanced"]
-    )
-
-
-def test_build_result__found_but_sha_unresolvable():
-    raw_sha = "c" * 40
-    signal: dict[str, object] = {
-        "sha": raw_sha,
-        "signal": "marker",
-        "legacy": True,
-        "source": "note",
-        "marker": {"version": "3.0", "sha": raw_sha},
-    }
-    facts = _git_facts(False, raw_sha, raw_sha[:8], HEAD_SHA, False, None)
-    result = detect_prior_review.build_result(signal, facts)
-    assert result["previously_reviewed"]
-    assert not result["sha_resolvable"]
-    assert not result["sha_is_ancestor"]
-    assert not result["head_advanced"]
-    assert not result["incremental_safe"]
-    assert result["last_reviewed_sha"] == raw_sha, "raw value is kept when unresolvable"
-    assert result["new_commit_count"] is None
-    assert result["legacy"]
-    assert result["incremental_safe"] == (
-        result["sha_resolvable"] and result["head_advanced"]
-    )
-
-
-def test_build_result__found_resolvable_but_not_ancestor_head_not_advanced():
-    signal: dict[str, object] = {
-        "sha": FULL_SHA,
-        "signal": "marker",
-        "legacy": False,
-        "source": "review",
-        "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
-    }
-    facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, False, 0)
-    result = detect_prior_review.build_result(signal, facts)
-    assert result["sha_resolvable"]
-    assert not result["sha_is_ancestor"]
-    assert not result["head_advanced"]
-    assert not result["incremental_safe"]
-    assert result["incremental_safe"] == (
-        result["sha_resolvable"] and result["head_advanced"]
-    )
-
-
-def test_build_result__not_found():
-    result = detect_prior_review.build_result(None, None)
-    assert not result["previously_reviewed"]
-    assert result["signal"] is None
-    assert result["source"] is None
-    assert result["marker"] is None
-    assert result["last_reviewed_sha"] is None
-    assert not result["sha_is_ancestor"]
-    assert not result["incremental_safe"]
+    view = cast("Mapping[str, object]", result)
+    assert {key: view[key] for key in expected} == expected
 
 
 def test_build_result__found_and_not_found_branches_share_the_same_key_set():
@@ -1109,67 +1056,10 @@ def test_build_result__found_and_not_found_branches_share_the_same_key_set():
         "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
     }
     found = detect_prior_review.build_result(
-        signal, _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 1)
+        signal, GitFacts(HEAD_SHA, FULL_SHA, SHORT_SHA, True, True, 1)
     )
     assert set(not_found.keys()) == set(found.keys())
     assert len(found) == 15
-
-
-def _facts_signal(sha):
-    return {
-        "sha": sha,
-        "signal": "marker",
-        "legacy": False,
-        "source": "review",
-        "marker": {"version": "3.0", "findings_count": 1, "sha": sha},
-    }
-
-
-def test_build_result_with_real_resolve_git_facts__forward_moving_branch_is_incremental_safe():
-    fake_run = _fake_git_run(
-        resolvable=True,
-        full_sha=FULL_SHA,
-        head_sha=HEAD_SHA,
-        commit_count=3,
-        ancestor=True,
-    )
-    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-        git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-    result = detect_prior_review.build_result(_facts_signal(FULL_SHA), git_facts)
-    assert result["previously_reviewed"]
-    assert result["sha_resolvable"]
-    assert result["sha_is_ancestor"]
-    assert result["head_advanced"]
-    assert result["incremental_safe"]
-    assert result["new_commit_count"] == 3
-
-
-def test_build_result_with_real_resolve_git_facts__non_ancestor_rebase_or_force_push_is_not_incremental_safe():
-    fake_run = _fake_git_run(
-        resolvable=True,
-        full_sha=FULL_SHA,
-        head_sha=HEAD_SHA,
-        commit_count=0,
-        ancestor=False,
-    )
-    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-        git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-    result = detect_prior_review.build_result(_facts_signal(FULL_SHA), git_facts)
-    assert result["previously_reviewed"]
-    assert result["sha_resolvable"]
-    assert not result["sha_is_ancestor"]
-    assert not result["head_advanced"]
-    assert not result["incremental_safe"]
-
-
-def test_build_result_with_real_resolve_git_facts__sha_unresolvable_is_not_incremental_safe():
-    fake_run = _fake_git_run(resolvable=False, head_sha=HEAD_SHA)
-    with patch("gauntlet.prior_review.proc.run", side_effect=fake_run):
-        git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
-    result = detect_prior_review.build_result(_facts_signal(FULL_SHA), git_facts)
-    assert result["previously_reviewed"]
-    assert not result["sha_resolvable"]
-    assert not result["incremental_safe"]
 
 
 def _facts_tracked(**kwargs):

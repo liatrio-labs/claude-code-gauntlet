@@ -16,7 +16,7 @@ from unittest.mock import patch
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
 import pytest
-from gauntlet.forge import PostResult, ReviewTarget
+from gauntlet.forge import JsonFetch, Platform, PostRequest, PostResult, ReviewTarget
 from gauntlet.prior_review import PriorDelivery
 
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
@@ -30,6 +30,7 @@ OUTBOUND_CASES = json.loads(
 )["cases"]
 SHA = "a" * 40
 FAKE_FINDING_MARKER = review_marker.build_finding_marker(SHA, "0123456789abcdef")
+pytestmark = pytest.mark.usefixtures("poster_state")
 
 
 def _hostile_finding(**overrides):
@@ -54,9 +55,22 @@ def _assert_no_hostile_prose(test, body, expected_markers=()):
     test.assertEqual(review_marker.find_finding_markers(body), list(expected_markers))
 
 
-def _capture_dry_run(platform, findings, review_body=""):
-    valid_lines = {("src/edited.py", 2): None}
-    line_texts = {("src/edited.py", 2): "changed"}
+def _deliver(
+    platform: Platform,
+    findings: list[dict[str, object]],
+    review_body: str = "",
+    *,
+    live: bool = False,
+    prior: PriorDelivery | None = None,
+    reject_first: bool = False,
+    lines: dict[tuple[str, int], int | None] | None = None,
+    texts: dict[tuple[str, int], str] | None = None,
+    check_position: bool = True,
+) -> tuple[dict[str, object] | list[PostRequest], list[ForgeCall]]:
+    if lines is None:
+        lines = {("src/edited.py", 2): None}
+    if texts is None:
+        texts = {("src/edited.py", 2): "changed"}
     data = {
         "owner": "o",
         "repo": "r",
@@ -65,31 +79,64 @@ def _capture_dry_run(platform, findings, review_body=""):
         "review_body": review_body,
         "findings": findings,
     }
-    post_review._CAPTURED.clear()
-    post_review._SKIP_WARNINGS.clear()
+    success = PostResult({}, None, None)
+    fake = (
+        FakeForge()
+        if platform == "github"
+        else FakeGitLab(
+            refs=[
+                JsonFetch(
+                    [
+                        {
+                            "base_commit_sha": "base",
+                            "head_commit_sha": "head",
+                            "start_commit_sha": "start",
+                        }
+                    ],
+                    None,
+                )
+            ],
+            entries=[prior_notes(prior, SHA)],
+            submissions={
+                "notes": [success] * (len(findings) + 1),
+                "discussions": (
+                    [PostResult(None, "position rejected", None)]
+                    if reject_first
+                    else [success]
+                )
+                + [success] * (2 * len(findings)),
+            },
+        )
+    )
+    # Direct poster calls share one test process, so each delivery starts fresh.
+    post_review.reset_run_state()
     with (
-        patch.object(post_review, "DRY_RUN", True),
-        patch(
-            "gauntlet.delivery.post.fetch_gitlab_shas",
-            return_value=("base", "head", "start"),
-        ),
-        patch(
-            "gauntlet.delivery.post.gitlab_prior_delivery",
-            return_value=PriorDelivery(False, frozenset(), frozenset(), None),
-        ),
+        contextlib.ExitStack() as stack,
+        patch.object(post_review, "DRY_RUN", not live),
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(io.StringIO()),
     ):
-        if platform == "github":
-            post_review.post_github(data, valid_lines, line_texts, forge=FakeForge())
-        else:
-            post_review.post_gitlab(
-                data, valid_lines, set(), {}, line_texts, forge=FakeGitLab()
+        if not check_position:
+            stack.enter_context(
+                patch.object(post_review, "validate_position", return_value=[])
             )
-        payload = post_review.build_dry_run_payload(platform)
-    post_review._CAPTURED.clear()
-    post_review._SKIP_WARNINGS.clear()
-    return payload
+        if platform == "github":
+            post_review.post_github(data, lines, texts, forge=fake)
+        else:
+            assert isinstance(fake, FakeGitLab)
+            post_review.post_gitlab(
+                data, lines, set(), {path: path for path, _ in lines}, texts, forge=fake
+            )
+        payload = (
+            [
+                call.request
+                for call in fake.calls
+                if call.method == "submit" and call.request is not None
+            ]
+            if live
+            else post_review.build_dry_run_payload(platform)
+        )
+    return payload, [call for call in fake.calls if call.method == "review_entries"]
 
 
 def _poison(key):
@@ -544,11 +591,11 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
     def test_github_payload_guards_review_inline_and_skipped_fields(self):
         anchored = _hostile_finding()
         skipped = _hostile_finding(line=99)
-        payload = _capture_dry_run(
+        payload = _deliver(
             "github",
             [anchored, skipped],
             f"@zz363sentinel <table><tr><td> review {FAKE_FINDING_MARKER}",
-        )
+        )[0]
         review_body = payload["payload"]["body"]
         inline_body = payload["payload"]["comments"][0]["body"]
         _assert_no_hostile_prose(self, review_body)
@@ -569,11 +616,11 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
             consolidation_primary=False,
         )
         skipped = _hostile_finding(line=99)
-        payload = _capture_dry_run(
+        payload = _deliver(
             "gitlab",
             [primary, corroborator, skipped],
             f"@zz363sentinel <table><tr><td> summary {FAKE_FINDING_MARKER}",
-        )
+        )[0]
         summary = payload["summary"]["body"]
         discussion = payload["discussions"][0]["body"]
         _assert_no_hostile_prose(self, summary)
@@ -853,48 +900,17 @@ class TestDeliveryTitleKeys(unittest.TestCase):
 
 class TestPoisonedOutboundSinks(unittest.TestCase):
     @staticmethod
-    def _finding(property_names, reads, *, primary=False):
-        return _poisoned_outbound_sinks_finding(property_names, reads, primary=primary)
-
-    @staticmethod
     def _capture(platform, findings, *, anchored):
         first = findings[0]
         filepath, line = first.get("file"), first.get("line")
-        valid_lines = {(filepath, line): None} if anchored else {}
-        line_texts = {(filepath, line): "context"} if anchored else {}
-        post_review._CAPTURED.clear()
-        post_review._SKIP_WARNINGS.clear()
-        with (
-            patch.object(post_review, "DRY_RUN", True),
-            patch(
-                "gauntlet.delivery.post.fetch_gitlab_shas",
-                return_value=("base", "head", "start"),
-            ),
-            patch(
-                "gauntlet.delivery.post.gitlab_prior_delivery",
-                return_value=PriorDelivery(False, frozenset(), frozenset(), None),
-            ),
-            patch("gauntlet.delivery.post.validate_position", return_value=[]),
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            data = {
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 7,
-                "sha": SHA,
-                "review_body": _poison("review_body"),
-                "findings": findings,
-            }
-            if platform == "github":
-                post_review.post_github(
-                    data, valid_lines, line_texts, forge=FakeForge()
-                )
-            else:
-                post_review.post_gitlab(
-                    data, valid_lines, set(), {}, line_texts, forge=FakeGitLab()
-                )
-            return post_review.build_dry_run_payload(platform)
+        return _deliver(
+            platform,
+            findings,
+            _poison("review_body"),
+            lines={(filepath, line): None} if anchored else {},
+            texts={(filepath, line): "context"} if anchored else {},
+            check_position=False,
+        )[0]
 
     def test_poisoned_python_fields_never_reach_any_comment_sink(self):
         property_names = set(_js_finding_property_union()) | {
@@ -904,8 +920,10 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
             "unknown_key",
         }
         reads = set()
-        discovery_primary = self._finding(property_names, reads, primary=True)
-        discovery_corroborator = self._finding(property_names, reads)
+        discovery_primary = _poisoned_outbound_sinks_finding(
+            property_names, reads, primary=True
+        )
+        discovery_corroborator = _poisoned_outbound_sinks_finding(property_names, reads)
         post_review.render_comment_body(discovery_primary)
         post_review.render_group_body(discovery_primary, [discovery_corroborator])
         post_review.build_skipped_section(
@@ -917,18 +935,24 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
                 )
             ]
         )
-        discovery_fallback = self._finding(property_names, reads)
+        discovery_fallback = _poisoned_outbound_sinks_finding(property_names, reads)
         discovery_fallback["claude_md_rule"] = FAKE_FINDING_MARKER
         post_review.render_comment_body(discovery_fallback)
         for platform in ("github", "gitlab"):
             for route in ("anchored", "off_diff", "grouped"):
-                members = [self._finding(property_names, reads, primary=True)]
+                members = [
+                    _poisoned_outbound_sinks_finding(
+                        property_names, reads, primary=True
+                    )
+                ]
                 if route == "grouped":
-                    members.append(self._finding(property_names, reads))
+                    members.append(
+                        _poisoned_outbound_sinks_finding(property_names, reads)
+                    )
                 self._capture(platform, members, anchored=route != "off_diff")
         property_names.update(reads - {"consolidation_key", "consolidation_primary"})
-        primary = self._finding(property_names, reads, primary=True)
-        corroborator = self._finding(property_names, reads)
+        primary = _poisoned_outbound_sinks_finding(property_names, reads, primary=True)
+        corroborator = _poisoned_outbound_sinks_finding(property_names, reads)
 
         direct_primary = {
             key: value for key, value in primary.items() if key != "suggested_fix_code"
@@ -945,17 +969,21 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
                 [(primary.get("file"), primary.get("line"), direct_primary)]
             ),
         ]
-        fallback = self._finding(property_names, reads)
+        fallback = _poisoned_outbound_sinks_finding(property_names, reads)
         fallback["claude_md_rule"] = FAKE_FINDING_MARKER
         fallback.pop("suggested_fix_code", None)
         direct_bodies.append(post_review.render_comment_body(fallback))
 
         for platform in ("github", "gitlab"):
             for route in ("anchored", "off_diff", "grouped"):
-                routed_primary = self._finding(property_names, reads, primary=True)
+                routed_primary = _poisoned_outbound_sinks_finding(
+                    property_names, reads, primary=True
+                )
                 members = [routed_primary]
                 if route == "grouped":
-                    members.append(self._finding(property_names, reads))
+                    members.append(
+                        _poisoned_outbound_sinks_finding(property_names, reads)
+                    )
                 payload = self._capture(platform, members, anchored=route != "off_diff")
                 if platform == "github":
                     bodies = [payload["payload"]["body"]]
@@ -995,11 +1023,11 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
     def test_recording_discovery_keeps_the_required_field_floor(self):
         property_names = set(_js_finding_property_union()) | {"unknown_key"}
         reads = set()
-        primary = self._finding(property_names, reads, primary=True)
-        corroborator = self._finding(property_names, reads)
+        primary = _poisoned_outbound_sinks_finding(property_names, reads, primary=True)
+        corroborator = _poisoned_outbound_sinks_finding(property_names, reads)
         self._capture("github", [primary], anchored=True)
         self._capture("gitlab", [primary, corroborator], anchored=True)
-        fallback = self._finding(property_names, reads)
+        fallback = _poisoned_outbound_sinks_finding(property_names, reads)
         fallback["claude_md_rule"] = FAKE_FINDING_MARKER
         post_review.render_comment_body(fallback)
         required_reads = {
@@ -1164,61 +1192,6 @@ def test_outbound_composer_contracts__legacy_report_summary_is_guarded_on_the_re
     assert "\\/close\n\\>>>" in review_body
 
 
-def _gitlab_live_fallback_contracts_post_live(
-    findings, prior, *, reject_first_discussion=False
-):
-    success = PostResult({}, None, None)
-    fake = FakeGitLab(
-        entries=[prior_notes(prior, SHA)],
-        submissions={
-            "notes": [success] * (len(findings) + 1),
-            "discussions": (
-                [PostResult(None, "position rejected", None)]
-                if reject_first_discussion
-                else [success]
-            )
-            + [success] * (2 * len(findings)),
-        },
-    )
-
-    valid_lines = {
-        ("src/edited.py", 2): None,
-        ("src/edited.py", 3): None,
-    }
-    line_texts = {
-        ("src/edited.py", 2): "primary",
-        ("src/edited.py", 3): "corroborator",
-    }
-    post_review._CAPTURED.clear()
-    with (
-        patch.object(post_review, "DRY_RUN", False),
-        patch(
-            "gauntlet.delivery.post.fetch_gitlab_shas",
-            return_value=("base", "head", "start"),
-        ),
-        contextlib.redirect_stdout(io.StringIO()),
-        contextlib.redirect_stderr(io.StringIO()),
-    ):
-        post_review.post_gitlab(
-            {
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 7,
-                "sha": SHA,
-                "findings": findings,
-            },
-            valid_lines,
-            set(),
-            {"src/edited.py": "src/edited.py"},
-            line_texts,
-            forge=fake,
-        )
-    return (
-        [call.request for call in fake.calls if call.method == "submit"],
-        [call for call in fake.calls if call.method == "review_entries"],
-    )
-
-
 def test_gitlab_live_fallback_contracts__rejected_group_position_falls_back_to_a_prepared_discussion(
     tmp_path, forge_factory
 ):
@@ -1232,10 +1205,14 @@ def test_gitlab_live_fallback_contracts__rejected_group_position_falls_back_to_a
         consolidation_key="src/edited.py:2",
         consolidation_primary=False,
     )
-    calls, lookup = _gitlab_live_fallback_contracts_post_live(
+    calls, lookup = _deliver(
+        "gitlab",
         [primary, corroborator],
-        PriorDelivery(False, frozenset(), frozenset(), None),
-        reject_first_discussion=True,
+        prior=PriorDelivery(False, frozenset(), frozenset(), None),
+        reject_first=True,
+        live=True,
+        lines={("src/edited.py", 2): None, ("src/edited.py", 3): None},
+        texts={("src/edited.py", 2): "primary", ("src/edited.py", 3): "corroborator"},
     )
     discussions = [
         request.payload
@@ -1280,8 +1257,13 @@ def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_
     new_key = "6970f2dcb5f585fd"
     assert hashlib.sha256(old_material.encode()).hexdigest()[:16] == old_key
     assert hashlib.sha256(new_material.encode()).hexdigest()[:16] == new_key
-    first_calls, _ = _gitlab_live_fallback_contracts_post_live(
-        [finding], PriorDelivery(True, frozenset({old_key}), frozenset(), None)
+    first_calls, _ = _deliver(
+        "gitlab",
+        [finding],
+        prior=PriorDelivery(True, frozenset({old_key}), frozenset(), None),
+        live=True,
+        lines={("src/edited.py", 2): None, ("src/edited.py", 3): None},
+        texts={("src/edited.py", 2): "primary", ("src/edited.py", 3): "corroborator"},
     )
     discussions = [
         request.payload
@@ -1290,8 +1272,13 @@ def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_
     ]
     assert len(discussions) == 1
     assert review_marker.find_finding_marker(discussions[0]["body"])["key"] == new_key
-    second_calls, _ = _gitlab_live_fallback_contracts_post_live(
-        [finding], PriorDelivery(True, frozenset({old_key, new_key}), frozenset(), None)
+    second_calls, _ = _deliver(
+        "gitlab",
+        [finding],
+        prior=PriorDelivery(True, frozenset({old_key, new_key}), frozenset(), None),
+        live=True,
+        lines={("src/edited.py", 2): None, ("src/edited.py", 3): None},
+        texts={("src/edited.py", 2): "primary", ("src/edited.py", 3): "corroborator"},
     )
     assert not (second_calls)
 
@@ -1319,9 +1306,13 @@ def test_gitlab_live_fallback_contracts__partial_prior_delivery_posts_only_the_m
         consolidation_key="src/edited.py:2",
         consolidation_primary=False,
     )
-    calls, lookup = _gitlab_live_fallback_contracts_post_live(
+    calls, lookup = _deliver(
+        "gitlab",
         [primary, corroborator],
-        PriorDelivery(True, frozenset({prior_key}), frozenset(), None),
+        prior=PriorDelivery(True, frozenset({prior_key}), frozenset(), None),
+        live=True,
+        lines={("src/edited.py", 2): None, ("src/edited.py", 3): None},
+        texts={("src/edited.py", 2): "primary", ("src/edited.py", 3): "corroborator"},
     )
     assert len(calls) == 1
     request = calls[0]
@@ -1333,56 +1324,6 @@ def test_gitlab_live_fallback_contracts__partial_prior_delivery_posts_only_the_m
     assert markers[0]["key"] != prior_key
     _assert_prepared_body(body, expected_markers=markers)
     assert lookup == [ForgeCall("review_entries", ReviewTarget("o", "r", 7))]
-
-
-def _poisoned_outbound_sinks_capture_live_gitlab(
-    findings, prior, *, reject_first=False
-):
-    success = PostResult({}, None, None)
-    fake = FakeGitLab(
-        entries=[prior_notes(prior, SHA)],
-        submissions={
-            "notes": [success] * (len(findings) + 1),
-            "discussions": (
-                [PostResult(None, "position rejected", None)]
-                if reject_first
-                else [success]
-            )
-            + [success] * (2 * len(findings)),
-        },
-    )
-    primary = findings[0]
-    filepath, line = primary.get("file"), primary.get("line")
-    valid_lines = {(filepath, line): None}
-    line_texts = {(filepath, line): "context"}
-
-    post_review._CAPTURED.clear()
-    with (
-        patch.object(post_review, "DRY_RUN", False),
-        patch(
-            "gauntlet.delivery.post.fetch_gitlab_shas",
-            return_value=("base", "head", "start"),
-        ),
-        patch("gauntlet.delivery.post.validate_position", return_value=[]),
-        contextlib.redirect_stdout(io.StringIO()),
-        contextlib.redirect_stderr(io.StringIO()),
-    ):
-        post_review.post_gitlab(
-            {
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 7,
-                "sha": SHA,
-                "review_body": _poison("review_body"),
-                "findings": findings,
-            },
-            valid_lines,
-            set(),
-            {filepath: filepath},
-            line_texts,
-            forge=fake,
-        )
-    return [call.request for call in fake.calls if call.method == "submit"]
 
 
 def _poisoned_outbound_sinks_finding(property_names, reads, *, primary=False):
@@ -1402,11 +1343,27 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
     corroborator = _poisoned_outbound_sinks_finding(property_names, set())
     primary["consolidation_key"] = "poison-group"
     corroborator["consolidation_key"] = "poison-group"
-    rejected_calls = _poisoned_outbound_sinks_capture_live_gitlab(
+    rejected_calls = _deliver(
+        "gitlab",
         [primary, corroborator],
-        PriorDelivery(False, frozenset(), frozenset(), None),
+        prior=PriorDelivery(False, frozenset(), frozenset(), None),
         reject_first=True,
-    )
+        live=True,
+        review_body=_poison("review_body"),
+        check_position=False,
+        lines={
+            (
+                [primary, corroborator][0].get("file"),
+                [primary, corroborator][0].get("line"),
+            ): None
+        },
+        texts={
+            (
+                [primary, corroborator][0].get("file"),
+                [primary, corroborator][0].get("line"),
+            ): "context"
+        },
+    )[0]
     discussions = [
         request.payload
         for request in rejected_calls
@@ -1431,10 +1388,26 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
             "1" * 16 if member_line is not None else "2" * 16
         ),
     ):
-        note_calls = _poisoned_outbound_sinks_capture_live_gitlab(
+        note_calls = _deliver(
+            "gitlab",
             [primary, corroborator],
-            PriorDelivery(True, frozenset({"1" * 16}), frozenset(), None),
-        )
+            prior=PriorDelivery(True, frozenset({"1" * 16}), frozenset(), None),
+            live=True,
+            review_body=_poison("review_body"),
+            check_position=False,
+            lines={
+                (
+                    [primary, corroborator][0].get("file"),
+                    [primary, corroborator][0].get("line"),
+                ): None
+            },
+            texts={
+                (
+                    [primary, corroborator][0].get("file"),
+                    [primary, corroborator][0].get("line"),
+                ): "context"
+            },
+        )[0]
     assert len(note_calls) == 1
     request = note_calls[0]
     payload = request.payload
