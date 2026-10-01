@@ -73,6 +73,24 @@ const DIMENSIONS = [
   { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
     schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
 ];
+const PIPELINE_FINDING_FIELDS = new Set([
+  'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
+  'validation_justification', 'challenge_justification', 'elimination_reason',
+  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
+  'challenge_contested', 'severity_downgraded', 'original_severity',
+  'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
+  'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
+  'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',
+  'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note',
+  'consolidation_key', 'consolidation_primary', 'routed_by', 'promoted_from', 'promotion_reason',
+  ...['suggestion', 'claude_md_rule', 'spec_text', 'suggested_fix_code'].flatMap((field) =>
+    [`${field}_removed_by`, `${field}_removal_reason`]),
+]);
+const FINDING_TEXT_FIELD_NAMES = new Set([
+  ...Object.keys(FINDING_PROP_TYPES),
+  ...DIMENSIONS.flatMap((dimension) => Object.keys(dimension.schemaExtra || {})),
+  ...PIPELINE_FINDING_FIELDS,
+]);
 const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 const AGENT_LABELS = {
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',
@@ -180,6 +198,59 @@ function normalizeAbsoluteRoot(root) {
   const normalized = normalizePathString(root);
   if (!isSafeAbsolutePath(normalized)) return null;
   return normalized;
+}
+const HOST_PATH_SEGMENT_SEPARATOR = '/(?:/|\\./)*';
+const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
+const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+function hostPathSpellings(root) {
+  const normalized = normalizeAbsoluteRoot(root);
+  if (normalized === null || normalized === '/') return [];
+  const spellings = [normalized];
+  if (normalized.startsWith('/private/')) spellings.push(normalized.slice('/private'.length));
+  else spellings.push(`/private${normalized}`);
+  return [...new Set(spellings)];
+}
+function hostPathPattern(root) {
+  const segments = root.slice(1).split('/');
+  const body = `/${segments.map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join(HOST_PATH_SEGMENT_SEPARATOR)}`;
+  return { segments, matcher: new RegExp(body, 'y') };
+}
+function hostPathRightBoundary(text, end) {
+  while (text[end] === '.') end += 1;
+  const next = text[end];
+  return next === undefined || !HOST_PATH_RIGHT_CONTINUATION_RE.test(next);
+}
+function hostPathLeftBoundary(text, start, segmentCount) {
+  if (segmentCount > 1 || start === 0) return true;
+  if (HOST_PATH_RIGHT_CONTINUATION_RE.test(text[start - 1])) return false;
+  if (text[start - 1] !== '/') return true;
+  let prefixEnd = start;
+  while (text[prefixEnd - 1] === '/') prefixEnd -= 1;
+  const prefixStart = prefixEnd - 5;
+  return prefixStart >= 0 && text.slice(prefixStart, prefixEnd).toLowerCase() === 'file:'
+    && (prefixStart === 0 || !/[A-Za-z]/.test(text[prefixStart - 1]));
+}
+function mentionsHostRoot(text, roots) {
+  if (typeof text !== 'string' || !Array.isArray(roots)) return false;
+  const patterns = [];
+  for (const root of roots) {
+    for (const spelling of hostPathSpellings(root)) patterns.push(hostPathPattern(spelling));
+  }
+  for (let start = text.indexOf('/'); start !== -1; start = text.indexOf('/', start + 1)) {
+    for (const { segments, matcher } of patterns) {
+      matcher.lastIndex = start;
+      const match = matcher.exec(text);
+      if (match && hostPathLeftBoundary(text, start, segments.length)
+        && hostPathRightBoundary(text, matcher.lastIndex)) return true;
+    }
+  }
+  return false;
+}
+function safeFindingLabel(value, fallback = null) {
+  if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value)) {
+    return fallback;
+  }
+  return value;
 }
 function pathUnderRoot(root, path) {
   const normalizedRoot = normalizeAbsoluteRoot(root);
@@ -364,7 +435,10 @@ function injectAgentField(findings, agent) {
   for (const f of findings) f.agent = agent;
 }
 function invalidFindingPathWarning(finding, field, reason, action) {
-  return `[${finding.id ?? '<no id>'}] Invalid ${field} path: ${reason} - ${action}`;
+  const label = finding.id == null
+    ? '<no id>'
+    : safeFindingLabel(finding.id, '<unsafe id>');
+  return `[${label}] Invalid ${field} path: ${reason} - ${action}`;
 }
 function normalizeFindingPath(finding, repoRoot) {
   const original = finding.file;
@@ -3748,6 +3822,45 @@ function defaultCtx() {
     pipelineVersion: null,
   };
 }
+function hostPathTextFields(value, roots) {
+  const fields = new Set();
+  const visit = (value, field) => {
+    if (typeof value === 'string') {
+      if (mentionsHostRoot(value, roots)) fields.add(field ?? 'other');
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry, field);
+      return;
+    }
+    for (const [key, entry] of Object.entries(value)) {
+      const name = field ?? (FINDING_TEXT_FIELD_NAMES.has(key) ? key : 'other');
+      visit(key, name);
+      visit(entry, name);
+    }
+  };
+  visit(value, null);
+  return [...fields].sort();
+}
+function hostPathTextGaps(challengeOut, summaryOut, roots) {
+  const gaps = [];
+  for (const bucket of ['findings', 'unverified', 'eliminated']) {
+    const findings = Array.isArray(challengeOut?.[bucket]) ? challengeOut[bucket] : [];
+    findings.forEach((finding, index) => {
+      const fields = hostPathTextFields(finding, roots);
+      if (fields.length === 0) return;
+      const fallback = `#${index + 1} of ${bucket}`;
+      const label = safeFindingLabel(finding && finding.id, fallback);
+      gaps.push(`host-path-text: finding ${label} mentions a host path in ${fields.join(', ')} - text left unchanged`);
+    });
+  }
+  const summaryText = Object.fromEntries(Object.entries(summaryOut).filter(([key]) => key !== 'gaps'));
+  if (hostPathTextFields(summaryText, roots).length > 0) {
+    gaps.push('host-path-text: change summary mentions a host path - text left unchanged');
+  }
+  return gaps;
+}
 function modelFor(agentType, policy) {
   return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
 }
@@ -5652,7 +5765,7 @@ async function runWith(ctx, rawArgs) {
   }
   const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
-  const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
+  const phaseOutputs = {};
   let phaseReached = 'start';
   let phaseAttempting = null;
   const normalizePhaseFindings = (name, out, replayed) => {
@@ -5796,6 +5909,11 @@ async function runWith(ctx, rawArgs) {
         gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
       }
     }
+    gaps.push(...hostPathTextGaps(
+      challengeOut,
+      summaryOut,
+      [A.repoRoot, A.pluginRoot, A.outputDir],
+    ));
     const deliveryTier = A.delivery && A.delivery.tier;
     const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
     const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');

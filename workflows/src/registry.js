@@ -233,6 +233,28 @@ export const DIMENSIONS = [
     schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
 ];
 
+// Pipeline stamps belong here so disclosure names remain code-owned.
+// A stamped field missing from this set prints as `other` in a host-path-text gap, which is the safe fallback.
+export const PIPELINE_FINDING_FIELDS = new Set([
+  'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
+  'validation_justification', 'challenge_justification', 'elimination_reason',
+  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
+  'challenge_contested', 'severity_downgraded', 'original_severity',
+  'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
+  'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
+  'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',
+  'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note',
+  'consolidation_key', 'consolidation_primary', 'routed_by', 'promoted_from', 'promotion_reason',
+  ...['suggestion', 'claude_md_rule', 'spec_text', 'suggested_fix_code'].flatMap((field) =>
+    [`${field}_removed_by`, `${field}_removal_reason`]),
+]);
+
+export const FINDING_TEXT_FIELD_NAMES = new Set([
+  ...Object.keys(FINDING_PROP_TYPES),
+  ...DIMENSIONS.flatMap((dimension) => Object.keys(dimension.schemaExtra || {})),
+  ...PIPELINE_FINDING_FIELDS,
+]);
+
 export const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 
 // Per-agent display label for the Review Dimensions Summary table (issue #89):

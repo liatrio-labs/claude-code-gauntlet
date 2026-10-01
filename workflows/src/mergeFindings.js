@@ -1,6 +1,6 @@
 // Merge structured and text-channel findings into the Phase 4 envelope.
 import { dedupById } from './findingDedup.js';
-import { repoRelativeFindingPath } from './paths.js';
+import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
 import { FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 
 const KNOWN_DIMENSIONS = new Set([
@@ -157,7 +157,10 @@ export function injectAgentField(findings, agent) {
 // --- Validation -------------------------------------------------------------
 
 function invalidFindingPathWarning(finding, field, reason, action) {
-  return `[${finding.id ?? '<no id>'}] Invalid ${field} path: ${reason} - ${action}`;
+  const label = finding.id == null
+    ? '<no id>'
+    : safeFindingLabel(finding.id, '<unsafe id>');
+  return `[${label}] Invalid ${field} path: ${reason} - ${action}`;
 }
 
 function normalizeFindingPath(finding, repoRoot) {

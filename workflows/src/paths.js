@@ -55,6 +55,67 @@ export function normalizeAbsoluteRoot(root) {
   return normalized;
 }
 
+const HOST_PATH_SEGMENT_SEPARATOR = '/(?:/|\\./)*';
+const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
+// A charset- and length-bounded id is printed so readers can find the finding; anything else uses the positional label.
+const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+function hostPathSpellings(root) {
+  const normalized = normalizeAbsoluteRoot(root);
+  if (normalized === null || normalized === '/') return [];
+  const spellings = [normalized];
+  if (normalized.startsWith('/private/')) spellings.push(normalized.slice('/private'.length));
+  else spellings.push(`/private${normalized}`);
+  return [...new Set(spellings)];
+}
+
+function hostPathPattern(root) {
+  const segments = root.slice(1).split('/');
+  const body = `/${segments.map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join(HOST_PATH_SEGMENT_SEPARATOR)}`;
+  return { segments, matcher: new RegExp(body, 'y') };
+}
+
+function hostPathRightBoundary(text, end) {
+  while (text[end] === '.') end += 1;
+  const next = text[end];
+  return next === undefined || !HOST_PATH_RIGHT_CONTINUATION_RE.test(next);
+}
+
+function hostPathLeftBoundary(text, start, segmentCount) {
+  if (segmentCount > 1 || start === 0) return true;
+  if (HOST_PATH_RIGHT_CONTINUATION_RE.test(text[start - 1])) return false;
+  if (text[start - 1] !== '/') return true;
+  let prefixEnd = start;
+  while (text[prefixEnd - 1] === '/') prefixEnd -= 1;
+  const prefixStart = prefixEnd - 5;
+  return prefixStart >= 0 && text.slice(prefixStart, prefixEnd).toLowerCase() === 'file:'
+    && (prefixStart === 0 || !/[A-Za-z]/.test(text[prefixStart - 1]));
+}
+
+export function mentionsHostRoot(text, roots) {
+  if (typeof text !== 'string' || !Array.isArray(roots)) return false;
+  const patterns = [];
+  for (const root of roots) {
+    for (const spelling of hostPathSpellings(root)) patterns.push(hostPathPattern(spelling));
+  }
+  for (let start = text.indexOf('/'); start !== -1; start = text.indexOf('/', start + 1)) {
+    for (const { segments, matcher } of patterns) {
+      matcher.lastIndex = start;
+      const match = matcher.exec(text);
+      if (match && hostPathLeftBoundary(text, start, segments.length)
+        && hostPathRightBoundary(text, matcher.lastIndex)) return true;
+    }
+  }
+  return false;
+}
+
+export function safeFindingLabel(value, fallback = null) {
+  if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value)) {
+    return fallback;
+  }
+  return value;
+}
+
 export function pathUnderRoot(root, path) {
   const normalizedRoot = normalizeAbsoluteRoot(root);
   if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
