@@ -1,0 +1,49 @@
+diff --git a/b/inner.py b/b/inner.py
+--- a/b/inner.py
++++ b/b/inner.py
+@@ -2,7 +2,7 @@ line_01
+ line_02
+ line_03
+ line_04
+-line_05
++changed_05
+ line_06
+ line_07
+ line_08
+diff --git a/src/added.py b/src/added.py
+new file mode 100644
+--- /dev/null
++++ b/src/added.py
+@@ -0,0 +1,2 @@
++added_01
++added_02
+diff --git a/src/edited.py b/src/edited.py
+--- a/src/edited.py
++++ b/src/edited.py
+@@ -2,7 +2,7 @@ line_01
+ line_02
+ line_03
+ line_04
+-line_05
++changed_05
+ line_06
+ line_07
+ line_08
+diff --git a/src/removed.py b/src/removed.py
+deleted file mode 100644
+--- a/src/removed.py
++++ /dev/null
+@@ -1,2 +0,0 @@
+-gone_1
+-gone_2
+diff --git a/old_name.py b/new_name.py
+rename from old_name.py
+rename to new_name.py
+--- a/old_name.py
++++ b/new_name.py
+@@ -1,4 +1,4 @@
+ ctx
+-x
++y
+ ctx2
+ 

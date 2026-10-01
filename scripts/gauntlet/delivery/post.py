@@ -81,7 +81,7 @@ Line validation:
     dropped: it degrades into a trailing "could not be anchored inline" section on
     the review body / summary note (see build_skipped_section), so every finding
     still reaches the PR/MR unless the complete composed body exceeds its platform
-    byte budget. A warning is still emitted per skipped finding.
+    byte budget. One warning is emitted per skipped group, naming every member.
 
 No external Python dependencies — stdlib only.
 """
@@ -275,13 +275,8 @@ def parse_diff_lines(platform, owner, repo, pr_number):
             ["gh", "pr", "diff", str(pr_number), "--repo", f"{owner}/{repo}"]
         )
     elif platform == "gitlab":
-        # PLAIN `glab mr diff` — never `--raw`. Plain output is glab's OWN reconstruction
-        # from the MR versions API: `--- <old_path>` / `+++ <new_path>` with the path
-        # verbatim, and nothing else between hunks. `--raw` streams git's diff instead,
-        # which reintroduces `a/` / `b/` prefixes and `/dev/null` — the gitlab branch
-        # below keys on paths exactly as printed and reads the old-side header as a real
-        # path, both premised on their absence. tests/fixtures/glab_diff/ records the
-        # shape and where it comes from.
+        # Plain `glab mr diff`, never `--raw`. Its output has two shapes, both recorded
+        # in tests/fixtures/glab_diff/; parse_diff_text tells them apart per file.
         stdout, stderr, rc = run_api(["glab", "mr", "diff", str(pr_number)])
     else:
         warn(
@@ -299,114 +294,104 @@ def parse_diff_lines(platform, owner, repo, pr_number):
     return parse_diff_text(platform, stdout)
 
 
-def parse_diff_text(platform, diff_text):
+def _git_header_agrees(git_header, old_side, new_side):
+    """True when *git_header* is exactly the ``diff --git`` text a producer writing
+    ``a/``/``b/`` prefixes composes for this ``---``/``+++`` pair.
+
+    The header is never split into two paths: a producer may write a path holding a
+    space unquoted, so the boundary between them is undecidable on its own. It is
+    rebuilt from the pair and compared whole instead, a ``/dev/null`` old side
+    borrowing the new side's name. The pair's paths are the walk's decoded spellings, which
+    for the raw paths glab composes are its own text; a name the decoder cut at a
+    literal TAB no longer rebuilds the header, so that block stays unproven.
     """
-    Return ``(valid_lines, new_files, old_paths, line_texts)``:
+    old_name = old_side[2:] if old_side.startswith("a/") else None
+    new_name = new_side[2:] if new_side.startswith("b/") else None
+    if old_side == "/dev/null":
+        old_name = new_name
+    return (
+        old_name is not None
+        and new_name is not None
+        and git_header == f"a/{old_name} b/{new_name}"
+    )
 
-    * ``valid_lines`` — mapping of ``(filepath, new_line)`` -> the SAME line's number on
-      the OLD side, or ``None`` when the line exists only on the new side (an added
-      line). Membership is unchanged (a key is present exactly when the line can carry
-      an inline comment); the value is what GitLab needs. GitLab addresses an
-      UNCHANGED/context line only when the position carries BOTH ``old_line`` and
-      ``new_line`` — with new_line alone it answers 400 ``line_code can't be blank``.
-      The old-side number must survive parsing. GitHub never needs
-      it (``path``/``line``/``side`` address the new side).
-    * ``new_files`` — set of filepaths newly ADDED in this diff. TWO signals, both
-      required: ``gh pr diff`` writes ``--- /dev/null``; ``glab mr diff`` writes the
-      SAME path on both sides and betrays the addition ONLY through an
-      ``@@ -0,0 +N,M @@`` hunk header. Matching /dev/null alone made this set
-      permanently empty on GitLab, so ``old_path`` was always sent and the HTTP 500 the
-      GitLab poster documents was never actually avoided.
-    * ``old_paths`` — mapping of new-side path -> the path its ``---`` header named. For
-      a RENAMED file that is the pre-rename path, which is what GitLab requires in
-      ``position.old_path``; for an unrenamed modified file the two coincide
-      (harmless — the poster's fallback is the new path anyway). Absent for added files,
-      whose old side is ``/dev/null``.
-    * ``line_texts`` — a PARALLEL mapping over the SAME keys as ``valid_lines``, holding
-      each line's NEW-SIDE TEXT with the diff's marker column removed. Parallel rather
-      than folded into ``valid_lines``'s value so every existing consumer of that mapping
-      reads exactly what it read before. The walk already reads this text off each
-      ``+``/context line (``DiffEvent.text``); it is the content oracle the
-      ``suggested_fix_code`` apply-check needs, and by construction it is the content the
-      platform's anchor points at, at the same head SHA the position carries. ``git show``
-      is not an alternative: the local HEAD is usually the base branch, a shallow clone has
-      no object to show, and it desyncs from GitLab's versions-API head_sha.
 
-    The unified-diff walk itself — header/hunk-body zone tracking, the old/new line
-    advance, and the wire spelling of a header path — is ``gauntlet.diff.walk_diff``; this
-    function reads its events and keeps only what is local to this platform pair: which
-    prefix a header's decoded path carries (``a/``/``b/`` stripped for GitHub, kept
-    verbatim for GitLab, since there a leading ``a/`` is a real top-level directory), what
-    ``/dev/null`` means for ``current_file``/``current_file_is_new``, and the
-    ``new_files``/``old_paths`` bookkeeping described above.
+def parse_diff_text(platform, diff_text):
+    """Parse a GitHub or GitLab diff into line and file metadata.
 
-    Two behaviours change with this migration:
+    * ``valid_lines`` — ``(path, new_line)`` -> the same line's OLD-side number, or
+      ``None`` for an added line. A key is present exactly when the line can carry an
+      inline comment. GitLab addresses a context line only when the position carries
+      both ``old_line`` and ``new_line``, so the old-side number must survive parsing.
+    * ``new_files`` — paths ADDED by this diff. GitLab answers HTTP 500 to an
+      ``old_path`` on a file that has none.
+    * ``old_paths`` — new-side path -> the path its ``---`` header named: the
+      pre-rename path GitLab requires in ``position.old_path``. Absent for added files.
+    * ``line_texts`` — the same keys as ``valid_lines`` -> the line's new-side text,
+      the content oracle for the suggested-fix apply-check.
 
-    1. Header paths now arrive DECODED — the TAB terminator git appends after a path
-       containing a space, and the C-quoting git uses for a path holding a control
-       character or (by default) a non-ASCII byte, are both undone before this function
-       ever sees the path. A finding on such a path previously matched nothing in
-       ``valid_lines`` (the raw, still-encoded spelling was the key); it now matches its
-       diff line like any other path. The decode also runs on ``glab mr diff``'s verbatim
-       paths, where it has nothing of git's to undo and only mis-reads a TAB-bearing or
-       quote-wrapped name — an accepted limitation, see ``gauntlet.diff._decode_header_path``.
-    2. A newline-terminated diff whose last hunk is cut short no longer mints a phantom
-       final line. The old hand-rolled loop walked the trailing empty string left by
-       splitting on the terminating newline as a context line — a key for a line the file
-       does not have, backed by an empty ``line_texts`` entry that would have fed the
-       apply-check a false oracle. ``walk_diff`` drops that trailing empty string instead
-       of walking it.
+    ``a/`` and ``b/`` are diff syntax on GitHub. ``glab mr diff`` has two shapes, told
+    apart per file block. In its PLAIN shape a block is a bare ``---``/``+++`` pair
+    with paths verbatim, so a leading ``a/`` or ``b/`` is a real directory, there is no
+    ``/dev/null``, and ``@@ -0,0`` is the only added-file signal. In its GIT-STYLE
+    shape the prefixes are syntax and ``/dev/null`` marks an absent side; a block is
+    read that way only when its ``diff --git`` line proves it (see
+    :func:`_git_header_agrees`), because a plain block under a real ``a/`` directory
+    is otherwise indistinguishable. One ``diff --git`` line proves at most the one
+    pair that follows it.
     """
     valid_lines = {}
     line_texts = {}
     new_files = set()
     old_paths = {}
-    pending_old_path = None
+    git_header = None
+    pending_old_side = None
     current_file = None
-    current_file_is_new = False
+    # Whether `@@ -0,0` in the current file's hunks means "added".
+    zero_old_hunk_means_added = True
 
     for event in walk_diff(diff_text):
+        if event.kind == "git_header":
+            git_header = event.text
+            # A `---` left unpaired by this header belongs to no block.
+            pending_old_side = None
+            continue
+
         if event.kind == "old_path":
-            # `--- a/path` (gh, prefix stripped below), `--- path` (glab, kept
-            # verbatim — there a leading `a/` is a REAL top-level directory, and
-            # stripping it truncated `a/`-rooted paths into keys and positions
-            # GitLab does not know), or `--- /dev/null`.
-            old_side = event.path
-            if platform == "github":
-                old_side = old_side.removeprefix("a/")
-            current_file_is_new = old_side == "/dev/null"
-            # Held until the `+++` header names the new-side path this belongs to;
-            # for a rename the two differ and only this one is GitLab's `old_path`.
-            pending_old_path = None if current_file_is_new else old_side
+            pending_old_side = event.path
             continue
 
         if event.kind == "new_path":
-            # `+++ b/path` (gh, prefix stripped below), `+++ path` (glab, verbatim),
-            # or `+++ /dev/null`.
-            path = event.path
-            if platform == "github":
-                path = path.removeprefix("b/")
-            if path == "/dev/null":
+            old_side, new_side = pending_old_side, event.path
+            pending_old_side = None
+            git_style = (
+                platform == "gitlab"
+                and old_side is not None
+                and _git_header_agrees(git_header, old_side, new_side)
+            )
+            git_header = None
+            if platform == "github" or git_style:
+                old_side = None if old_side is None else old_side.removeprefix("a/")
+                new_side = new_side.removeprefix("b/")
+            # An empty old side is either an added file or an edit of a file that was
+            # already empty. A git-style block says which with `/dev/null`; a plain
+            # one cannot, and guesses "added": omitting `old_path` for a pre-existing
+            # empty file is harmless, sending it for a new file is the HTTP 500.
+            zero_old_hunk_means_added = not git_style
+            if new_side == "/dev/null":
                 current_file = None  # deleted file — no new path to track
-            else:
-                current_file = path
-                if current_file_is_new:
-                    new_files.add(current_file)
-                if pending_old_path is not None:
-                    old_paths[current_file] = pending_old_path
-            current_file_is_new = False
+                continue
+            current_file = new_side
+            if old_side == "/dev/null":
+                new_files.add(current_file)
+            elif old_side is not None:
+                old_paths[current_file] = old_side
             continue
 
         if event.kind == "hunk":
-            # `@@ -0,0` means the old side of this file is empty: either the file is
-            # ADDED, or it pre-existed and was empty. Plain `glab mr diff` offers no
-            # discriminator between the two (it repeats the path on both
-            # `---`/`+++` lines and never writes /dev/null, so this is its ONLY
-            # added-file signal). We prefer the added-file reading: sending
-            # `old_path` into a genuinely new file is the documented HTTP 500,
-            # whereas omitting it for a pre-existing empty file is not.
             if (
-                event.old_line == 0
+                zero_old_hunk_means_added
+                and event.old_line == 0
                 and event.old_count == 0
                 and current_file is not None
             ):
@@ -423,12 +408,7 @@ def parse_diff_text(platform, diff_text):
 
 
 def _strip_ab_prefix(filepath):
-    """Return *filepath* with a leading synthetic ``a/``/``b/`` diff prefix removed.
-
-    The single home for this regex: every helper below that tries a finding's exact
-    spelling and falls back to the stripped one shares this pattern, so it cannot
-    drift out of sync between them. Idempotent on an already-unprefixed path.
-    """
+    """Return *filepath* without a leading Git diff prefix."""
     return re.sub(r"^[ab]/", "", filepath)
 
 
@@ -1479,6 +1459,37 @@ def _degraded_entry(filepath, line, finding, valid_lines, line_texts):
     platform.
     """
     return filepath, line, _gated_finding(finding, None, valid_lines, line_texts)
+
+
+def _warn_group_skipped(group, valid_lines, filepath=None):
+    """Record the one skip warning a group that cannot anchor inline gets.
+
+    *filepath* is the primary's resolved diff spelling when its line is missing from
+    the diff, and ``None`` when the primary has no line at all. The warning stands for
+    the whole group, so a group of several names every member: the title alone would
+    leave the corroborators untraceable.
+    """
+    primary = group["primary"]
+    title = primary.get("title", "?")
+    if filepath is None:
+        message = f"Finding '{title}' has no line number — skipping."
+    else:
+        diag = ""
+        vl = valid_lines_for_file(valid_lines, filepath)
+        if vl is not None:
+            diag = f" Valid lines for this file: {vl}"
+        message = (
+            f"Skipping finding '{title}' at {filepath}:{primary['line']} "
+            f"— line not found in diff.{diag}"
+        )
+    members = [primary, *group["corroborators"]]
+    if len(members) > 1:
+        labels = [
+            str(m["id"] if m.get("id") is not None else m.get("title", "?"))
+            for m in members
+        ]
+        message += f" [group members: {', '.join(labels)}]"
+    warn_skip(message)
 
 
 def _key_material_finding(finding):
@@ -2672,9 +2683,7 @@ def post_github(data, valid_lines, line_texts):
         corroborators = group["corroborators"]
         line = primary.get("line")
         if line is None:
-            warn_skip(
-                f"Finding '{primary.get('title', '?')}' has no line number — skipping."
-            )
+            _warn_group_skipped(group, valid_lines)
             skipped_groups.append(
                 [
                     _degraded_entry(
@@ -2699,14 +2708,7 @@ def post_github(data, valid_lines, line_texts):
         # on a path the PR does not have.
         filepath = diff_path_spelling(valid_lines, primary["file"], line)
         if not is_line_valid(valid_lines, filepath, line):
-            diag = ""
-            vl = valid_lines_for_file(valid_lines, filepath)
-            if vl is not None:
-                diag = f" Valid lines for this file: {vl}"
-            warn_skip(
-                f"Skipping finding '{primary.get('title', '?')}' at {filepath}:{line} "
-                f"— line not found in diff.{diag}"
-            )
+            _warn_group_skipped(group, valid_lines, filepath)
             skipped_groups.append(
                 [_degraded_entry(filepath, line, primary, valid_lines, line_texts)]
             )
@@ -2961,9 +2963,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         corroborators = group["corroborators"]
         line = primary.get("line")
         if line is None:
-            warn_skip(
-                f"Finding '{primary.get('title', '?')}' has no line number — skipping."
-            )
+            _warn_group_skipped(group, valid_lines)
             skipped_groups.append(
                 [
                     _degraded_entry(
@@ -2984,14 +2984,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         # Same spelling resolution the loop below applies — see its comment.
         filepath = diff_path_spelling(valid_lines, primary["file"], line)
         if not is_line_valid(valid_lines, filepath, line):
-            diag = ""
-            vl = valid_lines_for_file(valid_lines, filepath)
-            if vl is not None:
-                diag = f" Valid lines for this file: {vl}"
-            warn_skip(
-                f"Skipping finding '{primary.get('title', '?')}' at {filepath}:{line} "
-                f"— line not found in diff.{diag}"
-            )
+            _warn_group_skipped(group, valid_lines, filepath)
             skipped_groups.append(
                 [_degraded_entry(filepath, line, primary, valid_lines, line_texts)]
             )
