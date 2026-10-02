@@ -183,7 +183,7 @@ jobs:
         if: matrix.python-version == '3.12'
         run: |
           COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
-            --cov=bench --cov-fail-under=88.5
+            --cov=bench --cov-fail-under=88.6
 
   test-windows:
     name: Run Tests on Windows

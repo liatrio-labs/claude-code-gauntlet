@@ -7,17 +7,12 @@ context builders (``slice_hunk`` boundary/nearest/missing-path behavior and
 
 import json
 import re
-import sys
 import unittest
 from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from bench.adjudicator.adjudicate import (  # noqa: E402
+from bench.adjudicator.adjudicate import (
     FROZEN_PROMPT,
     _parse_verdict,
     _recover_verdict,
@@ -25,6 +20,8 @@ from bench.adjudicator.adjudicate import (  # noqa: E402
     file_context,
     slice_hunk,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The exact reply that sank --score-only smoke-20260721-172943-0b24d95: the adjudicator's
 # "reason" quotes the Ruby snippet `"." << website_host` with an UNescaped inner double-quote

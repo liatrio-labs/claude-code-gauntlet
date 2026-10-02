@@ -22,16 +22,12 @@ Covers:
 """
 
 import json
-import os
-import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-import profile_run as pr
+from bench import profile_run as pr
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

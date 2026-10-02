@@ -63,13 +63,6 @@ exclude = "(?x)(^(bench/vendor|bench/workspace)/)"
 
 [[tool.mypy.overrides]]
 module = [
-  "profile_run",
-  "runner.*",
-]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = [
   "gauntlet.cli",
   "gauntlet.diff",
   "gauntlet.forge",

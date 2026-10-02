@@ -12,17 +12,12 @@ import io
 import json
 import os
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from bench import run  # noqa: E402
+from bench import run
 
 FIXTURE_URL = "https://github.com/getsentry/sentry/pull/77754"  # in review_md_fixtures
 PLAIN_URL = "https://github.com/keycloak/keycloak/pull/37634"  # gate PR, not a fixture

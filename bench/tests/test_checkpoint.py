@@ -14,14 +14,10 @@ Covers the PR-granular resume semantics (spec H3):
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 
-# Add bench/ to path so we can import the runner package.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from runner.checkpoint import Checkpoint
+from bench.runner.checkpoint import Checkpoint
 
 GOLDEN_URLS = [
     "https://github.com/keycloak/keycloak/pull/37634",

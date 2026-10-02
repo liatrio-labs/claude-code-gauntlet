@@ -16,11 +16,9 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from bench import report
 
-from bench import report  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 BENCH_DIR = REPO_ROOT / "bench"
 REAL_LEDGER = BENCH_DIR / "experiments.jsonl"
