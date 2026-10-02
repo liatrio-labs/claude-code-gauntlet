@@ -445,7 +445,7 @@ class GitLab(_ForgeAdapter):
 
     def diff(self, target: ReviewTarget) -> tuple[str, str, int]:
         # Plain glab mr diff, never --raw or --repo: tests/fixtures/glab_diff/
-        # records both output shapes, which parse_diff_text distinguishes per file.
+        # records both output shapes, which parse_diff distinguishes per file.
         return proc.output([self._tool, "mr", "diff", str(target.number)])
 
     def review_entries(self, target: ReviewTarget) -> JsonFetch:

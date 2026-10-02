@@ -1,6 +1,6 @@
 # `glab mr diff` fixtures
 
-The output shapes `scripts/gauntlet/delivery/post.py::parse_diff_text` must read on GitLab.
+The output shapes `scripts/gauntlet/diff.py::parse_diff` must read on GitLab.
 They are load-bearing: every inline MR comment's `position` is computed from them. Neither
 shape is git's unified diff. `glab mr diff` does not shell out to git; it reads the merge
 request's diff versions from the API and composes every header line itself.
@@ -87,7 +87,7 @@ is owned by the github-platform test in `tests/test_post_review.py`.
 
 ## Byte-exactness
 
-`tests/test_post_review.py::TestGlabFixtureBytes` asserts two properties the parser cannot
+`tests/test_diff.py::test_fixture_bytes` asserts two properties the parser cannot
 see: every blank line in a fixture is a lone space (a blank context line; at least one
 fixture must carry one), and every fixture ends in exactly one newline.
 `.pre-commit-config.yaml` excludes `*.diff` in this directory from `trailing-whitespace`

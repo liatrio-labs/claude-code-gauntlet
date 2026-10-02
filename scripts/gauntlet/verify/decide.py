@@ -85,10 +85,11 @@ import math
 import os
 import re
 import sys
+from typing import Any
 
 from gauntlet import proc
 from gauntlet.cli import Command
-from gauntlet.diff import walk_diff
+from gauntlet.diff import DiffFacts, is_line_valid, parse_diff
 from gauntlet.fs import write_atomic
 from gauntlet.jsjson import (
     JS_MAX_SAFE_INTEGER,
@@ -208,78 +209,6 @@ def get_diff(base_branch, diff_file=None):
         "Diff validation will be skipped."
     )
     return None
-
-
-_DIFF_PREFIX_RE = re.compile(r"^[ab]/")
-
-
-def _path_spellings(path):
-    """Both prefix spellings of a decoded ``+++`` header path.
-
-    Git's wire spelling of the header — its TAB terminator and C-quoting — is already
-    undone by the walk; the prefix is what is left, and it is ambiguous.
-    The header alone cannot say whether a leading ``a/``/``b/`` is git's synthetic
-    prefix (``gh pr diff``, ``git diff``) or a real top-level directory (``glab mr
-    diff`` writes paths verbatim, so there the prefix is part of the path). REQUIRING
-    the prefix — the shape this replaced — matched no header at all in a verbatim diff,
-    left the set empty, and tagged every finding in the review "surfaced". Stripping it
-    unconditionally would instead lose a genuinely ``b/``-rooted file's own spelling.
-
-    Recording BOTH costs one extra tuple per line and cannot lose a legitimate match on
-    either platform, with no platform flag to thread through the caller. The set feeds a
-    membership test only (:func:`is_line_in_diff`), so the union is sound: its only cost
-    is that a finding naming a literal ``b/x`` can match a diff that touched ``x`` —
-    which ``is_line_in_diff``'s own prefix strip already allows from the other side.
-    """
-    stripped = _DIFF_PREFIX_RE.sub("", path)
-    return (path,) if stripped == path else (path, stripped)
-
-
-def parse_diff_lines(diff_text):
-    """
-    Parse a unified diff and return a set of (filepath, line_number) tuples
-    representing lines present in the diff (added or context lines).
-    Line numbers are from the new (head) version.
-
-    RF-04: Distinguishes two "nothing to parse" cases:
-    - ``None``  → diff retrieval failed; callers should skip validation entirely.
-    - ``""``    → diff retrieved successfully but is empty (e.g. no changes);
-                  callers should treat every finding as "surfaced" (not in diff).
-
-    The walk is ``gauntlet.diff.walk_diff``; what lives here is this parser's own header
-    semantics — which spellings of a path enter the set, and that a deleted file's
-    ``+++ /dev/null`` contributes nothing.
-    """
-    if diff_text is None:
-        return None
-
-    valid_lines = set()
-    current_paths = ()
-
-    for event in walk_diff(diff_text):
-        if event.kind == "new_path":
-            # `/dev/null` names a deleted file: it owns no new-side line, and the
-            # previous file's spellings must not survive into its hunk bodies.
-            current_paths = (
-                () if event.value == "/dev/null" else _path_spellings(event.value)
-            )
-        elif event.kind == "line" and event.new_line is not None:
-            # A removed line has no new side and is therefore not addressable here.
-            for path in current_paths:
-                valid_lines.add((path, event.new_line))
-
-    return valid_lines
-
-
-def is_line_in_diff(valid_lines, filepath, line):
-    """Check whether (filepath, line) appears in the parsed diff."""
-    if valid_lines is None:
-        return True  # diff validation skipped — pass through
-    if (filepath, line) in valid_lines:
-        return True
-    # Strip leading path component variations
-    stripped = re.sub(r"^[ab]/", "", filepath)
-    return (stripped, line) in valid_lines
 
 
 # ---------------------------------------------------------------------------
@@ -774,32 +703,9 @@ def verify_factual(finding):
     return True
 
 
-def validate_diff_lines(finding, valid_lines):
-    """
-    Validate whether the finding's reported line range overlaps with the diff.
-
-    Uses valid_lines set from parse_diff_lines().  Checks each line in
-    [line_start, line_end] for presence in the diff.
-
-    Per V4-10: findings entirely outside the diff are NOT eliminated — they
-    are tagged as "surfaced" (cross-file context, pre-existing code exposed by
-    the change).  This catches the calcom-PR10600 pattern where a finding
-    targeted a line far outside the actual diff.
-
-    Side effects:
-    - If no diff line in [line_start, line_end] is present in valid_lines,
-      sets finding["origin"] = "surfaced" and
-      finding["diff_validation"] = {"in_diff": False, "reason": "..."}.
-    - If at least one line overlaps, sets
-      finding["diff_validation"] = {"in_diff": True, "reason": "..."}.
-    - If diff validation is skipped (valid_lines is None), sets
-      finding["diff_validation"] = {"in_diff": None, "reason": "skipped"}.
-
-    Returns: always True (findings are kept regardless — origin is updated
-             to reflect whether they are "new" or "surfaced").
-    """
-    if valid_lines is None:
-        # Diff validation skipped — leave origin unchanged
+def validate_diff_lines(finding: dict[str, Any], facts: DiffFacts | None) -> bool:
+    """Keep off-diff findings as surfaced context instead of eliminating them."""
+    if facts is None:
         finding["diff_validation"] = {
             "in_diff": None,
             "reason": "diff validation skipped",
@@ -810,7 +716,6 @@ def validate_diff_lines(finding, valid_lines):
     line_start = finding.get("line_start") or 0
     line_end = finding.get("line_end") or line_start
 
-    # If no line reference at all, treat as in-diff (nothing to validate)
     if not line_start:
         finding["diff_validation"] = {
             "in_diff": True,
@@ -818,16 +723,14 @@ def validate_diff_lines(finding, valid_lines):
         }
         return True
 
-    # Check if any line in the range appears in the diff
     for line in range(line_start, line_end + 1):
-        if is_line_in_diff(valid_lines, filepath, line):
+        if is_line_valid(facts, filepath, line):
             finding["diff_validation"] = {
                 "in_diff": True,
                 "reason": f"line {line} found in diff",
             }
             return True
 
-    # No lines in range found in diff → tag as "surfaced"
     original_origin = finding.get("origin", "new")
     finding["origin"] = "surfaced"
     finding["diff_validation"] = {
@@ -837,8 +740,6 @@ def validate_diff_lines(finding, valid_lines):
             f"— tagged as surfaced (was: {original_origin})"
         ),
     }
-    # Also apply severity downgrade if not already applied (blame may have
-    # already downgraded; blame_metadata tracks original_severity)
     _SEVERITY_DOWNGRADE = {
         "critical": "high",
         "high": "medium",
@@ -1414,19 +1315,21 @@ def run_verification(findings, base_branch, diff_file=None, verbose=False):
             f["elimination_reason"] = "evidence does not match file content"
             eliminated.append(f)
 
-    # Phase 4: Validate diff lines (V4-10). Findings outside the diff are tagged
-    # "surfaced" (not eliminated) so cross-file context is preserved for Phase 5.
     if verbose:
         print("Validating finding line numbers against diff...", file=sys.stderr)
     diff_text = get_diff(base_branch, diff_file)
-    valid_lines = parse_diff_lines(diff_text)
-    if valid_lines is None and verbose:
+    facts = (
+        None
+        if diff_text is None
+        else parse_diff(diff_text, policy="verify-both-spellings")
+    )
+    if facts is None and verbose:
         warn("Diff validation skipped — all findings passed through.")
 
     diff_surfaced_count = 0
     for f in verified:
         origin_before = f.get("origin", "new")
-        validate_diff_lines(f, valid_lines)
+        validate_diff_lines(f, facts)
         if f.get("origin") == "surfaced" and origin_before != "surfaced":
             diff_surfaced_count += 1
 

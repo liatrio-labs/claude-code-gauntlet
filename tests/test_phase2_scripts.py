@@ -11,11 +11,16 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable
 from contextlib import redirect_stderr
 from importlib import import_module
 from io import StringIO
 from pathlib import Path
 from unittest import mock
+
+import pytest
+
+from tests.conftest import Invocation
 
 REPO = Path(__file__).resolve().parents[1]
 STALE_SCRIPT = REPO / "scripts" / "stale_truncate.py"
@@ -525,182 +530,6 @@ def _git(repo: Path, *args: str) -> bytes:
     return completed.stdout
 
 
-class TestDiffNumstat(unittest.TestCase):
-    def test_diff_numstat_matches_git_numstat_corpus(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            repo = root / "repo"
-            repo.mkdir()
-            patch_dir = root / "o'brien diff[1]"
-            patch_dir.mkdir()
-            _git(repo, "init", "--quiet")
-            _git(repo, "config", "user.name", "Test User")
-            _git(repo, "config", "user.email", "test@example.com")
-            _git(repo, "config", "core.autocrlf", "false")
-            _git(repo, "config", "diff.renames", "true")
-
-            files = {
-                "prefix.txt": b"-- old removal\n++ old addition\n",
-                "front-matter.md": b"---\ntitle: before\n+++\nbody before\n",
-                "patch.txt": (
-                    b"diff --git a/inner.txt b/inner.txt\n"
-                    b"--- a/inner.txt\n+++ b/inner.txt\n"
-                    b"@@ -1 +1 @@\n-old\n+new\n"
-                ),
-                "rename-old.txt": b"one\ntwo\nthree\nfour\nfive\n",
-                "mode.sh": b"#!/bin/sh\nexit 0\n",
-                "no-newline.txt": b"before without newline",
-                "crlf.txt": b"first\r\nsecond\r\n",
-            }
-            for name, contents in files.items():
-                (repo / name).write_bytes(contents)
-            _git(repo, "add", "--all")
-            _git(repo, "commit", "--quiet", "-m", "baseline")
-
-            def edit_prefix() -> None:
-                (repo / "prefix.txt").write_bytes(b"-- new removal\n++ new addition\n")
-
-            def edit_front_matter() -> None:
-                (repo / "front-matter.md").write_bytes(
-                    b"---\ntitle: after\n+++\nbody after\n"
-                )
-
-            def edit_patch_file() -> None:
-                (repo / "patch.txt").write_bytes(
-                    b"diff --git a/inner.txt b/inner.txt\n"
-                    b"--- a/inner.txt\n+++ b/inner.txt\n"
-                    b"@@ -1 +1 @@\n-before\n+after\n"
-                )
-
-            def add_binary() -> None:
-                (repo / "binary.dat").write_bytes(b"before\x00binary")
-                _git(repo, "add", "binary.dat")
-
-            def rename_with_edit() -> None:
-                (repo / "rename-old.txt").rename(repo / "rename-new.txt")
-                (repo / "rename-new.txt").write_bytes(
-                    b"one\ntwo changed\nthree\nfour\nfive\n"
-                )
-
-            def mode_only() -> None:
-                _git(repo, "update-index", "--chmod=+x", "mode.sh")
-
-            def no_trailing_newline() -> None:
-                (repo / "no-newline.txt").write_bytes(b"after without newline")
-
-            def crlf_lines() -> None:
-                (repo / "crlf.txt").write_bytes(b"first\r\nchanged\r\n")
-
-            # Each marker proves the case's patch really carries the shape it names.
-            cases = (
-                ("dash and plus content prefixes", edit_prefix, b"\n--- old removal\n"),
-                ("front matter delimiters", edit_front_matter, b"\n-title: before\n"),
-                ("patch as file content", edit_patch_file, b"\n--old\n"),
-                ("binary file", add_binary, b"\nBinary files "),
-                ("rename with edit", rename_with_edit, b"\nrename from "),
-                ("mode only", mode_only, b"\nnew mode 100755\n"),
-                ("no trailing newline", no_trailing_newline, b"\n\\ No newline"),
-                ("CRLF lines", crlf_lines, b"\n+changed\r\n"),
-                ("empty diff", lambda: None, b""),
-            )
-            for index, (label, edit, marker) in enumerate(cases):
-                with self.subTest(case=label):
-                    _git(repo, "reset", "--hard", "--quiet", "HEAD")
-                    _git(repo, "clean", "-fdq")
-                    edit()
-                    # Stage every edit so a rename's new side is tracked; with
-                    # core.filemode off, add keeps a mode set by update-index.
-                    _git(repo, "-c", "core.filemode=false", "add", "--all")
-                    patch = _git(repo, "diff", "--cached", "--find-renames", "HEAD")
-                    numstat = _git(
-                        repo, "diff", "--cached", "--numstat", "--find-renames", "HEAD"
-                    ).decode("utf-8")
-                    if marker:
-                        self.assertIn(marker, patch)
-                    else:
-                        self.assertEqual(patch, b"")
-                    expected_changed = 0
-                    expected_binary = 0
-                    for row in numstat.splitlines():
-                        fields = row.split("\t", 2)
-                        added, removed = fields[0], fields[1]
-                        if added == "-" or removed == "-":
-                            expected_binary += 1
-                        else:
-                            expected_changed += int(added) + int(removed)
-
-                    patch_path = patch_dir / f"case-{index}.patch"
-                    patch_path.write_bytes(patch)
-                    result = subprocess.run(
-                        [sys.executable, str(NUMSTAT_SCRIPT), str(patch_path)],
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        check=False,
-                    )
-
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(
-                        result.stdout,
-                        f"changed_lines={expected_changed}\n"
-                        f"binary_files={expected_binary}\n",
-                    )
-                    self.assertEqual(result.stderr, "")
-
-    def test_multi_file_glab_diff_counts_each_file_once(self):
-        # glab mr diff prints no `diff --git` lines, so a scan that leaves a hunk
-        # only there counts every later file's ---/+++ headers as changes.
-        fixtures = sorted((REPO / "tests" / "fixtures" / "glab_diff").glob("*.diff"))
-        self.assertGreater(len(fixtures), 1)
-        with tempfile.TemporaryDirectory() as temp_dir:
-            patch_dir = Path(temp_dir) / "o'brien glab[1]"
-            patch_dir.mkdir()
-
-            def changed_lines(patch: bytes, name: str) -> int:
-                patch_path = patch_dir / name
-                patch_path.write_bytes(patch)
-                result = subprocess.run(
-                    [sys.executable, str(NUMSTAT_SCRIPT), str(patch_path)],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    check=False,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                first = result.stdout.splitlines()[0]
-                return int(first.removeprefix("changed_lines="))
-
-            parts = [path.read_bytes() for path in fixtures]
-            self.assertTrue(all(part.endswith(b"\n") for part in parts))
-            singles = [
-                changed_lines(part, f"single-{index}.patch")
-                for index, part in enumerate(parts)
-            ]
-            self.assertTrue(all(count > 0 for count in singles), singles)
-            self.assertEqual(changed_lines(b"".join(parts), "all.patch"), sum(singles))
-
-    def test_crlf_patch_counts_binary_files(self):
-        patch = (
-            b"diff --git a/a.bin b/a.bin\r\nnew file mode 100644\r\n"
-            b"Binary files /dev/null and b/a.bin differ\r\n"
-            b"diff --git a/t.txt b/t.txt\r\n--- a/t.txt\r\n+++ b/t.txt\r\n"
-            b"@@ -1 +1 @@\r\n-old\r\n+new\r\n"
-        )
-        with tempfile.TemporaryDirectory() as temp_dir:
-            patch_path = Path(temp_dir) / "crlf.patch"
-            patch_path.write_bytes(patch)
-            result = subprocess.run(
-                [sys.executable, str(NUMSTAT_SCRIPT), str(patch_path)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                check=False,
-            )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "changed_lines=2\nbinary_files=1\n")
-
-
 class TestShippedText(unittest.TestCase):
     output_dir: Path
 
@@ -962,3 +791,151 @@ class TestShippedText(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize(
+    "case, marker",
+    [
+        ("prefix", b"\n--- old removal\n"),
+        ("front-matter", b"\n-title: before\n"),
+        ("patch-content", b"\n--old\n"),
+        ("binary", b"\nBinary files "),
+        ("rename", b"\nrename from "),
+        ("mode", b"\nnew mode 100755\n"),
+        ("eof", b"\n\\ No newline"),
+        ("crlf", b"\n+changed\r\n"),
+        ("empty", b""),
+    ],
+)
+def test_numstat_git_corpus(tmp_path: Path, case: str, marker: bytes) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet")
+    _git(repo, "config", "user.name", "Test User")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "core.autocrlf", "false")
+    _git(repo, "config", "diff.renames", "true")
+    files = {
+        "prefix.txt": b"-- old removal\n++ old addition\n",
+        "front-matter.md": b"---\ntitle: before\n+++\nbody before\n",
+        "patch.txt": (
+            b"diff --git a/inner.txt b/inner.txt\n"
+            b"--- a/inner.txt\n+++ b/inner.txt\n"
+            b"@@ -1 +1 @@\n-old\n+new\n"
+        ),
+        "rename-old.txt": b"one\ntwo\nthree\nfour\nfive\n",
+        "mode.sh": b"#!/bin/sh\nexit 0\n",
+        "no-newline.txt": b"before without newline",
+        "crlf.txt": b"first\r\nsecond\r\n",
+    }
+    for name, contents in files.items():
+        (repo / name).write_bytes(contents)
+    _git(repo, "add", "--all")
+    _git(repo, "commit", "--quiet", "-m", "baseline")
+    edits = {
+        "prefix": ("prefix.txt", b"-- new removal\n++ new addition\n"),
+        "front-matter": ("front-matter.md", b"---\ntitle: after\n+++\nbody after\n"),
+        "patch-content": (
+            "patch.txt",
+            b"diff --git a/inner.txt b/inner.txt\n--- a/inner.txt\n+++ b/inner.txt\n@@ -1 +1 @@\n-before\n+after\n",
+        ),
+        "binary": ("binary.dat", b"before\x00binary"),
+        "rename": ("rename-new.txt", b"one\ntwo changed\nthree\nfour\nfive\n"),
+        "eof": ("no-newline.txt", b"after without newline"),
+        "crlf": ("crlf.txt", b"first\r\nchanged\r\n"),
+    }
+    if case == "rename":
+        (repo / "rename-old.txt").rename(repo / "rename-new.txt")
+    if case == "mode":
+        _git(repo, "update-index", "--chmod=+x", "mode.sh")
+    if case in edits:
+        name, contents = edits[case]
+        (repo / name).write_bytes(contents)
+    # With core.filemode off, staging keeps the mode set by update-index.
+    _git(repo, "-c", "core.filemode=false", "add", "--all")
+    patch = _git(repo, "diff", "--cached", "--find-renames", "HEAD")
+    numstat = _git(
+        repo, "diff", "--cached", "--numstat", "--find-renames", "HEAD"
+    ).decode("utf-8")
+    if marker:
+        assert marker in patch
+    else:
+        assert patch == b""
+    changed = binary = 0
+    for row in numstat.splitlines():
+        added, removed, _ = row.split("\t", 2)
+        if added == "-" or removed == "-":
+            binary += 1
+        else:
+            changed += int(added) + int(removed)
+    patch_path = tmp_path / "o'brien diff[1].patch"
+    patch_path.write_bytes(patch)
+    result = subprocess.run(
+        [sys.executable, str(NUMSTAT_SCRIPT), str(patch_path)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"changed_lines={changed}\nbinary_files={binary}\n"
+    assert result.stderr == ""
+
+
+def test_numstat_glab_files(tmp_path: Path, invoke: Callable[..., Invocation]) -> None:
+    fixtures = sorted((REPO / "tests/fixtures/glab_diff").glob("*.diff"))
+    assert len(fixtures) > 1
+    parts = [path.read_bytes() for path in fixtures]
+    assert all(part.endswith(b"\n") for part in parts)
+    counts = []
+    for index, part in enumerate([*parts, b"".join(parts)]):
+        patch_path = tmp_path / f"capture-{index}.patch"
+        patch_path.write_bytes(part)
+        result = invoke("diff_numstat", [str(patch_path)], tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == b""
+        counts.append(
+            int(result.stdout.splitlines()[0].removeprefix(b"changed_lines="))
+        )
+    assert all(count > 0 for count in counts[:-1])
+    assert counts[-1] == sum(counts[:-1])
+
+
+def test_numstat_crlf_binary(tmp_path: Path, invoke: Callable[..., Invocation]) -> None:
+    patch = (
+        b"diff --git a/a.bin b/a.bin\r\nnew file mode 100644\r\n"
+        b"Binary files /dev/null and b/a.bin differ\r\n"
+        b"diff --git a/t.txt b/t.txt\r\n--- a/t.txt\r\n+++ b/t.txt\r\n"
+        b"@@ -1 +1 @@\r\n-old\r\n+new\r\n"
+    )
+    patch_path = tmp_path / "crlf.patch"
+    patch_path.write_bytes(patch)
+    result = invoke("diff_numstat", [str(patch_path)], tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == b"changed_lines=2\nbinary_files=1\n"
+
+
+@pytest.mark.parametrize(
+    "diff_text, expected",
+    [
+        pytest.param(
+            "@@ -1,2 +1,2 @@\n ctx\n-old\n+new\n",
+            b"changed_lines=2\nbinary_files=0\n",
+            id="pathless-body",
+        ),
+        pytest.param(
+            "@@ -1 +1 @@\nBinary files a/x and b/x differ\n",
+            b"changed_lines=0\nbinary_files=1\n",
+            id="body-binary",
+        ),
+    ],
+)
+def test_numstat_saved_text(
+    tmp_path: Path, invoke: Callable[..., Invocation], diff_text: str, expected: bytes
+) -> None:
+    patch = tmp_path / "capture.patch"
+    patch.write_text(diff_text, encoding="utf-8")
+    result = invoke("diff_numstat", [str(patch)], tmp_path)
+    assert result.returncode == 0
+    assert result.stdout == expected
+    assert result.stderr == b""

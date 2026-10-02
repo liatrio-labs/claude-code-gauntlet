@@ -2,16 +2,12 @@
 Tests for scripts/gauntlet/verify/decide.py
 
 Covers:
-  - parse_diff_lines: context, added, removed lines; multi-file diffs; edge cases;
-    exact-set cases (binary/deleted sections, header-shaped body content, form feeds,
-    GitHub- and GitLab-shaped path spellings)
   - classify_blame: new/surfaced classification, cross-file refs, file-not-found,
     blame failures, short SHA matching, severity downgrade
   - verify_factual: file exists, file missing, binary file, no lines, out-of-range,
     symbol found/missing
   - _extract_symbols: tiered extraction (V5-05)
   - validate_diff_lines: in-diff, out-of-diff, skipped, no line reference
-  - is_line_in_diff: exact match, stripped path match, None valid_lines
   - batch_findings: grouping by file, min/max bounds, tail merging, empty input
 """
 
@@ -23,13 +19,17 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from typing import ClassVar
+from typing import Any, ClassVar
 from unittest.mock import patch
+
+import pytest
+from gauntlet.diff import DiffFacts, parse_diff
 
 # JS_MAX_SAFE_INTEGER is the same constant _delta_confidence refuses to exceed --
 # imported from the sibling module rather than re-hardcoded so the two never drift.
 from gauntlet.jsjson import JS_MAX_SAFE_INTEGER
 from gauntlet.registry import VERIFY_SLICE_FIELDS as _SLICE_INPUT_FIELDS
+from gauntlet.verify import decide
 from gauntlet.verify.decide import (
     _DELTA_FIELDS,
     _LEGACY_CLI_FIELDS,
@@ -49,14 +49,14 @@ from gauntlet.verify.decide import (
     decode_inline_slice,
     deltas_checksum,
     get_diff,
-    is_line_in_diff,
     load_input,
-    parse_diff_lines,
     run,
     run_verification,
     validate_diff_lines,
     verify_factual,
 )
+
+from tests.support.diff import diff_facts
 
 
 def test_repo_root_falls_back_when_git_probe_fails(monkeypatch):
@@ -101,147 +101,6 @@ def js_encode_inline(doc):
     return proc.stdout
 
 
-# ---------------------------------------------------------------------------
-# parse_diff_lines
-# ---------------------------------------------------------------------------
-
-
-class TestParseDiffLines(unittest.TestCase):
-    """Test unified diff parsing into (file, line) tuples."""
-
-    def test_empty_input_returns_empty_set(self):
-        # RF-04: empty diff string means diff was retrieved but has no content;
-        # return empty set so all findings are tagged "surfaced" (not skipped).
-        self.assertEqual(parse_diff_lines(""), set())
-
-    def test_none_input_returns_none(self):
-        # RF-04: None means diff retrieval failed; return None to skip validation.
-        self.assertIsNone(parse_diff_lines(None))
-
-    def test_added_lines(self):
-        diff = (
-            "diff --git a/foo.py b/foo.py\n"
-            "--- a/foo.py\n"
-            "+++ b/foo.py\n"
-            "@@ -1,3 +1,4 @@\n"
-            " line1\n"
-            "+added_line\n"
-            " line2\n"
-            " line3\n"
-        )
-        result = parse_diff_lines(diff)
-        # Context line1 at new_line=1, added at 2, context line2 at 3, context line3 at 4
-        self.assertIn(("foo.py", 1), result)  # context
-        self.assertIn(("foo.py", 2), result)  # added
-        self.assertIn(("foo.py", 3), result)  # context
-        self.assertIn(("foo.py", 4), result)  # context
-
-    def test_removed_lines_do_not_advance_new_line(self):
-        diff = (
-            "diff --git a/bar.py b/bar.py\n"
-            "--- a/bar.py\n"
-            "+++ b/bar.py\n"
-            "@@ -1,4 +1,3 @@\n"
-            " line1\n"
-            "-removed\n"
-            " line2\n"
-            " line3\n"
-        )
-        result = parse_diff_lines(diff)
-        # context line1 at 1, removed does NOT advance, context line2 at 2, context line3 at 3
-        self.assertIn(("bar.py", 1), result)
-        self.assertIn(("bar.py", 2), result)
-        self.assertIn(("bar.py", 3), result)
-        self.assertNotIn(("bar.py", 4), result)
-
-    def test_multiple_files(self):
-        diff = (
-            "diff --git a/a.py b/a.py\n"
-            "--- a/a.py\n"
-            "+++ b/a.py\n"
-            "@@ -1,2 +1,3 @@\n"
-            " ctx\n"
-            "+new_a\n"
-            " ctx2\n"
-            "diff --git a/b.py b/b.py\n"
-            "--- a/b.py\n"
-            "+++ b/b.py\n"
-            "@@ -10,2 +10,3 @@\n"
-            " ctx\n"
-            "+new_b\n"
-            " ctx2\n"
-        )
-        result = parse_diff_lines(diff)
-        self.assertIn(("a.py", 2), result)  # added in a.py
-        self.assertIn(("b.py", 11), result)  # added in b.py at line 11
-        self.assertIn(("b.py", 10), result)  # context in b.py
-
-    def test_hunk_with_offset(self):
-        diff = (
-            "+++ b/module.ts\n"
-            "@@ -100,3 +200,4 @@\n"
-            " existing\n"
-            "+inserted\n"
-            " existing2\n"
-            " existing3\n"
-        )
-        result = parse_diff_lines(diff)
-        # new_line starts at 200: context=200, added=201, context=202, context=203
-        self.assertIn(("module.ts", 200), result)
-        self.assertIn(("module.ts", 201), result)
-        self.assertIn(("module.ts", 202), result)
-        self.assertIn(("module.ts", 203), result)
-
-    def test_no_newline_at_eof_ignored(self):
-        diff = (
-            "+++ b/f.py\n"
-            "@@ -1,2 +1,2 @@\n"
-            " line1\n"
-            "-old\n"
-            "+new\n"
-            "\\ No newline at end of file\n"
-        )
-        # Two commentable lines, each recorded under both spellings of the header's
-        # path (see _path_spellings) — four entries, and no entry for the marker.
-        self.assertEqual(
-            sorted(parse_diff_lines(diff)),
-            [("b/f.py", 1), ("b/f.py", 2), ("f.py", 1), ("f.py", 2)],
-        )
-
-    def test_multiple_hunks_same_file(self):
-        diff = (
-            "+++ b/multi.py\n"
-            "@@ -1,2 +1,3 @@\n"
-            " a\n"
-            "+b\n"
-            " c\n"
-            "@@ -50,2 +51,3 @@\n"
-            " d\n"
-            "+e\n"
-            " f\n"
-        )
-        result = parse_diff_lines(diff)
-        self.assertIn(("multi.py", 2), result)  # added in first hunk
-        self.assertIn(("multi.py", 52), result)  # added in second hunk
-
-
-# ---------------------------------------------------------------------------
-# parse_diff_lines — exact-set cases
-# ---------------------------------------------------------------------------
-
-# `gh pr diff` / `git diff` spelling: git's synthetic `a/` and `b/` prefixes.
-GH_SHAPED_DIFF = (
-    "diff --git a/src/app.py b/src/app.py\n"
-    "index 1111111..2222222 100644\n"
-    "--- a/src/app.py\n"
-    "+++ b/src/app.py\n"
-    "@@ -10,2 +10,3 @@ def handler():\n"
-    "     ctx\n"
-    "+    added\n"
-    "     tail\n"
-)
-
-# `glab mr diff` spelling: the same change, paths written verbatim on both sides.
 GLAB_SHAPED_DIFF = (
     "diff --git a/src/app.py b/src/app.py\n"
     "index 1111111..2222222 100644\n"
@@ -252,320 +111,6 @@ GLAB_SHAPED_DIFF = (
     "+    added\n"
     "     tail\n"
 )
-
-
-class TestParseDiffLinesExactSet(unittest.TestCase):
-    """The whole returned set, never a membership sample.
-
-    Every defect below produces a set that still CONTAINS the lines a sampling
-    assertion looks for — the damage is the extra entries, or entries under the wrong
-    path. An assertIn-shaped test reads straight past all of it.
-    """
-
-    def assertLines(self, diff_text, expected):
-        self.assertEqual(sorted(parse_diff_lines(diff_text)), sorted(expected))
-
-    def test_binary_section_does_not_contaminate_the_previous_file(self):
-        """A binary file's section has no hunk, so every one of its lines is noise.
-
-        Read as hunk-body content instead, each of them lands in the context branch and
-        is recorded against whichever file was parsed last — phantom lines that a
-        finding can then match, which is the whole point of validating against the diff.
-        """
-        diff = (
-            "diff --git a/first.py b/first.py\n"
-            "index 1111111..2222222 100644\n"
-            "--- a/first.py\n"
-            "+++ b/first.py\n"
-            "@@ -1,2 +1,3 @@\n"
-            " keep\n"
-            "+added\n"
-            " tail\n"
-            "diff --git a/logo.png b/logo.png\n"
-            "index 3333333..4444444 100644\n"
-            "Binary files a/logo.png and b/logo.png differ\n"
-            "diff --git a/next.py b/next.py\n"
-            "index 5555555..6666666 100644\n"
-            "--- a/next.py\n"
-            "+++ b/next.py\n"
-            "@@ -10,1 +10,2 @@\n"
-            " ctx\n"
-            "+added2\n"
-        )
-        self.assertLines(
-            diff,
-            [
-                ("b/first.py", 1),
-                ("b/first.py", 2),
-                ("b/first.py", 3),
-                ("first.py", 1),
-                ("first.py", 2),
-                ("first.py", 3),
-                ("b/next.py", 10),
-                ("b/next.py", 11),
-                ("next.py", 10),
-                ("next.py", 11),
-            ],
-        )
-
-    def test_deleted_file_body_drains_so_the_next_file_parses(self):
-        """A deleted file records nothing, but its body still owes the old side.
-
-        Its section is also the densest source of header-shaped noise: `deleted file
-        mode`, `--- a/gone.py` and `+++ /dev/null` all reach the parser between two
-        files that do have commentable lines.
-        """
-        diff = (
-            "diff --git a/first.py b/first.py\n"
-            "--- a/first.py\n"
-            "+++ b/first.py\n"
-            "@@ -1,2 +1,3 @@\n"
-            " keep\n"
-            "+added\n"
-            " tail\n"
-            "diff --git a/gone.py b/gone.py\n"
-            "deleted file mode 100644\n"
-            "--- a/gone.py\n"
-            "+++ /dev/null\n"
-            "@@ -1,3 +0,0 @@\n"
-            "-alpha\n"
-            "-beta\n"
-            "-gamma\n"
-            "diff --git a/next.py b/next.py\n"
-            "--- a/next.py\n"
-            "+++ b/next.py\n"
-            "@@ -10,1 +10,2 @@\n"
-            " ctx\n"
-            "+added2\n"
-        )
-        self.assertLines(
-            diff,
-            [
-                ("b/first.py", 1),
-                ("b/first.py", 2),
-                ("b/first.py", 3),
-                ("first.py", 1),
-                ("first.py", 2),
-                ("first.py", 3),
-                ("b/next.py", 10),
-                ("b/next.py", 11),
-                ("next.py", 10),
-                ("next.py", 11),
-            ],
-        )
-
-    def test_dev_null_new_side_records_nothing(self):
-        """`+++ /dev/null` owns no new-side line, and must not inherit the last path.
-
-        SYNTHETIC FIXTURE, stated honestly: real git writes `+0,0` for a deletion, so a
-        deleted file's body is all removed lines and records nothing whatever the parser
-        believes the path to be. The hunk below gives that section a new side purely so
-        the decision is observable — without it, dropping the `/dev/null` check leaves
-        every real diff's answer unchanged and the branch untested.
-        """
-        diff = (
-            "--- a/first.py\n"
-            "+++ b/first.py\n"
-            "@@ -1,1 +1,1 @@\n"
-            " keep\n"
-            "--- a/gone.py\n"
-            "+++ /dev/null\n"
-            "@@ -1,2 +1,1 @@\n"
-            "-dropped\n"
-            " stray\n"
-        )
-        self.assertLines(diff, [("b/first.py", 1), ("first.py", 1)])
-
-    def test_removed_line_that_renders_as_a_header_is_not_recorded(self):
-        """The SQL comment `-- deprecated: drop me`, removed, renders as `--- ...`.
-
-        It does not mis-match the new-side header regex; it falls through to the context
-        branch, which records a line that exists on neither side and pushes every later
-        line of the hunk one number too high.
-        """
-        diff = (
-            "diff --git a/schema.sql b/schema.sql\n"
-            "--- a/schema.sql\n"
-            "+++ b/schema.sql\n"
-            "@@ -1,3 +1,2 @@\n"
-            " CREATE TABLE t (\n"
-            "--- deprecated: drop me\n"
-            " );\n"
-        )
-        self.assertLines(
-            diff,
-            [
-                ("b/schema.sql", 1),
-                ("b/schema.sql", 2),
-                ("schema.sql", 1),
-                ("schema.sql", 2),
-            ],
-        )
-
-    def test_form_feed_inside_a_hunk_body_does_not_split_the_line(self):
-        """git breaks lines on "\\n" alone; str.splitlines() also breaks on \\x0c.
-
-        The removed line below then becomes two, the fragment reads as a context line,
-        and the hunk runs out of new-side budget one line early — so the set shifts to
-        {2, 3, 4} while the diff's own new side is {1, 2, 3}.
-        """
-        diff = (
-            "diff --git a/f.py b/f.py\n"
-            "--- a/f.py\n"
-            "+++ b/f.py\n"
-            "@@ -1,4 +1,3 @@\n"
-            " head\n"
-            "-alpha\x0cbeta\n"
-            "+gamma\n"
-            " middle\n"
-            "-omega\n"
-        )
-        self.assertLines(
-            diff,
-            [
-                ("b/f.py", 1),
-                ("b/f.py", 2),
-                ("b/f.py", 3),
-                ("f.py", 1),
-                ("f.py", 2),
-                ("f.py", 3),
-            ],
-        )
-
-    def test_github_shaped_headers_record_both_spellings(self):
-        self.assertLines(
-            GH_SHAPED_DIFF,
-            [
-                ("b/src/app.py", 10),
-                ("b/src/app.py", 11),
-                ("b/src/app.py", 12),
-                ("src/app.py", 10),
-                ("src/app.py", 11),
-                ("src/app.py", 12),
-            ],
-        )
-
-    def test_gitlab_shaped_headers_record_the_verbatim_path(self):
-        """`glab mr diff` writes no synthetic prefix, so there is one spelling.
-
-        Requiring `+++ b/<path>` matched no header at all in this shape: the set came
-        back EMPTY and every finding in a GitLab review was tagged "surfaced".
-        """
-        self.assertLines(
-            GLAB_SHAPED_DIFF,
-            [
-                ("src/app.py", 10),
-                ("src/app.py", 11),
-                ("src/app.py", 12),
-            ],
-        )
-
-    def test_encoded_header_paths_record_the_name_a_finding_can_use(self):
-        """A finding names the file as it exists, never as the header encodes it.
-
-        git writes a space-holding path with a trailing TAB and escapes a non-ASCII
-        one C-style; keyed under either raw field, every line of those files sits in
-        the set under a spelling no finding matches, which is the empty-set outcome
-        the GitLab shape had.
-        """
-        diff = (
-            "--- a/My Docs/read me.md\t\n"
-            "+++ b/My Docs/read me.md\t\n"
-            "@@ -1,1 +1,2 @@\n"
-            " intro\n"
-            "+added\n"
-            '--- "a/caf\\303\\251.py"\n'
-            '+++ "b/caf\\303\\251.py"\n'
-            "@@ -5,1 +5,2 @@\n"
-            " ctx\n"
-            "+brewed\n"
-        )
-        self.assertLines(
-            diff,
-            [
-                ("My Docs/read me.md", 1),
-                ("My Docs/read me.md", 2),
-                ("b/My Docs/read me.md", 1),
-                ("b/My Docs/read me.md", 2),
-                ("café.py", 5),
-                ("café.py", 6),
-                ("b/café.py", 5),
-                ("b/café.py", 6),
-            ],
-        )
-
-    def test_a_diff_cut_off_mid_hunk_records_no_phantom_line(self):
-        """A truncated or paginated diff supplies fewer body lines than it declares.
-
-        The hunk below owes four new-side lines and carries two. Counting the
-        terminating newline's tail as the third records a line the head revision may
-        not have — a finding there would validate as in-diff against nothing.
-        """
-        diff = "--- a/f.py\n+++ b/f.py\n@@ -1,4 +1,4 @@\n ctx\n+added\n"
-        self.assertLines(
-            diff,
-            [("b/f.py", 1), ("b/f.py", 2), ("f.py", 1), ("f.py", 2)],
-        )
-
-    def test_gitlab_finding_inside_the_diff_stays_new(self):
-        """The GitLab symptom end to end: in-diff findings must not be downgraded."""
-        finding = {
-            "file": "src/app.py",
-            "line_start": 11,
-            "line_end": 11,
-            "origin": "new",
-            "severity": "high",
-        }
-        validate_diff_lines(finding, parse_diff_lines(GLAB_SHAPED_DIFF))
-        self.assertTrue(finding["diff_validation"]["in_diff"])
-        self.assertEqual(finding["origin"], "new")
-        self.assertEqual(finding["severity"], "high")
-
-    def test_finding_in_a_space_named_file_stays_new(self):
-        """The same symptom, reached by the filename instead of by the platform."""
-        diff = (
-            "--- a/My Docs/read me.md\t\n"
-            "+++ b/My Docs/read me.md\t\n"
-            "@@ -1,1 +1,2 @@\n"
-            " intro\n"
-            "+added\n"
-        )
-        finding = {
-            "file": "My Docs/read me.md",
-            "line_start": 2,
-            "line_end": 2,
-            "origin": "new",
-            "severity": "high",
-        }
-        validate_diff_lines(finding, parse_diff_lines(diff))
-        self.assertTrue(finding["diff_validation"]["in_diff"])
-        self.assertEqual(finding["origin"], "new")
-        self.assertEqual(finding["severity"], "high")
-
-
-# ---------------------------------------------------------------------------
-# is_line_in_diff
-# ---------------------------------------------------------------------------
-
-
-class TestIsLineInDiff(unittest.TestCase):
-    def test_none_valid_lines_always_true(self):
-        self.assertTrue(is_line_in_diff(None, "any.py", 999))
-
-    def test_exact_match(self):
-        valid = {("src/foo.py", 10), ("src/foo.py", 11)}
-        self.assertTrue(is_line_in_diff(valid, "src/foo.py", 10))
-        self.assertFalse(is_line_in_diff(valid, "src/foo.py", 12))
-
-    def test_stripped_path_match(self):
-        valid = {("src/bar.py", 5)}
-        # If filepath has a/ prefix, strip it and retry
-        self.assertTrue(is_line_in_diff(valid, "a/src/bar.py", 5))
-        self.assertTrue(is_line_in_diff(valid, "b/src/bar.py", 5))
-
-    def test_no_match(self):
-        valid = {("x.py", 1)}
-        self.assertFalse(is_line_in_diff(valid, "y.py", 1))
 
 
 # ---------------------------------------------------------------------------
@@ -1164,64 +709,6 @@ class TestVerifyFactual(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # validate_diff_lines
 # ---------------------------------------------------------------------------
-
-
-class TestValidateDiffLines(unittest.TestCase):
-    def test_none_valid_lines_skips(self):
-        finding = {"file": "f.py", "line_start": 10}
-        result = validate_diff_lines(finding, None)
-        self.assertTrue(result)
-        self.assertIsNone(finding["diff_validation"]["in_diff"])
-
-    def test_no_line_reference_passes(self):
-        finding = {"file": "f.py"}
-        result = validate_diff_lines(finding, set())
-        self.assertTrue(result)
-        self.assertTrue(finding["diff_validation"]["in_diff"])
-
-    def test_line_in_diff(self):
-        valid = {("src/app.py", 42)}
-        finding = {"file": "src/app.py", "line_start": 42, "line_end": 42}
-        result = validate_diff_lines(finding, valid)
-        self.assertTrue(result)
-        self.assertTrue(finding["diff_validation"]["in_diff"])
-
-    def test_line_not_in_diff_tags_surfaced(self):
-        valid = {("src/app.py", 100)}
-        finding = {
-            "file": "src/app.py",
-            "line_start": 500,
-            "line_end": 505,
-            "origin": "new",
-            "severity": "high",
-        }
-        result = validate_diff_lines(finding, valid)
-        self.assertTrue(result)  # always True
-        self.assertEqual(finding["origin"], "surfaced")
-        self.assertFalse(finding["diff_validation"]["in_diff"])
-        # Severity downgraded
-        self.assertEqual(finding["severity"], "medium")
-
-    def test_partial_overlap_counts_as_in_diff(self):
-        valid = {("f.py", 12)}
-        finding = {"file": "f.py", "line_start": 10, "line_end": 15}
-        result = validate_diff_lines(finding, valid)
-        self.assertTrue(result)
-        self.assertTrue(finding["diff_validation"]["in_diff"])
-
-    def test_no_double_downgrade_when_blame_already_surfaced(self):
-        valid = {("x.py", 100)}
-        finding = {
-            "file": "x.py",
-            "line_start": 50,
-            "line_end": 55,
-            "origin": "new",
-            "severity": "medium",  # already downgraded by blame (post-blame state)
-            "blame_metadata": {"classification": "surfaced"},
-        }
-        validate_diff_lines(finding, valid)
-        # Blame already classified as surfaced, so no additional downgrade
-        self.assertEqual(finding["severity"], "medium")
 
 
 # ---------------------------------------------------------------------------
@@ -1852,7 +1339,7 @@ class TestReceipt(unittest.TestCase):
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", suffix=".patch", delete=False
         ) as f:
-            empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
+            empty_diff = f.name
         with (
             tempfile.NamedTemporaryFile(suffix=".json", delete=False) as legacy_file,
             tempfile.NamedTemporaryFile(suffix=".json", delete=False) as receipt_file,
@@ -2150,7 +1637,7 @@ class TestBuildDeltas(unittest.TestCase):
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", suffix=".patch", delete=False
         ) as f:
-            empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
+            empty_diff = f.name
         try:
             import io
 
@@ -2789,7 +2276,7 @@ class TestEliminationReasonStamp(unittest.TestCase):
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", suffix=".patch", delete=False
         ) as f:
-            empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
+            empty_diff = f.name
         try:
             import io
 
@@ -3671,7 +3158,7 @@ class TestSliceProjectionBehavioralEquivalence(unittest.TestCase):
             "w", encoding="utf-8", suffix=".patch", delete=False
         ) as f:
             self.addCleanup(os.unlink, f.name)
-            return f.name  # empty file -> parse_diff_lines("") -> set(), not None
+            return f.name
 
     def _write_file(self, lines):
         """A real temp file OUTSIDE the repo tree -- git blame/log always fail on
@@ -3829,3 +3316,191 @@ class TestSliceProjectionBehavioralEquivalence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize(
+    "finding, keys, validation, origin, severity",
+    [
+        pytest.param(
+            {"file": "f.py", "line_start": 10},
+            None,
+            {"in_diff": None, "reason": "diff validation skipped"},
+            None,
+            None,
+            id="skipped",
+        ),
+        pytest.param(
+            {"file": "f.py"},
+            set(),
+            {"in_diff": True, "reason": "no line reference — validation skipped"},
+            None,
+            None,
+            id="no-line",
+        ),
+        pytest.param(
+            {"file": "src/app.py", "line_start": 42, "line_end": 42},
+            {("src/app.py", 42)},
+            {"in_diff": True, "reason": "line 42 found in diff"},
+            None,
+            None,
+            id="in-diff",
+        ),
+        pytest.param(
+            {
+                "file": "src/app.py",
+                "line_start": 500,
+                "line_end": 505,
+                "origin": "new",
+                "severity": "high",
+            },
+            {("src/app.py", 100)},
+            {
+                "in_diff": False,
+                "reason": "lines 500-505 of 'src/app.py' not found in diff — tagged as surfaced (was: new)",
+            },
+            "surfaced",
+            "medium",
+            id="surfaced-and-downgraded",
+        ),
+        pytest.param(
+            {"file": "f.py", "line_start": 10, "line_end": 15},
+            {("f.py", 12)},
+            {"in_diff": True, "reason": "line 12 found in diff"},
+            None,
+            None,
+            id="partial-overlap",
+        ),
+        pytest.param(
+            {
+                "file": "x.py",
+                "line_start": 50,
+                "line_end": 55,
+                "origin": "new",
+                "severity": "medium",
+                "blame_metadata": {"classification": "surfaced"},
+            },
+            {("x.py", 100)},
+            {
+                "in_diff": False,
+                "reason": "lines 50-55 of 'x.py' not found in diff — tagged as surfaced (was: new)",
+            },
+            "surfaced",
+            "medium",
+            id="blame-already-surfaced",
+        ),
+        pytest.param(
+            {
+                "file": "src/app.py",
+                "line_start": 11,
+                "line_end": 11,
+                "origin": "new",
+                "severity": "high",
+            },
+            GLAB_SHAPED_DIFF,
+            {"in_diff": True, "reason": "line 11 found in diff"},
+            "new",
+            "high",
+            id="glab-stays-new",
+        ),
+        pytest.param(
+            {
+                "file": "My Docs/read me.md",
+                "line_start": 2,
+                "line_end": 2,
+                "origin": "new",
+                "severity": "high",
+            },
+            "--- a/My Docs/read me.md\t\n+++ b/My Docs/read me.md\t\n@@ -1,1 +1,2 @@\n intro\n+added\n",
+            {"in_diff": True, "reason": "line 2 found in diff"},
+            "new",
+            "high",
+            id="space-path-stays-new",
+        ),
+    ],
+)
+def test_verify_diff_decision(
+    finding: dict[str, Any],
+    keys: set[tuple[str, int]] | str | None,
+    validation: dict[str, object],
+    origin: str | None,
+    severity: str | None,
+) -> None:
+    finding = copy.deepcopy(finding)
+    assert (
+        validate_diff_lines(
+            finding,
+            None
+            if keys is None
+            else parse_diff(keys, policy="verify-both-spellings")
+            if isinstance(keys, str)
+            else diff_facts(dict.fromkeys(keys)),
+        )
+        is True
+    )
+    assert finding["diff_validation"] == validation
+    assert finding.get("origin") == origin
+    assert finding.get("severity") == severity
+
+
+@pytest.mark.parametrize(
+    "diff_text, in_diff, reason, origin, severity, surfaced",
+    [
+        pytest.param(
+            None,
+            None,
+            "diff validation skipped",
+            "new",
+            "high",
+            0,
+            id="retrieval-failed",
+        ),
+        pytest.param(
+            "",
+            False,
+            "lines 10-10 of 'f.py' not found in diff — tagged as surfaced (was: new)",
+            "surfaced",
+            "medium",
+            1,
+            id="empty-success",
+        ),
+    ],
+)
+def test_verify_diff_retrieval(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    diff_text: str | None,
+    in_diff: bool | None,
+    reason: str,
+    origin: str,
+    severity: str,
+    surfaced: int,
+) -> None:
+    monkeypatch.setattr(decide, "get_diff", lambda *_: diff_text)
+    parsed: list[str] = []
+
+    def capture_parse(text: str, *, policy: str) -> DiffFacts:
+        parsed.append(text)
+        assert policy == "verify-both-spellings"
+        return parse_diff(text, policy="verify-both-spellings")
+
+    monkeypatch.setattr(decide, "parse_diff", capture_parse)
+    monkeypatch.setattr(decide, "classify_blame", lambda *_: "new")
+    monkeypatch.setattr(decide, "verify_factual", lambda *_: True)
+    finding = {"id": "f1", "file": "f.py", "line_start": 10, "severity": "high"}
+    result = run_verification([finding], "main", verbose=True)
+    assert parsed == ([] if diff_text is None else [diff_text])
+    assert result["verified"] == [finding]
+    assert result["eliminated"] == []
+    assert result["stats"] == {
+        "total": 1,
+        "new": 1 - surfaced,
+        "surfaced": surfaced,
+        "eliminated": 0,
+    }
+    assert finding["diff_validation"] == {"in_diff": in_diff, "reason": reason}
+    assert finding["origin"] == origin
+    assert finding["severity"] == severity
+    assert (
+        "WARNING: Diff validation skipped — all findings passed through."
+        in capsys.readouterr().err
+    ) is (diff_text is None)

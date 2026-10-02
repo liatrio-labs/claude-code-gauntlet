@@ -61,8 +61,7 @@ _DIFF_PREFIX_RE = re.compile(r"^[ab]/")
 # Only the first line identifies the producer; noprefix/mnemonic output stays plain.
 _GIT_SHAPED_RE = re.compile(r'\Adiff --git "?a/')
 
-# The escapes git's C-quoting spells with a letter; every other byte it escapes it
-# writes as one to three octal digits.
+# C quoting encodes bytes, with letter escapes or one to three octal digits.
 _C_ESCAPES = {
     ord("a"): 0x07,
     ord("b"): 0x08,
@@ -237,9 +236,8 @@ def parse_diff(diff_text: str, *, policy: DiffPathPolicy) -> DiffFacts:
     GitLab context positions need both numbers and the pre-rename old path.
     Added files must omit old_path to avoid HTTP 500. Plain empty-old hunks
     cannot distinguish additions from edits of empty files and guess added;
-    proven git blocks instead use the null old side. An empty successful diff
-    is a present oracle with no valid keys; a caller that could not fetch the
-    diff passes ``None`` facts to the lookups instead of calling this.
+    proven git blocks instead use the null old side. Empty successful diffs
+    stay present; failed retrieval stays with callers.
     """
     valid_lines: dict[LineKey, int | None] = {}
     line_texts: dict[LineKey, str] = {}
