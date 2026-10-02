@@ -338,15 +338,20 @@ def test_events(diff_text: str, expected: list[DiffEvent]) -> None:
             id="no-newline-marker-in-body",
         ),
         pytest.param(
-            "+++ b/f.py\n@@ -1,1 +1,2 @@\n first\n+++ x\n",
+            # Each lookalike ends its hunk, where dropping it would shorten the text.
+            "+++ b/f.py\n@@ -1 +1,2 @@\n a\n+++ x\n"
+            "@@ -5,2 +6,2 @@\n b\n@@ -9 +9 @@\n"
+            "@@ -8,2 +9,2 @@\n c\ndiff --git a/x b/x\n",
             [
+                ("b/f.py", HunkEvent(1, 1, 1, 2), "@@ -1 +1,2 @@\n a\n+++ x\n"),
+                ("b/f.py", HunkEvent(5, 6, 2, 2), "@@ -5,2 +6,2 @@\n b\n@@ -9 +9 @@\n"),
                 (
                     "b/f.py",
-                    HunkEvent(1, 1, 1, 2),
-                    "@@ -1,1 +1,2 @@\n first\n+++ x\n",
-                )
+                    HunkEvent(8, 9, 2, 2),
+                    "@@ -8,2 +9,2 @@\n c\ndiff --git a/x b/x\n",
+                ),
             ],
-            id="body-plus-plus-plus-prefix",
+            id="body-lines-shaped-like-headers",
         ),
         pytest.param(
             "+++ b/one.py\n@@ -1 +1 @@\n-old\n+new\n"

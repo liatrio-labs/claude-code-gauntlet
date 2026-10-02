@@ -116,6 +116,13 @@ END_BOUNDARY_DIFF = (
         ),
         pytest.param(DIFF, "src/app.py", 27, HUNK_ONE, id="nearest-tie-first"),
         pytest.param(
+            "+++ b/f\n@@ -10 +10 @@\n-a\n+a\n@@ -9,3 +9,3 @@\n x\n y\n z\n",
+            "f",
+            10,
+            "@@ -10 +10 @@\n-a\n+a\n",
+            id="first-covering-wins-over-deeper-cover",
+        ),
+        pytest.param(
             "+++ b/zero.py\n@@ -3 +3 @@\n-later\n+later\n@@ -2,0 +2,0 @@\n",
             "zero.py",
             2,

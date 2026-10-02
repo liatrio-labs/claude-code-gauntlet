@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-from gauntlet.diff import HunkEvent, raw_hunks
+from gauntlet.diff import RawHunk, raw_hunks
 
 __all__ = ["FROZEN_PROMPT", "adjudicate", "file_context", "slice_hunk"]
 
@@ -36,7 +36,7 @@ def slice_hunk(diff_text: str, path: str, line: int) -> str:
 
     Raises ``ValueError`` when ``path`` has no hunk; callers catch it to fall back.
     """
-    hunks: list[tuple[HunkEvent, str]] = []
+    hunks: list[RawHunk] = []
     for raw_hunk in raw_hunks(diff_text):
         if raw_hunk.new_path is None:
             continue
@@ -45,18 +45,18 @@ def slice_hunk(diff_text: str, path: str, line: int) -> str:
         target = raw_hunk.new_path.strip().removeprefix("b/")
         if target != path or target == "/dev/null":
             continue
-        hunks.append((raw_hunk.hunk, raw_hunk.text))
+        hunks.append(raw_hunk)
     if not hunks:
         raise ValueError(
             f"path {path!r} not found in diff (no +++ header / hunks for it)"
         )
 
-    def distance(item: tuple[HunkEvent, str]) -> int:
-        hunk, _ = item
+    def distance(raw_hunk: RawHunk) -> int:
+        hunk = raw_hunk.hunk
         end = hunk.new_line + max(hunk.new_count, 1) - 1
         return max(hunk.new_line - line, line - end, 0)
 
-    return min(hunks, key=distance)[1]
+    return min(hunks, key=distance).text
 
 
 def file_context(file_lines, line, radius=_CONTEXT_RADIUS):
