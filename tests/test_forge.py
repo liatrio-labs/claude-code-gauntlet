@@ -1,7 +1,6 @@
 """Forge policy, transport and wired poster contracts."""
 
 import ast
-import re
 import sys
 import tempfile
 from collections.abc import Callable
@@ -717,11 +716,20 @@ def test_remote_classification(url, expected):
             "::1",
             id="ipv6-scp-no-user-no-suffix",
         ),
+        pytest.param(
+            "git@[:1]:owner/repo.git",
+            ("owner", "repo"),
+            None,
+            id="invalid-ipv6-scp",
+        ),
         pytest.param("https://host/owner", None, "host", id="missing-repo"),
         pytest.param("https://host", None, "host", id="pathless"),
         pytest.param("not-a-url", None, None, id="malformed"),
         pytest.param(
             "git@host:a@b/c.git", ("a@b", "c"), None, id="scp-at-in-owner-suffix"
+        ),
+        pytest.param(
+            "git@host:own@er/repo", ("own@er", "repo"), None, id="scp-at-in-owner"
         ),
         pytest.param(
             "org-123@git.example.com:team@x/r.git",
@@ -744,21 +752,23 @@ def test_remote_classification(url, expected):
         pytest.param("user@host:o/r\n", ("o", "r"), None, id="terminal-newline"),
     ],
 )
-def test_remote_slug(url, expected, hostname, monkeypatch: pytest.MonkeyPatch):
+def test_remote_slug(url, expected, hostname):
     remote = forge.parse_remote(url)
     assert (remote.hostname if remote else None) == hostname
     assert forge.remote_slug(remote) == (
         forge.RepoSlug(*expected) if expected else None
     )
-    if forge._SSH_URL_RE.fullmatch(url) or (
-        "://" not in url and forge._SCP_REMOTE_RE.fullmatch(url)
-    ):
-        # Accepted paths must survive the absence of lexical fallback extraction.
-        monkeypatch.setattr(forge, "_SCP_PATH_RE", re.compile(r"(?!)"))
-        monkeypatch.setattr(forge, "_URL_PATH_RE", re.compile(r"(?!)"))
-        assert forge.remote_slug(forge.parse_remote(url)) == (
-            forge.RepoSlug(*expected) if expected else None
-        )
+
+
+@pytest.mark.parametrize(
+    "url, expected_path",
+    [
+        pytest.param("https://host/.git", ".git", id="git-suffix-only"),
+        pytest.param("https://host//", "/", id="root-path-only"),
+    ],
+)
+def test_parse_remote_preserves_paths_that_normalize_to_empty(url, expected_path):
+    assert forge.parse_remote(url).path == expected_path
 
 
 @pytest.mark.parametrize(

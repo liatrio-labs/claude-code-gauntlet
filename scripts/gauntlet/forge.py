@@ -130,7 +130,7 @@ def _remote_hostname(authority: str) -> str | None:
 
 
 def _normalize_remote_path(path: str) -> str:
-    # Lexical matches require at least one captured character after normalization.
+    # Never strip to empty: "/" and ".git" stay as written.
     if path.endswith("/") and len(path) > 1:
         path = path[:-1]
     if path.endswith(".git") and len(path) > 4:
@@ -142,6 +142,8 @@ def parse_remote(url: str) -> Remote | None:
     match = _SCP_PATH_RE.match(url) or _URL_PATH_RE.match(url)
     path = _normalize_remote_path(match.group(1)) if match else ""
     unknown = Remote(None, path, None) if path else None
+    # Git scans the remainder for "@[" and percent-decodes ssh:// URLs, so a prefix
+    # match would trust a host git does not use.
     ssh_match = _SSH_URL_RE.fullmatch(url)
     scp_match = _SCP_REMOTE_RE.fullmatch(url) if "://" not in url else None
     recognized = ssh_match or scp_match
