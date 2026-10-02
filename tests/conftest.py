@@ -65,3 +65,33 @@ def probe_symlinks(tmp_path_factory):
 @pytest.fixture(scope="module")
 def symlink_or_skip(tmp_path_factory):
     probe_symlinks(tmp_path_factory)
+
+
+@pytest.fixture
+def forge_factory(monkeypatch, request):
+    from gauntlet.delivery import post
+
+    from tests.support.forge import install_forge_factory
+
+    factory = install_forge_factory(monkeypatch, getattr(request, "param", post))
+    if request.instance is not None:
+        request.instance.forge_factory = factory
+    return factory
+
+
+@pytest.fixture
+def poster_state(monkeypatch):
+    from gauntlet.delivery import post
+
+    monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+    post.reset_run_state()
+    monkeypatch.setattr(post, "DRY_RUN", False)
+    yield
+    post.reset_run_state()
+
+
+@pytest.fixture
+def poster_workspace(tmp_path, request):
+    if request.instance is not None:
+        request.instance.tmp = str(tmp_path)
+        request.instance.findings_path = str(tmp_path / "findings.json")

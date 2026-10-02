@@ -42,16 +42,28 @@ def test_non_text_streams_are_left_alone():
 
 
 @pytest.mark.parametrize(
-    ("argv", "status", "expected"),
+    ("argv", "options", "status", "expected"),
     [
-        ([], 2, b""),
-        (["--value", "ok"], 0, b'{"value": "ok"}\n'),
+        pytest.param([], {}, 2, b"", id="usage"),
+        pytest.param(["--value", "ok"], {}, 0, b'{"value": "ok"}\n', id="default"),
+        pytest.param(
+            ["--value", "ok"], {"compact": True}, 0, b'{"value":"ok"}\n', id="compact"
+        ),
+        pytest.param(
+            ["--value", "ok"],
+            {"indent": 2},
+            0,
+            b'{\n  "value": "ok"\n}\n',
+            id="indented",
+        ),
     ],
 )
-def test_command_invoke(argv, status, expected, capsys):
+def test_command_invoke(argv, options, status, expected, capsys):
     parser = Parser(prog="surrogate")
     parser.add_argument("--value", required=True)
-    command = Command(parser=parser, main=lambda args: ({"value": args.value}, 0))
+    command = Command(
+        parser=parser, main=lambda args: ({"value": args.value}, 0), **options
+    )
     assert command.invoke(argv) == status
     captured = capsys.readouterr()
     assert captured.out.encode() == expected

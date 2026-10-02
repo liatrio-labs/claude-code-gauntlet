@@ -41,7 +41,7 @@ Input JSON schema:
                                              #            (structural sanitize off).
             }
         ],
-        "platform": "github",            # optional — auto-detected from git remote
+        "platform": "github",            # optional — github.com/gitlab.com hosts only; else required
         "owner": "myorg",
         "repo": "myrepo",
         "pr_number": 7,
@@ -54,7 +54,7 @@ Input JSON schema:
     }
 
 Platform detection:
-    Parses git remote URL to detect github.com vs gitlab.com vs self-hosted.
+    Recognizes validated public github.com/gitlab.com hosts and dot subdomains.
     Override with "platform" field: "github" or "gitlab".
 
 GitHub path:
@@ -92,12 +92,24 @@ import json
 import os
 import re
 import sys
-import tempfile
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.diff import walk_diff
+from gauntlet.forge import (
+    Forge,
+    ForgeUnavailable,
+    GitLab,
+    PostRequest,
+    ReviewTarget,
+    detect_platform,
+    github_review_request,
+    gitlab_discussion_request,
+    gitlab_note_request,
+    make_forge,
+    origin_remote,
+)
 from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import (
     FINDING_MARKER_TOKEN,
@@ -109,7 +121,7 @@ from gauntlet.marker import (
     build_prose_footer,
     is_sha_shaped,
 )
-from gauntlet.prior_review import gitlab_prior_delivery_state
+from gauntlet.prior_review import PriorDelivery, gitlab_prior_delivery_state
 from gauntlet.registry import (
     BRAND_MARK,
     BRAND_NAME,
@@ -135,13 +147,8 @@ from gauntlet.text import normalize_report_severity
 # ---------------------------------------------------------------------------
 # Dry-run capture
 # ---------------------------------------------------------------------------
-# When --dry-run is passed, main() sets DRY_RUN=True and post_json() captures
-# the would-be API calls into _CAPTURED instead of sending them. Skip warnings
-# are accumulated into _SKIP_WARNINGS (in addition to being printed) so they can
-# be written into the payload file. main() resets all three at startup.
-
 DRY_RUN = False
-_CAPTURED: list[dict] = []
+_CAPTURED: list[PostRequest] = []
 _SKIP_WARNINGS: list[str] = []
 
 
@@ -165,97 +172,30 @@ def warn_skip(msg):
     warn(msg)
 
 
-def check_tool(name):
-    if proc.which(name) is None:
-        die(
-            f"'{name}' CLI tool not found. "
-            f"Install it and ensure it is authenticated before running this script."
-        )
-
-
-def run_api(cmd):
-    return proc.output(cmd)
-
-
-def try_post_json(cmd_prefix, payload):
-    """Post *payload* and return ``(response, error)`` — exactly one is meaningful.
-
-    A rejected position must not prevent later findings from being posted after
-    the summary note.
-
-    In dry-run the call is captured into ``_CAPTURED`` and ``({}, None)`` is returned,
-    so callers proceed exactly as after a successful post.
-    """
-    if DRY_RUN:
-        _CAPTURED.append({"cmd_prefix": cmd_prefix, "payload": payload})
-        return {}, None
-    fd, tmppath = tempfile.mkstemp(suffix=".json")
+def ensure_available(forge: Forge) -> None:
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-            json.dump(payload, f, ensure_ascii=False)
-        cmd = [*cmd_prefix, "--input", tmppath]
-        stdout, stderr, rc = run_api(cmd)
-        if rc != 0:
-            return None, (
-                f"API call failed (exit {rc}).\n"
-                f"Command: {' '.join(cmd)}\n"
-                f"stderr: {stderr.strip()}"
-            )
-        if not stdout.strip():
-            return {}, None
-        try:
-            return json.loads(stdout), None
-        except json.JSONDecodeError:
-            warn(f"Could not parse API response as JSON: {stdout[:200]}")
-            return {"raw": stdout}, None
-    finally:
-        if os.path.exists(tmppath):
-            os.unlink(tmppath)
+        forge.ensure_available()
+    except ForgeUnavailable as exc:
+        die(str(exc))
 
 
-def post_json(cmd_prefix, payload):
-    """Post *payload*; die on failure. Returns the parsed response.
+def try_post_json(request: PostRequest, *, forge: Forge):
+    """Return response/error without stranding siblings after a rejected position."""
+    if DRY_RUN:
+        _CAPTURED.append(request)
+        return {}, None
+    result = forge.submit(request)
+    if result.warning is not None:
+        warn(result.warning)
+    return result.response, result.error
 
-    Unchanged contract for every caller whose failure is total — the GitHub review
-    (one POST delivers everything) and the GitLab summary note (a failure there means
-    auth/MR is wrong and the discussion posts behind it are doomed too).
-    """
-    response, error = try_post_json(cmd_prefix, payload)
+
+def post_json(request: PostRequest, *, forge: Forge):
+    """Fail the whole delivery when the single review or first summary is rejected."""
+    response, error = try_post_json(request, forge=forge)
     if error is not None:
         die(error)
     return response
-
-
-# ---------------------------------------------------------------------------
-# Platform detection
-# ---------------------------------------------------------------------------
-
-
-def detect_platform():
-    """Parse git remote URL to detect github.com vs gitlab.com vs self-hosted."""
-    stdout, _, rc = run_api(["git", "remote", "get-url", "origin"])
-    if rc != 0:
-        return None, None
-    url = stdout.strip()
-
-    # Normalize SSH git@host:path to https-style for parsing
-    # git@github.com:owner/repo.git  ->  github.com/owner/repo
-    ssh_match = re.match(r"git@([^:]+):(.+?)(?:\.git)?$", url)
-    if ssh_match:
-        host = ssh_match.group(1)
-    else:
-        # https://host/path or http://host/path
-        https_match = re.match(r"https?://([^/]+)/(.+?)(?:\.git)?$", url)
-        if not https_match:
-            return None, None
-        host = https_match.group(1)
-
-    if "github.com" in host:
-        return "github", host
-    if "gitlab.com" in host or "gitlab" in host:
-        return "gitlab", host
-    # Unknown host — return host so caller can decide
-    return None, host
 
 
 # ---------------------------------------------------------------------------
@@ -263,27 +203,9 @@ def detect_platform():
 # ---------------------------------------------------------------------------
 
 
-def parse_diff_lines(platform, owner, repo, pr_number):
-    """Fetch *platform*'s diff via the CLI and return ``parse_diff_text(platform,
-    stdout)`` — see that function for the return shape and the walk/behaviour notes.
-
-    Returns ``(None, None, None, None)`` when validation should be skipped (unknown
-    platform or CLI failure). Callers must handle the ``None`` case.
-    """
-    if platform == "github":
-        stdout, stderr, rc = run_api(
-            ["gh", "pr", "diff", str(pr_number), "--repo", f"{owner}/{repo}"]
-        )
-    elif platform == "gitlab":
-        # Plain `glab mr diff`, never `--raw`. Its output has two shapes, both recorded
-        # in tests/fixtures/glab_diff/; parse_diff_text tells them apart per file.
-        stdout, stderr, rc = run_api(["glab", "mr", "diff", str(pr_number)])
-    else:
-        warn(
-            "Unknown platform — skipping diff validation. All findings will be posted."
-        )
-        return None, None, None, None
-
+def parse_diff_lines(target: ReviewTarget, *, forge: Forge):
+    """Fetch the diff, returning four absent oracles on a nonzero status."""
+    stdout, stderr, rc = forge.diff(target)
     if rc != 0:
         warn(
             f"Could not fetch diff (exit {rc}): {stderr.strip()}. "
@@ -291,7 +213,7 @@ def parse_diff_lines(platform, owner, repo, pr_number):
         )
         return None, None, None, None
 
-    return parse_diff_text(platform, stdout)
+    return parse_diff_text(forge.platform, stdout)
 
 
 def _git_header_agrees(git_header, old_side, new_side):
@@ -2610,7 +2532,7 @@ def finding_key(filepath, line, title, body):
 
 
 def get_head_sha():
-    stdout, _, rc = run_api(["git", "rev-parse", "HEAD"])
+    stdout, _, rc = proc.output(["git", "rev-parse", "HEAD"])
     return stdout.strip() if rc == 0 else "unknown"
 
 
@@ -2644,17 +2566,14 @@ def resolve_marker_sha(data):
 # ---------------------------------------------------------------------------
 
 
-def post_github(data, valid_lines, line_texts):
-    # Both oracles are REQUIRED arguments, no defaults: `parse_diff_lines` returns
-    # them together or not at all, and a caller that omitted `line_texts` used to
-    # silently disable half the apply-check (every fence then downgrading for a
-    # reason the diff would have answered). Pass what the parser returned.
+def post_github(data, valid_lines, line_texts, *, forge: Forge):
+    # Require both diff oracles so omission cannot silently disable apply checks.
     owner = data["owner"]
     repo = data["repo"]
     pr_number = data["pr_number"]
     findings = data.get("findings", [])
 
-    check_tool("gh")
+    ensure_available(forge)
 
     # consolidate_delivery(findings) is materialized ONCE: the pre-pass
     # below and the render loop that follows it walk the SAME list of groups by
@@ -2784,18 +2703,11 @@ def post_github(data, valid_lines, line_texts):
         "comments": comments,
     }
 
-    cmd_prefix = [
-        "gh",
-        "api",
-        "--method",
-        "POST",
-        "-H",
-        "Accept: application/vnd.github+json",
-        f"repos/{owner}/{repo}/pulls/{pr_number}/reviews",
-    ]
-
     _refuse_over_limit(composed.body, "github")
-    resp = post_json(cmd_prefix, payload)
+    resp = post_json(
+        github_review_request(ReviewTarget(owner, repo, pr_number), payload),
+        forge=forge,
+    )
     if DRY_RUN:
         print("Review captured (dry-run).")
         print(f"  {len(comments)} inline comment(s) captured.")
@@ -2826,27 +2738,13 @@ def post_github(data, valid_lines, line_texts):
 # ---------------------------------------------------------------------------
 
 
-def gitlab_project_id(owner, repo):
-    """Return URL-encoded project path for use in GitLab API."""
-    path = f"{owner}/{repo}"
-    return path.replace("/", "%2F")
-
-
-def fetch_gitlab_shas(project_id, mr_iid):
+def fetch_gitlab_shas(target: ReviewTarget, *, forge: GitLab):
     """Fetch latest MR version SHAs from GitLab."""
-    check_tool("glab")
-    stdout, stderr, rc = run_api(
-        ["glab", "api", f"projects/{project_id}/merge_requests/{mr_iid}/versions"]
-    )
-    if rc != 0:
-        die(
-            f"Failed to fetch MR versions (exit {rc}): {stderr.strip()}\n"
-            "Ensure glab is authenticated and the MR IID is correct."
-        )
-    try:
-        versions = json.loads(stdout)
-    except json.JSONDecodeError:
-        die(f"Could not parse MR versions response: {stdout[:200]}")
+    ensure_available(forge)
+    result = forge.diff_refs(target)
+    if result.error is not None:
+        die(result.error)
+    versions: Any = result.payload
 
     if not versions:
         die("MR versions endpoint returned an empty list.")
@@ -2859,53 +2757,37 @@ def fetch_gitlab_shas(project_id, mr_iid):
     )
 
 
-def gitlab_prior_delivery(owner, repo, mr_iid, sha):
-    """Return ``(summary_posted, finding_keys, legacy_group_keys)`` — what THIS sha's
-    review already left.
+def gitlab_prior_delivery(
+    owner: str, repo: str, mr_iid: int | str, sha: object, *, forge: Forge
+) -> PriorDelivery:
+    """Read this SHA's summary, finding keys, and legacy group keys from one snapshot.
 
-    Makes a rerun after a partial delivery retry-safe in three ways: the summary note is
-    not stacked a second time, the inline discussions that did land are not reposted,
-    and a legacy group body that rendered a corroborator's content without keying it is
-    recognized as already carrying that member (see
-    :func:`gauntlet.prior_review.legacy_group_keys_for_sha`) rather than posted a second
-    time. ONE fetch serves all three, in gauntlet.prior_review — the only reader of the
-    signals — so this module stays write-only.
-
-    Never blocks delivery. Dry-run does not fetch AT ALL: dry-run's invariant is that it
-    issues no WRITE calls (reads do happen under dry-run — `glab mr diff` and the
-    versions fetch both run), and the DRY_RUN guard here exists so dry-run adds no READ
-    either. That keeps `_CAPTURED[0]` the summary, which build_dry_run_payload's "the
-    first capture is the summary" shape depends on, and keeps every finding captured
-    rather than deduped away. A marker sha that is not SHA-shaped (get_head_sha's
-    "unknown" fallback) is not a usable dedup key. A failed fetch warns and delivers
-    everything — a possible duplicate beats a silently dropped review.
+    Dry-run skips the read so every finding is captured and the summary stays first.
+    An invalid SHA cannot key deduplication. Fetch failure warns and delivers everything
+    because a possible duplicate beats a silently dropped review.
     """
     if DRY_RUN or not is_sha_shaped(sha):
-        return False, frozenset(), frozenset()
-    summary_posted, keys, legacy_group_keys, error = gitlab_prior_delivery_state(
-        owner, repo, mr_iid, sha
-    )
-    if error:
+        return PriorDelivery(False, frozenset(), frozenset(), None)
+    state = gitlab_prior_delivery_state(owner, repo, mr_iid, sha, forge=forge)
+    if state.error:
         warn(
             f"could not check for an existing summary note or already-delivered inline "
-            f"discussions ({error}); posting them."
+            f"discussions ({state.error}); posting them."
         )
-        return False, frozenset(), frozenset()
-    return summary_posted, keys, legacy_group_keys
+    return state
 
 
-def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
-    # Every parsed-diff argument is REQUIRED — see post_github's note: defaults
-    # let a caller disable half the apply-check by omission.
+def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: GitLab):
+    # Require every diff oracle so omission cannot silently disable apply checks.
     owner = data["owner"]
     repo = data["repo"]
     mr_iid = data["pr_number"]
+    target = ReviewTarget(owner, repo, mr_iid)
     findings = data.get("findings", [])
 
-    check_tool("glab")
+    ensure_available(forge)
 
-    project_id = gitlab_project_id(owner, repo)
-    shas = fetch_gitlab_shas(project_id, mr_iid)
+    shas = fetch_gitlab_shas(target, forge=forge)
     base_sha, head_sha, start_sha = shas
 
     # fetch_gitlab_shas dies when the FETCH fails but never inspects the field values. An
@@ -3011,7 +2893,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     # below is load-bearing: a loser's own range must never occupy anything).
     overlap_records = _gitlab_overlap_records(remaining, valid_lines, line_texts)
     losers = _overlap_losers(overlap_records)
-    kept_intervals = {}
+    kept_intervals: dict[Any, list[Any]] = {}
     for index, filepath, apply_range in overlap_records:
         if index not in losers:
             kept_intervals.setdefault(filepath, []).append(apply_range)
@@ -3030,29 +2912,19 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         sha=sha,
     )
 
-    # Post the review summary as a top-level MR note first
     summary_payload = {"body": composed.body}
-    cmd_prefix = [
-        "glab",
-        "api",
-        "--method",
-        "POST",
-        "--header",
-        "Content-Type: application/json",
-        f"projects/{project_id}/merge_requests/{mr_iid}/notes",
-    ]
-    summary_posted, delivered_keys, legacy_group_keys = gitlab_prior_delivery(
-        owner, repo, mr_iid, sha
-    )
+    prior = gitlab_prior_delivery(owner, repo, mr_iid, sha, forge=forge)
+    delivered_keys = prior.finding_keys
+    legacy_group_keys = prior.legacy_group_keys
     # Same predicate that makes gitlab_prior_delivery skip the fetch: a marker built
     # from a non-SHA-shaped sha (get_head_sha's "unknown" fallback) is one
     # find_finding_marker is guaranteed to reject, so appending it would leave an
     # unreadable comment on every discussion and dedup nothing.
-    if summary_posted:
+    if prior.summary_posted:
         print(f"MR summary note for {sha} already on the MR — skipping.")
     else:
         _refuse_over_limit(composed.body, "gitlab")
-        post_json(cmd_prefix, summary_payload)
+        post_json(gitlab_note_request(target, summary_payload), forge=forge)
         print(
             "MR summary note captured (dry-run)."
             if DRY_RUN
@@ -3168,16 +3040,9 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             "position": position,
         }
 
-        cmd_prefix = [
-            "glab",
-            "api",
-            "--method",
-            "POST",
-            "--header",
-            "Content-Type: application/json",
-            f"projects/{project_id}/merge_requests/{mr_iid}/discussions",
-        ]
-        _response, error = try_post_json(cmd_prefix, payload)
+        _response, error = try_post_json(
+            gitlab_discussion_request(target, payload), forge=forge
+        )
         if error is not None:
             # One rejected position must not strand the findings behind it: the summary
             # note is already on the MR, so exiting here leaves partial, non-retryable
@@ -3232,16 +3097,9 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             return "failed"
         _report_inline_budget(composed, "gitlab", "note", c.get("file"), c.get("line"))
         payload = {"body": composed.body if DRY_RUN else composed.body + marker_suffix}
-        cmd_prefix = [
-            "glab",
-            "api",
-            "--method",
-            "POST",
-            "--header",
-            "Content-Type: application/json",
-            f"projects/{project_id}/merge_requests/{mr_iid}/notes",
-        ]
-        _response, error = try_post_json(cmd_prefix, payload)
+        _response, error = try_post_json(
+            gitlab_note_request(target, payload), forge=forge
+        )
         if error is not None:
             warn_skip(
                 f"Skipping corroborating finding '{c.get('title', '?')}' — GitLab "
@@ -3347,7 +3205,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         if primary_key in legacy_group_keys:
             # This group's primary key was found on an older group body that
             # rendered a corroborator's content without ever giving it a key of
-            # its own (see legacy_group_keys_for_sha). That body IS this group's
+            # its own (see prior_delivery_from_entries). That body IS this group's
             # whole delivery — every member it renders is provably already on
             # the MR, missing keys included — so treat the whole group as
             # already_present rather than let the "some but not all" branch
@@ -3483,14 +3341,6 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
 # ---------------------------------------------------------------------------
 
 
-def _method_from_cmd(cmd_prefix):
-    """Return the HTTP method following ``--method`` in *cmd_prefix* (default POST)."""
-    for i, tok in enumerate(cmd_prefix):
-        if tok == "--method" and i + 1 < len(cmd_prefix):
-            return cmd_prefix[i + 1]
-    return "POST"
-
-
 def build_dry_run_payload(platform):
     """Transform the captured API calls + skip warnings into the payload shape.
 
@@ -3501,18 +3351,17 @@ def build_dry_run_payload(platform):
     the per-finding delivery marker is appended on the live wire only.
     """
     if platform == "github":
-        cap = _CAPTURED[0] if _CAPTURED else {"cmd_prefix": [], "payload": {}}
-        cmd_prefix = cap["cmd_prefix"]
+        cap = _CAPTURED[0] if _CAPTURED else PostRequest("github", "", "POST", (), {})
         return {
             "platform": "github",
-            "endpoint": cmd_prefix[-1] if cmd_prefix else "",
-            "method": _method_from_cmd(cmd_prefix),
-            "payload": cap["payload"],
+            "endpoint": cap.endpoint,
+            "method": cap.method,
+            "payload": cap.payload,
             "skipped": list(_SKIP_WARNINGS),
         }
 
-    summary = _CAPTURED[0]["payload"] if _CAPTURED else {}
-    discussions = [cap["payload"] for cap in _CAPTURED[1:]]
+    summary = _CAPTURED[0].payload if _CAPTURED else {}
+    discussions = [cap.payload for cap in _CAPTURED[1:]]
     return {
         "platform": "gitlab",
         "summary": summary,
@@ -3574,7 +3423,6 @@ def main():
     DRY_RUN = args.dry_run or os.environ.get("CODE_GAUNTLET_POST_MODE") == "dry-run"
     reset_run_state()
 
-    # Load input
     try:
         loaded = read_json(args.findings_json)
     except JsonReadError as exc:
@@ -3619,20 +3467,18 @@ def main():
         except FileNotFoundError:
             die(f"Report file not found: {args.report}")
 
-    # Validate required fields
     for field in ("owner", "repo", "pr_number"):
         if field not in data:
             die(f"Missing required field in findings JSON: '{field}'")
 
-    # Determine platform
     platform = data.get("platform")
     if platform:
         platform = platform.lower()
     else:
-        detected, host = detect_platform()
-        if detected:
-            platform = detected
-            print(f"Detected platform: {platform} (from git remote: {host})")
+        detection = detect_platform(origin_remote())
+        if detection.platform:
+            platform = detection.platform
+            print(f"Detected platform: {platform} (from git remote: {detection.host})")
         else:
             die(
                 "Could not detect platform from git remote. "
@@ -3642,18 +3488,21 @@ def main():
     if platform not in ("github", "gitlab"):
         die(f"Unsupported platform: '{platform}'. Use 'github' or 'gitlab'.")
 
-    # Validate diff lines
+    forge = make_forge(platform)
+    target = ReviewTarget(data["owner"], data["repo"], data["pr_number"])
     valid_lines, new_files, old_paths, line_texts = parse_diff_lines(
-        platform, data["owner"], data["repo"], data["pr_number"]
+        target, forge=forge
     )
 
     # Deliver. A poster RETURNS its exit status instead of exiting, so a payload defect
     # it found cannot pre-empt the dry-run payload write below — that file is the artifact
     # an operator reads to see what the run would have sent.
-    if platform == "github":
-        status = post_github(data, valid_lines, line_texts)
+    if isinstance(forge, GitLab):
+        status = post_gitlab(
+            data, valid_lines, new_files, old_paths, line_texts, forge=forge
+        )
     else:
-        status = post_gitlab(data, valid_lines, new_files, old_paths, line_texts)
+        status = post_github(data, valid_lines, line_texts, forge=forge)
 
     if DRY_RUN:
         out_path = write_dry_run_payload(platform, args.findings_json)

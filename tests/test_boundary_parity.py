@@ -16,10 +16,12 @@ from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.patches as report_patches
+import pytest
 from gauntlet import config as resolve_config
 from gauntlet import contract_gen as generate_contract_requirements
 
 from bench.runner import invoke
+from tests.support.forge import FakeForge
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -229,7 +231,14 @@ def build_gh_diff(findings):
     return "".join(parts)
 
 
-def _fake_run(diff="", remote="git@github.com:o/r.git\n"):
+@contextlib.contextmanager
+def _boundary_run(factory, diff):
+    factory.configure(FakeForge(diffs=[(diff, "", 0)]))
+    with patch("gauntlet.proc.run", side_effect=_fake_run()):
+        yield
+
+
+def _fake_run(remote="git@github.com:o/r.git\n"):
     """Mock read-only CLI calls while dry-run suppresses POSTs."""
 
     def _run(cmd, *_a, **_k):
@@ -240,9 +249,7 @@ def _fake_run(diff="", remote="git@github.com:o/r.git\n"):
             return res(out=remote)
         if cmd[:2] == ["git", "rev-parse"]:
             return res(out="deadbeefcafe\n")
-        if cmd[:3] == ["gh", "pr", "diff"]:
-            return res(out=diff)
-        return res(out="{}", rc=0)
+        raise AssertionError(f"Unexpected Git call: {cmd}")
 
     return _run
 
@@ -363,24 +370,9 @@ class TestVerifyFindingsBoundary(unittest.TestCase):
             self.assertIn(key, envelope, f"verify envelope missing '{key}'")
 
 
+@pytest.mark.usefixtures("forge_factory", "poster_state", "poster_workspace")
 class TestPostReviewBoundary(unittest.TestCase):
     """post_review.py --dry-run consumes the persisted findings without a missing-field error."""
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        self.findings_path = os.path.join(self.tmp, "findings.json")
-        lookup = patch(
-            "gauntlet.delivery.post.proc.which",
-            side_effect=lambda name: f"/usr/bin/{name}",
-        )
-        lookup.start()
-        self.addCleanup(lookup.stop)
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
-        post_review.DRY_RUN = False
-        post_review._CAPTURED.clear()
-        post_review._SKIP_WARNINGS.clear()
 
     def _write(self, findings):
         with open(self.findings_path, "w", encoding="utf-8") as fh:
@@ -403,10 +395,7 @@ class TestPostReviewBoundary(unittest.TestCase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=diff),
-            ),
+            _boundary_run(self.forge_factory, diff),
         ):
             post_review.main()  # must not raise: every field it reads is present
 
@@ -431,10 +420,7 @@ class TestPostReviewBoundary(unittest.TestCase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=diff),
-            ),
+            _boundary_run(self.forge_factory, diff),
         ):
             post_review.main()
 
@@ -477,10 +463,7 @@ class TestPostReviewBoundary(unittest.TestCase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=diff),
-            ),
+            _boundary_run(self.forge_factory, diff),
         ):
             post_review.main()
 
@@ -506,10 +489,7 @@ class TestPostReviewBoundary(unittest.TestCase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS)),
-            ),
+            _boundary_run(self.forge_factory, build_gh_diff(PERSISTED_FINDINGS)),
             self.assertRaises(KeyError),
         ):
             post_review.main()
@@ -529,10 +509,7 @@ class TestPostReviewBoundary(unittest.TestCase):
             patch.object(
                 sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
             ),
-            patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS)),
-            ),
+            _boundary_run(self.forge_factory, build_gh_diff(PERSISTED_FINDINGS)),
         ):
             post_review.main()  # must not raise
 

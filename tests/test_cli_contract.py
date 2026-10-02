@@ -7,11 +7,18 @@ import re
 import shlex
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from gauntlet import cli, marker, prior_review, proc
+from gauntlet.forge import GitHub, JsonFetch
 from gauntlet.paths import ENTRY_ROOT
+
+from tests.conftest import Invocation
+from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
+from tests.test_forge import HOST_CASES
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORDED = json.loads(
@@ -21,6 +28,352 @@ RECORDED = json.loads(
 )
 SHA = "abc1234"
 FULL = "a" * 40
+
+
+@pytest.mark.usefixtures("poster_state")
+@pytest.mark.parametrize(
+    "mode, flag, dry_run",
+    [
+        pytest.param(None, False, False, id="default-live"),
+        pytest.param("live", False, False, id="env-live"),
+        pytest.param("dry-run", False, True, id="env-dry-run"),
+        pytest.param(None, True, True, id="flag-dry-run"),
+        pytest.param("live", True, True, id="flag-beats-env-live"),
+    ],
+)
+def test_poster_mode_stdout(
+    mode, flag, dry_run, tmp_path, invoke, forge_factory, monkeypatch
+):
+    data = {
+        "platform": "github",
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": FULL,
+        "review_body": "Summary",
+        "findings": [
+            {
+                "file": "foo.py",
+                "line": 2,
+                "severity": "high",
+                "title": "Bug A",
+                "body": "Body A",
+            }
+        ],
+    }
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    fake = forge_factory.configure(
+        FakeForge(
+            diffs=[
+                (
+                    "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -1,1 +1,2 @@\n context\n+added\n",
+                    "",
+                    0,
+                )
+            ]
+        )
+    )
+    if mode is None:
+        monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+    else:
+        monkeypatch.setenv("CODE_GAUNTLET_POST_MODE", mode)
+    monkeypatch.setattr(proc, "run", lambda *a, **k: pytest.fail("Unexpected Git call"))
+    result = invoke(
+        "post_review", [str(path)] + (["--dry-run"] if flag else []), tmp_path
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert forge_factory.calls == ["github"]
+    writes = [call for call in fake.calls if call.method == "submit"]
+    artifact = tmp_path / "post-review-payload.json"
+    if dry_run:
+        assert writes == []
+        assert artifact.exists()
+        payload = json.loads(artifact.read_text(encoding="utf-8"))
+        assert payload["platform"] == "github"
+        assert payload["payload"]["comments"][0]["line"] == 2
+        assert b"captured" in result.stdout
+        assert b"Review posted:" not in result.stdout
+        assert b"inline comment(s) posted." not in result.stdout
+    else:
+        assert len(writes) == 1
+        assert writes[0].request.endpoint == "repos/o/r/pulls/5/reviews"
+        assert writes[0].request.payload["event"] == "COMMENT"
+        assert writes[0].request.payload["comments"][0]["line"] == 2
+        assert not artifact.exists()
+        assert b"Review posted:" in result.stdout
+        assert b"inline comment(s) posted." in result.stdout
+        assert b"captured" not in result.stdout
+    assert fake.calls[0] == ForgeCall("diff", fake.calls[0].target)
+
+
+def _git_result(command, **kwargs):
+    assert command[0] == "git"
+    if command[1] == "rev-parse":
+        return proc.CompletedProcess(
+            command, 0, ("b" * 40 if command[-1] == "HEAD" else command[-1]) + "\n", ""
+        )
+    if command[1:3] in (["cat-file", "-e"], ["merge-base", "--is-ancestor"]):
+        return proc.CompletedProcess(command, 0, "", "")
+    if command[1:3] == ["rev-list", "--count"]:
+        return proc.CompletedProcess(command, 0, "3\n", "")
+    raise AssertionError(f"Unexpected Git call: {command}")
+
+
+@pytest.mark.parametrize("case", ["offline", "unicode-marker", "unicode-read-error"])
+def test_detector_receipt(case, tmp_path, invoke, monkeypatch):
+    path = tmp_path / "caf\u00e9-missing.json"
+    version = "3.0 caf\u00e9 \U0001f41b"
+    unknown_key = "future_\u00e9"
+    payload = {
+        "version": version,
+        "findings_count": 1,
+        "sha": FULL,
+        unknown_key: "ignored",
+    }
+    body = (
+        f"<!-- {marker.MARKER_TOKEN}: {json.dumps(payload)} -->"
+        if case == "unicode-marker"
+        else marker.build_marker(FULL, 1)
+    )
+    if case != "unicode-read-error":
+        path.write_text(
+            json.dumps(
+                [
+                    {
+                        "body": body,
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "source": "review",
+                        "id": 101,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(proc, "run", _git_result)
+    result = invoke(
+        "detect_prior_review",
+        ["--platform", "github", "--bodies-file", str(path)],
+        tmp_path,
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout.isascii()
+    assert result.stdout.endswith(b"\n")
+    text = result.stdout.decode().strip()
+    receipt, end = json.JSONDecoder().raw_decode(text)
+    assert isinstance(receipt, dict)
+    assert end == len(text)
+    if case == "unicode-read-error":
+        assert receipt["previously_reviewed"] is False
+        assert receipt["errors"]
+    else:
+        assert receipt["previously_reviewed"] is True
+        if case == "unicode-marker":
+            assert receipt["marker"]["version"] == version
+            assert receipt["marker"]["unknown_keys"] == [unknown_key]
+
+
+@pytest.mark.parametrize(
+    "argv, code, error",
+    [
+        pytest.param(
+            ["--owner", "o", "--repo", "r", "--number", "5"],
+            2,
+            "the following arguments are required: --platform",
+            id="missing-platform",
+        ),
+        pytest.param(["--platform", "github"], 0, None, id="missing-number"),
+        pytest.param(
+            ["--platform", "github", "--nope", "wat"],
+            2,
+            "unrecognized arguments: --nope wat",
+            id="unknown-flag",
+        ),
+    ],
+)
+def test_detector_usage(argv, code, error, tmp_path, invoke, monkeypatch):
+    monkeypatch.setattr(proc, "run", _git_result)
+    result = invoke("detect_prior_review", argv, tmp_path)
+    assert result.returncode == code
+    if error is not None:
+        assert result.stdout == b""
+        assert result.stderr == f"detect_prior_review: {error}\n".encode()
+    else:
+        receipt = json.loads(result.stdout)
+        assert receipt["previously_reviewed"] is False
+        assert receipt["errors"] == [
+            "usage: --number is required unless --bodies-file is given"
+        ]
+
+
+def test_identity_unicode_receipt(tmp_path, invoke):
+    result = invoke(
+        "resolve_pr_identity",
+        [
+            "--platform",
+            "github",
+            "--url",
+            "https://github.com/OpenAI/codex/pull/278",
+            "--sha",
+            FULL,
+            "--title",
+            "A caf\u00e9 fix",
+        ],
+        tmp_path,
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == (
+        b'{"owner": "OpenAI", "repo": "codex", "pr_number": 278, "sha_full": "'
+        + FULL.encode()
+        + b'", "platform": "github", "web_origin": "https://github.com", "title": "A caf\\u00e9 fix"}\n'
+    )
+
+
+@pytest.mark.parametrize(
+    "url, sha, error",
+    [
+        pytest.param(
+            "https://gitlab.com/a/r/-/merge_requests/3",
+            FULL,
+            "URL path does not match a github PR URL",
+            id="wrong-platform",
+        ),
+        pytest.param(
+            "https://github.com/a/r/pull/" + "9" * 5000,
+            FULL,
+            "PR/MR number must be a positive safe integer",
+            id="overlong-number",
+        ),
+    ],
+)
+def test_identity_data_error(url, sha, error, tmp_path, invoke):
+    result = invoke(
+        "resolve_pr_identity",
+        ["--platform", "github", "--url", url, "--sha", sha],
+        tmp_path,
+    )
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert result.stderr == f"resolve_pr_identity: {error}\n".encode()
+
+
+@pytest.mark.parametrize(
+    "name, argv",
+    [
+        pytest.param("detect_prior_review", ["--platform", "github"], id="detector"),
+        pytest.param(
+            "resolve_pr_identity",
+            [
+                "--platform",
+                "github",
+                "--url",
+                "https://github.com/o/r/pull/5",
+                "--sha",
+                FULL,
+            ],
+            id="identity",
+        ),
+    ],
+)
+def test_converted_serialization_fallback(
+    name: str,
+    argv: list[str],
+    tmp_path: Path,
+    invoke: Callable[[str, list[str], Path], Invocation],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*args: object, **kwargs: object) -> str:
+        raise TypeError("injected serialization failure")
+
+    monkeypatch.setattr(proc, "run", _git_result)
+    monkeypatch.setattr(cli, "dumps", fail)
+    result = invoke(name, argv, tmp_path)
+    assert result.returncode == 1
+    assert (
+        result.stdout == b'{"ok": false, "errors": ["receipt serialization failed"]}\n'
+    )
+    assert result.stderr == b""
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["NaN", "Infinity", "-Infinity", "1e999", "-1e999", "1E999"],
+    ids=[
+        "nan",
+        "positive-infinity",
+        "negative-infinity",
+        "positive-overflow",
+        "negative-overflow",
+        "uppercase-exponent-overflow",
+    ],
+)
+def test_detector_nonfinite_marker_exit_zero(token, tmp_path, invoke, monkeypatch):
+    body = (
+        '<!-- code-gauntlet-findings: {"sha":"'
+        + FULL
+        + '","findings_count":'
+        + token
+        + "} -->"
+    )
+    path = tmp_path / "bodies.json"
+    path.write_text(json.dumps([{"body": body}]), encoding="utf-8")
+    monkeypatch.setattr(proc, "run", _git_result)
+    result = invoke(
+        "detect_prior_review",
+        ["--platform", "github", "--bodies-file", str(path)],
+        tmp_path,
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+
+    def reject_constant(value):
+        raise ValueError(value)
+
+    receipt = json.loads(result.stdout, parse_constant=reject_constant)
+    assert receipt["marker"] is None
+    assert receipt["previously_reviewed"] is False
+    assert receipt["errors"] == []
+    assert (
+        result.stdout != b'{"ok": false, "errors": ["receipt serialization failed"]}\n'
+    )
+
+
+def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
+    real_run = proc.run
+    calls = []
+    child = r"import sys; sys.stdout.buffer.write(b'\xff\xfe' + b'not json')"
+
+    def child_run(command, **kwargs):
+        if command[0] == "git":
+            return _git_result(command, **kwargs)
+        calls.append((command, kwargs))
+        return real_run([sys.executable, "-c", child], **kwargs)
+
+    monkeypatch.setattr(proc, "run", child_run)
+    monkeypatch.setattr(prior_review, "make_forge", lambda platform: GitHub())
+    result = invoke(
+        "detect_prior_review",
+        ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"],
+        tmp_path,
+    )
+    obj, end = json.JSONDecoder().raw_decode(result.stdout.decode().strip())
+    assert result.returncode == 0
+    assert end == len(result.stdout.decode().strip())
+    assert obj["previously_reviewed"] is False
+    assert obj["errors"] == [
+        "github reviews: response was not JSON: \ufffd\ufffdnot json"
+    ]
+    assert calls == [
+        (
+            ["gh", "api", "--paginate", "repos/o/r/pulls/5/reviews"],
+            {"cwd": None, "timeout": 30, "errors": "replace"},
+        )
+    ]
+
+
 PATCH = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 # argv strings split on spaces before placeholders expand, so paths may hold spaces.
 MAIN_FAILURE = {
@@ -207,14 +560,15 @@ def _command_line(name, case, directory):
     }[case]
 
 
-def scenario(name, case, tmp_path):
+def scenario(name, case, tmp_path, *, shell_fixture=False):
     directory = tmp_path / name / case
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "invalid.json").write_text("not json", encoding="utf-8")
     fake_bin = directory / "bin"
     fake_bin.mkdir(exist_ok=True)
-    (fake_bin / "gh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    (fake_bin / "gh").chmod(0o755)
+    if shell_fixture and name == "post_review":
+        (fake_bin / "gh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake_bin / "gh").chmod(0o755)
     if case == "success" and name not in SUCCESS:
         argv = _built_success(name, directory)
     else:
@@ -322,7 +676,8 @@ def _assert_recorded(name, case, returncode, stdout, tmp_path):
 
 
 @pytest.mark.parametrize(("name", "case"), list(rows()))
-def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch):
+def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
+    forge_factory.configure(FakeForge(diffs=[("", "", 0)]))
     if reason := _windows_skip(name, case):
         pytest.skip(reason)
     monkeypatch.setenv("COLUMNS", "100")
@@ -353,7 +708,9 @@ def test_recording_covers_all_entry_files():
 def test_entry_runs_from_foreign_cwd(name, tmp_path):
     if reason := _windows_skip(name, "success"):
         pytest.skip(reason)
-    directory, argv, stdin, fake_bin = scenario(name, "success", tmp_path)
+    directory, argv, stdin, fake_bin = scenario(
+        name, "success", tmp_path, shell_fixture=True
+    )
     env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     env.update(
         PYTHONSAFEPATH="1",
@@ -371,3 +728,195 @@ def test_entry_runs_from_foreign_cwd(name, tmp_path):
         timeout=30,
     )
     _assert_recorded(name, "success", result.returncode, result.stdout, tmp_path)
+
+
+def _gitlab_fake() -> FakeGitLab:
+    return FakeGitLab(
+        diffs=[("", "", 0)],
+        refs=[
+            JsonFetch(
+                [
+                    {
+                        "base_commit_sha": "base",
+                        "head_commit_sha": "head",
+                        "start_commit_sha": "start",
+                    }
+                ],
+                None,
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize("remote, status, expected", HOST_CASES)
+def test_poster_auto_detection(
+    remote, status, expected, tmp_path, invoke, forge_factory, monkeypatch
+):
+    data: dict[str, object] = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": FULL,
+        "findings": [],
+    }
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    platform, host = expected
+    fake = FakeForge(diffs=[("", "", 0)]) if platform == "github" else _gitlab_fake()
+    forge_factory.configure(fake)
+    origins: list[list[str]] = []
+
+    def run(command, **kwargs):
+        assert command == ["git", "remote", "get-url", "origin"]
+        assert kwargs == {"cwd": None, "timeout": None, "errors": "strict"}
+        origins.append(command)
+        return proc.CompletedProcess(command, status, remote, "")
+
+    monkeypatch.setattr(proc, "run", run)
+    monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+    result = invoke("post_review", [str(path), "--dry-run"], tmp_path)
+    assert origins == [["git", "remote", "get-url", "origin"]]
+    artifact = tmp_path / "post-review-payload.json"
+    if platform:
+        assert result.returncode == 0
+        assert result.stderr == b""
+        assert result.stdout.startswith(
+            f"Detected platform: {platform} (from git remote: {host})\n".encode()
+        )
+        assert forge_factory.calls == [platform]
+        assert json.loads(artifact.read_text(encoding="utf-8"))["platform"] == platform
+        assert all(call.method != "submit" for call in fake.calls)
+        assert len([call for call in fake.calls if call.method == "diff"]) == 1
+    else:
+        assert result.returncode == 1
+        assert result.stdout == b""
+        assert result.stderr == (
+            b"ERROR: Could not detect platform from git remote. "
+            b"Set 'platform' field in findings JSON to 'github' or 'gitlab'.\n"
+        )
+        assert forge_factory.calls == []
+        assert fake.calls == []
+        assert not artifact.exists()
+
+
+@pytest.mark.parametrize(
+    "payload_platform, override, selected, origin_reads, error",
+    [
+        pytest.param("gitlab", "github", "github", 0, None, id="cli-beats-payload"),
+        pytest.param("github", None, "github", 0, None, id="payload-github"),
+        pytest.param("gitlab", None, "gitlab", 0, None, id="payload-gitlab"),
+        pytest.param("GiTHuB", None, "github", 0, None, id="mixedcase-github"),
+        pytest.param("GitLab", None, "gitlab", 0, None, id="mixedcase-gitlab"),
+        pytest.param("BitBucket", None, None, 0, "bitbucket", id="invalid-payload"),
+        pytest.param("github", "BiTBucket", None, 0, "bitbucket", id="invalid-cli"),
+        pytest.param("", None, None, 1, "unknown", id="empty-payload"),
+        pytest.param(None, None, None, 1, "unknown", id="null-payload"),
+        pytest.param("github", "", None, 1, "unknown", id="empty-cli"),
+        pytest.param(7, None, None, 0, "nonstring", id="truthy-nonstring"),
+    ],
+)
+@pytest.mark.parametrize(
+    "remote",
+    ["git@gitlab.internal.company.com:o/r", "https://[::1]:8443/o/r"],
+    ids=["private-gitlab", "ipv6"],
+)
+def test_explicit_platform(
+    payload_platform,
+    override,
+    selected,
+    origin_reads,
+    error,
+    remote,
+    tmp_path,
+    invoke,
+    forge_factory,
+    monkeypatch,
+):
+    data: dict[str, object] = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": FULL,
+        "findings": [],
+        "platform": payload_platform,
+    }
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    github = forge_factory.configure(FakeForge(diffs=[("", "", 0)]))
+    gitlab = forge_factory.configure(_gitlab_fake())
+    origins: list[list[str]] = []
+
+    def run(command, **kwargs):
+        assert command == ["git", "remote", "get-url", "origin"]
+        origins.append(command)
+        return proc.CompletedProcess(command, 0, remote, "")
+
+    monkeypatch.setattr(proc, "run", run)
+    monkeypatch.setenv("GH_HOST", "github.com")
+    monkeypatch.setenv("GITLAB_HOST", "gitlab.com")
+    result = invoke(
+        "post_review",
+        [str(path), "--dry-run"]
+        + (["--platform", override] if override is not None else []),
+        tmp_path,
+    )
+    assert len(origins) == origin_reads
+    assert forge_factory.calls == ([selected] if selected else [])
+    if selected:
+        assert result.returncode == 0
+        assert result.stderr == b""
+        assert b"Detected platform:" not in result.stdout
+        assert (
+            json.loads(
+                (tmp_path / "post-review-payload.json").read_text(encoding="utf-8")
+            )["platform"]
+            == selected
+        )
+        fake = github if selected == "github" else gitlab
+        assert len([call for call in fake.calls if call.method == "diff"]) == 1
+    else:
+        assert result.returncode == 1
+        assert result.stdout == b""
+        if error == "unknown":
+            assert result.stderr == (
+                b"ERROR: Could not detect platform from git remote. "
+                b"Set 'platform' field in findings JSON to 'github' or 'gitlab'.\n"
+            )
+        elif error == "nonstring":
+            assert (
+                result.stderr
+                == b"AttributeError: 'int' object has no attribute 'lower'\n"
+            )
+        else:
+            assert (
+                result.stderr
+                == f"ERROR: Unsupported platform: '{error}'. Use 'github' or 'gitlab'.\n".encode()
+            )
+        assert github.calls == [] and gitlab.calls == []
+
+
+@pytest.mark.parametrize("outcome", ["missing-git", "nonutf8", "timeout"])
+def test_poster_implicit_origin_exceptions(
+    outcome, tmp_path, forge_factory, monkeypatch
+):
+    from gauntlet.delivery import post
+
+    data: dict[str, object] = {"owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    failures: dict[str, Exception] = {
+        "missing-git": FileNotFoundError("missing git"),
+        "nonutf8": UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
+        "timeout": proc.TimeoutExpired(["git"], None),
+    }
+
+    def run(command, **kwargs):
+        assert command == ["git", "remote", "get-url", "origin"]
+        assert kwargs == {"cwd": None, "timeout": None, "errors": "strict"}
+        raise failures[outcome]
+
+    monkeypatch.setattr(proc, "run", run)
+    monkeypatch.setattr(sys, "argv", ["post_review.py", str(path)])
+    with pytest.raises(type(failures[outcome])):
+        post.main()
+    assert forge_factory.calls == []

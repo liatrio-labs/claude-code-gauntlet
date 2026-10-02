@@ -33,16 +33,26 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
+from gauntlet import proc
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import gauntlet.delivery.post as post_review  # noqa: E402
+from gauntlet.forge import (  # noqa: E402
+    JsonFetch,
+    ReviewTarget,
+    github_review_request,
+    gitlab_discussion_request,
+    gitlab_note_request,
+)
 
 from bench.adapter.adapt import merge_candidates, payload_to_candidates  # noqa: E402
+from tests.support.forge import FakeForge, FakeGitLab  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "adapter"
 
@@ -368,16 +378,10 @@ def build_reference_github_payload(
         inline_count=len(comments),
     ).body
     payload = {"body": body, "event": "COMMENT", "comments": comments}
-    cmd_prefix = [
-        "gh",
-        "api",
-        "--method",
-        "POST",
-        "-H",
-        "Accept: application/vnd.github+json",
-        f"repos/{owner}/{repo}/pulls/{pr_number}/reviews",
-    ]
-    post_review.post_json(cmd_prefix, payload)
+    post_review.post_json(
+        github_review_request(ReviewTarget(owner, repo, pr_number), payload),
+        forge=FakeForge(),
+    )
     for w in skip_warnings:
         post_review._SKIP_WARNINGS.append(w)
     out = post_review.build_dry_run_payload("github")
@@ -498,6 +502,7 @@ def build_reference_gitlab_payload(
     was always fully anchorable — so this builder never grew that parameter.
     """
     _reset_post_review()
+    owner, _, repo = project.rpartition("/")
     post_review.DRY_RUN = True
     skipped_groups = []  # singleton groups; this mirror models no consolidation
     remaining = []  # findings that reach the inline discussion loop
@@ -516,35 +521,29 @@ def build_reference_gitlab_payload(
         findings_count=total,
         sha=_GH_SHA,
     ).body
-    notes_cmd = [
-        "glab",
-        "api",
-        "--method",
-        "POST",
-        f"projects/{project}/merge_requests/{mr_iid}/notes",
-    ]
-    post_review.post_json(notes_cmd, {"body": body})
-    disc_cmd = [
-        "glab",
-        "api",
-        "--method",
-        "POST",
-        f"projects/{project}/merge_requests/{mr_iid}/discussions",
-    ]
+    post_review.post_json(
+        gitlab_note_request(ReviewTarget(owner, repo, mr_iid), {"body": body}),
+        forge=FakeGitLab(),
+    )
     losers = _gitlab_overlap_losers(remaining, valid_lines, line_texts)
     for index, f in enumerate(remaining):
         post_review.post_json(
-            disc_cmd,
-            _gitlab_discussion(
-                f,
-                new_files=new_files,
-                valid_lines=valid_lines,
-                line_texts=line_texts,
-                sha=sha,
-                demote_reason=(
-                    post_review._FIX_OVERLAPS_KEPT_FENCE if index in losers else None
+            gitlab_discussion_request(
+                ReviewTarget(owner, repo, mr_iid),
+                _gitlab_discussion(
+                    f,
+                    new_files=new_files,
+                    valid_lines=valid_lines,
+                    line_texts=line_texts,
+                    sha=sha,
+                    demote_reason=(
+                        post_review._FIX_OVERLAPS_KEPT_FENCE
+                        if index in losers
+                        else None
+                    ),
                 ),
             ),
+            forge=FakeGitLab(),
         )
     out = post_review.build_dry_run_payload("gitlab")
     _reset_post_review()
@@ -566,34 +565,9 @@ def _load_fixture(path):
 # ---------------------------------------------------------------------------
 
 
-def _fake_proc_run(diff, versions=None):
-    """Fail on unmodeled calls so a missing diff oracle cannot pass silently."""
-
-    def _run(cmd, *args, **kwargs):
-        def res(out=""):
-            return SimpleNamespace(stdout=out, stderr="", returncode=0)
-
-        if cmd[:3] == ["gh", "pr", "diff"] or cmd[:3] == ["glab", "mr", "diff"]:
-            return res(out=diff)
-        if cmd[:2] == ["glab", "api"] and cmd[-1].endswith("/versions"):
-            return res(out=json.dumps(versions if versions is not None else []))
-        if cmd[:3] == ["git", "remote", "get-url"]:
-            return res(out="git@github.com:o/r.git\n")
-        if cmd[:2] == ["git", "rev-parse"]:
-            return res(out="deadbeefcafe\n")
-        raise AssertionError(f"unmodeled subprocess call in fixture driver: {cmd!r}")
-
-    return _run
-
-
+@pytest.mark.usefixtures("forge_factory")
 class _RealPosterTestCase(unittest.TestCase):
-    """Drives the REAL ``post_review.main()`` over a tempdir findings file.
-
-    A ``SystemExit`` from inside ``main()`` (e.g. a ``die()``) must still run
-    cleanup, so the tempdir removal and the module-state reset are both
-    registered with ``addCleanup`` rather than left to a plain ``tearDown``
-    a raised exception could skip.
-    """
+    """Reset module state even when the real poster exits during delivery."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -601,6 +575,16 @@ class _RealPosterTestCase(unittest.TestCase):
         self.addCleanup(_reset_post_review)
 
     def _run_main(self, findings_data, diff, versions=None):
+        platform = findings_data["platform"]
+        fake = (
+            FakeForge(diffs=[(diff, "", 0)])
+            if platform == "github"
+            else FakeGitLab(
+                diffs=[(diff, "", 0)],
+                refs=[JsonFetch(versions if versions is not None else [], None)],
+            )
+        )
+        self.forge_factory.configure(fake)
         findings_path = os.path.join(self.tmp, "findings.json")
         with open(findings_path, "w", encoding="utf-8") as f:
             json.dump(findings_data, f)
@@ -609,12 +593,8 @@ class _RealPosterTestCase(unittest.TestCase):
         with (
             patch.object(sys, "argv", argv),
             patch(
-                "gauntlet.delivery.post.proc.run",
-                side_effect=_fake_proc_run(diff, versions=versions),
-            ),
-            patch(
-                "gauntlet.delivery.post.proc.which",
-                side_effect=lambda name: f"/usr/bin/{name}",
+                "gauntlet.proc.run",
+                side_effect=_git_run,
             ),
         ):
             try:
@@ -625,9 +605,17 @@ class _RealPosterTestCase(unittest.TestCase):
         # reports failure while still emitting an unchanged payload must not
         # pass silently here.
         self.assertFalse(exit_code, f"post_review.main() exited with {exit_code!r}")
+        self.assertEqual(self.forge_factory.calls, [platform])
+        self.assertFalse(any(call.method == "submit" for call in fake.calls))
         payload_path = os.path.join(self.tmp, "post-review-payload.json")
         with open(payload_path, encoding="utf-8") as f:
             return json.load(f)
+
+
+def _git_run(command, **kwargs):
+    if command == ["git", "rev-parse", "HEAD"]:
+        return proc.CompletedProcess(command, 0, "deadbeefcafe\n", "")
+    raise AssertionError(f"Unexpected Git call: {command}")
 
 
 # One file, one context line and four added lines — a single-line finding

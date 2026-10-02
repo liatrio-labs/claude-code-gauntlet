@@ -9,13 +9,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ISSUE = re.compile(r"(?:\bissue\s*#?\d+|#\d+)", re.IGNORECASE)
 
-# These bodies moved unchanged; each mechanism slice removes its own entry.
+# Exact violation matching prevents completed cleanup from staying exempt.
 MIGRATING_PYTHON = {
     "artifacts.py",
     "awaiting.py",
     "style.py",
     "project_rules.py",
-    "prior_review.py",
     "numstat.py",
     "stale.py",
     "shared_context.py",
@@ -23,12 +22,10 @@ MIGRATING_PYTHON = {
     "style_hook.py",
     "output_dir.py",
     "contract_gen.py",
-    "marker.py",
     "materialize.py",
     "delivery/post.py",
     "fix_tasks.py",
     "config.py",
-    "pr_identity.py",
     "agent_rules.py",
     "text.py",
     "verify/decide.py",

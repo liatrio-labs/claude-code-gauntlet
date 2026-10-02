@@ -55,8 +55,28 @@ def test_dumps_utf8_bytes(value, expected):
     assert dumps(value, ascii=False).encode("utf-8") == expected
 
 
-def test_dumps_compact_separators_and_ascii_escaping():
-    assert dumps({"café": [1, 2]}, compact=True).encode() == b'{"caf\\u00e9":[1,2]}'
+@pytest.mark.parametrize(
+    "options, expected",
+    [
+        pytest.param({}, b'{"caf\\u00e9": [1, 2]}', id="default"),
+        pytest.param({"compact": True}, b'{"caf\\u00e9":[1,2]}', id="compact"),
+        pytest.param(
+            {"indent": 2}, b'{\n  "caf\\u00e9": [\n    1,\n    2\n  ]\n}', id="indented"
+        ),
+        pytest.param(
+            {"compact": True, "indent": 2},
+            b'{\n  "caf\\u00e9":[\n    1,\n    2\n  ]\n}',
+            id="compact-indented",
+        ),
+        pytest.param(
+            {"ascii": False, "indent": 2},
+            b'{\n  "caf\xc3\xa9": [\n    1,\n    2\n  ]\n}',
+            id="utf8-indented",
+        ),
+    ],
+)
+def test_dumps_format(options, expected):
+    assert dumps({"caf\u00e9": [1, 2]}, **options).encode("utf-8") == expected
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
