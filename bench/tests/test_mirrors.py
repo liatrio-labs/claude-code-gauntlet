@@ -7,20 +7,12 @@ No network anywhere: a local bare repo stands in for the GitHub remote, with a
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-# Import the module under test via the intended package path. `python -m pytest`
-# from the repo root puts the root on sys.path; make that explicit so the test
-# imports the same way regardless of how pytest is invoked.
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from bench.runner import mirrors  # noqa: E402
-from bench.runner.mirrors import (  # noqa: E402
+from bench.runner import mirrors
+from bench.runner.mirrors import (
     DriftError,
     ensure_mirror,
     make_worktree,

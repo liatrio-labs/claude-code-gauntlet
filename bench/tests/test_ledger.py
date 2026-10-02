@@ -14,20 +14,11 @@ Covers the append-only ledger (spec H8):
 
 import json
 import os
-import sys
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-# Import via the intended package path, as every other bench test does: ledger.py is the
-# canonical home of the auth-mode vocabulary its siblings import, so it must not also be
-# reachable as a second, separately-initialised ``runner.ledger`` module.
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from bench.runner.ledger import (  # noqa: E402
+from bench.runner.ledger import (
     API_AUTH_MODE,
     AUTH_MODES,
     DEFAULT_AUTH_MODE,

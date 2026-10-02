@@ -1,18 +1,14 @@
 """Contract: headless-mode.md Headless config echo includes identity receipts."""
 
 import re
-import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bench.runner import invoke
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HEADLESS = REPO_ROOT / "skills" / "code-gauntlet" / "references" / "headless-mode.md"
-
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from bench.runner import invoke  # noqa: E402
 
 DOC_ECHO_VALUES = {
     **invoke.EXPECTED_ECHO,

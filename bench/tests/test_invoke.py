@@ -12,21 +12,17 @@ import os
 import shutil
 import stat
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import patch
 
-# Import via the intended package path regardless of how pytest is invoked.
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from bench.runner import invoke
+from bench.runner.costs import parse_costs
+from bench.runner.invoke import InvokeResult, build_env, invoke_review
 
-from bench.runner import invoke  # noqa: E402
-from bench.runner.costs import parse_costs  # noqa: E402
-from bench.runner.invoke import InvokeResult, build_env, invoke_review  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 FAKE = Path(__file__).resolve().parent / "fakes" / "fake_claude.py"
 BUNDLE_BYTES = (REPO_ROOT / "workflows" / "pipeline.js").read_bytes()

@@ -8,7 +8,6 @@ evaluations fixture, and one fully wired ``score_run`` over a fabricated run dir
 """
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,16 +15,12 @@ from types import SimpleNamespace
 from typing import ClassVar
 from unittest import mock
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from bench.runner import (  # noqa: E402
+from bench.runner import (
     ledger,
     score,
 )
-from bench.runner.ledger import REQUIRED_KEYS  # noqa: E402
-from bench.runner.score import (  # noqa: E402
+from bench.runner.ledger import REQUIRED_KEYS
+from bench.runner.score import (
     bucket_join,
     compute_metrics,
     resolve_judge_pin,

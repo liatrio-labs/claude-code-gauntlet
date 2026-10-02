@@ -463,6 +463,17 @@ def test_events(diff_text: str, expected: list[DiffEvent]) -> None:
             ],
             id="markers-on-both-sides-before-next-hunk",
         ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n+last\n\\ No newline at end of file\n\\ second\n",
+            [
+                (
+                    "b/f.py",
+                    HunkEvent(1, 1, 1, 1),
+                    "@@ -1 +1 @@\n+last\n\\ No newline at end of file\n",
+                )
+            ],
+            id="one-marker-look-ahead",
+        ),
     ],
 )
 def test_raw_hunks(

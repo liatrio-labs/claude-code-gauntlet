@@ -7,24 +7,20 @@ plumbing spot-check that makes API spend lives outside the test suite.
 """
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from bench.runner import anchors, score  # noqa: E402
-from bench.runner.anchors import (  # noqa: E402
+from bench.runner import anchors, score
+from bench.runner.anchors import (
     ANCHOR_TOOLS,
     rejudge_anchors,
     spot_check,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 ANCHORS_FILE = REPO_ROOT / "bench" / "golden" / "anchors" / "candidates.json"
 SUBSETS_FILE = REPO_ROOT / "bench" / "golden" / "subsets.json"
 

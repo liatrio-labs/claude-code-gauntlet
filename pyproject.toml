@@ -35,7 +35,7 @@ target-version = "py310"
 extend-exclude = ["bench/vendor", "bench/workspace"]
 
 [tool.pytest.ini_options]
-pythonpath = ["scripts"]
+pythonpath = ["scripts", "."]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "BLE", "RUF", "TID251"]
@@ -60,13 +60,6 @@ no_implicit_optional = true
 explicit_package_bases = true
 mypy_path = "scripts"
 exclude = "(?x)(^(bench/vendor|bench/workspace)/)"
-
-[[tool.mypy.overrides]]
-module = [
-  "profile_run",
-  "runner.*",
-]
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [

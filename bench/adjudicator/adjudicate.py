@@ -8,11 +8,8 @@ sits behind ``_transport`` so tests never touch the wire.
 
 import json
 import re
-import sys
 import urllib.request
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from gauntlet.diff import RawHunk, raw_hunks
 

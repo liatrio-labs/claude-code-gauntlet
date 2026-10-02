@@ -35,18 +35,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import gauntlet.delivery.post as post_review
 import pytest
 from gauntlet import diff as diff_api
 from gauntlet import proc
-
-from tests.support.diff import diff_facts
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-import gauntlet.delivery.post as post_review  # noqa: E402
-from gauntlet.forge import (  # noqa: E402
+from gauntlet.forge import (
     JsonFetch,
     ReviewTarget,
     github_review_request,
@@ -54,8 +47,9 @@ from gauntlet.forge import (  # noqa: E402
     gitlab_note_request,
 )
 
-from bench.adapter.adapt import merge_candidates, payload_to_candidates  # noqa: E402
-from tests.support.forge import FakeForge, FakeGitLab  # noqa: E402
+from bench.adapter.adapt import merge_candidates, payload_to_candidates
+from tests.support.diff import diff_facts
+from tests.support.forge import FakeForge, FakeGitLab
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "adapter"
 
