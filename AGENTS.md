@@ -63,7 +63,7 @@ repo tree (an in-tree data file trips the bench plugin-mutation guard):
 
 ```bash
 COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
-  --cov=scripts --cov=.github --cov-fail-under=93.7
+  --cov=scripts --cov=.github --cov-fail-under=94.3
 
 COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
   --cov=bench --cov-fail-under=88.5
@@ -80,7 +80,7 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
   && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
 ```
 
-Floors: Python 93.7 / 88.5, JS 98.2 / 90.7 / 97.9, each pinned from a PR's CI measurement;
+Floors: Python 94.3 / 88.5, JS 98.2 / 90.7 / 97.9, each pinned from a PR's CI measurement;
 the ratchet history is in git. Policy: a floor sits no more than 1.0 pp below the CI
 measurement for that gate; lower a floor only in the PR that causes the drop, with
 the reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
