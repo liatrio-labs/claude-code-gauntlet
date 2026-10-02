@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.42.18 (2026-10-02)
+
+### Bug Fixes
+
+- Match forge hosts exactly and put GitHub and GitLab access behind one Forge interface (#411, #431)
+  ([#449](https://github.com/liatrio-labs/claude-code-gauntlet/pull/449),
+  [`d84bf59`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d84bf59c9084dbdae6b231441e0accbfa6103608))
+
+
 ## v3.42.17 (2026-10-01)
 
 ### Bug Fixes
