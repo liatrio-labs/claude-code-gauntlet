@@ -725,7 +725,8 @@ def input_sha256(text: str) -> str:
 def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     """Compose deterministic complete GitLab bodies through delivery composers."""
     import gauntlet.delivery.post as post_review
-    from gauntlet.diff import DiffFacts
+
+    from tests.support.diff import diff_facts
 
     sha = "a" * 40
     keys = ("0123456789abcdef", "fedcba9876543210")
@@ -779,7 +780,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     )
     valid_lines = {("src/probe.py", line): None for line in range(1, 4)}
     line_texts = {("src/probe.py", line): f"old line {line}" for line in range(1, 4)}
-    facts = DiffFacts(valid_lines, frozenset(), {}, line_texts)
+    facts = diff_facts(valid_lines, line_texts=line_texts)
     patch_range, patch_offsets, cap_exceeded = post_review._gitlab_apply_range(
         patch_finding, 1
     )
@@ -1690,6 +1691,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    # The composed-case builder imports gauntlet.delivery.post from scripts/.
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    # The composed-case builder needs delivery and its shared test input builder.
+    repo_root = Path(__file__).resolve().parents[2]
+    sys.path[:0] = [str(repo_root / "scripts"), str(repo_root)]
     raise SystemExit(main())

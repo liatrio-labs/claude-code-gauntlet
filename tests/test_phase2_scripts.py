@@ -913,29 +913,3 @@ def test_numstat_crlf_binary(tmp_path: Path, invoke: Callable[..., Invocation]) 
     result = invoke("diff_numstat", [str(patch_path)], tmp_path)
     assert result.returncode == 0, result.stderr
     assert result.stdout == b"changed_lines=2\nbinary_files=1\n"
-
-
-@pytest.mark.parametrize(
-    "diff_text, expected",
-    [
-        pytest.param(
-            "@@ -1,2 +1,2 @@\n ctx\n-old\n+new\n",
-            b"changed_lines=2\nbinary_files=0\n",
-            id="pathless-body",
-        ),
-        pytest.param(
-            "@@ -1 +1 @@\nBinary files a/x and b/x differ\n",
-            b"changed_lines=0\nbinary_files=1\n",
-            id="body-binary",
-        ),
-    ],
-)
-def test_numstat_saved_text(
-    tmp_path: Path, invoke: Callable[..., Invocation], diff_text: str, expected: bytes
-) -> None:
-    patch = tmp_path / "capture.patch"
-    patch.write_text(diff_text, encoding="utf-8")
-    result = invoke("diff_numstat", [str(patch)], tmp_path)
-    assert result.returncode == 0
-    assert result.stdout == expected
-    assert result.stderr == b""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, cast
 
 
@@ -20,7 +20,6 @@ class HunkEvent:
     new_line: int
     old_count: int
     new_count: int
-    kind: Literal["hunk"] = field(default="hunk", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +27,6 @@ class LineEvent:
     old_line: int | None
     new_line: int | None
     text: str
-    kind: Literal["line"] = field(default="line", init=False)
 
 
 DiffEvent = HeaderEvent | HunkEvent | LineEvent
@@ -58,7 +56,11 @@ _NEW_HEADER_RE = re.compile(r"^\+\+\+ (.+)$")
 _GIT_HEADER_PREFIX = "diff --git "
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _DIFF_PREFIX_RE = re.compile(r"^[ab]/")
-# Only the first line identifies the producer; noprefix/mnemonic output stays plain.
+# Match default a/ because git-prefixed strips that prefix; mnemonic prefixes
+# deliberately fail closed rather than strip the wrong component. The quote
+# admits a C-quoted first file. First-line anchoring prevents bare body markers
+# from changing keying. Reports key git-shaped captures git-style; live GitLab
+# instead requires per-block proof, so quoted or mismatched pairs can differ.
 _GIT_SHAPED_RE = re.compile(r'\Adiff --git "?a/')
 
 # C quoting encodes bytes, with letter escapes or one to three octal digits.
@@ -78,9 +80,12 @@ _OCTAL_DIGITS = range(0x30, 0x38)
 
 
 def _decode_header_path(field: str) -> str:
-    """Undo git's TAB terminator and byte-wise C quoting.
+    """Undo git's TAB terminator for spaces and byte-wise C quoting.
 
-    Literal TAB and quote-wrapped glab names retain the decoder's ambiguity.
+    Git quotes the whole field outside its prefix for controls, quotes,
+    backslashes and, unless core.quotePath=false, non-ASCII bytes.
+    Literal TAB or quote-wrapped glab names are mis-read, an accepted limitation
+    that demotes findings on those names to summary-only.
     Malformed fields pass through verbatim to keep the walk lossless.
     """
     path = field.split("\t", 1)[0]
@@ -200,7 +205,9 @@ def _strip_ab_prefix(path: str) -> str:
 
 
 def _verify_both_spellings(path: str) -> tuple[str, ...]:
-    # Verify accepts the raw path and exactly one stripped alias, without git proof.
+    # Headers cannot distinguish a synthetic prefix from a real a/ or b/ directory.
+    # Membership-only use permits the union without losing either spelling;
+    # the accepted cost is a literal b/x finding cross-matching a diff touching x.
     stripped = _strip_ab_prefix(path)
     return (path,) if stripped == path else (path, stripped)
 
@@ -361,6 +368,8 @@ def valid_lines_for_file(facts: DiffFacts | None, path: str) -> list[int] | None
 
 
 def range_is_valid(facts: DiffFacts | None, path: str, start: int, end: int) -> bool:
+    # A contiguous run of valid lines implies the single hunk GitHub requires
+    # for a multi-line comment.
     # Short-circuit on a miss so a bogus huge end does not force a huge scan.
     return facts is None or all(
         is_line_valid(facts, path, line) for line in range(start, end + 1)

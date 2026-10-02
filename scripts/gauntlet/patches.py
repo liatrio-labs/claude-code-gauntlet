@@ -341,7 +341,8 @@ def main(argv=None):
         diff_text = None
 
     if diff_text is not None and not diff_text.strip():
-        # An empty capture must take the same disclosed, fail-closed path as a
+        # Phase 2 documents a zero-byte capture as diff-producer failure, so an
+        # empty capture must take the same disclosed, fail-closed path as a
         # missing file — parsing it as an empty-but-present diff would key
         # nothing and downgrade every candidate as `range_not_in_diff`
         # instead of the honest `no_diff_oracle`.

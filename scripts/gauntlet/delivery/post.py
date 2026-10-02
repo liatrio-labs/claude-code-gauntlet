@@ -786,6 +786,11 @@ def _leading_whitespace_charset(lines):
 def _suggested_fix_gate(finding, *, apply_range, facts: DiffFacts | None, path_lookup):
     """Check a fence at the render site's actual apply range.
 
+    Keep this pure (no I/O) so dry-run, live delivery and the patch report agree.
+    apply_range=None means a site where a fence cannot apply, such as a
+    position-less note or degraded body section. A failure reason is always
+    a member of _FIX_REASONS.
+
     First failure wins. Unknown diffs permit anchors, but a one-click patch
     fails closed because a misplaced fence corrupts the file. The prose
     suggestion still carries the fix. Raw path collisions fail closed before

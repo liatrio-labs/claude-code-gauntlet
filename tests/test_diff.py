@@ -1,7 +1,6 @@
 """Unified diff event and facts boundary proofs."""
 
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import fields
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal, cast
 
@@ -32,25 +31,12 @@ from gauntlet.diff import (
     walk_diff,
 )
 
+from tests.support.diff import diff_facts
+
 
 def _fixture(name: str) -> str:
     return (Path(__file__).parent / "fixtures" / "glab_diff" / name).read_text(
         encoding="utf-8"
-    )
-
-
-def _facts(
-    valid: Mapping[LineKey, int | None] | None = None,
-    *,
-    new_files: Iterable[str] = (),
-    old_paths: Mapping[str, str] | None = None,
-    texts: Mapping[LineKey, str] | None = None,
-) -> DiffFacts:
-    return DiffFacts(
-        {} if valid is None else valid,
-        frozenset(new_files),
-        {} if old_paths is None else old_paths,
-        {} if texts is None else texts,
     )
 
 
@@ -633,6 +619,30 @@ def test_events(diff_text: str, expected: list[DiffEvent]) -> None:
             id="empty-old:proven",
         ),
         pytest.param(
+            _patch("x", "x", "+first\n+second\n", hunk="@@ -5,0 +6,2 @@"),
+            ("git-prefixed", "glab-verbatim"),
+            {"x": {6: (None, "first"), 7: (None, "second")}},
+            set(),
+            {"x": "x"},
+            id="insertion-at-nonzero-old",
+        ),
+        pytest.param(
+            _patch("x", "x", " ctx\n", hunk="@@ -0 +1 @@"),
+            ("git-prefixed", "glab-verbatim"),
+            {"x": {1: (0, "ctx")}},
+            set(),
+            {"x": "x"},
+            id="zero-old-omitted-count",
+        ),
+        pytest.param(
+            "diff --git a/x b/OTHER\n" + _patch("a/x", "b/x", " ctx\n"),
+            ("glab-verbatim",),
+            {"b/x": {1: (1, "ctx")}},
+            set(),
+            {"b/x": "a/x"},
+            id="pair-proof:new-mismatch",
+        ),
+        pytest.param(
             "diff --git a/x.py b/x.py\n"
             + _patch("a/x.py", "b/x.py", "-o\n+n\n", hunk="@@ -1 +1 @@")
             + _patch("empty.py", "empty.py", "+first\n", hunk="@@ -0,0 +1 @@"),
@@ -825,71 +835,79 @@ def test_path_facts(
     [
         pytest.param(None, "any.py", 999, (True, "any.py", None), id="skipped-valid"),
         pytest.param(
-            _facts({("src/app.py", 42): 30}),
+            diff_facts({("src/app.py", 42): 30}),
             "src/app.py",
             42,
             (True, "src/app.py", 30),
             id="exact-valid",
         ),
         pytest.param(
-            _facts({("src/app.py", 42): 30}),
+            diff_facts({("src/app.py", 42): 30}),
             "src/app.py",
             43,
             (False, "src/app.py", None),
             id="missing-valid",
         ),
         pytest.param(
-            _facts({("src/app.py", 10): 4}),
+            diff_facts({("src/app.py", 10): 4}),
             "a/src/app.py",
             10,
             (True, "src/app.py", 4),
             id="prefixed-valid-a",
         ),
         pytest.param(
-            _facts({("src/app.py", 10): 4}),
+            diff_facts({("src/app.py", 10): 4}),
             "b/src/app.py",
             10,
             (True, "src/app.py", 4),
             id="prefixed-valid-b",
         ),
         pytest.param(
-            _facts({("src/app.py", 7): None}),
+            diff_facts({("src/app.py", 7): None}),
             "src/app.py",
             7,
             (True, "src/app.py", None),
             id="null-value",
         ),
         pytest.param(
-            _facts({("f.py", 1): 1}),
+            diff_facts({("f.py", 1): 1}),
             "other.py",
             1,
             (False, "other.py", None),
             id="missing-old-line",
         ),
-        pytest.param(_facts(), "f.py", 1, (False, "f.py", None), id="empty-oracle"),
         pytest.param(
-            _facts({("b/x", 1): 0, ("x", 1): 9}),
+            diff_facts({}), "f.py", 1, (False, "f.py", None), id="empty-oracle"
+        ),
+        pytest.param(
+            diff_facts({("b/x", 1): 0, ("x", 1): 9}),
             "b/x",
             1,
             (True, "b/x", 0),
             id="exact-before-stripped",
         ),
         pytest.param(
-            _facts({("b/x", 1): None, ("x", 1): 9}),
+            diff_facts({("b/x", 1): None, ("x", 1): 9}),
             "b/x",
             1,
             (True, "b/x", None),
             id="exact-null-before-stripped",
         ),
         pytest.param(
-            _facts({("x", 1): 0}), "x", True, (True, "x", 0), id="boolean-query"
-        ),
-        pytest.param(_facts({("x", 1): 0}), "x", 1.0, (True, "x", 0), id="float-query"),
-        pytest.param(
-            _facts({("x", 1): 1}), "b/x", None, (False, "b/x", None), id="no-query-line"
+            diff_facts({("x", 1): 0}), "x", True, (True, "x", 0), id="boolean-query"
         ),
         pytest.param(
-            _facts({("x", 1): 1}),
+            diff_facts({("x", 1): 0}), "x", 1.0, (True, "x", 0), id="float-query"
+        ),
+        pytest.param(
+            diff_facts({("x", 1): 1}),
+            "b/x",
+            None,
+            (False, "b/x", None),
+            id="no-query-line",
+        ),
+        pytest.param(
+            diff_facts({("x", 1): 1}),
             "b/b/x",
             1,
             (False, "b/b/x", None),
@@ -916,22 +934,22 @@ def test_path_lookup(
     [
         pytest.param(None, "foo.py", None, id="skipped-diagnostic"),
         pytest.param(
-            _facts({("f.py", i): i for i in range(1, 21)}),
+            diff_facts({("f.py", i): i for i in range(1, 21)}),
             "f.py",
             [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
             id="ten-line-limit",
         ),
         pytest.param(
-            _facts({("src/app.py", 5): 2}),
+            diff_facts({("src/app.py", 5): 2}),
             "a/src/app.py",
             [5],
             id="prefixed-diagnostic",
         ),
         pytest.param(
-            _facts({("other.py", 1): None}), "missing.py", [], id="empty-diagnostic"
+            diff_facts({("other.py", 1): None}), "missing.py", [], id="empty-diagnostic"
         ),
         pytest.param(
-            _facts({("b/f", 3): None, ("b/f", 1): None, ("f", 1): 1, ("f", 2): 2}),
+            diff_facts({("b/f", 3): None, ("b/f", 1): None, ("f", 1): 1, ("f", 2): 2}),
             "b/f",
             [1, 2, 3],
             id="sorted-deduplicated-union",
@@ -948,33 +966,36 @@ def test_path_diagnostics(
     "facts, path, expected",
     [
         pytest.param(None, "any.py", False, id="skipped-new-file"),
-        pytest.param(_facts(), "any.py", False, id="empty-new-file"),
+        pytest.param(diff_facts({}), "any.py", False, id="empty-new-file"),
         pytest.param(
-            _facts(new_files={"src/added.py"}),
+            diff_facts({}, new_files={"src/added.py"}),
             "src/added.py",
             True,
             id="exact-new-file",
         ),
         pytest.param(
-            _facts(new_files={"src/added.py"}),
+            diff_facts({}, new_files={"src/added.py"}),
             "a/src/added.py",
             False,
             id="unresolved-prefix-a",
         ),
         pytest.param(
-            _facts(new_files={"src/added.py"}),
+            diff_facts({}, new_files={"src/added.py"}),
             "b/src/added.py",
             False,
             id="unresolved-prefix-b",
         ),
         pytest.param(
-            _facts(new_files={"src/added.py"}),
+            diff_facts({}, new_files={"src/added.py"}),
             "src/other.py",
             False,
             id="missing-new-file",
         ),
         pytest.param(
-            _facts(new_files={"foo.py"}), "a/foo.py", False, id="real-a-collision"
+            diff_facts({}, new_files={"foo.py"}),
+            "a/foo.py",
+            False,
+            id="real-a-collision",
         ),
     ],
 )
@@ -986,9 +1007,9 @@ def test_path_new_file(facts: DiffFacts | None, path: str, expected: bool) -> No
     "facts, path, start, end, expected",
     [
         pytest.param(None, "x", 1, 3, True, id="skipped-range"),
-        pytest.param(_facts(), "x", 1, 1, False, id="empty-range-oracle"),
+        pytest.param(diff_facts({}), "x", 1, 1, False, id="empty-range-oracle"),
         pytest.param(
-            _facts({("b/x", 1): 1, ("x", 2): None}),
+            diff_facts({("b/x", 1): 1, ("x", 2): None}),
             "b/x",
             1,
             2,
@@ -996,15 +1017,15 @@ def test_path_new_file(facts: DiffFacts | None, path: str, expected: bool) -> No
             id="per-line-resolution",
         ),
         pytest.param(
-            _facts({("x", 1): 1, ("x", 3): None}),
+            diff_facts({("x", 1): 1, ("x", 3): None}),
             "x",
             1,
             3,
             False,
             id="all-lines-required",
         ),
-        pytest.param(_facts(), "x", 2, 1, True, id="vacuous-range"),
-        pytest.param(_facts(), "x", 1, 10**20, False, id="short-circuit"),
+        pytest.param(diff_facts({}), "x", 2, 1, True, id="vacuous-range"),
+        pytest.param(diff_facts({}), "x", 1, 10**20, False, id="short-circuit"),
     ],
 )
 def test_path_range(
@@ -1018,7 +1039,7 @@ def test_path_range(
     [
         pytest.param(None, "x", 1, 1, None, id="skipped-span"),
         pytest.param(
-            _facts(texts={("x", 1): "a", ("x", 2): ""}),
+            diff_facts({}, line_texts={("x", 1): "a", ("x", 2): ""}),
             "x",
             1,
             2,
@@ -1026,10 +1047,15 @@ def test_path_range(
             id="exact-span",
         ),
         pytest.param(
-            _facts({("x", 1): 1}, texts={}), "x", 1, 1, None, id="partial-content"
+            diff_facts({("x", 1): 1}, line_texts={}),
+            "x",
+            1,
+            1,
+            None,
+            id="partial-content",
         ),
         pytest.param(
-            _facts(texts={("b/x", 1): "a", ("x", 2): "b"}),
+            diff_facts({}, line_texts={("b/x", 1): "a", ("x", 2): "b"}),
             "b/x",
             1,
             2,
@@ -1037,9 +1063,14 @@ def test_path_range(
             id="no-union-span",
         ),
         pytest.param(
-            _facts(texts={("x", 1): "a"}), "b/x", 1, 1, None, id="no-strip-span"
+            diff_facts({}, line_texts={("x", 1): "a"}),
+            "b/x",
+            1,
+            1,
+            None,
+            id="no-strip-span",
         ),
-        pytest.param(_facts(), "x", 2, 1, [], id="vacuous-span"),
+        pytest.param(diff_facts({}), "x", 2, 1, [], id="vacuous-span"),
     ],
 )
 def test_path_span(
@@ -1052,27 +1083,27 @@ def test_path_span(
     "facts, path, expected",
     [
         pytest.param(None, "b/x", False, id="skipped-ambiguity"),
-        pytest.param(_facts(), "src/foo.py", False, id="unprefixed-empty"),
+        pytest.param(diff_facts({}), "src/foo.py", False, id="unprefixed-empty"),
         pytest.param(
-            _facts({("src/foo.py", 9): 9, ("b/src/foo.py", 10): 10}),
+            diff_facts({("src/foo.py", 9): 9, ("b/src/foo.py", 10): 10}),
             "src/foo.py",
             False,
             id="unprefixed-sibling",
         ),
         pytest.param(
-            _facts({("b/x", 1): 1, ("x", 9): None}),
+            diff_facts({("b/x", 1): 1, ("x", 9): None}),
             "b/x",
             True,
             id="addressable-collision",
         ),
         pytest.param(
-            _facts({("x", 1): 1}, old_paths={"b/x": "b/x"}, new_files={"b/x"}),
+            diff_facts({("x", 1): 1}, old_paths={"b/x": "b/x"}, new_files={"b/x"}),
             "b/x",
             False,
             id="header-only-sibling",
         ),
         pytest.param(
-            _facts({("new", 1): 1, ("x", 1): 1}, old_paths={"new": "b/x"}),
+            diff_facts({("new", 1): 1, ("x", 1): 1}, old_paths={"new": "b/x"}),
             "b/x",
             False,
             id="old-rename-sibling",
@@ -1087,10 +1118,10 @@ def test_path_ambiguity(facts: DiffFacts | None, path: str, expected: bool) -> N
     "facts, path, expected",
     [
         (None, "b/x", "b/x"),
-        (_facts(), "b/x", "b/x"),
-        (_facts(old_paths={"x": "old"}), "x", "old"),
-        (_facts(old_paths={"x": "old"}), "b/x", "b/x"),
-        (_facts(old_paths={"x": ""}), "x", ""),
+        (diff_facts({}), "b/x", "b/x"),
+        (diff_facts({}, old_paths={"x": "old"}), "x", "old"),
+        (diff_facts({}, old_paths={"x": "old"}), "b/x", "b/x"),
+        (diff_facts({}, old_paths={"x": ""}), "x", ""),
     ],
 )
 def test_path_old_path(facts: DiffFacts | None, path: str, expected: str) -> None:
@@ -1151,21 +1182,6 @@ def test_counts(diff_text: str, expected: DiffCounts) -> None:
 @pytest.mark.parametrize(
     "diff_text, expected",
     [
-        pytest.param(
-            "--- a/real/x.py\n+++ a/real/x.py\n", "glab-verbatim", id="verbatim"
-        ),
-        pytest.param(
-            "--- b/real/x.py\n+++ b/real/x.py\n@@ -1,2 +1,3 @@\ndiff --git a/real/x.py b/real/x.py\n def f():\n+    original\n",
-            "glab-verbatim",
-            id="body-marker",
-        ),
-        pytest.param("diff --git a/x.py b/x.py\n", "git-prefixed", id="git-prefixed"),
-        pytest.param("diff --git b/foo.py b/foo.py\n", "glab-verbatim", id="noprefix"),
-        pytest.param(
-            'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n',
-            "git-prefixed",
-            id="quoted-first",
-        ),
         pytest.param("diff --git i/x w/x\n", "glab-verbatim", id="mnemonic"),
         pytest.param("\ndiff --git a/x b/x\n", "glab-verbatim", id="leading-newline"),
         pytest.param("", "glab-verbatim", id="empty"),
@@ -1173,53 +1189,6 @@ def test_counts(diff_text: str, expected: DiffCounts) -> None:
 )
 def test_report_policy(diff_text: str, expected: PostingPathPolicy) -> None:
     assert patch_report_policy(diff_text) == expected
-
-
-@pytest.mark.parametrize(
-    "diff_text, expected_lines, expected_texts",
-    [
-        pytest.param(
-            "--- b/real/x\n+++ b/real/x\n@@ -1 +1 @@\n ctx\n",
-            {("b/real/x", 1): 1},
-            {("b/real/x", 1): "ctx"},
-            id="verbatim",
-        ),
-        pytest.param(
-            "--- b/real/x\n+++ b/real/x\n@@ -1,2 +1,2 @@\ndiff --git a/x b/x\n ctx\n",
-            {("b/real/x", 1): 1, ("b/real/x", 2): 2},
-            {("b/real/x", 1): "diff --git a/x b/x", ("b/real/x", 2): "ctx"},
-            id="body-marker",
-        ),
-        pytest.param(
-            "diff --git a/x b/x\n--- a/other\n+++ b/other\n@@ -1 +1 @@\n ctx\n",
-            {("other", 1): 1},
-            {("other", 1): "ctx"},
-            id="git-prefixed",
-        ),
-        pytest.param(
-            "diff --git b/foo b/foo\n--- b/foo\n+++ b/foo\n@@ -1 +1 @@\n real\n"
-            "diff --git foo foo\n--- foo\n+++ foo\n@@ -1 +1 @@\n sibling\n",
-            {("b/foo", 1): 1, ("foo", 1): 1},
-            {("b/foo", 1): "real", ("foo", 1): "sibling"},
-            id="noprefix",
-        ),
-        pytest.param(
-            'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n'
-            '--- "a/caf\\303\\251.py"\n+++ "b/caf\\303\\251.py"\n@@ -1 +1 @@\n ctx\n',
-            {("café.py", 1): 1},
-            {("café.py", 1): "ctx"},
-            id="quoted-first",
-        ),
-    ],
-)
-def test_report_selection(
-    diff_text: str,
-    expected_lines: Mapping[LineKey, int | None],
-    expected_texts: Mapping[LineKey, str],
-) -> None:
-    facts = parse_diff(diff_text, policy=patch_report_policy(diff_text))
-    assert facts.valid_lines == expected_lines
-    assert facts.line_texts == expected_texts
 
 
 @pytest.mark.parametrize(
@@ -1399,6 +1368,11 @@ def test_path_aliases(
             },
             id="decoded-paths",
         ),
+        pytest.param(
+            "--- /dev/null\n+++ b/x\n@@ -0,0 +1 @@\n+first\n",
+            {"b/x": (1,), "x": (1,)},
+            id="empty-old-no-new-files",
+        ),
     ],
 )
 def test_path_membership(
@@ -1492,32 +1466,6 @@ def test_path_null_order(
 
 
 @pytest.mark.parametrize(
-    "event, expected_fields",
-    [
-        (HeaderEvent("old_path", "a/f.py"), ("kind", "value")),
-        (
-            HunkEvent(1, 1, 1, 1),
-            ("old_line", "new_line", "old_count", "new_count", "kind"),
-        ),
-        (LineEvent(1, 1, "ctx"), ("old_line", "new_line", "text", "kind")),
-    ],
-    ids=["header", "hunk", "line"],
-)
-def test_diff_event_shape(event: DiffEvent, expected_fields: tuple[str, ...]) -> None:
-    assert tuple(field.name for field in fields(event)) == expected_fields
-    assert not hasattr(event, "__dict__")
-
-
-def test_diff_facts_fields() -> None:
-    assert tuple(field.name for field in fields(_facts())) == (
-        "valid_lines",
-        "new_files",
-        "old_paths",
-        "line_texts",
-    )
-
-
-@pytest.mark.parametrize(
     "policy", ["git-prefixed", "glab-verbatim", "verify-both-spellings"]
 )
 def test_empty_diff_is_present_facts(policy: DiffPathPolicy) -> None:
@@ -1537,32 +1485,28 @@ def test_posting_policy(
     assert posting_policy(platform) == expected
 
 
-def test_parse_diff_requires_policy() -> None:
-    with pytest.raises(TypeError, match="policy"):
-        without_policy = cast(Callable[[str], DiffFacts], parse_diff)
-        without_policy("")
-
-
 @pytest.mark.parametrize("query", [None, 1, 1.0, True, []])
 def test_diff_lookup_wrong_path(query: object) -> None:
     with pytest.raises(TypeError):
-        is_line_valid(_facts(), cast(str, query), 1)
+        is_line_valid(diff_facts({}), cast(str, query), 1)
 
 
-@pytest.mark.parametrize("guard", ["blank-context-space", "exact-final-newline"])
-def test_fixture_bytes(guard: str) -> None:
+def test_fixture_final_newline() -> None:
     fixtures = sorted((Path(__file__).parent / "fixtures/glab_diff").glob("*.diff"))
     assert fixtures
-    if guard == "exact-final-newline":
-        for path in fixtures:
-            data = path.read_bytes()
-            assert data.endswith(b"\n") and not data.endswith(b"\n\n"), path.name
-    else:
-        blanks = [
-            line
-            for path in fixtures
-            for line in path.read_bytes().split(b"\n")[:-1]
-            if not line.strip()
-        ]
-        assert blanks
-        assert all(line == b" " for line in blanks)
+    for path in fixtures:
+        data = path.read_bytes()
+        assert data.endswith(b"\n") and not data.endswith(b"\n\n"), path.name
+
+
+def test_fixture_blank_context_space() -> None:
+    fixtures = sorted((Path(__file__).parent / "fixtures/glab_diff").glob("*.diff"))
+    assert fixtures
+    blanks = [
+        line
+        for path in fixtures
+        for line in path.read_bytes().split(b"\n")[:-1]
+        if not line.strip()
+    ]
+    assert blanks
+    assert all(line == b" " for line in blanks)

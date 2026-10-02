@@ -177,7 +177,7 @@ GH_SKIP_WARNINGS = [
 # hand-built, not derived from an actual unified diff, because these findings are
 # synthetic fixture data with no diff of their own (unlike tests/test_post_review.py's
 # GH_DIFF_INDENTED, which backs real parsed-diff assertions). `valid_lines` covers
-# every line any finding above cites, matching `_range_is_valid`'s real multiline
+# every line any finding above cites, matching `range_is_valid`'s real multiline
 # check — including routes.py:21 (the fourth finding), present so its downgrade is
 # provably `missing_end_line` and not a `no_diff_oracle` in disguise; `line_texts`
 # only needs the one line a `suggested_fix_code` actually gates against on the

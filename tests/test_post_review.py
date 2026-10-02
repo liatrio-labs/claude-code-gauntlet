@@ -14,7 +14,7 @@ import unittest
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import ClassVar, cast
+from typing import ClassVar, Literal, cast
 from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
@@ -133,6 +133,19 @@ def test_diff_fetch_integration(
         assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+def test_diff_fetch_empty_success(
+    platform: Literal["github", "gitlab"], capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeForge(platform, diffs=[("", "", 0)])
+    target = ReviewTarget("myorg", "myrepo", 42)
+    assert fetch_diff_facts(target, forge=fake) == diff_api.DiffFacts(
+        {}, frozenset(), {}, {}
+    )
+    assert fake.calls == [ForgeCall("diff", target)]
+    assert capsys.readouterr().err == ""
+
+
 @pytest.mark.parametrize(
     "finding, expected",
     [
@@ -167,6 +180,35 @@ def test_fix_failure_order_without_diff(
     finding: dict[str, object], expected: tuple[bool, str | None]
 ) -> None:
     assert post_review._fence_verdict(finding, (1, 1), None) == expected
+
+
+@pytest.mark.parametrize(
+    "facts, apply_range, expected",
+    [
+        pytest.param(None, None, (False, "no_diff_oracle"), id="absent-no-anchor"),
+        pytest.param(
+            None, (1, 2), (False, "no_diff_oracle"), id="absent-mismatched-anchor"
+        ),
+        pytest.param(
+            diff_facts({("b/x", 2): 2, ("x", 2): 2}),
+            (1, 1),
+            (False, "no_diff_oracle"),
+            id="ambiguous-off-diff",
+        ),
+    ],
+)
+def test_fix_oracle_order(
+    facts: diff_api.DiffFacts | None,
+    apply_range: tuple[int, int] | None,
+    expected: tuple[bool, str],
+) -> None:
+    finding = {
+        "suggested_fix_code": "replacement",
+        "file": "b/x",
+        "line": 1,
+        "end_line": 1,
+    }
+    assert post_review._fence_verdict(finding, apply_range, facts) == expected
 
 
 @pytest.mark.parametrize(
@@ -6633,7 +6675,7 @@ class TestSuggestedFixGate(unittest.TestCase):
         corruption case (#229): the fence used to validate against
         ``b/x.py``'s own text while the patch may have meant ``x.py``.
 
-        Mutation: gut ``_fence_path_is_ambiguous`` to ``return False``
+        Mutation: gut ``path_is_ambiguous`` to ``return False``
         unconditionally — RED (``(True, None)`` instead of the downgrade).
         """
         valid_lines = {("b/x.py", 10): 10, ("x.py", 10): 10}
@@ -6712,7 +6754,7 @@ class TestSuggestedFixGate(unittest.TestCase):
         candidate filter, which only requires ``suggested_fix_code``), so this
         goes through the REAL call site (``_suggested_fix_gate``, which reads
         ``finding.get("file", "?")``) rather than asserting on
-        ``_fence_path_is_ambiguous`` in isolation. ``"?"`` has no ``a/``/``b/``
+        ``path_is_ambiguous`` in isolation. ``"?"`` has no ``a/``/``b/``
         prefix, so the predicate never fires for it and the gate falls
         through to the ordinary range check instead of raising ``KeyError``.
         """
@@ -8228,7 +8270,7 @@ class TestGitHubFencePathAmbiguity(_FixGateRunBase):
         validate against ``b/foo.py``'s real text while a patch may have
         meant ``foo.py``.
 
-        Mutation: gut ``_fence_path_is_ambiguous`` to ``return False``
+        Mutation: gut ``path_is_ambiguous`` to ``return False``
         unconditionally — RED (the fence renders instead of downgrading).
         """
         run = self._run(
@@ -8341,7 +8383,7 @@ class TestGitHubMultilineAnchorUsesResolvedPath(_FixGateRunBase):
     resolves, AT ITS OWN LINE (1), to `foo.py` — so the whole range is
     validated against `foo.py` and correctly finds line 3 missing there,
     posting a single-line comment. Before #229's path-resolution fix, the
-    UNRESOLVED raw spelling let `_range_is_valid` accept a range that mixed
+    UNRESOLVED raw spelling let `range_is_valid` accept a range that mixed
     BOTH files' line sets (1, 2 via the stripped fallback to `foo.py`; 3 as
     an EXACT hit on `b/foo.py` itself) and posted a multi-line comment
     naming `b/foo.py` lines 1 and 2, which that file does not have.
