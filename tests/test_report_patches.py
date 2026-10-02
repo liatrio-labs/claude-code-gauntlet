@@ -9,11 +9,104 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.patches as report_patches
 import pytest
+from gauntlet import diff as diff_api
+
+from tests.support.diff import diff_facts
+
+
+@pytest.mark.parametrize(
+    "content_byte",
+    [b"orig content", b"orig \xff content"],
+    ids=["crlf-header", "invalid-body-byte"],
+)
+def test_report_normalized_diff_receipt(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], content_byte: bytes
+) -> None:
+    sha = "abc1234"
+    (tmp_path / f"code-gauntlet-diff-{sha}.patch").write_bytes(
+        b"diff --git a/crlf.py b/crlf.py \xff\r\n"
+        b"--- a/crlf.py\r\n+++ b/crlf.py\r\n@@ -1,1 +1,2 @@\r\n line1\r\n+"
+        + content_byte
+        + b"\r\n"
+    )
+    (tmp_path / f"code-gauntlet-findings-{sha}.json").write_text(
+        json.dumps(
+            [
+                {
+                    "file": "crlf.py",
+                    "line": 2,
+                    "end_line": 2,
+                    "title": "CRLF",
+                    "suggested_fix_code": "changed content",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert report_patches.main(["--output-dir", str(tmp_path), "--head-sha", sha]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    receipt = json.loads(lines[0])
+    assert (
+        receipt["kept"],
+        receipt["downgraded"],
+        receipt["reasons"],
+        receipt["oracle"],
+    ) == (1, 0, {}, "ok")
+    artifact = (tmp_path / f"code-gauntlet-patches-{sha}.md").read_text(
+        encoding="utf-8"
+    )
+    assert "```py\nchanged content\n```" in artifact
+
+
+@pytest.mark.parametrize(
+    "capture", [None, b"", b" \r\n\t"], ids=["missing", "empty", "whitespace"]
+)
+def test_report_absent_capture_receipt(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], capture: bytes | None
+) -> None:
+    sha = "abc1234"
+    if capture is not None:
+        (tmp_path / f"code-gauntlet-diff-{sha}.patch").write_bytes(capture)
+    (tmp_path / f"code-gauntlet-findings-{sha}.json").write_text(
+        json.dumps(
+            [
+                {
+                    "file": "a.py",
+                    "line": 1,
+                    "end_line": 1,
+                    "title": "A",
+                    "suggested_fix_code": "replacement",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert report_patches.main(["--output-dir", str(tmp_path), "--head-sha", sha]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    receipt = json.loads(lines[0])
+    assert (
+        receipt["ok"],
+        receipt["oracle"],
+        receipt["candidates"],
+        receipt["kept"],
+        receipt["downgraded"],
+        receipt["reasons"],
+    ) == (True, "missing", 1, 0, 1, {"no_diff_oracle": 1})
+    artifact = (tmp_path / f"code-gauntlet-patches-{sha}.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "The pinned diff file was missing or empty, so every candidate patch failed closed (`no_diff_oracle`)."
+        in artifact
+    )
 
 
 class ReportPatchesTestBase(unittest.TestCase):
@@ -752,8 +845,6 @@ class TestCrlfBodyAndInvalidByte(ReportPatchesTestBase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(len(lines), 1)
 
-        # Read the diff exactly as report_patches.py does, and ask the SAME gate
-        # the script uses, to determine the ground truth rather than assuming it.
         with open(diff_path, encoding="utf-8", errors="replace") as fh:
             diff_text = fh.read()
         self.assertNotIn(
@@ -761,15 +852,6 @@ class TestCrlfBodyAndInvalidByte(ReportPatchesTestBase):
             diff_text,
             "universal newlines already strips CR before the gate ever runs",
         )
-        valid_lines, line_texts = report_patches._diff_oracle(diff_text)
-        ok, reason = post_review._suggested_fix_gate(
-            finding,
-            apply_range=(2, 2),
-            line_texts=line_texts,
-            valid_lines=valid_lines,
-            path_lookup="crlf.py",
-        )
-        self.assertTrue(ok, f"expected the differing patch to be kept, got {reason!r}")
         self.assertEqual(receipt["kept"], 1)
         self.assertEqual(receipt["downgraded"], 0)
 
@@ -806,7 +888,10 @@ class TestCrlfBodyAndInvalidByte(ReportPatchesTestBase):
 
         with open(diff_path, encoding="utf-8", errors="replace") as fh:
             diff_text = fh.read()
-        _, _, _, line_texts = post_review.parse_diff_text("github", diff_text)
+        parsed_facts = diff_api.parse_diff(
+            diff_text, policy=diff_api.posting_policy("github")
+        )
+        line_texts = parsed_facts.line_texts
         self.assertIn("�", line_texts[("bad.py", 2)])
 
 
@@ -2065,7 +2150,7 @@ class TestResetRunState(ReportPatchesTestBase):
 
     def test_stale_state_from_a_prior_gate_call_does_not_leak_into_the_receipt(self):
         poison = {"file": "poison.py", "line": 1, "suggested_fix_code": ""}
-        report_patches._gated_finding(poison, (1, 1), {}, {})
+        report_patches._gated_finding(poison, (1, 1), diff_facts({}, line_texts={}))
         self.assertEqual(report_patches._FIX_COUNTS["downgraded"], 1)  # sanity: dirtied
 
         diff = (

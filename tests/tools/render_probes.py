@@ -725,6 +725,7 @@ def input_sha256(text: str) -> str:
 def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     """Compose deterministic complete GitLab bodies through delivery composers."""
     import gauntlet.delivery.post as post_review
+    from gauntlet.diff import DiffFacts
 
     sha = "a" * 40
     keys = ("0123456789abcdef", "fedcba9876543210")
@@ -778,12 +779,11 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     )
     valid_lines = {("src/probe.py", line): None for line in range(1, 4)}
     line_texts = {("src/probe.py", line): f"old line {line}" for line in range(1, 4)}
+    facts = DiffFacts(valid_lines, frozenset(), {}, line_texts)
     patch_range, patch_offsets, cap_exceeded = post_review._gitlab_apply_range(
         patch_finding, 1
     )
-    patch_ok, _reason = post_review._fence_verdict(
-        patch_finding, patch_range, valid_lines, line_texts
-    )
+    patch_ok, _reason = post_review._fence_verdict(patch_finding, patch_range, facts)
     if cap_exceeded or not patch_ok:
         raise ValueError("deterministic quick-action patch case failed the GitLab gate")
     cases.append(
@@ -847,7 +847,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
         post_review._gitlab_apply_range(alert_patch_finding, 1)
     )
     alert_patch_ok, _alert_patch_reason = post_review._fence_verdict(
-        alert_patch_finding, alert_patch_range, valid_lines, line_texts
+        alert_patch_finding, alert_patch_range, facts
     )
     if alert_cap_exceeded or not alert_patch_ok:
         raise ValueError("deterministic alert patch case failed the GitLab gate")

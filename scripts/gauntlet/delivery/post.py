@@ -94,9 +94,9 @@ import re
 import sys
 from typing import Any, NamedTuple
 
-from gauntlet import proc
+from gauntlet import diff, proc
 from gauntlet.cli import Command
-from gauntlet.diff import walk_diff
+from gauntlet.diff import DiffFacts
 from gauntlet.forge import (
     Forge,
     ForgeUnavailable,
@@ -203,252 +203,17 @@ def post_json(request: PostRequest, *, forge: Forge):
 # ---------------------------------------------------------------------------
 
 
-def parse_diff_lines(target: ReviewTarget, *, forge: Forge):
-    """Fetch the diff, returning four absent oracles on a nonzero status."""
+def fetch_diff_facts(target: ReviewTarget, *, forge: Forge) -> DiffFacts | None:
+    """Fetch facts, preserving skipped validation on a nonzero status."""
     stdout, stderr, rc = forge.diff(target)
     if rc != 0:
         warn(
             f"Could not fetch diff (exit {rc}): {stderr.strip()}. "
             "Skipping line validation — all findings will be posted."
         )
-        return None, None, None, None
-
-    return parse_diff_text(forge.platform, stdout)
-
-
-def _git_header_agrees(git_header, old_side, new_side):
-    """True when *git_header* is exactly the ``diff --git`` text a producer writing
-    ``a/``/``b/`` prefixes composes for this ``---``/``+++`` pair.
-
-    The header is never split into two paths: a producer may write a path holding a
-    space unquoted, so the boundary between them is undecidable on its own. It is
-    rebuilt from the pair and compared whole instead, a ``/dev/null`` old side
-    borrowing the new side's name. The pair's paths are the walk's decoded spellings, which
-    for the raw paths glab composes are its own text; a name the decoder cut at a
-    literal TAB no longer rebuilds the header, so that block stays unproven.
-    """
-    old_name = old_side[2:] if old_side.startswith("a/") else None
-    new_name = new_side[2:] if new_side.startswith("b/") else None
-    if old_side == "/dev/null":
-        old_name = new_name
-    return (
-        old_name is not None
-        and new_name is not None
-        and git_header == f"a/{old_name} b/{new_name}"
-    )
-
-
-def parse_diff_text(platform, diff_text):
-    """Parse a GitHub or GitLab diff into line and file metadata.
-
-    * ``valid_lines`` — ``(path, new_line)`` -> the same line's OLD-side number, or
-      ``None`` for an added line. A key is present exactly when the line can carry an
-      inline comment. GitLab addresses a context line only when the position carries
-      both ``old_line`` and ``new_line``, so the old-side number must survive parsing.
-    * ``new_files`` — paths ADDED by this diff. GitLab answers HTTP 500 to an
-      ``old_path`` on a file that has none.
-    * ``old_paths`` — new-side path -> the path its ``---`` header named: the
-      pre-rename path GitLab requires in ``position.old_path``. Absent for added files.
-    * ``line_texts`` — the same keys as ``valid_lines`` -> the line's new-side text,
-      the content oracle for the suggested-fix apply-check.
-
-    ``a/`` and ``b/`` are diff syntax on GitHub. ``glab mr diff`` has two shapes, told
-    apart per file block. In its PLAIN shape a block is a bare ``---``/``+++`` pair
-    with paths verbatim, so a leading ``a/`` or ``b/`` is a real directory, there is no
-    ``/dev/null``, and ``@@ -0,0`` is the only added-file signal. In its GIT-STYLE
-    shape the prefixes are syntax and ``/dev/null`` marks an absent side; a block is
-    read that way only when its ``diff --git`` line proves it (see
-    :func:`_git_header_agrees`), because a plain block under a real ``a/`` directory
-    is otherwise indistinguishable. One ``diff --git`` line proves at most the one
-    pair that follows it.
-    """
-    valid_lines = {}
-    line_texts = {}
-    new_files = set()
-    old_paths = {}
-    git_header = None
-    pending_old_side = None
-    current_file = None
-    # Whether `@@ -0,0` in the current file's hunks means "added".
-    zero_old_hunk_means_added = True
-
-    for event in walk_diff(diff_text):
-        if event.kind == "git_header":
-            git_header = event.value
-            # A `---` left unpaired by this header belongs to no block.
-            pending_old_side = None
-            continue
-
-        if event.kind == "old_path":
-            pending_old_side = event.value
-            continue
-
-        if event.kind == "new_path":
-            old_side, new_side = pending_old_side, event.value
-            pending_old_side = None
-            git_style = (
-                platform == "gitlab"
-                and old_side is not None
-                and _git_header_agrees(git_header, old_side, new_side)
-            )
-            git_header = None
-            if platform == "github" or git_style:
-                old_side = None if old_side is None else old_side.removeprefix("a/")
-                new_side = new_side.removeprefix("b/")
-            # An empty old side is either an added file or an edit of a file that was
-            # already empty. A git-style block says which with `/dev/null`; a plain
-            # one cannot, and guesses "added": omitting `old_path` for a pre-existing
-            # empty file is harmless, sending it for a new file is the HTTP 500.
-            zero_old_hunk_means_added = not git_style
-            if new_side == "/dev/null":
-                current_file = None  # deleted file — no new path to track
-                continue
-            current_file = new_side
-            if old_side == "/dev/null":
-                new_files.add(current_file)
-            elif old_side is not None:
-                old_paths[current_file] = old_side
-            continue
-
-        if event.kind == "hunk":
-            if (
-                zero_old_hunk_means_added
-                and event.old_line == 0
-                and event.old_count == 0
-                and current_file is not None
-            ):
-                new_files.add(current_file)
-            continue
-
-        # event.kind == "line". A removed line carries no `new_line` — not
-        # addressable by the new side, so it records nothing here.
-        if event.new_line is not None and current_file is not None:
-            valid_lines[(current_file, event.new_line)] = event.old_line
-            line_texts[(current_file, event.new_line)] = event.text
-
-    return valid_lines, new_files, old_paths, line_texts
-
-
-def _strip_ab_prefix(filepath):
-    """Return *filepath* without a leading Git diff prefix."""
-    return re.sub(r"^[ab]/", "", filepath)
-
-
-def _resolve_spelling(valid_lines, filepath, line):
-    """Return the diff-key spelling of *filepath* at *line* — exact, else its
-    ``a/``/``b/``-stripped form — or ``None`` when neither is a diff key.
-
-    The single resolution order shared by :func:`is_line_valid`,
-    :func:`diff_path_spelling` and :func:`old_line_for`: prefer the finding's own
-    spelling (a real top-level ``a/``/``b/`` directory on GitLab must not be
-    stripped), fall back to the diff-prefix-stripped one (a GitHub finding may spell
-    its path with git's synthetic prefix). Assumes *valid_lines* is already known to
-    behave like a mapping — every caller guards its own None / non-dict case first,
-    since their "validation skipped" defaults differ (see each docstring).
-    """
-    if (filepath, line) in valid_lines:
-        return filepath
-    stripped = _strip_ab_prefix(filepath)
-    if (stripped, line) in valid_lines:
-        return stripped
-    return None
-
-
-def is_line_valid(valid_lines, filepath, line):
-    """Check whether (filepath, line) appears in the diff."""
-    if valid_lines is None:
-        return True  # validation skipped
-    return _resolve_spelling(valid_lines, filepath, line) is not None
-
-
-def diff_path_spelling(valid_lines, filepath, line):
-    """Return the spelling of *filepath* recorded in the diff, or *filepath* unchanged.
-
-    A finding may spell its path with a synthetic diff prefix (``b/src/app.py``) while
-    the parsed keys are unprefixed — or, on GitLab, the repo may contain a REAL top-level
-    ``a/``/``b/`` directory that must not be stripped. Trust the diff: prefer the exact
-    key, fall back to the stripped one, and when validation was skipped (*valid_lines*
-    is None) pass the finding's own spelling through untouched.
-
-    Residual: when the diff contains a real file under the
-    STRIPPED spelling but nothing ADDRESSABLE under the exact one, this resolves to the
-    stripped sibling — cross-file, and undecidable from the diff text alone. That is an
-    accepted, ANCHOR-level limitation (a wrong anchor costs a misplaced comment a human
-    reads and ignores). The higher-harm case — a patch silently applying to the wrong
-    one of two REAL files under both spellings — is caught one layer up, at the
-    ``suggested_fix_code`` fence (:func:`_suggested_fix_gate`'s ambiguity check), but
-    ONLY when both files contribute at least one addressable new-side line to
-    *valid_lines*: that check reads path components off *valid_lines*' own keys, which
-    hold nothing for a file present in the diff solely as a deletion, or as the
-    pre-rename side of a rename (no ``new_line`` to record — see ``parse_diff_text``).
-    The finding's own file being absent from the diff entirely, or contributing only
-    such non-addressable lines, is exactly the residual above, not the caught case: the
-    fence cross-resolves to the sibling and validates against it same as the anchor.
-    """
-    if not isinstance(valid_lines, dict):
-        return filepath
-    spelling = _resolve_spelling(valid_lines, filepath, line)
-    return filepath if spelling is None else spelling
-
-
-def old_line_for(valid_lines, filepath, line):
-    """Return the OLD-side line number for ``(filepath, line)``, or None.
-
-    None means "send no old_line": validation was skipped (``valid_lines`` is None or
-    not a mapping), the line is add-only, or the path is unknown. Applies the SAME
-    ``a/``/``b/`` normalization as :func:`is_line_valid` — a raw-key-only lookup would
-    return None for every finding that passed validation only through the stripped form,
-    silently re-arming the 400 this function exists to prevent.
-    """
-    if not isinstance(valid_lines, dict):
         return None
-    spelling = _resolve_spelling(valid_lines, filepath, line)
-    return None if spelling is None else valid_lines[(spelling, line)]
 
-
-def valid_lines_for_file(valid_lines, filepath):
-    """Return sorted list of up to 10 valid line numbers for *filepath* in the diff.
-
-    Returns None when *valid_lines* is None (validation was skipped). No *line* to
-    resolve against here, so this uses the shared strip helper directly rather than
-    :func:`_resolve_spelling` — both spellings' lines are wanted, not one.
-    """
-    if valid_lines is None:
-        return None
-    stripped = _strip_ab_prefix(filepath)
-    lines = sorted({line for fp, line in valid_lines if fp in (filepath, stripped)})
-    return lines[:10]
-
-
-def _range_is_valid(valid_lines, filepath, start, end):
-    """True when every line in [start, end] is a valid diff line for *filepath*.
-
-    A contiguous run of valid lines implies a single hunk, which is what GitHub
-    requires for a multi-line comment. Short-circuits on the first miss, so a
-    bogus huge *end* (e.g. an ``end_line`` copied from the wrong file) costs at
-    most one failing lookup rather than iterating the whole span.
-    """
-    if valid_lines is None:
-        return True  # validation skipped — pass the range through unchanged
-    return all(is_line_valid(valid_lines, filepath, n) for n in range(start, end + 1))
-
-
-def is_new_file(new_files, filepath):
-    """Return True when *filepath* was newly added in the diff.
-
-    *filepath* must already be resolved to the diff's own key spelling (see
-    :func:`diff_path_spelling`) — its sole caller resolves before calling. `new_files`
-    and the resolved keys come from the SAME parse of the SAME headers, so an exact
-    match is authoritative. A second, independent ``a/``/``b/``-stripped lookup here
-    would let a real `a/`-rooted MODIFIED file collide with an unrelated NEW file that
-    happens to share its stripped basename (e.g. modified ``a/foo.py`` vs. added
-    ``foo.py``) whenever GitLab preserves a genuine top-level ``a/`` directory, wrongly
-    reporting the modified file as new and dropping ``old_path`` from its position.
-    Returns False when *new_files* is None or empty.
-    """
-    if not new_files:
-        return False
-    return filepath in new_files
+    return diff.parse_diff(stdout, policy=diff.posting_policy(forge.platform))
 
 
 def _is_plain_int(value):
@@ -458,9 +223,7 @@ def _is_plain_int(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def validate_position(
-    position, shas, valid_lines, new_files, old_paths, filepath, line
-):
+def validate_position(position, shas, facts: DiffFacts | None, filepath, line):
     """Return the reasons *position* is malformed for GitLab; empty when it is sound.
 
     This is what makes a capture mean something. ``try_post_json`` short-circuits into
@@ -489,8 +252,8 @@ def validate_position(
     test moves with the bug and passes it.
 
     SCOPE, stated plainly: this catches a regression in the assembly below, or a
-    malformed finding. It cannot catch a parser defect — ``valid_lines``, ``new_files``
-    and ``old_paths`` are the ground truth BOTH sides are derived from, so a wrong answer
+    malformed finding. It cannot catch a parser defect: ``facts`` is the
+    ground truth BOTH sides are derived from, so a wrong answer
     there is compared against itself and passes.
     """
     base_sha, head_sha, start_sha = shas
@@ -502,11 +265,11 @@ def validate_position(
         "new_path": filepath,
         "new_line": line,
     }
-    expected_old_line = old_line_for(valid_lines, filepath, line)
+    expected_old_line = diff.old_line_for(facts, filepath, line)
     if expected_old_line is not None:
         expected["old_line"] = expected_old_line
-    if not is_new_file(new_files, filepath):
-        expected["old_path"] = (old_paths or {}).get(filepath, filepath)
+    if not diff.is_new_file(facts, filepath):
+        expected["old_path"] = diff.old_path_for(facts, filepath)
 
     problems = []
 
@@ -1020,85 +783,14 @@ def _leading_whitespace_charset(lines):
     return charset
 
 
-def _span_texts(line_texts, path_lookup, start, end):
-    """Return the diff's new-side text for every line in ``[start, end]``.
+def _suggested_fix_gate(finding, *, apply_range, facts: DiffFacts | None, path_lookup):
+    """Check a fence at the render site's actual apply range.
 
-    ``None`` when there is no complete answer — some line of the span is not a
-    diff line. The content checks that consume this treat ``None`` as "no
-    oracle", never as "no difference". (A missing ``line_texts`` mapping never
-    reaches here: the gate fails the whole patch closed on it first.)
-    """
-    texts = []
-    for n in range(start, end + 1):
-        if (path_lookup, n) not in line_texts:
-            return None
-        texts.append(line_texts[(path_lookup, n)])
-    return texts
-
-
-def _fence_path_is_ambiguous(valid_lines, raw_file):
-    """True when *raw_file* — the finding's OWN spelling, unresolved — cannot say
-    which of two distinct real files in the diff a ``suggested_fix_code`` fence
-    targets.
-
-    Fires only when *raw_file* carries a synthetic ``a/``/``b/`` diff prefix AND
-    BOTH it and its stripped form name a real path in *valid_lines* — path level,
-    any line, so this is a property of the diff's file set, not of which line the
-    finding happens to state. When that holds, the diff itself contains two
-    distinct files one strip apart (most commonly a real top-level ``a/``/``b/``
-    directory alongside its unprefixed sibling), and neither the exact spelling
-    nor :func:`diff_path_spelling`'s stripped fallback can disambiguate which one
-    a patch is meant to replace — one directly (the raw spelling IS a real,
-    different file's key), the other by silent cross-resolution. Both directions
-    are closed by the same check: it does not matter which one the finding's
-    stated line happens to validate against.
-
-    Reads only ``valid_lines`` KEYS — no platform, no alias map, no second keying
-    implementation — so delivery and ``gauntlet.patches``' payload
-    mirror (both routing through :func:`_suggested_fix_gate`) get identical
-    semantics for free. *valid_lines* must already be known to be a dict; the
-    caller checks that first.
-    """
-    stripped = _strip_ab_prefix(raw_file)
-    if stripped == raw_file:
-        return False
-    diff_paths = {fp for fp, _line in valid_lines}
-    return raw_file in diff_paths and stripped in diff_paths
-
-
-def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_lookup):
-    """Return ``(ok, reason)`` for *finding*'s ``suggested_fix_code`` at ONE render site.
-
-    Pure — no I/O, no subprocess — so it runs identically under --dry-run and live.
-    That is ``validate_position``'s precedent: a check that runs only under
-    --dry-run cannot be the thing that makes --dry-run trustworthy, and a caller's
-    hand-assembled JSON goes through this same one path, not a lenient fork.
-
-    *apply_range* is the ``(start, end)`` this site's one-click apply really
-    replaces, or ``None`` where a fence can never apply at all (a position-less
-    note, the degraded body section). *path_lookup* is the finding's path in the
-    DIFF's own spelling (``diff_path_spelling``), so this gate and the anchor
-    validation consult the same keys and cannot disagree.
-
-    First failure wins, in the order written below; ``reason`` is always a member
-    of ``_FIX_REASONS``.
-
-    When diff validation was skipped (``valid_lines`` / ``line_texts`` are
-    ``None`` — an unknown platform, or a failed diff fetch) this FAILS CLOSED
-    with ``no_diff_oracle``, deliberately unlike the anchor. The anchor fails
-    open there because a wrong anchor costs a misplaced comment a human reads
-    and ignores; a patch cannot, because a wrong patch is committed by one click
-    and corrupts the file. The fallback is free: the prose ``suggestion`` still
-    carries the same content, so nothing is lost but the affordance.
-
-    That same harm asymmetry is why the fence-path AMBIGUITY check
-    (:func:`_fence_path_is_ambiguous`) fails closed here, before span
-    validation, on the finding's RAW (unresolved) spelling — even though
-    :func:`diff_path_spelling` (used for *path_lookup*, and separately for the
-    posted anchor) tolerates and cross-resolves the exact same collision. An
-    anchor pointed at the wrong one of two colliding files costs a misplaced
-    comment; a fence pointed at the wrong one commits a patch to it.
-    """
+    First failure wins. Unknown diffs permit anchors, but a one-click patch
+    fails closed because a misplaced fence corrupts the file. The prose
+    suggestion still carries the fix. Raw path collisions fail closed before
+    span validation for the same reason, even when an anchor can resolve.
+    The resolved path must match the keys used to validate the anchor."""
     if "suggested_fix_code" not in finding:
         return True, None
 
@@ -1108,15 +800,9 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
     text = _fix_code_text(raw)
     if text is None:
         return False, _FIX_EMPTY
-    # CommonMark treats a lone \r (not just \r\n) as a line ending, so
-    # "foo\rbar\rbaz" renders as THREE fence lines and applies as three lines —
-    # but it is ONE element to this gate's `split("\n")`, which never checks for
-    # \r. That let a CR-joined patch dodge the no-op, indentation, and
-    # _FIX_MAX_LINES measurements entirely: none of them saw the document a
-    # one-click apply actually commits. Fail closed on any interior CR before
-    # those measurements run; the prose `suggestion` still carries the fix, and
-    # a genuinely CRLF-terminated patch is exactly the ambiguous case a
-    # one-click apply must not ship.
+    # CommonMark renders "foo\rbar\rbaz" as three lines, but split("\n") sees
+    # one. Reject CR before no-op, indentation and size checks so their
+    # measurements describe the document a one-click apply would commit.
     if "\r" in text:
         return False, _FIX_CARRIAGE_RETURN
     # Gate on the ORIGINAL bytes: a fence carrying a literal `[REDACTED]` would be
@@ -1141,37 +827,20 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
         or end_line < line
     ):
         return False, _FIX_INVALID_RANGE
-    if not isinstance(valid_lines, dict) or not isinstance(line_texts, dict):
-        # No diff was parsed, so every check below has nothing to consult. Both
-        # mappings are required: one alone answers only half of "is this range
-        # real" / "does this patch change anything".
+    if facts is None:
         return False, _FIX_NO_ORACLE
-    if _fence_path_is_ambiguous(valid_lines, finding.get("file", "?")):
-        # The diff names two distinct real files one strip apart: this finding's
-        # own spelling cannot say which one the patch targets, so the fence fails
-        # closed even though the ANCHOR still resolves (ratified, comment-level
-        # harm only — see diff_path_spelling's docstring).
+    if diff.path_is_ambiguous(facts, finding.get("file", "?")):
         return False, _FIX_NO_ORACLE
-    if not _range_is_valid(valid_lines, path_lookup, line, end_line):
+    if not diff.range_is_valid(facts, path_lookup, line, end_line):
         return False, _FIX_RANGE_NOT_IN_DIFF
     if apply_range != (line, end_line):
         return False, _FIX_ANCHOR_MISMATCH
 
     replacement = text.split("\n")
-    span = _span_texts(line_texts, path_lookup, line, end_line)
+    span = diff.span_texts(facts, path_lookup, line, end_line)
     if span is None:
-        # _range_is_valid/is_line_valid tolerate a per-line mix of path-spelling
-        # variants (the exact diff key, or its a/ b/ -stripped form), but a span
-        # needs ONE spelling to hold for every line in it. A mixed-spelling range
-        # PARSED from a real diff is no longer reachable here — the ambiguity
-        # check above already fails closed on it, since a mix implies both
-        # spellings name real diff paths. What still reaches this branch is a
-        # PARTIAL line_texts oracle: a hand-built or truncated mapping (e.g. a
-        # caller-supplied dict missing some span lines) that answers is_line_valid
-        # for every line but has no text for one of them. That is still "no
-        # oracle", not "no difference": treating it as the latter would silently
-        # skip the no-op/indentation checks below instead of failing the patch
-        # closed.
+        # Partial text is unavailable, never permission to skip content checks.
+        # A span needs one exact spelling even when membership resolves per line.
         return False, _FIX_NO_ORACLE
     # A trailing CR is transport (a CRLF diff carries one on every line), not
     # content, and `_fix_code_text` already took the replacement's terminating
@@ -1194,24 +863,16 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
     return True, None
 
 
-def _fence_verdict(finding, apply_range, valid_lines, line_texts):
-    """Return ``(ok, reason)`` for *finding*'s ``suggested_fix_code`` at *apply_range*.
+def _fence_verdict(finding, apply_range, facts: DiffFacts | None):
+    """Resolve at the finding's line, never the render site's anchor.
 
-    Owns the ``path_lookup`` derivation (:func:`diff_path_spelling`, resolved
-    against the finding's OWN ``line`` — never the render site's anchor) and the
-    call into :func:`_suggested_fix_gate`. Every caller that needs to know
-    whether a fence would render — :func:`_gated_finding` (the render sites) and
-    a poster's overlap pre-pass (the candidate check) — goes through this ONE
-    function, so "is this finding a candidate" and "would this finding's fence
-    actually be kept" are the same computation, not two that could drift apart.
-    """
+    Overlap candidates and rendered fences must use the same decision."""
     return _suggested_fix_gate(
         finding,
         apply_range=apply_range,
-        line_texts=line_texts,
-        valid_lines=valid_lines,
-        path_lookup=diff_path_spelling(
-            valid_lines, finding.get("file", "?"), finding.get("line")
+        facts=facts,
+        path_lookup=diff.diff_path_spelling(
+            facts, finding.get("file", "?"), finding.get("line")
         ),
     )
 
@@ -1219,8 +880,7 @@ def _fence_verdict(finding, apply_range, valid_lines, line_texts):
 def _gated_finding(
     finding,
     apply_range,
-    valid_lines,
-    line_texts,
+    facts: DiffFacts | None,
     *,
     mismatch_reason=_FIX_ANCHOR_MISMATCH,
     warn_label="suggested-fix",
@@ -1268,7 +928,7 @@ def _gated_finding(
     """
     if not isinstance(finding, dict) or "suggested_fix_code" not in finding:
         return finding
-    ok, reason = _fence_verdict(finding, apply_range, valid_lines, line_texts)
+    ok, reason = _fence_verdict(finding, apply_range, facts)
     if ok:
         if demote_reason is None:
             _FIX_COUNTS["kept"] += 1
@@ -1341,7 +1001,7 @@ def _gitlab_apply_range(finding, anchor):
     return apply_range, offsets, cap_exceeded
 
 
-def _gitlab_anchored(finding, anchor, valid_lines, line_texts, *, demote_reason=None):
+def _gitlab_anchored(finding, anchor, facts: DiffFacts | None, *, demote_reason=None):
     """Return ``(finding_to_render, fence_offsets)`` for ONE GitLab inline body.
 
     A GitLab position is always single-line, but the fence header widens what one
@@ -1365,25 +1025,24 @@ def _gitlab_anchored(finding, anchor, valid_lines, line_texts, *, demote_reason=
     gated = _gated_finding(
         finding,
         apply_range,
-        valid_lines,
-        line_texts,
+        facts,
         mismatch_reason=_FIX_SPAN_EXCEEDS_CAP if cap_exceeded else _FIX_ANCHOR_MISMATCH,
         demote_reason=demote_reason,
     )
     return gated, offsets
 
 
-def _degraded_entry(filepath, line, finding, valid_lines, line_texts):
+def _degraded_entry(filepath, line, finding, facts: DiffFacts | None):
     """One entry for the body section, which has no anchor to apply against.
 
     Shared by both posters: a body-section entry never has an apply range, so
     ``_gated_finding`` is always called with ``None`` here regardless of
     platform.
     """
-    return filepath, line, _gated_finding(finding, None, valid_lines, line_texts)
+    return filepath, line, _gated_finding(finding, None, facts)
 
 
-def _warn_group_skipped(group, valid_lines, filepath=None):
+def _warn_group_skipped(group, facts: DiffFacts | None, filepath=None):
     """Record the one skip warning a group that cannot anchor inline gets.
 
     *filepath* is the primary's resolved diff spelling when its line is missing from
@@ -1397,7 +1056,7 @@ def _warn_group_skipped(group, valid_lines, filepath=None):
         message = f"Finding '{title}' has no line number — skipping."
     else:
         diag = ""
-        vl = valid_lines_for_file(valid_lines, filepath)
+        vl = diff.valid_lines_for_file(facts, filepath)
         if vl is not None:
             diag = f" Valid lines for this file: {vl}"
         message = (
@@ -1439,7 +1098,7 @@ def _key_material_finding(finding):
     return stripped
 
 
-def _github_apply_range(valid_lines, filepath, line, end_line):
+def _github_apply_range(facts: DiffFacts | None, filepath, line, end_line):
     """Return ``(multiline, apply_range)`` for a GitHub comment anchored at *line*.
 
     Shared with ``post_github``'s render loop
@@ -1453,7 +1112,7 @@ def _github_apply_range(valid_lines, filepath, line, end_line):
         isinstance(end_line, int)
         and end_line >= line
         and end_line != line
-        and _range_is_valid(valid_lines, filepath, line, end_line)
+        and diff.range_is_valid(facts, filepath, line, end_line)
     )
     apply_range = (line, end_line) if multiline else (line, line)
     return multiline, apply_range
@@ -1472,7 +1131,7 @@ def _ranges_overlap(a, b):
     return max(a[0], b[0]) <= min(a[1], b[1])
 
 
-def _github_overlap_records(groups, valid_lines, line_texts):
+def _github_overlap_records(groups, facts: DiffFacts | None):
     """Return the CANDIDATE ``(index, path_lookup, apply_range)`` records for
     post_github's overlap pre-pass.
 
@@ -1496,19 +1155,19 @@ def _github_overlap_records(groups, valid_lines, line_texts):
         line = primary.get("line")
         if line is None:
             continue
-        filepath = diff_path_spelling(valid_lines, primary.get("file", "?"), line)
-        if not is_line_valid(valid_lines, filepath, line):
+        filepath = diff.diff_path_spelling(facts, primary.get("file", "?"), line)
+        if not diff.is_line_valid(facts, filepath, line):
             continue
         _, apply_range = _github_apply_range(
-            valid_lines, filepath, line, primary.get("end_line")
+            facts, filepath, line, primary.get("end_line")
         )
-        ok, _ = _fence_verdict(primary, apply_range, valid_lines, line_texts)
+        ok, _ = _fence_verdict(primary, apply_range, facts)
         if ok:
             records.append((index, filepath, apply_range))
     return records
 
 
-def _gitlab_overlap_records(remaining, valid_lines, line_texts):
+def _gitlab_overlap_records(remaining, facts: DiffFacts | None):
     """Return the CANDIDATE ``(index, path_lookup, apply_range)`` records for
     post_gitlab's overlap pre-pass.
 
@@ -1532,7 +1191,7 @@ def _gitlab_overlap_records(remaining, valid_lines, line_texts):
         apply_range, _offsets, _cap_exceeded = _gitlab_apply_range(
             primary, primary["line"]
         )
-        ok, _ = _fence_verdict(primary, apply_range, valid_lines, line_texts)
+        ok, _ = _fence_verdict(primary, apply_range, facts)
         if ok:
             records.append((index, filepath, apply_range))
     return records
@@ -2566,8 +2225,7 @@ def resolve_marker_sha(data):
 # ---------------------------------------------------------------------------
 
 
-def post_github(data, valid_lines, line_texts, *, forge: Forge):
-    # Require both diff oracles so omission cannot silently disable apply checks.
+def post_github(data, facts: DiffFacts | None, *, forge: Forge):
     owner = data["owner"]
     repo = data["repo"]
     pr_number = data["pr_number"]
@@ -2590,7 +2248,7 @@ def post_github(data, valid_lines, line_texts, *, forge: Forge):
     # pass). The candidate predicate and index basis are `_github_overlap_records`'s
     # own docstring — this poster and the benchmark mirror both call it rather
     # than each keeping their own copy.
-    overlap_records = _github_overlap_records(groups, valid_lines, line_texts)
+    overlap_records = _github_overlap_records(groups, facts)
     losers = _overlap_losers(overlap_records)
 
     comments = []
@@ -2602,22 +2260,16 @@ def post_github(data, valid_lines, line_texts, *, forge: Forge):
         corroborators = group["corroborators"]
         line = primary.get("line")
         if line is None:
-            _warn_group_skipped(group, valid_lines)
+            _warn_group_skipped(group, facts)
             skipped_groups.append(
-                [
-                    _degraded_entry(
-                        primary.get("file", "?"), None, primary, valid_lines, line_texts
-                    )
-                ]
+                [_degraded_entry(primary.get("file", "?"), None, primary, facts)]
             )
             # The primary can't anchor, so the whole group degrades into the
             # skipped section as individual entries — the corroborators never
             # merged into a comment that itself never gets posted.
             for c in corroborators:
                 skipped_groups[-1].append(
-                    _degraded_entry(
-                        c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
-                    )
+                    _degraded_entry(c.get("file", "?"), c.get("line"), c, facts)
                 )
             continue
 
@@ -2625,17 +2277,13 @@ def post_github(data, valid_lines, line_texts, *, forge: Forge):
         # finding that only the STRIPPED form validates must ship that
         # stripped path as `comment["path"]`, or GitHub 422s the whole review
         # on a path the PR does not have.
-        filepath = diff_path_spelling(valid_lines, primary["file"], line)
-        if not is_line_valid(valid_lines, filepath, line):
-            _warn_group_skipped(group, valid_lines, filepath)
-            skipped_groups.append(
-                [_degraded_entry(filepath, line, primary, valid_lines, line_texts)]
-            )
+        filepath = diff.diff_path_spelling(facts, primary["file"], line)
+        if not diff.is_line_valid(facts, filepath, line):
+            _warn_group_skipped(group, facts, filepath)
+            skipped_groups.append([_degraded_entry(filepath, line, primary, facts)])
             for c in corroborators:
                 skipped_groups[-1].append(
-                    _degraded_entry(
-                        c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
-                    )
+                    _degraded_entry(c.get("file", "?"), c.get("line"), c, facts)
                 )
             continue
 
@@ -2652,14 +2300,11 @@ def post_github(data, valid_lines, line_texts, *, forge: Forge):
         # finding, not just this one) with a 422 "Line could not be resolved" if
         # end_line falls outside every hunk, even though `line` alone was valid.
         end_line = primary.get("end_line")
-        multiline, apply_range = _github_apply_range(
-            valid_lines, filepath, line, end_line
-        )
+        multiline, apply_range = _github_apply_range(facts, filepath, line, end_line)
         gated = _gated_finding(
             primary,
             apply_range,
-            valid_lines,
-            line_texts,
+            facts,
             demote_reason=(_FIX_OVERLAPS_KEPT_FENCE if index in losers else None),
         )
         composed = compose_inline_body(
@@ -2777,8 +2422,7 @@ def gitlab_prior_delivery(
     return state
 
 
-def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: GitLab):
-    # Require every diff oracle so omission cannot silently disable apply checks.
+def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
     owner = data["owner"]
     repo = data["repo"]
     mr_iid = data["pr_number"]
@@ -2821,7 +2465,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
 
         def make_body(anchor):
             gated, offsets = _gitlab_anchored(
-                finding, anchor, valid_lines, line_texts, demote_reason=demote_reason
+                finding, anchor, facts, demote_reason=demote_reason
             )
             return _render_group_sections(gated, corroborators, fence_offsets=offsets)
 
@@ -2830,7 +2474,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
     # Pre-partition the deterministic skips (no line number, or a line the diff never
     # touched) BEFORE the summary note is composed — the note is posted first, so the
     # skipped section must already be known. Both checks are pure functions of facts
-    # already fetched above (valid_lines, the finding's own file/line), so this is
+    # already fetched above (facts, the finding's own file/line), so this is
     # exactly the decision the inline loop below would make; it is just made early for
     # the findings that will never reach that loop. `remaining` carries each finding's
     # resolved filepath through to the loop so it is not re-derived.
@@ -2845,36 +2489,26 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
         corroborators = group["corroborators"]
         line = primary.get("line")
         if line is None:
-            _warn_group_skipped(group, valid_lines)
+            _warn_group_skipped(group, facts)
             skipped_groups.append(
-                [
-                    _degraded_entry(
-                        primary.get("file", "?"), None, primary, valid_lines, line_texts
-                    )
-                ]
+                [_degraded_entry(primary.get("file", "?"), None, primary, facts)]
             )
             # The primary can't anchor, so the whole group degrades into the
             # skipped section as individual entries.
             for c in corroborators:
                 skipped_groups[-1].append(
-                    _degraded_entry(
-                        c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
-                    )
+                    _degraded_entry(c.get("file", "?"), c.get("line"), c, facts)
                 )
             continue
 
         # Same spelling resolution the loop below applies — see its comment.
-        filepath = diff_path_spelling(valid_lines, primary["file"], line)
-        if not is_line_valid(valid_lines, filepath, line):
-            _warn_group_skipped(group, valid_lines, filepath)
-            skipped_groups.append(
-                [_degraded_entry(filepath, line, primary, valid_lines, line_texts)]
-            )
+        filepath = diff.diff_path_spelling(facts, primary["file"], line)
+        if not diff.is_line_valid(facts, filepath, line):
+            _warn_group_skipped(group, facts, filepath)
+            skipped_groups.append([_degraded_entry(filepath, line, primary, facts)])
             for c in corroborators:
                 skipped_groups[-1].append(
-                    _degraded_entry(
-                        c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
-                    )
+                    _degraded_entry(c.get("file", "?"), c.get("line"), c, facts)
                 )
             continue
 
@@ -2891,7 +2525,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
     # fence sites consult — it names every WINNING candidate's apply
     # range per path, never a loser's (the `if index not in losers:` guard
     # below is load-bearing: a loser's own range must never occupy anything).
-    overlap_records = _gitlab_overlap_records(remaining, valid_lines, line_texts)
+    overlap_records = _gitlab_overlap_records(remaining, facts)
     losers = _overlap_losers(overlap_records)
     kept_intervals: dict[Any, list[Any]] = {}
     for index, filepath, apply_range in overlap_records:
@@ -3007,7 +2641,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
         # sending null. NEVER synthesize `line_code`: it is derived server-side, and
         # both documented attempts to compute it client-side (position sibling, and
         # inside line_range) reproduced the identical 400.
-        old_line = old_line_for(valid_lines, filepath, line)
+        old_line = diff.old_line_for(facts, filepath, line)
         if old_line is not None:
             position["old_line"] = old_line
         # Newly-added files have no old version. GitLab's discussions API
@@ -3015,18 +2649,12 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
         # ``old_path`` is set on a position pointing into a new file. Omit
         # ``old_path`` for added files; include it for modified files so the
         # position stays anchored to the diff.
-        if not is_new_file(new_files, filepath):
-            # A RENAMED file must anchor `old_path` to its PRE-RENAME path — the
-            # new path does not exist on the old side. `filepath` was resolved against
-            # the parsed keys above and `old_paths` is keyed by those same keys, so the
-            # two are the same spelling. The fallback to the new path covers skipped
-            # validation (`old_paths` is None) and unrenamed files, where the two paths
-            # coincide anyway.
-            position["old_path"] = (old_paths or {}).get(filepath, filepath)
+        if not diff.is_new_file(facts, filepath):
+            # A rename needs its pre-rename path; skipped validation uses the
+            # finding's path because no old-side spelling is available.
+            position["old_path"] = diff.old_path_for(facts, filepath)
 
-        problems = validate_position(
-            position, shas, valid_lines, new_files, old_paths, filepath, line
-        )
+        problems = validate_position(position, shas, facts, filepath, line)
         if problems:
             warn_skip(
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
@@ -3085,7 +2713,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
         A position-less note has no anchor at all, so no fence it carried could
         ever be applied — the gate below strips one unconditionally here.
         """
-        gated = _gated_finding(c, None, valid_lines, line_texts)
+        gated = _gated_finding(c, None, facts)
         marker_suffix = _delivery_marker_suffix(sha, [key])
         composed = compose_inline_body(
             _finding_sections(gated),
@@ -3118,8 +2746,8 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
         line = c.get("line")
         if line is None:
             return None
-        filepath = diff_path_spelling(valid_lines, c.get("file", "?"), line)
-        if not is_line_valid(valid_lines, filepath, line):
+        filepath = diff.diff_path_spelling(facts, c.get("file", "?"), line)
+        if not diff.is_line_valid(facts, filepath, line):
             return None
         return filepath, line
 
@@ -3154,8 +2782,8 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
                 f"anchor its own discussion on."
             )
             return "invalid"
-        filepath = diff_path_spelling(valid_lines, c.get("file", "?"), line)
-        if not is_line_valid(valid_lines, filepath, line):
+        filepath = diff.diff_path_spelling(facts, c.get("file", "?"), line)
+        if not diff.is_line_valid(facts, filepath, line):
             warn_skip(
                 f"Skipping corroborating finding '{title}' at {filepath}:{line} "
                 f"— line not found in diff."
@@ -3490,19 +3118,15 @@ def main():
 
     forge = make_forge(platform)
     target = ReviewTarget(data["owner"], data["repo"], data["pr_number"])
-    valid_lines, new_files, old_paths, line_texts = parse_diff_lines(
-        target, forge=forge
-    )
+    facts = fetch_diff_facts(target, forge=forge)
 
     # Deliver. A poster RETURNS its exit status instead of exiting, so a payload defect
     # it found cannot pre-empt the dry-run payload write below — that file is the artifact
     # an operator reads to see what the run would have sent.
     if isinstance(forge, GitLab):
-        status = post_gitlab(
-            data, valid_lines, new_files, old_paths, line_texts, forge=forge
-        )
+        status = post_gitlab(data, facts, forge=forge)
     else:
-        status = post_github(data, valid_lines, line_texts, forge=forge)
+        status = post_github(data, facts, forge=forge)
 
     if DRY_RUN:
         out_path = write_dry_run_payload(platform, args.findings_json)

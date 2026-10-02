@@ -7,8 +7,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 import pytest
-from gauntlet import numstat, patches
-from gauntlet.delivery import post
+from gauntlet import numstat
 from gauntlet.diff import (
     DiffCounts,
     DiffEvent,
@@ -413,12 +412,8 @@ def test_current_null_order(
     if policy == "verify-both-spellings":
         assert decide.parse_diff_lines(diff_text) == set(valid)
     else:
-        platform = "github" if policy == "git-prefixed" else "gitlab"
-        assert post.parse_diff_text(platform, diff_text) == (
-            valid,
-            new_files,
-            old_paths,
-            texts,
+        assert parse_diff(diff_text, policy=policy) == DiffFacts(
+            valid, frozenset(new_files), old_paths, texts
         )
 
 
@@ -1182,8 +1177,7 @@ def test_diff_facts_fields() -> None:
 @pytest.mark.parametrize(
     "policy", ["git-prefixed", "glab-verbatim", "verify-both-spellings"]
 )
-def test_diff_absence(policy: DiffPathPolicy) -> None:
-    assert parse_diff(None, policy=policy) is None
+def test_empty_diff_is_present_facts(policy: DiffPathPolicy) -> None:
     assert parse_diff("", policy=policy) == DiffFacts({}, frozenset(), {}, {})
 
 
@@ -1288,7 +1282,6 @@ def test_patch_report_selection(
     expected_lines: Mapping[LineKey, int | None],
     expected_texts: Mapping[LineKey, str],
 ) -> None:
-    assert patches._diff_oracle(diff_text) == (expected_lines, expected_texts)
     facts = parse_diff(diff_text, policy=patch_report_policy(diff_text))
     assert facts is not None
     assert facts.valid_lines == expected_lines
@@ -1718,33 +1711,37 @@ def test_diff_old_path(facts: DiffFacts | None, path: str, expected: str) -> Non
 
 def test_current_lookup_contract() -> None:
     valid = {("b/x", 1): 0, ("x", 1): 9}
-    assert post.is_line_valid(valid, "b/x", 1)
-    assert post.diff_path_spelling(valid, "b/x", 1) == "b/x"
-    assert post.old_line_for(valid, "b/x", 1) == 0
-    assert post.valid_lines_for_file(
-        {("b/f", 3): None, ("b/f", 1): None, ("f", 1): 1, ("f", 2): 2}, "b/f"
+    facts = _facts(valid=valid)
+    assert is_line_valid(facts, "b/x", 1)
+    assert diff_path_spelling(facts, "b/x", 1) == "b/x"
+    assert old_line_for(facts, "b/x", 1) == 0
+    assert valid_lines_for_file(
+        _facts(valid={("b/f", 3): None, ("b/f", 1): None, ("f", 1): 1, ("f", 2): 2}),
+        "b/f",
     ) == [1, 2, 3]
-    assert post._span_texts({("b/x", 1): "a", ("x", 2): "b"}, "b/x", 1, 2) is None
+    assert (
+        span_texts(_facts(texts={("b/x", 1): "a", ("x", 2): "b"}), "b/x", 1, 2) is None
+    )
 
 
 def test_current_last_write() -> None:
     diff_text = (
         "--- first\n+++ f\n@@ -1 +1 @@\n before\n--- last\n+++ f\n@@ -8 +1 @@\n after\n"
     )
-    assert post.parse_diff_text("gitlab", diff_text) == (
+    assert parse_diff(diff_text, policy="glab-verbatim") == DiffFacts(
         {("f", 1): 8},
-        set(),
+        frozenset(),
         {"f": "last"},
         {("f", 1): "after"},
     )
 
 
 def test_current_side_specific() -> None:
-    assert post.parse_diff_text(
-        "github", "--- b/old.py\n+++ a/new.py\n@@ -1 +1 @@\n-o\n+n\n"
-    ) == (
+    assert parse_diff(
+        "--- b/old.py\n+++ a/new.py\n@@ -1 +1 @@\n-o\n+n\n", policy="git-prefixed"
+    ) == DiffFacts(
         {("a/new.py", 1): None},
-        set(),
+        frozenset(),
         {"a/new.py": "b/old.py"},
         {("a/new.py", 1): "n"},
     )
@@ -1752,7 +1749,7 @@ def test_current_side_specific() -> None:
 
 def test_parse_diff_requires_policy() -> None:
     with pytest.raises(TypeError, match="policy"):
-        without_policy = cast(Callable[[str], DiffFacts | None], parse_diff)
+        without_policy = cast(Callable[[str], DiffFacts], parse_diff)
         without_policy("")
 
 
@@ -1766,7 +1763,6 @@ def test_diff_lookup_wrong_path(query: object) -> None:
     "diff_text, expected",
     [
         pytest.param("", set(), id="empty"),
-        pytest.param(None, None, id="skipped"),
         pytest.param(
             "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -1,3 +1,4 @@\n line1\n+added_line\n line2\n line3\n",
             {
@@ -1945,18 +1941,12 @@ def test_diff_lookup_wrong_path(query: object) -> None:
         ),
     ],
 )
-def test_verify_membership(
-    diff_text: str | None, expected: set[LineKey] | None
-) -> None:
+def test_verify_membership(diff_text: str, expected: set[LineKey]) -> None:
     facts = parse_diff(diff_text, policy="verify-both-spellings")
-    if expected is None:
-        assert facts is None
-    else:
-        assert facts is not None
-        assert set(facts.valid_lines) == expected
-        assert set(facts.line_texts) == expected
-        assert facts.new_files == frozenset()
-        assert facts.old_paths == {}
+    assert set(facts.valid_lines) == expected
+    assert set(facts.line_texts) == expected
+    assert facts.new_files == frozenset()
+    assert facts.old_paths == {}
 
 
 @pytest.mark.parametrize(

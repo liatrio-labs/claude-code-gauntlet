@@ -231,17 +231,16 @@ def patch_report_policy(diff_text: str) -> PostingPathPolicy:
     return "git-prefixed" if _GIT_SHAPED_RE.match(diff_text) else "glab-verbatim"
 
 
-def parse_diff(diff_text: str | None, *, policy: DiffPathPolicy) -> DiffFacts | None:
+def parse_diff(diff_text: str, *, policy: DiffPathPolicy) -> DiffFacts:
     """Collect new-side addressability and text, retaining old context numbers.
 
     GitLab context positions need both numbers and the pre-rename old path.
     Added files must omit old_path to avoid HTTP 500. Plain empty-old hunks
     cannot distinguish additions from edits of empty files and guess added;
-    proven git blocks instead use the null old side. None skips validation,
-    while an empty successful diff is a present oracle with no valid keys.
+    proven git blocks instead use the null old side. An empty successful diff
+    is a present oracle with no valid keys; a caller that could not fetch the
+    diff passes ``None`` facts to the lookups instead of calling this.
     """
-    if diff_text is None:
-        return None
     valid_lines: dict[LineKey, int | None] = {}
     line_texts: dict[LineKey, str] = {}
     new_files: set[str] = set()

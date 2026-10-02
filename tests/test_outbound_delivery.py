@@ -19,6 +19,7 @@ import pytest
 from gauntlet.forge import JsonFetch, Platform, PostRequest, PostResult, ReviewTarget
 from gauntlet.prior_review import PriorDelivery
 
+from tests.support.diff import diff_facts
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 from tests.support.prior import prior_notes
 from tests.test_outbound_contract import _assert_outbound_string_invariant
@@ -121,11 +122,20 @@ def _deliver(
                 patch.object(post_review, "validate_position", return_value=[])
             )
         if platform == "github":
-            post_review.post_github(data, lines, texts, forge=fake)
+            post_review.post_github(
+                data, diff_facts(lines, line_texts=texts), forge=fake
+            )
         else:
             assert isinstance(fake, FakeGitLab)
             post_review.post_gitlab(
-                data, lines, set(), {path: path for path, _ in lines}, texts, forge=fake
+                data,
+                diff_facts(
+                    lines,
+                    line_texts=texts,
+                    new_files=set(),
+                    old_paths={path: path for path, _ in lines},
+                ),
+                forge=fake,
             )
         payload = (
             [
@@ -775,9 +785,10 @@ class TestFoldAndGateContracts(unittest.TestCase):
         result = post_review._suggested_fix_gate(
             finding,
             apply_range=(1, 1),
-            line_texts={("src/edited.py", 1): "original"},
-            valid_lines={("src/edited.py", 1): 1},
             path_lookup="src/edited.py",
+            facts=diff_facts(
+                {("src/edited.py", 1): 1}, line_texts={("src/edited.py", 1): "original"}
+            ),
         )
         self.assertEqual(result, (False, "marker_shaped"))
         finding["end_line"] = 3
@@ -785,9 +796,11 @@ class TestFoldAndGateContracts(unittest.TestCase):
             post_review._suggested_fix_gate(
                 finding,
                 apply_range=(1, 1),
-                line_texts={("src/edited.py", 1): "original"},
-                valid_lines={("src/edited.py", 1): 1},
                 path_lookup="src/edited.py",
+                facts=diff_facts(
+                    {("src/edited.py", 1): 1},
+                    line_texts={("src/edited.py", 1): "original"},
+                ),
             ),
             (False, "marker_shaped"),
         )
@@ -817,10 +830,12 @@ class TestDeliveryTitleKeys(unittest.TestCase):
                     "sha": SHA,
                     "findings": [finding],
                 },
-                {(filepath, line): 50},
-                set(),
-                {filepath: filepath},
-                {(filepath, line): "context"},
+                diff_facts(
+                    {(filepath, line): 50},
+                    line_texts={(filepath, line): "context"},
+                    new_files=set(),
+                    old_paths={filepath: filepath},
+                ),
                 forge=fake,
             )
         discussion = next(

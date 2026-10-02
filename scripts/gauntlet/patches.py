@@ -20,26 +20,12 @@ from gauntlet.delivery.post import (
     _fix_code_text,
     _gated_finding,
     _redact_secrets,
-    parse_diff_text,
     reset_run_state,
 )
+from gauntlet.diff import parse_diff, patch_report_policy
 from gauntlet.fs import JsonReadError, confined, read_json, write_atomic
 
 _HEAD_SHA_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-# Anchored to the FIRST line, and to git's default `a/` prefix specifically —
-# not a bare `diff --git ` — because that default prefix is exactly what
-# `parse_diff_text("github", …)` strips. Under `diff.noprefix=true` the first
-# line is `diff --git foo.py foo.py`: it does not match, so parsing falls to
-# verbatim keying, which is exactly right (every path keys as itself). Under
-# `diff.mnemonicPrefix` the first line is `diff --git i/… w/…`: it also does
-# not match, so parsing falls to verbatim keying too — this fails closed on
-# every finding rather than stripping the wrong prefix, the safer of the two
-# wrong answers. The optional `"` keeps a C-quoted first file git-shaped
-# (`diff --git "a/café.py" "b/café.py"`). Searching the whole text instead of
-# anchoring to the first line would let a marker-less body line (a bare
-# zero-prefixed context line whose content begins `diff --git a/`) flip a
-# verbatim diff into git-shaped keying.
-_GIT_SHAPED_RE = re.compile(r'\Adiff --git "?a/')
 _EXT_RE = re.compile(r"^[A-Za-z0-9_+#-]{1,12}$")
 _COMMENT_OPEN_RE = re.compile(r"<!--")
 
@@ -98,23 +84,6 @@ def _load_findings(path, errors):
         )
         return None
     return data
-
-
-def _diff_oracle(diff_text):
-    """Return ``(valid_lines, line_texts)`` keyed by the live delivery parser.
-
-    Only a first line shaped like ``diff --git "?a/`` (git's default prefixes, from
-    ``gh pr diff`` or ``git diff``) is keyed git-style. ``diff.noprefix`` and
-    ``glab mr diff`` headers key paths verbatim, which is right for both, and
-    ``diff.mnemonicPrefix`` then fails closed on every finding rather than strip
-    the wrong prefix. A git-shaped diff on a GitLab run keys git-style while live
-    delivery keys glab-style; the artifact already discloses that residual.
-    """
-    platform = "github" if _GIT_SHAPED_RE.search(diff_text) else "gitlab"
-    valid_lines, _new_files, _old_paths, line_texts = parse_diff_text(
-        platform, diff_text
-    )
-    return valid_lines, line_texts
 
 
 def _code_span(s):
@@ -372,8 +341,7 @@ def main(argv=None):
         diff_text = None
 
     if diff_text is not None and not diff_text.strip():
-        # A 0-byte capture is Phase 2's documented diff-producer failure
-        # mode. It must take the same disclosed, fail-closed path as a
+        # An empty capture must take the same disclosed, fail-closed path as a
         # missing file — parsing it as an empty-but-present diff would key
         # nothing and downgrade every candidate as `range_not_in_diff`
         # instead of the honest `no_diff_oracle`.
@@ -381,10 +349,10 @@ def main(argv=None):
 
     if diff_text is None:
         oracle_state = "missing"
-        valid_lines, line_texts = None, None
+        facts = None
     else:
         oracle_state = "ok"
-        valid_lines, line_texts = _diff_oracle(diff_text)
+        facts = parse_diff(diff_text, policy=patch_report_policy(diff_text))
 
     candidates = [
         f for f in findings if isinstance(f, dict) and "suggested_fix_code" in f
@@ -406,8 +374,7 @@ def main(argv=None):
             gated = _gated_finding(
                 finding,
                 (finding.get("line"), finding.get("end_line")),
-                valid_lines,
-                line_texts,
+                facts,
                 warn_label="report-patch",
             )
             if "suggested_fix_code" in gated:
