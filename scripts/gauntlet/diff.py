@@ -23,6 +23,13 @@ class HunkEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class RawHunk:
+    new_path: str | None
+    hunk: HunkEvent
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class LineEvent:
     old_line: int | None
     new_line: int | None
@@ -125,34 +132,35 @@ def _decode_header_path(field: str) -> str:
         return field
 
 
-def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
-    """Yield events using trusted hunk budgets to separate headers from bodies."""
+def _walk_diff_indexed(lines: list[str]) -> Iterator[tuple[int, DiffEvent]]:
     old_line = 0
     new_line = 0
     old_rem = 0
     new_rem = 0
 
-    # Git treats form feeds, vertical tabs, NEL and Unicode separators as content.
-    # splitlines() would drain budgets early and shift the header/body boundary.
-    lines = diff_text.split("\n")
-    if lines[-1] == "":
-        # A terminating split tail would mint a phantom line in a truncated hunk.
-        lines.pop()
-
-    for raw_line in lines:
+    for line_index, raw_line in enumerate(lines):
         if old_rem <= 0 and new_rem <= 0:
             if raw_line.startswith(_GIT_HEADER_PREFIX):
-                yield HeaderEvent("git_header", raw_line[len(_GIT_HEADER_PREFIX) :])
+                yield (
+                    line_index,
+                    HeaderEvent("git_header", raw_line[len(_GIT_HEADER_PREFIX) :]),
+                )
                 continue
 
             old_match = _OLD_HEADER_RE.match(raw_line)
             if old_match:
-                yield HeaderEvent("old_path", _decode_header_path(old_match.group(1)))
+                yield (
+                    line_index,
+                    HeaderEvent("old_path", _decode_header_path(old_match.group(1))),
+                )
                 continue
 
             new_match = _NEW_HEADER_RE.match(raw_line)
             if new_match:
-                yield HeaderEvent("new_path", _decode_header_path(new_match.group(1)))
+                yield (
+                    line_index,
+                    HeaderEvent("new_path", _decode_header_path(new_match.group(1))),
+                )
                 continue
 
             hunk_match = _HUNK_RE.match(raw_line)
@@ -163,7 +171,7 @@ def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
                 # Unified diffs omit count 1; a missing group never means an empty side.
                 old_rem = 1 if old_count is None else int(old_count)
                 new_rem = 1 if new_count is None else int(new_count)
-                yield HunkEvent(old_line, new_line, old_rem, new_rem)
+                yield line_index, HunkEvent(old_line, new_line, old_rem, new_rem)
                 continue
 
             # Header-zone noise must not become phantom lines in the preceding file.
@@ -177,23 +185,91 @@ def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
 
         if raw_line.startswith("+"):
             new_rem -= 1
-            yield LineEvent(None, new_line, raw_line[1:])
+            yield line_index, LineEvent(None, new_line, raw_line[1:])
             new_line += 1
         elif raw_line.startswith("-"):
             old_rem -= 1
-            yield LineEvent(old_line, None, raw_line[1:])
+            yield line_index, LineEvent(old_line, None, raw_line[1:])
             old_line += 1
         else:
             # Bare context has no marker; slicing it would eat a content character.
             old_rem -= 1
             new_rem -= 1
-            yield LineEvent(
-                old_line,
-                new_line,
-                raw_line[1:] if raw_line.startswith(" ") else raw_line,
+            yield (
+                line_index,
+                LineEvent(
+                    old_line,
+                    new_line,
+                    raw_line[1:] if raw_line.startswith(" ") else raw_line,
+                ),
             )
             new_line += 1
             old_line += 1
+
+
+def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
+    """Yield events using trusted hunk budgets to separate headers from bodies."""
+    lines, _ = _split_lines(diff_text)
+
+    for _, event in _walk_diff_indexed(lines):
+        yield event
+
+
+def _split_lines(diff_text: str) -> tuple[list[str], bool]:
+    # Git treats form feeds, vertical tabs, NEL and Unicode separators as content.
+    # splitlines() would drain budgets early and shift the header/body boundary.
+    lines = diff_text.split("\n")
+    has_final_newline = lines[-1] == ""
+    if has_final_newline:
+        # A terminating split tail would mint a phantom line in a truncated hunk.
+        lines.pop()
+    return lines, has_final_newline
+
+
+def _build_raw_hunk(
+    lines: list[str],
+    has_final_newline: bool,
+    new_path: str | None,
+    hunk: HunkEvent,
+    start: int,
+    last_body: int,
+) -> RawHunk:
+    end = last_body
+    # The walker yields no event for a marker line, so a trailing one is found here.
+    if end + 1 < len(lines) and lines[end + 1].startswith("\\"):
+        end += 1
+    text = "\n".join(lines[start : end + 1])
+    if end < len(lines) - 1 or has_final_newline:
+        text += "\n"
+    return RawHunk(new_path, hunk, text)
+
+
+def raw_hunks(diff_text: str) -> Iterator[RawHunk]:
+    """Yield budgeted hunks with their decoded new path and original text."""
+    lines, has_final_newline = _split_lines(diff_text)
+
+    current_path: str | None = None
+    hunk: HunkEvent | None = None
+    hunk_path: str | None = None
+    start = last_body = 0
+    for line_index, event in _walk_diff_indexed(lines):
+        if isinstance(event, HeaderEvent) and event.kind == "new_path":
+            current_path = event.value
+        elif isinstance(event, HunkEvent):
+            if hunk is not None:
+                yield _build_raw_hunk(
+                    lines, has_final_newline, hunk_path, hunk, start, last_body
+                )
+            hunk = event
+            hunk_path = current_path
+            start = last_body = line_index
+        elif isinstance(event, LineEvent):
+            last_body = line_index
+
+    if hunk is not None:
+        yield _build_raw_hunk(
+            lines, has_final_newline, hunk_path, hunk, start, last_body
+        )
 
 
 def _strip_ab_prefix(path: str) -> str:

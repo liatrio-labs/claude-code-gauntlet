@@ -1,32 +1,20 @@
-"""Adjudicator: classify a non-golden-matched review comment as valid_extra | noise.
+"""Adjudicator: classify a review comment the judge matched to no golden.
 
-A comment that the LLM judge did not match to any golden is not automatically
-"noise" — it may be a real, grounded issue the golden set simply does not cover.
-The adjudicator makes that call with a deliberately narrow view: the comment
-text, the diff hunk it targets, and a few nearby lines of the changed file, and
-nothing else about the repository (frozen prompt in ``prompt.txt``). It is a
-single, temperature-0 call to the same pinned, dated Opus snapshot the judge uses,
-via the Anthropic OpenAI-compatible chat-completions endpoint (spec H5).
-
-Public surface:
-
-* ``adjudicate(comment_text, diff_hunk, file_context, pin, api_key)`` -> a dict
-  ``{"bucket": "valid_extra"|"noise", "failed_check": 1|2|3|4|None,
-  "reason": <str>}``. Strict JSON parse of the model reply with a single retry
-  on malformed JSON; a second malformed reply raises ``ValueError`` rather than
-  guessing a bucket.
-* ``slice_hunk(diff_text, path, line)`` and ``file_context(file_lines, line)``
-  are pure helpers that build the two context strings; they are the load-bearing
-  logic and are tested exhaustively. Network I/O lives behind ``_transport`` so
-  tests never touch the wire.
-
-stdlib-only (CLAUDE.md): ``urllib.request`` for HTTP, no third-party deps.
+Unmatched is not automatically noise: the golden set may simply not cover a real
+issue. The call goes to the same pinned, dated snapshot the judge uses and sees
+only the comment, its diff hunk and nearby lines of the changed file. Network I/O
+sits behind ``_transport`` so tests never touch the wire.
 """
 
 import json
 import re
+import sys
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+from gauntlet.diff import RawHunk, raw_hunks
 
 __all__ = ["FROZEN_PROMPT", "adjudicate", "file_context", "slice_hunk"]
 
@@ -38,99 +26,37 @@ _PROMPT_PATH = Path(__file__).resolve().parent / "prompt.txt"
 FROZEN_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
 
 _CONTEXT_RADIUS = 5  # nearby head-file lines shown on each side of the target line
-_HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
 # ------------------------------------------------------------------ diff slicing
 
 
-def _diff_path(header_line):
-    """Return the new-file path named by a ``+++ b/<path>`` line, or None."""
-    if not header_line.startswith("+++ "):
-        return None
-    target = header_line[4:].strip()
-    if target == "/dev/null":
-        return None
-    # Strip a leading ``b/`` (git) prefix; some diffs omit it.
-    if target.startswith("b/"):
-        target = target[2:]
-    # Drop a trailing tab-timestamp that some diff tools append.
-    return target.split("\t", 1)[0]
+def slice_hunk(diff_text: str, path: str, line: int) -> str:
+    """Return the hunk under ``path`` covering 1-based new-file ``line``, else the nearest one.
 
-
-def _iter_file_hunks(diff_text, path):
-    """Yield ``(new_start, new_count, hunk_text)`` for each hunk under ``path``.
-
-    ``new_start``/``new_count`` come from the ``@@ -a,b +c,d @@`` header and
-    describe the hunk's span in the *new* file. ``hunk_text`` is the header line
-    plus its body, verbatim.
+    Raises ``ValueError`` when ``path`` has no hunk; callers catch it to fall back.
     """
-    lines = diff_text.splitlines(keepends=True)
-    current_path = None
-    i = 0
-    n = len(lines)
-    while i < n:
-        line = lines[i]
-        if line.startswith("+++ "):
-            current_path = _diff_path(line.rstrip("\n"))
-            i += 1
+    hunks: list[RawHunk] = []
+    for raw_hunk in raw_hunks(diff_text):
+        if raw_hunk.new_path is None:
             continue
-        if line.startswith("--- ") or line.startswith("diff --git "):
-            i += 1
+        # Bench diffs are git output and candidate paths are repo-relative.
+        # Strip keeps CRLF and padded header lines matching after decoding.
+        target = raw_hunk.new_path.strip().removeprefix("b/")
+        if target != path or target == "/dev/null":
             continue
-        m = _HUNK_HEADER_RE.match(line)
-        if m and current_path == path:
-            new_start = int(m.group(1))
-            new_count = int(m.group(2)) if m.group(2) is not None else 1
-            body = [line]
-            j = i + 1
-            while j < n:
-                nxt = lines[j]
-                if (
-                    nxt.startswith("@@ ")
-                    or nxt.startswith("diff --git ")
-                    or nxt.startswith("+++ ")
-                ):
-                    break
-                body.append(nxt)
-                j += 1
-            yield new_start, new_count, "".join(body)
-            i = j
-            continue
-        i += 1
-
-
-def slice_hunk(diff_text, path, line):
-    """Return the diff hunk under ``path`` that covers new-file ``line``.
-
-    ``line`` is a 1-based line number in the new (post-change) file. A hunk
-    covers ``[new_start, new_start + new_count - 1]`` inclusive, so a line at a
-    hunk boundary is matched. If no hunk contains ``line`` but the path has
-    hunks, the nearest hunk (by distance to its new-file span) is returned so
-    the adjudicator still sees relevant context. Raises ``ValueError`` when the
-    path is absent from the diff (an informative error, never a guess).
-    """
-    hunks = list(_iter_file_hunks(diff_text, path))
+        hunks.append(raw_hunk)
     if not hunks:
         raise ValueError(
             f"path {path!r} not found in diff (no +++ header / hunks for it)"
         )
 
-    for new_start, new_count, text in hunks:
-        span = new_count if new_count > 0 else 1
-        if new_start <= line <= new_start + span - 1:
-            return text
+    def distance(raw_hunk: RawHunk) -> int:
+        hunk = raw_hunk.hunk
+        end = hunk.new_line + max(hunk.new_count, 1) - 1
+        return max(hunk.new_line - line, line - end, 0)
 
-    # Line outside every hunk for this path — return the closest hunk.
-    def distance(h):
-        new_start, new_count, _ = h
-        span = new_count if new_count > 0 else 1
-        end = new_start + span - 1
-        if line < new_start:
-            return new_start - line
-        return line - end
-
-    return min(hunks, key=distance)[2]
+    return min(hunks, key=distance).text
 
 
 def file_context(file_lines, line, radius=_CONTEXT_RADIUS):

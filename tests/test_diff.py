@@ -26,6 +26,7 @@ from gauntlet.diff import (
     path_is_ambiguous,
     posting_policy,
     range_is_valid,
+    raw_hunks,
     span_texts,
     valid_lines_for_file,
     walk_diff,
@@ -289,6 +290,200 @@ def _patch(old: str, new: str, body: str, *, hunk: str = "@@ -1 +1 @@") -> str:
 )
 def test_events(diff_text: str, expected: list[DiffEvent]) -> None:
     assert list(walk_diff(diff_text)) == expected
+
+
+@pytest.mark.parametrize(
+    "diff_text, expected",
+    [
+        pytest.param("", [], id="empty"),
+        pytest.param(
+            "@@ -0,0 +1 @@\n+new\n",
+            [(None, HunkEvent(0, 1, 0, 1), "@@ -0,0 +1 @@\n+new\n")],
+            id="hunk-before-any-path",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n@@ -8 +8 @@\n-old8\n+new8\n",
+            [
+                ("b/f.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-old\n+new\n"),
+                ("b/f.py", HunkEvent(8, 8, 1, 1), "@@ -8 +8 @@\n-old8\n+new8\n"),
+            ],
+            id="two-hunks",
+        ),
+        pytest.param(
+            "+++ b/f\n@@ -1 +1 @@\n-x\n+y\n@@ -5 +5 @@\n-x\n+y",
+            [
+                ("b/f", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-x\n+y\n"),
+                ("b/f", HunkEvent(5, 5, 1, 1), "@@ -5 +5 @@\n-x\n+y"),
+            ],
+            id="unterminated-multiple-hunks",
+        ),
+        pytest.param(
+            "+++ b/one.py\n@@ -1 +1 @@\n-old\n+new\n"
+            "--- a/two.py\n+++ /dev/null\n@@ -2 +2 @@\n-old2\n+new2\n",
+            [
+                ("b/one.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-old\n+new\n"),
+                ("/dev/null", HunkEvent(2, 2, 1, 1), "@@ -2 +2 @@\n-old2\n+new2\n"),
+            ],
+            id="two-files",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n",
+            [
+                (
+                    "b/f.py",
+                    HunkEvent(1, 1, 1, 1),
+                    "@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n",
+                )
+            ],
+            id="no-newline-marker-in-body",
+        ),
+        pytest.param(
+            # Each lookalike ends its hunk, where dropping it would shorten the text.
+            "+++ b/f.py\n@@ -1 +1,2 @@\n a\n+++ x\n"
+            "@@ -5,2 +6,2 @@\n b\n@@ -9 +9 @@\n"
+            "@@ -8,2 +9,2 @@\n c\ndiff --git a/x b/x\n",
+            [
+                ("b/f.py", HunkEvent(1, 1, 1, 2), "@@ -1 +1,2 @@\n a\n+++ x\n"),
+                ("b/f.py", HunkEvent(5, 6, 2, 2), "@@ -5,2 +6,2 @@\n b\n@@ -9 +9 @@\n"),
+                (
+                    "b/f.py",
+                    HunkEvent(8, 9, 2, 2),
+                    "@@ -8,2 +9,2 @@\n c\ndiff --git a/x b/x\n",
+                ),
+            ],
+            id="body-lines-shaped-like-headers",
+        ),
+        pytest.param(
+            "+++ b/one.py\n@@ -1 +1 @@\n-old\n+new\n"
+            "--- a/two.py\n+++ b/two.py\n@@ -2 +2 @@\n-old2\n+new2\n",
+            [
+                ("b/one.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-old\n+new\n"),
+                ("b/two.py", HunkEvent(2, 2, 1, 1), "@@ -2 +2 @@\n-old2\n+new2\n"),
+            ],
+            id="header-zone-next-file-without-git-header",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n\n",
+            [("b/f.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-old\n+new\n")],
+            id="header-zone-blank-line",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n-- \n",
+            [("b/f.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-old\n+new\n")],
+            id="header-zone-format-patch-trailer",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n+text\x0c+++ continuation\n",
+            [
+                (
+                    "b/f.py",
+                    HunkEvent(1, 1, 1, 1),
+                    "@@ -1 +1 @@\n+text\x0c+++ continuation\n",
+                )
+            ],
+            id="body-form-feed-is-not-a-separator",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1,2 +1,2 @@\n+only\n",
+            [("b/f.py", HunkEvent(1, 1, 2, 2), "@@ -1,2 +1,2 @@\n+only\n")],
+            id="truncated-final-hunk",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1,4 +1,4 @@\n-old\n+new\n"
+            "--- a/other.py\n+++ b/other.py\n@@ -1 +1 @@\n+other\n",
+            [
+                (
+                    "b/f.py",
+                    HunkEvent(1, 1, 4, 4),
+                    "@@ -1,4 +1,4 @@\n-old\n+new\n"
+                    "--- a/other.py\n+++ b/other.py\n@@ -1 +1 @@\n+other\n",
+                )
+            ],
+            id="overcount-consumes-next-file-hunk",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1,1 +1,1 @@\n-old\n+new\n+extra\n",
+            [("b/f.py", HunkEvent(1, 1, 1, 1), "@@ -1,1 +1,1 @@\n-old\n+new\n")],
+            id="undercount-stops-at-budget",
+        ),
+        pytest.param(
+            "+++  b/f.py \t\n@@ -1 +1 @@\n-old\r\n+new\r\n",
+            [(" b/f.py ", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n-old\r\n+new\r\n")],
+            id="lf-header-crlf-body",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n+last",
+            [("b/f.py", HunkEvent(1, 1, 1, 1), "@@ -1 +1 @@\n+last")],
+            id="unterminated-final-body-line",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n+last\n\\ No newline at end of file\n",
+            [
+                (
+                    "b/f.py",
+                    HunkEvent(1, 1, 1, 1),
+                    "@@ -1 +1 @@\n+last\n\\ No newline at end of file\n",
+                )
+            ],
+            id="marker-after-last-body-at-end",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n+last\n\\ No newline at end of file",
+            [
+                (
+                    "b/f.py",
+                    HunkEvent(1, 1, 1, 1),
+                    "@@ -1 +1 @@\n+last\n\\ No newline at end of file",
+                )
+            ],
+            id="unterminated-final-marker",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n-old\n+new\n\\ non-literal backslash note\n",
+            [
+                (
+                    "b/f.py",
+                    HunkEvent(1, 1, 1, 1),
+                    "@@ -1 +1 @@\n-old\n+new\n\\ non-literal backslash note\n",
+                )
+            ],
+            id="nonliteral-backslash-after-last-body",
+        ),
+        pytest.param(
+            "+++ b/f.py\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n"
+            "+new\n\\ No newline at end of file\n@@ -3 +3 @@\n+x\n",
+            [
+                (
+                    "b/f.py",
+                    HunkEvent(1, 1, 1, 1),
+                    "@@ -1 +1 @@\n-old\n\\ No newline at end of file\n"
+                    "+new\n\\ No newline at end of file\n",
+                ),
+                ("b/f.py", HunkEvent(3, 3, 1, 1), "@@ -3 +3 @@\n+x\n"),
+            ],
+            id="markers-on-both-sides-before-next-hunk",
+        ),
+    ],
+)
+def test_raw_hunks(
+    diff_text: str, expected: list[tuple[str | None, HunkEvent, str]]
+) -> None:
+    assert [
+        (raw_hunk.new_path, raw_hunk.hunk, raw_hunk.text)
+        for raw_hunk in raw_hunks(diff_text)
+    ] == expected
+
+
+def test_walk_diff_events_remain_unchanged_for_existing_fixture() -> None:
+    assert list(walk_diff(_fixture("modified.diff"))) == [
+        HeaderEvent("old_path", "src/edited.py"),
+        HeaderEvent("new_path", "src/edited.py"),
+        HunkEvent(50, 61, 3, 3),
+        LineEvent(50, 61, "unchanged_ctx"),
+        LineEvent(51, None, "removed"),
+        LineEvent(None, 62, "added"),
+        LineEvent(52, 63, "tail_ctx"),
+    ]
 
 
 @pytest.mark.parametrize(

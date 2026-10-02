@@ -6,9 +6,12 @@ context builders (``slice_hunk`` boundary/nearest/missing-path behavior and
 """
 
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -34,19 +37,17 @@ FAILING_REPLY = (
     'readability/unintentional mutation appearance is concrete and actionable."}'
 )
 
-# Two-hunk unified diff for one file. New-file spans: hunk 1 = lines 10..14,
-# hunk 2 = lines 41..44.
 DIFF = (
     "diff --git a/src/app.py b/src/app.py\n"
     "index 1111111..2222222 100644\n"
     "--- a/src/app.py\n"
     "+++ b/src/app.py\n"
-    "@@ -10,4 +10,5 @@ def foo():\n"
+    "@@ -10,3 +10,4 @@ def foo():\n"
     " a\n"
     " b\n"
     "+c\n"
     " d\n"
-    "@@ -40,3 +41,4 @@ def bar():\n"
+    "@@ -40,2 +41,3 @@ def bar():\n"
     " e\n"
     "+f\n"
     " g\n"
@@ -75,43 +76,143 @@ class FakeTransport:
         return {"choices": [{"message": {"content": content}}]}
 
 
-class SliceHunkTests(unittest.TestCase):
-    def test_line_at_hunk_start_boundary(self):
-        hunk = slice_hunk(DIFF, "src/app.py", 10)
-        self.assertIn("@@ -10,4 +10,5 @@", hunk)
-        self.assertNotIn("+41,4", hunk)
+HUNK_ONE = "@@ -10,3 +10,4 @@ def foo():\n a\n b\n+c\n d\n"
+HUNK_TWO = "@@ -40,2 +41,3 @@ def bar():\n e\n+f\n g\n"
+OTHER_HUNK = "@@ -1,2 +1,3 @@\n x\n+y\n z\n"
+START_BOUNDARY_DIFF = (
+    "+++ b/boundary.py\n@@ -10 +10 @@\n-first\n+first\n@@ -9,2 +9,2 @@\n before\n at\n"
+)
+END_BOUNDARY_DIFF = (
+    "+++ b/boundary.py\n@@ -10,2 +10,2 @@\n before\n last\n"
+    "@@ -11 +11 @@\n-second\n+second\n"
+)
 
-    def test_line_at_hunk_end_boundary(self):
-        # Line 14 is the last line of hunk 1's new-file span (10 + 5 - 1).
-        hunk = slice_hunk(DIFF, "src/app.py", 14)
-        self.assertIn("@@ -10,4 +10,5 @@", hunk)
 
-    def test_line_in_second_hunk(self):
-        hunk = slice_hunk(DIFF, "src/app.py", 41)
-        self.assertIn("@@ -40,3 +41,4 @@", hunk)
-        self.assertIn("+f", hunk)
-
-    def test_line_between_hunks_returns_nearest(self):
-        # Line 25: distance to hunk-1 end (14) = 11, to hunk-2 start (41) = 16.
-        hunk = slice_hunk(DIFF, "src/app.py", 25)
-        self.assertIn("@@ -10,4 +10,5 @@", hunk)
-
-    def test_second_file_isolated_from_first(self):
-        hunk = slice_hunk(DIFF, "other.py", 2)
-        self.assertIn("@@ -1,2 +1,3 @@", hunk)
-        self.assertIn("+y", hunk)
-        self.assertNotIn("def foo", hunk)
-
-    def test_missing_path_raises_informative_error(self):
-        with self.assertRaises(ValueError) as ctx:
-            slice_hunk(DIFF, "nope/missing.py", 5)
-        self.assertIn("missing.py", str(ctx.exception))
-
-    def test_hunk_text_is_only_that_hunk(self):
-        hunk = slice_hunk(DIFF, "src/app.py", 12)
-        # Body of hunk 1 only; must not bleed into hunk 2.
-        self.assertIn("+c", hunk)
-        self.assertNotIn("+f", hunk)
+@pytest.mark.parametrize(
+    "diff_text, path, line, expected",
+    [
+        pytest.param(
+            START_BOUNDARY_DIFF,
+            "boundary.py",
+            10,
+            "@@ -10 +10 @@\n-first\n+first\n",
+            id="start-boundary",
+        ),
+        pytest.param(
+            END_BOUNDARY_DIFF,
+            "boundary.py",
+            11,
+            "@@ -10,2 +10,2 @@\n before\n last\n",
+            id="end-boundary",
+        ),
+        pytest.param(DIFF, "src/app.py", 42, HUNK_TWO, id="second-hunk"),
+        pytest.param(DIFF, "src/app.py", 30, HUNK_TWO, id="between-hunks-nearest"),
+        pytest.param(
+            DIFF,
+            "src/app.py",
+            25,
+            HUNK_ONE,
+            id="between-hunks-strict-nearer-first",
+        ),
+        pytest.param(DIFF, "src/app.py", 27, HUNK_ONE, id="nearest-tie-first"),
+        pytest.param(
+            "+++ b/f\n@@ -10 +10 @@\n-a\n+a\n@@ -9,3 +9,3 @@\n x\n y\n z\n",
+            "f",
+            10,
+            "@@ -10 +10 @@\n-a\n+a\n",
+            id="first-covering-wins-over-deeper-cover",
+        ),
+        pytest.param(
+            "+++ b/zero.py\n@@ -3 +3 @@\n-later\n+later\n@@ -2,0 +2,0 @@\n",
+            "zero.py",
+            2,
+            "@@ -2,0 +2,0 @@\n",
+            id="zero-count-span-is-one",
+        ),
+        pytest.param(
+            "+++ b/f\n@@ -5,2 +4,0 @@\n-a\n-b\n@@ -12 +10 @@\n-x\n+y\n",
+            "f",
+            7,
+            "@@ -5,2 +4,0 @@\n-a\n-b\n",
+            id="zero-count-nearest-span-is-one",
+        ),
+        pytest.param(DIFF, "other.py", 2, OTHER_HUNK, id="second-file-isolated"),
+        pytest.param(
+            "+++ src/b/file.py\n@@ -1 +1 @@\n-old\n+new\n",
+            "src/b/file.py",
+            1,
+            "@@ -1 +1 @@\n-old\n+new\n",
+            id="non-leading-b-prefix-preserved",
+        ),
+        pytest.param(
+            '--- "a/f "\n+++ "b/f "\n@@ -1 +1 @@\n-old\n+new\n',
+            "f",
+            1,
+            "@@ -1 +1 @@\n-old\n+new\n",
+            id="quoted-trailing-space-matches-stripped-candidate",
+        ),
+        pytest.param(
+            '--- "a/caf\\303\\251.py"\n'
+            '+++ "b/caf\\303\\251.py"\n'
+            "@@ -1 +1 @@\n-old\n+new\n",
+            "café.py",
+            1,
+            "@@ -1 +1 @@\n-old\n+new\n",
+            id="quoted-path-decodes-to-candidate",
+        ),
+        pytest.param(
+            '--- "a/caf\\303\\251.py"\n'
+            '+++ "b/caf\\303\\251.py"\n'
+            "@@ -1 +1 @@\n-old\n+new\n",
+            '"b/caf\\303\\251.py"',
+            1,
+            None,
+            id="quoted-path-literal-spelling-does-not-match",
+        ),
+        pytest.param(
+            "--- a/crlf.py\r\n+++ b/crlf.py\r\n@@ -1 +1 @@\n-old\r\n+new\r\n",
+            "crlf.py",
+            1,
+            "@@ -1 +1 @@\n-old\r\n+new\r\n",
+            id="crlf-header",
+        ),
+        pytest.param(
+            "+++  b/double.py\n@@ -0,0 +1 @@\n+new\n",
+            "double.py",
+            1,
+            "@@ -0,0 +1 @@\n+new\n",
+            id="double-space-after-header-marker",
+        ),
+        pytest.param(
+            "+++ b/trailing.py \t\n@@ -0,0 +1 @@\n+new\n",
+            "trailing.py",
+            1,
+            "@@ -0,0 +1 @@\n+new\n",
+            id="trailing-space-before-tab",
+        ),
+        pytest.param(
+            "--- /dev/null\n+++ /dev/null\n@@ -0,0 +0,0 @@\n",
+            "/dev/null",
+            1,
+            None,
+            id="dev-null-is-not-a-new-path",
+        ),
+        pytest.param(DIFF, "nope/missing.py", 5, None, id="missing-path"),
+        pytest.param(
+            "@@ -0,0 +1 @@\n+new\n",
+            "",
+            1,
+            None,
+            id="unkeyed-hunk-does-not-match-empty-path",
+        ),
+    ],
+)
+def test_slice_hunk(diff_text: str, path: str, line: int, expected: str | None) -> None:
+    if expected is None:
+        with pytest.raises(ValueError, match=re.escape(repr(path))):
+            slice_hunk(diff_text, path, line)
+    else:
+        assert slice_hunk(diff_text, path, line) == expected
 
 
 class FileContextTests(unittest.TestCase):
