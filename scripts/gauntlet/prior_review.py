@@ -54,13 +54,15 @@ class PriorDelivery:
 
 @dataclass(frozen=True, slots=True)
 class GitFacts:
-    head_sha: str
+    head_sha: str | None
     last_reviewed_sha: str | None
     last_reviewed_sha_short: str | None
     sha_resolvable: bool
     sha_is_ancestor: bool
     new_commit_count: int | None
 
+
+_NO_GIT_FACTS = GitFacts(None, None, None, False, False, None)
 
 GIT_TIMEOUT_SECONDS = 10
 
@@ -291,7 +293,8 @@ def resolve_git_facts(
         return GitFacts(head or "unknown", None, None, False, False, None)
 
     _, cat_err, rc = run(
-        ["git", "cat-file", "-e", f"{sha}^{{commit}}"], timeout=GIT_TIMEOUT_SECONDS
+        ["git", "cat-file", "-e", f"{reviewed_sha}^{{commit}}"],
+        timeout=GIT_TIMEOUT_SECONDS,
     )
     if rc != 0:
         errors.append(
@@ -313,7 +316,7 @@ def resolve_git_facts(
         is_ancestor = anc_rc == 0
 
     stdout, _, rc = run(
-        ["git", "rev-list", "--count", f"{sha}..{head or 'HEAD'}"],
+        ["git", "rev-list", "--count", f"{reviewed_sha}..{head or 'HEAD'}"],
         timeout=GIT_TIMEOUT_SECONDS,
     )
     count = stdout.strip()
@@ -415,9 +418,10 @@ def build_result(
     promising an incremental diff that would be empty. It is the one boolean the
     orchestrator gates the incremental path on.
     """
+    git_facts = git_facts if git_facts is not None else _NO_GIT_FACTS
     scanned = dict(scanned or {})
     errors = list(errors or [])
-    head_sha = git_facts.head_sha if git_facts else None
+    head_sha = git_facts.head_sha
 
     # One default receipt keeps found and absent outcomes on the same wire shape.
     result: PriorReviewWire = {
@@ -440,15 +444,15 @@ def build_result(
     if not signal:
         return result
 
-    sha_resolvable = git_facts.sha_resolvable if git_facts else False
+    sha_resolvable = git_facts.sha_resolvable
     last_reviewed_sha = cast(
         str | None,
-        (git_facts.last_reviewed_sha if git_facts else None) or signal.get("sha"),
+        git_facts.last_reviewed_sha or signal.get("sha"),
     )
     # An unusable head ("unknown", i.e. `git rev-parse HEAD` failed) must never
     # read as "advanced" — that would offer an incremental diff against nothing.
     head_known = bool(head_sha) and head_sha != "unknown"
-    is_ancestor = git_facts.sha_is_ancestor if git_facts else False
+    is_ancestor = git_facts.sha_is_ancestor
     head_advanced = bool(
         sha_resolvable and head_known and is_ancestor and last_reviewed_sha != head_sha
     )
@@ -459,13 +463,11 @@ def build_result(
             "source": cast(str | None, signal.get("source")),
             "legacy": bool(signal.get("legacy")),
             "last_reviewed_sha": last_reviewed_sha,
-            "last_reviewed_sha_short": git_facts.last_reviewed_sha_short
-            if git_facts
-            else None,
+            "last_reviewed_sha_short": git_facts.last_reviewed_sha_short,
             "sha_resolvable": sha_resolvable,
             "sha_is_ancestor": is_ancestor,
             "head_advanced": head_advanced,
-            "new_commit_count": git_facts.new_commit_count if git_facts else None,
+            "new_commit_count": git_facts.new_commit_count,
             "incremental_safe": bool(sha_resolvable and head_advanced),
             "marker": sanitize_marker(signal.get("marker")),
         }

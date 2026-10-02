@@ -2782,11 +2782,12 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
     owner = data["owner"]
     repo = data["repo"]
     mr_iid = data["pr_number"]
+    target = ReviewTarget(owner, repo, mr_iid)
     findings = data.get("findings", [])
 
     ensure_available(forge)
 
-    shas = fetch_gitlab_shas(ReviewTarget(owner, repo, mr_iid), forge=forge)
+    shas = fetch_gitlab_shas(target, forge=forge)
     base_sha, head_sha, start_sha = shas
 
     # fetch_gitlab_shas dies when the FETCH fails but never inspects the field values. An
@@ -2923,10 +2924,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
         print(f"MR summary note for {sha} already on the MR — skipping.")
     else:
         _refuse_over_limit(composed.body, "gitlab")
-        post_json(
-            gitlab_note_request(ReviewTarget(owner, repo, mr_iid), summary_payload),
-            forge=forge,
-        )
+        post_json(gitlab_note_request(target, summary_payload), forge=forge)
         print(
             "MR summary note captured (dry-run)."
             if DRY_RUN
@@ -3043,8 +3041,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
         }
 
         _response, error = try_post_json(
-            gitlab_discussion_request(ReviewTarget(owner, repo, mr_iid), payload),
-            forge=forge,
+            gitlab_discussion_request(target, payload), forge=forge
         )
         if error is not None:
             # One rejected position must not strand the findings behind it: the summary
@@ -3101,7 +3098,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts, *, forge: G
         _report_inline_budget(composed, "gitlab", "note", c.get("file"), c.get("line"))
         payload = {"body": composed.body if DRY_RUN else composed.body + marker_suffix}
         _response, error = try_post_json(
-            gitlab_note_request(ReviewTarget(owner, repo, mr_iid), payload), forge=forge
+            gitlab_note_request(target, payload), forge=forge
         )
         if error is not None:
             warn_skip(

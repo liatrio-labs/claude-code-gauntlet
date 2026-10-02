@@ -13,6 +13,7 @@ from typing import ClassVar, Literal, Protocol
 from urllib.parse import urlsplit
 
 from gauntlet import proc
+from gauntlet.jsjson import JS_MAX_SAFE_INTEGER
 
 Platform = Literal["github", "gitlab"]
 
@@ -61,7 +62,7 @@ class JsonFetch:
 class PostRequest:
     platform: Platform
     endpoint: str
-    method: str
+    method: Literal["POST"]
     headers: tuple[str, ...]
     payload: Mapping[str, object]
 
@@ -116,7 +117,7 @@ def _remote_hostname(authority: str) -> str | None:
             return None
         _validated_host(host_port, hostname, port)
         if host_port.startswith("["):
-            # Remote hosts require real IPv6; PR identity retains its existing URL contract.
+            # urlsplit on Python 3.10 accepts any bracketed text, so the literal is checked here.
             IPv6Address(hostname)
     except ValueError:
         return None
@@ -230,11 +231,12 @@ def parse_pr_url(platform: Platform, url: str) -> ParsedPrUrl:
         target = "PR" if platform == "github" else "MR"
         raise ValueError(f"URL path does not match a {platform} {target} URL")
     owner, repo, number_text = match.groups()
-    if len(number_text) > 16:
+    if (
+        len(number_text) > len(str(JS_MAX_SAFE_INTEGER))
+        or int(number_text) > JS_MAX_SAFE_INTEGER
+    ):
         raise ValueError("PR/MR number must be a positive safe integer")
     number = int(number_text)
-    if number > 9007199254740991:
-        raise ValueError("PR/MR number must be a positive safe integer")
     return ParsedPrUrl(owner, repo, number, origin)
 
 

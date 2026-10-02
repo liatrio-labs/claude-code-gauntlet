@@ -803,7 +803,7 @@ def test_request_constructors(builder, platform, endpoint, headers):
     request = builder(forge.ReviewTarget("group/sub", "repo", "9"), payload)
     assert request == forge.PostRequest(platform, endpoint, "POST", headers, payload)
     with pytest.raises(FrozenInstanceError):
-        request.method = "GET"
+        cast(Any, request).method = "GET"
 
 
 TARGET = forge.ReviewTarget("group/sub", "repo", 9)
@@ -1282,12 +1282,12 @@ def test_submit_transport(adapter, builder, argv, monkeypatch, tracked_temp):
     [
         pytest.param(
             forge.GitHub,
-            forge.PostRequest("gitlab", "projects/1", "DELETE", (), {}),
+            forge.PostRequest("gitlab", "projects/1", "POST", (), {}),
             id="github-refuses-gitlab",
         ),
         pytest.param(
             forge.GitLab,
-            forge.PostRequest("github", "repos/o/r", "DELETE", (), {}),
+            forge.PostRequest("github", "repos/o/r", "POST", (), {}),
             id="gitlab-refuses-github",
         ),
     ],

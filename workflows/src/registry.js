@@ -282,7 +282,7 @@ export const AGENT_LABELS = {
 // The generator projects this presentation identity into gauntlet.registry and the
 // documentation surfaces.
 //
-// PRODUCT ("code-gauntlet", scripts/gauntlet/marker.py:83) is deliberately NOT here and is
+// PRODUCT ("code-gauntlet", scripts/gauntlet/marker.py) is deliberately NOT here and is
 // NOT a mirror of BRAND_NAME: that is a machine-parsed wire slug pinned by
 // docs/machine-parsed-strings.md; this is presentation. A product rename moves both,
 // separately, on purpose.

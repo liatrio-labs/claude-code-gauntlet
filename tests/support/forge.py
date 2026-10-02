@@ -57,13 +57,15 @@ class FakeForge:
             dict[str, list[PostResult | Exception]]
             | list[PostResult | Exception]
             | None
-        ) = (
-            {surface: list(replies) for surface, replies in submissions.items()}
-            if isinstance(submissions, Mapping)
-            else list(submissions)
-            if submissions is not None
-            else None
         )
+        if isinstance(submissions, Mapping):
+            self._submissions = {
+                surface: list(replies) for surface, replies in submissions.items()
+            }
+        elif submissions is not None:
+            self._submissions = list(submissions)
+        else:
+            self._submissions = None
 
     def ensure_available(self) -> None:
         self.calls.append(ForgeCall("ensure_available"))
