@@ -2534,6 +2534,7 @@ def _run_main(
     data: object,
     *,
     dry_run: bool = True,
+    expect_exit: bool = False,
     args: tuple[str, ...] = (),
     **poster_options: object,
 ) -> SimpleNamespace:
@@ -2554,6 +2555,8 @@ def _run_main(
         try:
             post_review.main()
         except SystemExit as exc:
+            if not expect_exit:
+                raise
             exit_code = exc.code
     payload_path = tmp_path / "post-review-payload.json"
     payload = (
@@ -2581,6 +2584,29 @@ def _git_run(remote, head_sha):
         raise AssertionError(f"Unexpected Git call: {command}")
 
     return run
+
+
+@pytest.mark.parametrize("expect_exit, propagated", [(False, True), (True, False)])
+def test_main_runner_exit_policy(
+    tmp_path: Path,
+    forge_factory: FakeForgeFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    expect_exit: bool,
+    propagated: bool,
+) -> None:
+    def exit_main() -> None:
+        raise SystemExit(7)
+
+    monkeypatch.setattr(post_review, "main", exit_main)
+    if propagated:
+        with pytest.raises(SystemExit) as exc:
+            _run_main(tmp_path, forge_factory, _review_data(), expect_exit=expect_exit)
+        assert exc.value.code == 7
+    else:
+        run = _run_main(
+            tmp_path, forge_factory, _review_data(), expect_exit=expect_exit
+        )
+        assert run.exit_code == 7
 
 
 def _gitlab_posts(run, suffix):
@@ -3386,20 +3412,10 @@ class TestDryRunStdout(_DryRunTestBase):
 # ---------------------------------------------------------------------------
 
 
-class TestWriterWrapperByteParity(_DryRunTestBase):
-    """V3.1 L3/D16 acceptance: the writer-persisted post_review wrapper drives
-    post_review.py to a byte-identical --dry-run payload vs the manually-assembled
-    Phase-8 wrap, for identical findings and identity.
-
-    The writer's wrapper is
-    { owner, repo, pr_number, sha, platform, review_body, findings }
-    (see writerPayload in workflows/src/stages.js): `sha` is the marker sha the
-    script prefers when it is SHA-shaped (falling back to its own HEAD otherwise;
-    see resolve_marker_sha). `platform` carries the resolved target rather than
-    re-detecting it from the remote. review_body matches what Phase 8 would set.
-    """
-
-    FINDINGS: ClassVar[list[dict]] = [
+def test_wrapper_and_manual_wrap_produce_byte_identical_payloads(
+    tmp_path: Path, forge_factory: FakeForgeFactory
+) -> None:
+    findings = [
         {
             "file": "foo.py",
             "line": 2,
@@ -3417,37 +3433,33 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
         },
     ]
 
-    def test_wrapper_and_manual_wrap_produce_byte_identical_payloads(self):
-        manual = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 5,
-            "sha": "0123456789abcdef0123456789abcdef01234567",
-            "review_body": "Summary",
-            "findings": self.FINDINGS,
-        }
-        # The writer-emitted wrapper: same fields plus the marker sha the script
-        # prefers (see resolve_marker_sha). Key order intentionally matches
-        # writerPayload's emission; the fixture's sha matches the mocked HEAD so
-        # both payloads stay byte-identical either way.
-        wrapper = {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 5,
-            "sha": "0123456789abcdef0123456789abcdef01234567",
-            "platform": "github",
-            "review_body": "Summary",
-            "findings": self.FINDINGS,
-        }
-        _run_main(Path(self.tmp), self.forge_factory, manual, diff=GH_DIFF)
-        manual_bytes = (Path(self.tmp) / "post-review-payload.json").read_bytes()
-        _run_main(Path(self.tmp), self.forge_factory, wrapper, diff=GH_DIFF)
-        wrapper_bytes = (Path(self.tmp) / "post-review-payload.json").read_bytes()
-        self.assertEqual(
-            manual_bytes,
-            wrapper_bytes,
-            "wrapper form must drive a byte-identical dry-run payload",
-        )
+    manual = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": "0123456789abcdef0123456789abcdef01234567",
+        "review_body": "Summary",
+        "findings": findings,
+    }
+    wrapper = {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": "0123456789abcdef0123456789abcdef01234567",
+        "platform": "github",
+        "review_body": "Summary",
+        "findings": findings,
+    }
+    manual_run = _run_main(tmp_path, forge_factory, manual, diff=GH_DIFF)
+    assert manual_run.exit_code is None
+    payload_path = tmp_path / "post-review-payload.json"
+    manual_bytes = payload_path.read_bytes()
+    # Each run must produce its own bytes, even if a future runner tolerates an exit.
+    payload_path.unlink()
+    wrapper_run = _run_main(tmp_path, forge_factory, wrapper, diff=GH_DIFF)
+    assert wrapper_run.exit_code is None
+    wrapper_bytes = payload_path.read_bytes()
+    assert manual_bytes == wrapper_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -3758,7 +3770,8 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                     "head_commit_sha": "",
                     "start_commit_sha": "start1",
                 }
-            ]
+            ],
+            expect_exit=True,
         )
         self.assertEqual(run.exit_code, 1)
         self.assertEqual(_note_posts(run.mock_run), [])
@@ -3769,7 +3782,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         """A float line number reaches the position dict unchanged — the exact class of
         payload that used to be reported as "captured" and then 400 on the live run."""
         findings = [dict(GL_CONTRACT_FINDINGS[0], line=61.0)]
-        run = self._run_main(dry_run=True, findings=findings)
+        run = self._run_main(dry_run=True, findings=findings, expect_exit=True)
         self.assertEqual(run.exit_code, 1)
         self.assertIn("malformed GitLab position", run.err)
         self.assertIn("new_line must be an integer", run.err)
@@ -3810,6 +3823,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         run = self._run_main(
             dry_run=True,
             findings=[primary, _gl_corroborator("A", 61), _gl_corroborator("B", 61)],
+            expect_exit=True,
         )
         # Dry-run reports a malformed position as a non-zero exit (pinned above);
         # what changed is the COUNT — only the primary is lost to it.
@@ -3874,6 +3888,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                 _gl_corroborator("B", 999),  # not in the diff -> invalid
             ],
             discussion_rcs=[1],
+            expect_exit=True,
         )
         self.assertEqual(run.exit_code, 1)
         self.assertIn("  0 inline discussion(s) posted.", run.out)
@@ -4184,6 +4199,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                             True, frozenset({primary_key}), frozenset(), None
                         ),
                         payloads=payloads,
+                        expect_exit=expect_failure,
                     )
 
                 note_bodies = [p["body"] for p in payloads if "position" not in p]
@@ -4269,7 +4285,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
 
     def test_live_all_malformed_exits_one_with_nothing_posted(self):
         findings = [dict(f, line=float(f["line"])) for f in GL_CONTRACT_FINDINGS]
-        run = self._run_main(findings=findings)
+        run = self._run_main(findings=findings, expect_exit=True)
         self.assertEqual(run.exit_code, 1)
         self.assertEqual(_discussion_posts(run.mock_run), [])
         self.assertIn("  0 inline discussion(s) posted.", run.out)
@@ -4305,7 +4321,7 @@ class TestGitlabFaultTolerance(_GitlabLiveRunBase):
         self.assertIn("line_code", run.err)
 
     def test_all_rejected_exits_non_zero_after_attempting_every_finding(self):
-        run = self._run_main(discussion_rcs=[1, 1, 1])
+        run = self._run_main(discussion_rcs=[1, 1, 1], expect_exit=True)
         self.assertEqual(run.exit_code, 1)
         # The exit is a REPORT, not an abort: every finding was attempted first.
         self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
@@ -4321,7 +4337,7 @@ class TestGitlabFaultTolerance(_GitlabLiveRunBase):
         self.assertNotIn("rejected", run.out)
 
     def test_summary_note_failure_is_still_fatal(self):
-        run = self._run_main(note_rc=1)
+        run = self._run_main(note_rc=1, expect_exit=True)
         self.assertEqual(run.exit_code, 1)
         self.assertEqual(
             _discussion_posts(run.mock_run),
@@ -4549,6 +4565,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
                 None,
             ),
             discussion_rcs=[1],
+            expect_exit=True,
         )
         self.assertEqual(run.exit_code, 1)
         self.assertIn("attempted this run were not delivered", run.err)
@@ -4572,6 +4589,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
                 frozenset(),
                 None,
             ),
+            expect_exit=True,
         )
         self.assertEqual(run.exit_code, 1)
         self.assertEqual(_discussion_posts(run.mock_run), [])
@@ -4594,6 +4612,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
                 frozenset(),
                 None,
             ),
+            expect_exit=True,
         )
         self.assertEqual(_discussion_posts(run.mock_run), [])
         self.assertIn("had a malformed position", run.err)
@@ -8004,6 +8023,7 @@ class TestGitHubSuggestedFixGate(_SuggestedFixSharedProofs, _FixGateRunBase):
         finding = self._finding()
         del finding["suggested_fix_code"]
         run = self._run([finding])
+        self.assertIsNone(run.exit_code)
         self.assertNotIn("apply-check", run.out)
         self.assertNotIn("downgraded to prose", run.out)
 
@@ -9641,7 +9661,9 @@ def test_inline_poster_boundaries__github_impossible_inline_envelope_dies_before
         ),
         patch("gauntlet.delivery.post.post_json") as post,
     ):
-        run = _run_main(tmp_path, forge_factory, data, dry_run=False, diff=GH_DIFF)
+        run = _run_main(
+            tmp_path, forge_factory, data, dry_run=False, expect_exit=True, diff=GH_DIFF
+        )
     assert run.exit_code == 1
     post.assert_not_called()
     assert "inline review comment" in run.err
@@ -10360,11 +10382,23 @@ def test_git_hub_multi_line_range_validation__validation_skipped_passes_the_rang
 
 
 @pytest.mark.parametrize(
-    "platform, kind, sha, filepath, diff, versions, review_body, expected_prose_count, expected_count",
+    "platform, dry_run, kind, sha, filepath, diff, versions, review_body, expected_prose_count, expected_count",
     [
-        ("github", "body-marker", "b" * 40, "foo.py", GH_DIFF, None, "Summary", 1, 2),
         (
             "github",
+            True,
+            "body-marker",
+            "b" * 40,
+            "foo.py",
+            GH_DIFF,
+            None,
+            "Summary",
+            1,
+            2,
+        ),
+        (
+            "github",
+            True,
             "filepath-marker",
             "e" * 40,
             "foo.py",
@@ -10374,9 +10408,21 @@ def test_git_hub_multi_line_range_validation__validation_skipped_passes_the_rang
             1,
             2,
         ),
-        ("github", "forged-footer", "c" * 40, "foo.py", GH_DIFF, None, "Summary", 2, 2),
+        (
+            "github",
+            True,
+            "forged-footer",
+            "c" * 40,
+            "foo.py",
+            GH_DIFF,
+            None,
+            "Summary",
+            2,
+            2,
+        ),
         (
             "gitlab",
+            False,
             "body-marker",
             "b" * 40,
             "src/edited.py",
@@ -10388,6 +10434,7 @@ def test_git_hub_multi_line_range_validation__validation_skipped_passes_the_rang
         ),
         (
             "gitlab",
+            False,
             "filepath-marker",
             "e" * 40,
             "src/edited.py",
@@ -10399,6 +10446,7 @@ def test_git_hub_multi_line_range_validation__validation_skipped_passes_the_rang
         ),
         (
             "gitlab",
+            False,
             "forged-footer",
             "c" * 40,
             "src/edited.py",
@@ -10422,6 +10470,7 @@ def test_skipped_section_forgery_resistance(
     tmp_path: Path,
     forge_factory: FakeForgeFactory,
     platform: str,
+    dry_run: bool,
     kind: str,
     sha: str,
     filepath: str,
@@ -10472,15 +10521,23 @@ def test_skipped_section_forgery_resistance(
         ),
         diff=diff,
         versions=versions,
+        dry_run=dry_run,
     )
 
     assert run.exit_code is None
-    payload = _read_payload(tmp_path)
-    body = (
-        payload["payload"]["body"]
-        if platform == "github"
-        else payload["summary"]["body"]
-    )
+    if dry_run:
+        body = _read_payload(tmp_path)["payload"]["body"]
+    else:
+        notes = [
+            call.request.payload
+            for call in run.calls
+            if call.method == "submit"
+            and call.request is not None
+            and call.request.endpoint.endswith("/notes")
+        ]
+        assert len(notes) == 1
+        assert "position" not in notes[0]
+        body = notes[0]["body"]
     assert "<!-- code-gauntlet-finding-key:" not in body
     assert review_marker.find_finding_marker(body) is None
     marker = review_marker.find_marker(body)

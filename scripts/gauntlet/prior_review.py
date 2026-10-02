@@ -14,7 +14,7 @@ from typing import Literal, TypedDict, cast
 from gauntlet import forge as forge_api
 from gauntlet import proc
 from gauntlet.cli import Command, Parser
-from gauntlet.forge import Forge, Platform, ReviewTarget
+from gauntlet.forge import Forge, Platform, ReviewTarget, make_forge
 from gauntlet.fs import JsonReadError, read_json
 from gauntlet.marker import detect_signal, find_finding_markers, select_latest
 
@@ -90,10 +90,6 @@ def git_rev_parse(rev: str) -> str | None:
     stdout, _, rc = run(["git", "rev-parse", rev], timeout=GIT_TIMEOUT_SECONDS)
     value = stdout.strip()
     return value if rc == 0 and value else None
-
-
-def make_forge(platform: Platform) -> Forge:
-    return forge_api.make_forge(platform)
 
 
 def remote_slug() -> tuple[str | None, str | None]:

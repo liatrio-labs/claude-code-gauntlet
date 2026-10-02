@@ -20,9 +20,16 @@ PUBLIC_HOST_CASES: list[ParameterSet] = [
     pytest.param("https://{host}/o/r.git", True, "{host}", id="https"),
     pytest.param("http://{host}/o/r", True, "{host}", id="http"),
     pytest.param("ssh://git@{host}:2222/o/r", True, "{host}", id="ssh"),
+    pytest.param("ssh://git@{host}/o/r", True, "{host}", id="ssh-no-port"),
     pytest.param("alice@{host}:o/r.git", True, "{host}", id="scp-user"),
+    pytest.param("alice@{host}:o/r", True, "{host}", id="scp-user-no-suffix"),
     pytest.param("git@{host}:o/r", True, "{host}", id="scp-no-suffix"),
     pytest.param("{host}:o/r.git", True, "{host}", id="userless-scp"),
+    pytest.param("{host}:o/r", True, "{host}", id="userless-scp-no-suffix"),
+    pytest.param(
+        "ssh://alice._-1@{host}/o/r", True, "{host}", id="ssh-username-grammar"
+    ),
+    pytest.param("a%40b@{host}:o/r", False, None, id="scp-percent-userinfo"),
     pytest.param("https://{host}", True, "{host}", id="pathless-url"),
     pytest.param("git@{host}:", True, "{host}", id="pathless-scp"),
     pytest.param("https://sub.{host}/o/r", True, "sub.{host}", id="subdomain"),
@@ -41,6 +48,44 @@ PUBLIC_HOST_CASES: list[ParameterSet] = [
     pytest.param(
         "https://fixture%40user@{host}/o/r", True, "{host}", id="percent-userinfo"
     ),
+    pytest.param(
+        "https://user%40x:tok@{host}/o/r", True, "{host}", id="percent-credentials"
+    ),
+    pytest.param("ssh://evil.com%2F@{host}/o/r", False, None, id="ssh-escaped-slash"),
+    pytest.param(
+        "ssh://git%40evil.com%2Fx@{host}/o/r", False, None, id="ssh-escaped-at-slash"
+    ),
+    pytest.param(
+        "ssh://evil.com%3A22%2F@{host}/o/r", False, None, id="ssh-escaped-port-slash"
+    ),
+    pytest.param(
+        "ssh://a%40%5Bevil.com%5D@{host}/o/r", False, None, id="ssh-escaped-brackets"
+    ),
+    pytest.param("ssh://%5B%3A%3A1%5D@{host}/o/r", False, None, id="ssh-escaped-ipv6"),
+    pytest.param("ssh://evil.com%0A@{host}/o/r", False, None, id="ssh-escaped-newline"),
+    pytest.param(
+        "ssh://evil.com%2F@sub.{host}/o/r", False, None, id="ssh-escaped-subdomain"
+    ),
+    pytest.param(
+        "ssh://fixture%40user@{host}:2222/group/sub/repo.git",
+        False,
+        None,
+        id="ssh-percent-userinfo",
+    ),
+    pytest.param("ssh://a@b@{host}/o/r", False, None, id="ssh-double-at"),
+    pytest.param("ssh://a#b@{host}/o/r", False, None, id="ssh-user-hash"),
+    pytest.param("ssh://a?b@{host}/o/r", False, None, id="ssh-user-query"),
+    pytest.param("ssh://a\\b@{host}/o/r", False, None, id="ssh-user-backslash"),
+    pytest.param("ssh://a b@{host}/o/r", False, None, id="ssh-user-space"),
+    pytest.param("ssh://a\tb@{host}/o/r", False, None, id="ssh-user-tab"),
+    pytest.param("ssh://a\x7fb@{host}/o/r", False, None, id="ssh-user-control"),
+    pytest.param("ssh://a\u00e9b@{host}/o/r", False, None, id="ssh-user-nonascii"),
+    pytest.param("ssh://a:b@{host}/o/r", False, None, id="ssh-user-password"),
+    pytest.param("ssh://@{host}/o/r", False, None, id="ssh-empty-user"),
+    pytest.param("ssh://{host}:0/o/r", False, None, id="ssh-zero-port"),
+    pytest.param("ssh://{host}:65536/o/r", False, None, id="ssh-high-port"),
+    pytest.param("ssh://{host}:1/o/r", True, "{host}", id="ssh-min-port"),
+    pytest.param("ssh://{host}:65535/o/r", True, "{host}", id="ssh-max-port"),
     pytest.param(
         "https://fixture\\user;name@{host}/o/r",
         True,
@@ -61,9 +106,7 @@ PUBLIC_HOST_CASES: list[ParameterSet] = [
         "evil.example",
         id="host-in-userinfo",
     ),
-    pytest.param(
-        "git@{host}@evil.example:o/r", False, "evil.example", id="double-at-scp"
-    ),
+    pytest.param("git@{host}@evil.example:o/r", False, None, id="double-at-scp"),
     pytest.param("git@{host}#@evil.example:o/r", False, None, id="scp-fragment-at"),
     pytest.param("{host}?@evil.example:o/r", False, None, id="scp-query-at"),
     pytest.param(
@@ -274,7 +317,7 @@ HOST_CASES: list[ParameterSet] = [
     pytest.param(
         "git@github.com@evil.example:o/r.git",
         0,
-        (None, "evil.example"),
+        (None, None),
         id="double-at-scp",
     ),
     pytest.param(
@@ -292,6 +335,8 @@ HOST_CASES: list[ParameterSet] = [
     ),
     pytest.param("C:/github.com/o/r", 0, (None, None), id="drive-forward"),
     pytest.param("C:\\github.com\\o\\r", 0, (None, None), id="drive-backslash"),
+    pytest.param("/git@github.com:o/r", 0, (None, None), id="local-absolute"),
+    pytest.param("\\git@github.com:o/r", 0, (None, None), id="local-backslash"),
     pytest.param("directory/github.com:o/r", 0, (None, None), id="slash-before-colon"),
     pytest.param("https://github.com\t\n", 0, (None, None), id="github-pathless-tab"),
     pytest.param("https://gitlab.com \n", 0, (None, None), id="gitlab-pathless-space"),
@@ -401,6 +446,23 @@ HOST_CASES += [
 
 
 @pytest.mark.parametrize(
+    "url, status, expected",
+    [
+        case
+        for case in HOST_CASES
+        if case.values[1] == 0
+        and cast("tuple[str | None, str | None]", case.values[2])[0] is None
+    ],
+)
+def test_unknown_host_detection_tuple(
+    url: str, status: int, expected: tuple[None, str | None]
+) -> None:
+    assert forge.detect_platform(forge.parse_remote(url)) == forge.PlatformDetection(
+        *expected
+    )
+
+
+@pytest.mark.parametrize(
     "stdout, host",
     [
         (" https://github.com/o/r.git \n", None),
@@ -459,6 +521,11 @@ def test_public_host_policy(platform, host, template, selected, host_template):
     [
         pytest.param(
             "ssh://git@[2001:DB8::1]/o/r", (None, "2001:db8::1"), id="ipv6-case"
+        ),
+        pytest.param(
+            "ssh://fixture%40user@GITHUB.COM:2222/group/sub/repo.git",
+            (None, None),
+            id="ssh-percent-userinfo-uppercase",
         ),
         pytest.param("https://[::1]extra/o/r", (None, None), id="bracket-suffix"),
         pytest.param("https://[127.0.0.1]/o/r", (None, None), id="bracketed-ipv4"),
@@ -547,16 +614,6 @@ def test_remote_slug(url, expected):
     assert forge.remote_slug(forge.parse_remote(url)) == (
         forge.RepoSlug(*expected) if expected else None
     )
-
-
-def test_remote_record_keeps_original_authority_and_lexical_path():
-    assert forge.parse_remote(
-        "ssh://fixture%40user@GITHUB.COM:2222/group/sub/repo.git"
-    ) == forge.Remote(
-        "fixture%40user@GITHUB.COM:2222", "github.com", "group/sub/repo", "ssh"
-    )
-    remote = forge.parse_remote("https://bad host/group/sub/repo.git")
-    assert remote == forge.Remote("bad host", None, "group/sub/repo", "https")
 
 
 @pytest.mark.parametrize(

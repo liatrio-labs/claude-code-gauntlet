@@ -26,7 +26,6 @@ class ReviewTarget:
 
 @dataclass(frozen=True, slots=True)
 class Remote:
-    authority: str
     hostname: str | None
     path: str
     scheme: str | None
@@ -84,6 +83,10 @@ class Forge(Protocol):
 
 
 _DNS_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+_SSH_AUTHORITY_RE = re.compile(
+    r"(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]+)?"
+)
+_FETCH_TIMEOUT_SECONDS = 30
 _SCP_PATH_RE = re.compile(r"[^@/]+@[^:/]+:(.+?)(?:\.git)?/?$")
 _URL_PATH_RE = re.compile(
     r"[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?[^/]+/(.+?)(?:\.git)?/?$"
@@ -94,50 +97,34 @@ _PR_PATHS = {
 }
 
 
-def _remote_hostname(authority: str) -> str | None:
-    # urlsplit discards tabs/newlines, so inspect the original authority first.
-    if any(ord(char) < 32 or char.isspace() for char in authority):
+def _remote_hostname(authority: str, *, ssh: bool) -> str | None:
+    # Git percent-decodes ssh:// URLs before splitting the authority, so escapes are unsafe.
+    if ssh and not _SSH_AUTHORITY_RE.fullmatch(authority):
+        return None
+    # urlsplit discards tabs/newlines, so inspect the original web authority first.
+    if not ssh and any(ord(char) < 32 or char.isspace() for char in authority):
         return None
     host_port = authority.rsplit("@", 1)[-1]
     try:
         parsed = urlsplit(f"ssh://{authority}")
         hostname = parsed.hostname
         port = parsed.port
+        if not hostname:
+            return None
+        _validated_host(host_port, hostname, port)
+        if host_port.startswith("["):
+            # Remote hosts require real IPv6; PR identity retains its existing URL contract.
+            IPv6Address(hostname)
     except ValueError:
         return None
-    if not hostname or (port is not None and not 1 <= port <= 65535):
-        return None
-    if any(char in hostname for char in ("\\", "%", ";")):
-        return None
-    if host_port.startswith("["):
-        close = host_port.find("]")
-        suffix = host_port[close + 1 :]
-        if (
-            close <= 0
-            or (suffix and not re.fullmatch(r":[0-9]+", suffix))
-            or not re.fullmatch(r"[0-9A-Fa-f:.]{2,45}", hostname)
-            or ":" not in hostname
-        ):
+    if not ssh:
+        host_text = (
+            host_port[1 : host_port.find("]")]
+            if host_port.startswith("[")
+            else host_port.partition(":")[0]
+        )
+        if host_text.casefold() != hostname:
             return None
-        try:
-            IPv6Address(hostname)
-        except ValueError:
-            return None
-    elif (
-        host_port.count(":") > 1
-        or host_port.endswith(":")
-        or len(hostname) > 253
-        or not all(_DNS_LABEL_RE.fullmatch(label) for label in hostname.split("."))
-    ):
-        return None
-    # SSH splits at the last @; urlsplit may truncate the authority at ? or #.
-    host_text = (
-        host_port[1 : host_port.find("]")]
-        if host_port.startswith("[")
-        else host_port.partition(":")[0]
-    )
-    if host_text.casefold() != hostname:
-        return None
     return hostname.lower()
 
 
@@ -145,7 +132,7 @@ def parse_remote(url: str) -> Remote | None:
     # Slug extraction is lexical even when the host syntax cannot be recognized.
     match = _SCP_PATH_RE.match(url) or _URL_PATH_RE.match(url)
     path = match.group(1) if match else ""
-    unknown = Remote("", None, path, None) if path else None
+    unknown = Remote(None, path, None) if path else None
     if url.startswith(("/", "\\", "./", "../")):
         return unknown
     if "://" in url:
@@ -154,7 +141,11 @@ def parse_remote(url: str) -> Remote | None:
             return unknown
         delimiter = r"[/?#]" if scheme.lower() in {"http", "https"} else r"/"
         authority = re.split(delimiter, tail, maxsplit=1)[0]
-        return Remote(authority, _remote_hostname(authority), path, scheme.lower())
+        return Remote(
+            _remote_hostname(authority, ssh=scheme.lower() == "ssh"),
+            path,
+            scheme.lower(),
+        )
     if re.match(r"^[A-Za-z]:", url):
         return unknown
     prefix = url.split(":", 1)[0]
@@ -168,7 +159,7 @@ def parse_remote(url: str) -> Remote | None:
     if colon < 0 or (slash >= 0 and colon > slash):
         return unknown
     authority = url[:colon]
-    return Remote(authority, _remote_hostname(authority), path, None)
+    return Remote(_remote_hostname(authority, ssh=True), path, None)
 
 
 def remote_slug(remote: Remote | None) -> RepoSlug | None:
@@ -192,6 +183,30 @@ def detect_platform(remote: Remote | None) -> PlatformDetection:
     return PlatformDetection(platform, host)
 
 
+def _validated_host(host_port: str, hostname: str, port: int | None) -> str:
+    if host_port.startswith("["):
+        close = host_port.find("]")
+        suffix = host_port[close + 1 :]
+        if close < 0 or (suffix and not re.fullmatch(r":[0-9]+", suffix)):
+            raise ValueError("URL has an invalid IPv6 host or port")
+        if not re.fullmatch(r"[0-9A-Fa-f:.]{2,45}", hostname):
+            raise ValueError("URL has an invalid IPv6 host")
+        host = f"[{hostname.lower()}]"
+    else:
+        if host_port.count(":") > 1:
+            raise ValueError("IPv6 hosts must be bracketed")
+        if ":" in host_port and not host_port.rpartition(":")[2]:
+            raise ValueError("URL has an empty port")
+        host = hostname.lower()
+        if len(host) > 253 or not all(
+            _DNS_LABEL_RE.fullmatch(label) for label in host.split(".")
+        ):
+            raise ValueError("URL has an invalid DNS host")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("URL port must be between 1 and 65535")
+    return host
+
+
 def _web_origin(url: str) -> tuple[str, str]:
     try:
         parsed = urlsplit(url)
@@ -203,27 +218,7 @@ def _web_origin(url: str) -> tuple[str, str]:
         raise ValueError("URL must use http(s) and include a host")
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("URL must not contain user information")
-    authority = parsed.netloc
-    if authority.startswith("["):
-        close = authority.find("]")
-        suffix = authority[close + 1 :]
-        if close < 0 or (suffix and not re.fullmatch(r":[0-9]+", suffix)):
-            raise ValueError("URL has an invalid IPv6 host or port")
-        if not re.fullmatch(r"[0-9A-Fa-f:.]{2,45}", hostname):
-            raise ValueError("URL has an invalid IPv6 host")
-        host = f"[{hostname.lower()}]"
-    else:
-        if authority.count(":") > 1:
-            raise ValueError("IPv6 hosts must be bracketed")
-        if ":" in authority and not authority.rpartition(":")[2]:
-            raise ValueError("URL has an empty port")
-        host = hostname.lower()
-        if len(host) > 253 or not all(
-            _DNS_LABEL_RE.fullmatch(label) for label in host.split(".")
-        ):
-            raise ValueError("URL has an invalid DNS host")
-    if port is not None and not 1 <= port <= 65535:
-        raise ValueError("URL port must be between 1 and 65535")
+    host = _validated_host(parsed.netloc, hostname, port)
     port_suffix = f":{port}" if port is not None else ""
     return f"{parsed.scheme.lower()}://{host}{port_suffix}", parsed.path
 
@@ -312,11 +307,7 @@ def origin_remote(
     # Extract the slug from the stripped URL to preserve its bytes. For the host,
     # remove only Git's trailing newline so stray whitespace or controls make it unknown.
     original = parse_remote(stdout.removesuffix("\n").removesuffix("\r"))
-    return replace(
-        remote,
-        authority=original.authority if original else remote.authority,
-        hostname=original.hostname if original else None,
-    )
+    return replace(remote, hostname=original.hostname if original else None)
 
 
 def _parse_pages(text: str) -> list[object] | None:
@@ -343,9 +334,11 @@ def _parse_pages(text: str) -> list[object] | None:
 
 def _review_entries(command: Sequence[str], label: str) -> JsonFetch:
     try:
-        stdout, stderr, status = proc.output(command, timeout=30, errors="replace")
+        stdout, stderr, status = proc.output(
+            command, timeout=_FETCH_TIMEOUT_SECONDS, errors="replace"
+        )
     except proc.TimeoutExpired:
-        stdout, stderr, status = "", "timed out after 30s", -1
+        stdout, stderr, status = "", f"timed out after {_FETCH_TIMEOUT_SECONDS}s", -1
     except OSError as exc:
         stdout, stderr, status = "", str(exc), -1
     if status != 0:
