@@ -2,6 +2,53 @@
 
 <!-- version list -->
 
+## v3.42.20 (2026-10-02)
+
+### Bug Fixes
+
+- Address round 1 review of the bench hunk slicer
+  ([#455](https://github.com/liatrio-labs/claude-code-gauntlet/pull/455),
+  [`73f1f6c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/73f1f6cc2f825298065bff6336e70de9a8cc7899))
+
+- Address round 2 review and gauntlet findings on the bench hunk slicer
+  ([#455](https://github.com/liatrio-labs/claude-code-gauntlet/pull/455),
+  [`73f1f6c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/73f1f6cc2f825298065bff6336e70de9a8cc7899))
+
+### Refactoring
+
+- Add typed diff events, DiffFacts and named path policies
+  ([#452](https://github.com/liatrio-labs/claude-code-gauntlet/pull/452),
+  [`3494e64`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3494e64530baa80c0caba68684565047fb0a7de0))
+
+- Address gauntlet findings on the diff-facts slice
+  ([#452](https://github.com/liatrio-labs/claude-code-gauntlet/pull/452),
+  [`3494e64`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3494e64530baa80c0caba68684565047fb0a7de0))
+
+- Build the bench hunk slicer on the gauntlet diff walker
+  ([#455](https://github.com/liatrio-labs/claude-code-gauntlet/pull/455),
+  [`73f1f6c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/73f1f6cc2f825298065bff6336e70de9a8cc7899))
+
+- Build the bench hunk slicer on the gauntlet diff walker (#453)
+  ([#455](https://github.com/liatrio-labs/claude-code-gauntlet/pull/455),
+  [`73f1f6c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/73f1f6cc2f825298065bff6336e70de9a8cc7899))
+
+- Move posting, the fix gate and the patch report onto DiffFacts
+  ([#452](https://github.com/liatrio-labs/claude-code-gauntlet/pull/452),
+  [`3494e64`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3494e64530baa80c0caba68684565047fb0a7de0))
+
+- Move verify and numstat onto gauntlet.diff and consolidate the diff tests
+  ([#452](https://github.com/liatrio-labs/claude-code-gauntlet/pull/452),
+  [`3494e64`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3494e64530baa80c0caba68684565047fb0a7de0))
+
+- Parse unified diffs once into typed diff facts (#412)
+  ([#452](https://github.com/liatrio-labs/claude-code-gauntlet/pull/452),
+  [`3494e64`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3494e64530baa80c0caba68684565047fb0a7de0))
+
+- Restore diff rationale comments and pin inherited gaps
+  ([#452](https://github.com/liatrio-labs/claude-code-gauntlet/pull/452),
+  [`3494e64`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3494e64530baa80c0caba68684565047fb0a7de0))
+
+
 ## v3.42.19 (2026-10-02)
 
 ### Bug Fixes
