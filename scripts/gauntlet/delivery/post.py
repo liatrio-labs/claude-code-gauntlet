@@ -274,17 +274,17 @@ def parse_diff_text(platform, diff_text):
 
     for event in walk_diff(diff_text):
         if event.kind == "git_header":
-            git_header = event.text
+            git_header = event.value
             # A `---` left unpaired by this header belongs to no block.
             pending_old_side = None
             continue
 
         if event.kind == "old_path":
-            pending_old_side = event.path
+            pending_old_side = event.value
             continue
 
         if event.kind == "new_path":
-            old_side, new_side = pending_old_side, event.path
+            old_side, new_side = pending_old_side, event.value
             pending_old_side = None
             git_style = (
                 platform == "gitlab"

@@ -1,92 +1,65 @@
-"""
-gauntlet.diff — the one unified-diff walk the retained diff parsers share.
-
-SCOPE SPLIT, and the whole reason this module is thin: THE WALK lives here —
-header zone vs. hunk-body zone, the per-hunk budgets that separate them, the
-old/new line-number advance, and the wire spelling of a header path (git's TAB
-terminator and C-quoting, which mean the same thing everywhere). HEADER SEMANTICS
-stay in the callers. What a path spelling means (``a/``/``b/`` are diff syntax under
-``gh pr diff`` and, under ``glab mr diff``, either diff syntax or a real top-level
-directory depending on which of its two shapes a file block has), what ``/dev/null``
-implies, and which lines are worth recording at all are decisions the callers answer
-differently — folding them in here would need a platform flag and would put one
-caller's answer on the other's path.
-
-The event vocabulary is the UNION of what the retained parsers need. The poster
-(``gauntlet.delivery.post.parse_diff_lines``) is a live reader of every kind: it
-keys its GitLab position fields off ``---``/``+++`` headers, reads a ``diff --git``
-line's raw text to prove which shape a file block has, reads a hunk's old count to
-recognise an added file (``@@ -0,0 +N,M @@``, the only added-file signal a verbatim-path
-diff carries), and reads a line's ``text`` as the content oracle its suggested-fix
-apply-check needs. A hunk event's ``new_count`` and ``new_line`` are still carried for
-symmetry with the old side but are read only by this module's own tests — the poster has
-no use for them. HEADER SEMANTICS still stay in the callers, per the scope split above.
-
-No external dependencies. stdlib only.
-
-Usage:
-    # The scripts/ directory is on sys.path for entry files and pytest:
-    from gauntlet.diff import walk_diff
-"""
+"""Walk unified diffs and collect typed facts under explicit path policies."""
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
-from typing import Literal, NamedTuple
-
-DiffEventKind = Literal["git_header", "old_path", "new_path", "hunk", "line"]
-
-
-class DiffEvent(NamedTuple):
-    """One meaningful line of a unified diff, interpreted as far as the walk can.
-
-    ``kind`` is one of:
-
-    * ``"git_header"`` — a ``diff --git`` line, matched only between hunks. ``text`` is
-      everything after ``diff --git ``, RAW: the two paths are not split and nothing is
-      decoded, because where one path ends is not decidable from this line alone (a
-      producer may write a path holding a space unquoted). A caller that needs the
-      paths reads them off the ``---``/``+++`` events and checks them against this.
-    * ``"old_path"`` / ``"new_path"`` — a ``---`` / ``+++`` header, matched only
-      between hunks. ``path`` is the header's text with git's wire spelling undone
-      (see :func:`_decode_header_path`) and NOTHING else: no prefix stripped and
-      ``/dev/null`` passed through as itself, because both are caller semantics.
-    * ``"hunk"`` — an ``@@`` header. ``old_line``/``new_line`` are the sides' start
-      lines; ``old_count``/``new_count`` are the RESOLVED body-line budgets. A unified
-      diff omits a count exactly when that side holds one line, so the omitted spelling
-      resolves to 1 here rather than reaching a caller as ``None`` — a caller reading
-      the raw group would compare an added-file signal against something that is not a
-      number.
-    * ``"line"`` — a hunk-body line. ``new_line`` is set when the line exists on the new
-      side and ``old_line`` when it exists on the old side: an added line carries only
-      the former, a removed line only the latter, a context line both. ``\\ No newline
-      at end of file`` belongs to neither side and yields no event at all. ``text`` is
-      the line's body with the marker column removed — ``raw[1:]`` for a ``+``/``-``
-      line, and ``raw[1:]`` for a context line only when the raw line actually starts
-      with a space (a zero-prefixed bare context line is already bare; slicing it would
-      eat its first character instead of its marker). A removed line carries ``text``
-      too, despite having no ``new_line``: the walk stays lossless.
-
-    ``text`` is a body line's content on a ``line`` event, the raw header remainder on
-    a ``git_header`` event, and ``None`` otherwise.
-    """
-
-    kind: DiffEventKind
-    path: str | None = None
-    old_line: int | None = None
-    new_line: int | None = None
-    old_count: int | None = None
-    new_count: int | None = None
-    text: str | None = None
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
+from typing import Literal, cast
 
 
-# Prefix-free on purpose: a header's `a/`/`b/` is diff syntax on one platform and a real
-# directory on the other, so the walk hands back what it read and the caller decides.
+@dataclass(frozen=True, slots=True)
+class HeaderEvent:
+    kind: Literal["git_header", "old_path", "new_path"]
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class HunkEvent:
+    old_line: int
+    new_line: int
+    old_count: int
+    new_count: int
+    kind: Literal["hunk"] = field(default="hunk", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class LineEvent:
+    old_line: int | None
+    new_line: int | None
+    text: str
+    kind: Literal["line"] = field(default="line", init=False)
+
+
+DiffEvent = HeaderEvent | HunkEvent | LineEvent
+LineKey = tuple[str, int]
+PostingPathPolicy = Literal["git-prefixed", "glab-verbatim"]
+DiffPathPolicy = Literal["git-prefixed", "glab-verbatim", "verify-both-spellings"]
+
+
+@dataclass(frozen=True, slots=True)
+class DiffFacts:
+    valid_lines: Mapping[LineKey, int | None]
+    new_files: frozenset[str]
+    old_paths: Mapping[str, str]
+    line_texts: Mapping[LineKey, str]
+
+
+@dataclass(frozen=True, slots=True)
+class DiffCounts:
+    added: int
+    removed: int
+    binary_files: int
+
+
+# Prefixes may be syntax or real directories; policies decide after decoding.
 _OLD_HEADER_RE = re.compile(r"^--- (.+)$")
 _NEW_HEADER_RE = re.compile(r"^\+\+\+ (.+)$")
 _GIT_HEADER_PREFIX = "diff --git "
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+_DIFF_PREFIX_RE = re.compile(r"^[ab]/")
+# Only the first line identifies the producer; noprefix/mnemonic output stays plain.
+_GIT_SHAPED_RE = re.compile(r'\Adiff --git "?a/')
 
 # The escapes git's C-quoting spells with a letter; every other byte it escapes it
 # writes as one to three octal digits.
@@ -106,32 +79,16 @@ _OCTAL_DIGITS = range(0x30, 0x38)
 
 
 def _decode_header_path(field: str) -> str:
-    """Undo the two encodings git puts on a ``---``/``+++`` path field.
+    """Undo git's TAB terminator and byte-wise C quoting.
 
-    A TAB terminates the field, and git appends one whenever the path contains a
-    space — otherwise the path would run into where the classic unified-diff
-    timestamp column begins. And a path holding a control character, a quote, a
-    backslash, or (unless ``core.quotePath=false``) a non-ASCII byte is written
-    C-quoted as a whole, with the quotes OUTSIDE the synthetic prefix and the tab, if
-    any, after the closing quote: ``+++ "b/caf\\303\\251 x.py"<TAB>``. Both encodings
-    are git's wire convention — how ``gh pr diff`` and plain ``git diff`` write a
-    header. ``glab mr diff`` composes its headers itself and writes every path raw, so
-    on that producer the decode has nothing to undo and is a no-op for every path git
-    could not have encoded — it mis-reads only a name that itself carries a literal TAB
-    or is wrapped in double quotes, an accepted limitation (the poster's pre-migration
-    regex kept such a name raw; now the finding on it is demoted to summary-only rather
-    than anchored).
-
-    A field that does not decode comes back verbatim: git never writes an escape this
-    cannot read, so an undecodable field is not a path a finding could name either,
-    and passing it through keeps the walk lossless.
+    Literal TAB and quote-wrapped glab names retain the decoder's ambiguity.
+    Malformed fields pass through verbatim to keep the walk lossless.
     """
     path = field.split("\t", 1)[0]
     if len(path) < 2 or not path.startswith('"') or not path.endswith('"'):
         return path
 
-    # Byte-wise, not character-wise: an octal escape names a BYTE of a multi-byte
-    # character, so the escapes must be resolved before anything is decoded as text.
+    # Octal escapes name bytes of UTF-8, so resolve them before decoding text.
     quoted = path[1:-1].encode("utf-8", "surrogateescape")
     decoded = bytearray()
     index = 0
@@ -165,51 +122,33 @@ def _decode_header_path(field: str) -> str:
 
 
 def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
-    """Yield a :class:`DiffEvent` for every meaningful line of *diff_text*.
-
-    The parser tracks each hunk's DECLARED old/new line budgets and matches file and
-    hunk headers only BETWEEN hunks. Well-formed git/gh/glab diffs always declare
-    correct counts, so the counts are trusted.
-    """
+    """Yield events using trusted hunk budgets to separate headers from bodies."""
     old_line = 0
     new_line = 0
-    # Lines of each side still owed by the hunk being read. Both at 0 means "between
-    # hunks" — the only zone where a line may be read as a header.
     old_rem = 0
     new_rem = 0
 
-    # Split on "\n" ONLY, never str.splitlines(): that also breaks on \x0c, \x0b, \x85
-    # and U+2028/U+2029, which git treats as ordinary line CONTENT. A form feed inside a
-    # hunk body would become two parsed lines, draining the declared budgets one line
-    # early — flipping the header/body zone boundary and shifting every line number
-    # after it.
+    # Git treats form feeds, vertical tabs, NEL and Unicode separators as content.
+    # splitlines() would drain budgets early and shift the header/body boundary.
     lines = diff_text.split("\n")
     if lines[-1] == "":
-        # The tail of the terminating newline is not a line. Walked as one, it is
-        # harmless between hunks but reads as a context line inside a hunk body that
-        # ran out of text — a diff truncated or paginated mid-hunk — minting a final
-        # line number the file does not have.
+        # A terminating split tail would mint a phantom line in a truncated hunk.
         lines.pop()
 
     for raw_line in lines:
         if old_rem <= 0 and new_rem <= 0:
-            # -- header zone -------------------------------------------------
             if raw_line.startswith(_GIT_HEADER_PREFIX):
-                yield DiffEvent("git_header", text=raw_line[len(_GIT_HEADER_PREFIX) :])
+                yield HeaderEvent("git_header", raw_line[len(_GIT_HEADER_PREFIX) :])
                 continue
 
             old_match = _OLD_HEADER_RE.match(raw_line)
             if old_match:
-                yield DiffEvent(
-                    "old_path", path=_decode_header_path(old_match.group(1))
-                )
+                yield HeaderEvent("old_path", _decode_header_path(old_match.group(1)))
                 continue
 
             new_match = _NEW_HEADER_RE.match(raw_line)
             if new_match:
-                yield DiffEvent(
-                    "new_path", path=_decode_header_path(new_match.group(1))
-                )
+                yield HeaderEvent("new_path", _decode_header_path(new_match.group(1)))
                 continue
 
             hunk_match = _HUNK_RE.match(raw_line)
@@ -217,53 +156,254 @@ def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
                 old_start, old_count, new_start, new_count = hunk_match.groups()
                 old_line = int(old_start)
                 new_line = int(new_start)
+                # Unified diffs omit count 1; a missing group never means an empty side.
                 old_rem = 1 if old_count is None else int(old_count)
                 new_rem = 1 if new_count is None else int(new_count)
-                yield DiffEvent(
-                    "hunk",
-                    old_line=old_line,
-                    new_line=new_line,
-                    old_count=old_rem,
-                    new_count=new_rem,
-                )
+                yield HunkEvent(old_line, new_line, old_rem, new_rem)
                 continue
 
-            # Anything else between hunks (`index …`, mode lines, rename lines,
-            # `Binary files … differ`) is noise. Reading it as body content is what
-            # attributes a phantom line to whichever file was parsed last.
+            # Header-zone noise must not become phantom lines in the preceding file.
             continue
 
-        # -- hunk-body zone --------------------------------------------------
-        # Headers are NOT matched here: `--- <text>` / `+++ <text>` are body content.
-        # Removing the SQL comment `-- deprecated: drop me` renders as
-        # `--- deprecated: drop me` and an added `++ x` renders as `+++ x`; by prefix
-        # alone neither is distinguishable from a real header. Budgets drain for every
-        # body line, including a deleted file's — a body left undrained puts the NEXT
-        # file's headers inside this zone, where nothing matches them.
+        # ---/+++ body content is indistinguishable from headers without budgets.
+        # Deleted bodies must drain too, or the next file's headers disappear here.
         if raw_line.startswith("\\"):
             # `\ No newline at end of file` belongs to neither side.
             continue
 
         if raw_line.startswith("+"):
             new_rem -= 1
-            yield DiffEvent("line", new_line=new_line, text=raw_line[1:])
+            yield LineEvent(None, new_line, raw_line[1:])
             new_line += 1
         elif raw_line.startswith("-"):
             old_rem -= 1
-            yield DiffEvent("line", old_line=old_line, text=raw_line[1:])
+            yield LineEvent(old_line, None, raw_line[1:])
             old_line += 1
         else:
-            # Context line (space- or zero-prefixed) — present on BOTH sides. The
-            # marker column comes off only when it is really there: a blank context
-            # line is a lone space (content ""), but a zero-prefixed one is already
-            # bare and slicing it would eat its first character.
+            # Bare context has no marker; slicing it would eat a content character.
             old_rem -= 1
             new_rem -= 1
-            yield DiffEvent(
-                "line",
-                old_line=old_line,
-                new_line=new_line,
-                text=raw_line[1:] if raw_line.startswith(" ") else raw_line,
+            yield LineEvent(
+                old_line,
+                new_line,
+                raw_line[1:] if raw_line.startswith(" ") else raw_line,
             )
             new_line += 1
             old_line += 1
+
+
+def _git_prefixed(path: str, *, side: Literal["old", "new"]) -> str:
+    return path.removeprefix("a/" if side == "old" else "b/")
+
+
+def _strip_ab_prefix(path: str) -> str:
+    return _DIFF_PREFIX_RE.sub("", path)
+
+
+def _verify_both_spellings(path: str) -> tuple[str, ...]:
+    # Verify accepts the raw path and exactly one stripped alias, without git proof.
+    stripped = _strip_ab_prefix(path)
+    return (path,) if stripped == path else (path, stripped)
+
+
+def _git_header_agrees(git_header: str | None, old_side: str, new_side: str) -> bool:
+    """Compare the whole header: unquoted spaces make splitting undecidable.
+
+    A null old side borrows the new name. Decoded TAB/quoted fields may fail
+    reconstruction, so those glab pairs retain their unproven spelling.
+    """
+    old_name = old_side[2:] if old_side.startswith("a/") else None
+    new_name = new_side[2:] if new_side.startswith("b/") else None
+    if old_side == "/dev/null":
+        old_name = new_name
+    return (
+        old_name is not None
+        and new_name is not None
+        and git_header == f"a/{old_name} b/{new_name}"
+    )
+
+
+def posting_policy(platform: Literal["github", "gitlab"]) -> PostingPathPolicy:
+    return "git-prefixed" if platform == "github" else "glab-verbatim"
+
+
+def patch_report_policy(diff_text: str) -> PostingPathPolicy:
+    return "git-prefixed" if _GIT_SHAPED_RE.match(diff_text) else "glab-verbatim"
+
+
+def parse_diff(diff_text: str | None, *, policy: DiffPathPolicy) -> DiffFacts | None:
+    """Collect new-side addressability and text, retaining old context numbers.
+
+    GitLab context positions need both numbers and the pre-rename old path.
+    Added files must omit old_path to avoid HTTP 500. Plain empty-old hunks
+    cannot distinguish additions from edits of empty files and guess added;
+    proven git blocks instead use the null old side. None skips validation,
+    while an empty successful diff is a present oracle with no valid keys.
+    """
+    if diff_text is None:
+        return None
+    valid_lines: dict[LineKey, int | None] = {}
+    line_texts: dict[LineKey, str] = {}
+    new_files: set[str] = set()
+    old_paths: dict[str, str] = {}
+    git_header: str | None = None
+    pending_old_side: str | None = None
+    current_paths: tuple[str, ...] = ()
+    zero_old_hunk_means_added = True
+
+    for event in walk_diff(diff_text):
+        if isinstance(event, HeaderEvent):
+            if event.kind == "git_header":
+                git_header = event.value
+                # An unpaired old header cannot belong to the next git block.
+                pending_old_side = None
+            elif event.kind == "old_path":
+                pending_old_side = event.value
+            else:
+                old_side, new_side = pending_old_side, event.value
+                pending_old_side = None
+                git_style = (
+                    policy == "glab-verbatim"
+                    and old_side is not None
+                    and _git_header_agrees(git_header, old_side, new_side)
+                )
+                # Even a failed proof belongs to only this pair.
+                git_header = None
+                if policy == "verify-both-spellings":
+                    # Null clears the previous aliases before body budgets drain.
+                    current_paths = (
+                        ()
+                        if new_side == "/dev/null"
+                        else _verify_both_spellings(new_side)
+                    )
+                    continue
+                if policy == "git-prefixed" or git_style:
+                    old_side = (
+                        None
+                        if old_side is None
+                        else _git_prefixed(old_side, side="old")
+                    )
+                    new_side = _git_prefixed(new_side, side="new")
+                zero_old_hunk_means_added = not git_style
+                current_paths = () if new_side == "/dev/null" else (new_side,)
+                if current_paths:
+                    if old_side == "/dev/null":
+                        new_files.add(new_side)
+                    elif old_side is not None:
+                        old_paths[new_side] = old_side
+            continue
+        if isinstance(event, HunkEvent):
+            if (
+                policy != "verify-both-spellings"
+                and zero_old_hunk_means_added
+                and event.old_line == 0
+                and event.old_count == 0
+            ):
+                new_files.update(current_paths)
+            continue
+        if event.new_line is not None:
+            for path in current_paths:
+                key = (path, event.new_line)
+                valid_lines[key] = event.old_line
+                line_texts[key] = event.text
+    return DiffFacts(valid_lines, frozenset(new_files), old_paths, line_texts)
+
+
+def diff_counts(diff_text: str) -> DiffCounts:
+    added = 0
+    removed = 0
+    for event in walk_diff(diff_text):
+        if isinstance(event, LineEvent):
+            if event.new_line is not None and event.old_line is None:
+                added += 1
+            elif event.old_line is not None and event.new_line is None:
+                removed += 1
+    # Binary prose is a raw-text statistic, including malformed or body-zone input.
+    binary_files = sum(
+        line.startswith("Binary files ") and line.rstrip("\r").endswith(" differ")
+        for line in diff_text.split("\n")
+    )
+    return DiffCounts(added, removed, binary_files)
+
+
+def _resolve_spelling(facts: DiffFacts, path: str, line: int | None) -> str | None:
+    # Exact wins for real a/b directories. Missing/deleted siblings can still cross
+    # resolve; the fence ambiguity check sees addressable keys only.
+    if (path, line) in facts.valid_lines:
+        return path
+    stripped = _strip_ab_prefix(path)
+    return stripped if (stripped, line) in facts.valid_lines else None
+
+
+def is_line_valid(facts: DiffFacts | None, path: str, line: int | None) -> bool:
+    return facts is None or _resolve_spelling(facts, path, line) is not None
+
+
+def diff_path_spelling(facts: DiffFacts | None, path: str, line: int | None) -> str:
+    spelling = None if facts is None else _resolve_spelling(facts, path, line)
+    return path if spelling is None else spelling
+
+
+def old_line_for(facts: DiffFacts | None, path: str, line: int | None) -> int | None:
+    if facts is None:
+        return None
+    # Use the same resolution as validity, or accepted prefix aliases lose old_line.
+    spelling = _resolve_spelling(facts, path, line)
+    return (
+        None if spelling is None else facts.valid_lines[cast(LineKey, (spelling, line))]
+    )
+
+
+def valid_lines_for_file(facts: DiffFacts | None, path: str) -> list[int] | None:
+    if facts is None:
+        return None
+    # There is no query line to resolve; diagnostics need the union of both spellings.
+    stripped = _strip_ab_prefix(path)
+    lines = sorted({line for fp, line in facts.valid_lines if fp in (path, stripped)})
+    return lines[:10]
+
+
+def range_is_valid(facts: DiffFacts | None, path: str, start: int, end: int) -> bool:
+    # Short-circuit on a miss so a bogus huge end does not force a huge scan.
+    return facts is None or all(
+        is_line_valid(facts, path, line) for line in range(start, end + 1)
+    )
+
+
+def is_new_file(facts: DiffFacts | None, resolved_path: str) -> bool:
+    # Already resolved: another strip could collide a modified real a/ file with a new one.
+    return facts is not None and resolved_path in facts.new_files
+
+
+def old_path_for(facts: DiffFacts | None, resolved_path: str) -> str:
+    return (
+        resolved_path
+        if facts is None
+        else facts.old_paths.get(resolved_path, resolved_path)
+    )
+
+
+def span_texts(
+    facts: DiffFacts | None, resolved_path: str, start: int, end: int
+) -> list[str] | None:
+    if facts is None:
+        return None
+    # Partial content means unavailable, never "no difference". Keep one exact spelling.
+    texts = []
+    for line in range(start, end + 1):
+        key = (resolved_path, line)
+        if key not in facts.line_texts:
+            return None
+        texts.append(facts.line_texts[key])
+    return texts
+
+
+def path_is_ambiguous(facts: DiffFacts | None, raw_path: str) -> bool:
+    if facts is None:
+        return False
+    stripped = _strip_ab_prefix(raw_path)
+    if stripped == raw_path:
+        return False
+    # Deletions, header-only paths and pre-rename names are not addressable keys.
+    paths = {path for path, _ in facts.valid_lines}
+    return raw_path in paths and stripped in paths

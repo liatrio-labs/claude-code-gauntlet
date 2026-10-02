@@ -261,7 +261,7 @@ def parse_diff_lines(diff_text):
             # `/dev/null` names a deleted file: it owns no new-side line, and the
             # previous file's spellings must not survive into its hunk bodies.
             current_paths = (
-                () if event.path == "/dev/null" else _path_spellings(event.path)
+                () if event.value == "/dev/null" else _path_spellings(event.value)
             )
         elif event.kind == "line" and event.new_line is not None:
             # A removed line has no new side and is therefore not addressable here.

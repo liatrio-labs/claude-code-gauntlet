@@ -20,7 +20,7 @@ Covers:
 
 import unittest
 
-from gauntlet.diff import DiffEvent, walk_diff
+from gauntlet.diff import HeaderEvent, HunkEvent, LineEvent, walk_diff
 
 
 def events(diff_text):
@@ -43,8 +43,8 @@ class TestHeaderZone(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("old_path", path="a/src/app.py"),
-                DiffEvent("new_path", path="b/src/app.py"),
+                HeaderEvent("old_path", "a/src/app.py"),
+                HeaderEvent("new_path", "b/src/app.py"),
             ],
         )
 
@@ -54,8 +54,8 @@ class TestHeaderZone(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("old_path", path="src/app.py"),
-                DiffEvent("new_path", path="src/app.py"),
+                HeaderEvent("old_path", "src/app.py"),
+                HeaderEvent("new_path", "src/app.py"),
             ],
         )
 
@@ -64,8 +64,8 @@ class TestHeaderZone(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("old_path", path="/dev/null"),
-                DiffEvent("new_path", path="b/added.py"),
+                HeaderEvent("old_path", "/dev/null"),
+                HeaderEvent("new_path", "b/added.py"),
             ],
         )
 
@@ -79,7 +79,7 @@ class TestHeaderZone(unittest.TestCase):
             "Binary files a/logo.png and b/logo.png differ\n"
         )
         self.assertEqual(
-            events(diff), [DiffEvent("git_header", text="a/logo.png b/logo.png")]
+            events(diff), [HeaderEvent("git_header", "a/logo.png b/logo.png")]
         )
 
     def test_git_header_text_is_raw(self):
@@ -87,7 +87,7 @@ class TestHeaderZone(unittest.TestCase):
         diff = 'diff --git "a/caf\\303\\251.py" b/my file.py\tx\n'
         self.assertEqual(
             events(diff),
-            [DiffEvent("git_header", text='"a/caf\\303\\251.py" b/my file.py\tx')],
+            [HeaderEvent("git_header", '"a/caf\\303\\251.py" b/my file.py\tx')],
         )
 
 
@@ -110,8 +110,8 @@ class TestHeaderPathSpelling(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("old_path", path="a/My Docs/read me.md"),
-                DiffEvent("new_path", path="b/My Docs/read me.md"),
+                HeaderEvent("old_path", "a/My Docs/read me.md"),
+                HeaderEvent("new_path", "b/My Docs/read me.md"),
             ],
         )
 
@@ -122,8 +122,8 @@ class TestHeaderPathSpelling(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("old_path", path="a/café.py"),
-                DiffEvent("new_path", path="b/café.py"),
+                HeaderEvent("old_path", "a/café.py"),
+                HeaderEvent("new_path", "b/café.py"),
             ],
         )
 
@@ -136,9 +136,9 @@ class TestHeaderPathSpelling(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("new_path", path="b/tab\there.txt"),
-                DiffEvent("new_path", path='b/quo"te.txt'),
-                DiffEvent("new_path", path="b/back\\slash.txt"),
+                HeaderEvent("new_path", "b/tab\there.txt"),
+                HeaderEvent("new_path", 'b/quo"te.txt'),
+                HeaderEvent("new_path", "b/back\\slash.txt"),
             ],
         )
 
@@ -146,7 +146,7 @@ class TestHeaderPathSpelling(unittest.TestCase):
         diff = '+++ "b/caf\\303\\251 space.py"\t\n'
         self.assertEqual(
             events(diff),
-            [DiffEvent("new_path", path="b/café space.py")],
+            [HeaderEvent("new_path", "b/café space.py")],
         )
 
     def test_a_field_that_does_not_decode_is_yielded_verbatim(self):
@@ -163,10 +163,10 @@ class TestHeaderPathSpelling(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("old_path", path='"a/bad\\q.py"'),
-                DiffEvent("new_path", path='"b/\\377.py"'),
-                DiffEvent("new_path", path='"b/\\400.py"'),
-                DiffEvent("new_path", path='"b/trailing\\"'),
+                HeaderEvent("old_path", '"a/bad\\q.py"'),
+                HeaderEvent("new_path", '"b/\\377.py"'),
+                HeaderEvent("new_path", '"b/\\400.py"'),
+                HeaderEvent("new_path", '"b/trailing\\"'),
             ],
         )
 
@@ -177,8 +177,8 @@ class TestHeaderPathSpelling(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("new_path", path='say"hi".py'),
-                DiffEvent("new_path", path='"quoted"/app.py'),
+                HeaderEvent("new_path", 'say"hi".py'),
+                HeaderEvent("new_path", '"quoted"/app.py'),
             ],
         )
 
@@ -196,10 +196,10 @@ class TestHunkHeaders(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("hunk", old_line=10, new_line=20, old_count=2, new_count=3),
-                DiffEvent("line", old_line=10, new_line=20, text="ctx"),
-                DiffEvent("line", new_line=21, text="added"),
-                DiffEvent("line", old_line=11, new_line=22, text="tail"),
+                HunkEvent(10, 20, 2, 3),
+                LineEvent(10, 20, "ctx"),
+                LineEvent(None, 21, "added"),
+                LineEvent(11, 22, "tail"),
             ],
         )
 
@@ -212,8 +212,8 @@ class TestHunkHeaders(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("hunk", old_line=0, new_line=1, old_count=0, new_count=1),
-                DiffEvent("line", new_line=1, text="only"),
+                HunkEvent(0, 1, 0, 1),
+                LineEvent(None, 1, "only"),
             ],
         )
 
@@ -232,15 +232,15 @@ class TestHunkHeaders(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("new_path", path="b/multi.py"),
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=3),
-                DiffEvent("line", old_line=1, new_line=1, text="a"),
-                DiffEvent("line", new_line=2, text="b"),
-                DiffEvent("line", old_line=2, new_line=3, text="c"),
-                DiffEvent("hunk", old_line=50, new_line=51, old_count=2, new_count=3),
-                DiffEvent("line", old_line=50, new_line=51, text="d"),
-                DiffEvent("line", new_line=52, text="e"),
-                DiffEvent("line", old_line=51, new_line=53, text="f"),
+                HeaderEvent("new_path", "b/multi.py"),
+                HunkEvent(1, 1, 2, 3),
+                LineEvent(1, 1, "a"),
+                LineEvent(None, 2, "b"),
+                LineEvent(2, 3, "c"),
+                HunkEvent(50, 51, 2, 3),
+                LineEvent(50, 51, "d"),
+                LineEvent(None, 52, "e"),
+                LineEvent(51, 53, "f"),
             ],
         )
 
@@ -256,11 +256,11 @@ class TestHunkBody(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("hunk", old_line=7, new_line=7, old_count=3, new_count=3),
-                DiffEvent("line", old_line=7, new_line=7, text="ctx"),
-                DiffEvent("line", old_line=8, text="gone"),
-                DiffEvent("line", new_line=8, text="fresh"),
-                DiffEvent("line", old_line=9, new_line=9, text="tail"),
+                HunkEvent(7, 7, 3, 3),
+                LineEvent(7, 7, "ctx"),
+                LineEvent(8, None, "gone"),
+                LineEvent(None, 8, "fresh"),
+                LineEvent(9, 9, "tail"),
             ],
         )
 
@@ -272,10 +272,10 @@ class TestHunkBody(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
-                DiffEvent("line", old_line=1, new_line=1, text="a"),
-                DiffEvent("line", old_line=2, text="b"),
-                DiffEvent("line", new_line=2, text="b2"),
+                HunkEvent(1, 1, 2, 2),
+                LineEvent(1, 1, "a"),
+                LineEvent(2, None, "b"),
+                LineEvent(None, 2, "b2"),
             ],
         )
 
@@ -293,12 +293,12 @@ class TestHunkBody(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("old_path", path="a/schema.sql"),
-                DiffEvent("new_path", path="b/schema.sql"),
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=3, new_count=2),
-                DiffEvent("line", old_line=1, new_line=1, text="CREATE TABLE t ("),
-                DiffEvent("line", old_line=2, text="-- deprecated: drop me"),
-                DiffEvent("line", old_line=3, new_line=2, text=");"),
+                HeaderEvent("old_path", "a/schema.sql"),
+                HeaderEvent("new_path", "b/schema.sql"),
+                HunkEvent(1, 1, 3, 2),
+                LineEvent(1, 1, "CREATE TABLE t ("),
+                LineEvent(2, None, "-- deprecated: drop me"),
+                LineEvent(3, 2, ");"),
             ],
         )
 
@@ -316,12 +316,12 @@ class TestHunkBody(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("old_path", path="a/notes.md"),
-                DiffEvent("new_path", path="b/notes.md"),
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=3),
-                DiffEvent("line", old_line=1, new_line=1, text="intro"),
-                DiffEvent("line", new_line=2, text="++ x marks a diff-of-a-diff"),
-                DiffEvent("line", old_line=2, new_line=3, text="outro"),
+                HeaderEvent("old_path", "a/notes.md"),
+                HeaderEvent("new_path", "b/notes.md"),
+                HunkEvent(1, 1, 2, 3),
+                LineEvent(1, 1, "intro"),
+                LineEvent(None, 2, "++ x marks a diff-of-a-diff"),
+                LineEvent(2, 3, "outro"),
             ],
         )
 
@@ -336,12 +336,12 @@ class TestHunkBody(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=4, new_count=3),
-                DiffEvent("line", old_line=1, new_line=1, text="head"),
-                DiffEvent("line", old_line=2, text="alpha\x0cbeta"),
-                DiffEvent("line", new_line=2, text="gamma"),
-                DiffEvent("line", old_line=3, new_line=3, text="middle"),
-                DiffEvent("line", old_line=4, text="omega"),
+                HunkEvent(1, 1, 4, 3),
+                LineEvent(1, 1, "head"),
+                LineEvent(2, None, "alpha\x0cbeta"),
+                LineEvent(None, 2, "gamma"),
+                LineEvent(3, 3, "middle"),
+                LineEvent(4, None, "omega"),
             ],
         )
 
@@ -355,11 +355,11 @@ class TestHunkBody(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("old_path", path="a/f.py"),
-                DiffEvent("new_path", path="b/f.py"),
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=4, new_count=4),
-                DiffEvent("line", old_line=1, new_line=1, text="ctx"),
-                DiffEvent("line", new_line=2, text="added"),
+                HeaderEvent("old_path", "a/f.py"),
+                HeaderEvent("new_path", "b/f.py"),
+                HunkEvent(1, 1, 4, 4),
+                LineEvent(1, 1, "ctx"),
+                LineEvent(None, 2, "added"),
             ],
         )
 
@@ -370,9 +370,9 @@ class TestHunkBody(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
-                DiffEvent("line", old_line=1, new_line=1, text="ctx"),
-                DiffEvent("line", new_line=2, text="added"),
+                HunkEvent(1, 1, 2, 2),
+                LineEvent(1, 1, "ctx"),
+                LineEvent(None, 2, "added"),
             ],
         )
 
@@ -384,10 +384,10 @@ class TestHunkBody(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=3, new_count=3),
-                DiffEvent("line", old_line=1, new_line=1, text="a"),
-                DiffEvent("line", old_line=2, new_line=2, text=""),
-                DiffEvent("line", new_line=3, text="b"),
+                HunkEvent(1, 1, 3, 3),
+                LineEvent(1, 1, "a"),
+                LineEvent(2, 2, ""),
+                LineEvent(None, 3, "b"),
             ],
         )
 
@@ -415,19 +415,19 @@ class TestHunkBody(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("git_header", text="a/gone.py b/gone.py"),
-                DiffEvent("old_path", path="a/gone.py"),
-                DiffEvent("new_path", path="/dev/null"),
-                DiffEvent("hunk", old_line=1, new_line=0, old_count=3, new_count=0),
-                DiffEvent("line", old_line=1, text="alpha"),
-                DiffEvent("line", old_line=2, text="beta"),
-                DiffEvent("line", old_line=3, text="gamma"),
-                DiffEvent("git_header", text="a/next.py b/next.py"),
-                DiffEvent("old_path", path="a/next.py"),
-                DiffEvent("new_path", path="b/next.py"),
-                DiffEvent("hunk", old_line=10, new_line=10, old_count=1, new_count=2),
-                DiffEvent("line", old_line=10, new_line=10, text="ctx"),
-                DiffEvent("line", new_line=11, text="added"),
+                HeaderEvent("git_header", "a/gone.py b/gone.py"),
+                HeaderEvent("old_path", "a/gone.py"),
+                HeaderEvent("new_path", "/dev/null"),
+                HunkEvent(1, 0, 3, 0),
+                LineEvent(1, None, "alpha"),
+                LineEvent(2, None, "beta"),
+                LineEvent(3, None, "gamma"),
+                HeaderEvent("git_header", "a/next.py b/next.py"),
+                HeaderEvent("old_path", "a/next.py"),
+                HeaderEvent("new_path", "b/next.py"),
+                HunkEvent(10, 10, 1, 2),
+                LineEvent(10, 10, "ctx"),
+                LineEvent(None, 11, "added"),
             ],
         )
 
@@ -446,26 +446,24 @@ class TestLineText(unittest.TestCase):
 
     def test_added_line_text_drops_the_leading_plus(self):
         diff = "@@ -0,0 +1 @@\n+hello\n"
-        self.assertEqual(events(diff)[1], DiffEvent("line", new_line=1, text="hello"))
+        self.assertEqual(events(diff)[1], LineEvent(None, 1, "hello"))
 
     def test_removed_line_text_drops_the_leading_minus(self):
         diff = "@@ -1 +0,0 @@\n-hello\n"
-        self.assertEqual(events(diff)[1], DiffEvent("line", old_line=1, text="hello"))
+        self.assertEqual(events(diff)[1], LineEvent(1, None, "hello"))
 
     def test_context_line_text_drops_exactly_one_leading_space(self):
         diff = "@@ -1 +1 @@\n  indented\n"
         self.assertEqual(
             events(diff)[1],
-            DiffEvent("line", old_line=1, new_line=1, text=" indented"),
+            LineEvent(1, 1, " indented"),
         )
 
     def test_blank_context_line_written_as_a_lone_space_yields_empty_text(self):
         # A unified diff spells a blank context line as a lone space — its content
         # is the empty string, not a space.
         diff = "@@ -1 +1 @@\n \n"
-        self.assertEqual(
-            events(diff)[1], DiffEvent("line", old_line=1, new_line=1, text="")
-        )
+        self.assertEqual(events(diff)[1], LineEvent(1, 1, ""))
 
     def test_zero_prefixed_bare_context_line_yields_empty_text_and_drains(self):
         # Some producers write a blank context line with no marker column at all
@@ -477,9 +475,9 @@ class TestLineText(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
-                DiffEvent("line", old_line=1, new_line=1, text=""),
-                DiffEvent("line", old_line=2, new_line=2, text="ctx"),
+                HunkEvent(1, 1, 2, 2),
+                LineEvent(1, 1, ""),
+                LineEvent(2, 2, "ctx"),
             ],
         )
 
@@ -490,39 +488,37 @@ class TestLineText(unittest.TestCase):
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
-                DiffEvent("line", old_line=1, new_line=1, text="bare_ctx"),
-                DiffEvent("line", old_line=2, new_line=2, text="ctx"),
+                HunkEvent(1, 1, 2, 2),
+                LineEvent(1, 1, "bare_ctx"),
+                LineEvent(2, 2, "ctx"),
             ],
         )
 
     def test_leading_whitespace_after_the_marker_is_preserved_verbatim(self):
         diff = "@@ -0,0 +1 @@\n+    indented_add\n"
-        self.assertEqual(
-            events(diff)[1], DiffEvent("line", new_line=1, text="    indented_add")
-        )
+        self.assertEqual(events(diff)[1], LineEvent(None, 1, "    indented_add"))
 
     def test_form_feed_inside_the_text_is_preserved(self):
         diff = "@@ -0,0 +1 @@\n+a\x0cb\n"
-        self.assertEqual(events(diff)[1], DiffEvent("line", new_line=1, text="a\x0cb"))
+        self.assertEqual(events(diff)[1], LineEvent(None, 1, "a\x0cb"))
 
     def test_no_newline_marker_yields_no_event(self):
         diff = "@@ -1,2 +1,2 @@\n a\n\\ No newline at end of file\n b\n"
         self.assertEqual(
             events(diff),
             [
-                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
-                DiffEvent("line", old_line=1, new_line=1, text="a"),
-                DiffEvent("line", old_line=2, new_line=2, text="b"),
+                HunkEvent(1, 1, 2, 2),
+                LineEvent(1, 1, "a"),
+                LineEvent(2, 2, "b"),
             ],
         )
 
     def test_header_and_hunk_events_carry_no_text(self):
         diff = "--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n ctx\n"
         old_path, new_path, hunk, line = events(diff)
-        self.assertIsNone(old_path.text)
-        self.assertIsNone(new_path.text)
-        self.assertIsNone(hunk.text)
+        self.assertFalse(hasattr(old_path, "text"))
+        self.assertFalse(hasattr(new_path, "text"))
+        self.assertFalse(hasattr(hunk, "text"))
         self.assertEqual(line.text, "ctx")
 
 
