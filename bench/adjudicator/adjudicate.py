@@ -1,8 +1,9 @@
-"""Judge unmatched review comments using a constrained context snapshot.
+"""Adjudicator: classify a review comment the judge matched to no golden.
 
-The pinned judge sees only the comment, its diff hunk, and nearby changed file
-lines. Network I/O lives behind a transport seam so tests can exercise
-adjudication without contacting the endpoint.
+Unmatched is not automatically noise: the golden set may simply not cover a real
+issue. The call goes to the same pinned, dated snapshot the judge uses and sees
+only the comment, its diff hunk and nearby lines of the changed file. Network I/O
+sits behind ``_transport`` so tests never touch the wire.
 """
 
 import json
@@ -31,12 +32,16 @@ _CONTEXT_RADIUS = 5  # nearby head-file lines shown on each side of the target l
 
 
 def slice_hunk(diff_text: str, path: str, line: int) -> str:
-    """Keep the judge's view local even when a finding falls between hunks."""
+    """Return the hunk under ``path`` covering 1-based new-file ``line``, else the nearest one.
+
+    Raises ``ValueError`` when ``path`` has no hunk; callers catch it to fall back.
+    """
     hunks: list[tuple[HunkEvent, str]] = []
     for raw_hunk in raw_hunks(diff_text):
         if raw_hunk.new_path is None:
             continue
         # Bench diffs are git output and candidate paths are repo-relative.
+        # Strip keeps CRLF and padded header lines matching after decoding.
         target = raw_hunk.new_path.strip().removeprefix("b/")
         if target != path or target == "/dev/null":
             continue
@@ -46,17 +51,10 @@ def slice_hunk(diff_text: str, path: str, line: int) -> str:
             f"path {path!r} not found in diff (no +++ header / hunks for it)"
         )
 
-    for hunk, text in hunks:
-        span = max(hunk.new_count, 1)
-        if hunk.new_line <= line <= hunk.new_line + span - 1:
-            return text
-
     def distance(item: tuple[HunkEvent, str]) -> int:
         hunk, _ = item
         end = hunk.new_line + max(hunk.new_count, 1) - 1
-        if line < hunk.new_line:
-            return hunk.new_line - line
-        return line - end
+        return max(hunk.new_line - line, line - end, 0)
 
     return min(hunks, key=distance)[1]
 

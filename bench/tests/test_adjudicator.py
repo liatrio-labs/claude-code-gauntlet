@@ -107,6 +107,13 @@ END_BOUNDARY_DIFF = (
         ),
         pytest.param(DIFF, "src/app.py", 42, HUNK_TWO, id="second-hunk"),
         pytest.param(DIFF, "src/app.py", 30, HUNK_TWO, id="between-hunks-nearest"),
+        pytest.param(
+            DIFF,
+            "src/app.py",
+            25,
+            HUNK_ONE,
+            id="between-hunks-strict-nearer-first",
+        ),
         pytest.param(DIFF, "src/app.py", 27, HUNK_ONE, id="nearest-tie-first"),
         pytest.param(
             "+++ b/zero.py\n@@ -3 +3 @@\n-later\n+later\n@@ -2,0 +2,0 @@\n",
@@ -115,8 +122,28 @@ END_BOUNDARY_DIFF = (
             "@@ -2,0 +2,0 @@\n",
             id="zero-count-span-is-one",
         ),
+        pytest.param(
+            "+++ b/f\n@@ -5,2 +4,0 @@\n-a\n-b\n@@ -12 +10 @@\n-x\n+y\n",
+            "f",
+            7,
+            "@@ -5,2 +4,0 @@\n-a\n-b\n",
+            id="zero-count-nearest-span-is-one",
+        ),
         pytest.param(DIFF, "other.py", 2, OTHER_HUNK, id="second-file-isolated"),
-        pytest.param(DIFF, "src/app.py", 10, HUNK_ONE, id="git-b-prefix-stripped"),
+        pytest.param(
+            "+++ src/b/file.py\n@@ -1 +1 @@\n-old\n+new\n",
+            "src/b/file.py",
+            1,
+            "@@ -1 +1 @@\n-old\n+new\n",
+            id="non-leading-b-prefix-preserved",
+        ),
+        pytest.param(
+            '--- "a/f "\n+++ "b/f "\n@@ -1 +1 @@\n-old\n+new\n',
+            "f",
+            1,
+            "@@ -1 +1 @@\n-old\n+new\n",
+            id="quoted-trailing-space-matches-stripped-candidate",
+        ),
         pytest.param(
             '--- "a/caf\\303\\251.py"\n'
             '+++ "b/caf\\303\\251.py"\n'

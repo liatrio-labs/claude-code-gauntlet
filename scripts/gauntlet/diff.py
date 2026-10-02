@@ -209,15 +209,21 @@ def _walk_diff_indexed(lines: list[str]) -> Iterator[tuple[int, DiffEvent]]:
 
 def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
     """Yield events using trusted hunk budgets to separate headers from bodies."""
-    # Git treats form feeds, vertical tabs, NEL and Unicode separators as content.
-    # splitlines() would drain budgets early and shift the header/body boundary.
-    lines = diff_text.split("\n")
-    if lines[-1] == "":
-        # A terminating split tail would mint a phantom line in a truncated hunk.
-        lines.pop()
+    lines, _ = _split_lines(diff_text)
 
     for _, event in _walk_diff_indexed(lines):
         yield event
+
+
+def _split_lines(diff_text: str) -> tuple[list[str], bool]:
+    # Git treats form feeds, vertical tabs, NEL and Unicode separators as content.
+    # splitlines() would drain budgets early and shift the header/body boundary.
+    lines = diff_text.split("\n")
+    has_final_newline = lines[-1] == ""
+    if has_final_newline:
+        # A terminating split tail would mint a phantom line in a truncated hunk.
+        lines.pop()
+    return lines, has_final_newline
 
 
 def _build_raw_hunk(
@@ -229,9 +235,8 @@ def _build_raw_hunk(
     last_body: int,
 ) -> RawHunk:
     end = last_body
-    while end + 1 < len(lines) and lines[end + 1].startswith(
-        "\\ No newline at end of file"
-    ):
+    # The walker yields no event for a marker line, so a trailing one is found here.
+    if end + 1 < len(lines) and lines[end + 1].startswith("\\"):
         end += 1
     text = "\n".join(lines[start : end + 1])
     if end < len(lines) - 1 or has_final_newline:
@@ -241,10 +246,7 @@ def _build_raw_hunk(
 
 def raw_hunks(diff_text: str) -> Iterator[RawHunk]:
     """Yield budgeted hunks with their decoded new path and original text."""
-    lines = diff_text.split("\n")
-    has_final_newline = lines[-1] == ""
-    if has_final_newline:
-        lines.pop()
+    lines, has_final_newline = _split_lines(diff_text)
 
     current_path: str | None = None
     hunk: HunkEvent | None = None
@@ -261,7 +263,7 @@ def raw_hunks(diff_text: str) -> Iterator[RawHunk]:
             hunk = event
             hunk_path = current_path
             start = last_body = line_index
-        elif isinstance(event, LineEvent) and hunk is not None:
+        elif isinstance(event, LineEvent):
             last_body = line_index
 
     if hunk is not None:
