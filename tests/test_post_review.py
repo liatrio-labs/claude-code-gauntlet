@@ -11,16 +11,17 @@ import re
 import subprocess
 import sys
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import ClassVar, cast
+from typing import ClassVar, Literal, cast
 from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
 import gauntlet.prior_review as detect_prior_review
 import pytest
+from gauntlet import diff as diff_api
 from gauntlet import proc
 from gauntlet.delivery.post import (
     _blockquote,
@@ -42,16 +43,11 @@ from gauntlet.delivery.post import (
     compose_inline_body,
     compose_review_body,
     consolidate_delivery,
-    diff_path_spelling,
-    is_line_valid,
-    old_line_for,
-    parse_diff_lines,
-    parse_diff_text,
+    fetch_diff_facts,
     render_comment_body,
     render_group_body,
     resolve_marker_sha,
     summary_body_from_report,
-    valid_lines_for_file,
     validate_position,
 )
 from gauntlet.forge import (
@@ -64,6 +60,7 @@ from gauntlet.forge import (
 )
 from gauntlet.prior_review import PriorDelivery
 
+from tests.support.diff import diff_facts
 from tests.support.forge import FakeForge, FakeForgeFactory, FakeGitLab, ForgeCall
 from tests.support.prior import prior_notes
 
@@ -98,7 +95,7 @@ _MISSING_SEVERITY = object()
     [
         (
             "github",
-            "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -1,1 +1,2 @@\n existing\n+added\n",
+            "--- a/foo.py\n+++ b/foo.py\n@@ -1,1 +1,2 @@\n existing\n+added\n",
             {("foo.py", 1): 1, ("foo.py", 2): None},
             set(),
             {"foo.py": "foo.py"},
@@ -106,11 +103,11 @@ _MISSING_SEVERITY = object()
         ),
         (
             "gitlab",
-            "--- bar.py\n+++ bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n",
-            {("bar.py", 5): 5, ("bar.py", 6): None},
+            "--- b/bar.py\n+++ b/bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n",
+            {("b/bar.py", 5): 5, ("b/bar.py", 6): None},
             set(),
-            {"bar.py": "bar.py"},
-            {("bar.py", 5): "ctx", ("bar.py", 6): "new_line"},
+            {"b/bar.py": "b/bar.py"},
+            {("b/bar.py", 5): "ctx", ("b/bar.py", 6): "new_line"},
         ),
     ],
     ids=["github-dispatches-to-gh-pr-diff", "gitlab-dispatches-to-glab-mr-diff"],
@@ -121,17 +118,97 @@ def test_diff_fetch_integration(
 ):
     fake = FakeForge(platform, diffs=[(diff, "fatal: not a git repository", status)])
     target = ReviewTarget("myorg", "myrepo", 42)
-    got = parse_diff_lines(target, forge=fake)
+    got = fetch_diff_facts(target, forge=fake)
     assert fake.calls == [ForgeCall("diff", target)]
     if status:
-        assert got == (None, None, None, None)
+        assert got is None
         assert capsys.readouterr().err == (
             "WARNING: Could not fetch diff (exit 128): fatal: not a git repository. "
             "Skipping line validation \u2014 all findings will be posted.\n"
         )
     else:
-        assert got == (expected, new_files, old_paths, texts)
+        assert got == diff_facts(
+            expected, new_files=new_files, old_paths=old_paths, line_texts=texts
+        )
         assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("platform", ["github", "gitlab"])
+def test_diff_fetch_empty_success(
+    platform: Literal["github", "gitlab"], capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeForge(platform, diffs=[("", "", 0)])
+    target = ReviewTarget("myorg", "myrepo", 42)
+    assert fetch_diff_facts(target, forge=fake) == diff_api.DiffFacts(
+        {}, frozenset(), {}, {}
+    )
+    assert fake.calls == [ForgeCall("diff", target)]
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "finding, expected",
+    [
+        pytest.param({}, (True, None), id="absent-fix"),
+        pytest.param(
+            {"suggested_fix_code": 42}, (False, "non_string"), id="non-string"
+        ),
+        pytest.param({"suggested_fix_code": ""}, (False, "empty"), id="empty"),
+        pytest.param(
+            {"suggested_fix_code": "replacement", "line": 1},
+            (False, "missing_end_line"),
+            id="missing-end",
+        ),
+        pytest.param(
+            {"suggested_fix_code": "replacement", "line": True, "end_line": 1},
+            (False, "invalid_range"),
+            id="invalid-range",
+        ),
+        pytest.param(
+            {
+                "suggested_fix_code": "replacement",
+                "file": "x",
+                "line": 1,
+                "end_line": 1,
+            },
+            (False, "no_diff_oracle"),
+            id="absent-oracle",
+        ),
+    ],
+)
+def test_fix_failure_order_without_diff(
+    finding: dict[str, object], expected: tuple[bool, str | None]
+) -> None:
+    assert post_review._fence_verdict(finding, (1, 1), None) == expected
+
+
+@pytest.mark.parametrize(
+    "facts, apply_range, expected",
+    [
+        pytest.param(None, None, (False, "no_diff_oracle"), id="absent-no-anchor"),
+        pytest.param(
+            None, (1, 2), (False, "no_diff_oracle"), id="absent-mismatched-anchor"
+        ),
+        pytest.param(
+            diff_facts({("b/x", 2): 2, ("x", 2): 2}),
+            (1, 1),
+            (False, "no_diff_oracle"),
+            id="ambiguous-off-diff",
+        ),
+    ],
+)
+def test_fix_oracle_order(
+    facts: diff_api.DiffFacts | None,
+    apply_range: tuple[int, int] | None,
+    expected: tuple[bool, str],
+) -> None:
+    finding = {
+        "suggested_fix_code": "replacement",
+        "file": "b/x",
+        "line": 1,
+        "end_line": 1,
+    }
+    assert post_review._fence_verdict(finding, apply_range, facts) == expected
 
 
 @pytest.mark.parametrize(
@@ -139,7 +216,7 @@ def test_diff_fetch_integration(
     [
         post_review.post_github,
         post_review.post_gitlab,
-        parse_diff_lines,
+        fetch_diff_facts,
         post_review.fetch_gitlab_shas,
     ],
     ids=["github-poster", "gitlab-poster", "diff-fetch", "versions-fetch"],
@@ -160,9 +237,13 @@ def test_missing_forge_tool(platform, capsys):
     data = {"owner": "o", "repo": "r", "pr_number": 1}
     with pytest.raises(SystemExit) as exc:
         if platform == "github":
-            post_review.post_github(data, {}, {}, forge=fake)
+            post_review.post_github(data, diff_facts({}, line_texts={}), forge=fake)
         else:
-            post_review.post_gitlab(data, {}, set(), {}, {}, forge=fake)
+            post_review.post_gitlab(
+                data,
+                diff_facts({}, line_texts={}, new_files=set(), old_paths={}),
+                forge=fake,
+            )
     assert exc.value.code == 1
     assert capsys.readouterr().err == f"ERROR: {message}\n"
     assert fake.calls == [ForgeCall("ensure_available")]
@@ -407,76 +488,6 @@ def _severity_matrix():
         for char in python_only_chars
     )
     return matrix
-
-
-# ---------------------------------------------------------------------------
-# parse_diff_lines (post_review version)
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# is_line_valid
-# ---------------------------------------------------------------------------
-
-
-class TestIsLineValid(unittest.TestCase):
-    def test_none_valid_lines_always_true(self):
-        self.assertTrue(is_line_valid(None, "any.py", 999))
-
-    def test_exact_match(self):
-        valid = {("src/app.py", 42): 30}
-        self.assertTrue(is_line_valid(valid, "src/app.py", 42))
-
-    def test_no_match(self):
-        valid = {("src/app.py", 42): 30}
-        self.assertFalse(is_line_valid(valid, "src/app.py", 43))
-
-    def test_stripped_path(self):
-        valid = {("src/app.py", 10): 4}
-        self.assertTrue(is_line_valid(valid, "a/src/app.py", 10))
-        self.assertTrue(is_line_valid(valid, "b/src/app.py", 10))
-
-    def test_context_key_membership_is_unaffected_by_the_value(self):
-        """``valid_lines`` is a mapping now (issue #127): an added line's ``None``
-        value must still read as "this line can carry a comment"."""
-        self.assertTrue(is_line_valid({("src/app.py", 7): None}, "src/app.py", 7))
-        self.assertTrue(is_line_valid({("src/app.py", 7): 5}, "src/app.py", 7))
-
-
-# ---------------------------------------------------------------------------
-# old_line_for (issue #127 D1)
-# ---------------------------------------------------------------------------
-
-
-class TestOldLineFor(unittest.TestCase):
-    """GitLab addresses a context line only when the position carries BOTH sides.
-
-    ``old_line_for`` is the lookup that supplies the old-side number; returning None
-    means "send no ``old_line``".
-    """
-
-    def test_returns_old_line_for_exact_key(self):
-        self.assertEqual(old_line_for({("src/app.py", 61): 50}, "src/app.py", 61), 50)
-
-    def test_returns_none_for_added_line(self):
-        self.assertIsNone(old_line_for({("src/app.py", 61): None}, "src/app.py", 61))
-
-    def test_strips_leading_ab_prefix(self):
-        # A finding path carrying the diff prefix passes is_line_valid through the
-        # stripped form; a raw-key-only lookup here would answer None and re-arm the 400.
-        self.assertEqual(old_line_for({("src/app.py", 61): 50}, "b/src/app.py", 61), 50)
-        self.assertEqual(old_line_for({("src/app.py", 61): 50}, "a/src/app.py", 61), 50)
-
-    def test_returns_none_when_validation_skipped(self):
-        self.assertIsNone(old_line_for(None, "f.py", 1))
-
-    def test_returns_none_for_a_legacy_set_container(self):
-        """A set has no old-side data — degrade like ``new_files=None`` rather than
-        raising AttributeError on a caller that never migrated."""
-        self.assertIsNone(old_line_for({("f.py", 1)}, "f.py", 1))
-
-    def test_returns_none_for_unknown_path(self):
-        self.assertIsNone(old_line_for({("f.py", 1): 1}, "other.py", 1))
 
 
 # ---------------------------------------------------------------------------
@@ -1436,105 +1447,13 @@ def test_poster_head_sha_uses_local_git(
 
 
 # ---------------------------------------------------------------------------
-# valid_lines_for_file
-# ---------------------------------------------------------------------------
-
-
-class TestValidLinesForFile(unittest.TestCase):
-    def test_returns_none_when_valid_lines_is_none(self):
-        self.assertIsNone(valid_lines_for_file(None, "foo.py"))
-
-    def test_returns_sorted_lines_for_exact_file(self):
-        # Production shape since #127: (path, new_line) -> old_line, None for added
-        # lines. The diagnostic still lists bare NEW-side numbers, which is what the
-        # "Valid lines for this file: [...]" warning promises the reader.
-        valid = {
-            ("src/app.py", 10): None,
-            ("src/app.py", 3): 3,
-            ("src/app.py", 7): None,
-            ("other.py", 1): 1,
-        }
-        result = valid_lines_for_file(valid, "src/app.py")
-        self.assertEqual(result, [3, 7, 10])
-
-    def test_returns_at_most_10(self):
-        valid = {("f.py", i): i for i in range(1, 21)}
-        result = valid_lines_for_file(valid, "f.py")
-        self.assertEqual(len(result), 10)
-        self.assertEqual(result, list(range(1, 11)))
-
-    def test_strips_leading_ab_prefix(self):
-        valid = {("src/app.py", 5): 2}
-        result = valid_lines_for_file(valid, "a/src/app.py")
-        self.assertEqual(result, [5])
-
-    def test_empty_when_no_match(self):
-        valid = {("other.py", 1): None}
-        result = valid_lines_for_file(valid, "missing.py")
-        self.assertEqual(result, [])
-
-
-# ---------------------------------------------------------------------------
-# Diagnostic logging in skip warnings
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# is_new_file
-# ---------------------------------------------------------------------------
-
-
-class TestIsNewFile(unittest.TestCase):
-    def test_none_new_files_returns_false(self):
-        from gauntlet.delivery.post import is_new_file
-
-        self.assertFalse(is_new_file(None, "any.py"))
-
-    def test_empty_new_files_returns_false(self):
-        from gauntlet.delivery.post import is_new_file
-
-        self.assertFalse(is_new_file(set(), "any.py"))
-
-    def test_exact_match(self):
-        from gauntlet.delivery.post import is_new_file
-
-        self.assertTrue(is_new_file({"src/added.py"}, "src/added.py"))
-
-    def test_unresolved_prefix_no_longer_falls_back(self):
-        """The sole caller pre-resolves via diff_path_spelling before calling here;
-        is_new_file itself does exact-match only. A raw synthetic-prefixed path that
-        was never resolved is correctly NOT treated as a match.
-        """
-        from gauntlet.delivery.post import is_new_file
-
-        self.assertFalse(is_new_file({"src/added.py"}, "b/src/added.py"))
-        self.assertFalse(is_new_file({"src/added.py"}, "a/src/added.py"))
-
-    def test_no_match_returns_false(self):
-        from gauntlet.delivery.post import is_new_file
-
-        self.assertFalse(is_new_file({"src/added.py"}, "src/other.py"))
-
-    def test_real_a_prefix_does_not_collide_with_stripped_new_file(self):
-        """A modified file under a real top-level `a/` directory must not be mistaken
-        for an unrelated new file that happens to share its stripped basename.
-        """
-        from gauntlet.delivery.post import is_new_file
-
-        # "a/foo.py" (modified, real a/ directory) is itself absent from new_files;
-        # only the unrelated new top-level "foo.py" is present. A stripped-prefix
-        # fallback would wrongly report the modified file as new.
-        self.assertFalse(is_new_file({"foo.py"}, "a/foo.py"))
-
-
-# ---------------------------------------------------------------------------
 # validate_position — the position gate
 # ---------------------------------------------------------------------------
 
 
 def _parse_fixture(diff, platform="gitlab"):
     """Use the real parser so position tests cannot invent the oracles they want."""
-    return parse_diff_text(platform, diff)
+    return diff_api.parse_diff(diff, policy=diff_api.posting_policy(platform))
 
 
 _MR_SHAS = ("base1", "head1", "start1")
@@ -1575,9 +1494,10 @@ class TestValidatePosition(unittest.TestCase):
     def _check(self, position, **overrides):
         kwargs = {
             "shas": _MR_SHAS,
-            "valid_lines": {("src/edited.py", 61): 50},
-            "new_files": set(),
-            "old_paths": {"src/edited.py": "src/edited.py"},
+            "facts": diff_facts(
+                {("src/edited.py", 61): 50},
+                old_paths={"src/edited.py": "src/edited.py"},
+            ),
             "filepath": "src/edited.py",
             "line": 61,
         }
@@ -1603,7 +1523,9 @@ class TestValidatePosition(unittest.TestCase):
         """A float line number survives every lookup: ``61.0`` hashes and compares equal
         to ``61``, so it passes line validation and reaches the wire as ``61.0``."""
         self.assertTrue(
-            is_line_valid({("src/edited.py", 61): 50}, "src/edited.py", 61.0)
+            diff_api.is_line_valid(
+                diff_facts({("src/edited.py", 61): 50}), "src/edited.py", 61.0
+            )
         )
         position = dict(self._sound(), new_line=61.0)
         problem = self._only_problem(position, line=61.0)
@@ -1612,14 +1534,15 @@ class TestValidatePosition(unittest.TestCase):
     def test_new_line_boolean(self):
         """``True`` is an ``int`` to ``isinstance`` and hashes equal to ``1``, so a
         boolean line number passes line validation and ships as JSON ``true``."""
-        self.assertTrue(is_line_valid({("f.py", 1): None}, "f.py", True))
+        self.assertTrue(
+            diff_api.is_line_valid(diff_facts({("f.py", 1): None}), "f.py", True)
+        )
         position = _position(new_path="f.py", new_line=True, old_path="f.py")
         problem = self._only_problem(
             position,
-            valid_lines={("f.py", 1): None},
-            old_paths={},
             filepath="f.py",
             line=True,
+            facts=diff_facts({("f.py", 1): None}, new_files=set(), old_paths={}),
         )
         self.assertIn("new_line must be an integer", problem)
 
@@ -1647,8 +1570,12 @@ class TestValidatePosition(unittest.TestCase):
         position = dict(self._sound(), new_line=62, old_line=51)
         problem = self._only_problem(
             position,
-            valid_lines={("src/edited.py", 62): None},
             line=62,
+            facts=diff_facts(
+                {("src/edited.py", 62): None},
+                new_files=set(),
+                old_paths={"src/edited.py": "src/edited.py"},
+            ),
         )
         self.assertIn("old_line must not be sent for this position", problem)
 
@@ -1674,18 +1601,21 @@ class TestValidatePosition(unittest.TestCase):
         )
         problem = self._only_problem(
             position,
-            valid_lines={("src/added.py", 1): None},
-            new_files={"src/added.py"},
-            old_paths={},
             filepath="src/added.py",
             line=1,
+            facts=diff_facts(
+                {("src/added.py", 1): None}, new_files={"src/added.py"}, old_paths={}
+            ),
         )
         self.assertIn("old_path must not be sent for this position", problem)
 
     def test_old_path_carries_the_post_rename_path(self):
         """The rename class: the post-rename path is a path the old side does not
         contain, and presence alone cannot tell it from the pre-rename one."""
-        valid_lines, new_files, old_paths, _ = _parse_fixture(GL_DIFF_RENAME)
+        parsed_facts = _parse_fixture(GL_DIFF_RENAME)
+        valid_lines = parsed_facts.valid_lines
+        new_files = parsed_facts.new_files
+        old_paths = parsed_facts.old_paths
         position = _position(
             new_path="new_name.py",
             new_line=3,
@@ -1694,11 +1624,9 @@ class TestValidatePosition(unittest.TestCase):
         )
         problem = self._only_problem(
             position,
-            valid_lines=valid_lines,
-            new_files=new_files,
-            old_paths=old_paths,
             filepath="new_name.py",
             line=3,
+            facts=diff_facts(valid_lines, new_files=new_files, old_paths=old_paths),
         )
         self.assertIn("old_path is 'new_name.py', expected 'old_name.py'", problem)
 
@@ -1741,9 +1669,9 @@ class TestValidatePosition(unittest.TestCase):
 
     def test_legitimate_positions_report_nothing(self):
         """Every position kind the poster legitimately builds, against parser output."""
-        contract = _parse_fixture(GL_DIFF_CONTRACT)[:3]
-        rename = _parse_fixture(GL_DIFF_RENAME)[:3]
-        real_a_dir = _parse_fixture(GL_DIFF_REAL_A_DIR)[:3]
+        contract = _parse_fixture(GL_DIFF_CONTRACT)
+        rename = _parse_fixture(GL_DIFF_RENAME)
+        real_a_dir = _parse_fixture(GL_DIFF_REAL_A_DIR)
         cases = [
             (
                 "context line in a modified file",
@@ -1801,15 +1729,19 @@ class TestValidatePosition(unittest.TestCase):
             ),
         ]
         for label, parsed, filepath, line, position in cases:
-            valid_lines, new_files, old_paths = parsed
+            valid_lines, new_files, old_paths = (
+                parsed.valid_lines,
+                parsed.new_files,
+                parsed.old_paths,
+            )
             with self.subTest(case=label):
                 self.assertEqual(
                     validate_position(
                         position,
                         _MR_SHAS,
-                        valid_lines,
-                        new_files,
-                        old_paths,
+                        diff_facts(
+                            valid_lines, new_files=new_files, old_paths=old_paths
+                        ),
                         filepath,
                         line,
                     ),
@@ -1821,7 +1753,7 @@ class TestValidatePosition(unittest.TestCase):
         old_line; the gate must not invent an expectation it cannot have."""
         position = _position(new_path="b/x.py", new_line=3, old_path="b/x.py")
         self.assertEqual(
-            validate_position(position, _MR_SHAS, None, None, None, "b/x.py", 3),
+            validate_position(position, _MR_SHAS, None, "b/x.py", 3),
             [],
         )
 
@@ -1845,7 +1777,7 @@ class TestGitlabPositionPayload(unittest.TestCase):
     only cover.
     """
 
-    def _capture_position(self, data, valid_lines, new_files):
+    def _capture_position(self, data, facts: diff_api.DiffFacts | None):
         """Run post_gitlab and return the position dict from the discussion call."""
         from gauntlet.delivery.post import post_gitlab
 
@@ -1862,13 +1794,15 @@ class TestGitlabPositionPayload(unittest.TestCase):
                 return_value=PriorDelivery(False, frozenset(), frozenset(), None),
             ),
         ):
-            post_gitlab(data, valid_lines, new_files, {}, {}, forge=fake)
+            post_gitlab(data, facts, forge=fake)
 
         captured = [call.request for call in fake.calls if call.method == "submit"]
         self.assertGreaterEqual(
             len(captured), 2, "expected summary + at least one discussion call"
         )
-        return captured[1].payload["position"]
+        request = captured[1]
+        assert request is not None
+        return request.payload["position"]
 
     def test_new_file_position_omits_old_path(self):
         data = {
@@ -1881,7 +1815,9 @@ class TestGitlabPositionPayload(unittest.TestCase):
         }
         valid_lines = {("src/added.py", 5): None}
         new_files = {"src/added.py"}
-        position = self._capture_position(data, valid_lines, new_files)
+        position = self._capture_position(
+            data, diff_facts(valid_lines, new_files=new_files)
+        )
         self.assertNotIn(
             "old_path", position, "old_path must be omitted for newly-added files"
         )
@@ -1900,7 +1836,9 @@ class TestGitlabPositionPayload(unittest.TestCase):
         }
         valid_lines = {("src/edited.py", 10): 7}
         new_files = set()
-        position = self._capture_position(data, valid_lines, new_files)
+        position = self._capture_position(
+            data, diff_facts(valid_lines, new_files=new_files)
+        )
         self.assertEqual(position["old_path"], "src/edited.py")
         self.assertEqual(position["new_path"], "src/edited.py")
         self.assertEqual(position["new_line"], 10)
@@ -1921,7 +1859,7 @@ class TestGitlabPositionPayload(unittest.TestCase):
                 {"file": "src/edited.py", "line": 10, "title": "Bug", "body": "x"}
             ],
         }
-        position = self._capture_position(data, valid_lines=None, new_files=None)
+        position = self._capture_position(data, None)
         self.assertEqual(position["old_path"], "src/edited.py")
         # A skipped validation has no old-side data to send, so the position degrades to
         # today's shape rather than crashing on a direct `valid_lines[...]` index.
@@ -1945,7 +1883,9 @@ class TestGitlabPositionPayload(unittest.TestCase):
         }
         valid_lines = {("a/foo.py", 10): 7}
         new_files = {"foo.py"}
-        position = self._capture_position(data, valid_lines, new_files)
+        position = self._capture_position(
+            data, diff_facts(valid_lines, new_files=new_files)
+        )
         self.assertEqual(position["old_path"], "a/foo.py")
         self.assertEqual(position["new_path"], "a/foo.py")
 
@@ -1962,7 +1902,7 @@ class TestGitlabPositionPayload(unittest.TestCase):
             "pr_number": 1,
             "findings": [{"file": "b/x.py", "line": 3, "title": "Bug", "body": "x"}],
         }
-        position = self._capture_position(data, valid_lines=None, new_files=None)
+        position = self._capture_position(data, None)
         self.assertEqual(position["new_path"], "b/x.py")
         self.assertEqual(position["old_path"], "b/x.py")
 
@@ -2011,75 +1951,14 @@ def _glab_fixture(name):
 # src/app/clients/api/__init__.py: new 1..16 — added file, signalled only by `@@ -0,0`.
 GL_DIFF_CONTRACT = _glab_fixture("modified.diff") + _glab_fixture("added.diff")
 
-# A deleted file followed by a modified one. glab repeats the path on BOTH headers for a
-# deletion (there is no `+++ /dev/null` to blank `current_file`), so the deleted file's
-# hunk budget draining is the only thing keeping the next file's headers out of its body.
-GL_DIFF_DELETED_THEN_MODIFIED = _glab_fixture("deleted.diff") + _glab_fixture(
-    "modified.diff"
-)
-
 # A RENAMED file: the `---` header names the PRE-rename path and the `+++` header the
 # post-rename one. That old-side path is what GitLab needs in `position.old_path` (#130).
 # new 3 = old 3 (context), new 4 = added, new 5 = old 5 (context), new 6 = old 6 (a BLANK
 # context line, which a unified diff spells as a lone space).
 GL_DIFF_RENAME = _glab_fixture("rename.diff")
 
-# Real captures of glab's git-style shape. The first holds a file under a real
-# top-level `b/` directory, an added, an edited and a deleted file, and a rename; the
-# second holds paths with spaces and a non-ASCII name, which glab writes raw.
 GL_DIFF_GIT_STYLE = _glab_fixture("git_style.diff")
 GL_DIFF_GIT_STYLE_SPACES = _glab_fixture("git_style_spaces.diff")
-
-
-class TestGlabFixtureBytes(unittest.TestCase):
-    """The fixtures above are a RECORD, so their bytes are the contract — including the
-    bytes no parser assertion can see.
-
-    ``parse_diff_lines`` reads a blank context line (a lone space) and a stripped one
-    (empty) through the same catch-all and produces the identical key, so a whitespace
-    fixer could rewrite the record with every other test in this file still green. These
-    assertions are what make the `.pre-commit-config.yaml` exclusion enforceable rather
-    than advisory: drop the exclusion, or add any hook that normalises these files, and
-    the record's loss is reported here instead of going unnoticed.
-    """
-
-    def _fixtures(self):
-        names = sorted(n for n in os.listdir(_GLAB_FIXTURE_DIR) if n.endswith(".diff"))
-        self.assertTrue(names, "no fixture files to hold to their recorded bytes")
-        return [(n, _glab_fixture(n)) for n in names]
-
-    def test_a_blank_context_line_is_recorded_as_a_lone_space(self):
-        blanks = []
-        for name, text in self._fixtures():
-            for lineno, line in enumerate(text.splitlines(), 1):
-                if line.strip():
-                    continue
-                self.assertEqual(
-                    line,
-                    " ",
-                    f"{name}:{lineno}: a unified diff spells a blank context line as a "
-                    "lone space; an empty line is a stripped record, not glab output",
-                )
-                blanks.append(f"{name}:{lineno}")
-        self.assertTrue(
-            blanks,
-            "no fixture carries a blank context line any more, so the assertion above "
-            "passes over nothing and defends nothing",
-        )
-
-    def test_every_fixture_ends_with_exactly_one_newline(self):
-        """Plain-shape constants concatenate fixtures, so their final newline separates
-        one file's body from the next file's headers."""
-        for name, text in self._fixtures():
-            self.assertTrue(
-                text.endswith("\n"), f"{name}: file boundary needs a final newline"
-            )
-            self.assertFalse(
-                text.endswith("\n\n"),
-                f"{name}: a trailing blank line is not glab output — a blank context "
-                "line is a lone space and a blank added line is a bare `+`",
-            )
-
 
 # A glab diff for a repo with a REAL top-level `a/` directory. `glab mr diff` prints
 # paths verbatim, so `a/foo.py` here is a directory named `a` — not git's synthetic
@@ -2094,254 +1973,6 @@ GL_DIFF_REAL_A_DIR = (
     "-x\n"
     "+y\n"
 )
-
-
-def test_git_style_glab_capture_has_exact_file_and_line_metadata():
-    valid_lines, new_files, old_paths, _ = parse_diff_text("gitlab", GL_DIFF_GIT_STYLE)
-
-    expected_lines = {}
-    for filepath in ("b/inner.py", "src/edited.py"):
-        expected_lines.update(
-            {
-                (filepath, 2): 2,
-                (filepath, 3): 3,
-                (filepath, 4): 4,
-                (filepath, 5): None,
-                (filepath, 6): 6,
-                (filepath, 7): 7,
-                (filepath, 8): 8,
-            }
-        )
-    expected_lines.update(
-        {
-            ("src/added.py", 1): None,
-            ("src/added.py", 2): None,
-            ("new_name.py", 1): 1,
-            ("new_name.py", 2): None,
-            ("new_name.py", 3): 3,
-            ("new_name.py", 4): 4,
-        }
-    )
-    assert valid_lines == expected_lines
-    assert new_files == {"src/added.py"}
-    assert old_paths == {
-        "b/inner.py": "b/inner.py",
-        "src/edited.py": "src/edited.py",
-        "new_name.py": "old_name.py",
-    }
-
-
-def test_git_style_glab_capture_with_raw_spaces_has_exact_metadata():
-    valid_lines, new_files, old_paths, _ = parse_diff_text(
-        "gitlab", GL_DIFF_GIT_STYLE_SPACES
-    )
-
-    assert valid_lines == {
-        ("docs/user guide/x.md", 1): 1,
-        ("docs/user guide/x.md", 2): None,
-        ("café.py", 1): None,
-        ("my file.py", 1): None,
-        ("new name.py", 1): 1,
-        ("new name.py", 2): None,
-    }
-    assert new_files == {"café.py", "my file.py"}
-    assert old_paths == {
-        "docs/user guide/x.md": "docs/user guide/x.md",
-        "new name.py": "old name.py",
-    }
-
-
-@pytest.mark.parametrize(
-    ("diff", "filepath", "line", "old_line"),
-    [
-        (GL_DIFF_GIT_STYLE, "src/edited.py", 2, 2),
-        (GL_DIFF_GIT_STYLE, "b/inner.py", 2, 2),
-        (GL_DIFF_GIT_STYLE_SPACES, "docs/user guide/x.md", 1, 1),
-        (GL_DIFF_GIT_STYLE_SPACES, "my file.py", 1, None),
-        (GL_DIFF_GIT_STYLE_SPACES, "café.py", 1, None),
-        (GL_DIFF_GIT_STYLE_SPACES, "new name.py", 1, 1),
-    ],
-    ids=[
-        "edited-file",
-        "real-b-directory",
-        "directory-with-space",
-        "added-file-with-space",
-        "non-ascii",
-        "renamed-file-with-space",
-    ],
-)
-def test_git_style_glab_capture_finding_paths_anchor(diff, filepath, line, old_line):
-    valid_lines, _, _, _ = parse_diff_text("gitlab", diff)
-
-    assert is_line_valid(valid_lines, filepath, line)
-    assert diff_path_spelling(valid_lines, filepath, line) == filepath
-    assert old_line_for(valid_lines, filepath, line) == old_line
-
-
-def test_plain_glab_shape_keeps_a_real_b_directory_path():
-    diff = "--- b/inner.py\n+++ b/inner.py\n@@ -1 +1,2 @@\n ctx\n+added\n"
-    valid_lines, _, old_paths, _ = parse_diff_text("gitlab", diff)
-
-    assert valid_lines == {("b/inner.py", 1): 1, ("b/inner.py", 2): None}
-    assert old_paths == {"b/inner.py": "b/inner.py"}
-    assert is_line_valid(valid_lines, "b/inner.py", 1)
-    assert diff_path_spelling(valid_lines, "b/inner.py", 1) == "b/inner.py"
-    assert old_line_for(valid_lines, "b/inner.py", 1) == 1
-
-
-@pytest.mark.parametrize(
-    ("header", "old_header", "new_header", "expected_path", "expected_old"),
-    [
-        ("a/x b/y b/z", "--- a/x b/y", "+++ b/z", "z", "x b/y"),
-        ("a/bar.py b/bar.py", "--- bar.py", "+++ b/bar.py", "b/bar.py", "bar.py"),
-        ("a/bar.py b/bar.py", "--- a/bar.py", "+++ bar.py", "bar.py", "a/bar.py"),
-        (
-            "a/bar.py b/bar.py",
-            "--- a/other.py",
-            "+++ b/bar.py",
-            "b/bar.py",
-            "a/other.py",
-        ),
-        (
-            "a/bar.py b/bar.py",
-            "--- a/other.py",
-            "+++ b/other.py",
-            "b/other.py",
-            "a/other.py",
-        ),
-        (
-            '"a/old path.py" "b/new path.py"',
-            '--- "a/old path.py"',
-            '+++ "b/new path.py"',
-            "b/new path.py",
-            "a/old path.py",
-        ),
-        ("a/t\tx.py b/t\tx.py", "--- a/t\tx.py", "+++ b/t\tx.py", "b/t", "a/t"),
-    ],
-    ids=[
-        "agrees-with-a-prefix-lookalike-inside-the-old-name",
-        "old-unprefixed",
-        "new-unprefixed",
-        "old-names-another-file",
-        "both-name-another-file",
-        "c-quoted-header",
-        "tab-cut-path",
-    ],
-)
-def test_gitlab_prefixes_are_stripped_only_when_the_git_header_agrees(
-    header, old_header, new_header, expected_path, expected_old
-):
-    diff = (
-        f"diff --git {header}\n{old_header}\n{new_header}\n"
-        "@@ -1,1 +1,2 @@\n ctx\n+newline\n"
-    )
-    valid_lines, _, old_paths, _ = parse_diff_text("gitlab", diff)
-
-    assert valid_lines == {(expected_path, 1): 1, (expected_path, 2): None}
-    assert old_paths == {expected_path: expected_old}
-
-
-_HUNK = "@@ -1 +1 @@\n-o\n+n\n"
-
-
-@pytest.mark.parametrize(
-    ("diff", "paths", "new_files", "old_paths"),
-    [
-        (
-            f"diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n{_HUNK}"
-            f"--- a/x.py\n+++ b/x.py\n{_HUNK}",
-            {"x.py", "b/x.py"},
-            set(),
-            {"x.py": "x.py", "b/x.py": "a/x.py"},
-        ),
-        (
-            f"diff --git a/x.py b/x.py\n--- a/y.py\n+++ b/y.py\n{_HUNK}"
-            f"--- a/x.py\n+++ b/x.py\n{_HUNK}",
-            {"b/y.py", "b/x.py"},
-            set(),
-            {"b/y.py": "a/y.py", "b/x.py": "a/x.py"},
-        ),
-        (
-            "diff --git a/x.py b/x.py\n--- /dev/null\n"
-            f"diff --git a/y.py b/y.py\n+++ b/y.py\n{_HUNK}",
-            {"b/y.py"},
-            set(),
-            {},
-        ),
-    ],
-    ids=[
-        "plain-block-after-a-git-style-block",
-        "second-pair-under-one-header",
-        "old-path-cut-off-by-the-next-header",
-    ],
-)
-def test_one_git_header_proves_only_the_pair_that_follows_it(
-    diff, paths, new_files, old_paths
-):
-    valid_lines, parsed_new_files, parsed_old_paths, _ = parse_diff_text("gitlab", diff)
-
-    assert {path for path, _ in valid_lines} == paths
-    assert parsed_new_files == new_files
-    assert parsed_old_paths == old_paths
-
-
-_EMPTY_OLD_SIDE = "@@ -0,0 +1 @@\n+first\n"
-
-
-@pytest.mark.parametrize(
-    ("diff", "new_files", "old_paths"),
-    [
-        (
-            "diff --git a/empty.py b/empty.py\n--- a/empty.py\n+++ b/empty.py\n"
-            + _EMPTY_OLD_SIDE,
-            set(),
-            {"empty.py": "empty.py"},
-        ),
-        (
-            "--- empty.py\n+++ empty.py\n" + _EMPTY_OLD_SIDE,
-            {"empty.py"},
-            {"empty.py": "empty.py"},
-        ),
-        (
-            f"diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n{_HUNK}"
-            "--- empty.py\n+++ empty.py\n" + _EMPTY_OLD_SIDE,
-            {"empty.py"},
-            {"x.py": "x.py", "empty.py": "empty.py"},
-        ),
-    ],
-    ids=["git-style", "plain", "plain-after-git-style"],
-)
-def test_empty_old_side_means_added_only_where_dev_null_cannot_say_so(
-    diff, new_files, old_paths
-):
-    """A git-style block marks an added file with ``/dev/null``, so its ``@@ -0,0``
-    over a named old side is an edit of a file that was already empty. A plain block
-    has no such marker and reads the same hunk as an addition."""
-    _, parsed_new_files, parsed_old_paths, _ = parse_diff_text("gitlab", diff)
-
-    assert parsed_new_files == new_files
-    assert parsed_old_paths == old_paths
-
-
-@pytest.mark.parametrize(
-    ("platform", "path"), [("github", "x.py"), ("gitlab", "b/x.py")]
-)
-def test_new_path_without_an_old_path_records_no_old_path(platform, path):
-    valid_lines, new_files, old_paths, _ = parse_diff_text(
-        platform, f"diff --git a/x.py b/x.py\n+++ b/x.py\n{_HUNK}"
-    )
-
-    assert valid_lines == {(path, 1): None}
-    assert new_files == set()
-    assert old_paths == {}
-
-
-def test_orphan_new_path_does_not_reuse_the_previous_old_side():
-    diff = f"--- /dev/null\n+++ b/x.py\n{_HUNK}+++ b/y.py\n{_HUNK}--- a/z.py\n+++ b/z.py\n{_HUNK}+++ b/w.py\n{_HUNK}"
-    _, new_files, old_paths, _ = parse_diff_text("github", diff)
-
-    assert new_files == {"x.py"}
-    assert old_paths == {"z.py": "z.py"}
 
 
 GL_CONTRACT_VERSIONS = [
@@ -3502,7 +3133,7 @@ class TestGitlabPositionContract(_DryRunTestBase):
     ``TestGitlabPositionPayload`` injects ``valid_lines``/``new_files`` and so could
     never have caught #127 D2 (glab-style added-file detection) — the fixture supplied
     the answer the parser was failing to compute. This class drives ``main()`` in
-    dry-run against ``GL_DIFF_CONTRACT``, so ``parse_diff_lines`` feeds ``post_gitlab``
+    dry-run against ``GL_DIFF_CONTRACT``, so ``fetch_diff_facts`` feeds ``post_gitlab``
     and every asserted key is one the production chain actually emitted.
     """
 
@@ -6656,196 +6287,6 @@ GL_DIFF_OVERLAP = (
 _FENCE = "```suggestion"
 
 
-class TestParseDiffLinesLineTexts(unittest.TestCase):
-    """``parse_diff_lines`` also returns each addressable line's NEW-SIDE TEXT.
-
-    The parser already read that text off every ``+``/context line and threw it
-    away. It is the only content oracle the apply-check can trust: by construction
-    it is the content the platform's anchor points at, at the same head SHA the
-    position carries. ``git show`` is not — the local HEAD is usually the base
-    branch, and a shallow clone has no object to show at all.
-    """
-
-    def _parse(self, diff, platform="gitlab"):
-        return parse_diff_text(platform, diff)
-
-    def test_line_texts_is_a_dict_parallel_to_valid_lines(self):
-        """A PARALLEL dict, not a richer ``valid_lines`` value: every existing
-        consumer of that mapping keeps reading exactly what it read before."""
-        valid_lines, _, _, line_texts = self._parse(GL_DIFF_CONTRACT)
-        self.assertIsInstance(line_texts, dict)
-        self.assertEqual(set(line_texts), set(valid_lines))
-        self.assertEqual(valid_lines[("src/edited.py", 61)], 50)
-
-    def test_context_line_text_drops_the_marker_column(self):
-        _, _, _, line_texts = self._parse(GL_DIFF_CONTRACT)
-        self.assertEqual(line_texts[("src/edited.py", 61)], "unchanged_ctx")
-
-    def test_added_line_text_drops_the_marker_column(self):
-        _, _, _, line_texts = self._parse(GL_DIFF_CONTRACT)
-        self.assertEqual(line_texts[("src/edited.py", 62)], "added")
-
-    def test_blank_context_line_records_the_empty_string(self):
-        """A unified diff spells a blank context line as a lone space — its
-        content is the empty string, not a space."""
-        _, _, _, line_texts = self._parse(GL_DIFF_RENAME)
-        self.assertEqual(line_texts[("new_name.py", 6)], "")
-
-    def test_leading_whitespace_is_preserved_verbatim(self):
-        """Indentation is the whole point of the content oracle — a fix that
-        re-indents a span is judged against the bytes the file really carries."""
-        _, _, _, line_texts = self._parse(GH_DIFF_INDENTED, platform="github")
-        self.assertEqual(line_texts[("foo.py", 2)], "    return 1")
-
-    def test_no_newline_marker_records_no_text(self):
-        """``\\ No newline at end of file`` belongs to neither side, so it must
-        not be recorded as a line's content."""
-        diff = (
-            "--- a/f.py\n"
-            "+++ b/f.py\n"
-            "@@ -1,2 +1,2 @@\n"
-            " a\n"
-            "\\ No newline at end of file\n"
-            " b\n"
-        )
-        _, _, _, line_texts = self._parse(diff, platform="github")
-        self.assertEqual(line_texts, {("f.py", 1): "a", ("f.py", 2): "b"})
-
-    def test_removed_line_text_is_not_recorded(self):
-        """A removed line has no new-side number — it must contribute no text."""
-        _, _, _, line_texts = self._parse(GL_DIFF_CONTRACT)
-        self.assertNotIn("removed", line_texts.values())
-
-    def test_deleted_file_records_no_text(self):
-        _, _, _, line_texts = self._parse(GL_DIFF_DELETED_THEN_MODIFIED)
-        self.assertEqual([k for k in line_texts if k[0] == "src/removed.py"], [])
-
-
-class TestParseDiffLinesHeaderDecoding(unittest.TestCase):
-    """``parse_diff_lines`` now walks headers through ``gauntlet.diff.walk_diff``, which
-    undoes git's wire spelling of a header path (the TAB terminator after a path
-    containing a space, and C-quoting of control/non-ASCII bytes) BEFORE this module's
-    platform-specific ``a/``/``b/`` prefix strip runs.
-
-    Pre-migration, the hand-rolled regexes (``^--- (?:a/)?(.+)$`` and friends) captured
-    everything up to end-of-line verbatim: a trailing TAB stayed part of the key, and a
-    C-quoted path stayed a literal quoted-and-escaped string that no finding could ever
-    name. Cases (a), (b) and (d) below reproduce exactly that failure — each is reasoned
-    through against the pre-migration regex in its own docstring, and was confirmed to
-    fail by running it against ``git show origin/main:scripts/post_review.py``. Case (c)
-    does not regress under the old code (GitLab's header regex never stripped a prefix),
-    but pins the platform split itself — the direct regression test for "make the prefix
-    strip unconditional for GitLab too". It pins BOTH sides (an ``a/``- and a ``b/``-rooted
-    real directory each survive on their own file) and BOTH mappings the walk feeds
-    (``old_paths`` for the old side, ``line_texts`` for the new side), keyed
-    independently — the failure mode a shared walk could introduce is an unconditional
-    strip landing on only one side or only one mapping while the other still looks correct.
-    """
-
-    def _parse(self, diff, platform="github"):
-        return parse_diff_text(platform, diff)
-
-    def test_github_path_with_a_space_decodes_past_the_tab_terminator(self):
-        """git appends a TAB after a header path containing a space, so the field
-        does not run into the classic timestamp column.
-
-        Pre-migration: ``(?:a/)?(.+)$`` is greedy to end-of-line, so ``group(1)``
-        keeps the trailing ``"\\t"`` and the key lands as
-        ``("dir with space/x.py\\t", 1)`` — nothing a finding names ever matches it.
-        """
-        diff = (
-            "--- a/dir with space/x.py\t\n"
-            "+++ b/dir with space/x.py\t\n"
-            "@@ -1 +1 @@\n"
-            "-old\n"
-            "+new\n"
-        )
-        valid_lines, _, _, _ = self._parse(diff, platform="github")
-        self.assertIn(("dir with space/x.py", 1), valid_lines)
-        self.assertNotIn(("dir with space/x.py\t", 1), valid_lines)
-
-    def test_github_c_quoted_non_ascii_path_decodes_then_strips_the_prefix(self):
-        """A non-ASCII path is C-quoted with the octal-escaped UTF-8 bytes; the
-        synthetic ``b/`` prefix sits INSIDE the quotes, so it must be stripped
-        AFTER decoding, not matched against the raw quoted text.
-
-        Pre-migration: the line does not start with ``b/`` (it starts with ``"``),
-        so ``(?:b/)?`` matches nothing and ``group(1)`` is the literal
-        ``'"b/caf\\\\303\\\\251.py"'`` — quotes, backslashes and octal digits as
-        themselves. The key that lands is that literal string, not ``café.py``.
-        """
-        diff = (
-            '--- "a/caf\\303\\251.py"\n'
-            '+++ "b/caf\\303\\251.py"\n'
-            "@@ -1 +1 @@\n"
-            "-old\n"
-            "+new\n"
-        )
-        valid_lines, _, _, _ = self._parse(diff, platform="github")
-        self.assertIn(("café.py", 1), valid_lines)
-
-    def test_gitlab_keeps_real_a_and_b_slash_directories(self):
-        """``glab mr diff`` writes paths verbatim: a leading ``a/`` OR ``b/`` there is a
-        real top-level directory, not git's synthetic prefix, so both must survive the
-        header decode and the (github-only) prefix strip. The old side is pinned through
-        ``old_paths``, the new side through ``valid_lines`` AND ``line_texts`` — the two
-        mappings are keyed independently."""
-        diff = (
-            "--- a/real/x.py\n+++ a/real/x.py\n@@ -1 +1 @@\n-old\n+new\n"
-            "--- b/real/y.py\n+++ b/real/y.py\n@@ -1 +1 @@\n-old\n+fresh\n"
-        )
-        valid_lines, _, old_paths, line_texts = self._parse(diff, platform="gitlab")
-        self.assertEqual(set(valid_lines), {("a/real/x.py", 1), ("b/real/y.py", 1)})
-        self.assertEqual(
-            old_paths, {"a/real/x.py": "a/real/x.py", "b/real/y.py": "b/real/y.py"}
-        )
-        self.assertEqual(line_texts[("a/real/x.py", 1)], "new")
-        self.assertEqual(line_texts[("b/real/y.py", 1)], "fresh")
-
-    def test_a_body_line_before_any_file_header_is_not_recorded(self):
-        """`current_file` is None until a `+++` header names one; a line read before that
-        has no path to key on and must record nothing."""
-        valid_lines, _, _, line_texts = self._parse("@@ -0,0 +1 @@\n+orphan\n")
-        self.assertEqual(valid_lines, {})
-        self.assertEqual(line_texts, {})
-
-    def test_gitlab_quoted_path_is_decoded_like_gits_wire_spelling(self):
-        """This pins a documented choice, not a requirement: the header decode in
-        ``gauntlet.diff._decode_header_path`` runs on every producer, including GitLab's
-        verbatim-path ``glab mr diff`` output. So a literal quote-wrapped name in a
-        GitLab diff — which ``glab`` would never itself need to quote, but which this
-        walk cannot distinguish from git's own C-quoting — is decoded the same way a
-        real git wire-spelling would be. See the accepted-limitation note in
-        ``_decode_header_path``'s docstring for why this is not fixed."""
-        diff = '--- "notes"\n+++ "notes"\n@@ -1 +1,2 @@\n c\n+z\n'
-        valid_lines, _, _, _ = self._parse(diff, platform="gitlab")
-        self.assertIn(("notes", 1), valid_lines)
-
-    def test_github_renamed_file_old_path_is_decoded_before_recording(self):
-        """A rename's ``---`` header names the pre-rename path, recorded in
-        ``old_paths`` under the NEW path's key. Quoted, that pre-rename path must be
-        decoded — GitLab's ``position.old_path`` (#130) is a real filesystem path,
-        not git's C-quoted wire spelling of one.
-
-        Pre-migration: the old-side line does not start with ``a/`` (it starts with
-        ``"``), so the captured, un-decoded literal ``'"a/caf\\\\303\\\\251
-        old.py"'`` is what ``old_paths`` would carry — never a path the pre-rename
-        file actually had.
-        """
-        diff = (
-            'diff --git "a/caf\\303\\251 old.py" b/new.py\n'
-            "similarity index 100%\n"
-            'rename from "caf\\303\\251 old.py"\n'
-            "rename to new.py\n"
-            '--- "a/caf\\303\\251 old.py"\n'
-            "+++ b/new.py\n"
-            "@@ -1 +1 @@\n"
-            " ctx\n"
-        )
-        _, _, old_paths, _ = self._parse(diff, platform="github")
-        self.assertEqual(old_paths, {"new.py": "café old.py"})
-
-
 class TestSuggestedFixGate(unittest.TestCase):
     """The pure gate helper: one case per reason in the closed vocabulary.
 
@@ -6856,7 +6297,10 @@ class TestSuggestedFixGate(unittest.TestCase):
 
     def setUp(self):
         parsed = _parse_fixture(GH_DIFF_INDENTED, platform="github")
-        self.valid_lines, _, _, self.line_texts = parsed
+        parsed_facts = parsed
+        self.facts = parsed_facts
+        self.valid_lines = parsed_facts.valid_lines
+        self.line_texts = parsed_facts.line_texts
 
     def _finding(self, **over):
         finding = {
@@ -6871,8 +6315,7 @@ class TestSuggestedFixGate(unittest.TestCase):
     def _gate(self, finding, apply_range=(2, 3), **over):
         kwargs = {
             "apply_range": apply_range,
-            "line_texts": self.line_texts,
-            "valid_lines": self.valid_lines,
+            "facts": self.facts,
             "path_lookup": "foo.py",
         }
         kwargs.update(over)
@@ -6917,7 +6360,10 @@ class TestSuggestedFixGate(unittest.TestCase):
         """
         finding = self._finding(suggested_fix_code="    return 1\n    # tail")
         self.assertEqual(
-            self._gate(finding, line_texts={("foo.py", 2): "    return 1"}),
+            self._gate(
+                finding,
+                facts=replace(self.facts, line_texts={("foo.py", 2): "    return 1"}),
+            ),
             (False, "no_diff_oracle"),
         )
 
@@ -7022,18 +6468,8 @@ class TestSuggestedFixGate(unittest.TestCase):
         the prose suggestion carries the same content at no risk.
         """
         self.assertEqual(
-            self._reason(self._finding(), valid_lines=None, line_texts=None),
+            self._reason(self._finding(), facts=None),
             "no_diff_oracle",
-        )
-
-    def test_valid_lines_alone_is_not_an_oracle(self):
-        self.assertEqual(
-            self._reason(self._finding(), line_texts=None), "no_diff_oracle"
-        )
-
-    def test_line_texts_alone_is_not_an_oracle(self):
-        self.assertEqual(
-            self._reason(self._finding(), valid_lines=None), "no_diff_oracle"
         )
 
     # -- 8. range_not_in_diff ----------------------------------------------
@@ -7084,13 +6520,16 @@ class TestSuggestedFixGate(unittest.TestCase):
         no longer pin this tolerance; only the span side can, which G1 leaves
         untouched.
         """
-        valid_lines, _, _, line_texts = _parse_fixture(
-            GH_DIFF_INDENTED_CRLF_BODY, platform="github"
-        )
+        parsed_facts = _parse_fixture(GH_DIFF_INDENTED_CRLF_BODY, platform="github")
+        valid_lines = parsed_facts.valid_lines
+        line_texts = parsed_facts.line_texts
         self.assertEqual(line_texts[("foo.py", 2)], "    return 1\r")
         self.assertEqual(line_texts[("foo.py", 3)], "    # tail\r")
         finding = self._finding(suggested_fix_code="    return 1\n    # tail")
-        ok, reason = self._gate(finding, valid_lines=valid_lines, line_texts=line_texts)
+        ok, reason = self._gate(
+            finding,
+            facts=replace(self.facts, valid_lines=valid_lines, line_texts=line_texts),
+        )
         self.assertFalse(ok)
         self.assertEqual(reason, "no_op_replacement")
 
@@ -7110,7 +6549,9 @@ class TestSuggestedFixGate(unittest.TestCase):
             " def f():\n"
             "+\treturn 1\n"
         )
-        valid_lines, _, _, line_texts = _parse_fixture(tabbed, platform="github")
+        parsed_facts = _parse_fixture(tabbed, platform="github")
+        valid_lines = parsed_facts.valid_lines
+        line_texts = parsed_facts.line_texts
         finding = {
             "file": "t.py",
             "line": 2,
@@ -7120,9 +6561,8 @@ class TestSuggestedFixGate(unittest.TestCase):
         ok, reason = post_review._suggested_fix_gate(
             finding,
             apply_range=(2, 2),
-            line_texts=line_texts,
-            valid_lines=valid_lines,
             path_lookup="t.py",
+            facts=diff_facts(valid_lines, line_texts=line_texts),
         )
         self.assertFalse(ok)
         self.assertEqual(reason, "indentation_mismatch")
@@ -7130,9 +6570,9 @@ class TestSuggestedFixGate(unittest.TestCase):
     def test_an_unindented_span_conflicts_with_nothing(self):
         """Lines without leading whitespace say nothing about the file's
         indentation style, so they contribute nothing to the charset."""
-        valid_lines, _, _, line_texts = _parse_fixture(
-            GH_DIFF_MULTILINE, platform="github"
-        )
+        parsed_facts = _parse_fixture(GH_DIFF_MULTILINE, platform="github")
+        valid_lines = parsed_facts.valid_lines
+        line_texts = parsed_facts.line_texts
         finding = {
             "file": "foo.py",
             "line": 2,
@@ -7143,9 +6583,8 @@ class TestSuggestedFixGate(unittest.TestCase):
             post_review._suggested_fix_gate(
                 finding,
                 apply_range=(2, 3),
-                line_texts=line_texts,
-                valid_lines=valid_lines,
                 path_lookup="foo.py",
+                facts=diff_facts(valid_lines, line_texts=line_texts),
             ),
             (True, None),
         )
@@ -7223,7 +6662,7 @@ class TestSuggestedFixGate(unittest.TestCase):
         corruption case (#229): the fence used to validate against
         ``b/x.py``'s own text while the patch may have meant ``x.py``.
 
-        Mutation: gut ``_fence_path_is_ambiguous`` to ``return False``
+        Mutation: gut ``path_is_ambiguous`` to ``return False``
         unconditionally — RED (``(True, None)`` instead of the downgrade).
         """
         valid_lines = {("b/x.py", 10): 10, ("x.py", 10): 10}
@@ -7238,9 +6677,8 @@ class TestSuggestedFixGate(unittest.TestCase):
             post_review._suggested_fix_gate(
                 finding,
                 apply_range=(10, 10),
-                line_texts=line_texts,
-                valid_lines=valid_lines,
                 path_lookup="b/x.py",
+                facts=diff_facts(valid_lines, line_texts=line_texts),
             ),
             (False, "no_diff_oracle"),
         )
@@ -7265,9 +6703,8 @@ class TestSuggestedFixGate(unittest.TestCase):
             post_review._suggested_fix_gate(
                 finding,
                 apply_range=(10, 10),
-                line_texts=line_texts,
-                valid_lines=valid_lines,
-                path_lookup="x.py",  # diff_path_spelling's own cross-resolution
+                path_lookup="x.py",
+                facts=diff_facts(valid_lines, line_texts=line_texts),
             ),
             (False, "no_diff_oracle"),
         )
@@ -7292,21 +6729,10 @@ class TestSuggestedFixGate(unittest.TestCase):
             post_review._suggested_fix_gate(
                 finding,
                 apply_range=(10, 10),
-                line_texts=line_texts,
-                valid_lines=valid_lines,
                 path_lookup="x.py",
+                facts=diff_facts(valid_lines, line_texts=line_texts),
             ),
             (True, None),
-        )
-
-    def test_an_unprefixed_path_is_never_ambiguous(self):
-        """A raw spelling with no ``a/``/``b/`` prefix has nothing to strip,
-        so it is never flagged — regardless of what else the diff contains."""
-        self.assertFalse(post_review._fence_path_is_ambiguous({}, "x.py"))
-        self.assertFalse(
-            post_review._fence_path_is_ambiguous(
-                {("x.py", 1): 1, ("b/x.py", 1): 1}, "x.py"
-            )
         )
 
     def test_missing_file_field_is_never_ambiguous(self):
@@ -7315,7 +6741,7 @@ class TestSuggestedFixGate(unittest.TestCase):
         candidate filter, which only requires ``suggested_fix_code``), so this
         goes through the REAL call site (``_suggested_fix_gate``, which reads
         ``finding.get("file", "?")``) rather than asserting on
-        ``_fence_path_is_ambiguous`` in isolation. ``"?"`` has no ``a/``/``b/``
+        ``path_is_ambiguous`` in isolation. ``"?"`` has no ``a/``/``b/``
         prefix, so the predicate never fires for it and the gate falls
         through to the ordinary range check instead of raising ``KeyError``.
         """
@@ -7379,7 +6805,7 @@ class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
             ),
             self.assertRaises(ValueError) as ctx,
         ):
-            post_review._gated_finding(finding, (2, 2), {}, {})
+            post_review._gated_finding(finding, (2, 2), diff_facts({}, line_texts={}))
         self.assertIn("bogus", str(ctx.exception))
 
     def test_a_renamed_anchor_failure_is_checked_against_the_same_set(self):
@@ -7393,7 +6819,9 @@ class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
             ),
             self.assertRaises(ValueError) as ctx,
         ):
-            post_review._gated_finding(finding, (2, 2), {}, {}, mismatch_reason="bogus")
+            post_review._gated_finding(
+                finding, (2, 2), diff_facts({}, line_texts={}), mismatch_reason="bogus"
+            )
         self.assertIn("bogus", str(ctx.exception))
 
     def test_a_typo_d_demote_reason_is_checked_against_the_same_set(self):
@@ -7407,7 +6835,9 @@ class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
             ),
             self.assertRaises(ValueError) as ctx,
         ):
-            post_review._gated_finding(finding, (2, 2), {}, {}, demote_reason="bogus")
+            post_review._gated_finding(
+                finding, (2, 2), diff_facts({}, line_texts={}), demote_reason="bogus"
+            )
         self.assertIn("bogus", str(ctx.exception))
 
 
@@ -7433,7 +6863,9 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
         """The default keeps every pre-#223 caller byte-identical."""
         finding = self._finding()
         with patch("gauntlet.delivery.post._fence_verdict", return_value=(True, None)):
-            result = post_review._gated_finding(finding, (2, 3), {}, {})
+            result = post_review._gated_finding(
+                finding, (2, 3), diff_facts({}, line_texts={})
+            )
         self.assertIs(result, finding)
         self.assertEqual(post_review._FIX_COUNTS["kept"], 1)
         self.assertEqual(post_review._FIX_COUNTS["downgraded"], 0)
@@ -7447,8 +6879,7 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
             result = post_review._gated_finding(
                 finding,
                 (2, 3),
-                {},
-                {},
+                diff_facts({}, line_texts={}),
                 demote_reason=post_review._FIX_OVERLAPS_KEPT_FENCE,
             )
         self.assertIsNot(result, finding)
@@ -7478,8 +6909,7 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
             post_review._gated_finding(
                 finding,
                 (2, 3),
-                {},
-                {},
+                diff_facts({}, line_texts={}),
                 demote_reason=post_review._FIX_OVERLAPS_KEPT_FENCE,
             )
         self.assertEqual(post_review._FIX_REASON_COUNTS.get("missing_end_line"), 1)
@@ -7557,7 +6987,10 @@ class TestGitLabAnchoredDecision(unittest.TestCase):
 
     def setUp(self):
         parsed = _parse_fixture(GL_DIFF_INDENTED, platform="gitlab")
-        self.valid_lines, _, _, self.line_texts = parsed
+        parsed_facts = parsed
+        self.facts = parsed_facts
+        self.valid_lines = parsed_facts.valid_lines
+        self.line_texts = parsed_facts.line_texts
 
     def _finding(self, **over):
         finding = {
@@ -7573,7 +7006,7 @@ class TestGitLabAnchoredDecision(unittest.TestCase):
 
     def _anchored(self, finding, anchor=2):
         return post_review._gitlab_anchored(
-            finding, anchor, self.valid_lines, self.line_texts
+            finding, anchor, diff_facts(self.valid_lines, line_texts=self.line_texts)
         )
 
     def test_a_kept_fence_comes_with_the_offsets_that_realize_its_range(self):
@@ -7613,8 +7046,7 @@ class TestGitLabAnchoredDecision(unittest.TestCase):
         gated, offsets = post_review._gitlab_anchored(
             self._finding(),
             2,
-            self.valid_lines,
-            self.line_texts,
+            diff_facts(self.valid_lines, line_texts=self.line_texts),
             demote_reason=post_review._FIX_OVERLAPS_KEPT_FENCE,
         )
         self.assertNotIn("suggested_fix_code", gated)
@@ -7631,29 +7063,37 @@ class TestGithubApplyRange(unittest.TestCase):
 
     def setUp(self):
         parsed = _parse_fixture(GH_DIFF_INDENTED, platform="github")
-        self.valid_lines = parsed[0]
+        self.valid_lines = parsed.valid_lines
 
     def test_a_valid_multi_line_span_is_multiline(self):
         self.assertEqual(
-            post_review._github_apply_range(self.valid_lines, "foo.py", 2, 3),
+            post_review._github_apply_range(
+                diff_facts(self.valid_lines), "foo.py", 2, 3
+            ),
             (True, (2, 3)),
         )
 
     def test_no_end_line_is_single_line(self):
         self.assertEqual(
-            post_review._github_apply_range(self.valid_lines, "foo.py", 2, None),
+            post_review._github_apply_range(
+                diff_facts(self.valid_lines), "foo.py", 2, None
+            ),
             (False, (2, 2)),
         )
 
     def test_end_line_equal_to_line_is_single_line(self):
         self.assertEqual(
-            post_review._github_apply_range(self.valid_lines, "foo.py", 2, 2),
+            post_review._github_apply_range(
+                diff_facts(self.valid_lines), "foo.py", 2, 2
+            ),
             (False, (2, 2)),
         )
 
     def test_an_end_line_outside_the_diff_falls_back_to_single_line(self):
         self.assertEqual(
-            post_review._github_apply_range(self.valid_lines, "foo.py", 2, 940),
+            post_review._github_apply_range(
+                diff_facts(self.valid_lines), "foo.py", 2, 940
+            ),
             (False, (2, 2)),
         )
 
@@ -7744,13 +7184,7 @@ class TestRangesOverlap(unittest.TestCase):
 
 
 class TestPosterOraclesAreRequiredArguments(unittest.TestCase):
-    """Neither poster may take a parsed-diff argument by default.
-
-    A default let a caller omit ``line_texts`` and silently disable half the
-    apply-check — the content oracle absent, every fence downgraded for a
-    reason the diff would have answered. ``parse_diff_lines`` returns all four
-    together or all four ``None``; the signature is what makes a caller say so.
-    """
+    """Both posters require one ``DiffFacts`` or ``None`` argument, with no default."""
 
     def _defaults(self, func):
         return {
@@ -8817,7 +8251,7 @@ class TestGitHubFencePathAmbiguity(_FixGateRunBase):
         validate against ``b/foo.py``'s real text while a patch may have
         meant ``foo.py``.
 
-        Mutation: gut ``_fence_path_is_ambiguous`` to ``return False``
+        Mutation: gut ``path_is_ambiguous`` to ``return False``
         unconditionally — RED (the fence renders instead of downgrading).
         """
         run = self._run(
@@ -8930,7 +8364,7 @@ class TestGitHubMultilineAnchorUsesResolvedPath(_FixGateRunBase):
     resolves, AT ITS OWN LINE (1), to `foo.py` — so the whole range is
     validated against `foo.py` and correctly finds line 3 missing there,
     posting a single-line comment. Before #229's path-resolution fix, the
-    UNRESOLVED raw spelling let `_range_is_valid` accept a range that mixed
+    UNRESOLVED raw spelling let `range_is_valid` accept a range that mixed
     BOTH files' line sets (1, 2 via the stripped fallback to `foo.py`; 3 as
     an EXACT hit on `b/foo.py` itself) and posted a multi-line comment
     naming `b/foo.py` lines 1 and 2, which that file does not have.
@@ -9085,13 +8519,18 @@ class TestGatedFindingWarnLabel(unittest.TestCase):
 
     def test_default_label_matches_delivery_bytes_exactly(self):
         with patch("gauntlet.delivery.post.warn_skip") as mock_warn:
-            post_review._gated_finding(self._finding(), (3, 3), {}, {})
+            post_review._gated_finding(
+                self._finding(), (3, 3), diff_facts({}, line_texts={})
+            )
         mock_warn.assert_called_once_with("suggested-fix downgraded: f.py:3 (empty)")
 
     def test_custom_label_replaces_only_the_leading_word(self):
         with patch("gauntlet.delivery.post.warn_skip") as mock_warn:
             post_review._gated_finding(
-                self._finding(), (3, 3), {}, {}, warn_label="report-patch"
+                self._finding(),
+                (3, 3),
+                diff_facts({}, line_texts={}),
+                warn_label="report-patch",
             )
         mock_warn.assert_called_once_with("report-patch downgraded: f.py:3 (empty)")
 
@@ -9099,12 +8538,17 @@ class TestGatedFindingWarnLabel(unittest.TestCase):
         """warn_label is per-call, not a module-level toggle: a caller that
         passes it must not change what a caller relying on the default sees."""
         post_review._gated_finding(
-            self._finding(), (3, 3), {}, {}, warn_label="report-patch"
+            self._finding(),
+            (3, 3),
+            diff_facts({}, line_texts={}),
+            warn_label="report-patch",
         )
         self.assertIn(
             "report-patch downgraded: f.py:3 (empty)", post_review._SKIP_WARNINGS
         )
-        post_review._gated_finding(self._finding(), (3, 3), {}, {})
+        post_review._gated_finding(
+            self._finding(), (3, 3), diff_facts({}, line_texts={})
+        )
         self.assertIn(
             "suggested-fix downgraded: f.py:3 (empty)", post_review._SKIP_WARNINGS
         )
@@ -9130,9 +8574,9 @@ class TestFixReasonCounts(unittest.TestCase):
             "suggested_fix_code": "x",
         }  # no end_line -> missing_end_line
 
-        post_review._gated_finding(empty, (1, 1), {}, {})
-        post_review._gated_finding(also_empty, (2, 2), {}, {})
-        post_review._gated_finding(no_end_line, None, {}, {})
+        post_review._gated_finding(empty, (1, 1), diff_facts({}, line_texts={}))
+        post_review._gated_finding(also_empty, (2, 2), diff_facts({}, line_texts={}))
+        post_review._gated_finding(no_end_line, None, diff_facts({}, line_texts={}))
 
         self.assertEqual(
             post_review._FIX_REASON_COUNTS,
@@ -9140,341 +8584,30 @@ class TestFixReasonCounts(unittest.TestCase):
         )
 
     def test_a_kept_finding_does_not_tally(self):
-        valid_lines, _, _, line_texts = _parse_fixture(
-            GH_DIFF_INDENTED, platform="github"
-        )
+        parsed_facts = _parse_fixture(GH_DIFF_INDENTED, platform="github")
+        valid_lines = parsed_facts.valid_lines
+        line_texts = parsed_facts.line_texts
         finding = {
             "file": "foo.py",
             "line": 2,
             "end_line": 3,
             "suggested_fix_code": "    return 2\n    # done",
         }
-        result = post_review._gated_finding(finding, (2, 3), valid_lines, line_texts)
+        result = post_review._gated_finding(
+            finding, (2, 3), diff_facts(valid_lines, line_texts=line_texts)
+        )
         self.assertIn("suggested_fix_code", result)
         self.assertEqual(post_review._FIX_REASON_COUNTS, {})
 
     def test_reset_run_state_clears_the_tally(self):
         post_review._gated_finding(
-            {"file": "a.py", "line": 1, "suggested_fix_code": ""}, (1, 1), {}, {}
+            {"file": "a.py", "line": 1, "suggested_fix_code": ""},
+            (1, 1),
+            diff_facts({}, line_texts={}),
         )
         self.assertTrue(post_review._FIX_REASON_COUNTS)
         post_review.reset_run_state()
         self.assertEqual(post_review._FIX_REASON_COUNTS, {})
-
-
-def test_parse_diff_lines_post_review__glab_no_prefix_headers_are_parsed():
-    """GitLab plain headers preserve paths and line facts without a/b prefixes."""
-    diff = (
-        "diff --git a/src/app.py b/src/app.py\n"
-        "--- src/app.py\n"
-        "+++ src/app.py\n"
-        "@@ -1,1 +1,2 @@\n"
-        " ctx\n"
-        "+added\n"
-    )
-    valid_lines, new_files, _, _ = parse_diff_text("gitlab", diff)
-    assert ("src/app.py", 1) in valid_lines
-    assert ("src/app.py", 2) in valid_lines
-    assert new_files == set()
-
-
-def test_parse_diff_lines_post_review__github_diff_prefixes_are_still_stripped():
-    """`gh pr diff` writes git's synthetic `a/` / `b/`: those ARE diff syntax.
-
-    The platform split that stopped stripping them on GitLab must not stop
-    stripping them here — the keys GitHub findings are matched against, and the
-    `path` shipped to its API, are prefix-free.
-    """
-    diff = (
-        "diff --git a/src/app.py b/src/app.py\n"
-        "--- a/src/app.py\n"
-        "+++ b/src/app.py\n"
-        "@@ -1,2 +1,2 @@\n"
-        " ctx\n"
-        "-x\n"
-        "+y\n"
-    )
-    valid_lines, _, old_paths, _ = parse_diff_text("github", diff)
-    assert ("src/app.py", 1) in valid_lines
-    assert old_paths == {"src/app.py": "src/app.py"}
-    assert {fp for fp, _ in valid_lines} == {"src/app.py"}
-
-
-def test_parse_diff_lines_post_review__new_file_detected_via_dev_null_old_header():
-    """The ``/dev/null`` branch, exercised by header-shaped input with no hunk.
-
-    SYNTHETIC FIXTURE, stated honestly: real ``git`` emits NO ``---``/``+++`` lines at
-    all for an empty added file — just ``diff --git``, ``new file mode`` and ``index``
-    (verified against real git). So the shape below is not one gh is known to emit
-    today; the ``/dev/null`` branch is defence-in-depth for header-shaped input, and
-    it is the ``@@ -0,0`` hunk signal that real added-file diffs actually trigger.
-    The branch is still worth pinning: with a hunk present the ``-0,0`` signal alone
-    satisfies the assertion, so mutating ``current_file_is_new`` would otherwise leave
-    the suite green.
-    """
-    diff = (
-        "diff --git a/empty_new.py b/empty_new.py\n"
-        "new file mode 100644\n"
-        "index 0000000..e69de29\n"
-        "--- /dev/null\n"
-        "+++ b/empty_new.py\n"
-    )
-    _, new_files, _, _ = parse_diff_text("github", diff)
-    assert new_files == {"empty_new.py"}
-
-
-def test_parse_diff_lines_post_review__new_file_detected_from_hunk_header_glab_style():
-    """An old-side start of zero identifies an added file in plain GitLab output."""
-    diff = "--- src/added.py\n+++ src/added.py\n@@ -0,0 +1,1 @@\n+content\n"
-    _, new_files, _, _ = parse_diff_text("gitlab", diff)
-    assert new_files == {"src/added.py"}
-
-
-def test_parse_diff_lines_post_review__deleted_file_does_not_add_dev_null_to_valid_lines():
-    """``+++ /dev/null`` (deleted file) must not produce phantom entries.
-
-    The ``@@ -1,2 +0,0 @@`` header must not read as an added file either: it is the
-    NEW side that is 0 here, and only an old-side start of 0 means "added".
-    """
-    diff = "--- a/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-line1\n-line2\n"
-    valid_lines, new_files, _, _ = parse_diff_text("github", diff)
-    assert isinstance(valid_lines, dict)
-    assert valid_lines == {}
-    assert new_files == set()
-
-
-def test_parse_diff_lines_post_review__empty_file_gaining_content_is_treated_as_added_a_known_limitation():
-    """A pre-existing EMPTY file gaining content emits `@@ -0,0 +1,N @@` with no
-    /dev/null — byte-identical to a real added file in plain `glab mr diff` output.
-
-    DOCUMENTED LIMITATION, pinned here deliberately: we read it as added, because
-    sending `old_path` into a genuinely new file is the documented HTTP 500 and real
-    added files are the common case, so this indistinguishable shape is treated as added.
-    """
-    diff = "--- a/empty.py\n+++ b/empty.py\n@@ -0,0 +1,2 @@\n+first\n+second\n"
-    _, new_files, _, _ = parse_diff_text("github", diff)
-    assert new_files == {"empty.py"}
-
-
-def test_parse_diff_lines_post_review__omitted_hunk_counts_default_to_one():
-    """A unified-diff count is omitted exactly when that side holds one line."""
-    diff = "--- oneline.txt\n+++ oneline.txt\n@@ -0,0 +1 @@\n+only\n"
-    valid_lines, new_files, _, _ = parse_diff_text("gitlab", diff)
-    assert ("oneline.txt", 1) in valid_lines
-    assert valid_lines["oneline.txt", 1] is None
-    assert "oneline.txt" in new_files
-
-
-def test_parse_diff_lines_post_review__deleted_file_body_drains_budgets_so_the_next_file_parses():
-    """A deleted file's body must consume its budgets even though it records nothing.
-
-    ``+++ /dev/null`` leaves ``current_file`` None, but skipping the body outright
-    (``if current_file is None: continue``) leaves the old-side budget undrained, so
-    the NEXT file's headers arrive while the parser is still in the hunk-body zone —
-    where headers are not matched — and every comment target in that file is eaten.
-    """
-    diff = (
-        "diff --git a/gone.py b/gone.py\n"
-        "--- a/gone.py\n"
-        "+++ /dev/null\n"
-        "@@ -1,3 +0,0 @@\n"
-        "-a\n"
-        "-b\n"
-        "-c\n"
-        "diff --git a/next.py b/next.py\n"
-        "--- a/next.py\n"
-        "+++ b/next.py\n"
-        "@@ -5,2 +5,2 @@\n"
-        " keep\n"
-        "-x\n"
-        "+y\n"
-    )
-    valid_lines, _, _, _ = parse_diff_text("github", diff)
-    assert valid_lines["next.py", 5] == 5
-    assert valid_lines["next.py", 6] is None
-    assert [k for k in valid_lines if k[0] == "gone.py"] == []
-
-
-def test_parse_diff_lines_post_review__gitlab_deleted_file_records_no_targets_of_its_own():
-    """`glab mr diff` has no `+++ /dev/null`: a deletion repeats the path on BOTH
-    headers, so ``current_file`` stays LIVE through the deleted file's body.
-
-    On GitHub the new-side header blanks ``current_file``, and a mis-drained body can
-    only lose the NEXT file's lines. Here nothing blanks it, so the same fault also
-    writes keys onto a file that no longer exists — inline comments aimed at a
-    deleted path. Draining the old-side budget is the only thing that ends the body.
-    """
-    valid_lines, new_files, old_paths, _ = parse_diff_text(
-        "gitlab", GL_DIFF_DELETED_THEN_MODIFIED
-    )
-    assert [k for k in valid_lines if k[0] == "src/removed.py"] == []
-    assert valid_lines["src/edited.py", 61] == 50
-    assert valid_lines["src/edited.py", 62] is None
-    assert valid_lines["src/edited.py", 63] == 52
-    # `@@ -1,3 +0,0 @@` is a deletion: only an OLD-side start of 0 means added. The
-    # repeated path still yields an old_paths entry, harmlessly mapping to itself.
-    assert new_files == set()
-    assert old_paths == {
-        "src/removed.py": "src/removed.py",
-        "src/edited.py": "src/edited.py",
-    }
-
-
-def test_parse_diff_lines_post_review__form_feed_line_content_does_not_split_the_hunk():
-    """A form feed is diff CONTENT; it must not invent a line boundary.
-
-    ``str.splitlines()`` breaks on \\x0c (and \\x0b, \\x85, U+2028/U+2029) — git never
-    emitted a boundary there. The extra line drains the declared budgets one line
-    early, flips the header/body zone boundary, and ships a WRONG old_line for
-    everything after it: here the ADDED last line would be reported as context on
-    old line 3.
-    """
-    # Real `git diff` shape for changing p2 -> p2X in a file whose middle line is a
-    # form feed (built in Python so the control character is explicit).
-    diff = "--- ff.py\n+++ ff.py\n@@ -1,3 +1,3 @@\n p1\n \x0c\n-p2\n+p2X\n"
-    valid_lines, _, _, _ = parse_diff_text("gitlab", diff)
-    assert ("ff.py", 3) in valid_lines
-    assert valid_lines["ff.py", 3] is None
-    assert valid_lines["ff.py", 2] == 2
-
-
-def test_parse_diff_lines_post_review__removed_line_content_starting_with_dashes_is_not_a_file_header():
-    """Removing `-- deprecated: drop me` renders `--- deprecated: drop me`.
-
-    Matched as an old-side file header it consumed no OLD number, desyncing
-    `old_line` for every later line of the hunk — a WRONG old_line on the wire,
-    worse than the 400 it replaces.
-    """
-    diff = (
-        "diff --git a/db/schema.sql b/db/schema.sql\n"
-        "--- db/schema.sql\n"
-        "+++ db/schema.sql\n"
-        "@@ -10,4 +10,3 @@\n"
-        " CREATE TABLE t (\n"
-        # A removed line whose CONTENT is `-- deprecated: drop me`.
-        "--- deprecated: drop me\n"
-        "   id INT,\n"
-        " );\n"
-    )
-    valid_lines, _, _, _ = parse_diff_text("gitlab", diff)
-    # new 10 = old 10 (context), then the removal eats old 11 with no new number,
-    # so new 11 must map to old 12 — not to 11.
-    assert valid_lines["db/schema.sql", 10] == 10
-    assert valid_lines["db/schema.sql", 11] == 12
-    assert valid_lines["db/schema.sql", 12] == 13
-
-
-def test_parse_diff_lines_post_review__added_line_content_starting_with_pluses_is_not_a_file_header():
-    """Adding `++ x` renders `+++ x`. Matched as a new-side file header it
-    retargeted `current_file` at the literal text and reset both counters."""
-    diff = (
-        "diff --git a/src/app.c b/src/app.c\n"
-        "--- src/app.c\n"
-        "+++ src/app.c\n"
-        "@@ -20,2 +20,3 @@\n"
-        " int i = 0;\n"
-        "+++ x\n"
-        " use(i);\n"
-    )
-    valid_lines, _, _, _ = parse_diff_text("gitlab", diff)
-    assert valid_lines["src/app.c", 20] == 20
-    assert valid_lines["src/app.c", 21] is None
-    # The context line after it still records under the original file, with the
-    # numbers the added line advanced.
-    assert valid_lines["src/app.c", 22] == 21
-    assert {fp for fp, _ in valid_lines} == {"src/app.c"}
-
-
-def test_parse_diff_lines_post_review__binary_file_prose_is_not_admitted_as_a_valid_line():
-    """`Binary files … differ` carries no hunk; it must not become a context line."""
-    diff = (
-        "diff --git a/img.png b/img.png\n"
-        "--- a/img.png\n"
-        "+++ b/img.png\n"
-        "Binary files a/img.png and b/img.png differ\n"
-    )
-    valid_lines, _, _, _ = parse_diff_text("github", diff)
-    assert [k for k in valid_lines if k[0] == "img.png"] == []
-
-
-@pytest.mark.parametrize(
-    "field, expected",
-    [
-        pytest.param(
-            0,
-            {
-                ("src/edited.py", 61): 50,
-                ("src/edited.py", 62): None,
-                ("src/edited.py", 63): 52,
-                ("src/app/clients/api/__init__.py", 1): None,
-                ("src/app/clients/api/__init__.py", 2): None,
-                ("src/app/clients/api/__init__.py", 3): None,
-                ("src/app/clients/api/__init__.py", 4): None,
-                ("src/app/clients/api/__init__.py", 5): None,
-                ("src/app/clients/api/__init__.py", 6): None,
-                ("src/app/clients/api/__init__.py", 7): None,
-                ("src/app/clients/api/__init__.py", 8): None,
-                ("src/app/clients/api/__init__.py", 9): None,
-                ("src/app/clients/api/__init__.py", 10): None,
-                ("src/app/clients/api/__init__.py", 11): None,
-                ("src/app/clients/api/__init__.py", 12): None,
-                ("src/app/clients/api/__init__.py", 13): None,
-                ("src/app/clients/api/__init__.py", 14): None,
-                ("src/app/clients/api/__init__.py", 15): None,
-                ("src/app/clients/api/__init__.py", 16): None,
-            },
-            id="line-map",
-        ),
-        pytest.param(1, {"src/app/clients/api/__init__.py"}, id="added-file"),
-        pytest.param(
-            2,
-            {
-                "src/edited.py": "src/edited.py",
-                "src/app/clients/api/__init__.py": "src/app/clients/api/__init__.py",
-            },
-            id="old-paths",
-        ),
-    ],
-)
-def test_plain_glab_contract_metadata(field: int, expected: object) -> None:
-    assert parse_diff_text("gitlab", GL_DIFF_CONTRACT)[field] == expected
-
-
-def test_parse_diff_lines_post_review__no_newline_marker_advances_neither_counter():
-    diff = (
-        "--- a/f.py\n"
-        "+++ b/f.py\n"
-        "@@ -1,2 +1,2 @@\n"
-        " a\n"
-        "\\ No newline at end of file\n"
-        " b\n"
-    )
-    valid_lines, _, _, _ = parse_diff_text("github", diff)
-    assert valid_lines["f.py", 2] == 2
-
-
-def test_parse_diff_lines_post_review__renamed_file_old_side_path_is_captured():
-    """Retain the old path under the new key because GitLab emits no other rename metadata."""
-    valid_lines, _, old_paths, _ = parse_diff_text("gitlab", GL_DIFF_RENAME)
-    assert old_paths == {"new_name.py": "old_name.py"}
-    assert valid_lines["new_name.py", 3] == 3
-    # A BLANK context line is a lone space, and is addressable like any other.
-    assert valid_lines["new_name.py", 6] == 6
-
-
-def test_parse_diff_lines_post_review__added_file_absent_from_old_paths():
-    """`--- /dev/null` means there is no old side — record no mapping at all."""
-    diff = (
-        "diff --git a/added.py b/added.py\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/added.py\n"
-        "@@ -0,0 +1,1 @@\n"
-        "+content\n"
-    )
-    _, new_files, old_paths, _ = parse_diff_text("github", diff)
-    assert new_files == {"added.py"}
-    assert "added.py" not in old_paths
 
 
 def _read_payload(directory):
@@ -9508,13 +8641,17 @@ def test_review_marker_round_trip_through_real_poster(
     monkeypatch.setattr(post_review, "DRY_RUN", True)
     data = _review_data(platform=platform, sha=sha, review_body=review_body)
     if platform == "github":
-        post_review.post_github(data, {}, {}, forge=FakeForge())
+        post_review.post_github(data, diff_facts({}, line_texts={}), forge=FakeForge())
     else:
         monkeypatch.setattr(
             "gauntlet.delivery.post.fetch_gitlab_shas",
             lambda *_args, **_kwargs: ("base", "head", "start"),
         )
-        post_review.post_gitlab(data, {}, set(), {}, {}, forge=FakeGitLab())
+        post_review.post_gitlab(
+            data,
+            diff_facts({}, line_texts={}, new_files=set(), old_paths={}),
+            forge=FakeGitLab(),
+        )
     body = post_review._CAPTURED[0].payload["body"]
     signal = review_marker.detect_signal(body)
     assert signal is not None, f"no signal recovered from posted body: {body!r}"
@@ -9522,11 +8659,11 @@ def test_review_marker_round_trip_through_real_poster(
 
 
 @pytest.mark.parametrize(
-    "platform, valid_lines, expected_warnings, expected_inline",
+    "platform, facts, expected_warnings, expected_inline",
     [
         pytest.param(
             "github",
-            {("src/app.py", 10): 10, ("src/app.py", 20): None},
+            diff_facts({("src/app.py", 10): 10, ("src/app.py", 20): None}),
             [
                 "Skipping finding 'Bug' at src/app.py:99 \u2014 line not found in diff. Valid lines for this file: [10, 20]"
             ],
@@ -9535,7 +8672,7 @@ def test_review_marker_round_trip_through_real_poster(
         ),
         pytest.param(
             "github",
-            {},
+            diff_facts({}),
             [
                 "Skipping finding 'Bug' at src/app.py:99 \u2014 line not found in diff. Valid lines for this file: []"
             ],
@@ -9545,7 +8682,7 @@ def test_review_marker_round_trip_through_real_poster(
         pytest.param("github", None, [], 1, id="github-validation-skipped"),
         pytest.param(
             "gitlab",
-            {("src/app.py", 5): 5, ("src/app.py", 15): None},
+            diff_facts({("src/app.py", 5): 5, ("src/app.py", 15): None}),
             [
                 "Skipping finding 'Bug' at src/app.py:99 \u2014 line not found in diff. Valid lines for this file: [5, 15]"
             ],
@@ -9556,7 +8693,7 @@ def test_review_marker_round_trip_through_real_poster(
 )
 def test_skip_warning_diagnostics(
     platform: str,
-    valid_lines: dict[tuple[str, int], int | None] | None,
+    facts: diff_api.DiffFacts | None,
     expected_warnings: list[str],
     expected_inline: int,
 ) -> None:
@@ -9572,10 +8709,14 @@ def test_skip_warning_diagnostics(
         else FakeGitLab(refs=[JsonFetch(GL_CONTRACT_VERSIONS, None)])
     )
     if platform == "github":
-        post_review.post_github(data, valid_lines, None, forge=fake)
+        post_review.post_github(data, facts, forge=fake)
     else:
         assert isinstance(fake, FakeGitLab)
-        post_review.post_gitlab(data, valid_lines, set(), {}, {}, forge=fake)
+        post_review.post_gitlab(
+            data,
+            facts,
+            forge=fake,
+        )
     assert expected_warnings == post_review._SKIP_WARNINGS
     requests = [call.request for call in fake.calls if call.method == "submit"]
     assert len(requests) == 1
@@ -9974,11 +9115,6 @@ def test_both_footer_halves_posted__review_body_with_a_stale_prose_sha_still_get
 def test_gitlab_real_a_directory_path__gitlab_real_a_directory_path_is_preserved(
     tmp_path: Path, forge_factory: FakeForgeFactory
 ) -> None:
-    valid_lines, new_files, old_paths, _ = parse_diff_text("gitlab", GL_DIFF_REAL_A_DIR)
-    assert ("a/foo.py", 1) in valid_lines
-    assert new_files == set()
-    assert old_paths == {"a/foo.py": "a/foo.py"}
-
     data = _review_data(
         platform="gitlab",
         review_body="MR review",
@@ -10094,10 +9230,14 @@ def test_summary_body_budget_guard(
     data = _review_data(pr_number=1, sha="a" * 40)
     with pytest.raises(SystemExit) as exc:
         if platform == "github":
-            post_review.post_github(data, {}, {}, forge=fake)
+            post_review.post_github(data, diff_facts({}, line_texts={}), forge=fake)
         else:
             assert isinstance(fake, FakeGitLab)
-            post_review.post_gitlab(data, {}, set(), {}, {}, forge=fake)
+            post_review.post_gitlab(
+                data,
+                diff_facts({}, line_texts={}, new_files=set(), old_paths={}),
+                forge=fake,
+            )
     assert exc.value.code == 1
     assert [call for call in fake.calls if call.method == "submit"] == []
 
@@ -10172,8 +9312,8 @@ def test_summary_body_delivery__bare_array_flags_form_the_real_wrapper_in_order(
     # hand-typed seven-key wrapper and values expose the lost code-owned shape.
     with (
         patch(
-            "gauntlet.delivery.post.parse_diff_lines",
-            return_value=(None, None, None, None),
+            "gauntlet.delivery.post.fetch_diff_facts",
+            return_value=None,
         ),
         patch("gauntlet.delivery.post.post_github", return_value=0) as mock_post,
     ):
@@ -10259,7 +9399,7 @@ def test_summary_body_delivery__summary_borne_marker_is_escaped_and_real_footer_
     github_data = _review_data(sha=sha, review_body=review_body)
     post_review.reset_run_state()
     monkeypatch.setattr(post_review, "DRY_RUN", True)
-    post_review.post_github(github_data, None, None, forge=FakeForge())
+    post_review.post_github(github_data, None, forge=FakeForge())
     github_body = post_review._CAPTURED[0].payload["body"]
     assert isinstance(github_body, str)
     assert "&lt;!--" in github_body
@@ -10271,7 +9411,7 @@ def test_summary_body_delivery__summary_borne_marker_is_escaped_and_real_footer_
     post_review.reset_run_state()
     monkeypatch.setattr(post_review, "DRY_RUN", True)
     gitlab_data = _review_data(sha=sha, review_body=review_body)
-    post_review.post_gitlab(gitlab_data, None, None, None, None, forge=FakeGitLab())
+    post_review.post_gitlab(gitlab_data, None, forge=FakeGitLab())
     gitlab_body = post_review._CAPTURED[0].payload["body"]
     assert isinstance(gitlab_body, str)
     assert "&lt;!--" in gitlab_body
@@ -10393,8 +9533,8 @@ def test_github_multi_line_range_validation__validation_skipped_passes_the_range
     )
     with (
         patch(
-            "gauntlet.delivery.post.parse_diff_lines",
-            return_value=(None, None, None, None),
+            "gauntlet.delivery.post.fetch_diff_facts",
+            return_value=None,
         ),
     ):
         _run_main(tmp_path, forge_factory, data, diff=GH_DIFF_MULTILINE)
@@ -10573,9 +9713,7 @@ def test_skipped_section_forgery_resistance(
 def test_skipped_section_forgery_resistance__gitlab_validation_skipped_posts_everything_with_no_section(
     tmp_path: Path, forge_factory: FakeForgeFactory
 ) -> None:
-    """When the diff could not be fetched, parse_diff_lines returns
-    all-None and is_line_valid always answers True — nothing should
-    ever reach the skipped section."""
+    """When diff retrieval fails, ``fetch_diff_facts`` returns ``None``."""
     data = _review_data(
         platform="gitlab",
         review_body="MR review",
@@ -10584,8 +9722,8 @@ def test_skipped_section_forgery_resistance__gitlab_validation_skipped_posts_eve
     )
     with (
         patch(
-            "gauntlet.delivery.post.parse_diff_lines",
-            return_value=(None, None, None, None),
+            "gauntlet.delivery.post.fetch_diff_facts",
+            return_value=None,
         ),
         patch(
             "gauntlet.delivery.post.gitlab_prior_delivery_state",

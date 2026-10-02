@@ -9,11 +9,115 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.patches as report_patches
 import pytest
+
+from tests.support.diff import diff_facts
+
+
+@pytest.mark.parametrize(
+    "content_byte",
+    [b"orig content", b"orig \xff content"],
+    ids=["crlf-header", "invalid-body-byte"],
+)
+def test_report_normalized_diff_receipt(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], content_byte: bytes
+) -> None:
+    sha = "abc1234"
+    (tmp_path / f"code-gauntlet-diff-{sha}.patch").write_bytes(
+        b"diff --git a/crlf.py b/crlf.py \xff\r\n"
+        b"--- a/crlf.py\r\n+++ b/crlf.py\r\n@@ -1,1 +1,2 @@\r\n line1\r\n+"
+        + content_byte
+        + b"\r\n"
+    )
+    (tmp_path / f"code-gauntlet-findings-{sha}.json").write_text(
+        json.dumps(
+            [
+                {
+                    "file": "crlf.py",
+                    "line": 2,
+                    "end_line": 2,
+                    "title": "CRLF",
+                    "suggested_fix_code": "changed content",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert report_patches.main(["--output-dir", str(tmp_path), "--head-sha", sha]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    receipt = json.loads(lines[0])
+    assert (
+        receipt["kept"],
+        receipt["downgraded"],
+        receipt["reasons"],
+        receipt["oracle"],
+    ) == (1, 0, {}, "ok")
+    artifact = (tmp_path / f"code-gauntlet-patches-{sha}.md").read_text(
+        encoding="utf-8"
+    )
+    assert "```py\nchanged content\n```" in artifact
+
+
+@pytest.mark.parametrize(
+    "capture, count",
+    [(None, 2), (b"", 1), (b" \r\n\t", 1)],
+    ids=["missing", "empty", "whitespace"],
+)
+def test_report_absent_capture_receipt(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    capture: bytes | None,
+    count: int,
+) -> None:
+    sha = "abc1234"
+    if capture is not None:
+        (tmp_path / f"code-gauntlet-diff-{sha}.patch").write_bytes(capture)
+    (tmp_path / f"code-gauntlet-findings-{sha}.json").write_text(
+        json.dumps(
+            [
+                {
+                    "file": "a.py",
+                    "line": 1,
+                    "end_line": 1,
+                    "title": "A",
+                    "suggested_fix_code": "replacement",
+                },
+                {
+                    "file": "b.py",
+                    "line": 5,
+                    "end_line": 5,
+                    "title": "B",
+                    "suggested_fix_code": "y",
+                },
+            ][:count]
+        ),
+        encoding="utf-8",
+    )
+    assert report_patches.main(["--output-dir", str(tmp_path), "--head-sha", sha]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    receipt = json.loads(lines[0])
+    assert (
+        receipt["ok"],
+        receipt["oracle"],
+        receipt["candidates"],
+        receipt["kept"],
+        receipt["downgraded"],
+        receipt["reasons"],
+    ) == (True, "missing", count, 0, count, {"no_diff_oracle": count})
+    artifact = (tmp_path / f"code-gauntlet-patches-{sha}.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "The pinned diff file was missing or empty, so every candidate patch failed closed (`no_diff_oracle`)."
+        in artifact
+    )
 
 
 class ReportPatchesTestBase(unittest.TestCase):
@@ -166,270 +270,11 @@ class TestGlabVerbatimRealDir(ReportPatchesTestBase):
         self.assertIn("## `a/real/x.py`:2-2 — Real Dir", self._read_artifact())
 
 
-class TestProducerDetection(ReportPatchesTestBase):
-    """The oracle detects a git-shaped producer solely from the FIRST line
-    opening with git's default ``a/`` prefix (``diff --git "?a/``), then keys
-    the oracle with ``post_review.parse_diff_text`` for that shape — never a
-    fixed assumption of one shape, and never a bare ``diff --git`` match that
-    would also swallow ``diff.noprefix``/``diff.mnemonicPrefix`` output.
-
-    RED (git-shaped case) when detection is removed and glab-verbatim parsing is
-    always assumed: an ``a/``/``b/`` prefixed path would never be stripped, so the
-    finding spelled ``x.py`` would fail closed instead of being kept.
-    RED (verbatim case) when detection is removed and git-shaped parsing is always
-    assumed: a real path spelled ``a/real/x.py`` would have its ``a/`` prefix
-    wrongly stripped, so the finding spelled with the prefix would fail closed
-    instead of being kept, while the unprefixed spelling would wrongly match.
-    RED (noprefix case) when the anchor is widened back to a bare ``diff --git ``:
-    a ``diff.noprefix``-shaped diff's first line (no ``a/`` after ``diff --git ``)
-    would then be wrongly treated as git-shaped, stripping a leading ``b/`` that
-    is not a synthetic prefix at all and colliding two real files onto one key.
-    RED (quoted case) when the optional ``"?`` is dropped: a C-quoted first file
-    (``diff --git "a/café.py" "b/café.py"``) would then fail the anchor entirely,
-    falling to verbatim keying that keeps the ``b/`` prefix on, so a finding
-    spelled without it fails closed instead of being kept.
-    """
-
-    def test_no_diff_git_line_is_parsed_verbatim_glab_style(self):
-        diff = (
-            "--- a/real/x.py\n"
-            "+++ a/real/x.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " def f():\n"
-            "+    original\n"
-        )
-        self._write_diff(diff)
-        self._write_findings(
-            [
-                {
-                    "file": "a/real/x.py",
-                    "line": 2,
-                    "end_line": 2,
-                    "title": "Verbatim Kept",
-                    "suggested_fix_code": "    changed",
-                },
-                {
-                    "file": "real/x.py",
-                    "line": 2,
-                    "end_line": 2,
-                    "title": "Verbatim Stripped Not In Diff",
-                    "suggested_fix_code": "    other",
-                },
-            ]
-        )
-
-        exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(receipt["kept"], 1)
-        self.assertEqual(receipt["downgraded"], 1)
-        self.assertEqual(receipt["reasons"], {"range_not_in_diff": 1})
-        content = self._read_artifact()
-        self.assertIn("Verbatim Kept", content)
-        self.assertNotIn("Verbatim Stripped Not In Diff", content)
-
-    def test_body_content_starting_with_diff_git_does_not_flip_detection(self):
-        """RED when detection searches the whole text instead of the first line: a
-        verbatim diff whose hunk body carries a marker-less (zero-prefixed) context
-        line beginning ``diff --git`` would be read as git-shaped, stripping the
-        real ``b/`` directory so the key becomes ``real/x.py`` — a path the repo
-        does not have — and a finding spelled that way would be KEPT against the
-        real ``b/real/x.py``'s lines. Under verbatim keying it fails closed."""
-        diff = (
-            "--- b/real/x.py\n"
-            "+++ b/real/x.py\n"
-            "@@ -1,2 +1,3 @@\n"
-            "diff --git a/real/x.py b/real/x.py\n"
-            " def f():\n"
-            "+    original\n"
-        )
-        self._write_diff(diff)
-        self._write_findings(
-            [
-                {
-                    "file": "real/x.py",
-                    "line": 3,
-                    "end_line": 3,
-                    "title": "Phantom Stripped Path",
-                    "suggested_fix_code": "    changed",
-                }
-            ]
-        )
-
-        exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(receipt["kept"], 0)
-        self.assertEqual(receipt["reasons"], {"range_not_in_diff": 1})
-
-    def test_diff_git_line_present_is_parsed_git_shaped(self):
-        diff = (
-            "diff --git a/x.py b/x.py\n"
-            "--- a/x.py\n"
-            "+++ b/x.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " def f():\n"
-            "+    original\n"
-        )
-        self._write_diff(diff)
-        self._write_findings(
-            [
-                {
-                    "file": "x.py",
-                    "line": 2,
-                    "end_line": 2,
-                    "title": "Git Shaped",
-                    "suggested_fix_code": "    changed",
-                }
-            ]
-        )
-
-        exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(receipt["kept"], 1)
-        self.assertEqual(receipt["downgraded"], 0)
-        self.assertIn("Git Shaped", self._read_artifact())
-
-    def test_noprefix_shaped_diff_is_not_wrongly_detected_as_git_shaped(self):
-        """``diff.noprefix=true`` output opens with ``diff --git b/foo.py
-        b/foo.py`` — no synthetic ``a/`` prefix, because the FIRST file here
-        genuinely lives under a real top-level ``b/`` directory. That must
-        NOT match the git-shaped anchor, so both files parse verbatim: the
-        real ``b/foo.py`` keys as itself, and the second file's real
-        top-level ``foo.py`` keys as itself — two distinct keys, not one.
-
-        RED when the anchor is widened back to a bare ``diff --git ``: this
-        diff's first line WOULD match, so github-style parsing strips a
-        leading ``b/`` from each new-side header — stripping the real
-        subdirectory off the first file (colliding it onto ``foo.py``, the
-        second file's own key) and stripping nothing off the second file
-        (which has no ``b/`` to strip). Both files then key as the SAME
-        ``foo.py``, the second hunk's lines overwriting the first's in
-        ``valid_lines`` — so the ``b/foo.py`` finding is judged against the
-        WRONG (collided) content and wrongly reads as a genuine change
-        instead of the no-op it actually is: measured as
-        ``receipt["kept"] == 2``, not the correct ``1``.
-
-        The ``b/foo.py`` finding's own reason is ``no_diff_oracle``, not
-        ``no_op_replacement`` (issue #229): correctly parsed verbatim, this
-        diff's real ``b/foo.py`` sits alongside a REAL, separate ``foo.py`` —
-        exactly the two-real-files-one-strip-apart shape the fence-ambiguity
-        check fails closed on, before the no-op comparison it would otherwise
-        also fail. That check is orthogonal to producer detection (it never
-        looks at how the keys were derived, only at whether both spellings
-        are diff paths) — this test still pins detection choosing "gitlab"
-        correctly for this shape, just via the new reason.
-        """
-        diff = (
-            "diff --git b/foo.py b/foo.py\n"
-            "--- b/foo.py\n"
-            "+++ b/foo.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " line1\n"
-            "+CURRENT_TOP\n"
-            "diff --git foo.py foo.py\n"
-            "--- foo.py\n"
-            "+++ foo.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " line1\n"
-            "+DIFFERENT_TEXT\n"
-        )
-        self._write_diff(diff)
-        self._write_findings(
-            [
-                {
-                    "file": "b/foo.py",
-                    "line": 2,
-                    "end_line": 2,
-                    "title": "Real Subdir No-Op",
-                    "suggested_fix_code": "CURRENT_TOP",
-                },
-                {
-                    "file": "foo.py",
-                    "line": 2,
-                    "end_line": 2,
-                    "title": "Top File Kept",
-                    "suggested_fix_code": "CHANGED_TEXT",
-                },
-            ]
-        )
-
-        exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(receipt["candidates"], 2)
-        self.assertEqual(receipt["kept"], 1)
-        self.assertEqual(receipt["downgraded"], 1)
-        self.assertEqual(receipt["reasons"], {"no_diff_oracle": 1})
-        content = self._read_artifact()
-        self.assertIn("Top File Kept", content)
-        self.assertNotIn("Real Subdir No-Op", content)
-
-    def test_c_quoted_first_file_is_still_detected_as_git_shaped(self):
-        """The FIRST line of this diff is C-quoted (git's octal-escaped
-        non-ASCII encoding, e.g. under ``core.quotepath``):
-        ``diff --git "a/café.py" "b/café.py"``. The optional ``"?`` in the
-        anchor must still recognize this as git-shaped so the ``b/`` prefix
-        is stripped and the finding spelled ``café.py`` (without it) anchors.
-
-        RED when the optional ``"?`` is dropped from the anchor: the quote
-        immediately after ``diff --git `` makes the anchor fail entirely, so
-        this diff falls to verbatim keying, which leaves the key spelled
-        ``b/café.py`` — a finding spelled ``café.py`` then fails closed as
-        ``range_not_in_diff`` instead of being kept.
-        """
-        diff = (
-            'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n'
-            '--- "a/caf\\303\\251.py"\n'
-            '+++ "b/caf\\303\\251.py"\n'
-            "@@ -1,1 +1,2 @@\n"
-            " line1\n"
-            "+orig\n"
-        )
-        self._write_diff(diff)
-        self._write_findings(
-            [
-                {
-                    "file": "café.py",
-                    "line": 2,
-                    "end_line": 2,
-                    "title": "Quoted First File",
-                    "suggested_fix_code": "changed",
-                }
-            ]
-        )
-
-        exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(receipt["kept"], 1)
-        self.assertEqual(receipt["downgraded"], 0)
-        self.assertIn("Quoted First File", self._read_artifact())
-
-
 class TestSiblingBPathCollisionFailsTheFenceClosed(ReportPatchesTestBase):
-    """A git-shaped diff touching both ``foo.py`` and a real top-level ``b/``
-    directory's ``b/foo.py`` must key each file under its OWN path, never
-    collapse the two together. ``parse_diff_text`` strips exactly ONE leading
-    ``b/`` from a new-side header: ``+++ b/foo.py`` keys as ``foo.py``, while
-    ``+++ b/b/foo.py`` keys as ``b/foo.py`` — the real subdirectory's ``b/``
-    survives the strip.
+    """A real b/ sibling makes its prefixed fence ambiguous and fail closed.
 
-    Issue #229 decision, pinned here: a finding spelled ``b/foo.py`` — the
-    diff's OWN key for the real subdirectory file — is still AMBIGUOUS,
-    because ``foo.py`` (its stripped form) is ALSO a real, different file in
-    this same diff. Neither spelling can say which file a patch is meant for,
-    so that fence fails closed on the no-oracle reason regardless of its
-    content. The sibling finding spelled plainly ``foo.py`` carries no such
-    prefix, so it is not ambiguous and is judged normally — kept here, since
-    its patch genuinely differs from ``foo.py``'s own line.
-
-    RED under the reverted alias/ambiguity keying, which resolved a header
-    path against a computed alias set and dropped ``b/foo.py`` in favor of
-    re-resolving it to ``foo.py``: the ``b/foo.py`` finding would then be
-    checked against the WRONG file's content instead of failing closed on
-    the ambiguity itself.
+    The unprefixed sibling keeps its own content and remains addressable.
+    Stripping twice would judge the prefixed fence against the wrong file.
     """
 
     def test_prefixed_sibling_downgrades_unprefixed_sibling_kept(self):
@@ -623,17 +468,7 @@ class TestVerbatimAliasNotKept(ReportPatchesTestBase):
 
 
 class TestGhAliasMatching(ReportPatchesTestBase):
-    """A gh-shaped header ``+++ b/foo.py`` is keyed as ``foo.py`` — the ``b/``
-    prefix strip happens at PARSE TIME, inside ``parse_diff_text("github",
-    …)`` itself, so there is only ever the one canonical key, never a second
-    header-path key recorded alongside it. A finding spelled ``foo.py`` (the
-    stripped spelling) anchors to that single key.
-
-    RED when the platform this git-shaped diff is parsed under is forced to
-    ``"gitlab"`` instead of the detected ``"github"``: verbatim (unstripped)
-    keying then leaves the key spelled ``b/foo.py``, so a finding spelled
-    ``foo.py`` fails closed as ``range_not_in_diff`` instead of being kept.
-    """
+    """Git headers need the git-prefixed policy so canonical findings anchor."""
 
     def test_finding_spelled_without_the_b_prefix_is_kept(self):
         diff = (
@@ -712,188 +547,6 @@ class TestHeaderPathDecoding(ReportPatchesTestBase):
         content = self._read_artifact()
         self.assertIn("Space Path", content)
         self.assertIn("Cafe Path", content)
-
-
-class TestCrlfBodyAndInvalidByte(ReportPatchesTestBase):
-    """The diff file is read with universal newlines and ``errors="replace"``:
-    a raw CRLF-terminated diff and a byte this repo cannot decode as UTF-8 must
-    neither crash the run nor corrupt the diff oracle a real patch is judged
-    against.
-
-    RED when ``errors="replace"`` is removed from the read: decoding the
-    invalid byte under strict UTF-8 raises ``UnicodeDecodeError``, which is not
-    an ``OSError`` and is not caught — the run crashes instead of returning
-    exit 0.
-    """
-
-    def test_crlf_diff_and_invalid_byte_do_not_crash_and_gate_sees_normalized_text(
-        self,
-    ):
-        diff_bytes = (
-            b"diff --git a/crlf.py b/crlf.py \xff\r\n"
-            b"--- a/crlf.py\r\n"
-            b"+++ b/crlf.py\r\n"
-            b"@@ -1,1 +1,2 @@\r\n"
-            b" line1\r\n"
-            b"+orig content\r\n"
-        )
-        diff_path = self._write_diff_bytes(diff_bytes)
-        finding = {
-            "file": "crlf.py",
-            "line": 2,
-            "end_line": 2,
-            "title": "CRLF",
-            "suggested_fix_code": "changed content",
-        }
-        self._write_findings([finding])
-
-        exit_code, receipt, _, stderr, lines = self._run()
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(len(lines), 1)
-
-        # Read the diff exactly as report_patches.py does, and ask the SAME gate
-        # the script uses, to determine the ground truth rather than assuming it.
-        with open(diff_path, encoding="utf-8", errors="replace") as fh:
-            diff_text = fh.read()
-        self.assertNotIn(
-            "\r",
-            diff_text,
-            "universal newlines already strips CR before the gate ever runs",
-        )
-        valid_lines, line_texts = report_patches._diff_oracle(diff_text)
-        ok, reason = post_review._suggested_fix_gate(
-            finding,
-            apply_range=(2, 2),
-            line_texts=line_texts,
-            valid_lines=valid_lines,
-            path_lookup="crlf.py",
-        )
-        self.assertTrue(ok, f"expected the differing patch to be kept, got {reason!r}")
-        self.assertEqual(receipt["kept"], 1)
-        self.assertEqual(receipt["downgraded"], 0)
-
-    def test_invalid_byte_on_a_content_line_still_yields_a_working_oracle(self):
-        """The invalid byte lands INSIDE a hunk's ``+`` content line this
-        time, not the header — the read-only oracle report_patches.py builds
-        must still work: the byte survives as U+FFFD (``errors="replace"``),
-        not a crash, and the SAME decoded text handed directly to
-        ``post_review.parse_diff_text`` carries the identical replacement
-        character at the identical line — the oracle survives the corruption
-        rather than silently losing that line."""
-        diff_bytes = (
-            b"diff --git a/bad.py b/bad.py\n"
-            b"--- a/bad.py\n"
-            b"+++ b/bad.py\n"
-            b"@@ -1,1 +1,2 @@\n"
-            b" line1\n"
-            b"+orig \xff content\n"
-        )
-        diff_path = self._write_diff_bytes(diff_bytes)
-        finding = {
-            "file": "bad.py",
-            "line": 2,
-            "end_line": 2,
-            "title": "Bad Byte",
-            "suggested_fix_code": "changed content",
-        }
-        self._write_findings([finding])
-
-        exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(receipt["kept"], 1)
-
-        with open(diff_path, encoding="utf-8", errors="replace") as fh:
-            diff_text = fh.read()
-        _, _, _, line_texts = post_review.parse_diff_text("github", diff_text)
-        self.assertIn("�", line_texts[("bad.py", 2)])
-
-
-class TestMissingDiffFailsEveryCandidateClosed(ReportPatchesTestBase):
-    """No diff file on disk: the oracle is ``None``/``None``, so every candidate
-    fails closed as ``no_diff_oracle`` and the artifact says so — but the run
-    still succeeds (exit 0, file written).
-
-    RED when a missing diff is treated as empty dicts (``{}``/``{}``) instead of
-    ``None``: an empty ``valid_lines`` dict passes the ``isinstance(..., dict)``
-    oracle-presence check, so ``_range_is_valid`` runs and reports
-    ``range_not_in_diff`` instead of ``no_diff_oracle``.
-    """
-
-    def test_missing_diff_downgrades_every_candidate_as_no_diff_oracle(self):
-        self._write_findings(
-            [
-                {
-                    "file": "a.py",
-                    "line": 1,
-                    "end_line": 1,
-                    "title": "A",
-                    "suggested_fix_code": "x",
-                },
-                {
-                    "file": "b.py",
-                    "line": 5,
-                    "end_line": 5,
-                    "title": "B",
-                    "suggested_fix_code": "y",
-                },
-            ]
-        )
-
-        exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(receipt["ok"], True)
-        self.assertEqual(receipt["oracle"], "missing")
-        self.assertEqual(receipt["candidates"], 2)
-        self.assertEqual(receipt["kept"], 0)
-        self.assertEqual(receipt["downgraded"], 2)
-        self.assertEqual(receipt["reasons"], {"no_diff_oracle": 2})
-        self.assertIn(
-            "The pinned diff file was missing or empty, so every candidate "
-            "patch failed closed (`no_diff_oracle`).",
-            self._read_artifact(),
-        )
-
-    def test_empty_diff_file_downgrades_every_candidate_as_no_diff_oracle(self):
-        """A 0-byte diff file — Phase 2's documented diff-producer failure mode —
-        must take the exact same disclosed, fail-closed path as a MISSING file,
-        not be silently parsed as a present-but-empty diff.
-
-        RED when the post-read emptiness check is removed: an empty string is
-        still a valid (if useless) diff to ``_diff_oracle``, so ``oracle_state``
-        becomes ``"ok"`` and every candidate downgrades as ``range_not_in_diff``
-        instead of ``no_diff_oracle`` — a different, undisclosed reason for the
-        same underlying failure.
-        """
-        self._write_diff("")
-        self._write_findings(
-            [
-                {
-                    "file": "a.py",
-                    "line": 1,
-                    "end_line": 1,
-                    "title": "A",
-                    "suggested_fix_code": "x",
-                }
-            ]
-        )
-
-        exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(receipt["ok"], True)
-        self.assertEqual(receipt["oracle"], "missing")
-        self.assertEqual(receipt["candidates"], 1)
-        self.assertEqual(receipt["kept"], 0)
-        self.assertEqual(receipt["downgraded"], 1)
-        self.assertEqual(receipt["reasons"], {"no_diff_oracle": 1})
-        self.assertIn(
-            "The pinned diff file was missing or empty, so every candidate "
-            "patch failed closed (`no_diff_oracle`).",
-            self._read_artifact(),
-        )
 
 
 class TestZeroCandidates(ReportPatchesTestBase):
@@ -2065,7 +1718,7 @@ class TestResetRunState(ReportPatchesTestBase):
 
     def test_stale_state_from_a_prior_gate_call_does_not_leak_into_the_receipt(self):
         poison = {"file": "poison.py", "line": 1, "suggested_fix_code": ""}
-        report_patches._gated_finding(poison, (1, 1), {}, {})
+        report_patches._gated_finding(poison, (1, 1), diff_facts({}, line_texts={}))
         self.assertEqual(report_patches._FIX_COUNTS["downgraded"], 1)  # sanity: dirtied
 
         diff = (
@@ -2095,6 +1748,110 @@ class TestResetRunState(ReportPatchesTestBase):
         self.assertEqual(receipt["kept"], 1)
         self.assertEqual(receipt["downgraded"], 0)
         self.assertEqual(receipt["reasons"], {})
+
+
+@pytest.mark.parametrize(
+    "diff_text, rows, kept, downgraded, reasons, included, excluded",
+    [
+        pytest.param(
+            "--- a/real/x.py\n+++ a/real/x.py\n@@ -1,1 +1,2 @@\n def f():\n+    original\n",
+            [
+                ("a/real/x.py", 2, "Verbatim Kept", "    changed"),
+                ("real/x.py", 2, "Verbatim Stripped Not In Diff", "    other"),
+            ],
+            1,
+            1,
+            {"range_not_in_diff": 1},
+            ["Verbatim Kept"],
+            ["Verbatim Stripped Not In Diff"],
+            id="verbatim",
+        ),
+        pytest.param(
+            "--- b/real/x.py\n+++ b/real/x.py\n@@ -1,2 +1,3 @@\ndiff --git a/real/x.py b/real/x.py\n def f():\n+    original\n",
+            [("real/x.py", 3, "Phantom Stripped Path", "    changed")],
+            0,
+            1,
+            {"range_not_in_diff": 1},
+            [],
+            ["Phantom Stripped Path"],
+            id="body-marker",
+        ),
+        pytest.param(
+            "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,1 +1,2 @@\n def f():\n+    original\n",
+            [("x.py", 2, "Git Shaped", "    changed")],
+            1,
+            0,
+            {},
+            ["Git Shaped"],
+            [],
+            id="git-prefixed",
+        ),
+        pytest.param(
+            "diff --git b/foo.py b/foo.py\n--- b/foo.py\n+++ b/foo.py\n@@ -1,1 +1,2 @@\n line1\n+CURRENT_TOP\ndiff --git foo.py foo.py\n--- foo.py\n+++ foo.py\n@@ -1,1 +1,2 @@\n line1\n+DIFFERENT_TEXT\n",
+            [
+                ("b/foo.py", 2, "Real Subdir No-Op", "CURRENT_TOP"),
+                ("foo.py", 2, "Top File Kept", "CHANGED_TEXT"),
+            ],
+            1,
+            1,
+            {"no_diff_oracle": 1},
+            ["Top File Kept"],
+            ["Real Subdir No-Op"],
+            id="noprefix",
+        ),
+        pytest.param(
+            'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n--- "a/caf\\303\\251.py"\n+++ "b/caf\\303\\251.py"\n@@ -1,1 +1,2 @@\n line1\n+orig\n',
+            [("café.py", 2, "Quoted First File", "changed")],
+            1,
+            0,
+            {},
+            ["Quoted First File"],
+            [],
+            id="quoted-first",
+        ),
+    ],
+)
+def test_report_producer_selection(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    diff_text: str,
+    rows: list[tuple[str, int, str, str]],
+    kept: int,
+    downgraded: int,
+    reasons: dict[str, int],
+    included: list[str],
+    excluded: list[str],
+) -> None:
+    sha = "abc1234"
+    findings = [
+        {
+            "file": path,
+            "line": line,
+            "end_line": line,
+            "title": title,
+            "suggested_fix_code": code,
+        }
+        for path, line, title, code in rows
+    ]
+    (tmp_path / f"code-gauntlet-diff-{sha}.patch").write_text(
+        diff_text, encoding="utf-8"
+    )
+    (tmp_path / f"code-gauntlet-findings-{sha}.json").write_text(
+        json.dumps(findings), encoding="utf-8"
+    )
+    assert report_patches.main(["--output-dir", str(tmp_path), "--head-sha", sha]) == 0
+    captured = capsys.readouterr()
+    assert len(captured.out.splitlines()) == 1
+    receipt = json.loads(captured.out)
+    assert receipt["candidates"] == len(rows)
+    assert receipt["kept"] == kept
+    assert receipt["downgraded"] == downgraded
+    assert receipt["reasons"] == reasons
+    content = (tmp_path / f"code-gauntlet-patches-{sha}.md").read_text(encoding="utf-8")
+    for title in included:
+        assert title in content
+    for title in excluded:
+        assert title not in content
 
 
 if __name__ == "__main__":

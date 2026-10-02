@@ -28,8 +28,9 @@ repos:
       # line with (and would normalise a captured tail of "} \n"); end-of-file-fixer is
       # a no-op on the files as they stand and is excluded so a later capture's final
       # newlines are not normalised either (a tail of "}\n\n" would collapse silently).
-      # What reports a loss is tests/test_post_review.py::TestGlabFixtureBytes for the
-      # diffs and TestSliceInputRecovery for the JSON captures.
+      # What reports a loss is test_fixture_blank_context_space and
+      # test_fixture_final_newline in tests/test_diff.py for the diffs,
+      # and TestSliceInputRecovery for the JSON captures.
       - id: end-of-file-fixer
         exclude: "^tests/fixtures/(glab_diff/.*\\.diff|verify_slice_recovery/.*\\.json)$"
       - id: trailing-whitespace

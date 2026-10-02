@@ -36,7 +36,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from gauntlet import diff as diff_api
 from gauntlet import proc
+
+from tests.support.diff import diff_facts
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -174,7 +177,7 @@ GH_SKIP_WARNINGS = [
 # hand-built, not derived from an actual unified diff, because these findings are
 # synthetic fixture data with no diff of their own (unlike tests/test_post_review.py's
 # GH_DIFF_INDENTED, which backs real parsed-diff assertions). `valid_lines` covers
-# every line any finding above cites, matching `_range_is_valid`'s real multiline
+# every line any finding above cites, matching `range_is_valid`'s real multiline
 # check — including routes.py:21 (the fourth finding), present so its downgrade is
 # provably `missing_end_line` and not a `no_diff_oracle` in disguise; `line_texts`
 # only needs the one line a `suggested_fix_code` actually gates against on the
@@ -230,36 +233,32 @@ _GL_VALID_LINES: dict[tuple[str, int], int | None] = {
 _GL_LINE_TEXTS: dict[tuple[str, int], str] = {}
 
 
+_GH_FACTS = diff_facts(_GH_VALID_LINES, line_texts=_GH_LINE_TEXTS)
+_GL_FACTS = diff_facts(_GL_VALID_LINES, line_texts=_GL_LINE_TEXTS)
+
+
 def _reset_post_review():
     post_review.reset_run_state()
     post_review.DRY_RUN = False
 
 
 def _github_comment(
-    f, valid_lines=_GH_VALID_LINES, line_texts=_GH_LINE_TEXTS, *, demote_reason=None
+    f, facts: diff_api.DiffFacts | None = _GH_FACTS, *, demote_reason=None
 ):
-    """Mirror post_github's per-finding comment construction exactly.
+    """Mirror the poster's apply range and gate to keep fixture fences real.
 
-    Including the apply-check: `apply_range` is computed by the REAL
-    `_github_apply_range` (issue #63 D2 / #223 — post_github's own decision,
-    called rather than copied, so this mirror cannot drift into fiction that
-    stays green — this is #224's exact ask), and the finding is gated through
-    `_gated_finding` before `render_comment_body` ever sees it. A finding
-    whose `suggested_fix_code` this gate would downgrade must render WITHOUT
-    its fence here too, or this fixture is fiction the real poster never
-    produces.
-
-    *demote_reason* (#223) threads a set-level overlap decision through to
-    `_gated_finding` exactly as `post_github`'s own render loop does.
-    """
+    The overlap decision is supplied by the same pre-pass as the poster."""
     line = f["line"]
-    filepath = post_review.diff_path_spelling(valid_lines, f["file"], line)
+    filepath = diff_api.diff_path_spelling(facts, f["file"], line)
     end_line = f.get("end_line")
     multiline, apply_range = post_review._github_apply_range(
-        valid_lines, filepath, line, end_line
+        facts, filepath, line, end_line
     )
     gated = post_review._gated_finding(
-        f, apply_range, valid_lines, line_texts, demote_reason=demote_reason
+        f,
+        apply_range,
+        facts,
+        demote_reason=demote_reason,
     )
     composed = post_review.compose_inline_body(
         post_review._render_group_sections(gated, []),
@@ -279,49 +278,34 @@ def _github_comment(
     return comment
 
 
-def _skip_entry(f, valid_lines, line_texts):
-    """Return the skipped-section entry for *f*, or None when it survives.
+def _skip_entry(f, facts):
+    """Share the poster's skip order and diagnostics between both mirrors.
 
-    The ONE skip decision both builders share, in the order post_github and
-    post_gitlab each make it: no ``line`` at all, then a line the diff
-    doesn't touch — real ``diff_path_spelling``/``is_line_valid`` resolution,
-    real ``warn_skip`` prose (diag included; *valid_lines* is always a dict
-    here, never the validation-skipped ``None``, so the diag is unconditional
-    unlike the poster's own defensive guard), real ``_degraded_entry`` (#234).
-    GitHub's single interleaved loop and GitLab's pre-partition pass call
-    this at exactly the point their real counterparts would — only the
-    per-finding DECISION is shared; each builder keeps its own loop shape.
-    """
+    GitHub interleaves skips and renders; GitLab partitions before rendering.
+    Present partial defaults keep the fixture diagnostics unconditional."""
     line = f.get("line")
     if line is None:
         post_review.warn_skip(
             f"Finding '{f.get('title', '?')}' has no line number — skipping."
         )
-        return post_review._degraded_entry(
-            f.get("file", "?"), None, f, valid_lines, line_texts
-        )
-    filepath = post_review.diff_path_spelling(valid_lines, f["file"], line)
-    if not post_review.is_line_valid(valid_lines, filepath, line):
-        vl = post_review.valid_lines_for_file(valid_lines, filepath)
+        return post_review._degraded_entry(f.get("file", "?"), None, f, facts)
+    filepath = diff_api.diff_path_spelling(facts, f["file"], line)
+    if not diff_api.is_line_valid(facts, filepath, line):
+        vl = diff_api.valid_lines_for_file(facts, filepath)
         post_review.warn_skip(
             f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
             f"— line not found in diff. Valid lines for this file: {vl}"
         )
-        return post_review._degraded_entry(filepath, line, f, valid_lines, line_texts)
+        return post_review._degraded_entry(filepath, line, f, facts)
     return None
 
 
-def _github_overlap_losers(findings, valid_lines, line_texts):
-    """Mirror post_github's overlap pre-pass (#223) — calls the REAL
-    `_github_overlap_records` (the SAME candidate predicate and index basis
-    post_github itself uses, issue #224's exact ask), never a hand-rolled
-    reimplementation. This mirror models no consolidation (the module
-    docstring), so each finding becomes its own single-member group in array
-    order — already `consolidate_delivery` group order — before the real
-    builder ever sees it.
-    """
+def _github_overlap_losers(findings, facts):
+    """Use the poster's candidate predicate and group index basis.
+
+    This mirror has no consolidation: singleton groups retain finding order."""
     groups = [{"primary": f, "corroborators": []} for f in findings]
-    records = post_review._github_overlap_records(groups, valid_lines, line_texts)
+    records = post_review._github_overlap_records(groups, facts)
     return post_review._overlap_losers(records)
 
 
@@ -332,37 +316,26 @@ def build_reference_github_payload(
     repo="astro",
     pr_number=1234,
     review_body="Automated review summary.",
-    valid_lines=_GH_VALID_LINES,
-    line_texts=_GH_LINE_TEXTS,
+    facts: diff_api.DiffFacts | None = _GH_FACTS,
 ):
-    """Build a GitHub dry-run payload via post_review's real capture path.
+    """Keep skip and downgrade warnings interleaved in finding order.
 
-    ``post_github`` decides comment-vs-skipped and renders in ONE loop, so its
-    skip and downgrade warnings interleave in *findings* order (#234) — this
-    walks the same real check (:func:`_skip_entry`) in the same order rather
-    than trusting a caller to have pre-partitioned. Whatever ``_skip_entry``
-    degrades goes straight to the skipped section; every survivor renders via
-    ``_github_comment``, which already reproduces the poster's per-comment
-    gate (and so contributes its own downgrade warning, in place, when the
-    fence fails). *skip_warnings* stays for the legacy fixture, whose skip
-    string never had a backing finding to derive from — it is appended AFTER
-    the loop, never interleaved with it.
-    """
+    Survivors use the poster's gate before rendering. The fixture's extra
+    skip warnings have no backing findings, so they follow the loop."""
     _reset_post_review()
     post_review.DRY_RUN = True
-    losers = _github_overlap_losers(findings, valid_lines, line_texts)
+    losers = _github_overlap_losers(findings, facts)
     comments = []
     skipped_groups = []  # singleton groups; this mirror models no consolidation
     for index, f in enumerate(findings):
-        entry = _skip_entry(f, valid_lines, line_texts)
+        entry = _skip_entry(f, facts)
         if entry is not None:
             skipped_groups.append([entry])
             continue
         comments.append(
             _github_comment(
                 f,
-                valid_lines,
-                line_texts,
+                facts,
                 demote_reason=(
                     post_review._FIX_OVERLAPS_KEPT_FENCE if index in losers else None
                 ),
@@ -391,33 +364,23 @@ def build_reference_github_payload(
 
 def _gitlab_discussion(
     f,
-    new_files=None,
-    valid_lines=_GL_VALID_LINES,
-    line_texts=_GL_LINE_TEXTS,
+    facts: diff_api.DiffFacts | None = _GL_FACTS,
     *,
     demote_reason=None,
     sha=None,
 ):
-    """Mirror post_gitlab's per-finding discussion payload — resolved path and
-    OLD-side line number included, matching what the real poster sends.
-    Rename-aware ``old_path`` is NOT mirrored: this mirror has no rename
-    model, so a modified file's ``old_path`` is always the same resolved path
-    as its ``new_path``.
+    """Use the poster's fence offsets and old-side line addressing.
 
-    A GitLab position is always single-line, but a ```suggestion:-m+n header
-    widens what one click replaces (#219). The apply range and the header's
-    offsets are both taken from `_gitlab_anchored` — post_gitlab's own decision,
-    called rather than copied, so this mirror cannot drift into fiction that
-    stays green.
-
-    *demote_reason* (#223) threads a set-level overlap decision through to
-    `_gitlab_anchored` exactly as `post_gitlab`'s own `body_factory` does.
-    """
+    This mirror has no rename model, so modified old_path equals new_path.
+    The overlap decision is supplied by the same pre-pass as the poster."""
     line = f["line"]
     gated, offsets = post_review._gitlab_anchored(
-        f, line, valid_lines, line_texts, demote_reason=demote_reason
+        f,
+        line,
+        facts,
+        demote_reason=demote_reason,
     )
-    filepath = post_review.diff_path_spelling(valid_lines, f["file"], line)
+    filepath = diff_api.diff_path_spelling(facts, f["file"], line)
     position = {
         "position_type": "text",
         "base_sha": _GL_BASE,
@@ -428,12 +391,12 @@ def _gitlab_discussion(
     }
     # An UNCHANGED (context) line anchors on both sides; an added line has no
     # old side, and the key is omitted rather than sent as null.
-    old_line = post_review.old_line_for(valid_lines, filepath, line)
+    old_line = diff_api.old_line_for(facts, filepath, line)
     if old_line is not None:
         position["old_line"] = old_line
     # A newly-added file has no old version at all — old_path is omitted for
     # it exactly as the real poster omits it, via the same is_new_file call.
-    if not post_review.is_new_file(new_files, filepath):
+    if not diff_api.is_new_file(facts, filepath):
         position["old_path"] = filepath
     key = post_review.finding_key(
         filepath,
@@ -454,24 +417,18 @@ def _gitlab_discussion(
     }
 
 
-def _gitlab_overlap_losers(remaining, valid_lines, line_texts):
-    """Mirror post_gitlab's overlap pre-pass (#223) over `remaining` — the
-    findings that survive the skip pre-partition, in the same order the real
-    poster's `remaining` list carries them — calling the REAL
-    `_gitlab_overlap_records` (the SAME candidate predicate and index basis
-    post_gitlab itself uses) rather than a hand-rolled copy. Wrapping each
-    survivor as its own single-member `(filepath, group)` pair — never
-    feeding it the unfiltered `findings` list — is what keeps this mirror's
-    index basis identical to post_gitlab's own `remaining`.
-    """
+def _gitlab_overlap_losers(remaining, facts):
+    """Use the poster's candidate predicate on the pre-partitioned survivors.
+
+    Skipped findings cannot occupy an index in the survivor list."""
     pairs = [
         (
-            post_review.diff_path_spelling(valid_lines, f.get("file", "?"), f["line"]),
+            diff_api.diff_path_spelling(facts, f.get("file", "?"), f["line"]),
             {"primary": f, "corroborators": []},
         )
         for f in remaining
     ]
-    records = post_review._gitlab_overlap_records(pairs, valid_lines, line_texts)
+    records = post_review._gitlab_overlap_records(pairs, facts)
     return post_review._overlap_losers(records)
 
 
@@ -480,34 +437,20 @@ def build_reference_gitlab_payload(
     project="gitlab-org/gitlab",
     mr_iid=999,
     review_body="Automated review summary.",
-    valid_lines=_GL_VALID_LINES,
-    line_texts=_GL_LINE_TEXTS,
-    new_files=None,
+    facts: diff_api.DiffFacts | None = _GL_FACTS,
     sha=None,
 ):
-    """Build a GitLab dry-run payload via post_review's real capture path.
+    """Partition skips before composing the summary and rendering survivors.
 
-    ``post_gitlab`` decides every skip BEFORE the summary note is composed —
-    a full pass ahead of any surviving finding's render, unlike GitHub's
-    single interleaved loop (#234). That is the true positional guarantee:
-    NOT "every skip warning precedes every downgrade warning" — a SKIPPED
-    finding's own ``_degraded_entry`` downgrade (when its fence also fails)
-    fires inside this same first pass, in findings order, so it can precede
-    a LATER finding's skip warning. Only a SURVIVING finding's downgrade (via
-    ``_gitlab_discussion``'s own gate) is guaranteed to fire after every
-    first-pass warning, in the second pass. This walks the same real check
-    (:func:`_skip_entry`) over ALL of *findings* first; only what survives
-    reaches ``_gitlab_discussion``. Unlike the GitHub builder, no caller ever
-    needs a legacy ``skip_warnings`` injection here — ``gitlab_shape.json``
-    was always fully anchorable — so this builder never grew that parameter.
-    """
+    A degraded entry can downgrade during partition, in finding order.
+    Only surviving fence downgrades wait until the render pass."""
     _reset_post_review()
     owner, _, repo = project.rpartition("/")
     post_review.DRY_RUN = True
     skipped_groups = []  # singleton groups; this mirror models no consolidation
     remaining = []  # findings that reach the inline discussion loop
     for f in findings:
-        entry = _skip_entry(f, valid_lines, line_texts)
+        entry = _skip_entry(f, facts)
         if entry is not None:
             skipped_groups.append([entry])
             continue
@@ -525,16 +468,14 @@ def build_reference_gitlab_payload(
         gitlab_note_request(ReviewTarget(owner, repo, mr_iid), {"body": body}),
         forge=FakeGitLab(),
     )
-    losers = _gitlab_overlap_losers(remaining, valid_lines, line_texts)
+    losers = _gitlab_overlap_losers(remaining, facts)
     for index, f in enumerate(remaining):
         post_review.post_json(
             gitlab_discussion_request(
                 ReviewTarget(owner, repo, mr_iid),
                 _gitlab_discussion(
                     f,
-                    new_files=new_files,
-                    valid_lines=valid_lines,
-                    line_texts=line_texts,
+                    facts=facts,
                     sha=sha,
                     demote_reason=(
                         post_review._FIX_OVERLAPS_KEPT_FENCE
@@ -1008,9 +949,10 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         }
         real = self._run_main(findings_data, GH_DIFF_PREFIXED_PATH)
 
-        valid_lines, _, _, line_texts = post_review.parse_diff_text(
-            "github", GH_DIFF_PREFIXED_PATH
+        parsed_facts = diff_api.parse_diff(
+            GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
+        valid_lines = parsed_facts.valid_lines
         self.assertTrue(valid_lines)
         self.assertIn(("src/edited.py", 2), valid_lines)
 
@@ -1020,8 +962,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             owner=GH_PREFIXED_PATH_OWNER,
             repo=GH_PREFIXED_PATH_REPO,
             pr_number=GH_PREFIXED_PATH_PR,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1040,8 +981,8 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         }
         real = self._run_main(findings_data, GH_DIFF_TWO_FILE_COLLISION)
 
-        valid_lines, _, _, line_texts = post_review.parse_diff_text(
-            "github", GH_DIFF_TWO_FILE_COLLISION
+        parsed_facts = diff_api.parse_diff(
+            GH_DIFF_TWO_FILE_COLLISION, policy=diff_api.posting_policy("github")
         )
         mirror = build_reference_github_payload(
             [GH_TWO_FILE_COLLISION_FINDING],
@@ -1049,8 +990,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             owner=GH_COLLISION_OWNER,
             repo=GH_COLLISION_REPO,
             pr_number=GH_COLLISION_PR,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1081,17 +1021,15 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             ],
         )
 
-        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
-            "gitlab", GL_DIFF_PREFIXED_PATH
+        parsed_facts = diff_api.parse_diff(
+            GL_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("gitlab")
         )
         mirror = build_reference_gitlab_payload(
             GL_PREFIXED_PATH_FINDINGS,
             project=GL_PREFIXED_PATH_PROJECT,
             mr_iid=GL_PREFIXED_PATH_MR_IID,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
-            new_files=new_files,
             sha=_GH_SHA,
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1117,8 +1055,8 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         }
         real = self._run_main(findings_data, GH_DIFF_PREFIXED_PATH)
 
-        valid_lines, _, _, line_texts = post_review.parse_diff_text(
-            "github", GH_DIFF_PREFIXED_PATH
+        parsed_facts = diff_api.parse_diff(
+            GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
         mirror = build_reference_github_payload(
             GH_SKIPPED_SECTION_FINDINGS,
@@ -1126,8 +1064,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             owner=GH_SKIPPED_SECTION_OWNER,
             repo=GH_SKIPPED_SECTION_REPO,
             pr_number=GH_SKIPPED_SECTION_PR,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1194,8 +1131,8 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             "findings": [finding],
         }
         real = self._run_main(findings_data, GH_DIFF_PREFIXED_PATH)
-        valid_lines, _, _, line_texts = post_review.parse_diff_text(
-            "github", GH_DIFF_PREFIXED_PATH
+        parsed_facts = diff_api.parse_diff(
+            GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
         mirror = build_reference_github_payload(
             [finding],
@@ -1204,8 +1141,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             repo="widgets",
             pr_number=324,
             review_body=review_body,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
+            facts=parsed_facts,
         )
         self.assertEqual(real, mirror)
         self.assertIn("_1 of these 1 finding is not shown:", real["payload"]["body"])
@@ -1228,8 +1164,8 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             "findings": [finding],
         }
         real = self._run_main(findings_data, GH_DIFF_PREFIXED_PATH)
-        valid_lines, _, _, line_texts = post_review.parse_diff_text(
-            "github", GH_DIFF_PREFIXED_PATH
+        parsed_facts = diff_api.parse_diff(
+            GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
         mirror = build_reference_github_payload(
             [finding],
@@ -1237,8 +1173,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             owner="acme",
             repo="widgets",
             pr_number=325,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
+            facts=parsed_facts,
         )
         self.assertEqual(real, mirror)
         self.assertEqual(len(real["payload"]["comments"]), 1)
@@ -1279,17 +1214,15 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
                 }
             ],
         )
-        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
-            "gitlab", GL_DIFF_PREFIXED_PATH
+        parsed_facts = diff_api.parse_diff(
+            GL_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("gitlab")
         )
         mirror = build_reference_gitlab_payload(
             [finding],
             project="acme/widgets",
             mr_iid=326,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
-            new_files=new_files,
             sha=_GH_SHA,
+            facts=parsed_facts,
         )
         self.assertEqual(real, mirror)
         self.assertEqual(len(real["discussions"]), 1)
@@ -1322,17 +1255,15 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             ],
         )
 
-        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
-            "gitlab", GL_DIFF_FENCED_SUGGESTION
+        parsed_facts = diff_api.parse_diff(
+            GL_DIFF_FENCED_SUGGESTION, policy=diff_api.posting_policy("gitlab")
         )
         mirror = build_reference_gitlab_payload(
             GL_FENCED_FINDINGS,
             project=GL_FENCED_PROJECT,
             mr_iid=GL_FENCED_MR_IID,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
-            new_files=new_files,
             sha=_GH_SHA,
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1408,18 +1339,16 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
                 }
             ],
         )
-        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
-            "gitlab", GL_DIFF_PREFIXED_PATH
+        parsed_facts = diff_api.parse_diff(
+            GL_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("gitlab")
         )
         mirror = build_reference_gitlab_payload(
             [finding],
             project="acme/widgets",
             mr_iid=324,
             review_body=review_body,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
-            new_files=new_files,
             sha=_GH_SHA,
+            facts=parsed_facts,
         )
         self.assertEqual(real, mirror)
         self.assertIn("_1 of these 1 finding is not shown:", real["summary"]["body"])
@@ -1445,8 +1374,8 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         }
         real = self._run_main(findings_data, GH_DIFF_OVERLAP)
 
-        valid_lines, _, _, line_texts = post_review.parse_diff_text(
-            "github", GH_DIFF_OVERLAP
+        parsed_facts = diff_api.parse_diff(
+            GH_DIFF_OVERLAP, policy=diff_api.posting_policy("github")
         )
         mirror = build_reference_github_payload(
             GH_OVERLAP_FINDINGS,
@@ -1454,8 +1383,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             owner=GH_OVERLAP_OWNER,
             repo=GH_OVERLAP_REPO,
             pr_number=GH_OVERLAP_PR,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1525,17 +1453,15 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             ],
         )
 
-        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
-            "gitlab", GL_DIFF_OVERLAP
+        parsed_facts = diff_api.parse_diff(
+            GL_DIFF_OVERLAP, policy=diff_api.posting_policy("gitlab")
         )
         mirror = build_reference_gitlab_payload(
             GL_OVERLAP_FINDINGS,
             project=GL_OVERLAP_PROJECT,
             mr_iid=GL_OVERLAP_MR_IID,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
-            new_files=new_files,
             sha=_GH_SHA,
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1798,7 +1724,7 @@ class TestFixtureFidelity(unittest.TestCase):
             ("app/models/user.rb", 28): "    render p",
         }
         discussion = _gitlab_discussion(
-            finding, valid_lines=valid_lines, line_texts=line_texts
+            finding, facts=diff_facts(valid_lines, line_texts=line_texts)
         )
         self.assertIn("```suggestion:-0+1", discussion["body"])
         self.assertEqual(discussion["position"]["new_line"], 27)
@@ -1812,8 +1738,8 @@ class TestFixtureFidelity(unittest.TestCase):
         self.assertEqual(_load_fixture(GITLAB_FIXTURE), expected)
 
     def test_github_prefixed_path_fixture_matches_post_review(self):
-        valid_lines, _, _, line_texts = post_review.parse_diff_text(
-            "github", GH_DIFF_PREFIXED_PATH
+        parsed_facts = diff_api.parse_diff(
+            GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
         expected = build_reference_github_payload(
             GH_PREFIXED_PATH_FINDINGS,
@@ -1821,28 +1747,25 @@ class TestFixtureFidelity(unittest.TestCase):
             owner=GH_PREFIXED_PATH_OWNER,
             repo=GH_PREFIXED_PATH_REPO,
             pr_number=GH_PREFIXED_PATH_PR,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITHUB_PREFIXED_PATH_FIXTURE), expected)
 
     def test_gitlab_prefixed_path_fixture_matches_post_review(self):
-        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
-            "gitlab", GL_DIFF_PREFIXED_PATH
+        parsed_facts = diff_api.parse_diff(
+            GL_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("gitlab")
         )
         expected = build_reference_gitlab_payload(
             GL_PREFIXED_PATH_FINDINGS,
             project=GL_PREFIXED_PATH_PROJECT,
             mr_iid=GL_PREFIXED_PATH_MR_IID,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
-            new_files=new_files,
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITLAB_PREFIXED_PATH_FIXTURE), expected)
 
     def test_github_skipped_section_fixture_matches_post_review(self):
-        valid_lines, _, _, line_texts = post_review.parse_diff_text(
-            "github", GH_DIFF_PREFIXED_PATH
+        parsed_facts = diff_api.parse_diff(
+            GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
         expected = build_reference_github_payload(
             GH_SKIPPED_SECTION_FINDINGS,
@@ -1850,28 +1773,25 @@ class TestFixtureFidelity(unittest.TestCase):
             owner=GH_SKIPPED_SECTION_OWNER,
             repo=GH_SKIPPED_SECTION_REPO,
             pr_number=GH_SKIPPED_SECTION_PR,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITHUB_SKIPPED_SECTION_FIXTURE), expected)
 
     def test_gitlab_fenced_suggestion_fixture_matches_post_review(self):
-        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
-            "gitlab", GL_DIFF_FENCED_SUGGESTION
+        parsed_facts = diff_api.parse_diff(
+            GL_DIFF_FENCED_SUGGESTION, policy=diff_api.posting_policy("gitlab")
         )
         expected = build_reference_gitlab_payload(
             GL_FENCED_FINDINGS,
             project=GL_FENCED_PROJECT,
             mr_iid=GL_FENCED_MR_IID,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
-            new_files=new_files,
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITLAB_FENCED_SUGGESTION_FIXTURE), expected)
 
     def test_github_overlap_demotion_fixture_matches_post_review(self):
-        valid_lines, _, _, line_texts = post_review.parse_diff_text(
-            "github", GH_DIFF_OVERLAP
+        parsed_facts = diff_api.parse_diff(
+            GH_DIFF_OVERLAP, policy=diff_api.posting_policy("github")
         )
         expected = build_reference_github_payload(
             GH_OVERLAP_FINDINGS,
@@ -1879,22 +1799,19 @@ class TestFixtureFidelity(unittest.TestCase):
             owner=GH_OVERLAP_OWNER,
             repo=GH_OVERLAP_REPO,
             pr_number=GH_OVERLAP_PR,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITHUB_OVERLAP_DEMOTION_FIXTURE), expected)
 
     def test_gitlab_overlap_demotion_fixture_matches_post_review(self):
-        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
-            "gitlab", GL_DIFF_OVERLAP
+        parsed_facts = diff_api.parse_diff(
+            GL_DIFF_OVERLAP, policy=diff_api.posting_policy("gitlab")
         )
         expected = build_reference_gitlab_payload(
             GL_OVERLAP_FINDINGS,
             project=GL_OVERLAP_PROJECT,
             mr_iid=GL_OVERLAP_MR_IID,
-            valid_lines=valid_lines,
-            line_texts=line_texts,
-            new_files=new_files,
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITLAB_OVERLAP_DEMOTION_FIXTURE), expected)
 

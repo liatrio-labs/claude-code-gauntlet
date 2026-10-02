@@ -18,7 +18,6 @@ MIGRATING_PYTHON = {
     "numstat.py",
     "stale.py",
     "shared_context.py",
-    "diff.py",
     "style_hook.py",
     "output_dir.py",
     "contract_gen.py",
