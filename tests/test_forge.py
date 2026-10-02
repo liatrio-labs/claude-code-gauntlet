@@ -528,25 +528,21 @@ def test_origin_authority_validation_preserves_lexical_slug(stdout, host, monkey
     assert forge.remote_slug(remote) == forge.RepoSlug("o", "r")
 
 
+@pytest.mark.parametrize("host", ["github.com", "gitlab.com"])
 @pytest.mark.parametrize(
-    "url, expected",
+    "template, expected",
     [
-        ("git@github.com#@evil.example:o/r", forge.RepoSlug("o", "r")),
-        ("github.com?@evil.example:o/r", forge.RepoSlug("o", "r")),
-        ("ssh://git@github.com#@evil.example/o/r", forge.RepoSlug("o", "r")),
-        ("ssh://github.com?@evil.example/o/r", forge.RepoSlug("o", "r")),
-        ("git@github.com#.evil.example:o/r", forge.RepoSlug("o", "r")),
-        ("git@gitlab.com#@evil.example:o/r", forge.RepoSlug("o", "r")),
-        ("gitlab.com?@evil.example:o/r", forge.RepoSlug("o", "r")),
-        ("ssh://git@gitlab.com#@evil.example/o/r", forge.RepoSlug("o", "r")),
-        ("ssh://gitlab.com?@evil.example/o/r", forge.RepoSlug("o", "r")),
-        ("git@gitlab.com#.evil.example:o/r", forge.RepoSlug("o", "r")),
+        ("git@{host}#@evil.example:o/r", forge.RepoSlug("o", "r")),
+        ("{host}?@evil.example:o/r", forge.RepoSlug("o", "r")),
+        ("ssh://git@{host}#@evil.example/o/r", forge.RepoSlug("o", "r")),
+        ("ssh://{host}?@evil.example/o/r", forge.RepoSlug("o", "r")),
+        ("git@{host}#.evil.example:o/r", forge.RepoSlug("o", "r")),
     ],
 )
 def test_ssh_authority_delimiters_preserve_slug(
-    url: str, expected: forge.RepoSlug
+    host: str, template: str, expected: forge.RepoSlug
 ) -> None:
-    assert forge.remote_slug(forge.parse_remote(url)) == expected
+    assert forge.remote_slug(forge.parse_remote(template.format(host=host))) == expected
 
 
 @pytest.mark.parametrize(
@@ -591,100 +587,188 @@ def test_remote_classification(url, expected):
 
 
 @pytest.mark.parametrize(
-    "url, expected",
+    "url, expected, hostname",
     [
-        pytest.param("git@github.com:owner/repo.git", ("owner", "repo"), id="scp"),
         pytest.param(
-            "alice@host:group/sub/repo.git", ("group", "sub/repo"), id="subgroups"
+            "git@github.com:owner/repo.git", ("owner", "repo"), "github.com", id="scp"
         ),
-        pytest.param("https://host/owner/repo", ("owner", "repo"), id="no-suffix"),
-        pytest.param("ssh://git@host/owner/repo.git", ("owner", "repo"), id="ssh-url"),
         pytest.param(
-            "ssh://git@host:2222/owner/repo.git", ("owner", "repo"), id="ssh-port"
+            "alice@host:group/sub/repo.git",
+            ("group", "sub/repo"),
+            "host",
+            id="subgroups",
         ),
-        pytest.param("git://host/owner/repo.git", ("owner", "repo"), id="git-scheme"),
         pytest.param(
-            "https://host/owner/repo.git/", ("owner", "repo"), id="one-trailing-slash"
+            "https://host/owner/repo", ("owner", "repo"), "host", id="no-suffix"
+        ),
+        pytest.param(
+            "ssh://git@host/owner/repo.git", ("owner", "repo"), "host", id="ssh-url"
+        ),
+        pytest.param(
+            "ssh://git@host:2222/owner/repo.git",
+            ("owner", "repo"),
+            "host",
+            id="ssh-port",
+        ),
+        pytest.param(
+            "git://host/owner/repo.git", ("owner", "repo"), "host", id="git-scheme"
+        ),
+        pytest.param(
+            "https://host/owner/repo.git/",
+            ("owner", "repo"),
+            "host",
+            id="one-trailing-slash",
         ),
         pytest.param(
             "https://host/owner/repo.git//",
             ("owner", "repo.git"),
+            "host",
             id="multiple-trailing-slashes",
         ),
         pytest.param(
             "https://host/owner/repo.git?query",
             ("owner", "repo.git?query"),
+            "host",
             id="query-tail",
         ),
         pytest.param(
             "https://host/owner/repo.git#fragment",
             ("owner", "repo.git#fragment"),
+            "host",
             id="fragment-tail",
         ),
         pytest.param(
             "https://bad host:bad/owner/repo.git",
             ("owner", "repo"),
+            None,
             id="invalid-authority",
         ),
         pytest.param(
-            "git+ssh://user@host/owner/repo.git", ("owner", "repo"), id="other-scheme"
+            "git+ssh://user@host/owner/repo.git",
+            ("owner", "repo"),
+            "host",
+            id="other-scheme",
         ),
         pytest.param(
-            "HTTPS://HOST/owner/repo.git", ("owner", "repo"), id="uppercase-scheme"
+            "HTTPS://HOST/owner/repo.git",
+            ("owner", "repo"),
+            "host",
+            id="uppercase-scheme",
         ),
         pytest.param(
-            "Https://HOST/owner/repo.git", ("owner", "repo"), id="mixedcase-scheme"
+            "Https://HOST/owner/repo.git",
+            ("owner", "repo"),
+            "host",
+            id="mixedcase-scheme",
         ),
-        pytest.param("github.com:owner/repo.git", None, id="userless-scp"),
-        pytest.param("https://host/owner", None, id="missing-repo"),
-        pytest.param("https://host", None, id="pathless"),
-        pytest.param("not-a-url", None, id="malformed"),
-        pytest.param("git@host:own@er/repo", ("own@er", "repo"), id="scp-at-in-owner"),
-        pytest.param("git@host:a@b/c.git", ("a@b", "c"), id="scp-at-in-owner-suffix"),
         pytest.param(
-            "org-123@git.example.com:team@x/r.git", ("team@x", "r"), id="scp-at-in-team"
+            "github.com:owner/repo.git",
+            ("owner", "repo"),
+            "github.com",
+            id="userless-scp",
+        ),
+        pytest.param(
+            "github.com:o/r", ("o", "r"), "github.com", id="userless-scp-no-suffix"
+        ),
+        pytest.param(
+            "github.com:o/r/",
+            ("o", "r"),
+            "github.com",
+            id="userless-scp-trailing-slash",
+        ),
+        pytest.param(
+            "github.com:o/r.git/",
+            ("o", "r"),
+            "github.com",
+            id="userless-scp-git-trailing-slash",
+        ),
+        pytest.param(
+            "ssh://git@[2001:DB8::1]:2222/owner/repo.git",
+            ("owner", "repo"),
+            "2001:db8::1",
+            id="ssh-ipv6-port",
+        ),
+        pytest.param("git@host:/o/r.git", ("o", "r"), "host", id="absolute-scp-path"),
+        pytest.param(
+            "fixture:token@github.com:owner/repo.git",
+            ("owner", "repo"),
+            None,
+            id="colon-userinfo-scp",
+        ),
+        pytest.param(
+            "x://github.com/owner/repo.git",
+            ("owner", "repo"),
+            "github.com",
+            id="single-letter-scheme",
+        ),
+        pytest.param(
+            "git@[::1]:owner/repo.git", ("owner", "repo"), "::1", id="ipv6-scp"
+        ),
+        pytest.param(
+            "[::1]:owner/repo.git", ("owner", "repo"), "::1", id="ipv6-scp-no-user"
+        ),
+        pytest.param(
+            "git@[::1]:owner/repo", ("owner", "repo"), "::1", id="ipv6-scp-no-suffix"
+        ),
+        pytest.param(
+            "[::1]:owner/repo",
+            ("owner", "repo"),
+            "::1",
+            id="ipv6-scp-no-user-no-suffix",
+        ),
+        pytest.param(
+            "git@[:1]:owner/repo.git",
+            ("owner", "repo"),
+            None,
+            id="invalid-ipv6-scp",
+        ),
+        pytest.param("https://host/owner", None, "host", id="missing-repo"),
+        pytest.param("https://host", None, "host", id="pathless"),
+        pytest.param("not-a-url", None, None, id="malformed"),
+        pytest.param(
+            "git@host:a@b/c.git", ("a@b", "c"), None, id="scp-at-in-owner-suffix"
+        ),
+        pytest.param(
+            "git@host:own@er/repo", ("own@er", "repo"), None, id="scp-at-in-owner"
+        ),
+        pytest.param(
+            "org-123@git.example.com:team@x/r.git",
+            ("team@x", "r"),
+            None,
+            id="scp-at-in-team",
         ),
         pytest.param(
             "git@github.com:own@er/repo",
             ("own@er", "repo"),
+            None,
             id="public-scp-at-in-owner",
         ),
-        pytest.param("@host:o/r", None, id="empty-user"),
-        pytest.param("git@:o/r", None, id="empty-host"),
-        pytest.param("user@host:o/r\nx", None, id="newline-in-path"),
-        pytest.param("\\\\srv@h:o/r", ("o", "r"), id="unc-lexical-slug"),
-        pytest.param("C:x@h:o/r", ("o", "r"), id="drive-lexical-slug"),
-        pytest.param("git@h:o/r://x", ("o", "r://x"), id="scheme-token-in-path"),
-        pytest.param("user@host:o/r\n", ("o", "r"), id="terminal-newline"),
+        pytest.param("@host:o/r", None, None, id="empty-user"),
+        pytest.param("git@:o/r", None, None, id="empty-host"),
+        pytest.param("user@host:o/r\nx", None, None, id="newline-in-path"),
+        pytest.param("\\\\srv@h:o/r", ("o", "r"), None, id="unc-lexical-slug"),
+        pytest.param("C:x@h:o/r", ("o", "r"), None, id="drive-lexical-slug"),
+        pytest.param("git@h:o/r://x", ("o", "r://x"), None, id="scheme-token-in-path"),
+        pytest.param("user@host:o/r\n", ("o", "r"), None, id="terminal-newline"),
     ],
 )
-def test_remote_slug(url, expected):
-    assert forge.remote_slug(forge.parse_remote(url)) == (
+def test_remote_slug(url, expected, hostname):
+    remote = forge.parse_remote(url)
+    assert (remote.hostname if remote else None) == hostname
+    assert forge.remote_slug(remote) == (
         forge.RepoSlug(*expected) if expected else None
     )
 
 
 @pytest.mark.parametrize(
-    "url, host, slug",
+    "url, expected_path",
     [
-        (
-            "fixture:token@github.com:owner/repo.git",
-            None,
-            forge.RepoSlug("owner", "repo"),
-        ),
-        (
-            "x://github.com/owner/repo.git",
-            "github.com",
-            forge.RepoSlug("owner", "repo"),
-        ),
-        ("git@[::1]:owner/repo.git", "::1", forge.RepoSlug(":1]:owner", "repo")),
+        pytest.param("https://host/.git", ".git", id="git-suffix-only"),
+        pytest.param("https://host//", "/", id="root-path-only"),
     ],
-    ids=["colon-userinfo-scp", "single-letter-scheme", "ipv6-scp"],
 )
-def test_remote_syntax_disambiguation(url, host, slug):
-    remote = forge.parse_remote(url)
-    assert remote.hostname == host
-    assert forge.remote_slug(remote) == slug
+def test_parse_remote_preserves_paths_that_normalize_to_empty(url, expected_path):
+    assert forge.parse_remote(url).path == expected_path
 
 
 @pytest.mark.parametrize(

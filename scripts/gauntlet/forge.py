@@ -87,17 +87,15 @@ _DNS_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 _SSH_HOST_PATTERN = r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])"
 _SSH_URL_RE = re.compile(
     rf"ssh://(?P<authority>(?:[A-Za-z0-9._-]+@)?{_SSH_HOST_PATTERN}(?::[0-9]+)?)"
-    r"(?:/[A-Za-z0-9._~+/-]*)?"
+    r"(?:/(?P<path>[A-Za-z0-9._~+/-]*))?"
 )
 _SCP_REMOTE_RE = re.compile(
     rf"(?P<authority>(?:[A-Za-z0-9._-]+@)?{_SSH_HOST_PATTERN}):"
-    r"[A-Za-z0-9._~+/-]*"
+    r"(?P<path>[A-Za-z0-9._~+/-]*)"
 )
 _FETCH_TIMEOUT_SECONDS = 30
-_SCP_PATH_RE = re.compile(r"[^@/]+@[^:/]+:(.+?)(?:\.git)?/?$")
-_URL_PATH_RE = re.compile(
-    r"[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?[^/]+/(.+?)(?:\.git)?/?$"
-)
+_SCP_PATH_RE = re.compile(r"[^@/]+@[^:/]+:(.+)$")
+_URL_PATH_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?[^/]+/(.+)$")
 _PR_PATHS = {
     "github": re.compile(r"^/([^/]+)/([^/]+)/pull/([1-9][0-9]*)/?$"),
     "gitlab": re.compile(r"^/(.+)/([^/]+)/-/merge_requests/([1-9][0-9]*)/?$"),
@@ -131,20 +129,30 @@ def _remote_hostname(authority: str) -> str | None:
     return hostname.lower()
 
 
+def _normalize_remote_path(path: str) -> str:
+    # Never strip to empty: "/" and ".git" stay as written.
+    if path.endswith("/") and len(path) > 1:
+        path = path[:-1]
+    if path.endswith(".git") and len(path) > 4:
+        path = path[:-4]
+    return path
+
+
 def parse_remote(url: str) -> Remote | None:
-    # Slug extraction is lexical even when the host syntax cannot be recognized.
     match = _SCP_PATH_RE.match(url) or _URL_PATH_RE.match(url)
-    path = match.group(1) if match else ""
+    path = _normalize_remote_path(match.group(1)) if match else ""
     unknown = Remote(None, path, None) if path else None
-    # Git scans the whole remainder for "@[" and percent-decodes ssh:// URLs first.
-    # Whole-remote grammars also leave bracketed DNS and [host:port] SCP forms unknown.
+    # Git scans the remainder for "@[" and percent-decodes ssh:// URLs, so a prefix
+    # match would trust a host git does not use.
     ssh_match = _SSH_URL_RE.fullmatch(url)
     scp_match = _SCP_REMOTE_RE.fullmatch(url) if "://" not in url else None
     recognized = ssh_match or scp_match
     if recognized is not None:
+        # A drive path stays local even if its suffix resembles SCP syntax.
         if not ssh_match and re.match(r"^[A-Za-z]:", url):
             return unknown
         authority = recognized.group("authority")
+        path = _normalize_remote_path(recognized.group("path") or "")
         return Remote(_remote_hostname(authority), path, "ssh" if ssh_match else None)
     if "://" in url:
         scheme, tail = url.split("://", 1)
@@ -163,7 +171,7 @@ def parse_remote(url: str) -> Remote | None:
 
 
 def remote_slug(remote: Remote | None) -> RepoSlug | None:
-    # Host validation must not discard a detector's usable lexical slug.
+    # A rejected host can still leave enough path to identify a repository.
     if remote is None:
         return None
     owner, sep, repo = remote.path.strip("/").partition("/")
