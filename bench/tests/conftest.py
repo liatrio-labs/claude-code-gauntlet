@@ -1,4 +1,4 @@
-"""Benchmark-local fixtures also work when the main tests directory is absent."""
+"""Benchmark-local pytest fixtures for adapter and real-poster tests."""
 
 import pytest
 from gauntlet.delivery import post

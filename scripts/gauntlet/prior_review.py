@@ -68,8 +68,6 @@ GIT_TIMEOUT_SECONDS = 10
 
 # The surfaces each platform exposes, in scan order. Used to seed "scanned" so the
 # key set is stable even when a fetch fails or returns nothing.
-# Both surfaces stay user-writable: a forged signal can narrow a rerun to
-# incremental scope; headless CODE_GAUNTLET_REVIEWED_POLICY=skip hides it from humans.
 PLATFORM_SOURCES: dict[Platform, tuple[str, ...]] = {
     "github": ("review",),
     "gitlab": ("note",),
@@ -104,6 +102,8 @@ def remote_slug() -> tuple[str | None, str | None]:
     return (slug.owner, slug.repo) if slug else (None, None)
 
 
+# Both surfaces stay user-writable: a forged signal can narrow a rerun to
+# incremental scope; headless CODE_GAUNTLET_REVIEWED_POLICY=skip hides it from humans.
 def fetch_entries(
     owner: str, repo: str, number: int | str, *, forge: Forge
 ) -> tuple[list[ReviewEntryWire], list[str]]:

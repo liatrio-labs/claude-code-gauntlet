@@ -3352,11 +3352,15 @@ def build_dry_run_payload(platform):
     """
     if platform == "github":
         cap = _CAPTURED[0] if _CAPTURED else None
+        if cap is None:
+            endpoint, method, payload = "", "POST", {}
+        else:
+            endpoint, method, payload = cap.endpoint, cap.method, cap.payload
         return {
             "platform": "github",
-            "endpoint": cap.endpoint if cap is not None else "",
-            "method": cap.method if cap is not None else "POST",
-            "payload": cap.payload if cap is not None else {},
+            "endpoint": endpoint,
+            "method": method,
+            "payload": payload,
             "skipped": list(_SKIP_WARNINGS),
         }
 

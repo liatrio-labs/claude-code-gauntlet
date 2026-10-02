@@ -148,17 +148,16 @@ def parse_remote(url: str) -> Remote | None:
         return Remote(_remote_hostname(authority), path, "ssh" if ssh_match else None)
     if "://" in url:
         scheme, tail = url.split("://", 1)
-        if (
-            not re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme)
-            or scheme.lower() == "ssh"
-        ):
+        is_web = scheme in {"http", "https"}
+        is_ssh = scheme.lower() == "ssh"
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme) or is_ssh:
             return unknown
-        delimiter = r"[/?#]" if scheme.lower() in {"http", "https"} else r"/"
+        delimiter = r"[/?#]" if is_web else r"/"
         authority = re.split(delimiter, tail, maxsplit=1)[0]
         return Remote(
             _remote_hostname(authority),
             path,
-            scheme.lower(),
+            scheme,
         )
     return unknown
 

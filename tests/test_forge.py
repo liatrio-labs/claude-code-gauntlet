@@ -43,7 +43,8 @@ PUBLIC_HOST_CASES: list[ParameterSet] = [
     pytest.param("ftp://{host}/o/r", False, "{host}", id="ftp"),
     pytest.param("git://{host}/o/r", False, "{host}", id="git-scheme"),
     pytest.param("git+ssh://git@{host}/o/r", False, "{host}", id="git-ssh"),
-    pytest.param("HTTPS://{host}/o/r", True, "{host}", id="uppercase-scheme"),
+    pytest.param("HTTPS://{host}/o/r", False, "{host}", id="uppercase-scheme"),
+    pytest.param("Https://{host}/o/r", False, "{host}", id="mixedcase-scheme"),
     pytest.param(
         "https://fixture-user:fixture-token@{host}/o/r",
         True,
@@ -259,7 +260,7 @@ HOST_CASES: list[ParameterSet] = [
         "https://GITHUB.COM/o/r.git", 0, ("github", "github.com"), id="uppercase-host"
     ),
     pytest.param(
-        "HTTPS://GITHUB.COM/o/r.git", 0, ("github", "github.com"), id="uppercase-scheme"
+        "HTTPS://GITHUB.COM/o/r.git", 0, (None, "github.com"), id="uppercase-scheme"
     ),
     pytest.param(
         "git@GitLab.COM:g/r.git", 0, ("gitlab", "gitlab.com"), id="mixedcase-scp"
@@ -630,6 +631,9 @@ def test_remote_classification(url, expected):
         ),
         pytest.param(
             "HTTPS://HOST/owner/repo.git", ("owner", "repo"), id="uppercase-scheme"
+        ),
+        pytest.param(
+            "Https://HOST/owner/repo.git", ("owner", "repo"), id="mixedcase-scheme"
         ),
         pytest.param("github.com:owner/repo.git", None, id="userless-scp"),
         pytest.param("https://host/owner", None, id="missing-repo"),
