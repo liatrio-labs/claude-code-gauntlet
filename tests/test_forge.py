@@ -24,6 +24,11 @@ PUBLIC_HOST_CASES: list[ParameterSet] = [
     pytest.param("alice@{host}:o/r.git", True, "{host}", id="scp-user"),
     pytest.param("alice@{host}:o/r", True, "{host}", id="scp-user-no-suffix"),
     pytest.param("git@{host}:o/r", True, "{host}", id="scp-no-suffix"),
+    pytest.param("git@{host}:o/r.git", True, "{host}", id="scp-git-suffix"),
+    pytest.param("alice@{host}:g/sub/r.git", True, "{host}", id="scp-subgroups"),
+    pytest.param("git@{host}:o/my-repo_1.x", True, "{host}", id="scp-repo-grammar"),
+    pytest.param("ssh://git@{host}/o/r.git", True, "{host}", id="ssh-git-suffix"),
+    pytest.param("ssh://git@{host}:2222/g/sub/r", True, "{host}", id="ssh-subgroups"),
     pytest.param("{host}:o/r.git", True, "{host}", id="userless-scp"),
     pytest.param("{host}:o/r", True, "{host}", id="userless-scp-no-suffix"),
     pytest.param(
@@ -143,6 +148,8 @@ PUBLIC_HOST_CASES: list[ParameterSet] = [
     pytest.param("https://evil%23.{host}/o/r", False, None, id="percent-host"),
     pytest.param("https://evil;.{host}/o/r", False, None, id="semicolon"),
     pytest.param("https://evil\uff0f.{host}/o/r", False, None, id="nfkc-host"),
+    pytest.param("https://\u212a.{host}/o/r", False, None, id="kelvin-host"),
+    pytest.param("http://\u212a.{host}/o/r", False, None, id="http-kelvin-host"),
     pytest.param(
         "https://" + "x" * 64 + ".{host}/o/r", False, None, id="overlong-label"
     ),
@@ -346,61 +353,61 @@ HOST_CASES: list[ParameterSet] = [
     pytest.param(
         "git@evil.example:x@github.com/r",
         0,
-        (None, "evil.example"),
+        (None, None),
         id="github-at-in-path",
     ),
     pytest.param(
         "evil.example:x@github.com/r",
         0,
-        (None, "evil.example"),
+        (None, None),
         id="github-at-in-userless-path",
     ),
     pytest.param(
         "git@evil.example:x@github.com:o/r",
         0,
-        (None, "evil.example"),
+        (None, None),
         id="github-colon-in-path",
     ),
     pytest.param(
         "evil.example:x@github.com:o/r",
         0,
-        (None, "evil.example"),
+        (None, None),
         id="github-colon-in-userless-path",
     ),
     pytest.param(
         "git@evil.example:x@gitlab.com/r",
         0,
-        (None, "evil.example"),
+        (None, None),
         id="gitlab-at-in-path",
     ),
     pytest.param(
         "evil.example:x@gitlab.com/r",
         0,
-        (None, "evil.example"),
+        (None, None),
         id="gitlab-at-in-userless-path",
     ),
     pytest.param(
         "git@evil.example:x@gitlab.com:o/r",
         0,
-        (None, "evil.example"),
+        (None, None),
         id="gitlab-colon-in-path",
     ),
     pytest.param(
         "evil.example:x@gitlab.com:o/r",
         0,
-        (None, "evil.example"),
+        (None, None),
         id="gitlab-colon-in-userless-path",
     ),
     pytest.param(
         "git@github.com:own@er/repo",
         0,
-        ("github", "github.com"),
+        (None, None),
         id="github-at-in-owner",
     ),
     pytest.param(
         "git@gitlab.com:own@er/repo",
         0,
-        ("gitlab", "gitlab.com"),
+        (None, None),
         id="gitlab-at-in-owner",
     ),
     pytest.param(
@@ -442,6 +449,43 @@ HOST_CASES += [
     case
     for case in _GENERATED_HOST_CASES
     if case.values[0] not in _HOST_TRANSITION_ROWS
+]
+HOST_CASES += [
+    pytest.param(template.format(host=host), 0, (None, None), id=f"{name}-{host}")
+    for host in ("github.com", "gitlab.com")
+    for name, template in (
+        ("scp-path-bracket-user", "{host}:x@[evil.com]:o/r"),
+        ("scp-path-bracket", "git@{host}:o/r@[evil.com]:x"),
+        ("ssh-path-bracket", "ssh://git@{host}/o/r@[evil.com]/x"),
+        ("ssh-path-escaped-bracket", "ssh://git@{host}/o/r%40%5Bevil.com%5D/x"),
+        ("ssh-path-bracket-port", "ssh://{host}:22/o/r@[evil.com]:2222/x"),
+        ("ssh-subdomain-path-bracket", "ssh://git@sub.{host}/o/r@[evil.com]/x"),
+        ("ssh-uppercase-helper", "SSH://git@{host}/o/r"),
+        ("ssh-mixedcase-helper", "Ssh://git@{host}/o/r"),
+        ("scp-helper", "{host}::o/r"),
+        ("scp-bracketed-port", "git@[{host}:22]:o/r"),
+        ("scp-bracketed-dns", "git@[{host}]:o/r"),
+        ("ssh-bracketed-dns", "ssh://git@[{host}]/o/r"),
+        ("scp-path-at", "git@{host}:o/r@x"),
+        ("scp-path-open-bracket", "git@{host}:o/r[x"),
+        ("ssh-path-at", "ssh://git@{host}/o/r@x"),
+        ("ssh-path-open-bracket", "ssh://git@{host}/o/r[x"),
+    )
+]
+HOST_CASES += [
+    pytest.param(
+        url + ("@[evil.com]/x" if url.startswith("ssh://") else "@[evil.com]:x"),
+        0,
+        (None, None),
+        id=f"appended-bracket-{case.id}",
+    )
+    for case in HOST_CASES
+    for url, status, expected in [
+        cast("tuple[str, int, tuple[str | None, str | None]]", case.values)
+    ]
+    if status == 0
+    and expected[0] is not None
+    and (url.startswith("ssh://") or "://" not in url)
 ]
 
 
@@ -621,7 +665,7 @@ def test_remote_slug(url, expected):
     [
         (
             "fixture:token@github.com:owner/repo.git",
-            "fixture",
+            None,
             forge.RepoSlug("owner", "repo"),
         ),
         (

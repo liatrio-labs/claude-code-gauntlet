@@ -83,8 +83,14 @@ class Forge(Protocol):
 
 
 _DNS_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
-_SSH_AUTHORITY_RE = re.compile(
-    r"(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]+)?"
+_SSH_HOST_PATTERN = r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])"
+_SSH_URL_RE = re.compile(
+    rf"ssh://(?P<authority>(?:[A-Za-z0-9._-]+@)?{_SSH_HOST_PATTERN}(?::[0-9]+)?)"
+    r"(?:/[A-Za-z0-9._~+/-]*)?"
+)
+_SCP_REMOTE_RE = re.compile(
+    rf"(?P<authority>(?:[A-Za-z0-9._-]+@)?{_SSH_HOST_PATTERN}):"
+    r"[A-Za-z0-9._~+/-]*"
 )
 _FETCH_TIMEOUT_SECONDS = 30
 _SCP_PATH_RE = re.compile(r"[^@/]+@[^:/]+:(.+?)(?:\.git)?/?$")
@@ -97,12 +103,9 @@ _PR_PATHS = {
 }
 
 
-def _remote_hostname(authority: str, *, ssh: bool) -> str | None:
-    # Git percent-decodes ssh:// URLs before splitting the authority, so escapes are unsafe.
-    if ssh and not _SSH_AUTHORITY_RE.fullmatch(authority):
-        return None
+def _remote_hostname(authority: str) -> str | None:
     # urlsplit discards tabs/newlines, so inspect the original web authority first.
-    if not ssh and any(ord(char) < 32 or char.isspace() for char in authority):
+    if any(ord(char) < 32 or char.isspace() for char in authority):
         return None
     host_port = authority.rsplit("@", 1)[-1]
     try:
@@ -117,14 +120,13 @@ def _remote_hostname(authority: str, *, ssh: bool) -> str | None:
             IPv6Address(hostname)
     except ValueError:
         return None
-    if not ssh:
-        host_text = (
-            host_port[1 : host_port.find("]")]
-            if host_port.startswith("[")
-            else host_port.partition(":")[0]
-        )
-        if host_text.casefold() != hostname:
-            return None
+    host_text = (
+        host_port[1 : host_port.find("]")]
+        if host_port.startswith("[")
+        else host_port.partition(":")[0]
+    )
+    if not host_text.isascii() or host_text.lower() != hostname:
+        return None
     return hostname.lower()
 
 
@@ -133,33 +135,31 @@ def parse_remote(url: str) -> Remote | None:
     match = _SCP_PATH_RE.match(url) or _URL_PATH_RE.match(url)
     path = match.group(1) if match else ""
     unknown = Remote(None, path, None) if path else None
-    if url.startswith(("/", "\\", "./", "../")):
-        return unknown
+    # Git scans the whole remainder for "@[" and percent-decodes ssh:// URLs first.
+    # Whole-remote grammars also leave bracketed DNS and [host:port] SCP forms unknown.
+    ssh_match = _SSH_URL_RE.fullmatch(url)
+    scp_match = _SCP_REMOTE_RE.fullmatch(url) if "://" not in url else None
+    recognized = ssh_match or scp_match
+    if recognized is not None:
+        if not ssh_match and re.match(r"^[A-Za-z]:", url):
+            return unknown
+        authority = recognized.group("authority")
+        return Remote(_remote_hostname(authority), path, "ssh" if ssh_match else None)
     if "://" in url:
         scheme, tail = url.split("://", 1)
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme):
+        if (
+            not re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme)
+            or scheme.lower() == "ssh"
+        ):
             return unknown
         delimiter = r"[/?#]" if scheme.lower() in {"http", "https"} else r"/"
         authority = re.split(delimiter, tail, maxsplit=1)[0]
         return Remote(
-            _remote_hostname(authority, ssh=scheme.lower() == "ssh"),
+            _remote_hostname(authority),
             path,
             scheme.lower(),
         )
-    if re.match(r"^[A-Za-z]:", url):
-        return unknown
-    prefix = url.split(":", 1)[0]
-    host_start = prefix.rfind("@") + 1
-    if url[host_start:].startswith("["):
-        close = url.find("]", host_start)
-        colon = close + 1 if close >= 0 and url[close + 1 :].startswith(":") else -1
-    else:
-        colon = url.find(":")
-    slash = url.find("/")
-    if colon < 0 or (slash >= 0 and colon > slash):
-        return unknown
-    authority = url[:colon]
-    return Remote(_remote_hostname(authority, ssh=True), path, None)
+    return unknown
 
 
 def remote_slug(remote: Remote | None) -> RepoSlug | None:

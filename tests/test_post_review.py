@@ -2558,6 +2558,9 @@ def _run_main(
             if not expect_exit:
                 raise
             exit_code = exc.code
+        else:
+            if expect_exit:
+                pytest.fail("main returned without the expected SystemExit")
     payload_path = tmp_path / "post-review-payload.json"
     payload = (
         json.loads(payload_path.read_text(encoding="utf-8"))
@@ -2607,6 +2610,32 @@ def test_main_runner_exit_policy(
             tmp_path, forge_factory, _review_data(), expect_exit=expect_exit
         )
         assert run.exit_code == 7
+
+
+@pytest.mark.parametrize(
+    "expect_exit, error",
+    [(False, None), (True, "main returned without the expected SystemExit")],
+)
+def test_main_runner_requires_expected_exit(
+    tmp_path: Path,
+    forge_factory: FakeForgeFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    expect_exit: bool,
+    error: str | None,
+) -> None:
+    def return_main() -> None:
+        return None
+
+    monkeypatch.setattr(post_review, "main", return_main)
+    if error is not None:
+        with pytest.raises(pytest.fail.Exception) as exc:
+            _run_main(tmp_path, forge_factory, _review_data(), expect_exit=expect_exit)
+        assert str(exc.value) == error
+    else:
+        run = _run_main(
+            tmp_path, forge_factory, _review_data(), expect_exit=expect_exit
+        )
+        assert run.exit_code is None
 
 
 def _gitlab_posts(run, suffix):
@@ -4614,6 +4643,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
             ),
             expect_exit=True,
         )
+        self.assertEqual(run.exit_code, 1)
         self.assertEqual(_discussion_posts(run.mock_run), [])
         self.assertIn("had a malformed position", run.err)
         self.assertNotIn("Inline body folded by", run.err)
