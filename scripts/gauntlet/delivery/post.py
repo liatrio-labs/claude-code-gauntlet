@@ -41,7 +41,7 @@ Input JSON schema:
                                              #            (structural sanitize off).
             }
         ],
-        "platform": "github",            # optional — auto-detected from git remote
+        "platform": "github",            # optional — github.com/gitlab.com hosts only; else required
         "owner": "myorg",
         "repo": "myrepo",
         "pr_number": 7,
@@ -3351,16 +3351,12 @@ def build_dry_run_payload(platform):
     the per-finding delivery marker is appended on the live wire only.
     """
     if platform == "github":
-        cap = _CAPTURED[0] if _CAPTURED else None
-        if cap is None:
-            endpoint, method, payload = "", "POST", {}
-        else:
-            endpoint, method, payload = cap.endpoint, cap.method, cap.payload
+        cap = _CAPTURED[0] if _CAPTURED else PostRequest("github", "", "POST", (), {})
         return {
             "platform": "github",
-            "endpoint": endpoint,
-            "method": method,
-            "payload": payload,
+            "endpoint": cap.endpoint,
+            "method": cap.method,
+            "payload": cap.payload,
             "skipped": list(_SKIP_WARNINGS),
         }
 
@@ -3501,13 +3497,12 @@ def main():
     # Deliver. A poster RETURNS its exit status instead of exiting, so a payload defect
     # it found cannot pre-empt the dry-run payload write below — that file is the artifact
     # an operator reads to see what the run would have sent.
-    if platform == "github":
-        status = post_github(data, valid_lines, line_texts, forge=forge)
-    else:
-        assert isinstance(forge, GitLab)
+    if isinstance(forge, GitLab):
         status = post_gitlab(
             data, valid_lines, new_files, old_paths, line_texts, forge=forge
         )
+    else:
+        status = post_github(data, valid_lines, line_texts, forge=forge)
 
     if DRY_RUN:
         out_path = write_dry_run_payload(platform, args.findings_json)
