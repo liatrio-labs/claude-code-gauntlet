@@ -1951,13 +1951,6 @@ def _glab_fixture(name):
 # src/app/clients/api/__init__.py: new 1..16 — added file, signalled only by `@@ -0,0`.
 GL_DIFF_CONTRACT = _glab_fixture("modified.diff") + _glab_fixture("added.diff")
 
-# A deleted file followed by a modified one. glab repeats the path on BOTH headers for a
-# deletion (there is no `+++ /dev/null` to blank `current_file`), so the deleted file's
-# hunk budget draining is the only thing keeping the next file's headers out of its body.
-GL_DIFF_DELETED_THEN_MODIFIED = _glab_fixture("deleted.diff") + _glab_fixture(
-    "modified.diff"
-)
-
 # A RENAMED file: the `---` header names the PRE-rename path and the `+++` header the
 # post-rename one. That old-side path is what GitLab needs in `position.old_path` (#130).
 # new 3 = old 3 (context), new 4 = added, new 5 = old 5 (context), new 6 = old 6 (a BLANK
@@ -1980,12 +1973,6 @@ GL_DIFF_REAL_A_DIR = (
     "-x\n"
     "+y\n"
 )
-
-
-_HUNK = "@@ -1 +1 @@\n-o\n+n\n"
-
-
-_EMPTY_OLD_SIDE = "@@ -0,0 +1 @@\n+first\n"
 
 
 GL_CONTRACT_VERSIONS = [
@@ -7197,13 +7184,7 @@ class TestRangesOverlap(unittest.TestCase):
 
 
 class TestPosterOraclesAreRequiredArguments(unittest.TestCase):
-    """Neither poster may take a parsed-diff argument by default.
-
-    A default let a caller omit ``line_texts`` and silently disable half the
-    apply-check — the content oracle absent, every fence downgraded for a
-    reason the diff would have answered. ``fetch_diff_facts`` returns all four
-    together or all four ``None``; the signature is what makes a caller say so.
-    """
+    """Both posters require one ``DiffFacts`` or ``None`` argument, with no default."""
 
     def _defaults(self, func):
         return {
@@ -9732,9 +9713,7 @@ def test_skipped_section_forgery_resistance(
 def test_skipped_section_forgery_resistance__gitlab_validation_skipped_posts_everything_with_no_section(
     tmp_path: Path, forge_factory: FakeForgeFactory
 ) -> None:
-    """When the diff could not be fetched, fetch_diff_facts returns
-    all-None and is_line_valid always answers True — nothing should
-    ever reach the skipped section."""
+    """When diff retrieval fails, ``fetch_diff_facts`` returns ``None``."""
     data = _review_data(
         platform="gitlab",
         review_body="MR review",

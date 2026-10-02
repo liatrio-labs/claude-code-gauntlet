@@ -196,10 +196,6 @@ def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
             old_line += 1
 
 
-def _git_prefixed(path: str, *, side: Literal["old", "new"]) -> str:
-    return path.removeprefix("a/" if side == "old" else "b/")
-
-
 def _strip_ab_prefix(path: str) -> str:
     return _DIFF_PREFIX_RE.sub("", path)
 
@@ -282,12 +278,8 @@ def parse_diff(diff_text: str, *, policy: DiffPathPolicy) -> DiffFacts:
                     )
                     continue
                 if policy == "git-prefixed" or git_style:
-                    old_side = (
-                        None
-                        if old_side is None
-                        else _git_prefixed(old_side, side="old")
-                    )
-                    new_side = _git_prefixed(new_side, side="new")
+                    old_side = None if old_side is None else old_side.removeprefix("a/")
+                    new_side = new_side.removeprefix("b/")
                 zero_old_hunk_means_added = not git_style
                 current_paths = () if new_side == "/dev/null" else (new_side,)
                 if current_paths:

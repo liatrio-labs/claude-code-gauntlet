@@ -953,7 +953,6 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
         valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
         self.assertTrue(valid_lines)
         self.assertIn(("src/edited.py", 2), valid_lines)
 
@@ -963,7 +962,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             owner=GH_PREFIXED_PATH_OWNER,
             repo=GH_PREFIXED_PATH_REPO,
             pr_number=GH_PREFIXED_PATH_PR,
-            facts=diff_facts(valid_lines, line_texts=line_texts),
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -985,15 +984,13 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         parsed_facts = diff_api.parse_diff(
             GH_DIFF_TWO_FILE_COLLISION, policy=diff_api.posting_policy("github")
         )
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
         mirror = build_reference_github_payload(
             [GH_TWO_FILE_COLLISION_FINDING],
             [],
             owner=GH_COLLISION_OWNER,
             repo=GH_COLLISION_REPO,
             pr_number=GH_COLLISION_PR,
-            facts=diff_facts(valid_lines, line_texts=line_texts),
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1027,15 +1024,12 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         parsed_facts = diff_api.parse_diff(
             GL_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("gitlab")
         )
-        valid_lines = parsed_facts.valid_lines
-        new_files = parsed_facts.new_files
-        line_texts = parsed_facts.line_texts
         mirror = build_reference_gitlab_payload(
             GL_PREFIXED_PATH_FINDINGS,
             project=GL_PREFIXED_PATH_PROJECT,
             mr_iid=GL_PREFIXED_PATH_MR_IID,
             sha=_GH_SHA,
-            facts=diff_facts(valid_lines, line_texts=line_texts, new_files=new_files),
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1064,15 +1058,13 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         parsed_facts = diff_api.parse_diff(
             GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
         mirror = build_reference_github_payload(
             GH_SKIPPED_SECTION_FINDINGS,
             [],
             owner=GH_SKIPPED_SECTION_OWNER,
             repo=GH_SKIPPED_SECTION_REPO,
             pr_number=GH_SKIPPED_SECTION_PR,
-            facts=diff_facts(valid_lines, line_texts=line_texts),
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1142,8 +1134,6 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         parsed_facts = diff_api.parse_diff(
             GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
         mirror = build_reference_github_payload(
             [finding],
             [],
@@ -1151,7 +1141,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             repo="widgets",
             pr_number=324,
             review_body=review_body,
-            facts=diff_facts(valid_lines, line_texts=line_texts),
+            facts=parsed_facts,
         )
         self.assertEqual(real, mirror)
         self.assertIn("_1 of these 1 finding is not shown:", real["payload"]["body"])
@@ -1177,15 +1167,13 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         parsed_facts = diff_api.parse_diff(
             GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
         mirror = build_reference_github_payload(
             [finding],
             [],
             owner="acme",
             repo="widgets",
             pr_number=325,
-            facts=diff_facts(valid_lines, line_texts=line_texts),
+            facts=parsed_facts,
         )
         self.assertEqual(real, mirror)
         self.assertEqual(len(real["payload"]["comments"]), 1)
@@ -1229,15 +1217,12 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         parsed_facts = diff_api.parse_diff(
             GL_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("gitlab")
         )
-        valid_lines = parsed_facts.valid_lines
-        new_files = parsed_facts.new_files
-        line_texts = parsed_facts.line_texts
         mirror = build_reference_gitlab_payload(
             [finding],
             project="acme/widgets",
             mr_iid=326,
             sha=_GH_SHA,
-            facts=diff_facts(valid_lines, line_texts=line_texts, new_files=new_files),
+            facts=parsed_facts,
         )
         self.assertEqual(real, mirror)
         self.assertEqual(len(real["discussions"]), 1)
@@ -1273,15 +1258,12 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         parsed_facts = diff_api.parse_diff(
             GL_DIFF_FENCED_SUGGESTION, policy=diff_api.posting_policy("gitlab")
         )
-        valid_lines = parsed_facts.valid_lines
-        new_files = parsed_facts.new_files
-        line_texts = parsed_facts.line_texts
         mirror = build_reference_gitlab_payload(
             GL_FENCED_FINDINGS,
             project=GL_FENCED_PROJECT,
             mr_iid=GL_FENCED_MR_IID,
             sha=_GH_SHA,
-            facts=diff_facts(valid_lines, line_texts=line_texts, new_files=new_files),
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1360,16 +1342,13 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         parsed_facts = diff_api.parse_diff(
             GL_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("gitlab")
         )
-        valid_lines = parsed_facts.valid_lines
-        new_files = parsed_facts.new_files
-        line_texts = parsed_facts.line_texts
         mirror = build_reference_gitlab_payload(
             [finding],
             project="acme/widgets",
             mr_iid=324,
             review_body=review_body,
             sha=_GH_SHA,
-            facts=diff_facts(valid_lines, line_texts=line_texts, new_files=new_files),
+            facts=parsed_facts,
         )
         self.assertEqual(real, mirror)
         self.assertIn("_1 of these 1 finding is not shown:", real["summary"]["body"])
@@ -1398,15 +1377,13 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         parsed_facts = diff_api.parse_diff(
             GH_DIFF_OVERLAP, policy=diff_api.posting_policy("github")
         )
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
         mirror = build_reference_github_payload(
             GH_OVERLAP_FINDINGS,
             [],
             owner=GH_OVERLAP_OWNER,
             repo=GH_OVERLAP_REPO,
             pr_number=GH_OVERLAP_PR,
-            facts=diff_facts(valid_lines, line_texts=line_texts),
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1479,15 +1456,12 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         parsed_facts = diff_api.parse_diff(
             GL_DIFF_OVERLAP, policy=diff_api.posting_policy("gitlab")
         )
-        valid_lines = parsed_facts.valid_lines
-        new_files = parsed_facts.new_files
-        line_texts = parsed_facts.line_texts
         mirror = build_reference_gitlab_payload(
             GL_OVERLAP_FINDINGS,
             project=GL_OVERLAP_PROJECT,
             mr_iid=GL_OVERLAP_MR_IID,
             sha=_GH_SHA,
-            facts=diff_facts(valid_lines, line_texts=line_texts, new_files=new_files),
+            facts=parsed_facts,
         )
 
         self.assertEqual(real, mirror)
@@ -1767,15 +1741,13 @@ class TestFixtureFidelity(unittest.TestCase):
         parsed_facts = diff_api.parse_diff(
             GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
         expected = build_reference_github_payload(
             GH_PREFIXED_PATH_FINDINGS,
             [],
             owner=GH_PREFIXED_PATH_OWNER,
             repo=GH_PREFIXED_PATH_REPO,
             pr_number=GH_PREFIXED_PATH_PR,
-            facts=diff_facts(valid_lines, line_texts=line_texts),
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITHUB_PREFIXED_PATH_FIXTURE), expected)
 
@@ -1783,14 +1755,11 @@ class TestFixtureFidelity(unittest.TestCase):
         parsed_facts = diff_api.parse_diff(
             GL_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("gitlab")
         )
-        valid_lines = parsed_facts.valid_lines
-        new_files = parsed_facts.new_files
-        line_texts = parsed_facts.line_texts
         expected = build_reference_gitlab_payload(
             GL_PREFIXED_PATH_FINDINGS,
             project=GL_PREFIXED_PATH_PROJECT,
             mr_iid=GL_PREFIXED_PATH_MR_IID,
-            facts=diff_facts(valid_lines, line_texts=line_texts, new_files=new_files),
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITLAB_PREFIXED_PATH_FIXTURE), expected)
 
@@ -1798,15 +1767,13 @@ class TestFixtureFidelity(unittest.TestCase):
         parsed_facts = diff_api.parse_diff(
             GH_DIFF_PREFIXED_PATH, policy=diff_api.posting_policy("github")
         )
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
         expected = build_reference_github_payload(
             GH_SKIPPED_SECTION_FINDINGS,
             [],
             owner=GH_SKIPPED_SECTION_OWNER,
             repo=GH_SKIPPED_SECTION_REPO,
             pr_number=GH_SKIPPED_SECTION_PR,
-            facts=diff_facts(valid_lines, line_texts=line_texts),
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITHUB_SKIPPED_SECTION_FIXTURE), expected)
 
@@ -1814,14 +1781,11 @@ class TestFixtureFidelity(unittest.TestCase):
         parsed_facts = diff_api.parse_diff(
             GL_DIFF_FENCED_SUGGESTION, policy=diff_api.posting_policy("gitlab")
         )
-        valid_lines = parsed_facts.valid_lines
-        new_files = parsed_facts.new_files
-        line_texts = parsed_facts.line_texts
         expected = build_reference_gitlab_payload(
             GL_FENCED_FINDINGS,
             project=GL_FENCED_PROJECT,
             mr_iid=GL_FENCED_MR_IID,
-            facts=diff_facts(valid_lines, line_texts=line_texts, new_files=new_files),
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITLAB_FENCED_SUGGESTION_FIXTURE), expected)
 
@@ -1829,15 +1793,13 @@ class TestFixtureFidelity(unittest.TestCase):
         parsed_facts = diff_api.parse_diff(
             GH_DIFF_OVERLAP, policy=diff_api.posting_policy("github")
         )
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
         expected = build_reference_github_payload(
             GH_OVERLAP_FINDINGS,
             [],
             owner=GH_OVERLAP_OWNER,
             repo=GH_OVERLAP_REPO,
             pr_number=GH_OVERLAP_PR,
-            facts=diff_facts(valid_lines, line_texts=line_texts),
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITHUB_OVERLAP_DEMOTION_FIXTURE), expected)
 
@@ -1845,14 +1807,11 @@ class TestFixtureFidelity(unittest.TestCase):
         parsed_facts = diff_api.parse_diff(
             GL_DIFF_OVERLAP, policy=diff_api.posting_policy("gitlab")
         )
-        valid_lines = parsed_facts.valid_lines
-        new_files = parsed_facts.new_files
-        line_texts = parsed_facts.line_texts
         expected = build_reference_gitlab_payload(
             GL_OVERLAP_FINDINGS,
             project=GL_OVERLAP_PROJECT,
             mr_iid=GL_OVERLAP_MR_IID,
-            facts=diff_facts(valid_lines, line_texts=line_texts, new_files=new_files),
+            facts=parsed_facts,
         )
         self.assertEqual(_load_fixture(GITLAB_OVERLAP_DEMOTION_FIXTURE), expected)
 

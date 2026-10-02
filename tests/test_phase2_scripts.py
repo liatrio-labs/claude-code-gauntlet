@@ -789,10 +789,6 @@ class TestShippedText(unittest.TestCase):
         self.assertEqual(_placeholder_program_lines(script_with_stdin), [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 @pytest.mark.parametrize(
     "case, marker",
     [
@@ -913,3 +909,7 @@ def test_numstat_crlf_binary(tmp_path: Path, invoke: Callable[..., Invocation]) 
     result = invoke("diff_numstat", [str(patch_path)], tmp_path)
     assert result.returncode == 0, result.stderr
     assert result.stdout == b"changed_lines=2\nbinary_files=1\n"
+
+
+if __name__ == "__main__":
+    unittest.main()

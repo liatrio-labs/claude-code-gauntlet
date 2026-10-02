@@ -1750,10 +1750,6 @@ class TestResetRunState(ReportPatchesTestBase):
         self.assertEqual(receipt["reasons"], {})
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 @pytest.mark.parametrize(
     "diff_text, rows, kept, downgraded, reasons, included, excluded",
     [
@@ -1856,3 +1852,7 @@ def test_report_producer_selection(
         assert title in content
     for title in excluded:
         assert title not in content
+
+
+if __name__ == "__main__":
+    unittest.main()

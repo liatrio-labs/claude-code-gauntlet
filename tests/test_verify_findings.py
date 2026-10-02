@@ -3314,10 +3314,6 @@ class TestSliceProjectionBehavioralEquivalence(unittest.TestCase):
         self.assertEqual(deltas[0]["verified"], True)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 @pytest.mark.parametrize(
     "finding, keys, validation, origin, severity",
     [
@@ -3504,3 +3500,7 @@ def test_verify_diff_retrieval(
         "WARNING: Diff validation skipped — all findings passed through."
         in capsys.readouterr().err
     ) is (diff_text is None)
+
+
+if __name__ == "__main__":
+    unittest.main()
