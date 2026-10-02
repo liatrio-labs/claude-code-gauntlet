@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.42.19 (2026-10-02)
+
+### Bug Fixes
+
+- Derive the detector slug from the whole-remote grammar
+  ([#451](https://github.com/liatrio-labs/claude-code-gauntlet/pull/451),
+  [`594efcf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/594efcf06f8fc594928e1157f825af201cd35d65))
+
+- Derive the detector slug from the whole-remote grammar (#450)
+  ([#451](https://github.com/liatrio-labs/claude-code-gauntlet/pull/451),
+  [`594efcf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/594efcf06f8fc594928e1157f825af201cd35d65))
+
+### Testing
+
+- Pin the path guards and the rejected-host slug; drop the private-regex patch
+  ([#451](https://github.com/liatrio-labs/claude-code-gauntlet/pull/451),
+  [`594efcf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/594efcf06f8fc594928e1157f825af201cd35d65))
+
+
 ## v3.42.18 (2026-10-02)
 
 ### Bug Fixes
