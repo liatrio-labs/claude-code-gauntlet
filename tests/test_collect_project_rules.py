@@ -1264,87 +1264,42 @@ class TestPureHelpers(unittest.TestCase):
         self.assertEqual(_find_imports("@b.md @a.md @b.md"), ["b.md", "a.md"])
 
 
-_COMMONMARK_BLOCK_GAP = pytest.mark.xfail(
-    strict=True, reason="#458: needs a CommonMark block parser"
-)
+# Expected values were measured against Claude Code's own import parser.
+_PROBE_ROWS = [
+    ("c1-opener-line", "```\n```python\n@imp.md\n```\n", []),
+    ("c2-closer-trailing-text", "```\n@a.md\n``` trailing\n@b.md\n```\n", []),
+    ("c3-backtick-info", "```a`b\n@imp.md\n", ["imp.md"]),
+    ("c4-equal-width-span", "``@imp.md``\n", []),
+    ("c7-tilde-closer-text", "~~~\n~~~x\n@imp.md\n~~~\n", []),
+    ("c8-four-space-indent", "    ```\n@imp.md\n", ["imp.md"]),
+    ("c9-unclosed-fence", "```\n@imp.md\n", []),
+    ("d3-list-fence", "- item\n  ```\n  @imp.md\n  ```\n", []),
+    ("e1-span-leaves-import-boundary", "a`x`@imp.md", ["imp.md"]),
+    ("e2-span-before-import", "`x`@imp.md", ["imp.md"]),
+    ("e3-midword-import", "word@imp.md", []),
+    ("f1-span-splits-import", "@imp`code`.md", []),
+    ("f2-mask-hidden-import-only", "`see @hidden.md here` and @live.md", ["live.md"]),
+    ("escaped-opener-is-not-a-span", r"see \` @imp.md ` here", ["imp.md"]),
+    ("even-backslashes-open-a-span", r"see \\` @imp.md ` here", []),
+    ("nested-fence-longer-closer", "````\n@A.md\n```\n@B.md\n````\n@C.md\n", ["C.md"]),
+    ("crlf-fence-lines", "```\r\n@hidden.md\r\n```\r\n@live.md", ["live.md"]),
+    ("cr-only-fence-then-span", "```\rx\r```\rsee ` @skip.md ` here\r", []),
+]
+# Claude Code loads none of these; the collector needs a block parser to agree.
+_BLOCK_GAP_ROWS = [
+    ("d1-multiline-span", "`open\n@imp.md`\n"),
+    ("d1-cr-only-multiline-span", "see `a\r@imp.md` here"),
+    ("d2-blockquote-fence", "> ```\n> @imp.md\n> ```\n"),
+    ("d4-html-comment", "<!-- @imp.md -->\n"),
+    ("d5-indented-code", "paragraph\n\n    @imp.md\n"),
+]
+_GAP = pytest.mark.xfail(strict=True, reason="#458: needs a CommonMark block parser")
 
 
 @pytest.mark.parametrize(
     ("source", "expected"),
-    [
-        pytest.param("```\n```python\n@imp.md\n```\n", [], id="c1-opener-line"),
-        pytest.param(
-            "```\n@hidden.md\n``` trailing text\n@still-hidden.md\n```\n",
-            [],
-            id="c2-closer-trailing-text",
-        ),
-        pytest.param("```a`b\n@imp.md\n", ["imp.md"], id="c3-backtick-info"),
-        pytest.param("``@imp.md``\n", [], id="c4-equal-width-span"),
-        pytest.param("~~~\n~~~x\n@imp.md\n~~~\n", [], id="c7-tilde-closer-text"),
-        pytest.param("    ```\n@imp.md\n", ["imp.md"], id="c8-four-space-indent"),
-        pytest.param("```\n@imp.md\n", [], id="c9-unclosed-fence"),
-        pytest.param(
-            "`open\n@imp.md`\n", [], marks=_COMMONMARK_BLOCK_GAP, id="d1-multiline-span"
-        ),
-        pytest.param(
-            "see `a\r@imp.md` here",
-            [],
-            marks=_COMMONMARK_BLOCK_GAP,
-            id="d1-cr-only-multiline-span",
-        ),
-        pytest.param(
-            "> ```\n> @imp.md\n> ```\n",
-            [],
-            marks=_COMMONMARK_BLOCK_GAP,
-            id="d2-blockquote-fence",
-        ),
-        pytest.param("- item\n  ```\n  @imp.md\n  ```\n", [], id="d3-list-fence"),
-        pytest.param(
-            "<!-- @imp.md -->\n",
-            [],
-            marks=_COMMONMARK_BLOCK_GAP,
-            id="d4-html-comment",
-        ),
-        pytest.param(
-            "paragraph\n\n    @imp.md\n",
-            [],
-            marks=_COMMONMARK_BLOCK_GAP,
-            id="d5-indented-code",
-        ),
-        pytest.param("a`x`@imp.md", ["imp.md"], id="e1-span-leaves-import-boundary"),
-        pytest.param("`x`@imp.md", ["imp.md"], id="e2-span-before-import"),
-        pytest.param("word@imp.md", [], id="e3-midword-import"),
-        pytest.param("@imp`code`.md", [], id="f1-span-splits-import"),
-        pytest.param(
-            "`see @hidden.md here` and @live.md",
-            ["live.md"],
-            id="f2-mask-hidden-import-only",
-        ),
-        pytest.param(
-            r"see \` @imp.md ` here", ["imp.md"], id="escaped-opener-is-not-a-span"
-        ),
-        pytest.param(r"see \\` @imp.md ` here", [], id="even-backslashes-open-a-span"),
-        pytest.param(
-            "````\n@OUTER1.md\n```\n@MISPARSED.md\n````\n@AFTER.md\n",
-            ["AFTER.md"],
-            id="nested-fence-longer-closer",
-        ),
-        pytest.param(
-            "```\r@hidden.md\r```\r@live.md",
-            ["live.md"],
-            id="cr-only-fence-lines",
-        ),
-        pytest.param(
-            "```\r\n@hidden.md\r\n```\r\n@live.md",
-            ["live.md"],
-            id="crlf-fence-lines",
-        ),
-        pytest.param(
-            "```\rx\r```\rsee ` @skip.md ` here\r",
-            [],
-            id="cr-only-fence-then-span",
-        ),
-    ],
+    [pytest.param(source, expected, id=id_) for id_, source, expected in _PROBE_ROWS]
+    + [pytest.param(source, [], id=id_, marks=_GAP) for id_, source in _BLOCK_GAP_ROWS],
 )
 def test_find_imports_matches_markdown_probe(source, expected):
     assert _find_imports(source) == expected

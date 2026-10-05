@@ -130,7 +130,11 @@ def _neutralize(text):
 
 
 def _render(kept, candidates, filtered_earlier, oracle_state, sha):
-    """Return the whole markdown document, deterministically."""
+    """Return the whole markdown document, deterministically.
+
+    ``_FIX_COUNTS``, which ``main()`` resets before gating, is the source of truth
+    for kept/downgraded; ``candidates - len(kept)`` is not.
+    """
     downgraded = _FIX_COUNTS["downgraded"]
     parts = []
 
