@@ -28,6 +28,7 @@ from typing import Literal, TypedDict, cast
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MARKETPLACE_REPO = "liatrio-labs/claude-plugins"
 DEFAULT_SOURCE_REPO = "liatrio-labs/claude-code-gauntlet"
+SOURCE_URL = f"https://github.com/{DEFAULT_SOURCE_REPO}.git"
 MARKETPLACE_PATH = ".claude-plugin/marketplace.json"
 MANIFEST_PATH = ".claude-plugin/plugin.json"
 TAG_PATTERN = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
@@ -173,11 +174,10 @@ def rewrite_entry(
     marketplace: MarketplaceDocument,
     manifest: PluginManifest,
     sha: str,
-    source_url: str = f"https://github.com/{DEFAULT_SOURCE_REPO}.git",
 ) -> MarketplaceDocument:
     """Copy the document and update its sole matching entry."""
     updated = copy.deepcopy(marketplace)
-    entry = _find_entry(updated, source_url)
+    entry = _find_entry(updated, SOURCE_URL)
     for field in ("version", "description", "keywords"):
         entry[field] = copy.deepcopy(manifest[field])
     entry["source"]["sha"] = sha
@@ -210,33 +210,6 @@ def _require_document(text: str, label: str) -> MarketplaceDocument:
 def open_pr(tag: str, run: CommandRunner) -> int:
     manifest, sha = _read_release(tag, run)
     branch = f"bump-marketplace/claude-code-gauntlet-{tag}"
-    pr_text = run(
-        [
-            "gh",
-            "pr",
-            "list",
-            "--repo",
-            DEFAULT_MARKETPLACE_REPO,
-            "--head",
-            branch,
-            "--state",
-            "open",
-            "--json",
-            "url",
-        ],
-        None,
-    )
-    try:
-        prs = json.loads(pr_text)
-    except json.JSONDecodeError:
-        raise InputError("pull request list is not valid JSON") from None
-    if not isinstance(prs, list) or any(
-        not isinstance(pr, dict) or not isinstance(pr.get("url"), str) for pr in prs
-    ):
-        raise InputError("pull request list must contain objects with URLs")
-    if prs:
-        print(prs[0]["url"])
-        return 0
     source_repo = DEFAULT_SOURCE_REPO
     marketplace_repo = DEFAULT_MARKETPLACE_REPO
     title = f"fix(plugins): update {source_repo} to {tag}"
@@ -271,6 +244,33 @@ def open_pr(tag: str, run: CommandRunner) -> int:
             ["git", "push", "--force-with-lease", "--set-upstream", "origin", branch],
             cwd,
         )
+        pr_text = run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--repo",
+                marketplace_repo,
+                "--head",
+                branch,
+                "--state",
+                "open",
+                "--json",
+                "url",
+            ],
+            None,
+        )
+        try:
+            prs = json.loads(pr_text)
+        except json.JSONDecodeError:
+            raise InputError("pull request list is not valid JSON") from None
+        if not isinstance(prs, list) or any(
+            not isinstance(pr, dict) or not isinstance(pr.get("url"), str) for pr in prs
+        ):
+            raise InputError("pull request list must contain objects with URLs")
+        if prs:
+            print(prs[0]["url"])
+            return 0
         url = run(
             [
                 "gh",
@@ -305,7 +305,7 @@ def check(tag: str, run: CommandRunner) -> int:
         None,
     )
     marketplace = _require_document(text, "marketplace response")
-    entry = _find_entry(marketplace, f"https://github.com/{DEFAULT_SOURCE_REPO}.git")
+    entry = _find_entry(marketplace, SOURCE_URL)
     expected = {
         "version": manifest["version"],
         "source.sha": sha,

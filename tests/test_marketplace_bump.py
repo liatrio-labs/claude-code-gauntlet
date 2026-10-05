@@ -299,7 +299,7 @@ def test_open_pr_rewrites_only_matching_entry_and_runs_exact_sequence(
             create, 1, "PR creation failed"
         )
         assert MODULE.main(["open-pr", "--tag", TAG], run=failed) == 2
-        assert [tuple(argv) for argv, _ in failed.calls[-2:]] == list(WRITE_ARGVS[-2:])
+        assert [tuple(argv) for argv, _ in failed.calls[-2:]] == [PR_LIST_ARGV, create]
         assert "PR creation failed" in capsys.readouterr().err
 
     assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 0
@@ -312,13 +312,16 @@ def test_open_pr_rewrites_only_matching_entry_and_runs_exact_sequence(
         ["git", "rev-parse", f"{TAG}^{{commit}}"],
         list(PROVENANCE_ARGV),
         ["git", "show", f"{TAG}:.claude-plugin/plugin.json"],
-        list(PR_LIST_ARGV),
         list(CLONE_ARGV),
-        *map(list, WRITE_ARGVS),
+        *map(list, WRITE_ARGVS[:-1]),
+        list(PR_LIST_ARGV),
+        list(WRITE_ARGVS[-1]),
     ]
-    assert [cwd for _, cwd in runner.calls[:4]] == [str(ROOT), None, str(ROOT), None]
-    assert Path(runner.calls[4][1]) / "claude-plugins" == Path(runner.calls[5][1])
-    assert all(cwd == runner.calls[5][1] for _, cwd in runner.calls[5:])
+    assert [cwd for _, cwd in runner.calls[:3]] == [str(ROOT), None, str(ROOT)]
+    assert Path(runner.calls[3][1]) / "claude-plugins" == Path(runner.calls[4][1])
+    assert all(cwd == runner.calls[4][1] for _, cwd in runner.calls[4:8])
+    assert runner.calls[8][1] is None
+    assert runner.calls[9][1] == runner.calls[4][1]
     assert capsys.readouterr().out == (url + "\n" if url else "")
 
 
@@ -339,36 +342,59 @@ def test_open_pr_already_current_preserves_file_bytes_and_creates_no_branch(
 
     assert runner.clone_path is not None
     assert (runner.clone_path / ".claude-plugin/marketplace.json").read_bytes() == raw
-    assert not any(argv[:2] == ["git", "switch"] for argv, _ in runner.calls)
+    assert [tuple(argv) for argv, _ in runner.calls] == [
+        *release_responses(),
+        CLONE_ARGV,
+    ]
     assert (
         capsys.readouterr().out.strip() == "The marketplace entry is already current."
     )
 
 
-def test_open_pr_existing_pr_returns_url_without_cloning(capsys):
+def test_open_pr_existing_pr_rewrites_commits_and_pushes_before_printing_url(
+    capsys, tmp_path
+):
     url = "https://github.com/liatrio-labs/claude-plugins/pull/42"
-    runner = FakeRunner(
-        {**release_responses(), PR_LIST_ARGV: json.dumps([{"url": url}])}
-    )
+    runner = open_runner(marketplace(entry()), persistent_root=tmp_path)
+    runner.responses[PR_LIST_ARGV] = json.dumps([{"url": url}])
+    del runner.responses[WRITE_ARGVS[-1]]
 
-    assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 0
+    def run(argv, cwd=None):
+        if tuple(argv) in (*WRITE_ARGVS[:-1], PR_LIST_ARGV):
+            assert capsys.readouterr().out == ""
+            assert runner.clone_path is not None
+            assert json.loads(
+                (runner.clone_path / ".claude-plugin/marketplace.json").read_text(
+                    encoding="utf-8"
+                )
+            ) == marketplace(current_entry())
+        return runner(argv, cwd)
+
+    assert MODULE.main(["open-pr", "--tag", TAG], run=run) == 0
 
     assert [tuple(argv) for argv, _ in runner.calls] == [
         *release_responses(),
+        CLONE_ARGV,
+        *WRITE_ARGVS[:-1],
         PR_LIST_ARGV,
     ]
     assert capsys.readouterr().out == url + "\n"
-    assert runner.clone_path is None
 
 
 @pytest.mark.parametrize("response", ["{", "{}", "[null]", '[{"url": null}]'])
-def test_open_pr_invalid_pr_list_refuses_before_clone(response, capsys):
-    runner = FakeRunner({**release_responses(), PR_LIST_ARGV: response})
+def test_open_pr_invalid_pr_list_reports_error_after_push(response, capsys):
+    runner = open_runner(marketplace(entry()))
+    runner.responses[PR_LIST_ARGV] = response
 
     assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 2
 
     assert capsys.readouterr().err.startswith("pull request list")
-    assert runner.clone_path is None
+    assert [tuple(argv) for argv, _ in runner.calls] == [
+        *release_responses(),
+        CLONE_ARGV,
+        *WRITE_ARGVS[:-1],
+        PR_LIST_ARGV,
+    ]
 
 
 @pytest.mark.parametrize("command", ["open-pr", "check"])
@@ -554,17 +580,17 @@ def test_reminder_workflow_uses_weekly_issue_reminder_and_old_publish_file_is_ab
         encoding="utf-8"
     )
 
-    assert "schedule:" in workflow
-    assert 'cron: "0 14 * * 1"' in workflow
-    assert "issues: write" in workflow
-    assert (
-        "concurrency:\n  group: marketplace-reminder\n  cancel-in-progress: false"
-        in workflow
-    )
-    assert (
-        'python3 .github/marketplace_bump.py remind --repo "$GITHUB_REPOSITORY"'
-        in workflow
-    )
+    # The test environment has no YAML parser, so each block is matched whole with its
+    # indentation: a commented-out trigger or a key moved to another level breaks the match.
+    for block in (
+        'on:\n  schedule:\n    - cron: "0 14 * * 1"\n  workflow_dispatch:\n\n',
+        "\npermissions:\n  contents: read\n\n",
+        "\nconcurrency:\n  group: marketplace-reminder\n  cancel-in-progress: false\n\n",
+        "    permissions:\n      contents: read\n      issues: write\n    steps:\n",
+        "        env:\n          GH_TOKEN: ${{ github.token }}\n"
+        '        run: python3 .github/marketplace_bump.py remind --repo "$GITHUB_REPOSITORY"\n',
+    ):
+        assert block in workflow
     assert not (ROOT / ".github/workflows/publish-marketplace.yml").exists()
 
 
