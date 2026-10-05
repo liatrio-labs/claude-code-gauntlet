@@ -16,7 +16,6 @@ from gauntlet.project_rules import (
     PROJECT_RULE_FILENAMES,
     _changed_path_sets,
     _find_imports,
-    _strip_code,
     main,
     render,
 )
@@ -1242,17 +1241,6 @@ class TestPureHelpers(unittest.TestCase):
 
         self.assertEqual(set(), realpaths)
 
-    def test_strip_code_blanks_fences_and_spans(self):
-        text = "a `@x.md` b\n```\n@y.md\n```\n@z.md\n"
-        stripped = _strip_code(text)
-        self.assertNotIn("@x.md", stripped)
-        self.assertNotIn("@y.md", stripped)
-        self.assertIn("@z.md", stripped)
-
-    def test_strip_code_nested_different_length_fences_dont_close_early(self):
-        text = "````\n@OUTER1.md\n```\n@MISPARSED.md\n````\n@AFTER.md\n"
-        self.assertEqual(_find_imports(text), ["AFTER.md"])
-
     def test_find_imports_handles_inline_and_trailing_punctuation(self):
         self.assertEqual(
             _find_imports("See @AI-AGENTS.md for all instructions."),
@@ -1274,6 +1262,47 @@ class TestPureHelpers(unittest.TestCase):
 
     def test_find_imports_deduplicates_preserving_order(self):
         self.assertEqual(_find_imports("@b.md @a.md @b.md"), ["b.md", "a.md"])
+
+
+# Expected values were measured against Claude Code's own import parser.
+_PROBE_ROWS = [
+    ("c1-opener-line", "```\n```python\n@imp.md\n```\n", []),
+    ("c2-closer-trailing-text", "```\n@a.md\n``` trailing\n@b.md\n```\n", []),
+    ("c3-backtick-info", "```a`b\n@imp.md\n", ["imp.md"]),
+    ("c4-equal-width-span", "``@imp.md``\n", []),
+    ("c7-tilde-closer-text", "~~~\n~~~x\n@imp.md\n~~~\n", []),
+    ("c8-four-space-indent", "    ```\n@imp.md\n", ["imp.md"]),
+    ("c9-unclosed-fence", "```\n@imp.md\n", []),
+    ("d3-list-fence", "- item\n  ```\n  @imp.md\n  ```\n", []),
+    ("e1-span-leaves-import-boundary", "a`x`@imp.md", ["imp.md"]),
+    ("e2-span-before-import", "`x`@imp.md", ["imp.md"]),
+    ("e3-midword-import", "word@imp.md", []),
+    ("f1-span-splits-import", "@imp`code`.md", []),
+    ("f2-mask-hidden-import-only", "`see @hidden.md here` and @live.md", ["live.md"]),
+    ("escaped-opener-is-not-a-span", r"see \` @imp.md ` here", ["imp.md"]),
+    ("even-backslashes-open-a-span", r"see \\` @imp.md ` here", []),
+    ("nested-fence-longer-closer", "````\n@A.md\n```\n@B.md\n````\n@C.md\n", ["C.md"]),
+    ("crlf-fence-lines", "```\r\n@hidden.md\r\n```\r\n@live.md", ["live.md"]),
+    ("cr-only-fence-then-span", "```\rx\r```\rsee ` @skip.md ` here\r", []),
+]
+# Claude Code loads none of these; the collector needs a block parser to agree.
+_BLOCK_GAP_ROWS = [
+    ("d1-multiline-span", "`open\n@imp.md`\n"),
+    ("d1-cr-only-multiline-span", "see `a\r@imp.md` here"),
+    ("d2-blockquote-fence", "> ```\n> @imp.md\n> ```\n"),
+    ("d4-html-comment", "<!-- @imp.md -->\n"),
+    ("d5-indented-code", "paragraph\n\n    @imp.md\n"),
+]
+_GAP = pytest.mark.xfail(strict=True, reason="needs a CommonMark block parser")
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [pytest.param(source, expected, id=id_) for id_, source, expected in _PROBE_ROWS]
+    + [pytest.param(source, [], id=id_, marks=_GAP) for id_, source in _BLOCK_GAP_ROWS],
+)
+def test_find_imports_matches_markdown_probe(source, expected):
+    assert _find_imports(source) == expected
 
 
 if __name__ == "__main__":

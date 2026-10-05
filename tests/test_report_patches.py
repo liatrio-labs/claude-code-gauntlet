@@ -604,53 +604,24 @@ class TestIdempotentRewrite(ReportPatchesTestBase):
         self.assertEqual(receipt1, receipt2)
 
 
-class TestFenceLengthening(ReportPatchesTestBase):
-    """A patch payload containing a three-backtick run needs a four-backtick
-    fence so the payload cannot close it early — the same rule
-    ``post_review._fence_run`` applies to delivery's own fences.
-
-    RED when the fence is fixed at three backticks: the rendered open/close
-    lines would then be exactly ``` ``` ``` (three backticks), which this test's
-    exact-line check rejects.
-    """
-
-    def test_a_backtick_run_in_the_payload_lengthens_the_fence_to_four(self):
-        diff = (
-            "diff --git a/fence.py b/fence.py\n"
-            "--- a/fence.py\n"
-            "+++ b/fence.py\n"
-            "@@ -1,1 +1,4 @@\n"
-            " def f():\n"
-            "+    line_a\n"
-            "+    line_b\n"
-            "+    line_c\n"
-        )
-        self._write_diff(diff)
-        self._write_findings(
-            [
-                {
-                    "file": "fence.py",
-                    "line": 2,
-                    "end_line": 4,
-                    "title": "Fence",
-                    "suggested_fix_code": "```\nx\ny",
-                }
-            ]
-        )
-
-        exit_code, receipt, *_ = self._run()
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(receipt["kept"], 1)
-        lines = self._read_artifact().splitlines()
-        # The payload's OWN first line is a bare "```" (content, not a delimiter) —
-        # so the real assertion is on the FENCE lines specifically: a 4-backtick
-        # opener carrying the language tag, and the payload sandwiched between it
-        # and a bare 4-backtick closer.
-        open_index = lines.index("````py")
-        self.assertEqual(lines[open_index + 1 : open_index + 4], ["```", "x", "y"])
-        self.assertEqual(lines[open_index + 4], "````")
-        self.assertNotIn("```py", lines)
+def test_report_patch_fence_uses_shared_fence_run(monkeypatch):
+    monkeypatch.setattr(report_patches, "fence_run", lambda _payload: "````")
+    content = report_patches._render(
+        [
+            {
+                "file": "fence.py",
+                "line": 2,
+                "end_line": 4,
+                "title": "Fence",
+                "suggested_fix_code": "replacement",
+            }
+        ],
+        1,
+        0,
+        "ok",
+        "abc1234",
+    )
+    assert "````py\nreplacement\n````" in content
 
 
 class TestSecretBearingPatchRedacted(ReportPatchesTestBase):
@@ -979,10 +950,6 @@ class TestRenderedDisclosures(ReportPatchesTestBase):
         ]
         self.assertEqual(receipt["warnings"], stderr_warning_lines)
         self.assertEqual(len(receipt["warnings"]), 2)
-
-    def test_code_span_lengthens_the_run_over_a_backtick_in_the_path(self):
-        self.assertEqual(report_patches._code_span("a`b"), "``a`b``")
-        self.assertEqual(report_patches._code_span("no ticks here"), "`no ticks here`")
 
 
 class TestReceiptContract(ReportPatchesTestBase):

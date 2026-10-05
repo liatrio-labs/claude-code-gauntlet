@@ -28,6 +28,8 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
+from gauntlet.project_rules import _strip_code
+
 REPO = Path(__file__).resolve().parents[1]
 
 # Codex concatenates AGENTS.md from the repo root down to the working directory and stops
@@ -72,15 +74,14 @@ def agents_dirs():
 
 class TestCanonicalPointer(unittest.TestCase):
     def test_root_claude_md_imports_agents_md_outside_any_code_span(self):
-        """Must be a bare `@AGENTS.md` at line start.
-
-        Claude Code's import parser skips code spans and fenced blocks, so backticks around
+        """Must be a bare `@AGENTS.md` at line start: Claude Code's import parser skips
+        code spans and fenced blocks, so backticks around
         the pointer leave a CLAUDE.md that reads correctly to a human and imports nothing.
         This is the one import in the layout that DOES expand — it is launch-time and
         root-level, unlike the on-demand subdirectory path.
         """
         text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
-        uncoded = re.sub(r"`[^`\n]*`", "", re.sub(r"```.*?```", "", text, flags=re.S))
+        uncoded = _strip_code(text)
         self.assertRegex(
             uncoded,
             r"(?m)^@AGENTS\.md\s*$",

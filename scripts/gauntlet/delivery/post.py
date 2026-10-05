@@ -111,6 +111,16 @@ from gauntlet.forge import (
     origin_remote,
 )
 from gauntlet.fs import JsonReadError, read_json
+from gauntlet.markdown import (
+    code_span,
+    code_spans,
+    escaped_tick,
+    fence_closer,
+    fence_run,
+    open_fence,
+    span_close,
+    tick_run,
+)
 from gauntlet.marker import (
     FINDING_MARKER_TOKEN,
     LEGACY_PRODUCT,
@@ -457,45 +467,20 @@ def _escape_visible(text, *, code=False):
     )
 
 
-def _escaped_tick(text, index):
-    backslashes = 0
-    index -= 1
-    while index >= 0 and text[index] == "\\":
-        backslashes += 1
-        index -= 1
-    return bool(backslashes % 2)
-
-
 def _contain_line(line):
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     out = []
     index = 0
     while index < len(line):
         if line[index] == "`":
-            if _escaped_tick(line, index):
+            if escaped_tick(line, index):
                 out.append("`")
                 index += 1
                 continue
-            end = index
-            while end < len(line) and line[end] == "`":
-                end += 1
+            end = tick_run(line, index)
             width = end - index
-            # Only a complete run of exactly this width closes; backslashes
-            # inside the span have no escape meaning.
-            cursor = end
-            close = -1
-            while cursor < len(line):
-                tick = line.find("`", cursor)
-                if tick < 0:
-                    break
-                after = tick
-                while after < len(line) and line[after] == "`":
-                    after += 1
-                if after - tick == width:
-                    close = tick
-                    break
-                cursor = after
-            if close >= 0:
+            close = span_close(line, index, end)
+            if close is not None:
                 out.append(
                     line[index : close + width].replace(
                         line[end:close],
@@ -537,7 +522,7 @@ def _prepare_text(
         return ""
     intervals = []
     fence = (
-        _open_fence(text, strict=True, intervals=intervals)
+        open_fence(text, strict=True, intervals=intervals)
         if not single_line and trust_fences
         else None
     )
@@ -640,27 +625,8 @@ def _blockquote(text):
     return "\n".join(out)
 
 
-def _fence_run(payload):
-    """Return the backtick fence long enough to contain *payload* unbroken.
-
-    ``max(3, longest_backtick_run + 1)`` so CommonMark cannot close early. Per
-    clause: the longest-run+1, min-3 rule matches GitLab's own suggestion UI
-    (gitlab-org MR !172981); GitHub keeps Apply at 4+ backticks (confirmed);
-    GitLab documents four-backtick suggestion nesting.
-
-    Factored out of ``_suggestion_fence`` so a second renderer
-    (``gauntlet.patches``, the report-side read-only apply-check) computes
-    the identical length from the identical rule rather than a second copy of it.
-    """
-    runs = re.findall(r"`+", payload)
-    n = max(3, max((len(r) for r in runs), default=0) + 1)
-    return "`" * n
-
-
 def _suggestion_fence(payload, *, offsets=None):
-    """Return ``(open, close)`` fence lines that contain ``payload``.
-
-    Length is ``_fence_run(payload)`` — see its docstring for the rule.
+    """Return ``(open, close)`` fence lines; ``fence_run`` sets the length.
 
     *offsets* is GitLab's ``(above, below)`` pair: it makes the header
     ``suggestion:-m+n``, which widens what one click replaces to
@@ -671,7 +637,7 @@ def _suggestion_fence(payload, *, offsets=None):
     platform-blind: whether offsets are expressible at all is the poster's
     decision, made where the anchor is known.
     """
-    fence = _fence_run(payload)
+    fence = fence_run(payload)
     header = "suggestion"
     if offsets not in (None, (0, 0)):
         header = f"suggestion:-{offsets[0]}+{offsets[1]}"
@@ -1513,15 +1479,11 @@ def _skipped_location(filepath, line):
 
 
 def _quoted_location(value):
-    """Keep display location text inside a delimiter longer than its tick runs."""
+    """Display locations must contain mentions and markup without losing space edges."""
     value = _redact_secrets(_normalize_outbound(str(value)))
     value = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", value)
     value = _escape_visible(value, code=True).replace("\r", " ").replace("\n", " ")
-    longest = max((len(run) for run in re.findall(r"`+", value)), default=0)
-    delimiter = "`" * (longest + 1)
-    if value.startswith(("`", " ")) or value.endswith(("`", " ")):
-        value = f" {value} "
-    return f"{delimiter}{value}{delimiter}"
+    return code_span(value, pad_space_edges=True)
 
 
 def _plural(count, singular, plural=None):
@@ -1616,118 +1578,6 @@ def _codepoint_prefix(text, allowance):
     return "".join(pieces)
 
 
-# Twin of ``foldProse`` in ``workflows/src/renderReport.js``.
-def _open_fence(text, *, strict=False, intervals=None):
-    """Return the final open prose fence as ``(char, length, offset)``."""
-
-    state = None
-    opened_at = None
-    line_start = 0
-    index = 0
-
-    def line_run(line):
-        indent = 0
-        while indent < 3 and indent < len(line) and line[indent] == " ":
-            indent += 1
-        if indent >= len(line) or line[indent] not in "`~":
-            return None
-        char = line[indent]
-        end = indent
-        while end < len(line) and line[end] == char:
-            end += 1
-        return char, end - indent, end, indent
-
-    def visit(line, offset, line_end):
-        nonlocal state, opened_at
-        run = line_run(line)
-        if state is not None:
-            if (
-                run is not None
-                and run[0] == state[0]
-                and run[1] >= state[1]
-                and all(character in " \t" for character in line[run[2] :])
-            ):
-                state = None
-                if intervals is not None:
-                    intervals.append((opened_at, line_end))
-            return
-        if (
-            run is not None
-            and run[1] >= 3
-            and (not strict or run[3] == 0)
-            and not (run[0] == "`" and "`" in line[run[2] :])
-        ):
-            state = (run[0], run[1], offset + run[3])
-            opened_at = offset
-
-    while index < len(text):
-        if text[index] in "\r\n":
-            visit(text[line_start:index], line_start, index + 1)
-            if (
-                text[index] == "\r"
-                and index + 1 < len(text)
-                and text[index + 1] == "\n"
-            ):
-                index += 2
-            else:
-                index += 1
-            line_start = index
-        else:
-            index += 1
-    visit(text[line_start:], line_start, len(text))
-    if intervals is not None and state is not None:
-        intervals.append((opened_at, len(text)))
-    return state
-
-
-def _fence_closer(prefix):
-    state = _open_fence(prefix)
-    return "" if state is None else state[0] * state[1]
-
-
-def _code_intervals(text):
-    """Return paired single-line spans and trusted fences as separate intervals."""
-    fences = []
-    intervals = []
-    _open_fence(text, intervals=fences)
-    offset = 0
-    for line in text.split("\n"):
-        if any(start <= offset < end for start, end in fences):
-            offset += len(line) + 1
-            continue
-        cursor = 0
-        while cursor < len(line):
-            start = line.find("`", cursor)
-            if start < 0:
-                break
-            end = start
-            while end < len(line) and line[end] == "`":
-                end += 1
-            if _escaped_tick(line, start):
-                cursor = start + 1
-                continue
-            width = end - start
-            close = end
-            while close < len(line):
-                close = line.find("`", close)
-                if close < 0:
-                    break
-                after = close
-                while after < len(line) and line[after] == "`":
-                    after += 1
-                if after - close == width:
-                    intervals.append((offset + start, offset + after))
-                    cursor = after
-                    break
-                close = after
-            else:
-                cursor = end
-            if close < 0:
-                cursor = end
-        offset += len(line) + 1
-    return intervals, fences
-
-
 def _retreat_inside_span(text, cut, intervals):
     for start, end in intervals:
         if start < cut < end:
@@ -1736,10 +1586,10 @@ def _retreat_inside_span(text, cut, intervals):
 
 
 def _cut_unclosed_comment(prefix, intervals=None):
-    """Remove the first unclosed HTML comment and everything after it."""
+    """An unclosed HTML comment would swallow the appended fold notice."""
 
     if intervals is None:
-        spans, fences = _code_intervals(prefix)
+        spans, fences = code_spans(prefix)
         intervals = spans + fences
 
     position = 0
@@ -1798,10 +1648,10 @@ def _retreat_fold_prefix(
 
 
 def _fold_review_body(text, allowance, platform):
-    """Fold *text* into *allowance* bytes while preserving lines and code points."""
+    """Platform budgets count bytes; folds must preserve lines and code points."""
     limits = _body_limit(platform)
     total = _utf8_len(text)
-    intervals, fences = _code_intervals(text)
+    intervals, fences = code_spans(text)
     comment_intervals = intervals + fences
 
     def fold_line_for(byte_count):
@@ -1812,7 +1662,7 @@ def _fold_review_body(text, allowance, platform):
 
     # This is only the shortest provisional fence reserve. The final assembly
     # below measures the actual opener character and length.
-    reserve = _utf8_len(f"\n\n{fold_line_for(total)}\n{_fence_closer('```')}")
+    reserve = _utf8_len(f"\n\n{fold_line_for(total)}\n{fence_closer('```')}")
     if allowance < reserve:
         prefix = ""
         cut_inside_line = False
@@ -1836,7 +1686,7 @@ def _fold_review_body(text, allowance, platform):
     prefix = _cut_unclosed_comment(prefix, comment_intervals)
 
     while True:
-        closer = _fence_closer(prefix)
+        closer = fence_closer(prefix)
         dropped_bytes = total - _utf8_len(prefix)
         fold_line = fold_line_for(dropped_bytes)
         separator = "" if not closer or prefix.endswith(("\n", "\r")) else "\n"
@@ -1876,7 +1726,7 @@ def _fold_inline_body(sections, allowance, platform, surface):
     """Fold inline *sections* into *allowance* bytes without breaking markdown."""
     limits = _body_limit(platform, surface)
     total = _utf8_len(sections)
-    intervals, fences = _code_intervals(sections)
+    intervals, fences = code_spans(sections)
     comment_intervals = intervals + fences
 
     def fold_line_for(byte_count):
@@ -1888,7 +1738,7 @@ def _fold_inline_body(sections, allowance, platform, surface):
     # Reserve the fold line at the maximum digit count and the shortest possible
     # synthetic closer. The final assembly measures the actual fence and retreats
     # whole lines when the closer is longer.
-    reserve = _utf8_len(f"\n\n{fold_line_for(total)}\n{_fence_closer('```')}")
+    reserve = _utf8_len(f"\n\n{fold_line_for(total)}\n{fence_closer('```')}")
     if allowance < reserve:
         prefix = ""
         cut_inside_line = False
@@ -1912,7 +1762,7 @@ def _fold_inline_body(sections, allowance, platform, surface):
     prefix = _cut_unclosed_comment(prefix, comment_intervals)
 
     while True:
-        state = _open_fence(prefix)
+        state = open_fence(prefix)
         suggestion_start = _open_suggestion_line(prefix, state)
         if suggestion_start is not None:
             # A partial committable suggestion is worse than omitting its patch:

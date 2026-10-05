@@ -97,6 +97,7 @@ from contextlib import suppress
 
 from gauntlet.cli import Command
 from gauntlet.fs import confined, read_json, write_atomic
+from gauntlet.markdown import code_spans
 
 # The one place a convention filename is added. Ordered: this order is also the
 # tie-break precedence when two files at the same directory level state
@@ -137,9 +138,6 @@ DEFAULT_MAX_FILES = 512
 # so an email address or a decorator mid-word is not mistaken for an import.
 _IMPORT_RE = re.compile(r"(?:^|(?<=\s))@(\S+)")
 
-_FENCE_RE = re.compile(r"^\s{0,3}(```+|~~~+)")
-_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
-
 # Trailing sentence punctuation is not part of the path. Stripped because the
 # docs' own example is an inline mid-sentence import, e.g.
 # "See @AI-AGENTS.md for all instructions." — ".md" survives this, "md." does not.
@@ -149,30 +147,31 @@ _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
 
 def _strip_code(text):
-    """Return *text* with fenced blocks and inline code spans blanked out.
-
-    Claude Code skips imports inside code spans and fenced blocks — wrapping a
-    path in backticks is the documented way to mention it without importing it.
-    Blanking rather than deleting keeps this cheap and order-independent; only
-    import scanning consumes the result.
+    """Claude Code skips imports in code spans and fenced blocks; backticks are the
+    documented way to mention a path without importing it. Each span becomes one
+    space (measured: a`x`@imp.md loads). Top-level fences and one-line spans only:
+    containers, indented code, HTML and multi-line spans need a block parser.
     """
-    out = []
-    fence = None
-    for line in text.splitlines():
-        match = _FENCE_RE.match(line)
-        if match:
-            marker = match.group(1)
-            if fence is None:
-                fence = marker
-            # Markdown permits longer closing fences (>= opening length).
-            # Track fence run length so nested shorter fences do not close
-            # the outer fence early.
-            elif fence[0] == marker[0] and len(marker) >= len(fence):
-                fence = None
-            out.append("")
-            continue
-        out.append("" if fence is not None else _INLINE_CODE_RE.sub("", line))
-    return "\n".join(out)
+    normalized = "\n".join(text.splitlines())
+    spans, fences = code_spans(normalized)
+    intervals = [(start, end, "span") for start, end in spans]
+    for start, end in fences:
+        line_start = start
+        while line_start < end:
+            line_end = normalized.find("\n", line_start, end)
+            if line_end < 0:
+                line_end = end
+            intervals.append((line_start, line_end, "fence"))
+            line_start = line_end + 1
+    intervals.sort()
+    parts = []
+    cursor = 0
+    for start, end, kind in intervals:
+        parts.append(normalized[cursor:start])
+        parts.append("" if kind == "fence" else " ")
+        cursor = end
+    parts.append(normalized[cursor:])
+    return "".join(parts)
 
 
 def _find_imports(text):

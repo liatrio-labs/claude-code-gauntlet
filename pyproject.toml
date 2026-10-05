@@ -71,6 +71,7 @@ module = [
   "gauntlet.marker",
   "gauntlet.paths",
   "gauntlet.jsjson",
+  "gauntlet.markdown",
   "gauntlet.numstat",
   "gauntlet.stale",
   "gauntlet.shared_context",

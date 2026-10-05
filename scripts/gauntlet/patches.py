@@ -16,7 +16,6 @@ from gauntlet.delivery.post import (
     _FIX_COUNTS,
     _FIX_REASON_COUNTS,
     _SKIP_WARNINGS,
-    _fence_run,
     _fix_code_text,
     _gated_finding,
     _redact_secrets,
@@ -24,6 +23,7 @@ from gauntlet.delivery.post import (
 )
 from gauntlet.diff import parse_diff, patch_report_policy
 from gauntlet.fs import JsonReadError, confined, read_json, write_atomic
+from gauntlet.markdown import code_span, fence_run
 
 _HEAD_SHA_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _EXT_RE = re.compile(r"^[A-Za-z0-9_+#-]{1,12}$")
@@ -86,15 +86,6 @@ def _load_findings(path, errors):
     return data
 
 
-def _code_span(s):
-    """Inline code span wrapping *s*: a backtick run longer than any run *s*
-    contains, space-padded when *s* itself starts or ends with a backtick."""
-    runs = re.findall(r"`+", s)
-    ticks = "`" * (max((len(r) for r in runs), default=0) + 1)
-    pad = " " if s.startswith("`") or s.endswith("`") else ""
-    return f"{ticks}{pad}{s}{pad}{ticks}"
-
-
 _LINE_BREAK_RUN_RE = re.compile(r"[\r\n \x0b\x0c\x85]+")
 
 
@@ -139,13 +130,10 @@ def _neutralize(text):
 
 
 def _render(kept, candidates, filtered_earlier, oracle_state, sha):
-    """Return the whole markdown document, deterministically, from KEPT
-    findings (already gated) plus the run's own counters.
+    """Return the whole markdown document, deterministically.
 
-    ``_FIX_COUNTS`` (not ``candidates - len(kept)``) is the single source of
-    truth for kept/downgraded: it is what ``_gated_finding`` itself
-    incremented while gating this run's candidates, reset fresh by
-    ``main()``'s ``reset_run_state()`` call before the first one.
+    ``_FIX_COUNTS``, which ``main()`` resets before gating, is the source of truth
+    for kept/downgraded; ``candidates - len(kept)`` is not.
     """
     downgraded = _FIX_COUNTS["downgraded"]
     parts = []
@@ -191,13 +179,13 @@ def _render(kept, candidates, filtered_earlier, oracle_state, sha):
             or _one_line(finding.get("id") or "")
             or "finding"
         )
-        emit(f"## {_code_span(file_)}:{line}-{end_line} — {title}")
+        emit(f"## {code_span(file_)}:{line}-{end_line} — {title}")
 
         text = _fix_code_text(finding.get("suggested_fix_code"))
         text = _redact_secrets(
             text
         )  # defense in depth: the gate already proved this is a no-op
-        fence = _fence_run(text)
+        fence = fence_run(text)
         ext = os.path.splitext(file_)[1].lstrip(".")
         info = ext if _EXT_RE.match(ext) else ""
         emit(f"{fence}{info}\n{text}\n{fence}", raw=True)

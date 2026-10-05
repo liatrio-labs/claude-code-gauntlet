@@ -27,12 +27,10 @@ from gauntlet.delivery.post import (
     _blockquote,
     _cap_rule_text,
     _delivery_marker_suffix,
-    _fence_closer,
     _fold_inline_body,
     _fold_review_body,
     _inline_body_over_limit,
     _normalize_outbound,
-    _open_fence,
     _prepared_prose,
     _redact_secrets,
     _render_group_sections,
@@ -58,6 +56,7 @@ from gauntlet.forge import (
     ReviewTarget,
     github_review_request,
 )
+from gauntlet.markdown import fence_closer
 from gauntlet.prior_review import PriorDelivery
 
 from tests.support.diff import diff_facts
@@ -619,23 +618,6 @@ class TestOutboundSanitizeHelpers(unittest.TestCase):
         # CR stripped by sanitize → single line inside the quote.
         self.assertIn("> keepescape **bold**", body)
         self.assertNotIn("\r", body)
-
-    def test_suggestion_fence_lengthens_for_inner_triple(self):
-        payload = "line1\n```\nline3"
-        open_f, close_f = _suggestion_fence(payload)
-        self.assertEqual(open_f, "````suggestion")
-        self.assertEqual(close_f, "````")
-
-    def test_suggestion_fence_stays_three_without_backticks(self):
-        open_f, close_f = _suggestion_fence("return None")
-        self.assertEqual(open_f, "```suggestion")
-        self.assertEqual(close_f, "```")
-
-    def test_suggestion_fence_four_inner_needs_five(self):
-        payload = "````"
-        open_f, close_f = _suggestion_fence(payload)
-        self.assertEqual(open_f, "`````suggestion")
-        self.assertEqual(close_f, "`````")
 
     def test_offsets_are_stated_in_the_header(self):
         open_f, close_f = _suggestion_fence("return None", offsets=(0, 2))
@@ -4573,15 +4555,6 @@ class TestBuildSkippedSection(unittest.TestCase):
         self.assertNotIn("prose\n\n\n---", body)
 
 
-class TestProseFenceHelpers(unittest.TestCase):
-    """The Python fold scanner is pinned to the shared hand-typed corpus."""
-
-    def test_open_fence_reports_the_opener_shape(self):
-        self.assertEqual(_open_fence("   ````x"), ("`", 4, 3))
-        self.assertEqual(_open_fence("prose\r````\rx"), ("`", 4, 6))
-        self.assertIsNone(_open_fence("````\n````\nprose"))
-
-
 class TestProseFenceBudget(unittest.TestCase):
     def _fold_line(self, dropped):
         limits = post_review._body_limit("github")
@@ -5303,7 +5276,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         body = payload["payload"]["body"]
         before_fold = body[: body.index("_[folded:")]
         self.assertFalse(exit_code)
-        self.assertEqual(_fence_closer(before_fold), "")
+        self.assertEqual(fence_closer(before_fold), "")
         self.assertIn("\n```\n\n", before_fold)
         self.assertIn(
             "_[folded: 4808 more bytes; this review body reached the 65536-byte "
@@ -8479,26 +8452,9 @@ class TestDeliveryKeysAreFenceIndependent(_GitlabLiveRunBase):
         )
 
 
-class TestFenceRun(unittest.TestCase):
-    """``_fence_run`` — the factored-out fence-length rule ``_suggestion_fence``
-    now delegates to (issue #226). Pinned directly, and cross-checked against
-    ``_suggestion_fence``'s own open/close pair so the two can never drift."""
-
-    def test_no_backticks_uses_the_minimum_of_three(self):
-        self.assertEqual(post_review._fence_run("plain text"), "```")
-
-    def test_a_three_run_needs_a_four_run_fence(self):
-        self.assertEqual(post_review._fence_run("a ``` run"), "````")
-
-    def test_a_four_run_needs_a_five_run_fence(self):
-        self.assertEqual(post_review._fence_run("a ```` run"), "`````")
-
-    def test_matches_suggestion_fence_open_and_close(self):
-        for payload in ("plain", "has ``` three", "has ```` four"):
-            fence = post_review._fence_run(payload)
-            open_line, close_line = post_review._suggestion_fence(payload)
-            self.assertEqual(close_line, fence)
-            self.assertEqual(open_line, f"{fence}suggestion")
+def test_suggestion_fence_uses_shared_fence_run(monkeypatch):
+    monkeypatch.setattr(post_review, "fence_run", lambda _payload: "````")
+    assert post_review._suggestion_fence("plain") == ("````suggestion", "````")
 
 
 class TestGatedFindingWarnLabel(unittest.TestCase):

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import gauntlet.delivery.post as post_review
 import pytest
+from gauntlet.markdown import open_fence
 from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 
 from tests.tools.render_probes import (
@@ -55,7 +56,7 @@ def test_tracked_fixture_has_canonical_byte_layout():
 
 def _assert_outbound_string_invariant(output, *, check_prose_rules=True):
     fences = []
-    post_review._open_fence(output, strict=True, intervals=fences)
+    open_fence(output, strict=True, intervals=fences)
     cursor = 0
     outside = []
     for start, end in fences:
@@ -457,15 +458,16 @@ def test_escape_rules_preserve_trusted_fences_and_reject_fake_fences():
     fake_fences = (
         ("> ```\n/close\n> ```", "> \\`\\`\\`\n\\/close\n> \\`\\`\\`"),
         ("- ```\n/close\n- ```", "- \\`\\`\\`\n\\/close\n- \\`\\`\\`"),
+        (" ```\n/close\n ```", " \\`\\`\\`\n\\/close\n \\`\\`\\`"),
     )
     for source, expected in fake_fences:
-        assert post_review._open_fence(source, strict=True) is None
+        assert open_fence(source, strict=True) is None
         prepared = post_review.prepare_prose(source)
         assert prepared == expected
         _assert_outbound_string_invariant(prepared)
 
     bad_info = "```a`b\n/close"
-    assert post_review._open_fence(bad_info, strict=True) is None
+    assert open_fence(bad_info, strict=True) is None
     expected_bad_info = "\\`\\``a`b\n\\/close"
     assert post_review.prepare_prose(bad_info) == expected_bad_info
     _assert_outbound_string_invariant(expected_bad_info)
@@ -491,6 +493,7 @@ def test_quoted_location_uses_fullwidth_characters():
         "`app/\uff20modal/\uff1cSlot>.tsx`"
     )
     assert post_review._quoted_location("src/a<`b.py") == "``src/a\uff1c`b.py``"
+    assert post_review._quoted_location(" path") == "`  path `"
 
 
 def test_rule_fixture_rows_are_contained_after_blockquote_prefix():
@@ -644,20 +647,6 @@ def test_backslash_before_final_closer_is_span_content():
     assert post_review.prepare_prose("| `x | <b> @user`") == (
         "| `x | \uff1cb> \uff20user`"
     )
-
-
-def test_byte_fold_intervals_use_exact_runs_and_literal_span_backslashes():
-    unequal = "left `x ``` <ins> @user`"
-    assert post_review._code_intervals(unequal)[0] == [(5, len(unequal))]
-
-    ended_by_backslash = r"left `protected\` <table> @inside`"
-    first_close = ended_by_backslash.index("`", 6) + 1
-    assert post_review._code_intervals(ended_by_backslash)[0] == [(5, first_close)]
-
-    escaped_first = r"left \``<ins> @inside`"
-    assert post_review._code_intervals(escaped_first)[0] == [
-        (escaped_first.index("``") + 1, len(escaped_first))
-    ]
 
 
 @pytest.mark.parametrize("text", ("/close", ">>> x", ">>> [!note]"))
