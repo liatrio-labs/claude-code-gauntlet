@@ -454,8 +454,16 @@ def test_check_reports_drift_fields(field, overrides, capsys):
         ([issue(9, "v1.2.2", "CLOSED")], "create", None),
         ([issue(10, TAG)], "none", None),
         ([issue(12, "v1.2.2"), issue(13, TAG, "CLOSED")], "none", None),
+        ([issue(13, TAG, "CLOSED"), issue(12, "v1.2.2")], "none", None),
     ],
-    ids=["no_issue", "open_older", "closed_older", "open_latest", "closed_latest"],
+    ids=[
+        "no_issue",
+        "open_older",
+        "closed_older",
+        "open_latest",
+        "closed_latest_listed_last",
+        "closed_latest_listed_first",
+    ],
 )
 def test_remind_decision_table(issues, action, issue_number):
     runner = remind_runner(issues, action=action, number=issue_number)

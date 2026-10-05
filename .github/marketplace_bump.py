@@ -207,18 +207,44 @@ def _require_document(text: str, label: str) -> MarketplaceDocument:
     return cast(MarketplaceDocument, document)
 
 
+def _existing_pr_url(branch: str, run: CommandRunner) -> str | None:
+    text = run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            DEFAULT_MARKETPLACE_REPO,
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "url",
+        ],
+        None,
+    )
+    try:
+        prs = json.loads(text)
+    except json.JSONDecodeError:
+        raise InputError("pull request list is not valid JSON") from None
+    if not isinstance(prs, list) or any(
+        not isinstance(pr, dict) or not isinstance(pr.get("url"), str) for pr in prs
+    ):
+        raise InputError("pull request list must contain objects with URLs")
+    return prs[0]["url"] if prs else None
+
+
 def open_pr(tag: str, run: CommandRunner) -> int:
     manifest, sha = _read_release(tag, run)
     branch = f"bump-marketplace/claude-code-gauntlet-{tag}"
-    source_repo = DEFAULT_SOURCE_REPO
-    marketplace_repo = DEFAULT_MARKETPLACE_REPO
-    title = f"fix(plugins): update {source_repo} to {tag}"
-    release_url = f"https://github.com/{source_repo}/releases/tag/{tag}"
+    title = f"fix(plugins): update {DEFAULT_SOURCE_REPO} to {tag}"
+    release_url = f"https://github.com/{DEFAULT_SOURCE_REPO}/releases/tag/{tag}"
     body = f"Update the marketplace entry to upstream release [{tag}]({release_url})."
 
     with tempfile.TemporaryDirectory(prefix="marketplace-bump-") as temporary:
-        run(["gh", "repo", "clone", marketplace_repo], temporary)
-        clone = Path(temporary) / marketplace_repo.split("/", 1)[1]
+        run(["gh", "repo", "clone", DEFAULT_MARKETPLACE_REPO], temporary)
+        clone = Path(temporary) / DEFAULT_MARKETPLACE_REPO.split("/", 1)[1]
         marketplace_path = clone / MARKETPLACE_PATH
         try:
             original = _require_document(
@@ -240,36 +266,15 @@ def open_pr(tag: str, run: CommandRunner) -> int:
         run(["git", "switch", "--create", branch], cwd)
         run(["git", "add", "--", MARKETPLACE_PATH], cwd)
         run(["git", "commit", "-m", title], cwd)
+        # Pushed before the lookup so the branch always carries this run's content,
+        # whoever created it.
         run(
             ["git", "push", "--force-with-lease", "--set-upstream", "origin", branch],
             cwd,
         )
-        pr_text = run(
-            [
-                "gh",
-                "pr",
-                "list",
-                "--repo",
-                marketplace_repo,
-                "--head",
-                branch,
-                "--state",
-                "open",
-                "--json",
-                "url",
-            ],
-            None,
-        )
-        try:
-            prs = json.loads(pr_text)
-        except json.JSONDecodeError:
-            raise InputError("pull request list is not valid JSON") from None
-        if not isinstance(prs, list) or any(
-            not isinstance(pr, dict) or not isinstance(pr.get("url"), str) for pr in prs
-        ):
-            raise InputError("pull request list must contain objects with URLs")
-        if prs:
-            print(prs[0]["url"])
+        existing = _existing_pr_url(branch, run)
+        if existing:
+            print(existing)
             return 0
         url = run(
             [
@@ -277,7 +282,7 @@ def open_pr(tag: str, run: CommandRunner) -> int:
                 "pr",
                 "create",
                 "--repo",
-                marketplace_repo,
+                DEFAULT_MARKETPLACE_REPO,
                 "--base",
                 "main",
                 "--title",
