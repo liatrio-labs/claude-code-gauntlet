@@ -4,7 +4,6 @@ import contextlib
 import hashlib
 import io
 import json
-import random
 import re
 import subprocess
 import sys
@@ -19,13 +18,15 @@ import gauntlet.marker as review_marker
 import gauntlet.text as outbound_text
 import pytest
 from gauntlet.forge import JsonFetch, Platform, PostRequest, PostResult, ReviewTarget
-from gauntlet.markdown import fence_closer, open_fence
+from gauntlet.markdown import open_fence
 from gauntlet.prior_review import PriorDelivery
 
 from tests.support.diff import diff_facts
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 from tests.support.prior import prior_notes
-from tests.test_outbound_contract import _assert_outbound_string_invariant
+from tests.tools.outbound import (
+    assert_outbound_string_invariant as _assert_outbound_string_invariant,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 NODE = "node"
@@ -461,38 +462,6 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
                 self.assertIn("\uff20leehopper &lt;ins>x&lt;/ins>", rendered)
                 self.assertIsNone(open_fence(rendered))
 
-    def test_python_fixture_rows_match_the_ordered_prose_entry_points(self):
-        prepare_prose = getattr(outbound_text, "prepare_prose", None)
-        prepare_line = getattr(outbound_text, "prepare_line", None)
-        self.assertTrue(callable(prepare_prose), "prepare_prose entry point is missing")
-        self.assertTrue(callable(prepare_line), "prepare_line entry point is missing")
-        prepare = {
-            "single_line": prepare_line,
-            "location": prepare_line,
-            "prose": prepare_prose,
-            "rule": lambda value: outbound_text.prepared_prose(value, cap=True) or "",
-        }
-        for row in OUTBOUND_CASES:
-            with self.subTest(case=row["id"]):
-                self.assertEqual(
-                    prepare[row["field_class"]](row["input"]), row["expected"]
-                )
-
-    def test_prose_preparation_is_idempotent_for_fixtures_and_seeded_inputs(self):
-        prepare_prose = getattr(outbound_text, "prepare_prose", None)
-        self.assertTrue(callable(prepare_prose), "prepare_prose entry point is missing")
-        values = [row["input"] for row in OUTBOUND_CASES]
-        rng = random.Random(917)
-        alphabet = "@<&#!/?`\\0123456789abc\n\r "
-        values.extend(
-            "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 64)))
-            for _ in range(5000)
-        )
-        for value in values:
-            with self.subTest(value=value[:24]):
-                once = prepare_prose(value)
-                self.assertEqual(prepare_prose(once), once)
-
     def test_primary_title_and_body_are_contained_before_the_footer(self):
         rendered = post_review.render_comment_body(_hostile_finding())
         _assert_no_hostile_prose(self, rendered)
@@ -646,32 +615,6 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
 
 
 class TestFoldAndGateContracts(unittest.TestCase):
-    def test_forced_review_folds_keep_escaped_lines_at_the_cut(self):
-        limits = outbound_fold.body_limit("github")
-        for line, source in (
-            ("\\/close", "context\n/close\n" + "tail " * 15000),
-            ("\\>>>", "context\n>>>\n" + "tail " * 15000),
-        ):
-            with self.subTest(line=line):
-                prepared = outbound_text.prepare_prose(source)
-                total = outbound_fold.utf8_len(prepared)
-                folded_note = (
-                    f"_[folded: {total} more bytes; this {limits.surface} reached the "
-                    f"{limits.bytes}-byte {limits.label} body limit]_"
-                )
-                reserve = outbound_fold.utf8_len(
-                    f"\n\n{folded_note}\n{fence_closer('```')}"
-                )
-                cut = prepared.index(line) + len(line) + 1
-                allowance = outbound_fold.utf8_len(prepared[:cut]) + reserve
-                folded, dropped = outbound_fold.fold_review_body(
-                    prepared, allowance, "github"
-                )
-                self.assertGreater(dropped, 0)
-                prefix = folded.split("\n\n_[folded:", 1)[0]
-                self.assertTrue(prefix.endswith(line + "\n"), prefix[-80:])
-                _assert_outbound_string_invariant(folded)
-
     def test_forced_composer_folds_keep_escaped_quote_prefixes(self):
         for platform in ("github", "gitlab"):
             with self.subTest(platform=platform):
@@ -718,49 +661,6 @@ class TestFoldAndGateContracts(unittest.TestCase):
                     "prepared slash line was not kept",
                 )
                 _assert_outbound_string_invariant(composed.body)
-
-    def test_midline_fold_retires_the_open_code_span_in_both_composers(self):
-        text = "x" * 65213 + " `<table><tr><td>`" + "y" * 1000
-        for name, fold in (
-            (
-                "inline",
-                lambda: outbound_fold.fold_inline_body(text, 65336, "github", "inline"),
-            ),
-            (
-                "review",
-                lambda: outbound_fold.fold_review_body(text, 65336, "github"),
-            ),
-        ):
-            with self.subTest(composer=name):
-                folded, dropped = fold()
-                self.assertGreater(dropped, 0)
-                prefix = folded.split("\n\n_[folded:", 1)[0]
-                if "<table" in prefix:
-                    self.assertTrue(_contains_code_span(prefix, "<table><tr><td>"))
-                shorter, _ = (
-                    outbound_fold.fold_inline_body(text, 65320, "github", "inline")
-                    if name == "inline"
-                    else outbound_fold.fold_review_body(text, 65320, "github")
-                )
-                self.assertNotIn("<table", shorter)
-
-    def test_line_boundary_fold_keeps_a_complete_single_line_code_span(self):
-        span = "`<table><tr><td>`"
-        text = "x" * 65213 + "\n" + span + "\n" + "tail " * 1000
-        for name, fold in (
-            (
-                "inline",
-                lambda: outbound_fold.fold_inline_body(text, 65336, "github", "inline"),
-            ),
-            (
-                "review",
-                lambda: outbound_fold.fold_review_body(text, 65336, "github"),
-            ),
-        ):
-            with self.subTest(composer=name):
-                folded, dropped = fold()
-                self.assertGreater(dropped, 0)
-                self.assertIn("\n" + span + "\n", folded)
 
     def test_patch_with_a_finding_marker_opener_is_rejected_as_marker_shaped(self):
         finding = {

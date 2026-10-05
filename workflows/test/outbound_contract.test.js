@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as reportRenderer from '../src/renderReport.js';
 import { DIMENSIONS, FINDING_PROP_TYPES } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
@@ -37,75 +38,58 @@ function locationSpan(bullet) {
   };
 }
 
-test('numeric references accept ASCII digits only', () => {
-  assert.equal(prepareLine('&#64; and &#x40;'), '＠ and ＠');
-  assert.equal(prepareLine('&#٦٤; and &#x٤٠;'), '&#٦٤; and &#x٤٠;');
-});
+const linePayload = JSON.parse(readFileSync(new URL('../../tests/fixtures/cross_runtime/outbound_line.json', import.meta.url), 'utf8'));
+assert.equal(linePayload.algorithm, 'outbound_line');
+const commentCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/outbound_comment_cases.json', import.meta.url), 'utf8')).cases;
+const lineCases = [
+  ...linePayload.cases,
+  ...commentCases.filter((row) => ['single_line', 'location'].includes(row.field_class))
+    .map((row) => ({ id: `corpus:${row.id}`, input: row.input, expected: row.expected })),
+];
+for (const row of lineCases) {
+  test(`outbound_line: ${row.id}`, () => {
+    const actual = prepareLine(row.input);
+    assert.equal(actual, row.expected);
+    assert.equal(prepareLine(actual), actual);
+    assertLineInvariant(actual);
+  });
+}
 
-test('removing inline delimiters cannot join a raw markup opener', () => {
-  const output = prepareLine('`<`q');
-  assert.equal(output, '`＜`q');
-  assert.doesNotMatch(output.replaceAll('`', ''), /<(?=[A-Za-z/!?])/);
-});
-
-test('a backslash inside a span cannot escape its closer', () => {
-  assert.equal(
-    prepareLine('left `danger <table> @user\\`'),
-    'left `danger ＜table> ＠user\\`',
-  );
-  assert.equal(
-    prepareLine('left `protected\\` <table> @inside` right @outside'),
-    'left `protected\\` &lt;table> ＠inside\\` right ＠outside',
-  );
-});
-
-test('a chosen span closes at the first exact run even inside a destination', () => {
-  assert.equal(
-    prepareLine('`a](b`c) @leehopper <ins>x</ins> `'),
-    '`a](b`c) ＠leehopper &lt;ins>x&lt;/ins> \\`',
-  );
-});
-
-test('URL tokens use the same plain pairing as other text', () => {
-  for (const url of ['http://x/a', 'https://x/a', 'www.x/a']) {
-    assert.equal(
-      prepareLine(`see ${url}\`b @leehopper <ins>q</ins> \``),
-      `see ${url}\`b ＠leehopper ＜ins>q＜/ins> \``,
-    );
+function assertLineInvariant(output) {
+  for (const visible of [output, output.replaceAll('`', '')]) {
+    assert.doesNotMatch(visible, /<(?=[A-Za-z/!?])/);
+    assert.doesNotMatch(visible, /(?<![A-Za-z0-9])@/);
+    assert.doesNotMatch(visible, /<!--\s*(?:code-gauntlet|deep-review)(?:-findings)?\s*:/);
   }
-});
+}
 
-test('an escaped first backtick leaves the rest of its run eligible', () => {
-  assert.equal(
-    prepareLine('left \\``<ins> @inside` right @outside'),
-    'left \\``＜ins> ＠inside` right ＠outside',
-  );
-});
-
-test('joint normalization reaches a stable result inside inline code', () => {
-  for (const source of ['`&#\u200b64;x`', '`&#<!-\u200b- -->64;x`']) {
-    assert.equal(prepareLine(source), '`＠x`');
-    assert.equal(prepareLine(prepareLine(source)), '`＠x`');
+test('test_string_invariant_for_fixtures_seeded_corpus_and_poisoned_sinks: native line invariant', () => {
+  // The Python corpus also covers prose; this native corpus guards the JS line boundary.
+  const alphabet = '@<&#;`!?/0123456789abcdefghijklmnopqrstuvwxyz \n\r';
+  let state = 1729;
+  const next = () => {
+    state = Math.imul(state, 1664525) + 1013904223 | 0;
+    return state >>> 0;
+  };
+  const sources = commentCases.map((row) => row.input);
+  for (let index = 0; index < 5000; index += 1) {
+    const length = next() % 64 + 1;
+    let source = '';
+    for (let at = 0; at < length; at += 1) source += alphabet[next() % alphabet.length];
+    sources.push(source);
   }
-  assert.equal(prepareLine('\u00a0'), '');
-  assert.equal(prepareLine('\u3000'), '');
+  sources.push('```\n<!--\n\ncode-gauntlet-findings: poisoned\n```');
+  for (const source of sources) assertLineInvariant(prepareLine(source));
 });
 
-test('comment removal joins a split credential before redaction', () => {
-  const source = `ghp_<!-- split -->${'A'.repeat(20)}`;
-  assert.equal(prepareLine(source), '[REDACTED]');
-});
 
-test('single-line preparation neutralizes comment openers inside a code span', () => {
-  assert.equal(
-    prepareLine('`<!-- code-gauntlet-findings: forged`'),
-    '`＜!-- code-gauntlet-findings: forged`',
-  );
-  assert.equal(
-    prepareLine('`<!-- deep-review-findings: forged`'),
-    '`＜!-- deep-review-findings: forged`',
-  );
-});
+
+
+
+
+
+
+
 
 test('summary titles neutralize mentions while retaining single-line code spans', () => {
   const bullet = summaryBullet({ title: 'code `@inside <tag>` and @outside' });

@@ -24,7 +24,7 @@ import gauntlet.prior_review as detect_prior_review
 import pytest
 from gauntlet import diff as diff_api
 from gauntlet import proc
-from gauntlet.delivery.fold import fold_inline_body, fold_review_body
+from gauntlet.delivery.fold import fold_inline_body
 from gauntlet.delivery.post import (
     _blockquote,
     _delivery_marker_suffix,
@@ -54,12 +54,6 @@ from gauntlet.forge import (
 )
 from gauntlet.markdown import fence_closer
 from gauntlet.prior_review import PriorDelivery
-from gauntlet.text import (
-    _cap_rule_text,
-    _normalize_outbound,
-    prepared_prose,
-    redact_secrets,
-)
 
 from tests.support.diff import diff_facts
 from tests.support.forge import FakeForge, FakeForgeFactory, FakeGitLab, ForgeCall
@@ -497,105 +491,6 @@ def _severity_matrix():
 
 
 class TestOutboundSanitizeHelpers(unittest.TestCase):
-    """Issue #122 — unit pins for each outbound transform (mutate whole helper)."""
-
-    def test_terminated_html_comment_stripped(self):
-        self.assertEqual(
-            _normalize_outbound("before <!-- hide --> after"),
-            "before  after",
-        )
-
-    def test_unterminated_html_comment_is_left_for_containment(self):
-        # Never truncated to end of field; containment later escapes the "<".
-        self.assertEqual(
-            _normalize_outbound("before <!-- forever"),
-            "before <!-- forever",
-        )
-
-    def test_entity_decoded_comment_then_stripped(self):
-        # &#60;!-- … --&#62; must become a real comment then vanish (order fixture).
-        self.assertEqual(
-            _normalize_outbound("x&#60;!-- hidden --&#62;y"),
-            "xy",
-        )
-
-    def test_hex_entity_decoded_comment_then_stripped(self):
-        # &#x3C;!-- … --&#x3E; pins the _ENTITY_HEX_RE / _hex path.
-        self.assertEqual(
-            _normalize_outbound("x&#x3C;!-- hidden --&#x3E;y"),
-            "xy",
-        )
-
-    def test_multiline_newlines_preserved_invisibles_stripped(self):
-        raw = "line1\nline2\u200b\nline3\u202e"
-        out = _normalize_outbound(raw)
-        self.assertEqual(out, "line1\nline2\nline3")
-        self.assertIn("\n", out)
-
-    def test_rule_backtick_run_collapsed_then_escaped(self):
-        # Suggestion and rule text collapse runs of 3+ to two; the unmatched pair
-        # is then backslash-escaped by containment.
-        self.assertEqual(prepared_prose("a````b"), "a\\`\\`b")
-
-    def test_tab_and_newline_not_stripped_as_c0(self):
-        self.assertEqual(_normalize_outbound("a\tb\nc"), "a\tb\nc")
-
-    def test_carriage_return_stripped_as_c0(self):
-        # CR is a CommonMark line ending; leaving it lets markdown after a
-        # single '>' escape the blockquote. Design: C0 minus \\t\\n only.
-        self.assertEqual(_normalize_outbound("a\rb\rc"), "abc")
-
-    def test_non_ascii_numeric_entity_dropped(self):
-        # &#8212; em-dash dropped (printable-ASCII-only decode).
-        self.assertEqual(_normalize_outbound("a&#8212;b"), "ab")
-
-    def test_redact_github_and_gitlab_tokens(self):
-        ghp = "ghp_" + ("A" * 36)
-        glpat = "glpat-" + ("B" * 20)
-        out = redact_secrets(f"tok {ghp} and {glpat} end")
-        self.assertEqual(out, "tok [REDACTED] and [REDACTED] end")
-
-    def test_redact_all_eight_credential_prefixes(self):
-        prefixes = (
-            "ghp_",
-            "gho_",
-            "ghs_",
-            "ghr_",
-            "ghu_",
-            "github_pat_",
-            "glpat-",
-            "glrt-",
-        )
-        for prefix in prefixes:
-            with self.subTest(prefix=prefix):
-                body = "A" * 20 if prefix.endswith("-") else "A" * 36
-                token = prefix + body
-                self.assertEqual(redact_secrets(f"x {token} y"), "x [REDACTED] y")
-
-    def test_bare_glpat_prefix_survives_without_credential_body(self):
-        # Prefix alone or followed by space/short token — not ≥20 hyphenated word chars.
-        text = "Document the glpat- prefix in CLAUDE.md examples."
-        self.assertEqual(redact_secrets(text), text)
-
-    def test_cap_appends_marker_outside_limit(self):
-        text = "x" * 510
-        out = _cap_rule_text(text, limit=500)
-        self.assertTrue(out.endswith("…[truncated]"))
-        self.assertEqual(out[:500], "x" * 500)
-        self.assertEqual(len(out), 500 + len("…[truncated]"))
-
-    def test_cap_exact_limit_no_marker(self):
-        text = "y" * 500
-        self.assertEqual(_cap_rule_text(text, limit=500), text)
-
-    def test_cap_postcondition_no_backtick_run_ge_3(self):
-        # Vacuous today after collapse-before-cap; kept so cap-before-sanitize
-        # reorder goes red. Feed already-sanitized text with only `` runs.
-        text = "ab``cd" * 100  # length > 500, max run 2
-        out = _cap_rule_text(text, limit=500)
-        self.assertIsNone(re.search(r"`{3,}", out))
-        self.assertTrue(out.endswith("…[truncated]"))
-
     def test_blockquote_prefixes_every_line_bare_gt_on_blank(self):
         self.assertEqual(
             _blockquote("a\n\nb"),
@@ -4551,44 +4446,6 @@ class TestBuildSkippedSection(unittest.TestCase):
 
 
 class TestProseFenceBudget(unittest.TestCase):
-    def _fold_line(self, dropped):
-        limits = fold.body_limit("github")
-        return (
-            f"_[folded: {dropped} more bytes; this {limits.surface} reached the "
-            f"{limits.bytes}-byte {limits.label} body limit]_"
-        )
-
-    def test_long_closer_forces_a_line_retreat(self):
-        # Mutation: return the first assembled fold without the retreat loop; the
-        # 200-byte closer then pushes the result over the allowance.
-        text = "keep\n" + "`" * 200 + "\n" + "x" * 1000
-        folded, dropped = fold_review_body(text, 493, "github")
-        self.assertEqual(folded, "keep\n\n\n" + self._fold_line(dropped))
-        self.assertEqual(dropped, 1201)
-        self.assertLessEqual(len(folded.encode("utf-8")), 493)
-
-    def test_crlf_text_retreats_whole_lines_and_closes_on_its_own_line(self):
-        # Mutation: keep one byte of a CRLF when _drop_last_line retreats; the 200-byte
-        # closer forces the retreat over CRLF lines, and at this allowance the split
-        # prefix ("more\\r") fits, so the kept text changes.
-        opener = "`" * 200
-        text = opener + "\r\nkeep\r\nmore\r\n" + "DROP\r\n" * 300
-        folded, dropped = fold_review_body(text, 501, "github")
-        kept = opener + "\r\nkeep\r\n"
-        self.assertEqual(folded, kept + opener + "\n\n" + self._fold_line(dropped))
-        self.assertEqual(dropped, len(text.encode("utf-8")) - len(kept.encode("utf-8")))
-        self.assertLessEqual(len(folded.encode("utf-8")), 501)
-
-    def test_lone_cr_text_retreats_to_a_cr_boundary(self):
-        # Mutation: split on LF only in _drop_last_line; lone-CR text then has no line
-        # to retreat to and the fold collapses to the closer alone.
-        opener = "`" * 200
-        text = opener + "\rkeep\rmore\r" + "DROP\r" * 300
-        folded, dropped = fold_review_body(text, 495, "github")
-        kept = opener + "\rkeep\r"
-        self.assertEqual(folded, kept + opener + "\n\n" + self._fold_line(dropped))
-        self.assertLessEqual(len(folded.encode("utf-8")), 495)
-
     def test_drop_last_line_accepts_every_line_ending(self):
         # Mutation: split on LF only, or keep one byte of a CRLF.
         cases = {
@@ -4603,22 +4460,6 @@ class TestProseFenceBudget(unittest.TestCase):
         for prefix, expected in cases.items():
             with self.subTest(prefix=prefix):
                 self.assertEqual(fold._drop_last_line(prefix), expected)
-
-    def test_multibyte_prefix_stays_on_a_codepoint_boundary(self):
-        # Mutation: count characters as bytes; the four-byte character would be
-        # admitted or split at the hand-typed 103-byte allowance.
-        text = "a" * 10 + "😀" + "b" * 10
-        folded, dropped = fold_review_body(text, 103, "github")
-        self.assertEqual(folded, "a" * 10 + "\n\n" + self._fold_line(dropped))
-        self.assertEqual(dropped, 14)
-        self.assertLessEqual(len(folded.encode("utf-8")), 103)
-
-    def test_allowance_below_the_provisional_reserve_keeps_only_the_fold(self):
-        text = "x" * 99
-        folded, dropped = fold_review_body(text, 86, "github")
-        self.assertEqual(folded, "\n\n" + self._fold_line(dropped))
-        self.assertEqual(dropped, 99)
-        self.assertLessEqual(len(folded.encode("utf-8")), 86)
 
 
 class TestInlineBodyBudget(unittest.TestCase):
@@ -4711,32 +4552,6 @@ class TestInlineBodyBudget(unittest.TestCase):
         self.assertGreater(composed.folded_bytes, 0)
         self.assertLessEqual(len(composed.body.encode("utf-8")), 160)
 
-    def test_inline_fold_retires_partial_suggestion_and_preserves_heading(self):
-        # Mutation: close the partial suggestion; a truncated committable patch is
-        # valid markdown but is an invalid one-click patch.
-        fence = "`" * 4
-        sections = (
-            "**heading**\n"
-            + "keep\n" * 2
-            + fence
-            + "suggestion\n"
-            + "bad\n" * 60
-            + fence
-            + "\ntail\n" * 30
-        )
-        with patch.dict(
-            fold.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
-            {"bytes": 285},
-        ):
-            composed = compose_inline_body(
-                sections, platform="github", surface="inline"
-            )
-        self.assertGreater(composed.folded_bytes, 0)
-        self.assertLessEqual(len(composed.body.encode("utf-8")), 285)
-        self.assertIn("**heading**", composed.body)
-        self.assertNotIn("suggestion", composed.body)
-        self.assertNotIn(fence, composed.body)
-
     def test_inline_fold_cuts_comments_and_overlong_lines_at_safe_boundaries(self):
         with patch.dict(
             fold.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
@@ -4751,23 +4566,6 @@ class TestInlineBodyBudget(unittest.TestCase):
         self.assertGreater(dropped, 0)
         self.assertTrue(folded.startswith("a" * 10 + "😀"))
         self.assertLessEqual(len(folded.encode("utf-8")), 140)
-
-    def test_inline_fold_reserves_actual_long_closer(self):
-        # Mutation: return the first assembled fold without the fit check or retreat;
-        # the 200-byte closer then pushes the result over the allowance.
-        sections = "keep\n" + "`" * 200 + "\n" + "x" * 1000
-        with patch.dict(
-            fold.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
-            {"bytes": 500},
-        ):
-            folded, dropped = fold_inline_body(sections, 493, "github", "inline")
-        self.assertEqual(
-            folded,
-            "keep\n\n\n_[folded: 1201 more bytes; this inline review comment "
-            "reached the 500-byte GitHub body limit]_",
-        )
-        self.assertEqual(dropped, 1201)
-        self.assertLessEqual(len(folded.encode("utf-8")), 493)
 
     def test_legacy_finding_with_oversized_severity_is_bounded(self):
         """Severity normalization bounds the legacy body before inline budgeting."""
@@ -4901,38 +4699,6 @@ class TestSummaryBodyBudget(_DryRunTestBase):
             "gitlab": 24 + 2 + 2 + 350 + 46 + 211,
         }[platform]
         return "x" * (limit - fixed_bytes)
-
-    def test_platform_limits_are_the_hand_typed_contract(self):
-        # Mutation: change a table value or label; this equality must turn red.
-        self.assertEqual(
-            fold.PLATFORM_BODY_LIMITS,
-            {
-                "github": {
-                    "label": "GitHub",
-                    "surfaces": {
-                        "summary": {"surface": "review body", "bytes": 65536},
-                        "inline": {
-                            "surface": "inline review comment",
-                            "bytes": 65536,
-                        },
-                    },
-                },
-                "gitlab": {
-                    "label": "GitLab",
-                    "surfaces": {
-                        "summary": {"surface": "summary note", "bytes": 1000000},
-                        "discussion": {
-                            "surface": "inline discussion",
-                            "bytes": 1000000,
-                        },
-                        "note": {
-                            "surface": "corroborator note",
-                            "bytes": 1000000,
-                        },
-                    },
-                },
-            },
-        )
 
     def test_github_exact_fit_is_posted_whole(self):
         # Mutation: use < instead of <= in the fast path; exact-fit output turns red.

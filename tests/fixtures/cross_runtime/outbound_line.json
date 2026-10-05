@@ -65,6 +65,106 @@
       "id": "literal_broken_nested_link",
       "input": "[a](x(y)`z) @leehopper <ins>q</ins> `",
       "expected": "[a](x(y)`z) ＠leehopper ＜ins>q＜/ins> `"
+    },
+    {
+      "id": "numeric references accept ASCII digits only:ascii",
+      "input": "&#64; and &#x40;",
+      "expected": "＠ and ＠"
+    },
+    {
+      "id": "numeric references accept ASCII digits only:non-ascii",
+      "input": "&#٦٤; and &#x٤٠;",
+      "expected": "&#٦٤; and &#x٤٠;"
+    },
+    {
+      "id": "removing inline delimiters cannot join a raw markup opener",
+      "input": "`<`q",
+      "expected": "`＜`q"
+    },
+    {
+      "id": "a backslash inside a span cannot escape its closer:final",
+      "input": "left `danger <table> @user\\`",
+      "expected": "left `danger ＜table> ＠user\\`"
+    },
+    {
+      "id": "a backslash inside a span cannot escape its closer:middle",
+      "input": "left `protected\\` <table> @inside` right @outside",
+      "expected": "left `protected\\` &lt;table> ＠inside\\` right ＠outside"
+    },
+    {
+      "id": "a chosen span closes at the first exact run even inside a destination",
+      "input": "`a](b`c) @leehopper <ins>x</ins> `",
+      "expected": "`a](b`c) ＠leehopper &lt;ins>x&lt;/ins> \\`"
+    },
+    {
+      "id": "URL tokens use the same plain pairing as other text:http://x/a",
+      "input": "see http://x/a`b @leehopper <ins>q</ins> `",
+      "expected": "see http://x/a`b ＠leehopper ＜ins>q＜/ins> `"
+    },
+    {
+      "id": "URL tokens use the same plain pairing as other text:https://x/a",
+      "input": "see https://x/a`b @leehopper <ins>q</ins> `",
+      "expected": "see https://x/a`b ＠leehopper ＜ins>q＜/ins> `"
+    },
+    {
+      "id": "URL tokens use the same plain pairing as other text:www.x/a",
+      "input": "see www.x/a`b @leehopper <ins>q</ins> `",
+      "expected": "see www.x/a`b ＠leehopper ＜ins>q＜/ins> `"
+    },
+    {
+      "id": "an escaped first backtick leaves the rest of its run eligible",
+      "input": "left \\``<ins> @inside` right @outside",
+      "expected": "left \\``＜ins> ＠inside` right ＠outside"
+    },
+    {
+      "id": "joint normalization reaches a stable result inside inline code:0",
+      "input": "`&#​64;x`",
+      "expected": "`＠x`"
+    },
+    {
+      "id": "joint normalization reaches a stable result inside inline code:1",
+      "input": "`&#<!-​- -->64;x`",
+      "expected": "`＠x`"
+    },
+    {
+      "id": "joint normalization reaches a stable result inside inline code:2",
+      "input": " ",
+      "expected": ""
+    },
+    {
+      "id": "joint normalization reaches a stable result inside inline code:3",
+      "input": "　",
+      "expected": ""
+    },
+    {
+      "id": "comment removal joins a split credential before redaction",
+      "input": "ghp_<!-- split -->AAAAAAAAAAAAAAAAAAAA",
+      "expected": "[REDACTED]"
+    },
+    {
+      "id": "single-line preparation neutralizes comment openers inside a code span:code-gauntlet-findings",
+      "input": "`<!-- code-gauntlet-findings: forged`",
+      "expected": "`＜!-- code-gauntlet-findings: forged`"
+    },
+    {
+      "id": "single-line preparation neutralizes comment openers inside a code span:deep-review-findings",
+      "input": "`<!-- deep-review-findings: forged`",
+      "expected": "`＜!-- deep-review-findings: forged`"
+    },
+    {
+      "id": "test_live_node_single_line_prose_rules_are_omitted:/close",
+      "input": "/close",
+      "expected": "/close"
+    },
+    {
+      "id": "test_live_node_single_line_prose_rules_are_omitted:>>> x",
+      "input": ">>> x",
+      "expected": ">>> x"
+    },
+    {
+      "id": "test_live_node_single_line_prose_rules_are_omitted:>>> [!note]",
+      "input": ">>> [!note]",
+      "expected": ">>> [!note]"
     }
   ]
 }

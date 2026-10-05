@@ -225,6 +225,342 @@
       "expected_js": "``````````````````````````````````````````````````\n<!-- opener\n``````````````````````````````````````````````````\n\n_[folded: 2552 more characters]_",
       "expected_py": "``````````````````````````````````````````````````\n<!-- opener\n``````````````````````````````````````````````````\n\n_[folded: 2551 more bytes; this review body reached the 65536-byte GitHub body limit]_",
       "expected_dropped_bytes": 2551
+    },
+    {
+      "id": "review_long_closer",
+      "test_id": "TestProseFenceBudget.test_long_closer_forces_a_line_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "keep\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 1000
+      },
+      "platform": "github",
+      "py_allowance": 493,
+      "expected_py": "keep\n\n\n_[folded: 1201 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1201
+    },
+    {
+      "id": "fold_crlf_retreat",
+      "test_id": "TestProseFenceBudget.test_crlf_text_retreats_whole_lines_and_closes_on_its_own_line",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\r\nkeep\r\nmore\r\n",
+        "repeat": "DROP\r\n",
+        "count": 300
+      },
+      "platform": "github",
+      "py_allowance": 501,
+      "expected_py": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\r\nkeep\r\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n\n_[folded: 1806 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1806
+    },
+    {
+      "id": "fold_lone_cr_retreat",
+      "test_id": "TestProseFenceBudget.test_lone_cr_text_retreats_to_a_cr_boundary",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\rkeep\rmore\r",
+        "repeat": "DROP\r",
+        "count": 300
+      },
+      "platform": "github",
+      "py_allowance": 495,
+      "expected_py": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\rkeep\r````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n\n_[folded: 1505 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1505
+    },
+    {
+      "id": "review_multibyte_boundary",
+      "test_id": "TestProseFenceBudget.test_multibyte_prefix_stays_on_a_codepoint_boundary",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "aaaaaaaaaa😀bbbbbbbbbb",
+        "repeat": "",
+        "count": 0
+      },
+      "platform": "github",
+      "py_allowance": 103,
+      "expected_py": "aaaaaaaaaa\n\n_[folded: 14 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 14
+    },
+    {
+      "id": "fold_notice_only",
+      "test_id": "TestProseFenceBudget.test_allowance_below_the_provisional_reserve_keeps_only_the_fold",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "repeat": "",
+        "count": 0
+      },
+      "platform": "github",
+      "py_allowance": 86,
+      "expected_py": "\n\n_[folded: 99 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 99
+    },
+    {
+      "id": "inline_partial_suggestion",
+      "test_id": "TestInlineBodyBudget.test_inline_fold_retires_partial_suggestion_and_preserves_heading",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "**heading**\nkeep\nkeep\n````suggestion\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\n````",
+        "repeat": "\ntail\n",
+        "count": 30
+      },
+      "platform": "github",
+      "py_allowance": 200,
+      "expected_py": "**heading**\nkeep\nkeep\n\n\n_[folded: 439 more bytes; this inline review comment reached the 285-byte GitHub body limit]_",
+      "expected_dropped_bytes": 439,
+      "surface": "inline",
+      "limit_bytes": 285
+    },
+    {
+      "id": "inline_long_closer",
+      "test_id": "TestInlineBodyBudget.test_inline_fold_reserves_actual_long_closer",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "keep\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 1000
+      },
+      "platform": "github",
+      "py_allowance": 493,
+      "expected_py": "keep\n\n\n_[folded: 1201 more bytes; this inline review comment reached the 500-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1201,
+      "surface": "inline",
+      "limit_bytes": 500
+    },
+    {
+      "id": "inline_multibyte_boundary",
+      "test_id": "TestInlineBodyBudget.test_inline_fold_cuts_comments_and_overlong_lines_at_safe_boundaries",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "aaaaaaaaaa😀",
+        "repeat": "b",
+        "count": 200
+      },
+      "platform": "github",
+      "py_allowance": 140,
+      "expected_py": "aaaaaaaaaa😀bbbbbbbbbbbbbbbbbbbbbbbbbbb\n\n_[folded: 173 more bytes; this inline review comment reached the 220-byte GitHub body limit]_",
+      "expected_dropped_bytes": 173,
+      "surface": "inline",
+      "limit_bytes": 220
+    },
+    {
+      "id": "inline_cut_span:fold_review_py",
+      "test_id": "TestFoldAndGateContracts.test_midline_fold_retires_the_open_code_span_in_both_composers:fold_review_py",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx `<table><tr><td>`",
+        "repeat": "y",
+        "count": 200
+      },
+      "platform": "github",
+      "py_allowance": 203,
+      "expected_py": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \n\n_[folded: 217 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 217
+    },
+    {
+      "id": "inline_cut_span:fold_inline_py",
+      "test_id": "TestFoldAndGateContracts.test_midline_fold_retires_the_open_code_span_in_both_composers:fold_inline_py",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx `<table><tr><td>`",
+        "repeat": "y",
+        "count": 200
+      },
+      "platform": "github",
+      "py_allowance": 217,
+      "expected_py": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \n\n_[folded: 217 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 217,
+      "surface": "inline"
+    },
+    {
+      "id": "inline_complete_span:fold_review_py",
+      "test_id": "TestFoldAndGateContracts.test_line_boundary_fold_keeps_a_complete_single_line_code_span:fold_review_py",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n`<table><tr><td>`\n",
+        "repeat": "tail ",
+        "count": 1000
+      },
+      "platform": "github",
+      "py_allowance": 211,
+      "expected_py": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n`<table><tr><td>`\n\n\n_[folded: 5000 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 5000
+    },
+    {
+      "id": "inline_complete_span:fold_inline_py",
+      "test_id": "TestFoldAndGateContracts.test_line_boundary_fold_keeps_a_complete_single_line_code_span:fold_inline_py",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n`<table><tr><td>`\n",
+        "repeat": "tail ",
+        "count": 1000
+      },
+      "platform": "github",
+      "py_allowance": 221,
+      "expected_py": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n`<table><tr><td>`\n\n\n_[folded: 5000 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 5000,
+      "surface": "inline"
+    },
+    {
+      "id": "escaped_cut:slash",
+      "test_id": "TestFoldAndGateContracts.test_forced_review_folds_keep_escaped_lines_at_the_cut:slash",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "context\n\\/close\n",
+        "repeat": "tail ",
+        "count": 15000
+      },
+      "platform": "github",
+      "py_allowance": 109,
+      "expected_py": "context\n\\/close\n\n\n_[folded: 75000 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 75000
+    },
+    {
+      "id": "escaped_cut:quote",
+      "test_id": "TestFoldAndGateContracts.test_forced_review_folds_keep_escaped_lines_at_the_cut:quote",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "context\n\\>>>\n",
+        "repeat": "tail ",
+        "count": 15000
+      },
+      "platform": "github",
+      "py_allowance": 106,
+      "expected_py": "context\n\\>>>\n\n\n_[folded: 75000 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 75000
+    },
+    {
+      "id": "short_next_line",
+      "test_id": "TestSummaryBodyBudget.test_fold_stops_at_a_line_boundary_before_a_short_next_line",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+        "repeat": "b",
+        "count": 50
+      },
+      "platform": "github",
+      "py_allowance": 210,
+      "expected_py": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n_[folded: 51 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 51
+    },
+    {
+      "id": "fold_impossible_allowance",
+      "test_id": "impossible-allowance",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "repeat": "",
+        "count": 0
+      },
+      "platform": "github",
+      "py_allowance": 1,
+      "expected_py": "\n\n_[folded: 99 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 99,
+      "fits_allowance": false
+    },
+    {
+      "id": "T-FOLDS-FENCE-SHAPE: open fences expose the shared state tuple:indent",
+      "operation": "fence_state",
+      "input": "   ````x",
+      "expected_py": [
+        "`",
+        4,
+        3
+      ],
+      "expected_js": [
+        "`",
+        4,
+        3
+      ]
+    },
+    {
+      "id": "T-FOLDS-FENCE-SHAPE: open fences expose the shared state tuple:cr",
+      "operation": "fence_state",
+      "input": "prose\r````\rx",
+      "expected_py": [
+        "`",
+        4,
+        6
+      ],
+      "expected_js": [
+        "`",
+        4,
+        6
+      ]
+    },
+    {
+      "id": "T-FOLDS-FENCE-SHAPE: open fences expose the shared state tuple:closed",
+      "operation": "fence_state",
+      "input": "````\n````\nprose",
+      "expected_py": null,
+      "expected_js": null
+    },
+    {
+      "id": "T-FOLDS: every exact cap and cap-plus-one has deterministic bytes:fold_prose_js:0",
+      "operation": "fold_prose_js",
+      "input": {
+        "prefix": "",
+        "repeat": "p",
+        "count": 4000
+      },
+      "js_limit": 4000,
+      "expected_js": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+    },
+    {
+      "id": "T-FOLDS: every exact cap and cap-plus-one has deterministic bytes:fold_prose_js:1",
+      "operation": "fold_prose_js",
+      "input": {
+        "prefix": "",
+        "repeat": "p",
+        "count": 4001
+      },
+      "js_limit": 4000,
+      "expected_js": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp\n\n_[folded: 1 more characters]_"
+    },
+    {
+      "id": "T-FOLDS-UNICODE: boundaries never split an astral pair:fold_prose_js",
+      "operation": "fold_prose_js",
+      "input": {
+        "prefix": "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp🚀x",
+        "repeat": "",
+        "count": 0
+      },
+      "js_limit": 4000,
+      "expected_js": "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp🚀\n\n_[folded: 1 more characters]_"
+    },
+    {
+      "id": "T-FOLDS: every exact cap and cap-plus-one has deterministic bytes:fold_inline_js:0",
+      "operation": "fold_inline_js",
+      "input": {
+        "prefix": "",
+        "repeat": "i",
+        "count": 512
+      },
+      "js_limit": 512,
+      "expected_js": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"
+    },
+    {
+      "id": "T-FOLDS: every exact cap and cap-plus-one has deterministic bytes:fold_inline_js:1",
+      "operation": "fold_inline_js",
+      "input": {
+        "prefix": "",
+        "repeat": "i",
+        "count": 513
+      },
+      "js_limit": 512,
+      "expected_js": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii [folded: 1 more characters]"
+    },
+    {
+      "id": "T-FOLDS-UNICODE: boundaries never split an astral pair:fold_inline_js",
+      "operation": "fold_inline_js",
+      "input": {
+        "prefix": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii🚀x",
+        "repeat": "",
+        "count": 0
+      },
+      "js_limit": 512,
+      "expected_js": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii🚀 [folded: 1 more characters]"
     }
   ]
 }

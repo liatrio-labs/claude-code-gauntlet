@@ -1,18 +1,19 @@
 """Prepared delivery folds preserve code boundaries and UTF-8 budgets."""
 
-import json
 import random
 import re
-from pathlib import Path
-from typing import Literal, TypedDict
+from contextlib import nullcontext
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
 from gauntlet.delivery.fold import (
     PLATFORM_BODY_LIMITS,
     Platform,
+    body_limit,
     fold_inline_body,
     fold_review_body,
+    utf8_len,
 )
 from gauntlet.delivery.post import (
     _render_group_sections,
@@ -21,7 +22,7 @@ from gauntlet.delivery.post import (
     compose_review_body,
     render_comment_body,
 )
-from gauntlet.markdown import code_spans, open_fence
+from gauntlet.markdown import code_spans, fence_closer, open_fence
 from gauntlet.marker import (
     FINDING_MARKER_TOKEN,
     MARKER_TOKENS,
@@ -30,80 +31,132 @@ from gauntlet.marker import (
 )
 from gauntlet.text import prepare_line, prepare_location, prepare_prose, prepared_prose
 
-
-class FoldInput(TypedDict):
-    prefix: str
-    repeat: str
-    count: int
-
-
-class FoldVector(TypedDict):
-    id: str
-    operation: Literal["fold"]
-    input: FoldInput
-    platform: Platform
-    py_allowance: int
-    expected_py: str
-    expected_dropped_bytes: int
-
-
-TRUSTED_FOLD_VECTOR: FoldVector = next(
-    row
-    for row in json.loads(
-        (
-            Path(__file__).with_name("fixtures")
-            / "cross_runtime"
-            / "outbound_fold.json"
-        ).read_text(encoding="utf-8")
-    )["cases"]
-    if row["id"] == "fold_trusted_unclosed_html"
+from tests.tools.outbound import (
+    FoldVector,
+    assert_outbound_string_invariant,
+    fold_vectors,
 )
+
+OWNED_FOLD_VECTORS = [
+    row for row in fold_vectors() if not row["operation"].endswith("_js")
+]
 
 
 @pytest.mark.parametrize(
     "case",
-    [TRUSTED_FOLD_VECTOR],
+    OWNED_FOLD_VECTORS,
     ids=[
-        "TestInlineBodyBudget.test_summary_retreat_preserves_comment_inside_trusted_fence"
+        row.get("test_id", "outbound_fold:" + row["id"]) for row in OWNED_FOLD_VECTORS
     ],
 )
-def test_fold_vector(case: FoldVector) -> None:
+def test_fold_fixture(case: FoldVector) -> None:
+    # A 200-byte closer can exceed the provisional reserve and force line retreat.
+    # CRLF must retreat together; lone CR also terminates a logical line.
+    operation = case["operation"]
     source = case["input"]
-    text = source["prefix"] + source["repeat"] * source["count"]
-    assert prepare_prose(text) == text
-    folded, dropped = fold_review_body(text, case["py_allowance"], case["platform"])
+    if operation in ("closer", "fence_state"):
+        assert isinstance(source, str)
+        if operation == "closer":
+            assert fence_closer(source) == case["expected_py"]
+        else:
+            state = open_fence(source)
+            assert (list(state) if state is not None else None) == case["expected_py"]
+        return
+    assert operation in ("fold", "fold_review_py", "fold_inline_py")
+    assert not isinstance(source, str)
+    sections = source["prefix"] + source["repeat"] * source["count"]
+    surface = case.get("surface", "summary")
+    context = (
+        patch.dict(
+            PLATFORM_BODY_LIMITS[case["platform"]]["surfaces"][surface],
+            {"bytes": case["limit_bytes"]},
+        )
+        if "limit_bytes" in case
+        else nullcontext()
+    )
+    with context:
+        # Closing a partial suggestion would make an incomplete patch committable.
+        folded, dropped = (
+            fold_inline_body(sections, case["py_allowance"], case["platform"], surface)
+            if operation == "fold_inline_py"
+            else fold_review_body(sections, case["py_allowance"], case["platform"])
+        )
     assert folded == case["expected_py"]
     assert dropped == case["expected_dropped_bytes"]
-    assert len(folded.encode("utf-8")) <= case["py_allowance"]
+    if case.get("fits_allowance", True):
+        assert len(folded.encode("utf-8")) <= case["py_allowance"]
+    else:
+        # The poster refuses an envelope that cannot even fit the fold notice.
+        assert len(folded.encode("utf-8")) > case["py_allowance"]
     assert open_fence(folded) is None
+    if case["id"] == "fold_trusted_unclosed_html":
+        assert prepare_prose(sections) == sections
+    if case["id"].startswith("escaped_cut:"):
+        assert_outbound_string_invariant(folded)
 
 
 @pytest.mark.parametrize(
-    ("text", "allowance", "expected", "dropped"),
+    ("platform", "label", "surface", "name", "byte_limit"),
     [
-        pytest.param(
-            "a" * 10 + "\U0001f600" + "b" * 200,
-            140,
-            "a" * 10
-            + "\U0001f600"
-            + "b" * 27
-            + "\n\n_[folded: 173 more bytes; this inline review comment "
-            "reached the 220-byte GitHub body limit]_",
-            173,
-            id="TestInlineBodyBudget.test_inline_fold_cuts_comments_and_overlong_lines_at_safe_boundaries",
-        ),
+        ("github", "GitHub", "summary", "review body", 65536),
+        ("github", "GitHub", "inline", "inline review comment", 65536),
+        ("gitlab", "GitLab", "summary", "summary note", 1000000),
+        ("gitlab", "GitLab", "discussion", "inline discussion", 1000000),
+        ("gitlab", "GitLab", "note", "corroborator note", 1000000),
+    ],
+    ids=[
+        "TestSummaryBodyBudget.test_platform_limits_are_the_hand_typed_contract:" + row
+        for row in (
+            "github-summary",
+            "github-inline",
+            "gitlab-summary",
+            "gitlab-discussion",
+            "gitlab-note",
+        )
     ],
 )
-def test_fold_multibyte_vector(
-    text: str, allowance: int, expected: str, dropped: int
+def test_body_limit(
+    platform: Platform,
+    label: str,
+    surface: Literal["summary", "inline", "discussion", "note"],
+    name: str,
+    byte_limit: int,
 ) -> None:
-    with patch.dict(
-        PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"], {"bytes": 220}
-    ):
-        actual, actual_dropped = fold_inline_body(text, allowance, "github", "inline")
-    assert actual == expected
-    assert actual_dropped == dropped
-    assert len(actual.encode("utf-8")) <= allowance
+    limit = body_limit(platform, surface)
+    assert (limit.label, limit.surface, limit.bytes) == (label, name, byte_limit)
+    assert PLATFORM_BODY_LIMITS[platform]["surfaces"][surface] == {
+        "surface": name,
+        "bytes": byte_limit,
+    }
+    assert PLATFORM_BODY_LIMITS[platform]["label"] == label
+
+
+def test_body_limit_has_only_supported_platforms_and_surfaces() -> None:
+    assert set(PLATFORM_BODY_LIMITS) == {"github", "gitlab"}
+    assert set(PLATFORM_BODY_LIMITS["github"]["surfaces"]) == {"summary", "inline"}
+    assert set(PLATFORM_BODY_LIMITS["gitlab"]["surfaces"]) == {
+        "summary",
+        "discussion",
+        "note",
+    }
+
+
+@pytest.mark.parametrize(
+    ("platform", "surface"),
+    [("github", "discussion"), ("github", "note"), ("gitlab", "inline")],
+)
+def test_body_limit_rejects_unsupported_surface(
+    platform: Platform, surface: Literal["discussion", "note", "inline"]
+) -> None:
+    with pytest.raises(KeyError):
+        body_limit(platform, surface)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"), [("", 0), ("ascii", 5), ("\U0001f600\u6f22", 7)]
+)
+def test_utf8_len(text: str, expected: int) -> None:
+    assert utf8_len(text) == expected
 
 
 def test_prepared_and_composed_sections_contain_comment_openers() -> None:
