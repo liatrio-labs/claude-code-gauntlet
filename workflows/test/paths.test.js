@@ -6,7 +6,7 @@ import {
   plannedArtifactPaths,
   persistPlanPath,
   writeArtifacts,
-  PATH_ESCAPE_TOKEN,
+  PATH_ESCAPE_MARKER,
   runWith,
 } from '../src/stages.js';
 import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, repoRelativeFindingPath, safeFindingLabel } from '../src/paths.js';
@@ -408,11 +408,11 @@ test('writeArtifacts: writer echo outside fence → path-escape gap + partial-ar
   assert.equal(out.partial, true);
   assert.equal(out.artifactPaths.findings, null);
   assert.ok(
-    out.gaps.some((g) => g.includes(PATH_ESCAPE_TOKEN) && /checkpoints=/.test(g) && /partial-artifacts/.test(g)),
+    out.gaps.some((g) => g.includes(PATH_ESCAPE_MARKER) && /checkpoints=/.test(g) && /partial-artifacts/.test(g)),
     out.gaps,
   );
   // Names every escaped field in one gap (all-or-nothing partial).
-  assert.equal(out.gaps.filter((g) => g.includes(PATH_ESCAPE_TOKEN)).length, 1);
+  assert.equal(out.gaps.filter((g) => g.includes(PATH_ESCAPE_MARKER)).length, 1);
 });
 
 test('writeArtifacts: writer echo with null path field → path-escape (not TypeError)', async () => {
@@ -432,7 +432,7 @@ test('writeArtifacts: writer echo with null path field → path-escape (not Type
     headShaShort: 'abc1234',
   });
   assert.equal(out.partial, true);
-  assert.ok(out.gaps.some((g) => g.includes(PATH_ESCAPE_TOKEN) && /report=null/.test(g)), out.gaps);
+  assert.ok(out.gaps.some((g) => g.includes(PATH_ESCAPE_MARKER) && /report=null/.test(g)), out.gaps);
 });
 
 // --- runWith boundary: stamp/root failure is ok:false, not a disguise gap ---

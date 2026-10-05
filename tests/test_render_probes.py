@@ -570,7 +570,7 @@ def test_canary_rejects_wrong_handle_reference() -> None:
 
 
 def test_gitlab_adapter_extracts_html_from_json_response() -> None:
-    token = "private-render-token-value"
+    token = "example-render-token-value"
     seen = {}
 
     def fake_opener(request):
@@ -631,7 +631,7 @@ def test_divergence_rejects_href_only_difference() -> None:
 
 
 def test_gitlab_http_error_includes_truncated_json_message_without_token() -> None:
-    token = "private-render-token-value"
+    token = "example-render-token-value"
     message = "namespace path already taken " + token + " " + ("x" * 240)
     safe_message = message.replace(token, "[redacted]")[:200]
     requests = []

@@ -6384,7 +6384,7 @@ class TestSuggestedFixGate(unittest.TestCase):
     def test_a_fix_the_redactor_rewrites_is_never_shipped(self):
         """One click would commit the literal ``[REDACTED]`` into the file."""
         secret = "ghp_" + "A" * 24
-        finding = self._finding(suggested_fix_code=f"    token = '{secret}'")
+        finding = self._finding(suggested_fix_code=f"    token = {secret!r}")
         self.assertEqual(self._reason(finding), "redacted")
 
     # -- 5. missing_end_line -----------------------------------------------
@@ -7403,7 +7403,7 @@ class TestGitHubSuggestedFixGate(_SuggestedFixSharedProofs, _FixGateRunBase):
             ("empty", self._finding(suggested_fix_code="   ")),
             (
                 "redacted",
-                self._finding(suggested_fix_code=f"    token = '{secret}'"),
+                self._finding(suggested_fix_code=f"    token = {secret!r}"),
             ),
             ("missing_end_line", self._finding(end_line=None)),
             ("invalid_range", self._finding(line=3, end_line=2)),

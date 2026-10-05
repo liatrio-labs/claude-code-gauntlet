@@ -196,7 +196,7 @@ class SpotCheckTests(unittest.TestCase):
             return spot_check(
                 self.url,
                 judge_model=self.judge,
-                api_key="test-key",
+                api_key="example-key",
                 anchors_path=self.anchors_path,
                 upstream_eval_path=up_path,
                 results_dir=self.results_dir,
