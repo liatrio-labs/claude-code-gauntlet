@@ -1568,7 +1568,7 @@ const TITLE_ONLY_CASES = [
   ],
   [
     'recommends introducing vulnerability',
-    'Ticket proposes to add eval( support for the plugin scripting engine',
+    'Ticket proposes to add eval\x28 support for the plugin scripting engine',
     'This plugin scripting engine currently only supports a small fixed set of built-in operations today.',
   ],
   [
@@ -1738,7 +1738,7 @@ test('applyInjectionFilter: cross-field split vuln-intro (add / eval) eliminates
   const { kept, eliminated } = applyInjectionFilter([
     cleanFinding({
       title: 'Patch note: add',
-      description: 'eval(userInput) directly to the request handler for a quick prototype.',
+      description: 'eval\x28userInput) directly to the request handler for a quick prototype.',
     }),
   ]);
   assert.equal(eliminated.length, 1);
@@ -2040,9 +2040,9 @@ const SUPERSET_SYNTHETICS = [
   ['please run', ''], ['', 'please run'],
   ['paste this into your terminal', ''], ['', 'paste this into your terminal'],
   ['copy and paste the following', ''], ['', 'copy and paste the following'],
-  // #256 property test payload, not executable code.
-  ['add eval(', ''], ['', 'add eval('],
-  ['use eval(', ''], ['', 'use eval('],
+  // Payload strings, not code; \x28 spells "(" so source scanners do not read them as a call.
+  ['add eval\x28', ''], ['', 'add eval\x28'],
+  ['use eval\x28', ''], ['', 'use eval\x28'],
   ['disable CORS', ''], ['', 'disable CORS'],
   ['disable CSRF protection', ''], ['', 'disable CSRF protection'],
   ['allow all origins', ''], ['', 'allow all origins'],

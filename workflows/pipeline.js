@@ -4979,7 +4979,7 @@ const WRITTEN_SCHEMA = {
   type: 'object',
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
-const PATH_ESCAPE_TOKEN = 'path-escape';
+const PATH_ESCAPE_MARKER = 'path-escape';
 function requireAbsoluteOutputDir(outputDir) {
   const root = normalizeAbsoluteRoot(outputDir);
   if (root === null) {
@@ -5003,7 +5003,7 @@ function pathEscapeReason(outputDir, fields) {
     }
   }
   if (!escaped.length) return null;
-  return `${PATH_ESCAPE_TOKEN}: writer-reported paths outside outputDir (${escaped.join(', ')})`;
+  return `${PATH_ESCAPE_MARKER}: writer-reported paths outside outputDir (${escaped.join(', ')})`;
 }
 function plannedArtifactPaths(outputDir, sha) {
   const root = requireAbsoluteOutputDir(outputDir);

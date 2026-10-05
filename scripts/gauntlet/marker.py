@@ -8,7 +8,7 @@ import math
 import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Literal, NoReturn, TypedDict, TypeGuard, cast
+from typing import Final, Literal, NoReturn, TypedDict, TypeGuard, cast
 
 
 class FindingMarkerWire(TypedDict):
@@ -28,14 +28,15 @@ class SelectedSignalWire(SignalWire, total=False):
     timestamp: object
 
 
-MARKER_TOKEN = "code-gauntlet-findings"
-LEGACY_MARKER_TOKEN = "deep-review-findings"  # Existing review bodies remain readable.
+MARKER_TOKEN: Final = "code-gauntlet-findings"
+# Existing review bodies remain readable.
+LEGACY_MARKER_TOKEN: Final = "deep-review-findings"
 MARKER_TOKENS = (MARKER_TOKEN, LEGACY_MARKER_TOKEN)
 # Per-finding delivery marker. Neither this token nor its regex below can be
 # reached by the summary-marker patterns above (nor they by it): the summary
 # tokens end in `findings`, this one continues into `-key`, so the `:` each
 # pattern demands right after its token cannot follow the other's bytes.
-FINDING_MARKER_TOKEN = "code-gauntlet-finding-key"
+FINDING_MARKER_TOKEN: Final = "code-gauntlet-finding-key"
 PRODUCT = "code-gauntlet"
 LEGACY_PRODUCT = "deep-review"
 MARKER_VERSION = "3.0"  # informational; never dispatched on
