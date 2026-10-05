@@ -16,19 +16,18 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
-def test_manifest_agents_match_named_contracts():
+def test_manifest_agents_list_every_contract():
     manifest = json.loads(
         (REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
-    # Directory rules must remain local without becoming registered subagents.
-    rules = {"./agents/AGENTS.md", "./agents/CLAUDE.md"}
-    contracts = []
-    for path in sorted((REPO / "agents").glob("*.md")):
-        text = path.read_text(encoding="utf-8")
-        frontmatter = re.match(r"\A---\n(.*?)\n---(?:\n|\Z)", text, re.DOTALL)
-        if frontmatter and re.search(r"(?m)^name:[ \t]*\S+", frontmatter[1]):
-            contracts.append(f"./agents/{path.name}")
-    assert rules.isdisjoint(manifest["agents"])
+    # The list replaces Claude Code's scan of agents/, which would register the
+    # folder's rule files as subagents. Every other file there must be listed.
+    rules = {"AGENTS.md", "CLAUDE.md"}
+    contracts = [
+        f"./agents/{path.name}"
+        for path in sorted((REPO / "agents").rglob("*.md"))
+        if path.name not in rules
+    ]
     assert manifest["agents"] == contracts
 
 
