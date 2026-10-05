@@ -4,7 +4,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/liatrio-labs/claude-code-gauntlet/badge)](https://securityscorecards.dev/viewer/?uri=github.com/liatrio-labs/claude-code-gauntlet)
 
-Adversarial code review for Claude Code: each GitHub PR or GitLab MR runs a gauntlet of seven specialist agents for bugs, security, tests and cross-file impact, and every finding must survive verification, a skeptical validator, and a blind challenge before it is posted.
+Adversarial code review for Claude Code: each GitHub PR or GitLab MR runs a gauntlet of up to seven specialist agents for bugs, security, tests and cross-file impact, and every finding must survive verification, a skeptical validator, and a blind challenge before it is posted.
 
 <!-- pipeline-diagram -->
 
