@@ -7,12 +7,29 @@ Bash failures in the PR-310 run were printf emission attempts) and double-emits
 findings. These tests pin the scrub so the residue cannot return.
 """
 
+import json
 import re
 import subprocess
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def test_manifest_agents_list_every_contract():
+    manifest = json.loads(
+        (REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+    # The list replaces Claude Code's scan of agents/, which would register the
+    # folder's rule files as subagents. Every other file there must be listed.
+    rules = {"AGENTS.md", "CLAUDE.md"}
+    contracts = [
+        f"./agents/{path.name}"
+        for path in sorted((REPO / "agents").rglob("*.md"))
+        if path.name not in rules
+    ]
+    assert manifest["agents"] == contracts
+
 
 DISCOVERY_AGENTS = [
     "bug-detector",

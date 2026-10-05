@@ -6,6 +6,8 @@
 
 Subagent contracts. Each `.md` is a system prompt with enforced YAML frontmatter.
 
+Add new agent files to the manifest's `agents` list.
+
 - **Frontmatter is system-enforced.** `tools`, `effort`, `model` and `color` are not advisory —
   Claude Code enforces them.
 - **LSP-first investigation.** Agents prefer `goToDefinition` / `findReferences` / `hover`, with
