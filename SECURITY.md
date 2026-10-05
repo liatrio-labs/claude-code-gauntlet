@@ -60,6 +60,13 @@ former deep-review pipeline) and is no longer maintained.
 | Earlier 3.x | No — upgrade to the latest 3.x |
 | 2.x and earlier | No — retired architecture, no backports |
 
+## OpenSSF Scorecard
+
+`Branch-Protection` and `Code-Review` score low by design.
+Required approving reviews stay at zero because the sole maintainer cannot self-approve.
+An always-bypass `Octo STS` integration actor lets semantic-release push from CI.
+Requiring approvals or removing that bypass would block merges or releases.
+
 ## Scope
 
 ### Trust boundaries

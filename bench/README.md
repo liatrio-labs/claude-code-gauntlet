@@ -287,6 +287,30 @@ for CI pipelines and scripts. It is not a credential-routing surface for third
 parties, and routing other people's review traffic through Free/Pro/Max
 credentials is prohibited by the usage policy.
 
+## Measurement history
+
+The [release table](../README.md#benchmark-results) records the v3.0 gate subset and holdout, plus the v2 baseline and upstream anchors.
+Later paired minis use the same six PRs as the v3.1 baseline.
+The [committed ledger](experiments.jsonl) records these runs:
+
+| Release | Date | Run identifiers | Recall | Noise |
+| --- | --- | --- | --- | --- |
+| v3.1 baseline | 2026-07-23 | `custom-20260723-102149-381e9ff` | 0.633 | 0.223 |
+| v3.12 | 2026-08-18 | `mini-20260818-120540-b423885` + `custom-20260818-142206-b423885` | 0.667 | 0.106 |
+| v3.24 | 2026-09-01 | `mini-20260901-170531-2cb9104` | 0.633 | 0.179 |
+| v3.26 | 2026-09-03 | `mini-20260903-204424-e8b3af7` | 0.667 | 0.138 |
+
+The v3.12 row combines a five-PR mini and its one-PR completion leg.
+The v3.26 mini met the pre-registered 0.24 noise ceiling.
+At six PRs, one reference finding moves recall by 3.3 percentage points.
+Treat the gain over v3.1 as a consistency check.
+Noise in the v3.24 and v3.26 minis is below the v3.1 baseline.
+That matches what we would expect from v3.24's wider injection filtering.
+That change only adds eliminations.
+These runs do not establish causation.
+
+`report.py` renders release summaries, run-level recall and noise, tokens, cost, and anchor comparisons from the ledger and baselines.
+
 ## What gets written where
 
 Gitignored (`bench/workspace/`, `bench/.env`):

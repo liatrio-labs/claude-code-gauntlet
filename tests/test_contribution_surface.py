@@ -13,8 +13,7 @@ are silent rather than loud, so they are pinned:
    no local signal. `check-yaml` validates YAML syntax only and knows nothing of the
    form schema, so the schema constraints are asserted here.
 3. Phase names in `bug_report.yml` are only useful while they match the shipped
-   pipeline. README's Architecture section is the source of truth and is compared
-   directly rather than re-transcribed.
+   pipeline. CONTRIBUTING's Architecture section supplies the names for comparison.
 
 Stdlib only: CI installs pytest and nothing else, so these tests carry a small reader
 for the narrow issue-form YAML subset they inspect. The reader is deliberately strict —
@@ -322,22 +321,27 @@ def _contact_links(text):
     return [(link.get("name", ""), link.get("url", "")) for link in links]
 
 
-def _readme_phases():
-    """`Phase N — Name` for every phase in README's Architecture list (source of truth)."""
+def _contributing_phases():
+    """Read phase names from CONTRIBUTING's Architecture list."""
     architecture = (
-        _read("README.md").split("\n## Architecture", 1)[1].split("\n## ", 1)[0]
+        _read("CONTRIBUTING.md").split("\n## Architecture", 1)[1].split("\n## ", 1)[0]
     )
     phases = [
         f"Phase {number} \u2014 {name}"
-        for number, name in re.findall(
-            r"^(\d+)\. \*\*(.+?)\*\* \u2014", architecture, re.M
-        )
+        for number, name in re.findall(r"^(\d+)\. ([^:\n]+):", architecture, re.M)
     ]
     if not phases:
         raise ValueError(
-            "README Architecture section no longer lists phases as `N. **Name** —`"
+            "CONTRIBUTING Architecture section no longer lists phases as `N. Name:`"
         )
     return phases
+
+
+def test_bug_form_phase_options_match_contributing_architecture():
+    options = _field("bug_report.yml", "phase")["options"]
+    assert [option for option in options if option.startswith("Phase ")] == (
+        _contributing_phases()
+    )
 
 
 def _labels():
@@ -818,12 +822,6 @@ class TestIssueForms(unittest.TestCase):
                 self.assertIn(
                     "needs-triage", _form_labels(form.read_text(encoding="utf-8"))
                 )
-
-    def test_bug_form_phase_options_match_readme_architecture(self):
-        options = _field("bug_report.yml", "phase")["options"]
-        self.assertEqual(
-            [o for o in options if o.startswith("Phase ")], _readme_phases()
-        )
 
     def test_bug_form_components_include_workflows_and_bench(self):
         joined = "\n".join(_field("bug_report.yml", "phase")["options"])

@@ -98,6 +98,49 @@ pre-commit run cspell --all-files
 
 Pass the test glob explicitly: the bare directory form is not a valid `node --test` target on node 24.
 
+## Architecture
+
+Your session prepares the target and delivers the result.
+It invokes one workflow for the review stages.
+Use these phase names when reporting a failure:
+
+1. Pre-flight: the session checks eligibility and resolves configuration.
+2. Target & triage: the session gathers the diff, risk classification, and project rules.
+3. Summarize & discover: agents summarize the changes and propose findings in parallel.
+4. Merge & verify: the pipeline combines candidates and checks source facts and git blame.
+5. Validate: an independent agent tries to disprove each finding.
+6. Filter: the pipeline applies thresholds, rejects injection, and groups related findings.
+7. Blind challenge: a fresh agent checks each claim without the original reasoning or evidence.
+8. Report & deliver: the workflow renders results; the session saves artifacts and handles delivery.
+
+The workflow renders and ranks results but has no filesystem access.
+On the default RETURN path, the session runs `materialize_artifacts.py` to save artifacts under `.code-gauntlet/`.
+Writer fallbacks persist through `artifact-writer`.
+Set `$CODE_GAUNTLET_OUTPUT_DIR` to change the output directory.
+
+Successful runs save full challenge output and phase counts in a slim checkpoint.
+Resuming from it reuses challenge results and reruns earlier stages.
+Failure returns can carry completed phase outputs for a faster resume.
+Merging, filtering, and ranking use pure functions.
+A failed agent records a gap while other agents continue.
+The [research index](docs/research/README.md) explains the design choices.
+
+## Project layout
+
+```text
+claude-code-gauntlet/
+|-- .claude-plugin/           # Plugin and marketplace manifests
+|-- agents/                  # Discovery and support agent contracts
+|-- workflows/               # JS sources, bundler, generated pipeline, Node tests
+|-- scripts/                 # Shipped standard-library Python scripts
+|-- tests/                   # Python tests and cross-runtime fixtures
+|-- bench/                   # Golden PRs, judge, anchors, ledger, reports
+|-- skills/
+|   |-- code-gauntlet/        # Review orchestration and phase references
+|   `-- build-review-md/      # REVIEW.md setup
+`-- docs/research/           # Design evidence
+```
+
 ## The v3 workflow pipeline (JS)
 
 The review pipeline runs inside Claude Code's workflow runtime, so it carries constraints the Python side does not.
