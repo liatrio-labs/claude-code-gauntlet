@@ -93,7 +93,7 @@
   <text class="reviewer" x="1043.2" y="590">Simplification</text>
   <text class="model" x="1043.2" y="624">Sonnet</text>
   <path class="light" d="M92 646 V660 H375.2 V646"/>
-  <text class="effect" x="386.4" y="664">Light review runs only these two</text>
+  <text class="effect" x="386.4" y="664">Light review runs only these two reviewers</text>
   <text class="detail" x="386.4" y="689">Offered when every changed file is low risk and the change is under 50 lines</text>
   <path class="flow" d="M128 719 V763" marker-end="url(#arrow)"/>
   <text class="detail" x="152" y="748">Candidate findings</text>
@@ -111,17 +111,17 @@
   <text class="kind" x="92" y="967">CODE</text>
   <text class="section" x="92" y="998">Verify</text>
   <text class="detail" x="92" y="1028">Git blame separates new code from old code the change surfaced</text>
-  <text class="detail" x="92" y="1053">A script fact-checks each claim against the source</text>
-  <text class="detail" x="92" y="1078">Its receipt proves the check really ran, on these exact findings</text>
+  <text class="detail" x="92" y="1053">A script checks each cited file, line and symbol against the source</text>
+  <text class="detail" x="92" y="1078">Its receipt ties the result to these exact findings</text>
   <line class="divider" x1="780" y1="958" x2="780" y2="1080"/>
-  <text class="effect" x="802" y="999">Wrong fact: confidence set to 0</text>
+  <text class="effect" x="802" y="999">Bad file or line: cut</text>
   <text class="effect" x="802" y="1025">Surfaced: severity down one level</text>
   <text class="effect" x="802" y="1051">Check failed: kept, gap recorded</text>
   <path class="flow" d="M128 1102 V1130" marker-end="url(#arrow)"/>
   <rect class="agent-stage" x="64" y="1132" width="1072" height="141" rx="10"/>
   <text class="agent-kind" x="92" y="1163">AGENT</text>
   <text class="section" x="92" y="1194">Validate</text>
-  <text class="detail" x="92" y="1224">Independent validators try to disprove each finding</text>
+  <text class="detail" x="92" y="1224">An independent validator tries to disprove each finding</text>
   <text class="detail" x="92" y="1249">Fresh context, the full finding and its evidence, codebase access</text>
   <line class="divider" x1="780" y1="1154" x2="780" y2="1251"/>
   <text class="effect" x="802" y="1182">Confidence re-scored, 0 to 100</text>
@@ -136,8 +136,8 @@
   <line class="divider" x1="780" y1="1325" x2="780" y2="1422"/>
   <text class="effect" x="802" y="1340"><tspan class="cut">Cut</tspan>  under 55, security under 70</text>
   <text class="note" x="802" y="1366">Defaults, which REVIEW.md can change</text>
-  <text class="effect" x="802" y="1392"><tspan class="cut">Cut</tspan>  prompt-injection attempts</text>
-  <text class="effect" x="802" y="1418">Agents agree: +10 confidence</text>
+  <text class="effect" x="802" y="1392"><tspan class="cut">Cut</tspan>  known prompt-injection patterns</text>
+  <text class="effect" x="802" y="1418">Co-located findings: +10 confidence</text>
   <path class="flow" d="M128 1444 V1472" marker-end="url(#arrow)"/>
   <rect class="agent-stage hero" x="64" y="1474" width="1072" height="174" rx="10"/>
   <text class="agent-kind" x="92" y="1505">FRESH AGENT</text>
@@ -165,7 +165,7 @@
   <text class="effect" x="802" y="1728">Unchallenged: listed as unverified</text>
   <text class="effect" x="802" y="1754">Failed agents and gap count shown</text>
   <text class="effect" x="802" y="1780">Selection made by code</text>
-  <text class="kind" x="64" y="1863">HOLDS AT EVERY STAGE</text>
+  <text class="kind" x="64" y="1863">DESIGN PRINCIPLES</text>
   <rect class="panel" x="64" y="1877" width="1072" height="84" rx="10"/>
   <text class="strong" x="92" y="1913">Pure functions</text>
   <text class="detail" x="92" y="1939">Merge, filter, rank and render are code</text>
@@ -180,7 +180,7 @@
   <text class="kind" x="68" y="2050">YOUR SESSION</text>
   <text class="section" x="68" y="2081">Delivery</text>
   <text class="detail" x="68" y="2111">Writes the findings, report and ready-to-post payload once the Workflow call returns</text>
-  <text class="detail" x="68" y="2136">Posts exactly the set the pipeline selected, never re-filtered or re-ranked</text>
+  <text class="detail" x="68" y="2136">Posts the set the pipeline selected, never re-filtered or re-ranked</text>
   <line class="divider" x1="780" y1="2041" x2="780" y2="2151"/>
   <text class="effect" x="802" y="2076">HTML and mentions contained</text>
   <text class="effect" x="802" y="2102">Known token prefixes redacted</text>
@@ -188,7 +188,7 @@
   <text class="kind" x="68" y="2187">INTERACTIVE RUN</text>
   <rect class="node" x="68" y="2201" width="242" height="76" rx="7"/>
   <text class="reviewer" x="189" y="2234">Markdown report</text>
-  <text class="detail mid" x="189" y="2258">Always saved</text>
+  <text class="detail mid" x="189" y="2258">Saved first</text>
   <path class="flow" d="M310 2239 H340" marker-end="url(#arrow)"/>
   <rect class="ask-node" x="342" y="2201" width="242" height="76" rx="7"/>
   <text class="reviewer" x="463" y="2234">Asks before posting</text>
