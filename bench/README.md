@@ -1,11 +1,10 @@
 # bench — code-gauntlet benchmark harness
 
-`bench/` drives the code-gauntlet skill (formerly deep-review) headlessly against a curated set of
+`bench/` drives the code-gauntlet skill headlessly against a curated set of
 golden PRs from [withmartian/code-review-benchmark](https://github.com/withmartian/code-review-benchmark)
 (MIT — see [`vendor/VENDORED.md`](vendor/VENDORED.md)), then scores the
-results in three buckets against a pinned LLM judge. It exists to give every
-change to the skill a repeatable, quantified answer to "did this help or
-hurt," instead of vibes.
+results in three buckets against a pinned LLM judge. Owner-triggered runs measure
+recall and noise; deterministic suites gate development.
 
 **Measurement policy:** paired bench runs are *not* the default gate for every
 change. See the canonical runbook [`MEASUREMENT.md`](MEASUREMENT.md) for the
@@ -133,6 +132,7 @@ judge and adjudicator are the same pinned, dated snapshot at temperature 0
 bench runs and to the anchor tools — scoring is blind to which tool
 produced a candidate.
 
+The plugin was formerly named deep-review; ledger labels retain that name for measurement continuity.
 Each scored run's ledger row is labeled by `tool`: `deep-review-v3` for a
 normal skill run, `naive-anchor` for a `--anchor naive` run — both flow
 through the identical candidate/adapter/scoring pipeline, differing only in

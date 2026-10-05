@@ -1,9 +1,9 @@
 # Security Policy
 
 Code Gauntlet is a Claude Code plugin, not a hosted service. It ships agent prompt contracts, a generated
-deterministic JavaScript pipeline bundle (`workflows/pipeline.js`), and standard-library Python scripts. All of it
-runs locally inside your own Claude Code session, under your own credentials, and shells out to `git` and to the
-`gh` or `glab` CLI. There is no server we operate and no data we hold, so the security surface is what the plugin
+deterministic JavaScript pipeline bundle (`workflows/pipeline.js`), and standard-library Python 3.10 or newer scripts.
+It orchestrates reviews in your Claude Code session through your configured model access and shells out to `git` and the
+`gh` or `glab` CLI under your own credentials. There is no server we operate and no data we hold, so the security surface is what the plugin
 can be induced to do on a developer's machine and in the repositories they point it at.
 
 ## Reporting a vulnerability
@@ -63,9 +63,8 @@ former deep-review pipeline) and is no longer maintained.
 ## OpenSSF Scorecard
 
 `Branch-Protection` and `Code-Review` score low by design.
-Required approving reviews stay at zero because the sole maintainer cannot self-approve.
-An always-bypass `Octo STS` integration actor lets semantic-release push from CI.
-Requiring approvals or removing that bypass would block merges or releases.
+A sole maintainer cannot self-approve and the release workflow needs its bypass, so raising either score would block merges or releases.
+See [the merge policy](CONTRIBUTING.md#pull-requests).
 
 ## Scope
 
