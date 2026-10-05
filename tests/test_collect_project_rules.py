@@ -1293,7 +1293,7 @@ _BLOCK_GAP_ROWS = [
     ("d4-html-comment", "<!-- @imp.md -->\n"),
     ("d5-indented-code", "paragraph\n\n    @imp.md\n"),
 ]
-_GAP = pytest.mark.xfail(strict=True, reason="#458: needs a CommonMark block parser")
+_GAP = pytest.mark.xfail(strict=True, reason="needs a CommonMark block parser")
 
 
 @pytest.mark.parametrize(
