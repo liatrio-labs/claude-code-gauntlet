@@ -53,7 +53,7 @@ A full review runs seven discovery agents in parallel:
 | code-simplifier | Sonnet | Simplification opportunities |
 
 The security reviewer runs on Opus, a judgment call that the [routing research](docs/research/artifacts/12-model-routing-for-code-review.md) explains.
-For low-risk changes under 50 lines, the plugin offers a light review with only `bug-detector` and `security-reviewer`.
+When every changed file is low risk and the change is under 50 lines, the plugin offers a light review with only `bug-detector` and `security-reviewer`.
 
 Discovery produces candidates, and each one then runs the gauntlet:
 
@@ -74,7 +74,7 @@ After new commits, the plugin offers to review only what changed since the last 
 
 ## What it posts
 
-The plugin saves a markdown report locally, then asks whether to post the selected findings as inline comments on the PR or MR in one review.
+The plugin saves a markdown report locally. For an open PR or MR, it then asks whether to post the selected findings as inline comments in one review.
 Here is one such comment, rendered from a [repository fixture](tests/fixtures/parity/apply_challenges/issue47_extra_fields_pass_through/input.json) finding and trimmed:
 
 > **🟠 [HIGH] Missing test for the payment failure rollback path**
@@ -122,7 +122,7 @@ No `REVIEW.md` is required. See the [configuration reference](skills/code-gauntl
 
 Scores come from the MIT-licensed [Martian benchmark](https://github.com/withmartian/code-review-benchmark), pinned at commit `dfc6cb4`.
 A pinned judge, `claude-opus-4-5-20251101`, scores each review without knowing which tool wrote it.
-Recall is the share of reference findings the review catches, and noise is the share of reported findings the judge rejects as ungrounded, vague, or incoherent.
+Recall is the share of reference findings the review catches, and noise is the share of reported findings the same pinned model rejects as ungrounded, vague, or incoherent.
 
 <!-- bench-results:begin — this block is slated to be generated from the run ledger (issue #185); keep hand edits inside it minimal -->
 | Release | Run | PRs | Golden recall | Noise rate | Tokens |
