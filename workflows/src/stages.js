@@ -2177,7 +2177,7 @@ const WRITTEN_SCHEMA = {
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
 
-// A stable token lets callers recognize invalid writer path receipts without parsing prose.
+// A stable marker lets callers recognize invalid writer path receipts without parsing prose.
 export const PATH_ESCAPE_MARKER = 'path-escape';
 
 export function requireAbsoluteOutputDir(outputDir) {

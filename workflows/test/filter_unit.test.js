@@ -2040,7 +2040,7 @@ const SUPERSET_SYNTHETICS = [
   ['please run', ''], ['', 'please run'],
   ['paste this into your terminal', ''], ['', 'paste this into your terminal'],
   ['copy and paste the following', ''], ['', 'copy and paste the following'],
-  // #256 property test payload, not executable code.
+  // Payload strings, not code; \x28 spells "(" so source scanners do not read them as a call.
   ['add eval\x28', ''], ['', 'add eval\x28'],
   ['use eval\x28', ''], ['', 'use eval\x28'],
   ['disable CORS', ''], ['', 'disable CORS'],
