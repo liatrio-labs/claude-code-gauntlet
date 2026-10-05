@@ -2,6 +2,113 @@
 
 <!-- version list -->
 
+## v3.42.21 (2026-10-05)
+
+### Bug Fixes
+
+- Keep the agents rule note within the instruction byte budget
+  ([#467](https://github.com/liatrio-labs/claude-code-gauntlet/pull/467),
+  [`c62f29f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c62f29f4e9b40ea545d53d60df29a8985012de91))
+
+- Stop the agents folder's rule files registering as subagents
+  ([#467](https://github.com/liatrio-labs/claude-code-gauntlet/pull/467),
+  [`c62f29f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c62f29f4e9b40ea545d53d60df29a8985012de91))
+
+### Chores
+
+- Clear the marketplace scanner's false positives and guard against new ones
+  ([#464](https://github.com/liatrio-labs/claude-code-gauntlet/pull/464),
+  [`0af2228`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0af22289a5ab1acb4879eff8af565237d6a1bb6e))
+
+- Reshape literals a marketplace scanner reads as secrets and eval
+  ([#464](https://github.com/liatrio-labs/claude-code-gauntlet/pull/464),
+  [`0af2228`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0af22289a5ab1acb4879eff8af565237d6a1bb6e))
+
+- Triage out-of-scope findings in /next-issue instead of filing each one
+  ([#461](https://github.com/liatrio-labs/claude-code-gauntlet/pull/461),
+  [`dcd856d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/dcd856d0b9565dea7c6bb0b4fe53afcc9148b74e))
+
+### Continuous Integration
+
+- Run the plugin catalog's scanner on pull requests and main
+  ([#466](https://github.com/liatrio-labs/claude-code-gauntlet/pull/466),
+  [`ba43d4c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ba43d4c4d265b521b97f7ccdab36d38cc527f54b))
+
+- State what the scanner pin guarantees and scope the remedy
+  ([#466](https://github.com/liatrio-labs/claude-code-gauntlet/pull/466),
+  [`ba43d4c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ba43d4c4d265b521b97f7ccdab36d38cc527f54b))
+
+### Documentation
+
+- Add the pipeline overview to the README and a how-it-works page
+  ([#463](https://github.com/liatrio-labs/claude-code-gauntlet/pull/463),
+  [`4fd6e16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4fd6e164e746d8a046d2dd57e98dec41b21604ba))
+
+- Align the plugin manifests and policy docs with the README
+  ([#463](https://github.com/liatrio-labs/claude-code-gauntlet/pull/463),
+  [`4fd6e16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4fd6e164e746d8a046d2dd57e98dec41b21604ba))
+
+- Correct ten labels in the detailed pipeline diagram
+  ([#463](https://github.com/liatrio-labs/claude-code-gauntlet/pull/463),
+  [`4fd6e16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4fd6e164e746d8a046d2dd57e98dec41b21604ba))
+
+- Rewrite the README for first-time visitors
+  ([#463](https://github.com/liatrio-labs/claude-code-gauntlet/pull/463),
+  [`4fd6e16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4fd6e164e746d8a046d2dd57e98dec41b21604ba))
+
+- Say up to seven agents in the README opening
+  ([#463](https://github.com/liatrio-labs/claude-code-gauntlet/pull/463),
+  [`4fd6e16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4fd6e164e746d8a046d2dd57e98dec41b21604ba))
+
+- Scope three README statements to what the code does
+  ([#463](https://github.com/liatrio-labs/claude-code-gauntlet/pull/463),
+  [`4fd6e16`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4fd6e164e746d8a046d2dd57e98dec41b21604ba))
+
+### Refactoring
+
+- Give the bench scripts path insert one home (#454, #456)
+  ([#457](https://github.com/liatrio-labs/claude-code-gauntlet/pull/457),
+  [`e4bdea8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e4bdea8d3a37dbf991ca935732359d40674b235f))
+
+- Scan Markdown fences with one state machine (#413, #359)
+  ([#459](https://github.com/liatrio-labs/claude-code-gauntlet/pull/459),
+  [`d467e00`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d467e004f6f13f3c1ed07e148399b605a09f9dc7))
+
+- Tighten the markdown module after review round 1
+  ([#459](https://github.com/liatrio-labs/claude-code-gauntlet/pull/459),
+  [`d467e00`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d467e004f6f13f3c1ed07e148399b605a09f9dc7))
+
+### Testing
+
+- Compact the collector probe table and restore the render why
+  ([#459](https://github.com/liatrio-labs/claude-code-gauntlet/pull/459),
+  [`d467e00`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d467e004f6f13f3c1ed07e148399b605a09f9dc7))
+
+- Cover each branch of the scanner guard with a sanity row
+  ([#464](https://github.com/liatrio-labs/claude-code-gauntlet/pull/464),
+  [`0af2228`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0af22289a5ab1acb4879eff8af565237d6a1bb6e))
+
+- Guard tracked files against the marketplace scanner's secret and eval rules
+  ([#464](https://github.com/liatrio-labs/claude-code-gauntlet/pull/464),
+  [`0af2228`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0af22289a5ab1acb4879eff8af565237d6a1bb6e))
+
+- Keep the issue number out of the xfail reason
+  ([#459](https://github.com/liatrio-labs/claude-code-gauntlet/pull/459),
+  [`d467e00`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d467e004f6f13f3c1ed07e148399b605a09f9dc7))
+
+- List every file in agents/ except the rule files
+  ([#467](https://github.com/liatrio-labs/claude-code-gauntlet/pull/467),
+  [`c62f29f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c62f29f4e9b40ea545d53d60df29a8985012de91))
+
+- Never exempt an AWS secret assignment in the scanner guard
+  ([#464](https://github.com/liatrio-labs/claude-code-gauntlet/pull/464),
+  [`0af2228`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0af22289a5ab1acb4879eff8af565237d6a1bb6e))
+
+- Require a synthetic payload for the guard's provider exemption
+  ([#464](https://github.com/liatrio-labs/claude-code-gauntlet/pull/464),
+  [`0af2228`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0af22289a5ab1acb4879eff8af565237d6a1bb6e))
+
+
 ## v3.42.20 (2026-10-02)
 
 ### Bug Fixes
