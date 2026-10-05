@@ -4,43 +4,130 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/liatrio-labs/claude-code-gauntlet/badge)](https://securityscorecards.dev/viewer/?uri=github.com/liatrio-labs/claude-code-gauntlet)
 
-Adversarial multi-agent code review for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Your PR runs a gauntlet: parallel concern-specialized reviewers find issues, then every finding must survive deterministic verification, skeptical validation, and a blind challenge before it reaches you. *Formerly published as **deep-review**.*
+Adversarial code review for Claude Code: each GitHub PR or GitLab MR runs a gauntlet of up to seven specialist agents for bugs, security, tests and cross-file impact, and every finding must survive verification, a skeptical validator, and a blind challenge before it is posted.
 
-> **Scorecard note:** Branch-Protection and Code-Review score low by design.
-> Required approving reviews stay at 0 because a single maintainer cannot
-> self-approve, and an always-bypass Integration actor (Octo STS) lets
-> semantic-release push from CI. Raising either into a “fix” deadlocks merges.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-overview-dark.svg">
+  <img alt="Code Gauntlet pipeline overview: seven parallel reviewers feed merge, verify, validate, filter and blind challenge stages before delivery" src="docs/assets/pipeline-overview-light.svg">
+</picture>
+
+## Quick start
+
+```bash
+claude plugin marketplace add https://github.com/liatrio-labs/claude-code-gauntlet.git
+claude plugin install code-gauntlet@code-gauntlet
+```
+
+Update later with `claude plugin update code-gauntlet@code-gauntlet`.
+
+Run `/code-gauntlet 42` in your repository to review PR #42.
+The plugin saves a markdown report under `.code-gauntlet/` and asks before posting inline comments.
+
+Plain words work too, because the plugin triggers on code review requests:
+
+```text
+code gauntlet PR #42                  # GitHub pull request
+review MR !89 thoroughly              # GitLab merge request
+comprehensive review of my changes    # local uncommitted changes
+```
+
+The plugin detects GitHub or GitLab from the git remote.
+You need Claude Code 2.1.154 or newer, git, Python 3.10 or newer, and an authenticated `gh` (GitHub) or `glab` (GitLab).
+There is nothing to `pip install`.
+
+The pipeline pins the review agents' models, so your own session's model and effort do not change them.
+We recommend Sonnet at low effort for that session.
+
+Full reviews took 16 to 22 minutes per PR in our [benchmark runs](bench/MEASUREMENT.md#ledger-sourced-costs).
+The v3.0 measurement used 20.9 million tokens across 15 PRs, about 1.4 million per PR ([results](#benchmark-results)).
 
 ## How it reviews
 
-Seven discovery agents examine your changes in parallel, each through a different lens:
+A full review runs seven discovery agents in parallel:
 
 | Agent | Model | Focus |
-|-------|-------|-------|
-| **bug-detector** | Sonnet | Logic errors, edge cases, error handling, resource leaks |
-| **security-reviewer** | **Opus** | OWASP top 10, injection, auth, SSRF, deserialization |
-| **cross-file-impact** | Sonnet | How changes affect callers and dependents across the codebase |
-| **test-analyzer** | Sonnet | Test coverage gaps, test quality, missing edge cases |
-| **conventions-and-intent** | Sonnet | CLAUDE.md compliance, spec alignment, comment accuracy |
-| **type-design-analyzer** | Sonnet | Type encapsulation and invariant design |
-| **code-simplifier** | Sonnet | Simplification opportunities |
+| --- | --- | --- |
+| bug-detector | Sonnet | Logic errors, edge cases, error handling, resource leaks |
+| security-reviewer | Opus | Injection, authentication, data flows, vulnerabilities |
+| cross-file-impact | Sonnet | Callers and dependencies across the codebase |
+| test-analyzer | Sonnet | Missing tests, weak assertions, untested paths |
+| conventions-and-intent | Sonnet | Project rules, specs, comment accuracy |
+| type-design-analyzer | Sonnet | Type boundaries and invariants |
+| code-simplifier | Sonnet | Simplification opportunities |
 
-Security runs on Opus rather than Sonnet. That is a judgment call, not a measured optimum: the routing survey behind it ([`docs/research/artifacts/12-model-routing-for-code-review.md`](docs/research/artifacts/12-model-routing-for-code-review.md)) concludes that published evidence for tier routing in code review is thin, and finds the frontier-tier case most defensible for deep data-flow security analysis.
+The security reviewer runs on Opus, a judgment call that the [routing research](docs/research/artifacts/12-model-routing-for-code-review.md) explains.
+When every changed file is low risk and the change is under 50 lines, the plugin offers a light review with only `bug-detector` and `security-reviewer`.
 
-Discovery only produces candidates. Each candidate then runs the gauntlet:
+Discovery produces candidates, and each one then runs the gauntlet:
 
-1. **Merge** — finding-ID deduplication across channels, schema validation, agent attribution
-2. **Verify** — deterministic git-blame classification (new vs. surfaced code) and factual verification against the actual source, trusted only through a nonce + SHA + count receipt
-3. **Validate** — an independent validator attempts to disprove each finding with its full content and codebase access, adjusting confidence either way
-4. **Filter** — confidence and severity thresholds, prompt-injection filtering, cross-agent consolidation (co-located findings from different agents are grouped for one combined comment rather than dropped), consensus boosts, disagreement suppression, routing to the main report or improvement suggestions
-5. **Blind challenge** — a fresh agent attempts to disprove each finding *without the original reasoning or evidence*; claims it cannot verify from the code are removed
-6. **Deliver** — deterministic ranking and selection, then prepared comment text
+1. Merge combines duplicate findings and checks their structure.
+2. Verify checks source facts and separates new issues from older ones.
+3. Validate asks an independent skeptic to disprove each finding.
+4. Filter applies confidence thresholds, rejects prompt injection, and groups related findings.
+5. Blind challenge asks a fresh agent to check the claim without the original reasoning or evidence.
+6. Deliver ranks the survivors and prepares comments and a report.
 
-A finding that fails a stage is eliminated, downgraded, or routed to a lower tier. Every degradation along the way — a failed agent, a verification that arrived without a valid receipt — is recorded as an explicit gap in the report rather than silently absorbed.
+A finding the challenger rejects is removed, unless it is a security finding, which is downgraded to a suggestion instead.
+Weakly supported findings are downgraded to suggestions too, and a downgrade removes a finding already at the lowest severity; contested findings are kept and marked in the report.
+If verification or validation itself breaks, the report records the gap and the affected findings still face the blind challenge.
+
+Agents see the full diff and follow callers, dependencies, and tests across files.
+Git blame separates new issues from older ones your changes exposed, which the report downgrades and groups separately.
+After new commits, the plugin offers to review only what changed since the last review.
+
+[How it works](docs/how-it-works.md) shows the full design, stage by stage.
+
+## What it posts
+
+The plugin saves a markdown report locally. For an open PR or MR, it then asks whether to post the selected findings as inline comments in one review.
+Here is one such comment, rendered from a [repository fixture](tests/fixtures/parity/apply_challenges/issue47_extra_fields_pass_through/input.json) finding and trimmed:
+
+> **🟠 [HIGH] Missing test for the payment failure rollback path**
+>
+> processPayment rolls back the transaction when the gateway raises, but no test exercises that path.
+>
+> **Suggested fix:**
+> Mock the gateway to raise PaymentGatewayError and assert the transaction is rolled back.
+>
+> ⚔️ *Code Gauntlet*
+
+In interactive runs you can also create a task board for the selected findings.
+Headless runs support chat, markdown, and PR/MR comments, and posting defaults to dry-run ([headless configuration](skills/code-gauntlet/references/headless-mode.md)).
+
+## Safety and privacy
+
+The plugin treats code under review as untrusted input and filters prompt-injection attempts.
+Before posting comments, it escapes raw HTML and @mentions outside trusted code fences and redacts known GitHub and GitLab token formats.
+See [security boundaries](SECURITY.md#trust-boundaries).
+
+The plugin runs locally through Claude Code and collects no data.
+See [PRIVACY.md](PRIVACY.md).
+
+## Configuration: REVIEW.md
+
+Use `REVIEW.md` to set project rules, confidence thresholds, and findings to ignore. Run `/build-review-md` to create one.
+Root settings apply project-wide, while matching subdirectory settings override thresholds and add ignores.
+
+````markdown
+## Rules
+- All database queries must use parameterized statements
+
+```yaml
+# code-gauntlet
+confidence_threshold: 75
+ignore:
+  - prompt injection via template tokens
+```
+````
+
+Prose guides the agents; the fenced config block controls thresholds and ignores.
+No `REVIEW.md` is required. See the [configuration reference](skills/code-gauntlet/references/review-md-spec.md) for defaults and hierarchy.
 
 ## Benchmark results
 
-Development is gated by a judged benchmark ([`bench/`](bench/README.md)). The golden PRs and their reference findings are not ours: they come from the MIT-licensed [Martian code-review benchmark](https://github.com/withmartian/code-review-benchmark), vendored at pinned upstream commit `dfc6cb4`, so the findings a run is scored against were established upstream, independently of this project. Scoring uses a pinned judge (`claude-opus-4-5-20251101`) with symmetric three-bucket adjudication (golden-matched / valid-extra / noise), blind to which tool produced a comment.
+Scores come from the MIT-licensed [Martian benchmark](https://github.com/withmartian/code-review-benchmark), pinned at commit `dfc6cb4`.
+A pinned judge, `claude-opus-4-5-20251101`, scores each review without knowing which tool wrote it.
+Recall is the share of reference findings the review catches, and noise is the share of reported findings the same pinned model rejects as ungrounded, vague, or incoherent.
 
 <!-- bench-results:begin — this block is slated to be generated from the run ledger (issue #185); keep hand edits inside it minimal -->
 | Release | Run | PRs | Golden recall | Noise rate | Tokens |
@@ -52,137 +139,27 @@ Development is gated by a judged benchmark ([`bench/`](bench/README.md)). The go
 | Claude CLI review (anchor) | gate subset | 15 | 0.339 | 0.481 (not comparable&dagger;) | — |
 | claude-code review (anchor) | gate subset | 15 | 0.271 | 0.542 (not comparable&dagger;) | — |
 
-The gate subset and the holdout are separate PR sets; anchors exist only for the gate subset, where every row above is the same 15 PRs under the same judge. The most recent measurement is smaller: a 6-PR paired mini of v3.26 (`mini-20260903-204424-e8b3af7`, 2026-09-03, vs the v3.1 baseline `custom-20260723-102149-381e9ff`) came in at 0.667 recall / 0.138 noise against the baseline's 0.633 / 0.223, under the pre-registered 0.24 noise ceiling — at that size one finding moves recall by 3.3 points, so the one-finding recall gain reads as a consistency check rather than a signal; the noise reading extends the v3.24 mini's (`mini-20260901-170531-2cb9104`, 2026-09-01: 0.633 / 0.179), and the lower noise is consistent with the v3.24 injection-filter widening (union-scan homoglyph, lookalike-character, and invisible-character folding), which by construction only adds eliminations. The prior v3.12 mini (`mini-20260818-120540-b423885` + completion leg `custom-20260818-142206-b423885`, 2026-08-18) read 0.667 / 0.106.
+A later six-PR v3.26 run measured 0.667 recall and 0.138 noise.
+At that size, one finding moves recall by 3.3 points.
+Read it as a consistency check ([run history](bench/README.md#measurement-history)).
 <!-- bench-results:end -->
 
-Releases since ship behind the always-on deterministic test suites; the heavier measurement tiers are owner-triggered (cadence and method in [`bench/MEASUREMENT.md`](bench/MEASUREMENT.md)).
+We run the benchmark by hand ([method](bench/MEASUREMENT.md)), not on every release.
 
-The judge is an Anthropic model grading a Claude Code plugin, and one anchor (`claude-code review`) is also an Anthropic product; same-vendor self-preference is a known failure mode of LLM-as-judge setups and has not been measured here. The anchors are also not fresh runs of those tools: they are the comments the upstream dataset recorded for them at commit `dfc6cb4`, as those tools shipped then. That dataset records comments from 41 tools; so far three have been adjudicated under this project's pinned judge, and widening the anchor set is planned.
+Gate-subset rows cover the same 15 PRs under the same judge, and the holdout uses 10 different PRs.
+The judge and plugin use Anthropic models, and same-vendor bias has not been measured here.
 
-&dagger; Anchor noise rates are not comparable to Code Gauntlet's, and some unknown part of the gap between them is an artifact of how each side was scored. Anchors are adjudicated from stored upstream comments that carry no file/line anchors, so their non-golden comments were judged against the capped PR diff rather than the precise code slice Code Gauntlet's own comments receive (see `adjudicator_context_note` in [`bench/baselines.json`](bench/baselines.json)). That asymmetry inflates anchor noise by an unmeasured amount; recall is the like-for-like column.
+&dagger; Anchors use stored upstream comments, not fresh tool runs.
+Those comments lack file and line anchors, so they receive different scoring context, which can inflate anchor noise by an unmeasured amount.
+Their noise rates are therefore not comparable. Recall is the comparable column.
+See `adjudicator_context_note` in [bench/baselines.json](bench/baselines.json).
 
-Harness details and the run ledger are in [`bench/README.md`](bench/README.md). `bench/report.py` generates the interactive report — per-PR buckets, per-dimension recall, cost, judge drift — and a rendered copy is [published here](https://claude.ai/code/artifact/fbe487de-b09d-4d11-9b8c-c8c8891215ad).
+## Contributing
 
-## Installation
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup, architecture, and checks.
+[AGENTS.md](AGENTS.md) holds the repository rules, [docs/research](docs/research/README.md) the design evidence, and [CHANGELOG.md](CHANGELOG.md) the release changes.
 
-```bash
-claude plugin marketplace add https://github.com/liatrio-labs/claude-code-gauntlet.git
-claude plugin install code-gauntlet@code-gauntlet
-```
-
-To update later:
-
-```bash
-claude plugin update code-gauntlet@code-gauntlet
-```
-
-Requires Claude Code **>= 2.1.154** (the pipeline runs through the dynamic `Workflow` tool), git, and either the `gh` CLI (GitHub) or `glab` CLI (GitLab). The deterministic pipeline scripts use standard-library Python 3 only.
-
-## Usage
-
-The skill triggers automatically when you ask for a code review:
-
-```
-# Review a PR (GitHub)
-code gauntlet PR #42
-
-# Review a merge request (GitLab)
-review MR !89 thoroughly
-
-# Review local uncommitted changes
-comprehensive review of my changes
-
-# Focused review
-code gauntlet PR #42, focus only on security and error handling
-```
-
-Or invoke it directly:
-
-```
-/code-gauntlet 42
-```
-
-Recommended: run the review from a session set to Sonnet at low effort. The pipeline dispatches its own sub-agents with pinned models for the heavy reasoning, so the orchestrating session only sequences phases and hands off arguments. Raising the orchestrator's effort does not change what the reviewers do — it mostly makes the run slower.
-
-## Review behavior
-
-Every discovery agent sees the full diff with cross-file context rather than a slice of it, because bugs at module boundaries are invisible to file-scoped reviewers, and each agent pulls the context it needs — tracing data flows beyond the diff through Read, Grep, and LSP — instead of working from a passive context dump.
-
-Findings are then triaged by origin as well as by content. Git blame separates issues in code you wrote from pre-existing issues your changes merely exposed; surfaced findings are downgraded and grouped separately so they do not drown out the new ones. Re-reviewing a PR after new commits offers to review only the delta since the last review.
-
-Code under review is untrusted input throughout: trust-boundary delimiters on the way in, and a deterministic text contract for every posted PR/MR comment field on the way out. Outside trusted fences, the contract contains raw HTML and visible mentions even inside inline code and quoted locations, and redacts known token prefixes. After normalization and redaction, prose lines starting with `/` and multiline quote openers starting with three or more `>` are escaped; checked suggestion code remains unchanged inside its fence. The platform — GitHub or GitLab — is auto-detected from the git remote, and results can go to PR/MR comments, a markdown file, or a task board, in any combination.
-
-## Configuration: REVIEW.md
-
-Code Gauntlet tells you when it doesn't find a `REVIEW.md` — a non-blocking notice, not an offer — and you can scaffold one any time with `/build-review-md`, mirroring your CLAUDE.md locations: a root file for global defaults, subdirectory files for per-area thresholds or ignores (say, stricter security for `src/auth/`). Matching child thresholds override root defaults and ignore patterns accumulate per subtree; every context-reading agent receives all source-path-tagged prose blocks, each advisory for its source directory's subtree.
-
-````markdown
-## Rules
-- All database queries must use parameterized statements
-
-```yaml
-# code-gauntlet
-ignore:
-  - prompt injection via template tokens
-```
-````
-
-Only the fenced `yaml # code-gauntlet` block above is parsed mechanically by the pipeline for subtree thresholds and ignores; every context-reading agent receives all source-path-tagged prose blocks as advisory guidance for their source subtrees. Confidence thresholds default to 55 for non-security findings and 70 for security findings — set `confidence_threshold` (and optionally `security_min_confidence`) in the config block to override them. You maintain the ignore list by hand — there's no auto-maintenance. Hierarchy rules and the full field reference: [review-md-spec.md](skills/code-gauntlet/references/review-md-spec.md). The companion `/build-review-md` skill walks you through initial setup.
-
-## Architecture
-
-A review runs in eight phases. Phases 1–2 happen in your session; phases 3–8 are the internal stages of **one deterministic program** — the skill makes a single `Workflow` tool invocation and `workflows/pipeline.js` takes it from there:
-
-1. **Pre-flight** — eligibility (closed/merged, draft, trivially-scoped change), configuration resolution
-2. **Target & triage** — platform detection, PR checkout, head-SHA resolution, prior-review gate, diff fetch, risk classification, test discovery, CLAUDE.md/REVIEW.md context, shared context file
-3. **Summarize & discover** — shared change context (retained in the report's Change Context section), then the parallel discovery agents (schema-enforced structured output)
-4. **Merge & verify** — gauntlet stages 1–2
-5. **Validate** — gauntlet stage 3
-6. **Filter** — gauntlet stage 4
-7. **Blind challenge** — gauntlet stage 5
-8. **Report & deliver** — the workflow renders the report, persists all artifacts, and selects the delivery set deterministically (gauntlet stage 6); `post_review.py` prepares and posts the selected text
-
-Every merge, filter, and ranking decision inside that program is a pure function, not a model reconstructing JSON. The JS transforms are pinned by JavaScript-owned goldens; the verify wire retains cross-runtime parity fixtures. `workflows/pipeline.js` is a generated, dependency-free bundle byte-verified against a fresh build in CI. Each phase persists its own output, so an interrupted run resumes from the last completed phase instead of starting over, and a failed agent nulls out without taking its siblings down.
-
-The rationale behind these choices — concern decomposition, blind challenge, context-pulling, hierarchical config, injection defense, actionability filtering — is documented per-decision in [`docs/research/`](docs/research/README.md).
-
-## Project layout
-
-```
-claude-code-gauntlet/
-├── .claude-plugin/            # Plugin + marketplace manifests
-├── agents/                    # **12** named subagents: 7 discovery, change-summarizer,
-│                              #   validator, challenger, executor, artifact-writer
-├── workflows/                 # Review pipeline: src/ (ESM modules), build.js (bundler),
-│                              #   pipeline.js (generated bundle), test/ (node --test)
-├── scripts/                   # Stdlib-only Python: verify_findings.py and
-│                              #   post_review.py are invoked by the pipeline; the
-│                              #   verify-wire logic retains JS/Python parity
-├── tests/                     # pytest: scripts, verify-wire parity fixtures,
-│                              #   bundle freshness; JS transform goldens live under tests/fixtures/
-├── bench/                     # Benchmark harness: golden PRs, pinned judge, anchors,
-│                              #   ledger, report generation
-├── skills/
-│   ├── code-gauntlet/         # Main orchestration skill + phase references
-│   └── build-review-md/       # REVIEW.md configuration wizard
-└── docs/research/             # Research artifacts informing the design
-```
-
-## Development
-
-```bash
-python -m pytest tests/ -q            # pipeline scripts, JS/Python parity, bundle freshness
-node --test workflows/test/*.test.js  # workflow pipeline: orchestration contracts, transforms
-python -m pytest bench/tests -q       # benchmark harness
-```
-
-After editing anything in `workflows/src/`, rebuild the bundle (`tests/test_bundle_fresh.py` enforces that the committed bundle matches a fresh build byte-for-byte):
-
-```bash
-node workflows/build.js
-```
-
-Node 24 is a development-only dependency — the shipped bundle runs inside Claude Code's workflow runtime. All Python is standard-library only and language-agnostic: nothing assumes the language of the codebase under review.
+We formerly published the plugin as `deep-review`.
 
 ## License
 

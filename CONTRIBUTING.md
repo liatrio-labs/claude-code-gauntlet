@@ -31,7 +31,7 @@ ladder, costs, and pre-registered owner options.
 ## Getting Started
 
 1. Fork and clone the repository.
-2. Ensure you have Python 3.10 or newer installed (for the test suite and pre-commit hooks). CI runs the pipeline
+2. Install Python 3.10 or newer for the pipeline scripts, test suite, and pre-commit hooks. CI runs the pipeline
    suite on 3.10, 3.11, and 3.12 on Linux, and on 3.12 and 3.14 on Windows.
 3. Ensure Node `24.18.0` is installed; the `contract-fences-current` pre-commit hook uses it to verify generated fences.
 4. Set up the development environment:
@@ -97,6 +97,49 @@ pre-commit run cspell --all-files
 ```
 
 Pass the test glob explicitly: the bare directory form is not a valid `node --test` target on node 24.
+
+## Architecture
+
+Your session prepares the target and delivers the result.
+It invokes one workflow for the review stages.
+Use these phase names when reporting a failure:
+
+1. Pre-flight: the session checks eligibility and resolves configuration.
+2. Target & triage: the session gathers the diff, risk classification, and project rules.
+3. Summarize & discover: agents summarize the changes and propose findings in parallel.
+4. Merge & verify: the pipeline combines candidates and checks source facts and git blame.
+5. Validate: an independent agent tries to disprove each finding.
+6. Filter: the pipeline applies thresholds, rejects injection, and groups related findings.
+7. Blind challenge: a fresh agent checks each claim without the original reasoning or evidence.
+8. Report & deliver: the workflow renders results; the session saves artifacts and handles delivery.
+
+The workflow renders and ranks results but has no filesystem access.
+On the default RETURN path, the session runs `materialize_artifacts.py` to save artifacts under `.code-gauntlet/`.
+Writer fallbacks persist through `artifact-writer`.
+Set `$CODE_GAUNTLET_OUTPUT_DIR` to change the output directory.
+
+Successful runs save full challenge output and phase counts in a slim checkpoint.
+Resuming from it reuses challenge results and reruns earlier stages.
+Failure returns can carry completed phase outputs for a faster resume.
+Merging, filtering, and ranking use pure functions.
+A failed agent records a gap while other agents continue.
+The [research index](docs/research/README.md) explains the design choices.
+
+## Project layout
+
+```text
+claude-code-gauntlet/
+|-- .claude-plugin/           # Plugin and marketplace manifests
+|-- agents/                  # Discovery and support agent contracts
+|-- workflows/               # JS sources, bundler, generated pipeline, Node tests
+|-- scripts/                 # Shipped standard-library Python scripts
+|-- tests/                   # Python tests and cross-runtime fixtures
+|-- bench/                   # Golden PRs, judge, anchors, ledger, reports
+|-- skills/
+|   |-- code-gauntlet/        # Review orchestration and phase references
+|   `-- build-review-md/      # REVIEW.md setup
+`-- docs/research/           # Design evidence
+```
 
 ## The v3 workflow pipeline (JS)
 
