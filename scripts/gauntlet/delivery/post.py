@@ -90,12 +90,17 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import sys
 from typing import Any, NamedTuple
 
 from gauntlet import diff, proc
 from gauntlet.cli import Command
+from gauntlet.delivery.fold import (
+    body_limit,
+    fold_inline_body,
+    fold_review_body,
+    utf8_len,
+)
 from gauntlet.diff import DiffFacts
 from gauntlet.forge import (
     Forge,
@@ -111,20 +116,9 @@ from gauntlet.forge import (
     origin_remote,
 )
 from gauntlet.fs import JsonReadError, read_json
-from gauntlet.markdown import (
-    code_span,
-    code_spans,
-    escaped_tick,
-    fence_closer,
-    fence_run,
-    open_fence,
-    span_close,
-    tick_run,
-)
+from gauntlet.markdown import fence_run
 from gauntlet.marker import (
-    FINDING_MARKER_TOKEN,
     LEGACY_PRODUCT,
-    MARKER_TOKENS,
     SHA_RE,
     build_finding_marker,
     build_footer,
@@ -152,7 +146,15 @@ from gauntlet.registry import (
 from gauntlet.registry import (
     FIX_MAX_LINES as _FIX_MAX_LINES,
 )
-from gauntlet.text import normalize_report_severity
+from gauntlet.text import (
+    has_marker_opener,
+    normalize_report_severity,
+    prepare_line,
+    prepare_location,
+    prepare_prose,
+    prepared_prose,
+    redact_secrets,
+)
 
 # ---------------------------------------------------------------------------
 # Dry-run capture
@@ -305,30 +307,6 @@ def validate_position(position, shas, facts: DiffFacts | None, filepath, line):
 # ---------------------------------------------------------------------------
 
 
-def _rendered_text(value):
-    """Normalize a finding field for optional rendering.
-
-    Returns ``None`` for ``None``, ``""``, and whitespace-only strings — all
-    treated as absent, mirroring the established ``suggested_fix_code``
-    semantics. A non-string value (e.g. a number) is coerced via ``str()``
-    rather than crashing the renderer. LEADING and trailing newlines are both
-    stripped: the sections below are joined with their own blank lines, so a value
-    padded on either side puts a stray blank line into the comment. Only NEWLINES
-    are stripped, never spaces.
-
-    PROSE fields only. ``suggested_fix_code`` has its own normalizer
-    (:func:`_fix_code_text`) because stripping edge newlines off a PATCH silently
-    changes what it replaces the span with.
-    """
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        value = str(value)
-    if not value.strip():
-        return None
-    return value.strip("\n")
-
-
 def _fix_code_text(value):
     """Normalize ``suggested_fix_code`` — the ONE normalizer for the patch.
 
@@ -353,267 +331,8 @@ def _fix_code_text(value):
     return value[:-1] if value.endswith("\n") else value
 
 
-_RULE_TEXT_CAP = 500
-_TRUNCATION_MARKER = "…[truncated]"
-
-_GH_TOKEN_RE = re.compile(r"(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}")
-_GL_TOKEN_RE = re.compile(r"(?:glpat-|glrt-)[A-Za-z0-9_\-]{20,}")
-
-_ENTITY_DEC_RE = re.compile(r"&#([0-9]+);")
-_ENTITY_HEX_RE = re.compile(r"&#x([0-9a-fA-F]+);", re.IGNORECASE)
-_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
-_BACKTICK_RUN_RE = re.compile(r"`{3,}")
-
-# Invisible / control code points stripped from outbound prose. Built as an
-# explicit frozenset (not a regex character-class range) so CR (U+000D) is
-# included while TAB/LF stay, and so CodeQL does not flag C0/C1 ranges as
-# "overly permissive" (py/overly-large-range). Design: C0 minus \\t\\n, DEL,
-# C1, soft hyphen, zero-width, bidi controls.
-_INVISIBLE_ORDS = frozenset(
-    (
-        *range(0x00, 0x09),  # C0 through BS (excludes TAB)
-        0x0B,  # VT
-        0x0C,  # FF
-        0x0D,  # CR — must strip: _blockquote splits only on \\n
-        *range(0x0E, 0x20),  # rest of C0 (excludes LF, already skipped)
-        0x7F,  # DEL
-        *range(0x80, 0xA0),  # C1
-        0xAD,  # soft hyphen
-        0x200B,
-        0x200C,
-        0x200D,
-        0xFEFF,
-        0x2060,  # zero-width
-        *range(0x202A, 0x202F),  # bidi embeddings/overrides
-        *range(0x2066, 0x206A),  # bidi isolates
-    )
-)
-
-
-def _strip_invisibles(text):
-    """Remove C0/C1/zero-width/bidi controls; keep TAB and LF."""
-    return "".join(ch for ch in text if ord(ch) not in _INVISIBLE_ORDS)
-
-
-def _decode_numeric_entities(text):
-    """Decode printable-ASCII numeric entities; drop all others.
-
-    ``&commat;`` is decoded too; other named entities are left untouched.
-    Non-ASCII numeric entities (e.g.
-    ``&#8212;``) are dropped deliberately — decoding the full Unicode range
-    would reintroduce smuggleable invisibles if pass order ever drifts.
-    Markdown parses fences before HTML entity decode, so a surviving literal
-    ``&#96;`` cannot form a fence.
-    """
-
-    def _dec(match):
-        num = int(match.group(1), 10)
-        if 32 <= num <= 126:
-            return chr(num)
-        return ""
-
-    def _hex(match):
-        num = int(match.group(1), 16)
-        if 32 <= num <= 126:
-            return chr(num)
-        return ""
-
-    text = _ENTITY_DEC_RE.sub(_dec, text)
-    text = _ENTITY_HEX_RE.sub(_hex, text)
-    return text.replace("&commat;", "@")
-
-
-_DANGEROUS_LT_RE = re.compile(r"<(?=[A-Za-z/!?])")
-_MARKER_OPEN_RE = re.compile(
-    r"<!--\s*(?:"
-    + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
-    + r")\s*:"
-)
-_FENCE_SHAPE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*([`~])\1{2,}")
-_MULTILINE_QUOTE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})")
-
-
-def _remove_comments(text):
-    while True:
-        cleaned = _HTML_COMMENT_RE.sub("", text)
-        if cleaned == text:
-            return text
-        text = cleaned
-
-
-def _normalize_outbound(text):
-    while True:
-        normalized = _strip_invisibles(_remove_comments(_decode_numeric_entities(text)))
-        if normalized == text:
-            return text
-        text = normalized
-
-
-def _break_marker_openers(text):
-    return _MARKER_OPEN_RE.sub(lambda match: "&lt;" + match.group()[1:], text)
-
-
-def _escape_visible(text, *, code=False):
-    text = _DANGEROUS_LT_RE.sub("\uff1c" if code else "&lt;", text)
-    return re.sub(
-        r"@",
-        lambda match: (
-            "\uff20"
-            if not match.start()
-            or not re.match(r"[A-Za-z0-9]", text[match.start() - 1])
-            else "@"
-        ),
-        text,
-    )
-
-
-def _contain_line(line):
-    line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
-    out = []
-    index = 0
-    while index < len(line):
-        if line[index] == "`":
-            if escaped_tick(line, index):
-                out.append("`")
-                index += 1
-                continue
-            end = tick_run(line, index)
-            width = end - index
-            close = span_close(line, index, end)
-            if close is not None:
-                out.append(
-                    line[index : close + width].replace(
-                        line[end:close],
-                        _escape_visible(line[end:close], code=True),
-                        1,
-                    )
-                )
-                index = close + width
-                continue
-            out.append("\\`")
-            index += 1
-            continue
-        next_tick = line.find("`", index)
-        if next_tick < 0:
-            next_tick = len(line)
-        out.append(_escape_visible(line[index:next_tick]))
-        index = next_tick
-    return "".join(out)
-
-
-def _prepare_text(
-    text, *, single_line=False, collapse_ticks=False, cap=None, trust_fences=True
-):
-    if text is None:
-        return ""
-    if not isinstance(text, str):
-        text = str(text)
-    if not text.strip():
-        return ""
-    text = _normalize_outbound(text)
-    text = _redact_secrets(text)
-    if collapse_ticks:
-        text = _BACKTICK_RUN_RE.sub("``", text)
-    if single_line:
-        text = re.sub(r"[\r\n]+", " ", text)
-    if cap is not None:
-        text = _cap_rule_text(text, cap)
-    if not text.strip():
-        return ""
-    intervals = []
-    fence = (
-        open_fence(text, strict=True, intervals=intervals)
-        if not single_line and trust_fences
-        else None
-    )
-    lines = text.split("\n")
-    prepared = []
-    protected_lines = []
-    offset = 0
-    for line in lines:
-        protected = any(start <= offset < end for start, end in intervals)
-        original_length = len(line)
-        shape = _FENCE_SHAPE_RE.match(line) if not single_line else None
-        if shape and not protected:
-            tick = shape.start(1)
-            line = line[:tick] + "\\" + line[tick:]
-        if not protected and not single_line:
-            if line.startswith("/"):
-                line = "\\" + line
-            quote = _MULTILINE_QUOTE_RE.match(line)
-            if quote:
-                index = quote.start(1)
-                line = line[:index] + "\\" + line[index:]
-        prepared.append(line if protected else _contain_line(line))
-        protected_lines.append(protected)
-        offset += original_length + 1
-    start = None
-    for index in range(len(prepared) + 1):
-        if index < len(prepared) and protected_lines[index]:
-            if start is None:
-                start = index
-        elif start is not None:
-            prepared[start:index] = _break_marker_openers(
-                "\n".join(prepared[start:index])
-            ).split("\n")
-            start = None
-    result = "\n".join(prepared)
-    if fence is not None:
-        result += "\n" + fence[0] * fence[1]
-    return result if result.strip() else ""
-
-
-def prepare_prose(text):
-    """Prepare multiline, untrusted text for a posted Markdown field."""
-    return _prepare_text(text)
-
-
-def prepare_line(text):
-    """Prepare a single-line, untrusted display field."""
-    return _prepare_text(text, single_line=True)
-
-
-def _redact_secrets(text):
-    """Replace prefixed credential-shaped tokens with ``[REDACTED]``.
-
-    Prefixed formats only (GitHub + GitLab); no entropy heuristics. A prefix
-    with no credential-shaped body (e.g. ``glpat-`` followed by space or a
-    short token) survives; a prefix immediately followed by ≥20 hyphenated
-    word chars is redacted.
-    """
-    text = _GH_TOKEN_RE.sub("[REDACTED]", text)
-    text = _GL_TOKEN_RE.sub("[REDACTED]", text)
-    return text
-
-
-def _cap_rule_text(text, limit=_RULE_TEXT_CAP):
-    """Hard-cap cited-rule text; marker is appended outside ``limit``."""
-    if len(text) <= limit:
-        return text
-    return text[:limit] + _TRUNCATION_MARKER
-
-
-def _prepared_prose(text, *, cap=False):
-    """Sanitize and redact repo-derived prose; optionally cap cited-rule text.
-
-    Returns ``None`` when the field is absent before or after processing.
-    """
-    prepared = _prepare_text(
-        text,
-        collapse_ticks=True,
-        cap=_RULE_TEXT_CAP if cap else None,
-        trust_fences=not cap,
-    )
-    return _rendered_text(prepared)
-
-
 def _blockquote(text):
-    """Prefix every line for a markdown blockquote; bare ``>`` on blanks.
-
-    Normalizes ``\\r\\n`` / lone ``\\r`` to ``\\n`` before splitting so a
-    surviving CR cannot end a CommonMark line after a single ``>`` prefix
-    (defense in depth on top of ``_strip_invisibles`` removing CR).
-    """
+    """Raw CR/CRLF must not end a CommonMark line outside its quote prefix."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
     out = []
@@ -779,9 +498,9 @@ def _suggested_fix_gate(finding, *, apply_range, facts: DiffFacts | None, path_l
     # Gate on the ORIGINAL bytes: a fence carrying a literal `[REDACTED]` would be
     # committed by one click. Passing here means the render-time redaction is a
     # guaranteed no-op, so the posted fence is byte-identical to what was checked.
-    if _redact_secrets(text) != text:
+    if redact_secrets(text) != text:
         return False, _FIX_REDACTED
-    if _MARKER_OPEN_RE.search(text):
+    if has_marker_opener(text):
         return False, _FIX_MARKER_SHAPED
 
     line = finding.get("line")
@@ -1234,23 +953,6 @@ def _print_fix_summary():
 # skipped-findings entries inside it are rendered unbranded.
 BRAND_TRAILER = f"{BRAND_MARK} *{BRAND_NAME}*"
 BRAND_SUMMARY_HEADER = f"### {BRAND_MARK} {BRAND_NAME}"
-PLATFORM_BODY_LIMITS = {
-    "github": {
-        "label": "GitHub",
-        "surfaces": {
-            "summary": {"surface": "review body", "bytes": 65536},
-            "inline": {"surface": "inline review comment", "bytes": 65536},
-        },
-    },
-    "gitlab": {
-        "label": "GitLab",
-        "surfaces": {
-            "summary": {"surface": "summary note", "bytes": 1000000},
-            "discussion": {"surface": "inline discussion", "bytes": 1000000},
-            "note": {"surface": "corroborator note", "bytes": 1000000},
-        },
-    },
-}
 
 
 class ComposedBody(NamedTuple):
@@ -1266,33 +968,14 @@ class InlineBody(NamedTuple):
     folded_bytes: int
 
 
-def _utf8_len(text):
-    return len(text.encode("utf-8"))
-
-
-def _body_limit(platform, surface="summary"):
-    limits = PLATFORM_BODY_LIMITS[platform]
-    row = limits["surfaces"][surface]
-    return {"label": limits["label"], **row}
-
-
 def _normalize_report_severity(raw):
-    """Normalize severity with the current generated or contract-sample label map."""
     return normalize_report_severity(raw, SEVERITY_EMOJI)
 
 
 def _finding_sections(finding, *, fence_offsets=None):
-    """The finding's rendered sections — historically byte-identical to what
-    ``render_comment_body`` returned before the brand trailer existed for existing canonical
-    labels and plain case variants. This is the KEY MATERIAL: a delivery key must not move
-    when the product's identity does (see :func:`key_material_body`). Severity normalization
-    supplies both the emoji and the heading label.
+    """Key material excludes branding so identity changes cannot change delivery keys.
 
-    *fence_offsets* is passed through to the suggestion fence and is meaningful
-    only where a platform reads one (GitLab). It is a parameter rather
-    than a finding field because the value depends on the anchor the body will
-    be posted at, which only the caller knows — and because a finding's own JSON
-    is caller-supplied.
+    Fence offsets depend on the posting anchor and belong to the caller, not the finding.
     """
     severity = _normalize_report_severity(finding.get("severity"))
     emoji = SEVERITY_EMOJI.get(severity, SEVERITY_EMOJI_FALLBACK)
@@ -1304,46 +987,31 @@ def _finding_sections(finding, *, fence_offsets=None):
 
     parts = [f"**{emoji} [{severity.upper()}] {title or 'Finding'}**", "", body]
 
-    # Agent-authored prose fix suggestion: sanitize and
-    # redact, uncapped. Structural sanitize only — not the cited-rule cap.
-    suggestion_text = _prepared_prose(finding.get("suggestion"))
+    suggestion_text = prepared_prose(finding.get("suggestion"))
     if suggestion_text:
         parts += ["", "**Suggested fix:**", suggestion_text]
 
-    # Cited rule: normalize, redact, collapse long backtick runs, cap the source
-    # at 500 characters, contain every line, then blockquote. Each candidate
-    # is prepared independently; `claude_md_rule`
-    # wins only when it survives sanitize (comment-only rules fall through).
-    rule_text = _prepared_prose(finding.get("claude_md_rule"), cap=True)
+    # A comment-only rule must not block the fallback or select its source label.
+    clause_rule = prepared_prose(finding.get("claude_md_rule"), cap=True)
+    rule_text = clause_rule
     if not rule_text:
-        rule_text = _prepared_prose(finding.get("spec_text"), cap=True)
+        rule_text = prepared_prose(finding.get("spec_text"), cap=True)
     rule_label = RULE_SOURCE_LABEL_FALLBACK
-    if rule_text and _prepared_prose(finding.get("claude_md_rule"), cap=True):
+    if rule_text and clause_rule:
         source = finding.get("rule_source")
         if isinstance(source, str):
             rule_label = RULE_SOURCE_LABELS.get(source, RULE_SOURCE_LABEL_FALLBACK)
     if rule_text:
         parts += ["", f"**{rule_label}:**", _blockquote(rule_text)]
 
-    # `criticality`, `failure_scenario`, `evidence`, `confidence`, and
-    # `dimension` are deliberately NOT rendered into posted PR comments
-    # — they are scoped to the artifact/report consumers, not
-    # this deterministic comment renderer. Do not "helpfully" add them here.
-
-    # suggested_fix_code: secret-redacted; outer fence lengthened. Structural
-    # sanitize OFF so one-click apply stays byte-exact aside from credential
-    # redaction (deliberate exception). This renderer does NOT decide whether the
-    # patch may ship — `_suggested_fix_gate` does, at each render site, and hands
-    # this function a copy with the field already removed when it may not. Keeping
-    # the decision out of here is what lets one finding render with a fence inline
-    # and without one in the degraded body section of the same review.
+    # criticality, failure_scenario, evidence, confidence and dimension belong to
+    # artifacts/reports; posted comments exclude them.
     #
-    # The fence carries `_fix_code_text`'s output — the SAME normalization the
-    # gate measured, applied ONCE. Re-normalizing after redaction would take a
-    # second trailing newline off, so the posted bytes would differ from the
-    # checked ones; redaction only ever substitutes a token, never empties.
+    # The gate removes ineligible patches at each render site so inline and degraded
+    # bodies can differ. Patch content stays exact except for credential redaction.
+    # Normalize once: a second pass removes another LF and changes the approved patch.
     if suggested_fix:
-        suggested_fix = _redact_secrets(suggested_fix)
+        suggested_fix = redact_secrets(suggested_fix)
         open_f, close_f = _suggestion_fence(suggested_fix, offsets=fence_offsets)
         parts += ["", open_f, suggested_fix, close_f]
 
@@ -1478,14 +1146,6 @@ def _skipped_location(filepath, line):
     return f"{filepath}:{line}" if line is not None else str(filepath or "?")
 
 
-def _quoted_location(value):
-    """Display locations must contain mentions and markup without losing space edges."""
-    value = _redact_secrets(_normalize_outbound(str(value)))
-    value = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", value)
-    value = _escape_visible(value, code=True).replace("\r", " ").replace("\n", " ")
-    return code_span(value, pad_space_edges=True)
-
-
 def _plural(count, singular, plural=None):
     return singular if count == 1 else (plural or singular + "s")
 
@@ -1529,15 +1189,15 @@ def _skipped_piece(filepath, line, finding):
     neutralizes any remaining marker opener, including one in its heading.
     """
     location = _skipped_location(filepath, line)
-    piece = f"\n\n#### {_quoted_location(location)}\n\n{_finding_sections(finding)}"
+    piece = f"\n\n#### {prepare_location(location)}\n\n{_finding_sections(finding)}"
     return piece.replace("<!--", "&lt;!--")
 
 
 def _closing_line(m, n, platform):
-    limits = _body_limit(platform)
+    limits = body_limit(platform)
     return (
-        f"_{m} of these {n} {_plural(n, 'finding')} {_plural(m, 'is', 'are')} not shown: this {limits['surface']} "
-        f"reached the {limits['bytes']}-byte {limits['label']} body limit._"
+        f"_{m} of these {n} {_plural(n, 'finding')} {_plural(m, 'is', 'are')} not shown: this {limits.surface} "
+        f"reached the {limits.bytes}-byte {limits.label} body limit._"
     )
 
 
@@ -1563,236 +1223,6 @@ def build_skipped_section(skipped, inline_count=None):
     )
 
 
-def _codepoint_prefix(text, allowance):
-    """Return the longest prefix whose UTF-8 encoding fits *allowance*."""
-    if allowance <= 0:
-        return ""
-    pieces = []
-    used = 0
-    for character in text:
-        size = _utf8_len(character)
-        if used + size > allowance:
-            break
-        pieces.append(character)
-        used += size
-    return "".join(pieces)
-
-
-def _retreat_inside_span(text, cut, intervals):
-    for start, end in intervals:
-        if start < cut < end:
-            return text[:start]
-    return text[:cut]
-
-
-def _cut_unclosed_comment(prefix, intervals=None):
-    """An unclosed HTML comment would swallow the appended fold notice."""
-
-    if intervals is None:
-        spans, fences = code_spans(prefix)
-        intervals = spans + fences
-
-    position = 0
-    while True:
-        opener = prefix.find("<!--", position)
-        if opener < 0:
-            return prefix
-        if any(start <= opener < end for start, end in intervals):
-            position = opener + 4
-            continue
-        closer = prefix.find("-->", opener + 4)
-        if closer < 0:
-            return prefix[:opener]
-        position = closer + 3
-
-
-def _drop_last_line(prefix):
-    """Drop the final logical line, accepting LF, CRLF, and lone CR."""
-
-    ended_with_line_ending = prefix.endswith(("\r", "\n"))
-    end = len(prefix)
-    if prefix.endswith("\r\n"):
-        end -= 2
-    elif prefix.endswith(("\r", "\n")):
-        end -= 1
-    separators = [prefix.rfind("\n", 0, end), prefix.rfind("\r", 0, end)]
-    line_start = max(separators)
-    if line_start < 0:
-        return ""
-    if ended_with_line_ending:
-        return prefix[: line_start + 1]
-    if prefix[line_start] == "\n" and line_start and prefix[line_start - 1] == "\r":
-        line_start -= 1
-    return prefix[:line_start]
-
-
-def _retreat_fold_prefix(
-    prefix,
-    *,
-    cut_inside_line,
-    suggestion_start=None,
-    intervals=(),
-    comment_intervals=None,
-):
-    """Retreat a fold prefix and re-cut any HTML comment it exposes."""
-    if suggestion_start is not None:
-        prefix = prefix[:suggestion_start]
-        cut_inside_line = False
-    elif cut_inside_line and not prefix.endswith(("\n", "\r")):
-        prefix = prefix[:-1]
-    else:
-        prefix = _drop_last_line(prefix)
-        cut_inside_line = False
-    prefix = _retreat_inside_span(prefix, len(prefix), intervals)
-    return _cut_unclosed_comment(prefix, comment_intervals), cut_inside_line
-
-
-def _fold_review_body(text, allowance, platform):
-    """Platform budgets count bytes; folds must preserve lines and code points."""
-    limits = _body_limit(platform)
-    total = _utf8_len(text)
-    intervals, fences = code_spans(text)
-    comment_intervals = intervals + fences
-
-    def fold_line_for(byte_count):
-        return (
-            f"_[folded: {byte_count} more bytes; this {limits['surface']} reached the "
-            f"{limits['bytes']}-byte {limits['label']} body limit]_"
-        )
-
-    # This is only the shortest provisional fence reserve. The final assembly
-    # below measures the actual opener character and length.
-    reserve = _utf8_len(f"\n\n{fold_line_for(total)}\n{fence_closer('```')}")
-    if allowance < reserve:
-        prefix = ""
-        cut_inside_line = False
-    else:
-        prefix_allowance = allowance - reserve
-        prefix = ""
-        cut_inside_line = False
-        for index, line in enumerate(text.split("\n")):
-            next_part = line if index == 0 else f"\n{line}"
-            remaining = prefix_allowance - _utf8_len(prefix)
-            if _utf8_len(next_part) <= remaining:
-                prefix += next_part
-                continue
-            if _utf8_len(line) > prefix_allowance:
-                partial = _codepoint_prefix(next_part, remaining)
-                prefix += partial
-                cut_inside_line = bool(partial) and not partial.endswith(("\n", "\r"))
-            break
-
-    prefix = _retreat_inside_span(text, len(prefix), intervals)
-    prefix = _cut_unclosed_comment(prefix, comment_intervals)
-
-    while True:
-        closer = fence_closer(prefix)
-        dropped_bytes = total - _utf8_len(prefix)
-        fold_line = fold_line_for(dropped_bytes)
-        separator = "" if not closer or prefix.endswith(("\n", "\r")) else "\n"
-        folded = f"{prefix}{separator}{closer}\n\n{fold_line}"
-        if _utf8_len(folded) <= allowance or not prefix:
-            return folded, dropped_bytes
-        # After the overlong-line cut the prefix ends mid-line, so retreat one code
-        # point at a time: dropping the line would discard the partial that a cut
-        # inside an opener run keeps (the PARTIAL fixture row).
-        prefix, cut_inside_line = _retreat_fold_prefix(
-            prefix,
-            cut_inside_line=cut_inside_line,
-            intervals=intervals,
-            comment_intervals=comment_intervals,
-        )
-
-
-def _open_suggestion_line(prefix, state):
-    """Return the opener line start when *state* is a committable suggestion."""
-    if state is None:
-        return None
-    _char, length, offset = state
-    line_start = max(prefix.rfind("\n", 0, offset), prefix.rfind("\r", 0, offset)) + 1
-    line_end = len(prefix)
-    for separator in ("\n", "\r"):
-        candidate = prefix.find(separator, offset)
-        if candidate >= 0:
-            line_end = min(line_end, candidate)
-    line = prefix[line_start:line_end]
-    delimiter = offset - line_start
-    if line[delimiter + length :].startswith("suggestion"):
-        return line_start
-    return None
-
-
-def _fold_inline_body(sections, allowance, platform, surface):
-    """Fold inline *sections* into *allowance* bytes without breaking markdown."""
-    limits = _body_limit(platform, surface)
-    total = _utf8_len(sections)
-    intervals, fences = code_spans(sections)
-    comment_intervals = intervals + fences
-
-    def fold_line_for(byte_count):
-        return (
-            f"_[folded: {byte_count} more bytes; this {limits['surface']} reached the "
-            f"{limits['bytes']}-byte {limits['label']} body limit]_"
-        )
-
-    # Reserve the fold line at the maximum digit count and the shortest possible
-    # synthetic closer. The final assembly measures the actual fence and retreats
-    # whole lines when the closer is longer.
-    reserve = _utf8_len(f"\n\n{fold_line_for(total)}\n{fence_closer('```')}")
-    if allowance < reserve:
-        prefix = ""
-        cut_inside_line = False
-    else:
-        prefix_allowance = allowance - reserve
-        prefix = ""
-        cut_inside_line = False
-        for index, line in enumerate(sections.split("\n")):
-            next_part = line if index == 0 else f"\n{line}"
-            remaining = prefix_allowance - _utf8_len(prefix)
-            if _utf8_len(next_part) <= remaining:
-                prefix += next_part
-                continue
-            if _utf8_len(line) > prefix_allowance:
-                partial = _codepoint_prefix(next_part, remaining)
-                prefix += partial
-                cut_inside_line = bool(partial) and not partial.endswith(("\n", "\r"))
-            break
-
-    prefix = _retreat_inside_span(sections, len(prefix), intervals)
-    prefix = _cut_unclosed_comment(prefix, comment_intervals)
-
-    while True:
-        state = open_fence(prefix)
-        suggestion_start = _open_suggestion_line(prefix, state)
-        if suggestion_start is not None:
-            # A partial committable suggestion is worse than omitting its patch:
-            # closing it would turn an incomplete patch into a valid wrong patch.
-            prefix, cut_inside_line = _retreat_fold_prefix(
-                prefix,
-                cut_inside_line=cut_inside_line,
-                suggestion_start=suggestion_start,
-                intervals=intervals,
-                comment_intervals=comment_intervals,
-            )
-            continue
-
-        closer = "" if state is None else state[0] * state[1]
-        dropped_bytes = total - _utf8_len(prefix)
-        fold_line = fold_line_for(dropped_bytes)
-        separator = "" if not closer or prefix.endswith(("\n", "\r")) else "\n"
-        folded = f"{prefix}{separator}{closer}\n\n{fold_line}"
-        if _utf8_len(folded) <= allowance or not prefix:
-            return folded, dropped_bytes
-        # After an overlong-line cut the prefix ends mid-line, so retreat one code
-        # point at a time. This preserves the shared summary fold's opener behavior.
-        prefix, cut_inside_line = _retreat_fold_prefix(
-            prefix,
-            cut_inside_line=cut_inside_line,
-            intervals=intervals,
-            comment_intervals=comment_intervals,
-        )
-
-
 def _delivery_marker_suffix(sha, keys):
     """Return the live-only suffix for the findings carried by one delivery."""
     if not is_sha_shaped(sha) or not keys:
@@ -1802,24 +1232,24 @@ def _delivery_marker_suffix(sha, keys):
 
 def compose_inline_body(sections, *, platform, surface, marker_suffix=""):
     """Compose and budget one complete inline body, reserving its live markers."""
-    limits = _body_limit(platform, surface)
+    limits = body_limit(platform, surface)
     trailer = f"\n\n{BRAND_TRAILER}"
-    allowance = limits["bytes"] - _utf8_len(trailer) - _utf8_len(marker_suffix)
-    if _utf8_len(sections) <= allowance:
+    allowance = limits.bytes - utf8_len(trailer) - utf8_len(marker_suffix)
+    if utf8_len(sections) <= allowance:
         return InlineBody(sections + trailer, 0)
-    folded, folded_bytes = _fold_inline_body(sections, allowance, platform, surface)
+    folded, folded_bytes = fold_inline_body(sections, allowance, platform, surface)
     return InlineBody(folded + trailer, folded_bytes)
 
 
 def _inline_body_over_limit(composed, marker_suffix, platform, surface):
     """Handle an inline envelope too small even for its synthetic fold."""
-    limits = _body_limit(platform, surface)
-    actual = _utf8_len(composed.body + marker_suffix)
-    if actual <= limits["bytes"]:
+    limits = body_limit(platform, surface)
+    actual = utf8_len(composed.body + marker_suffix)
+    if actual <= limits.bytes:
         return False
     message = (
-        f"The composed {limits['surface']} is {actual} bytes, over the "
-        f"{limits['bytes']}-byte {limits['label']} body limit"
+        f"The composed {limits.surface} is {actual} bytes, over the "
+        f"{limits.bytes}-byte {limits.label} body limit"
     )
     if platform == "github":
         die(message + "; nothing was posted.")
@@ -1831,12 +1261,12 @@ def _report_inline_budget(composed, platform, surface, filepath, line):
     """Report an inline fold without changing stdout or dry-run capture."""
     if not composed.folded_bytes:
         return
-    limits = _body_limit(platform, surface)
+    limits = body_limit(platform, surface)
     path = filepath or "?"
     warn(
         f"Inline body folded by {composed.folded_bytes} bytes at {path}:{line}: "
-        f"this {limits['surface']} reached the {limits['bytes']}-byte "
-        f"{limits['label']} body limit."
+        f"this {limits.surface} reached the {limits.bytes}-byte "
+        f"{limits.label} body limit."
     )
 
 
@@ -1878,52 +1308,44 @@ def _standalone_footer_lines(review_body, sha):
 
 def _skipped_reserve(n, inline_count, platform):
     # The widest count and both grammar forms bound every possible shown count.
-    frame = max(_utf8_len(_skipped_frame(n, shown, inline_count)) for shown in (0, n))
-    closing = _utf8_len(_closing_line(n, n, platform))
+    frame = max(utf8_len(_skipped_frame(n, shown, inline_count)) for shown in (0, n))
+    closing = utf8_len(_closing_line(n, n, platform))
     return frame + closing
 
 
 def compose_review_body(
     review_body, skipped_groups, *, platform, findings_count, sha, inline_count=None
 ):
-    """Compose and budget the complete summary comment for one platform.
+    """Deduplicate prose footers against standalone prepared lines with the same SHA.
 
-    The fast path preserves the prepared body and any existing footer halves.
-    The bounded path reserves the header, the skipped-section frame and closing line,
-    and builds the canonical footer before folding the supplied prose or fitting whole
-    skipped groups in list order. No output is printed. This is deliberately not
-    idempotent by regex: a hand-typed heading in ``review_body`` yields two headings
-    once and self-heals, whereas a phrase-sniffing stripper would make identity depend
-    on counting prose. Preparation removes terminated comments before footer
-    deduplication; prose-footer deduplication sees only standalone footer lines
-    with the same head SHA. The bounded path always appends the full canonical
-    footer, and skipped-finding text never reaches the dedup.
+    The bounded path reserves the complete envelope and uses a canonical footer.
+    Skipped groups stay indivisible and their text cannot drive footer deduplication.
     """
     review_body = prepare_prose(review_body)
-    limits = _body_limit(platform)
+    limits = body_limit(platform)
     skipped = [entry for group in skipped_groups for entry in group]
     n = len(skipped)
     section = build_skipped_section(skipped, inline_count)
     footer = build_footer(
         findings_count,
         sha,
-        body=review_body,
+        body="",
         prose_body=_standalone_footer_lines(review_body, sha),
     )
     body = _compose_fragments(review_body, section, footer)
-    if _utf8_len(body) <= limits["bytes"]:
+    if utf8_len(body) <= limits.bytes:
         return ComposedBody(body, n, 0, 0, ())
 
     footer = build_footer(findings_count, sha, body="")
-    fixed = _utf8_len(BRAND_SUMMARY_HEADER) + _utf8_len(footer)
+    fixed = utf8_len(BRAND_SUMMARY_HEADER) + utf8_len(footer)
     if review_body:
-        fixed += _utf8_len("\n\n")
+        fixed += utf8_len("\n\n")
     if n:
-        fixed += _utf8_len("\n\n\n\n") + _skipped_reserve(n, inline_count, platform)
-    allowance = limits["bytes"] - fixed
+        fixed += utf8_len("\n\n\n\n") + _skipped_reserve(n, inline_count, platform)
+    allowance = limits.bytes - fixed
 
-    if review_body and _utf8_len(review_body) > allowance:
-        effective_body, folded_bytes = _fold_review_body(
+    if review_body and utf8_len(review_body) > allowance:
+        effective_body, folded_bytes = fold_review_body(
             review_body, allowance, platform
         )
         section = _bounded_section(n, [], inline_count, platform) if n else ""
@@ -1939,12 +1361,12 @@ def compose_review_body(
             ),
         )
 
-    remaining = allowance - (_utf8_len(review_body) if review_body else 0)
+    remaining = allowance - (utf8_len(review_body) if review_body else 0)
     shown_entries = []
     omitted_entries = []
     for group in skipped_groups:
         pieces = [_skipped_piece(*entry) for entry in group]
-        group_size = sum(_utf8_len(piece) for piece in pieces)
+        group_size = sum(utf8_len(piece) for piece in pieces)
         if group_size <= remaining:
             shown_entries.extend(group)
             remaining -= group_size
@@ -1966,35 +1388,35 @@ def compose_review_body(
 
 def _refuse_over_limit(body, platform):
     """Refuse a summary body that still exceeds its platform limit."""
-    limits = _body_limit(platform)
-    actual = _utf8_len(body)
-    if actual > limits["bytes"]:
+    limits = body_limit(platform)
+    actual = utf8_len(body)
+    if actual > limits.bytes:
         die(
-            f"The composed {limits['surface']} is {actual} bytes, over the "
-            f"{limits['bytes']}-byte {limits['label']} body limit; nothing was posted."
+            f"The composed {limits.surface} is {actual} bytes, over the "
+            f"{limits.bytes}-byte {limits.label} body limit; nothing was posted."
         )
 
 
 def _report_summary_budget(composed, platform):
     """Report omitted entries and prose folding without changing dry-run capture."""
-    limits = _body_limit(platform)
+    limits = body_limit(platform)
     if composed.omitted:
         print(
             f"  {composed.omitted} skipped finding(s) not shown: the "
-            f"{limits['surface']} reached the {limits['bytes']}-byte "
-            f"{limits['label']} body limit."
+            f"{limits.surface} reached the {limits.bytes}-byte "
+            f"{limits.label} body limit."
         )
         for location, title in composed.omitted_entries:
             warn(
                 f"Skipped finding '{title}' at {location} not shown: the "
-                f"{limits['surface']} reached the {limits['bytes']}-byte "
-                f"{limits['label']} body limit."
+                f"{limits.surface} reached the {limits.bytes}-byte "
+                f"{limits.label} body limit."
             )
     if composed.folded_bytes:
         print(
             f"  review_body folded by {composed.folded_bytes} bytes: the "
-            f"{limits['surface']} reached the {limits['bytes']}-byte "
-            f"{limits['label']} body limit."
+            f"{limits.surface} reached the {limits.bytes}-byte "
+            f"{limits.label} body limit."
         )
 
 
@@ -2182,10 +1604,8 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
 
         comments.append(comment)
 
-    # The partition (comments vs skipped groups) is complete above. The fast path
-    # checks the marker against the full review_body and prose against standalone
-    # lines carrying the head SHA; the bounded path always appends the full canonical
-    # footer, and skipped-finding text never reaches the dedup.
+    # Only standalone prepared prose-footer lines carrying this SHA drive dedup.
+    # The bounded path uses a canonical footer; skipped text cannot suppress it.
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
     composed = compose_review_body(

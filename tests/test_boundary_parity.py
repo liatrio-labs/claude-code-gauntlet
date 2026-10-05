@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.patches as report_patches
+import gauntlet.text as outbound_text
 import pytest
 from gauntlet import config as resolve_config
 from gauntlet import contract_gen as generate_contract_requirements
@@ -107,7 +108,7 @@ class TestSummaryIndexParity(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         report, summary = json.loads(result.stdout)
         self.assertEqual(post_review.summary_body_from_report(report), summary)
-        self.assertEqual(post_review.prepare_prose(summary), summary)
+        self.assertEqual(outbound_text.prepare_prose(summary), summary)
         self.assertIn("app/\uff20modal/\uff1cSlot>.tsx", summary)
         self.assertIn("dev@example.test", summary)
         self.assertIn("&#٦٤;", summary)

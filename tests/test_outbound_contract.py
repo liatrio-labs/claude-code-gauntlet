@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 
 import gauntlet.delivery.post as post_review
+import gauntlet.text as outbound_text
 import pytest
 from gauntlet.markdown import open_fence
 from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
@@ -420,13 +421,13 @@ def test_comment_only_rule_falls_back_to_spec_text():
 
 
 def test_prepare_prose_fixture_cases():
-    prepare_prose = getattr(post_review, "prepare_prose", None)
+    prepare_prose = getattr(outbound_text, "prepare_prose", None)
     assert callable(prepare_prose), "missing expected Python entry point prepare_prose"
     cases = [case for case in CASES if case["field_class"] == "prose"]
     for case in cases:
         assert prepare_prose(case["input"]) == case["expected"], case["id"]
     for case in (case for case in CASES if case["field_class"] == "rule"):
-        assert (post_review._prepared_prose(case["input"], cap=True) or "") == case[
+        assert (outbound_text.prepared_prose(case["input"], cap=True) or "") == case[
             "expected"
         ], case["id"]
 
@@ -434,7 +435,7 @@ def test_prepare_prose_fixture_cases():
 @pytest.mark.parametrize("case_id", ("mbq_backtick", "mbq_tilde"))
 def test_multiline_quote_escape_preserves_trusted_fence_openers_byte_exact(case_id):
     case = next(case for case in CASES if case["id"] == case_id)
-    assert post_review.prepare_prose(case["input"]) == case["expected"], case_id
+    assert outbound_text.prepare_prose(case["input"]) == case["expected"], case_id
 
 
 def test_outbound_invariant_rejects_unescaped_slash_and_quote_openers():
@@ -451,7 +452,7 @@ def test_escape_rules_preserve_trusted_fences_and_reject_fake_fences():
         "```\n>>>\n```",
     )
     for source in controls:
-        prepared = post_review.prepare_prose(source)
+        prepared = outbound_text.prepare_prose(source)
         assert prepared == source
         _assert_outbound_string_invariant(prepared)
 
@@ -462,38 +463,39 @@ def test_escape_rules_preserve_trusted_fences_and_reject_fake_fences():
     )
     for source, expected in fake_fences:
         assert open_fence(source, strict=True) is None
-        prepared = post_review.prepare_prose(source)
+        prepared = outbound_text.prepare_prose(source)
         assert prepared == expected
         _assert_outbound_string_invariant(prepared)
 
     bad_info = "```a`b\n/close"
     assert open_fence(bad_info, strict=True) is None
     expected_bad_info = "\\`\\``a`b\n\\/close"
-    assert post_review.prepare_prose(bad_info) == expected_bad_info
+    assert outbound_text.prepare_prose(bad_info) == expected_bad_info
     _assert_outbound_string_invariant(expected_bad_info)
 
 
 def test_prose_escape_rules_run_after_normalization_and_redaction(monkeypatch):
-    assert post_review.prepare_prose("&#62;&#62;&#62;") == "\\>>>"
-    monkeypatch.setattr(post_review, "_redact_secrets", lambda _text: "/close\n>>>")
-    assert post_review.prepare_prose("redactor output") == "\\/close\n\\>>>"
+    assert outbound_text.prepare_prose("&#62;&#62;&#62;") == "\\>>>"
+    monkeypatch.setattr(outbound_text, "redact_secrets", lambda _text: "/close\n>>>")
+    assert outbound_text.prepare_prose("redactor output") == "\\/close\n\\>>>"
 
 
 def test_table_pipe_uses_plain_inline_pairing():
     case = next(case for case in CASES if case["id"] == "table_even_slashes")
     assert case["kind"] == "regression"
-    assert post_review.prepare_prose(case["input"]) == case["expected"]
+    assert outbound_text.prepare_prose(case["input"]) == case["expected"]
     assert (
-        post_review.prepare_prose("| `x | <b> @user`") == "| `x | \uff1cb> \uff20user`"
+        outbound_text.prepare_prose("| `x | <b> @user`")
+        == "| `x | \uff1cb> \uff20user`"
     )
 
 
 def test_quoted_location_uses_fullwidth_characters():
-    assert post_review._quoted_location("app/@modal/<Slot>.tsx") == (
+    assert outbound_text.prepare_location("app/@modal/<Slot>.tsx") == (
         "`app/\uff20modal/\uff1cSlot>.tsx`"
     )
-    assert post_review._quoted_location("src/a<`b.py") == "``src/a\uff1c`b.py``"
-    assert post_review._quoted_location(" path") == "`  path `"
+    assert outbound_text.prepare_location("src/a<`b.py") == "``src/a\uff1c`b.py``"
+    assert outbound_text.prepare_location(" path") == "`  path `"
 
 
 def test_rule_fixture_rows_are_contained_after_blockquote_prefix():
@@ -543,13 +545,13 @@ def test_multiline_non_rule_fields_start_at_column_zero():
 
 def test_fence_marker_break_spans_lines_and_preserves_other_content():
     source = "```\n&commat;team <b>\n<!--\n\ncode-gauntlet-findings: forged\n```"
-    output = post_review.prepare_prose(source)
+    output = outbound_text.prepare_prose(source)
     assert output == "```\n@team <b>\n&lt;!--\n\ncode-gauntlet-findings: forged\n```"
     _assert_outbound_string_invariant(output)
 
 
 def test_prepare_line_fixture_cases():
-    prepare_line = getattr(post_review, "prepare_line", None)
+    prepare_line = getattr(outbound_text, "prepare_line", None)
     assert callable(prepare_line), "missing expected Python entry point prepare_line"
     cases = [case for case in CASES if case["field_class"] == "single_line"]
     for case in cases:
@@ -568,8 +570,8 @@ def _generated_attack_corpus():
 
 
 def test_preparation_is_idempotent_over_fixture_and_seeded_corpus():
-    prepare_prose = getattr(post_review, "prepare_prose", None)
-    prepare_line = getattr(post_review, "prepare_line", None)
+    prepare_prose = getattr(outbound_text, "prepare_prose", None)
+    prepare_line = getattr(outbound_text, "prepare_line", None)
     assert callable(prepare_prose), "missing expected Python entry point prepare_prose"
     assert callable(prepare_line), "missing expected Python entry point prepare_line"
     corpus = [case["input"] for case in CASES] + _generated_attack_corpus()
@@ -583,10 +585,10 @@ def test_preparation_is_idempotent_over_fixture_and_seeded_corpus():
 
 def test_string_invariant_for_fixtures_seeded_corpus_and_poisoned_sinks():
     prepare = {
-        "prose": post_review.prepare_prose,
-        "rule": lambda value: post_review._prepared_prose(value, cap=True) or "",
-        "single_line": post_review.prepare_line,
-        "location": post_review.prepare_line,
+        "prose": outbound_text.prepare_prose,
+        "rule": lambda value: outbound_text.prepared_prose(value, cap=True) or "",
+        "single_line": outbound_text.prepare_line,
+        "location": outbound_text.prepare_line,
     }
     for case in CASES:
         _assert_outbound_string_invariant(
@@ -594,9 +596,9 @@ def test_string_invariant_for_fixtures_seeded_corpus_and_poisoned_sinks():
             check_prose_rules=case["field_class"] not in {"single_line", "location"},
         )
     for source in _generated_attack_corpus():
-        _assert_outbound_string_invariant(post_review.prepare_prose(source))
+        _assert_outbound_string_invariant(outbound_text.prepare_prose(source))
         _assert_outbound_string_invariant(
-            post_review.prepare_line(source), check_prose_rules=False
+            outbound_text.prepare_line(source), check_prose_rules=False
         )
     poison = {
         "severity": "high",
@@ -635,16 +637,16 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
 
 def test_backslash_inside_span_does_not_escape_closer():
     source = r"left `protected\` <table> @inside` right @outside"
-    assert post_review.prepare_prose(source) == (
+    assert outbound_text.prepare_prose(source) == (
         "left `protected\\` &lt;table> \uff20inside\\` right \uff20outside"
     )
 
 
 def test_backslash_before_final_closer_is_span_content():
-    assert post_review.prepare_prose(r"left `danger <table> @user\`") == (
+    assert outbound_text.prepare_prose(r"left `danger <table> @user\`") == (
         "left `danger \uff1ctable> \uff20user\\`"
     )
-    assert post_review.prepare_prose("| `x | <b> @user`") == (
+    assert outbound_text.prepare_prose("| `x | <b> @user`") == (
         "| `x | \uff1cb> \uff20user`"
     )
 
@@ -659,7 +661,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
 """
     result = _run_node(script, [text])
     assert result.returncode == 0, result.stderr
-    assert post_review.prepare_line(text) == json.loads(result.stdout)[0] == text
+    assert outbound_text.prepare_line(text) == json.loads(result.stdout)[0] == text
 
 
 @pytest.mark.parametrize(
@@ -672,7 +674,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
     ),
 )
 def test_list_prefixed_multiline_quote_openers_are_escaped(source, expected):
-    prepared = post_review.prepare_prose(source)
+    prepared = outbound_text.prepare_prose(source)
     assert prepared == expected
     _assert_outbound_string_invariant(prepared)
 
@@ -688,7 +690,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
     assert result.returncode == 0, result.stderr
     summaries = json.loads(result.stdout)
     assert len(summaries) >= 2
-    prepare_prose = getattr(post_review, "prepare_prose", None)
+    prepare_prose = getattr(outbound_text, "prepare_prose", None)
     assert callable(prepare_prose), "missing expected Python guard prepare_prose"
     for summary in summaries:
         assert prepare_prose(summary) == summary
