@@ -173,8 +173,33 @@ def test_tracked_files_have_no_scanner_hits() -> None:
             None,
         ),
         ("pkg/mod.js", "ev" + "al(x)", "dynamic-execution"),
+        ("pkg/mod.js", "new Fun" + "ction(x)", "dynamic-execution"),
+        ("pkg/notes.txt", "ev" + "al(x)", None),
         ("tests/test_a.py", "api_key" + '="example-key"', None),
+        # The exemptions hold on example surfaces only.
+        ("pkg/mod.py", "api_key" + '="example-key"', "hardcoded-secret"),
+        (
+            "pkg/mod.py",
+            "# example\n" + "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + "0123456789",
+            "hardcoded-secret",
+        ),
+        ("pkg/id.txt", "-----BEGIN RSA PRIVATE " + "KEY-----", "hardcoded-secret"),
+        ("node_modules/a/mod.py", "token" + '="ordinary-value"', None),
+        ("pkg/logo.png", "token" + '="ordinary-value"', None),
+        # .turbo is skipped by the secret walk and read by the eval walk.
+        (
+            ".turbo/mod.js",
+            "token" + '="ordinary-value"\n' + "ev" + "al(x)",
+            "dynamic-execution",
+        ),
     ],
 )
 def test_strict_guard_sanity(rel: str, content: str, rule: Rule | None) -> None:
     assert [h.rule for h in scan(rel, content)] == ([rule] if rule else [])
+
+
+def test_symlink_skips_the_secret_rule_only() -> None:
+    content = "token" + '="ordinary-value"\n' + "ev" + "al(x)"
+    assert [h.rule for h in scan("pkg/mod.js", content, symlink=True)] == [
+        "dynamic-execution"
+    ]
