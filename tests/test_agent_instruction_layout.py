@@ -74,7 +74,8 @@ def agents_dirs():
 
 class TestCanonicalPointer(unittest.TestCase):
     def test_root_claude_md_imports_agents_md_outside_any_code_span(self):
-        """Claude Code's import parser skips code spans and fenced blocks, so backticks around
+        """Must be a bare `@AGENTS.md` at line start: Claude Code's import parser skips
+        code spans and fenced blocks, so backticks around
         the pointer leave a CLAUDE.md that reads correctly to a human and imports nothing.
         This is the one import in the layout that DOES expand — it is launch-time and
         root-level, unlike the on-demand subdirectory path.

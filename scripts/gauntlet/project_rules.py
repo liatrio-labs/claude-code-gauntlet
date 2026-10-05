@@ -147,22 +147,31 @@ _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
 
 def _strip_code(text):
-    """Claude Code skips imports inside code spans and fenced blocks.
-
-    Top-level fences and one-line spans only; containers and HTML need a block parser.
+    """Claude Code skips imports in code spans and fenced blocks; backticks are the
+    documented way to mention a path without importing it. Each span becomes one
+    space (measured: a`x`@imp.md loads). Top-level fences and one-line spans only:
+    containers, indented code, HTML and multi-line spans need a block parser.
     """
     normalized = "\n".join(text.splitlines())
-    chars = list(normalized)
     spans, fences = code_spans(normalized)
+    intervals = [(start, end, "span") for start, end in spans]
     for start, end in fences:
-        for index in range(start, end):
-            if chars[index] != "\n":
-                chars[index] = ""
-    for start, end in spans:
-        chars[start] = " "
-        for index in range(start + 1, end):
-            chars[index] = ""
-    return "".join(chars)
+        line_start = start
+        while line_start < end:
+            line_end = normalized.find("\n", line_start, end)
+            if line_end < 0:
+                line_end = end
+            intervals.append((line_start, line_end, "fence"))
+            line_start = line_end + 1
+    intervals.sort()
+    parts = []
+    cursor = 0
+    for start, end, kind in intervals:
+        parts.append(normalized[cursor:start])
+        parts.append("" if kind == "fence" else " ")
+        cursor = end
+    parts.append(normalized[cursor:])
+    return "".join(parts)
 
 
 def _find_imports(text):

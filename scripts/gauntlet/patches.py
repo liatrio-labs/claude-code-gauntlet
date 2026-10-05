@@ -130,10 +130,7 @@ def _neutralize(text):
 
 
 def _render(kept, candidates, filtered_earlier, oracle_state, sha):
-    """The gate owns ``_FIX_COUNTS``; candidate subtraction cannot recover its tally.
-
-    ``main()`` resets the counters before gating each run's candidates.
-    """
+    """Return the whole markdown document, deterministically."""
     downgraded = _FIX_COUNTS["downgraded"]
     parts = []
 

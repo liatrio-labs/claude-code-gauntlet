@@ -5,62 +5,72 @@ from gauntlet.markdown import code_span, code_spans, fence_run, open_fence
 
 
 @pytest.mark.parametrize(
-    ("text", "expected"),
+    ("text", "strict", "expected"),
     [
-        pytest.param("   ````x", ("`", 4, 3), id="opener-shape-indented-run"),
-        pytest.param("prose\r````\rx", ("`", 4, 6), id="cr-line-endings"),
-        pytest.param("````\n````\nprose", None, id="closed-fence"),
+        pytest.param("   ````x", False, ("`", 4, 3), id="opener-shape-indented-run"),
+        pytest.param("prose\r````\rx", False, ("`", 4, 6), id="cr-line-endings"),
+        pytest.param("````\n````\nprose", False, None, id="closed-fence"),
         pytest.param(
             "```\n``` info\n@hidden.md\n",
+            False,
             ("`", 3, 0),
             id="closer-info-string-does-not-close",
         ),
-        pytest.param("```\n``` \t\n", None, id="closer-trailing-spaces-and-tabs"),
-        pytest.param("````\n```\n", ("`", 4, 0), id="shorter-closer-does-not-close"),
-        pytest.param("```\n````\n", None, id="longer-closer-closes"),
-        pytest.param("```\n~~~\n", ("`", 3, 0), id="other-character-does-not-close"),
-        pytest.param("```a`b\n@imp.md\n", None, id="backtick-info-string-rejected"),
-        pytest.param("~~~a`b\n", ("~", 3, 0), id="tilde-info-allows-backtick"),
-        pytest.param("    ```\n", None, id="four-space-indent-is-not-opener"),
-        pytest.param("``\n", None, id="opener-needs-three-ticks"),
+        pytest.param(
+            "```\n``` \t\n", False, None, id="closer-trailing-spaces-and-tabs"
+        ),
+        pytest.param(
+            "````\n```\n", False, ("`", 4, 0), id="shorter-closer-does-not-close"
+        ),
+        pytest.param("```\n````\n", False, None, id="longer-closer-closes"),
+        pytest.param(
+            "```\n~~~\n", False, ("`", 3, 0), id="other-character-does-not-close"
+        ),
+        pytest.param(
+            "```a`b\n@imp.md\n", False, None, id="backtick-info-string-rejected"
+        ),
+        pytest.param("~~~a`b\n", False, ("~", 3, 0), id="tilde-info-allows-backtick"),
+        pytest.param("    ```\n", False, None, id="four-space-indent-is-not-opener"),
+        pytest.param("``\n", False, None, id="opener-needs-three-ticks"),
+        pytest.param(" ```\n", True, None, id="strict-indent-one"),
+        pytest.param("  ```\n", True, None, id="strict-indent-two"),
+        pytest.param("   ```\n", True, None, id="strict-indent-three"),
+        pytest.param(
+            "```\nx\n ```\n",
+            True,
+            None,
+            id="strict-indented-closer-still-closes",
+        ),
     ],
 )
-def test_open_fence(text, expected):
-    assert open_fence(text) == expected
+def test_open_fence(text, strict, expected):
+    assert open_fence(text, strict=strict) == expected
 
 
 @pytest.mark.parametrize(
-    "indent",
+    ("text", "expected_state", "expected_intervals"),
     [
-        pytest.param(" ", id="strict-indent-one"),
-        pytest.param("  ", id="strict-indent-two"),
-        pytest.param("   ", id="strict-indent-three"),
+        pytest.param(
+            "```\nx\n```\n~~~\ny",
+            ("~", 3, 10),
+            [(0, 10), (10, 15)],
+            id="closed-and-trailing-open-fences",
+        ),
+        pytest.param(
+            "é\n```\nx\n```\n",
+            None,
+            [(2, 12)],
+            id="python-offsets-after-non-ascii-text",
+        ),
     ],
 )
-def test_open_fence_strict_rejects_indented_openers(indent):
-    assert open_fence(f"{indent}```\n", strict=True) is None
-
-
-def test_open_fence_strict_applies_only_to_openers():
-    assert open_fence("```\nx\n ```\n", strict=True) is None
-
-
-def test_open_fence_intervals_include_closed_and_trailing_open_fences():
-    closed = "```\nx\n```\n"
-    text = closed + "~~~\ny"
+def test_open_fence_intervals(text, expected_state, expected_intervals):
     intervals = []
-    assert open_fence(text, intervals=intervals) == ("~", 3, len(closed))
-    assert intervals == [(0, len(closed)), (len(closed), len(text))]
+    assert open_fence(text, intervals=intervals) == expected_state
+    assert intervals == expected_intervals
 
 
-def test_open_fence_intervals_use_python_offsets_after_non_ascii_text():
-    text = "\u00e9\n```\nx\n```\n"
-    intervals = []
-    assert open_fence(text, intervals=intervals) is None
-    assert intervals == [(2, len(text))]
-
-
-def test_byte_fold_intervals_use_exact_runs_and_literal_span_backslashes():
+def test_code_spans_pair_exact_runs_with_literal_backslashes():
     unequal = "left `x ``` <ins> @user`"
     assert code_spans(unequal)[0] == [(5, len(unequal))]
 
@@ -74,6 +84,11 @@ def test_byte_fold_intervals_use_exact_runs_and_literal_span_backslashes():
     ]
 
 
+def test_code_spans_even_backslashes_leave_the_opener_live():
+    text = r"a \\`x`"
+    assert code_spans(text)[0] == [(4, 7)]
+
+
 def test_code_spans_skip_trusted_fence_contents():
     text = "`outside`\n```\n`inside`\n```\n`after`"
     spans, fences = code_spans(text)
@@ -82,43 +97,39 @@ def test_code_spans_skip_trusted_fence_contents():
 
 
 @pytest.mark.parametrize(
-    ("payload", "minimum", "expected"),
+    ("payload", "expected"),
     [
-        pytest.param("plain text", 3, "```", id="minimum-three"),
-        pytest.param("a ``` run", 3, "````", id="longest-run-plus-one"),
-        pytest.param("a ```` run", 3, "`````", id="four-run-needs-five"),
-        pytest.param("plain text", 5, "`````", id="caller-minimum"),
+        pytest.param("plain text", "```", id="minimum-three"),
+        pytest.param("a ``` run", "````", id="longest-run-plus-one"),
+        pytest.param("a ```` run", "`````", id="four-run-needs-five"),
     ],
 )
-def test_fence_run(payload, minimum, expected):
-    assert fence_run(payload, minimum) == expected
-
-
-def test_code_span_lengthens_the_run_over_a_backtick_in_the_path():
-    assert code_span("a`b") == "``a`b``"
-    assert code_span("no ticks here") == "`no ticks here`"
+def test_fence_run(payload, expected):
+    assert fence_run(payload) == expected
 
 
 @pytest.mark.parametrize(
-    ("value", "options", "expected"),
+    ("value", "pad_space_edges", "expected"),
     [
-        pytest.param("`path", {}, "`` `path ``", id="default-pads-backtick-start"),
-        pytest.param("path`", {}, "`` path` ``", id="default-pads-backtick-end"),
+        pytest.param("`path", False, "`` `path ``", id="default-pads-backtick-start"),
+        pytest.param("path`", False, "`` path` ``", id="default-pads-backtick-end"),
+        pytest.param("a`b", False, "``a`b``", id="lengthens-over-inner-run"),
+        pytest.param("no ticks here", False, "`no ticks here`", id="plain-value"),
         pytest.param(
             " path",
-            {"pad_space_edges": True},
+            True,
             "`  path `",
             id="outbound-pads-space-edge",
         ),
-        pytest.param(" path", {}, "` path`", id="default-leaves-space-edge"),
+        pytest.param(" path", False, "` path`", id="default-leaves-space-edge"),
         pytest.param(
             "path ",
-            {"pad_space_edges": True},
+            True,
             "` path  `",
             id="outbound-pads-trailing-space",
         ),
-        pytest.param("path ", {}, "`path `", id="default-leaves-trailing-space"),
+        pytest.param("path ", False, "`path `", id="default-leaves-trailing-space"),
     ],
 )
-def test_code_span_padding_policy(value, options, expected):
-    assert code_span(value, **options) == expected
+def test_code_span_padding_policy(value, pad_space_edges, expected):
+    assert code_span(value, pad_space_edges=pad_space_edges) == expected

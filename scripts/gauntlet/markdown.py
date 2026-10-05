@@ -88,20 +88,22 @@ def escaped_tick(text: str, index: int) -> bool:
     return bool(backslashes % 2)
 
 
-def span_close(line: str, start: int) -> int | None:
-    """Find an equal-width closer; backslashes inside a CommonMark span are literal."""
+def tick_run(line: str, start: int) -> int:
     end = start
     while end < len(line) and line[end] == "`":
         end += 1
+    return end
+
+
+def span_close(line: str, start: int, end: int) -> int | None:
+    """Find an equal-width closer; backslashes inside a CommonMark span are literal."""
     width = end - start
     cursor = end
     while cursor < len(line):
         tick = line.find("`", cursor)
         if tick < 0:
             return None
-        after = tick
-        while after < len(line) and line[after] == "`":
-            after += 1
+        after = tick_run(line, tick)
         if after - tick == width:
             return tick
         cursor = after
@@ -123,13 +125,11 @@ def code_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]
             start = line.find("`", cursor)
             if start < 0:
                 break
-            end = start
-            while end < len(line) and line[end] == "`":
-                end += 1
+            end = tick_run(line, start)
             if escaped_tick(line, start):
                 cursor = start + 1
                 continue
-            close = span_close(line, start)
+            close = span_close(line, start, end)
             if close is None:
                 cursor = end
                 continue
@@ -140,10 +140,13 @@ def code_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]
     return spans, fences
 
 
-def fence_run(payload: str, minimum: int = 3) -> str:
-    """GitLab nests suggestions; GitHub Apply accepts fences of four or more ticks."""
+def fence_run(payload: str) -> str:
+    """Longest inner run + 1, minimum 3, so the payload cannot close the fence early
+    (CommonMark). Matches GitLab's suggestion UI, which documents four-backtick
+    nesting; GitHub keeps Apply working at four or more backticks.
+    """
     runs = re.findall(r"`+", payload)
-    length = max(minimum, max((len(run) for run in runs), default=0) + 1)
+    length = max(3, max((len(run) for run in runs), default=0) + 1)
     return "`" * length
 
 

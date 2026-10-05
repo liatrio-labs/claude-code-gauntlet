@@ -119,6 +119,7 @@ from gauntlet.markdown import (
     fence_run,
     open_fence,
     span_close,
+    tick_run,
 )
 from gauntlet.marker import (
     FINDING_MARKER_TOKEN,
@@ -476,11 +477,9 @@ def _contain_line(line):
                 out.append("`")
                 index += 1
                 continue
-            end = index
-            while end < len(line) and line[end] == "`":
-                end += 1
+            end = tick_run(line, index)
             width = end - index
-            close = span_close(line, index)
+            close = span_close(line, index, end)
             if close is not None:
                 out.append(
                     line[index : close + width].replace(
@@ -627,7 +626,9 @@ def _blockquote(text):
 
 
 def _suggestion_fence(payload, *, offsets=None):
-    """*offsets* is GitLab's ``(above, below)`` pair: it makes the header
+    """Return ``(open, close)`` fence lines; ``fence_run`` sets the length.
+
+    *offsets* is GitLab's ``(above, below)`` pair: it makes the header
     ``suggestion:-m+n``, which widens what one click replaces to
     ``[anchor - m, anchor + n]``. The parser is fence-length blind, so
     the header composes with any length. ``None`` and ``(0, 0)`` both render
@@ -1722,6 +1723,7 @@ def _open_suggestion_line(prefix, state):
 
 
 def _fold_inline_body(sections, allowance, platform, surface):
+    """Fold inline *sections* into *allowance* bytes without breaking markdown."""
     limits = _body_limit(platform, surface)
     total = _utf8_len(sections)
     intervals, fences = code_spans(sections)

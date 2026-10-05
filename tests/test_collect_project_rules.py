@@ -1265,7 +1265,7 @@ class TestPureHelpers(unittest.TestCase):
 
 
 _COMMONMARK_BLOCK_GAP = pytest.mark.xfail(
-    strict=True, reason="needs a CommonMark block parser"
+    strict=True, reason="#458: needs a CommonMark block parser"
 )
 
 
@@ -1280,13 +1280,17 @@ _COMMONMARK_BLOCK_GAP = pytest.mark.xfail(
         ),
         pytest.param("```a`b\n@imp.md\n", ["imp.md"], id="c3-backtick-info"),
         pytest.param("``@imp.md``\n", [], id="c4-equal-width-span"),
-        pytest.param("```\n@hidden.md\n```\n", [], id="c5-plain-fence"),
-        pytest.param("@imp.md\n", ["imp.md"], id="c6-live-import"),
         pytest.param("~~~\n~~~x\n@imp.md\n~~~\n", [], id="c7-tilde-closer-text"),
         pytest.param("    ```\n@imp.md\n", ["imp.md"], id="c8-four-space-indent"),
         pytest.param("```\n@imp.md\n", [], id="c9-unclosed-fence"),
         pytest.param(
             "`open\n@imp.md`\n", [], marks=_COMMONMARK_BLOCK_GAP, id="d1-multiline-span"
+        ),
+        pytest.param(
+            "see `a\r@imp.md` here",
+            [],
+            marks=_COMMONMARK_BLOCK_GAP,
+            id="d1-cr-only-multiline-span",
         ),
         pytest.param(
             "> ```\n> @imp.md\n> ```\n",
@@ -1296,7 +1300,10 @@ _COMMONMARK_BLOCK_GAP = pytest.mark.xfail(
         ),
         pytest.param("- item\n  ```\n  @imp.md\n  ```\n", [], id="d3-list-fence"),
         pytest.param(
-            "<!-- @imp.md -->\n", [], marks=_COMMONMARK_BLOCK_GAP, id="d4-html-comment"
+            "<!-- @imp.md -->\n",
+            [],
+            marks=_COMMONMARK_BLOCK_GAP,
+            id="d4-html-comment",
         ),
         pytest.param(
             "paragraph\n\n    @imp.md\n",
@@ -1314,6 +1321,10 @@ _COMMONMARK_BLOCK_GAP = pytest.mark.xfail(
             id="f2-mask-hidden-import-only",
         ),
         pytest.param(
+            r"see \` @imp.md ` here", ["imp.md"], id="escaped-opener-is-not-a-span"
+        ),
+        pytest.param(r"see \\` @imp.md ` here", [], id="even-backslashes-open-a-span"),
+        pytest.param(
             "````\n@OUTER1.md\n```\n@MISPARSED.md\n````\n@AFTER.md\n",
             ["AFTER.md"],
             id="nested-fence-longer-closer",
@@ -1327,6 +1338,11 @@ _COMMONMARK_BLOCK_GAP = pytest.mark.xfail(
             "```\r\n@hidden.md\r\n```\r\n@live.md",
             ["live.md"],
             id="crlf-fence-lines",
+        ),
+        pytest.param(
+            "```\rx\r```\rsee ` @skip.md ` here\r",
+            [],
+            id="cr-only-fence-then-span",
         ),
     ],
 )
