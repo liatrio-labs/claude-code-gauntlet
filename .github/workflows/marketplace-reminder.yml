@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: marketplace-reminder
+  cancel-in-progress: false
+
 jobs:
   remind:
     name: Remind maintainers about a marketplace bump

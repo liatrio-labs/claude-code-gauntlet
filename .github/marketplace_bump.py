@@ -151,6 +151,14 @@ def _read_release(tag: str, run: CommandRunner) -> tuple[PluginManifest, str]:
     sha_text = run(["git", "rev-parse", f"{tag}^{{commit}}"], str(ROOT)).strip()
     if not SHA_PATTERN.fullmatch(sha_text):
         raise InputError(f"git returned a malformed commit sha for {tag}")
+    published_sha = run(
+        ["gh", "api", f"repos/{DEFAULT_SOURCE_REPO}/commits/{tag}", "--jq", ".sha"],
+        None,
+    ).strip()
+    if sha_text.lower() != published_sha.lower():
+        raise InputError(
+            f"release {tag} sha mismatch: local {sha_text}, published {published_sha}"
+        )
     manifest_text = run(["git", "show", f"{tag}:{MANIFEST_PATH}"], str(ROOT))
     manifest = _load_manifest(manifest_text)
     expected_version = tag[1:]
@@ -199,13 +207,38 @@ def _require_document(text: str, label: str) -> MarketplaceDocument:
     return cast(MarketplaceDocument, document)
 
 
-def open_pr(
-    tag: str,
-    marketplace_repo: str,
-    source_repo: str,
-    run: CommandRunner,
-) -> int:
+def open_pr(tag: str, run: CommandRunner) -> int:
     manifest, sha = _read_release(tag, run)
+    branch = f"bump-marketplace/claude-code-gauntlet-{tag}"
+    pr_text = run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            DEFAULT_MARKETPLACE_REPO,
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "url",
+        ],
+        None,
+    )
+    try:
+        prs = json.loads(pr_text)
+    except json.JSONDecodeError:
+        raise InputError("pull request list is not valid JSON") from None
+    if not isinstance(prs, list) or any(
+        not isinstance(pr, dict) or not isinstance(pr.get("url"), str) for pr in prs
+    ):
+        raise InputError("pull request list must contain objects with URLs")
+    if prs:
+        print(prs[0]["url"])
+        return 0
+    source_repo = DEFAULT_SOURCE_REPO
+    marketplace_repo = DEFAULT_MARKETPLACE_REPO
     title = f"fix(plugins): update {source_repo} to {tag}"
     release_url = f"https://github.com/{source_repo}/releases/tag/{tag}"
     body = f"Update the marketplace entry to upstream release [{tag}]({release_url})."
@@ -220,9 +253,7 @@ def open_pr(
             )
         except (OSError, UnicodeDecodeError) as error:
             raise InputError(f"cannot read cloned marketplace file: {error}") from None
-        updated = rewrite_entry(
-            original, manifest, sha, f"https://github.com/{source_repo}.git"
-        )
+        updated = rewrite_entry(original, manifest, sha)
         if updated == original:
             print("The marketplace entry is already current.")
             return 0
@@ -232,12 +263,14 @@ def open_pr(
             encoding="utf-8",
             newline="",
         )
-        branch = f"bump-marketplace/claude-code-gauntlet-{tag}"
         cwd = str(clone)
         run(["git", "switch", "--create", branch], cwd)
         run(["git", "add", "--", MARKETPLACE_PATH], cwd)
         run(["git", "commit", "-m", title], cwd)
-        run(["git", "push", "--set-upstream", "origin", branch], cwd)
+        run(
+            ["git", "push", "--force-with-lease", "--set-upstream", "origin", branch],
+            cwd,
+        )
         url = run(
             [
                 "gh",
@@ -259,12 +292,7 @@ def open_pr(
     return 0
 
 
-def check(
-    tag: str,
-    marketplace_repo: str,
-    source_repo: str,
-    run: CommandRunner,
-) -> int:
+def check(tag: str, run: CommandRunner) -> int:
     manifest, sha = _read_release(tag, run)
     text = run(
         [
@@ -272,12 +300,12 @@ def check(
             "api",
             "-H",
             "Accept: application/vnd.github.raw",
-            f"repos/{marketplace_repo}/contents/{MARKETPLACE_PATH}",
+            f"repos/{DEFAULT_MARKETPLACE_REPO}/contents/{MARKETPLACE_PATH}",
         ],
         None,
     )
     marketplace = _require_document(text, "marketplace response")
-    entry = _find_entry(marketplace, f"https://github.com/{source_repo}.git")
+    entry = _find_entry(marketplace, f"https://github.com/{DEFAULT_SOURCE_REPO}.git")
     expected = {
         "version": manifest["version"],
         "source.sha": sha,
@@ -395,8 +423,6 @@ def _parser() -> ArgumentParser:
     for name in ("open-pr", "check"):
         command = commands.add_parser(name)
         command.add_argument("--tag", required=True)
-        command.add_argument("--marketplace-repo", default=DEFAULT_MARKETPLACE_REPO)
-        command.add_argument("--source-repo", default=DEFAULT_SOURCE_REPO)
     reminder = commands.add_parser("remind")
     reminder.add_argument("--repo", required=True)
     return parser
@@ -407,16 +433,15 @@ def main(argv: list[str] | None = None, *, run: CommandRunner = run_command) -> 
         args = _parser().parse_args(argv)
         if args.command == "remind":
             return remind(args.repo, run)
-        _validate_repo(args.marketplace_repo, "marketplace repository")
-        _validate_repo(args.source_repo, "source repository")
         operation = open_pr if args.command == "open-pr" else check
-        return operation(args.tag, args.marketplace_repo, args.source_repo, run)
+        return operation(args.tag, run)
     except InputError as error:
         print(str(error).splitlines()[0], file=sys.stderr)
         return 2
     except CommandFailure as error:
         command = " ".join(error.argv)
-        detail = f": {error.stderr.splitlines()[0]}" if error.stderr else ""
+        lines = [line.strip() for line in error.stderr.splitlines() if line.strip()]
+        detail = f": {lines[-1]}" if lines else ""
         print(
             f"command failed ({error.returncode}): {command}{detail}", file=sys.stderr
         )

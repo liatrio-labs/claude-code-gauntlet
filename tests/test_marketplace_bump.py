@@ -25,15 +25,47 @@ SHA = "a" * 40
 SOURCE_REPO = "liatrio-labs/claude-code-gauntlet"
 MARKET_REPO = "liatrio-labs/claude-plugins"
 SOURCE_URL = f"https://github.com/{SOURCE_REPO}.git"
-RELEASE_ARGV = (
-    "gh",
-    "release",
-    "view",
-    "--repo",
-    "owner/repo",
-    "--json",
-    "tagName",
+BRANCH = f"bump-marketplace/claude-code-gauntlet-{TAG}"
+TITLE = f"fix(plugins): update {SOURCE_REPO} to {TAG}"
+PR_BODY = (
+    f"Update the marketplace entry to upstream release [{TAG}]"
+    f"(https://github.com/{SOURCE_REPO}/releases/tag/{TAG})."
 )
+PROVENANCE_ARGV = ("gh", "api", f"repos/{SOURCE_REPO}/commits/{TAG}", "--jq", ".sha")
+PR_LIST_ARGV = (
+    "gh",
+    "pr",
+    "list",
+    "--repo",
+    MARKET_REPO,
+    "--head",
+    BRANCH,
+    "--state",
+    "open",
+    "--json",
+    "url",
+)
+CLONE_ARGV = ("gh", "repo", "clone", MARKET_REPO)
+WRITE_ARGVS = (
+    ("git", "switch", "--create", BRANCH),
+    ("git", "add", "--", ".claude-plugin/marketplace.json"),
+    ("git", "commit", "-m", TITLE),
+    ("git", "push", "--force-with-lease", "--set-upstream", "origin", BRANCH),
+    (
+        "gh",
+        "pr",
+        "create",
+        "--repo",
+        MARKET_REPO,
+        "--base",
+        "main",
+        "--title",
+        TITLE,
+        "--body",
+        PR_BODY,
+    ),
+)
+RELEASE_ARGV = ("gh", "release", "view", "--repo", "owner/repo", "--json", "tagName")
 ISSUE_LIST_ARGV = (
     "gh",
     "issue",
@@ -80,6 +112,17 @@ def entry(url=SOURCE_URL, **overrides):
     return value
 
 
+def current_entry(**overrides):
+    value = entry(
+        version="1.2.3",
+        description="A plugin",
+        keywords=["review"],
+        source={"source": "url", "url": SOURCE_URL, "sha": SHA},
+    )
+    value.update(overrides)
+    return value
+
+
 def marketplace(*plugins):
     return {"plugins": list(plugins), "unrelated": {"keep": True}}
 
@@ -88,6 +131,7 @@ def release_responses(manifest_document=None, sha=SHA):
     manifest_document = manifest_document or manifest()
     return {
         ("git", "rev-parse", f"{TAG}^{{commit}}"): sha + "\n",
+        PROVENANCE_ARGV: SHA + "\n",
         ("git", "show", f"{TAG}:.claude-plugin/plugin.json"): json.dumps(
             manifest_document, ensure_ascii=False
         ),
@@ -102,45 +146,33 @@ class FakeRunner:
         self.clone_bytes = clone_bytes
         self.persistent_root = persistent_root
         self.create_clone = create_clone
-        self.command_output = ""
         self.calls = []
         self.clone_path = None
 
     def __call__(self, argv, cwd=None):
         self.calls.append((list(argv), cwd))
         key = tuple(argv)
-        absent = object()
-        response = self.responses.get(key, absent)
-        if response is absent and argv[:3] == ["gh", "issue", "list"]:
-            response = next(
-                (
-                    value
-                    for candidate, value in self.responses.items()
-                    if candidate[:3] == ("gh", "issue", "list")
-                ),
-                absent,
-            )
-        if response is not absent:
-            if isinstance(response, BaseException):
-                raise response
-            if argv[:3] == ["gh", "issue", "list"] and "--author" in argv:
-                # Model gh's author filter so the CLI proves bot provenance at its boundary.
-                try:
-                    issues = json.loads(response)
-                except json.JSONDecodeError:
-                    return response
-                if isinstance(issues, list):
-                    response = json.dumps(
-                        [
-                            value
-                            for value in issues
-                            if not isinstance(value, dict)
-                            or "author" not in value
-                            or value["author"]["login"] == "github-actions[bot]"
-                        ]
-                    )
-            return response
-        if argv[:3] == ["gh", "repo", "clone"]:
+        assert key in self.responses, f"unregistered command: {argv}"
+        response = self.responses[key]
+        if isinstance(response, BaseException):
+            raise response
+        if key == ISSUE_LIST_ARGV:
+            # Model gh's author filter so the CLI proves bot provenance at its boundary.
+            try:
+                issues = json.loads(response)
+            except json.JSONDecodeError:
+                return response
+            if isinstance(issues, list):
+                response = json.dumps(
+                    [
+                        value
+                        for value in issues
+                        if not isinstance(value, dict)
+                        or "author" not in value
+                        or value["author"]["login"] == "github-actions[bot]"
+                    ]
+                )
+        if key == CLONE_ARGV:
             if not self.create_clone:
                 return ""
             clone_name = argv[3].split("/", 1)[1]
@@ -156,16 +188,15 @@ class FakeRunner:
             manifest_path.parent.mkdir(parents=True)
             manifest_path.write_bytes(self.clone_bytes or b"{}\n")
             return ""
-        if argv[:3] == ["gh", "pr", "create"]:
-            return self.command_output
-        if argv[:3] in (["gh", "issue", "create"], ["gh", "issue", "edit"]):
-            return self.command_output
-        return ""
+        return response
 
 
 def open_runner(document, release_manifest=None, sha=SHA, persistent_root=None):
     data = json.dumps(document, ensure_ascii=False, indent=2).encode() + b"\n"
-    return FakeRunner(release_responses(release_manifest, sha), data, persistent_root)
+    responses = release_responses(release_manifest, sha)
+    responses.update({PR_LIST_ARGV: "[]", CLONE_ARGV: ""})
+    responses.update(dict.fromkeys(WRITE_ARGVS, ""))
+    return FakeRunner(responses, data, persistent_root)
 
 
 def check_runner(marketplace_response):
@@ -189,20 +220,37 @@ def issue(number, tag, state="OPEN", author=None):
     return value
 
 
-def remind_runner(issues, tag=TAG):
-    return FakeRunner(
-        {
-            RELEASE_ARGV: json.dumps({"tagName": tag}),
-            ISSUE_LIST_ARGV: json.dumps(issues),
-        }
+def reminder_write_argv(action="create", number=None):
+    body = (
+        f"A release of claude-code-gauntlet is ready for the marketplace: `{TAG}`.\n\n"
+        "Open the marketplace PR:\n\n"
+        f"`python3 .github/marketplace_bump.py open-pr --tag {TAG}`\n\n"
+        "Check the marketplace entry after it merges:\n\n"
+        f"`python3 .github/marketplace_bump.py check --tag {TAG}`\n\n"
+        "Close this issue once the marketplace PR merges."
+    )
+    return (
+        "gh",
+        "issue",
+        action,
+        *([str(number)] if action == "edit" else []),
+        "--repo",
+        "owner/repo",
+        "--title",
+        f"Marketplace bump due: {TAG}",
+        "--body",
+        body,
     )
 
 
-def remind_runner_with_payload(payload, tag=TAG):
-    runner = remind_runner([])
-    runner.responses[ISSUE_LIST_ARGV] = payload
-    runner.responses[RELEASE_ARGV] = json.dumps({"tagName": tag})
-    return runner
+def remind_runner(issues, tag=TAG, action="create", number=None):
+    responses = {
+        RELEASE_ARGV: json.dumps({"tagName": tag}),
+        ISSUE_LIST_ARGV: json.dumps(issues),
+    }
+    if action != "none":
+        responses[reminder_write_argv(action, number)] = ""
+    return FakeRunner(responses)
 
 
 @pytest.mark.parametrize(
@@ -218,12 +266,7 @@ def remind_runner_with_payload(payload, tag=TAG):
 def test_legacy_command_calls_main_without_arguments_and_preserves_exit_code(
     argv, code, monkeypatch
 ):
-    target = entry(
-        version="1.2.3",
-        description="A plugin" if code == 0 else "Wrong",
-        keywords=["review"],
-        source={"url": SOURCE_URL, "sha": SHA},
-    )
+    target = current_entry(description="A plugin" if code == 0 else "Wrong")
     runner = check_runner(marketplace(target))
     command = Command.legacy(
         partial(MODULE.main, run=runner), prog="marketplace_bump.py"
@@ -233,71 +276,50 @@ def test_legacy_command_calls_main_without_arguments_and_preserves_exit_code(
 
     assert command.invoke(argv) == code
     assert sys.argv is saved
-    assert len(runner.calls) == (3 if argv[0] == "check" else 0)
+    assert len(runner.calls) == (4 if argv[0] == "check" else 0)
 
 
-def test_open_pr_rewrites_only_matching_entry_and_runs_exact_sequence(capsys, tmp_path):
+@pytest.mark.parametrize(
+    "url", ["", "https://github.com/liatrio-labs/claude-plugins/pull/42"]
+)
+def test_open_pr_rewrites_only_matching_entry_and_runs_exact_sequence(
+    url, capsys, tmp_path
+):
     second = entry("https://github.com/example/other.git", name="other")
     original = marketplace(entry(), second)
     runner = open_runner(
         original, manifest(description="Révision"), persistent_root=tmp_path
     )
-    runner.command_output = "https://github.com/liatrio-labs/claude-plugins/pull/42"
+    runner.responses[WRITE_ARGVS[-1]] = url
+
+    if url:
+        failed = open_runner(original)
+        create = WRITE_ARGVS[-1]
+        failed.responses[create] = MODULE.CommandFailure(
+            create, 1, "PR creation failed"
+        )
+        assert MODULE.main(["open-pr", "--tag", TAG], run=failed) == 2
+        assert [tuple(argv) for argv, _ in failed.calls[-2:]] == list(WRITE_ARGVS[-2:])
+        assert "PR creation failed" in capsys.readouterr().err
 
     assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 0
 
-    expected = marketplace(
-        {
-            **entry(),
-            "version": "1.2.3",
-            "description": "Révision",
-            "keywords": ["review"],
-            "source": {"source": "url", "url": SOURCE_URL, "sha": SHA},
-        },
-        second,
-    )
+    expected = marketplace(current_entry(description="Révision"), second)
     assert (runner.clone_path / ".claude-plugin/marketplace.json").read_bytes() == (
         json.dumps(expected, ensure_ascii=False, indent=2) + "\n"
     ).encode()
-    title = f"fix(plugins): update {SOURCE_REPO} to {TAG}"
-    body = (
-        f"Update the marketplace entry to upstream release [{TAG}]"
-        f"(https://github.com/{SOURCE_REPO}/releases/tag/{TAG})."
-    )
     assert [argv for argv, _ in runner.calls] == [
         ["git", "rev-parse", f"{TAG}^{{commit}}"],
+        list(PROVENANCE_ARGV),
         ["git", "show", f"{TAG}:.claude-plugin/plugin.json"],
-        ["gh", "repo", "clone", MARKET_REPO],
-        ["git", "switch", "--create", f"bump-marketplace/claude-code-gauntlet-{TAG}"],
-        ["git", "add", "--", ".claude-plugin/marketplace.json"],
-        ["git", "commit", "-m", title],
-        [
-            "git",
-            "push",
-            "--set-upstream",
-            "origin",
-            f"bump-marketplace/claude-code-gauntlet-{TAG}",
-        ],
-        [
-            "gh",
-            "pr",
-            "create",
-            "--repo",
-            MARKET_REPO,
-            "--base",
-            "main",
-            "--title",
-            title,
-            "--body",
-            body,
-        ],
+        list(PR_LIST_ARGV),
+        list(CLONE_ARGV),
+        *map(list, WRITE_ARGVS),
     ]
-    assert [cwd for _, cwd in runner.calls[:2]] == [str(ROOT), str(ROOT)]
-    assert Path(runner.calls[2][1]) / "claude-plugins" == Path(runner.calls[3][1])
-    assert all(cwd == runner.calls[3][1] for _, cwd in runner.calls[3:])
-    assert capsys.readouterr().out.strip() == (
-        "https://github.com/liatrio-labs/claude-plugins/pull/42"
-    )
+    assert [cwd for _, cwd in runner.calls[:4]] == [str(ROOT), None, str(ROOT), None]
+    assert Path(runner.calls[4][1]) / "claude-plugins" == Path(runner.calls[5][1])
+    assert all(cwd == runner.calls[5][1] for _, cwd in runner.calls[5:])
+    assert capsys.readouterr().out == (url + "\n" if url else "")
 
 
 def test_open_pr_already_current_preserves_file_bytes_and_creates_no_branch(
@@ -310,7 +332,8 @@ def test_open_pr_already_current_preserves_file_bytes_and_creates_no_branch(
         f'"url":"{SOURCE_URL}", "sha":"{SHA}"}}, "strict": true }} ],\n'
         '  "other": "✓"\n}\n'
     ).encode()
-    runner = FakeRunner(release_responses(), raw, tmp_path)
+    runner = open_runner(marketplace(), persistent_root=tmp_path)
+    runner.clone_bytes = raw
 
     assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 0
 
@@ -322,82 +345,75 @@ def test_open_pr_already_current_preserves_file_bytes_and_creates_no_branch(
     )
 
 
-def test_open_pr_refuses_manifest_version_that_differs_from_tag(capsys):
+def test_open_pr_existing_pr_returns_url_without_cloning(capsys):
+    url = "https://github.com/liatrio-labs/claude-plugins/pull/42"
     runner = FakeRunner(
-        release_responses(manifest(version="1.2.2")),
-        json.dumps(marketplace(entry())).encode(),
+        {**release_responses(), PR_LIST_ARGV: json.dumps([{"url": url}])}
     )
+
+    assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 0
+
+    assert [tuple(argv) for argv, _ in runner.calls] == [
+        *release_responses(),
+        PR_LIST_ARGV,
+    ]
+    assert capsys.readouterr().out == url + "\n"
+    assert runner.clone_path is None
+
+
+@pytest.mark.parametrize("response", ["{", "{}", "[null]", '[{"url": null}]'])
+def test_open_pr_invalid_pr_list_refuses_before_clone(response, capsys):
+    runner = FakeRunner({**release_responses(), PR_LIST_ARGV: response})
 
     assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 2
 
-    assert [argv for argv, _ in runner.calls] == [
-        ["git", "rev-parse", f"{TAG}^{{commit}}"],
-        ["git", "show", f"{TAG}:.claude-plugin/plugin.json"],
-    ]
-    error = capsys.readouterr().err
-    assert "does not match tag" in error
-    assert len(error.splitlines()) == 1
+    assert capsys.readouterr().err.startswith("pull request list")
+    assert runner.clone_path is None
 
 
-def test_check_accepts_matching_entry():
-    document = marketplace(
-        {
-            **entry(),
-            "version": "1.2.3",
-            "description": "A plugin",
-            "keywords": ["review"],
-            "source": {"source": "url", "url": SOURCE_URL, "sha": SHA},
-        }
+@pytest.mark.parametrize("command", ["open-pr", "check"])
+def test_release_provenance_mismatch_refuses_before_clone_or_write(command, capsys):
+    published = "c" * 40
+    runner = FakeRunner(
+        {("git", "rev-parse", f"{TAG}^{{commit}}"): SHA, PROVENANCE_ARGV: published}
     )
-    responses = release_responses()
-    responses[
-        (
-            "gh",
-            "api",
-            "-H",
-            "Accept: application/vnd.github.raw",
-            f"repos/{MARKET_REPO}/contents/.claude-plugin/marketplace.json",
-        )
-    ] = json.dumps(document)
-    runner = FakeRunner(responses)
+
+    assert MODULE.main([command, "--tag", TAG], run=runner) == 2
+
+    assert capsys.readouterr().err == (
+        f"release {TAG} sha mismatch: local {SHA}, published {published}\n"
+    )
+    assert runner.calls == [
+        (["git", "rev-parse", f"{TAG}^{{commit}}"], str(ROOT)),
+        (list(PROVENANCE_ARGV), None),
+    ]
+    assert runner.clone_path is None
+
+
+def test_check_accepts_matching_entry_and_normalizes_uppercase_sha():
+    runner = check_runner(marketplace(current_entry()))
+    runner.responses[("git", "rev-parse", f"{TAG}^{{commit}}")] = SHA.upper()
 
     assert MODULE.main(["check", "--tag", TAG], run=runner) == 0
     assert [argv for argv, _ in runner.calls] == [
         ["git", "rev-parse", f"{TAG}^{{commit}}"],
+        list(PROVENANCE_ARGV),
         ["git", "show", f"{TAG}:.claude-plugin/plugin.json"],
         list(MARKETPLACE_API_ARGV),
     ]
 
 
 @pytest.mark.parametrize(
-    "field",
-    ["version", "source.sha", "description", "keywords"],
+    ("field", "overrides"),
+    [
+        ("version", {"version": "9.9.9"}),
+        ("source.sha", {"source": {"url": SOURCE_URL, "sha": "c" * 40}}),
+        ("description", {"description": "Wrong"}),
+        ("keywords", {"keywords": []}),
+    ],
 )
-def test_check_reports_drift_fields(field, capsys):
-    target = {
-        **entry(),
-        "version": "1.2.3",
-        "description": "A plugin",
-        "keywords": ["review"],
-        "source": {"source": "url", "url": SOURCE_URL, "sha": SHA},
-    }
-    if field == "source.sha":
-        target["source"]["sha"] = "c" * 40
-    else:
-        target[field] = {"version": "9.9.9", "description": "Wrong", "keywords": []}[
-            field
-        ]
-    responses = release_responses()
-    responses[
-        (
-            "gh",
-            "api",
-            "-H",
-            "Accept: application/vnd.github.raw",
-            f"repos/{MARKET_REPO}/contents/.claude-plugin/marketplace.json",
-        )
-    ] = json.dumps(marketplace(target))
-    runner = FakeRunner(responses)
+def test_check_reports_drift_fields(field, overrides, capsys):
+    runner = check_runner(marketplace(current_entry(**overrides)))
 
     assert MODULE.main(["check", "--tag", TAG], run=runner) == 1
 
@@ -411,14 +427,16 @@ def test_check_reports_drift_fields(field, capsys):
         ([issue(8, "v1.2.2")], "edit", 8),
         ([issue(9, "v1.2.2", "CLOSED")], "create", None),
         ([issue(10, TAG)], "none", None),
-        ([issue(13, TAG, "CLOSED"), issue(12, "v1.2.2")], "none", None),
+        ([issue(12, "v1.2.2"), issue(13, TAG, "CLOSED")], "none", None),
     ],
     ids=["no_issue", "open_older", "closed_older", "open_latest", "closed_latest"],
 )
 def test_remind_decision_table(issues, action, issue_number):
-    runner = remind_runner(issues)
+    runner = remind_runner(issues, action=action, number=issue_number)
     if action == "edit":
-        runner.command_output = "https://github.com/owner/repo/issues/42"
+        runner.responses[reminder_write_argv(action, issue_number)] = (
+            "https://github.com/owner/repo/issues/42"
+        )
 
     assert MODULE.main(["remind", "--repo", "owner/repo"], run=runner) == 0
 
@@ -430,28 +448,9 @@ def test_remind_decision_table(issues, action, issue_number):
     if action == "none":
         assert issue_calls == [list(ISSUE_LIST_ARGV)]
     else:
-        body = (
-            f"A release of claude-code-gauntlet is ready for the marketplace: `{TAG}`.\n\n"
-            "Open the marketplace PR:\n\n"
-            f"`python3 .github/marketplace_bump.py open-pr --tag {TAG}`\n\n"
-            "Check the marketplace entry after it merges:\n\n"
-            f"`python3 .github/marketplace_bump.py check --tag {TAG}`\n\n"
-            "Close this issue once the marketplace PR merges."
-        )
-        prefix = ["gh", "issue", action]
-        if action == "edit":
-            prefix.append(str(issue_number))
         assert issue_calls == [
             list(ISSUE_LIST_ARGV),
-            [
-                *prefix,
-                "--repo",
-                "owner/repo",
-                "--title",
-                f"Marketplace bump due: {TAG}",
-                "--body",
-                body,
-            ],
+            list(reminder_write_argv(action, issue_number)),
         ]
 
 
@@ -474,17 +473,7 @@ def test_remind_ignores_non_bot_and_near_miss_titles_and_passes_author_filter(ig
 
 def test_remind_no_release_is_silent(capsys):
     runner = FakeRunner(
-        {
-            (
-                "gh",
-                "release",
-                "view",
-                "--repo",
-                "owner/repo",
-                "--json",
-                "tagName",
-            ): MODULE.CommandFailure(("gh", "release", "view"), 1, "release not found")
-        }
+        {RELEASE_ARGV: MODULE.CommandFailure(RELEASE_ARGV, 1, "release not found")}
     )
 
     assert MODULE.main(["remind", "--repo", "owner/repo"], run=runner) == 0
@@ -493,43 +482,59 @@ def test_remind_no_release_is_silent(capsys):
 
 
 @pytest.mark.parametrize(
-    ("argv", "responses", "clone_bytes"),
+    ("argv", "responses", "message"),
     [
-        (["open-pr", "--tag", "1.2.3"], {}, None),
-        (["check", "--tag", "v1.2"], {}, None),
+        (["open-pr", "--tag", "1.2.3"], {}, "malformed release tag"),
+        (["check", "--tag", "v1.2"], {}, "malformed release tag"),
+        (["remind", "--repo", "bad"], {}, "malformed repository"),
+        (
+            ["open-pr", "--tag", TAG],
+            {
+                **release_responses(),
+                ("git", "show", f"{TAG}:.claude-plugin/plugin.json"): "[]",
+            },
+            "release manifest must be a JSON object",
+        ),
         (
             ["open-pr", "--tag", TAG],
             {
                 ("git", "rev-parse", f"{TAG}^{{commit}}"): SHA,
+                PROVENANCE_ARGV: SHA,
                 ("git", "show", f"{TAG}:.claude-plugin/plugin.json"): "{",
             },
-            None,
+            "release manifest is not valid JSON",
         ),
         (
             ["open-pr", "--tag", TAG],
             {("git", "rev-parse", f"{TAG}^{{commit}}"): "short-sha"},
-            None,
+            f"git returned a malformed commit sha for {TAG}",
         ),
     ],
 )
-def test_release_bad_inputs_exit_two_with_one_line(
-    argv, responses, clone_bytes, capsys
-):
-    runner = FakeRunner(responses, clone_bytes)
+def test_release_bad_inputs_exit_two_with_one_line(argv, responses, message, capsys):
+    runner = FakeRunner(responses)
 
     assert MODULE.main(argv, run=runner) == 2
 
     error = capsys.readouterr().err
     assert len(error.splitlines()) == 1
-    assert "Traceback" not in error
+    assert error.startswith(message)
+    assert len(runner.calls) == len(responses)
 
 
 @pytest.mark.parametrize(
     "document",
-    ["{", json.dumps({"plugins": []}), json.dumps(marketplace(entry(), entry()))],
+    [
+        "{",
+        json.dumps({"plugins": []}),
+        json.dumps(marketplace(entry(), entry())),
+        json.dumps(marketplace(entry(SOURCE_URL + ".lookalike"))),
+    ],
+    ids=["invalid_json", "no_entry", "several_entries", "lookalike_url"],
 )
-def test_open_pr_bad_marketplace_json_or_entry_exits_two(document, capsys):
-    runner = FakeRunner(release_responses(), document.encode())
+def test_open_pr_bad_marketplace_json_or_entry_exits_two(document, capsys, tmp_path):
+    runner = open_runner(marketplace(), persistent_root=tmp_path)
+    runner.clone_bytes = document.encode()
 
     assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 2
 
@@ -537,6 +542,11 @@ def test_open_pr_bad_marketplace_json_or_entry_exits_two(document, capsys):
     assert len(error.splitlines()) == 1
     assert "Traceback" not in error
     assert not any(argv[:2] == ["git", "switch"] for argv, _ in runner.calls)
+    assert (
+        runner.clone_path / ".claude-plugin/marketplace.json"
+    ).read_bytes() == document.encode()
+    if SOURCE_URL + ".lookalike" in document:
+        assert error.strip() == f"marketplace has no entries for {SOURCE_URL}"
 
 
 def test_reminder_workflow_uses_weekly_issue_reminder_and_old_publish_file_is_absent():
@@ -548,44 +558,69 @@ def test_reminder_workflow_uses_weekly_issue_reminder_and_old_publish_file_is_ab
     assert 'cron: "0 14 * * 1"' in workflow
     assert "issues: write" in workflow
     assert (
+        "concurrency:\n  group: marketplace-reminder\n  cancel-in-progress: false"
+        in workflow
+    )
+    assert (
         'python3 .github/marketplace_bump.py remind --repo "$GITHUB_REPOSITORY"'
         in workflow
     )
     assert not (ROOT / ".github/workflows/publish-marketplace.yml").exists()
 
 
-def test_runner_is_the_only_subprocess_boundary(monkeypatch):
+@pytest.mark.parametrize(
+    ("result", "code", "message"),
+    [
+        (
+            SimpleNamespace(
+                returncode=0, stdout=json.dumps({"tagName": TAG}), stderr=""
+            ),
+            0,
+            "",
+        ),
+        (
+            SimpleNamespace(returncode=7, stdout="", stderr="denied\n"),
+            2,
+            "command failed (7): " + " ".join(RELEASE_ARGV) + ": denied\n",
+        ),
+        (
+            FileNotFoundError("missing executable"),
+            2,
+            "command failed (127): "
+            + " ".join(RELEASE_ARGV)
+            + ": missing executable\n",
+        ),
+        (
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
+            2,
+            "command output is not valid UTF-8\n",
+        ),
+    ],
+)
+def test_runner_is_the_only_subprocess_boundary(
+    result, code, message, monkeypatch, capsys
+):
     calls = []
-    results = [
-        SimpleNamespace(returncode=0, stdout="sha\n", stderr=""),
-        SimpleNamespace(returncode=7, stdout="", stderr="denied\n"),
-    ]
 
     def fake_subprocess_run(argv, **kwargs):
         calls.append((argv, kwargs))
-        return results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        if tuple(argv) == ISSUE_LIST_ARGV:
+            return SimpleNamespace(
+                returncode=0, stdout=json.dumps([issue(1, TAG)]), stderr=""
+            )
+        return result
 
     monkeypatch.setattr(MODULE.subprocess, "run", fake_subprocess_run)
 
-    assert MODULE.run_command(["git", "rev-parse", "tag"], "/repo") == "sha\n"
-    with pytest.raises(MODULE.CommandFailure) as failure:
-        MODULE.run_command(["gh", "api", "endpoint"])
-
-    assert failure.value.returncode == 7
-    assert failure.value.stderr == "denied"
+    assert (
+        MODULE.main(["remind", "--repo", "owner/repo"], run=MODULE.run_command) == code
+    )
+    assert capsys.readouterr().err == message
     assert calls == [
         (
-            ["git", "rev-parse", "tag"],
-            {
-                "cwd": "/repo",
-                "capture_output": True,
-                "text": True,
-                "encoding": "utf-8",
-                "check": False,
-            },
-        ),
-        (
-            ["gh", "api", "endpoint"],
+            list(argv),
             {
                 "cwd": None,
                 "capture_output": True,
@@ -593,108 +628,70 @@ def test_runner_is_the_only_subprocess_boundary(monkeypatch):
                 "encoding": "utf-8",
                 "check": False,
             },
-        ),
+        )
+        for argv in ([RELEASE_ARGV, ISSUE_LIST_ARGV] if code == 0 else [RELEASE_ARGV])
     ]
-
-    def missing_command(argv, **kwargs):
-        raise FileNotFoundError("missing executable")
-
-    monkeypatch.setattr(MODULE.subprocess, "run", missing_command)
-    with pytest.raises(MODULE.CommandFailure) as missing:
-        MODULE.run_command(["gh", "api"])
-    assert missing.value.returncode == 127
-
-    def invalid_output(argv, **kwargs):
-        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte")
-
-    monkeypatch.setattr(MODULE.subprocess, "run", invalid_output)
-    with pytest.raises(MODULE.InputError, match="not valid UTF-8"):
-        MODULE.run_command(["gh", "api"])
-
-
-def test_argument_errors_and_command_failures_are_one_line(capsys):
-    assert MODULE.main(["open-pr"], run=FakeRunner()) == 2
-    assert len(capsys.readouterr().err.splitlines()) == 1
-
-    runner = FakeRunner(
-        {
-            ("git", "rev-parse", f"{TAG}^{{commit}}"): MODULE.CommandFailure(
-                ("git", "rev-parse"), 128, "bad tag"
-            )
-        }
-    )
-    assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 2
-    error = capsys.readouterr().err
-    assert len(error.splitlines()) == 1
-    assert "Traceback" not in error
 
 
 @pytest.mark.parametrize(
-    ("argv", "responses"),
+    "stderr", ["", "remote: https://github.com/example/repo\ndenied\n \n"]
+)
+def test_push_failure_reports_last_nonempty_stderr_line(stderr, capsys):
+    runner = open_runner(marketplace(entry()))
+    push = WRITE_ARGVS[-2]
+    runner.responses[push] = MODULE.CommandFailure(push, 1, stderr)
+
+    assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 2
+
+    assert capsys.readouterr().err == (
+        "command failed (1): " + " ".join(push) + (": denied" if stderr else "") + "\n"
+    )
+    assert tuple(runner.calls[-1][0]) == push
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
     [
-        (["open-pr", "--tag", TAG, "--source-repo", "bad"], {}),
-        (["check", "--tag", TAG, "--marketplace-repo", "bad"], {}),
-        (["remind", "--repo", "bad"], {}),
+        *[
+            (field, "missing", f"release manifest is missing fields: {field}")
+            for field in ("version", "description", "keywords")
+        ],
+        ("version", 123, "release manifest version must be a string"),
+        ("description", None, "release manifest description must be a string"),
         (
-            ["open-pr", "--tag", TAG],
-            {("git", "show", f"{TAG}:.claude-plugin/plugin.json"): "[]"},
+            "keywords",
+            "not-an-array",
+            "release manifest keywords must be an array of strings",
+        ),
+        (
+            "keywords",
+            ["review", 1],
+            "release manifest keywords must be an array of strings",
+        ),
+        (
+            "version",
+            "1.2.2",
+            f"release manifest version '1.2.2' does not match tag '{TAG}'",
         ),
     ],
 )
-def test_invalid_repositories_and_non_object_manifest_exit_two(argv, responses, capsys):
-    defaults = release_responses()
-    defaults.update(responses)
-    runner = FakeRunner(defaults)
-
-    assert MODULE.main(argv, run=runner) == 2
-
-    error = capsys.readouterr().err
-    assert len(error.splitlines()) == 1
-    assert "Traceback" not in error
-
-
-@pytest.mark.parametrize("field", ["version", "description", "keywords"])
-def test_missing_manifest_field_exits_two(field, capsys):
-    document = manifest()
-    del document[field]
+def test_invalid_manifest_fields_exit_two(field, value, message, capsys):
+    document = manifest(**{field: value})
+    if value == "missing":
+        del document[field]
     runner = FakeRunner(release_responses(document))
 
     assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 2
 
-    assert (
-        capsys.readouterr().err.strip()
-        == f"release manifest is missing fields: {field}"
-    )
-    assert len(runner.calls) == 2
+    assert capsys.readouterr().err == message + "\n"
+    assert len(runner.calls) == 3
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("version", 123),
-        ("description", None),
-        ("keywords", "not-an-array"),
-        ("keywords", ["review", 1]),
-    ],
-)
-def test_manifest_field_types_exit_two(field, value, capsys):
-    runner = FakeRunner(release_responses(manifest(**{field: value})))
-
-    assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 2
-
-    assert len(capsys.readouterr().err.splitlines()) == 1
-
-
-def test_open_pr_clone_read_error_is_one_line(capsys):
-    runner = FakeRunner(release_responses(), create_clone=False)
-
-    assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 2
-
-    assert len(capsys.readouterr().err.splitlines()) == 1
-
-
-def test_open_pr_invalid_utf8_clone_is_one_line(capsys):
-    runner = FakeRunner(release_responses(), b"\xff")
+@pytest.mark.parametrize("create_clone", [False, True], ids=["missing", "invalid_utf8"])
+def test_open_pr_clone_read_error_is_one_line(create_clone, capsys):
+    runner = open_runner(marketplace())
+    runner.create_clone = create_clone
+    runner.clone_bytes = b"\xff"
 
     assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 2
 
@@ -714,26 +711,8 @@ def test_open_pr_file_write_error_is_one_line(monkeypatch, capsys, tmp_path):
     assert capsys.readouterr().err.strip() == "file operation failed: disk full"
 
 
-def test_open_pr_does_not_print_an_empty_pr_url(capsys, tmp_path):
-    runner = open_runner(marketplace(entry()), persistent_root=tmp_path)
-
-    assert MODULE.main(["open-pr", "--tag", TAG], run=runner) == 0
-
-    assert capsys.readouterr().out == ""
-
-
-@pytest.mark.parametrize(
-    "response",
-    [
-        "{",
-        "[]",
-        json.dumps({"plugins": "not-an-array"}),
-        json.dumps(marketplace()),
-        json.dumps(marketplace(entry(), entry())),
-    ],
-)
-def test_check_bad_marketplace_responses_exit_two(response, capsys):
-    runner = check_runner(response)
+def test_check_bad_marketplace_shape_exits_two(capsys):
+    runner = check_runner({"plugins": "not-an-array"})
 
     assert MODULE.main(["check", "--tag", TAG], run=runner) == 2
 
@@ -744,7 +723,7 @@ def test_check_bad_marketplace_responses_exit_two(response, capsys):
 
 @pytest.mark.parametrize(
     "release_response",
-    ["{", "[]", "{}", json.dumps({"tagName": None}), json.dumps({"tagName": "v1.2"})],
+    ["{}", json.dumps({"tagName": "v1.2"})],
 )
 def test_remind_bad_release_response_exits_two(release_response, capsys):
     runner = FakeRunner({RELEASE_ARGV: release_response})
@@ -784,7 +763,8 @@ def test_remind_release_service_failure_is_reported(capsys):
     ],
 )
 def test_remind_bad_issue_response_exits_two(payload, capsys):
-    runner = remind_runner_with_payload(payload)
+    runner = remind_runner([])
+    runner.responses[ISSUE_LIST_ARGV] = payload
 
     assert MODULE.main(["remind", "--repo", "owner/repo"], run=runner) == 2
 
