@@ -29,7 +29,8 @@ GENERICS = tuple(
     re.compile(name + r"\s*" + _Q, re.I)
     for name in ("password", "secret", "token", "api_?key")
 ) + tuple(re.compile(name + r"\s*" + _Q) for name in ("API_KEY", "PRIVATE_KEY"))
-_AWS = r"aws_secret_access_key\s*[=:]\s*[\"']?(?P<payload>[A-Za-z0-9/+=]{40})"
+# No payload group: the scanner never exempts this shape, so neither does the guard.
+_AWS = r"aws_secret_access_key\s*[=:]\s*[\"']?([A-Za-z0-9/+=]{40})"
 PROVIDERS = tuple(
     re.compile(rx, flags)
     for rx, flags in (
@@ -109,12 +110,13 @@ def scan(rel: str, content: str, *, symlink: bool = False) -> list[Hit]:
                     if rx in PROVIDERS
                     else next((p for r in PROVIDERS if (p := r.fullmatch(value))), None)
                 )
+                payload = provider.groupdict().get("payload") if provider else None
                 context = "\n".join(content.splitlines()[max(0, line - 3) : line + 2])
                 if example and (
                     (not provider and value.lower().startswith("example-"))
                     or (
-                        provider
-                        and synthetic(provider["payload"])
+                        payload
+                        and synthetic(payload)
                         and re.search(r"\bexample\b", context, re.I)
                     )
                 ):
@@ -147,7 +149,7 @@ def test_tracked_files_have_no_scanner_hits() -> None:
             symlink=(ROOT / rel).is_symlink(),
         )
     ]
-    assert "tests/test_scanner_literals.py" in paths
+    assert "tests/test_scanner_literals.py" in paths, "the guard scanned no files"
     assert not hits, "Reshape the literal and keep its runtime value:\n" + "\n".join(
         f"{h.path}:{h.line} {h.rule}" for h in hits
     )
@@ -159,6 +161,12 @@ def test_tracked_files_have_no_scanner_hits() -> None:
         ("pkg/mod.py", "token" + '="ordinary-value"', "hardcoded-secret"),
         ("tests/test_a.py", "ghp_" + "A" * 36, "hardcoded-secret"),
         ("tests/test_a.py", "# example\n" + "ghp_" + "Az9" * 12, "hardcoded-secret"),
+        (
+            "tests/test_a.py",
+            "# example\naws_secret_access_"
+            + 'key="abcdefghijklmnopqrstuvwxyz0123456789abcd"',
+            "hardcoded-secret",
+        ),
         (
             "tests/test_a.py",
             "# example\n" + "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + "0123456789",
