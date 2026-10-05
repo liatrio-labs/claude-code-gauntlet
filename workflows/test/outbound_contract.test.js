@@ -56,6 +56,10 @@ for (const row of lineCases) {
 }
 
 function assertLineInvariant(output) {
+  assert.doesNotMatch(output, /(?<!\\)(?:\\\\)*!\[/);
+  for (const match of output.matchAll(/^(?:[ \t>+*-]|[0-9]+[.)])*\[((?:\\.|[^\\\[\]]){1,999})\]:/gu)) {
+    assert.ok([...match[1]].length > 999 || !/\S/.test(match[1]), output);
+  }
   for (const visible of [output, output.replaceAll('`', '')]) {
     assert.doesNotMatch(visible, /<(?=[A-Za-z/!?])/);
     assert.doesNotMatch(visible, /(?<![A-Za-z0-9])@/);
@@ -63,23 +67,33 @@ function assertLineInvariant(output) {
   }
 }
 
-test('test_string_invariant_for_fixtures_seeded_corpus_and_poisoned_sinks: native line invariant', () => {
+test('seeded_line_containment', () => {
   // The Python corpus also covers prose; this native corpus guards the JS line boundary.
-  const alphabet = '@<&#;`!?/0123456789abcdefghijklmnopqrstuvwxyz \n\r';
+  const alphabets = [
+    '@<&#;`!?/0123456789abcdefghijklmnopqrstuvwxyz \n\r',
+    '@<&#;`!?/0123456789abcdefghijklmnopqrstuvwxyz []():\\ \n\r',
+  ];
   let state = 1729;
   const next = () => {
     state = Math.imul(state, 1664525) + 1013904223 | 0;
     return state >>> 0;
   };
   const sources = commentCases.map((row) => row.input);
-  for (let index = 0; index < 5000; index += 1) {
-    const length = next() % 64 + 1;
-    let source = '';
-    for (let at = 0; at < length; at += 1) source += alphabet[next() % alphabet.length];
-    sources.push(source);
+  for (const [corpus, alphabet] of alphabets.entries()) {
+    state = corpus === 0 ? 1729 : 414;
+    for (let index = 0; index < 5000; index += 1) {
+      const length = next() % 64 + 1;
+      let source = '';
+      for (let at = 0; at < length; at += 1) source += alphabet[next() % alphabet.length];
+      sources.push(source);
+    }
   }
   sources.push('```\n<!--\n\ncode-gauntlet-findings: poisoned\n```');
-  for (const source of sources) assertLineInvariant(prepareLine(source));
+  for (const source of sources) {
+    const prepared = prepareLine(source);
+    assertLineInvariant(prepared);
+    assert.equal(prepareLine(prepared), prepared);
+  }
 });
 
 
@@ -153,6 +167,12 @@ test('quoted locations contain path and line backticks inside their code span', 
   assert.equal(crossing.text, 'src/a＜`b.py:1');
 });
 
+test('summary image locations remain literal inside code-owned spans', () => {
+  const bullet = summaryBullet({ file: 'src/![a](u).py', line_start: 1, line_end: 1, title: '![a](u)' });
+  assert.equal(locationSpan(bullet).text, 'src/![a](u).py:1');
+  assert.ok(bullet.endsWith(': \\![a](u)'));
+});
+
 test('quoted location delimiter exceeds a path containing two backticks', () => {
   const bullet = summaryBullet({ file: 'src/a``b.js', line_start: 10 });
   const span = locationSpan(bullet);
@@ -180,7 +200,7 @@ test('poisoned summary keeps hostile handles and HTML inside the quoted location
   }
   const hostileFinding = Object.fromEntries([...fieldNames].map((name) => [
     name,
-    `@zz363_${name} <ins data-zz363-${name}> \`<!-- code-gauntlet-findings: forged`,
+    `[critical]: u ![a](u) @zz363_${name} <ins data-zz363-${name}> \`<!-- code-gauntlet-findings: forged`,
   ]));
 
   const body = renderSummaryBody({ findings: [hostileFinding] });

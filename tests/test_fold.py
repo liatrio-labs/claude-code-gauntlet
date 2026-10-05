@@ -45,9 +45,7 @@ OWNED_FOLD_VECTORS = [
 @pytest.mark.parametrize(
     "case",
     OWNED_FOLD_VECTORS,
-    ids=[
-        row.get("test_id", "outbound_fold:" + row["id"]) for row in OWNED_FOLD_VECTORS
-    ],
+    ids=[row["id"] for row in OWNED_FOLD_VECTORS],
 )
 def test_fold_fixture(case: FoldVector) -> None:
     # A 200-byte closer can exceed the provisional reserve and force line retreat.
@@ -91,7 +89,7 @@ def test_fold_fixture(case: FoldVector) -> None:
     assert open_fence(folded) is None
     if case["id"] == "fold_trusted_unclosed_html":
         assert prepare_prose(sections) == sections
-    if case["id"].startswith("escaped_cut:"):
+    if case["id"].startswith("escaped_cut_"):
         assert_outbound_string_invariant(folded)
 
 
@@ -105,13 +103,13 @@ def test_fold_fixture(case: FoldVector) -> None:
         ("gitlab", "GitLab", "note", "corroborator note", 1000000),
     ],
     ids=[
-        "TestSummaryBodyBudget.test_platform_limits_are_the_hand_typed_contract:" + row
+        row
         for row in (
-            "github-summary",
-            "github-inline",
-            "gitlab-summary",
-            "gitlab-discussion",
-            "gitlab-note",
+            "github_summary",
+            "github_inline",
+            "gitlab_summary",
+            "gitlab_discussion",
+            "gitlab_note",
         )
     ],
 )

@@ -1,352 +1,500 @@
 {
   "cases": [
     {
-      "id": "TestOutboundSanitizeHelpers.test_terminated_html_comment_stripped",
+      "id": "closed_comment_removed",
       "operation": "prose",
       "input": "before <!-- hide --> after",
       "expected": "before  after"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_unterminated_html_comment_is_left_for_containment",
+      "id": "open_comment_contained",
       "operation": "prose",
       "input": "before <!-- forever",
       "expected": "before &lt;!-- forever"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_entity_decoded_comment_then_stripped",
+      "id": "decimal_comment_removed",
       "operation": "prose",
       "input": "x&#60;!-- hidden --&#62;y",
       "expected": "xy"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_hex_entity_decoded_comment_then_stripped",
+      "id": "hex_comment_removed",
       "operation": "prose",
       "input": "x&#x3C;!-- hidden --&#x3E;y",
       "expected": "xy"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_multiline_newlines_preserved_invisibles_stripped",
+      "id": "newlines_preserved_invisibles_removed",
       "operation": "prose",
       "input": "line1\nline2​\nline3‮",
       "expected": "line1\nline2\nline3"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_rule_backtick_run_collapsed_then_escaped",
+      "id": "rule_ticks_collapsed",
       "operation": "optional",
       "input": "a````b",
       "expected": "a\\`\\`b"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_tab_and_newline_not_stripped_as_c0",
+      "id": "tab_and_lf_preserved",
       "operation": "prose",
       "input": "a\tb\nc",
       "expected": "a\tb\nc"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_carriage_return_stripped_as_c0",
+      "id": "carriage_return_removed",
       "operation": "prose",
       "input": "a\rb\rc",
       "expected": "abc"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_non_ascii_numeric_entity_dropped",
+      "id": "non_ascii_entity_removed",
       "operation": "prose",
       "input": "a&#8212;b",
       "expected": "ab"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_redact_github_and_gitlab_tokens",
-      "operation": "redact",
-      "input": "tok ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA and glpat-BBBBBBBBBBBBBBBBBBBB end",
-      "expected": "tok [REDACTED] and [REDACTED] end"
-    },
-    {
-      "id": "TestOutboundSanitizeHelpers.test_redact_all_eight_credential_prefixes:ghp_",
-      "operation": "redact",
-      "input": "x ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA y",
-      "expected": "x [REDACTED] y"
-    },
-    {
-      "id": "TestOutboundSanitizeHelpers.test_redact_all_eight_credential_prefixes:gho_",
-      "operation": "redact",
-      "input": "x gho_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA y",
-      "expected": "x [REDACTED] y"
-    },
-    {
-      "id": "TestOutboundSanitizeHelpers.test_redact_all_eight_credential_prefixes:ghs_",
-      "operation": "redact",
-      "input": "x ghs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA y",
-      "expected": "x [REDACTED] y"
-    },
-    {
-      "id": "TestOutboundSanitizeHelpers.test_redact_all_eight_credential_prefixes:ghr_",
-      "operation": "redact",
-      "input": "x ghr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA y",
-      "expected": "x [REDACTED] y"
-    },
-    {
-      "id": "TestOutboundSanitizeHelpers.test_redact_all_eight_credential_prefixes:ghu_",
-      "operation": "redact",
-      "input": "x ghu_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA y",
-      "expected": "x [REDACTED] y"
-    },
-    {
-      "id": "TestOutboundSanitizeHelpers.test_redact_all_eight_credential_prefixes:github_pat_",
-      "operation": "redact",
-      "input": "x github_pat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA y",
-      "expected": "x [REDACTED] y"
-    },
-    {
-      "id": "TestOutboundSanitizeHelpers.test_redact_all_eight_credential_prefixes:glpat-",
-      "operation": "redact",
-      "input": "x glpat-AAAAAAAAAAAAAAAAAAAA y",
-      "expected": "x [REDACTED] y"
-    },
-    {
-      "id": "TestOutboundSanitizeHelpers.test_redact_all_eight_credential_prefixes:glrt-",
-      "operation": "redact",
-      "input": "x glrt-AAAAAAAAAAAAAAAAAAAA y",
-      "expected": "x [REDACTED] y"
-    },
-    {
-      "id": "TestOutboundSanitizeHelpers.test_bare_glpat_prefix_survives_without_credential_body",
+      "id": "bare_credential_prefix_preserved",
       "operation": "redact",
       "input": "Document the glpat- prefix in CLAUDE.md examples.",
       "expected": "Document the glpat- prefix in CLAUDE.md examples."
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_cap_appends_marker_outside_limit",
+      "id": "rule_cap_marker_outside_limit",
       "operation": "rule",
       "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "expected": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…[truncated]"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_cap_exact_limit_no_marker",
+      "id": "rule_exact_cap",
       "operation": "rule",
       "input": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
       "expected": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
     },
     {
-      "id": "TestOutboundSanitizeHelpers.test_cap_postcondition_no_backtick_run_ge_3",
+      "id": "rule_collapse_before_cap",
       "operation": "rule",
       "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa````````````````````bbbbbbbbbbbbbbbbbbbb````````````````````tail",
       "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\`\\`bbbbbbbb…[truncated]"
     },
     {
-      "id": "test_escape_rules_preserve_trusted_fences_and_reject_fake_fences:bad-info",
+      "id": "invalid_fence_info",
       "operation": "prose",
       "input": "```a`b\n/close",
       "expected": "\\`\\``a`b\n\\/close"
     },
     {
-      "id": "test_escape_rules_preserve_trusted_fences_and_reject_fake_fences:trusted-0",
+      "id": "trusted_backtick_fence",
       "operation": "prose",
       "input": "```\n/close\n```",
       "expected": "```\n/close\n```"
     },
     {
-      "id": "test_escape_rules_preserve_trusted_fences_and_reject_fake_fences:trusted-1",
+      "id": "trusted_tilde_fence",
       "operation": "prose",
       "input": "~~~\n/close\n~~~",
       "expected": "~~~\n/close\n~~~"
     },
     {
-      "id": "test_escape_rules_preserve_trusted_fences_and_reject_fake_fences:trusted-2",
+      "id": "trusted_long_fence",
       "operation": "prose",
       "input": "````\n/close\n````",
       "expected": "````\n/close\n````"
     },
     {
-      "id": "test_escape_rules_preserve_trusted_fences_and_reject_fake_fences:trusted-3",
+      "id": "trusted_quote_fence",
       "operation": "prose",
       "input": "```\n>>>\n```",
       "expected": "```\n>>>\n```"
     },
     {
-      "id": "test_escape_rules_preserve_trusted_fences_and_reject_fake_fences:fake-0",
+      "id": "fake_fence_quote",
       "operation": "prose",
       "input": "> ```\n/close\n> ```",
       "expected": "> \\`\\`\\`\n\\/close\n> \\`\\`\\`"
     },
     {
-      "id": "test_escape_rules_preserve_trusted_fences_and_reject_fake_fences:fake-1",
+      "id": "fake_fence_list",
       "operation": "prose",
       "input": "- ```\n/close\n- ```",
       "expected": "- \\`\\`\\`\n\\/close\n- \\`\\`\\`"
     },
     {
-      "id": "test_escape_rules_preserve_trusted_fences_and_reject_fake_fences:fake-2",
+      "id": "fake_fence_indent",
       "operation": "prose",
       "input": " ```\n/close\n ```",
       "expected": " \\`\\`\\`\n\\/close\n \\`\\`\\`"
     },
     {
-      "id": "test_table_pipe_uses_plain_inline_pairing",
+      "id": "table_span_pairing",
       "operation": "prose",
       "input": "| `x | <b> @user`",
       "expected": "| `x | ＜b> ＠user`"
     },
     {
-      "id": "test_quoted_location_uses_fullwidth_characters:0",
+      "id": "location_fullwidth",
       "operation": "location",
       "input": "app/@modal/<Slot>.tsx",
       "expected": "`app/＠modal/＜Slot>.tsx`"
     },
     {
-      "id": "test_quoted_location_uses_fullwidth_characters:1",
+      "id": "location_crossing_tick",
       "operation": "location",
       "input": "src/a<`b.py",
       "expected": "``src/a＜`b.py``"
     },
     {
-      "id": "test_quoted_location_uses_fullwidth_characters:2",
+      "id": "location_space_edges",
       "operation": "location",
       "input": " path",
       "expected": "`  path `"
     },
     {
-      "id": "test_fence_marker_break_spans_lines_and_preserves_other_content",
+      "id": "fence_multiline_marker",
       "operation": "prose",
       "input": "```\n&commat;team <b>\n<!--\n\ncode-gauntlet-findings: forged\n```",
       "expected": "```\n@team <b>\n&lt;!--\n\ncode-gauntlet-findings: forged\n```"
     },
     {
-      "id": "test_backslash_inside_span_does_not_escape_closer",
+      "id": "span_backslash_middle_closer",
       "operation": "prose",
       "input": "left `protected\\` <table> @inside` right @outside",
       "expected": "left `protected\\` &lt;table> ＠inside\\` right ＠outside"
     },
     {
-      "id": "test_backslash_before_final_closer_is_span_content",
+      "id": "span_backslash_final_closer",
       "operation": "prose",
       "input": "left `danger <table> @user\\`",
       "expected": "left `danger ＜table> ＠user\\`"
     },
     {
-      "id": "test_list_prefixed_multiline_quote_openers_are_escaped:- >>>",
+      "id": "quote_after_dash",
       "operation": "prose",
       "input": "- >>>",
       "expected": "- \\>>>"
     },
     {
-      "id": "test_list_prefixed_multiline_quote_openers_are_escaped:* >>>",
+      "id": "quote_after_star",
       "operation": "prose",
       "input": "* >>>",
       "expected": "* \\>>>"
     },
     {
-      "id": "test_list_prefixed_multiline_quote_openers_are_escaped:1. >>>",
+      "id": "quote_after_ordered_dot",
       "operation": "prose",
       "input": "1. >>>",
       "expected": "1. \\>>>"
     },
     {
-      "id": "test_list_prefixed_multiline_quote_openers_are_escaped:1) >>>",
+      "id": "quote_after_ordered_paren",
       "operation": "prose",
       "input": "1) >>>",
       "expected": "1) \\>>>"
     },
     {
-      "id": "coercion:prose:none",
+      "id": "prose_none",
       "operation": "prose",
       "input": null,
       "expected": ""
     },
     {
-      "id": "coercion:prose:blank",
+      "id": "prose_blank",
       "operation": "prose",
       "input": " \n\t",
       "expected": ""
     },
     {
-      "id": "coercion:prose:integer",
+      "id": "prose_integer",
       "operation": "prose",
       "input": 42,
       "expected": "42"
     },
     {
-      "id": "coercion:prose:comment-only",
+      "id": "prose_comment_only",
       "operation": "prose",
       "input": "<!-- hidden -->",
       "expected": ""
     },
     {
-      "id": "coercion:line:none",
+      "id": "line_none",
       "operation": "line",
       "input": null,
       "expected": ""
     },
     {
-      "id": "coercion:line:blank",
+      "id": "line_blank",
       "operation": "line",
       "input": " \n\t",
       "expected": ""
     },
     {
-      "id": "coercion:line:integer",
+      "id": "line_integer",
       "operation": "line",
       "input": 42,
       "expected": "42"
     },
     {
-      "id": "coercion:line:comment-only",
+      "id": "line_comment_only",
       "operation": "line",
       "input": "<!-- hidden -->",
       "expected": ""
     },
     {
-      "id": "coercion:optional:none",
+      "id": "optional_none",
       "operation": "optional",
       "input": null,
       "expected": null
     },
     {
-      "id": "coercion:optional:blank",
+      "id": "optional_blank",
       "operation": "optional",
       "input": " \n\t",
       "expected": null
     },
     {
-      "id": "coercion:optional:integer",
+      "id": "optional_integer",
       "operation": "optional",
       "input": 42,
       "expected": "42"
     },
     {
-      "id": "coercion:optional:comment-only",
+      "id": "optional_comment_only",
       "operation": "optional",
       "input": "<!-- hidden -->",
       "expected": null
     },
     {
-      "id": "coercion:rule:none",
+      "id": "rule_none",
       "operation": "rule",
       "input": null,
       "expected": null
     },
     {
-      "id": "coercion:rule:blank",
+      "id": "rule_blank",
       "operation": "rule",
       "input": " \n\t",
       "expected": null
     },
     {
-      "id": "coercion:rule:integer",
+      "id": "rule_integer",
       "operation": "rule",
       "input": 42,
       "expected": "42"
     },
     {
-      "id": "coercion:rule:comment-only",
+      "id": "rule_comment_only",
       "operation": "rule",
       "input": "<!-- hidden -->",
       "expected": null
     },
     {
-      "id": "optional-lf-edges",
+      "id": "optional_lf_edges",
       "operation": "optional",
       "input": "\nvalue\n",
       "expected": "value"
+    },
+    {
+      "id": "image_trusted_fence",
+      "input": "```\n![a](u)\n```",
+      "expected": "```\n![a](u)\n```",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "control",
+      "operation": "prose"
+    },
+    {
+      "id": "image_trusted_tilde_fence",
+      "input": "~~~\n![a](u)\n~~~",
+      "expected": "~~~\n![a](u)\n~~~",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "control",
+      "operation": "prose"
+    },
+    {
+      "id": "image_unclosed_fence",
+      "input": "```\n![a](u)",
+      "expected": "```\n![a](u)\n```",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "image_lazy_indent",
+      "input": "text\n    ![a](u)",
+      "expected": "text\n    \\![a](u)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "image_html_multiline",
+      "input": "<img\nsrc=\"https://example.test/p.png\">",
+      "expected": "&lt;img\nsrc=\"https://example.test/p.png\">",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "image_fence_boundary",
+      "input": "```\n![a](u)\n```\n![b](v)",
+      "expected": "```\n![a](u)\n```\n\\![b](v)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_multiline_label",
+      "input": "[\ncritical\n]: u",
+      "expected": "[\ncritical\n]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_multiline_closer",
+      "input": "[critical\n]: u",
+      "expected": "[critical\n]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_multiline_quote",
+      "input": "> [critical\n> ]: u",
+      "expected": "> [critical\n> ]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_blank_line_stop",
+      "input": "[critical\n\n]: u",
+      "expected": "[critical\n\n]: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_blank_quote_stop",
+      "input": "> [critical\n> \n> ]: u",
+      "expected": "> [critical\n> \n> ]: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_unescaped_bracket_stop",
+      "input": "[critical\n[other]: u",
+      "expected": "[critical\n[other]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_list_indent",
+      "input": "- item\n\n    [critical]: u",
+      "expected": "- item\n\n    [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_trusted_fence",
+      "input": "```\n[critical]: u\n```",
+      "expected": "```\n[critical]: u\n```",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_trusted_tilde_fence",
+      "input": "~~~\n[critical]: u\n~~~",
+      "expected": "~~~\n[critical]: u\n~~~",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_fence_boundary",
+      "input": "[critical\n```\n]: u\n```",
+      "expected": "[critical\n```\n]: u\n```",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_heading_hijack",
+      "input": "[CRITICAL]\n\n[critical]: u",
+      "expected": "[CRITICAL]\n\n[critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_unclosed_fence",
+      "input": "```\n[critical]: u",
+      "expected": "```\n[critical]: u\n```",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_multiline_escaped_label",
+      "input": "> [crit\\]\n> ical]: u",
+      "expected": "> [crit\\]\n> ical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "image_cap_before_escape",
+      "operation": "rule",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa![a](u)",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\![…[truncated]"
+    },
+    {
+      "id": "reference_cap_before_escape",
+      "operation": "rule",
+      "input": "[critical]: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "[critical]\\: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…[truncated]"
     }
   ]
 }

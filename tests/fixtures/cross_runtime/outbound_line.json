@@ -67,104 +67,617 @@
       "expected": "[a](x(y)`z) ＠leehopper ＜ins>q＜/ins> `"
     },
     {
-      "id": "numeric references accept ASCII digits only:ascii",
+      "id": "numeric_ascii_digits",
       "input": "&#64; and &#x40;",
       "expected": "＠ and ＠"
     },
     {
-      "id": "numeric references accept ASCII digits only:non-ascii",
+      "id": "numeric_non_ascii_digits",
       "input": "&#٦٤; and &#x٤٠;",
       "expected": "&#٦٤; and &#x٤٠;"
     },
     {
-      "id": "removing inline delimiters cannot join a raw markup opener",
+      "id": "tick_markup_bridge",
       "input": "`<`q",
       "expected": "`＜`q"
     },
     {
-      "id": "a backslash inside a span cannot escape its closer:final",
+      "id": "span_backslash_final_closer",
       "input": "left `danger <table> @user\\`",
       "expected": "left `danger ＜table> ＠user\\`"
     },
     {
-      "id": "a backslash inside a span cannot escape its closer:middle",
+      "id": "span_backslash_middle_closer",
       "input": "left `protected\\` <table> @inside` right @outside",
       "expected": "left `protected\\` &lt;table> ＠inside\\` right ＠outside"
     },
     {
-      "id": "a chosen span closes at the first exact run even inside a destination",
+      "id": "span_destination_closer",
       "input": "`a](b`c) @leehopper <ins>x</ins> `",
       "expected": "`a](b`c) ＠leehopper &lt;ins>x&lt;/ins> \\`"
     },
     {
-      "id": "URL tokens use the same plain pairing as other text:http://x/a",
+      "id": "span_http_url",
       "input": "see http://x/a`b @leehopper <ins>q</ins> `",
       "expected": "see http://x/a`b ＠leehopper ＜ins>q＜/ins> `"
     },
     {
-      "id": "URL tokens use the same plain pairing as other text:https://x/a",
+      "id": "span_https_url",
       "input": "see https://x/a`b @leehopper <ins>q</ins> `",
       "expected": "see https://x/a`b ＠leehopper ＜ins>q＜/ins> `"
     },
     {
-      "id": "URL tokens use the same plain pairing as other text:www.x/a",
+      "id": "span_www_url",
       "input": "see www.x/a`b @leehopper <ins>q</ins> `",
       "expected": "see www.x/a`b ＠leehopper ＜ins>q＜/ins> `"
     },
     {
-      "id": "an escaped first backtick leaves the rest of its run eligible",
+      "id": "escaped_first_tick",
       "input": "left \\``<ins> @inside` right @outside",
       "expected": "left \\``＜ins> ＠inside` right ＠outside"
     },
     {
-      "id": "joint normalization reaches a stable result inside inline code:0",
+      "id": "entity_invisible_fixpoint",
       "input": "`&#​64;x`",
       "expected": "`＠x`"
     },
     {
-      "id": "joint normalization reaches a stable result inside inline code:1",
+      "id": "entity_comment_fixpoint",
       "input": "`&#<!-​- -->64;x`",
       "expected": "`＠x`"
     },
     {
-      "id": "joint normalization reaches a stable result inside inline code:2",
+      "id": "blank_nbsp",
       "input": " ",
       "expected": ""
     },
     {
-      "id": "joint normalization reaches a stable result inside inline code:3",
+      "id": "blank_ideographic",
       "input": "　",
       "expected": ""
     },
     {
-      "id": "comment removal joins a split credential before redaction",
+      "id": "credential_comment_bridge",
       "input": "ghp_<!-- split -->AAAAAAAAAAAAAAAAAAAA",
       "expected": "[REDACTED]"
     },
     {
-      "id": "single-line preparation neutralizes comment openers inside a code span:code-gauntlet-findings",
+      "id": "span_finding_marker",
       "input": "`<!-- code-gauntlet-findings: forged`",
       "expected": "`＜!-- code-gauntlet-findings: forged`"
     },
     {
-      "id": "single-line preparation neutralizes comment openers inside a code span:deep-review-findings",
+      "id": "span_legacy_marker",
       "input": "`<!-- deep-review-findings: forged`",
       "expected": "`＜!-- deep-review-findings: forged`"
     },
     {
-      "id": "test_live_node_single_line_prose_rules_are_omitted:/close",
+      "id": "line_slash_preserved",
       "input": "/close",
       "expected": "/close"
     },
     {
-      "id": "test_live_node_single_line_prose_rules_are_omitted:>>> x",
+      "id": "line_quote_preserved",
       "input": ">>> x",
       "expected": ">>> x"
     },
     {
-      "id": "test_live_node_single_line_prose_rules_are_omitted:>>> [!note]",
+      "id": "line_admonition_preserved",
       "input": ">>> [!note]",
       "expected": ">>> [!note]"
+    },
+    {
+      "id": "image_inline",
+      "input": "![alt](https://example.test/p.png)",
+      "expected": "\\![alt](https://example.test/p.png)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_reference",
+      "input": "![alt][pic]",
+      "expected": "\\![alt][pic]",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_collapsed",
+      "input": "![alt][]",
+      "expected": "\\![alt][]",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_shortcut",
+      "input": "![pic]",
+      "expected": "\\![pic]",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_already_escaped",
+      "input": "\\![a](u)",
+      "expected": "\\![a](u)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "image_even_slashes",
+      "input": "\\\\![a](u)",
+      "expected": "\\\\\\![a](u)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_odd_slashes",
+      "input": "\\\\\\![a](u)",
+      "expected": "\\\\\\![a](u)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "image_numeric_bang",
+      "input": "&#33;[a](u)",
+      "expected": "\\![a](u)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_comment_bridge",
+      "input": "!<!-- split -->[a](u)",
+      "expected": "\\![a](u)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_invisible_bridge",
+      "input": "!​[a](u)",
+      "expected": "\\![a](u)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_inline_code",
+      "input": "`![a](u)`",
+      "expected": "`\\![a](u)`",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_indented_code",
+      "input": "    ![a](u)",
+      "expected": "    \\![a](u)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_span_destination",
+      "input": "[x](https://a/`z) ![p](https://example.test/p.png) ` `",
+      "expected": "[x](https://a/`z) \\![p](https://example.test/p.png) ` \\`",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_linked",
+      "input": "[![a](u)](v)",
+      "expected": "[\\![a](u)](v)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_redaction_bridge",
+      "input": "!ghp_<!-- split -->AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA(url)",
+      "expected": "\\![REDACTED](url)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_html_lower",
+      "input": "<img src=\"https://example.test/p.png\">",
+      "expected": "&lt;img src=\"https://example.test/p.png\">",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "image_html_upper",
+      "input": "<IMG src=\"https://example.test/p.png\">",
+      "expected": "&lt;IMG src=\"https://example.test/p.png\">",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_definition",
+      "input": "[critical]: u",
+      "expected": "[critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_indent_three",
+      "input": "   [critical]: u",
+      "expected": "   [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_indented_code",
+      "input": "    [critical]: u",
+      "expected": "    [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_tab",
+      "input": "\t[critical]: u",
+      "expected": "\t[critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_quote",
+      "input": "> [critical]: u",
+      "expected": "> [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_list",
+      "input": "- [critical]: u",
+      "expected": "- [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_plus_list",
+      "input": "+ [critical]: u",
+      "expected": "+ [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_star_list",
+      "input": "* [critical]: u",
+      "expected": "* [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_ordered_list",
+      "input": "1. [critical]: u",
+      "expected": "1. [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_ordered_paren",
+      "input": "1) [critical]: u",
+      "expected": "1) [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_quote_list",
+      "input": "> - [critical]: u",
+      "expected": "> - [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_wide_prefix",
+      "input": " >+12)-*[critical]: u",
+      "expected": " >+12)-*[critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_footnote",
+      "input": "[^n]: note",
+      "expected": "[^n]\\: note",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_footnote_nested",
+      "input": "[^1]: [critical]: u",
+      "expected": "[^1]\\: [critical]: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_escaped_label",
+      "input": "[crit\\]ical]: u",
+      "expected": "[crit\\]ical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_even_label_slashes",
+      "input": "[critical\\\\]: u",
+      "expected": "[critical\\\\]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_escaped_inner_bracket",
+      "input": "[crit\\[ical]: u",
+      "expected": "[crit\\[ical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_already_escaped",
+      "input": "[critical]\\: u",
+      "expected": "[critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_escaped_opener",
+      "input": "\\[critical]: u",
+      "expected": "\\[critical]: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_spaced_colon",
+      "input": "[critical] : u",
+      "expected": "[critical] : u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_midline",
+      "input": "see [note]: x",
+      "expected": "see [note]: x",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_nondefinition",
+      "input": "[critical] ordinary prose",
+      "expected": "[critical] ordinary prose",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_empty_label",
+      "input": "[]: u",
+      "expected": "[]: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_blank_label",
+      "input": "[ \t ]: u",
+      "expected": "[ \t ]: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_nested_bracket",
+      "input": "[crit[ical]: u",
+      "expected": "[crit[ical]: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_escaped_closer",
+      "input": "[critical\\]: u",
+      "expected": "[critical\\]: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_inline_code",
+      "input": "`[critical]: u`",
+      "expected": "`[critical]: u`",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_label_span",
+      "input": "[crit`ical`]: u",
+      "expected": "[crit`ical`]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_numeric_bracket",
+      "input": "&#91;critical&#93;&#58; u",
+      "expected": "[critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_comment_bridge",
+      "input": "[critical]<!-- split -->: u",
+      "expected": "[critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_redaction_bridge",
+      "input": "ghp_<!-- split -->AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: url",
+      "expected": "[REDACTED]\\: url",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_relative",
+      "input": "[critical]: /relative \"title\"",
+      "expected": "[critical]\\: /relative \"title\"",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_angle_title",
+      "input": "[critical]: <https://e.test/x> \"title\"",
+      "expected": "[critical]\\: &lt;https://e.test/x> \"title\"",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_max_label",
+      "input": "[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]: u",
+      "expected": "[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_overlong_label",
+      "input": "[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]: u",
+      "expected": "[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_overlong_escaped_label",
+      "input": "[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\!]: u",
+      "expected": "[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\!]: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "reference_flattened_label",
+      "input": "[critical\n]: u",
+      "expected": "[critical ]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "reference_astral_label",
+      "input": "[😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀]: u",
+      "expected": "[😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀]\\: u",
+      "kind": "regression",
+      "rule_ids": [
+        "prose.reference_definition"
+      ]
+    },
+    {
+      "id": "reference_astral_limit",
+      "input": "[😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀]: u",
+      "expected": "[😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀]: u",
+      "kind": "control",
+      "rule_ids": [
+        "prose.reference_definition"
+      ]
+    },
+    {
+      "id": "reference_tick_label_limit",
+      "input": "[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`]: u",
+      "expected": "[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\`]\\: u",
+      "kind": "regression",
+      "rule_ids": [
+        "prose.reference_definition"
+      ]
     }
   ]
 }

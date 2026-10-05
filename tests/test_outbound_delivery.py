@@ -18,7 +18,7 @@ import gauntlet.marker as review_marker
 import gauntlet.text as outbound_text
 import pytest
 from gauntlet.forge import JsonFetch, Platform, PostRequest, PostResult, ReviewTarget
-from gauntlet.markdown import open_fence
+from gauntlet.markdown import code_spans, open_fence
 from gauntlet.prior_review import PriorDelivery
 
 from tests.support.diff import diff_facts
@@ -159,6 +159,8 @@ def _poison(key):
     return (
         f"@zz363{key} <ins data-zz363{key}> {marker} ```` &#38;#64;zz363{key}"
         f"\n/zz377{key}\n>>>\n```\n/zz377{key}\n```"
+        "\n![a](u)"
+        "\n[critical]: u"
     )
 
 
@@ -298,7 +300,15 @@ def _assert_poison_containment(test, body, property_names, expected_markers=()):
         without_live_markers = without_live_markers.replace(
             review_marker.build_finding_marker(marker["sha"], marker["key"]), ""
         )
-    _assert_outbound_string_invariant(without_live_markers)
+    spans, _fences = code_spans(without_live_markers)
+    locations = tuple(
+        without_live_markers[start:end]
+        for start, end in spans
+        if any(
+            f"zz363{name}" in without_live_markers[start:end] for name in location_names
+        )
+    )
+    _assert_outbound_string_invariant(without_live_markers, literal_locations=locations)
 
 
 @pytest.mark.usefixtures("forge_factory", "poster_state")
@@ -1183,6 +1193,134 @@ def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_
         texts={("src/edited.py", 2): "primary", ("src/edited.py", 3): "corroborator"},
     )
     assert not (second_calls)
+
+
+@pytest.mark.usefixtures("forge_factory")
+@pytest.mark.parametrize(
+    ("title", "body", "old_sections", "sections", "old_key", "new_key"),
+    [
+        pytest.param(
+            "![a](u)",
+            "Body one",
+            "**\U0001f7e0 [HIGH] ![a](u)**\n\nBody one",
+            "**\U0001f7e0 [HIGH] \\![a](u)**\n\nBody one",
+            "0899e2af08bef3b4",
+            "a34e0a8d932df39f",
+            id="image_title_rekey",
+        ),
+        pytest.param(
+            "Title",
+            "[critical]: u",
+            "**\U0001f7e0 [HIGH] Title**\n\n[critical]: u",
+            "**\U0001f7e0 [HIGH] Title**\n\n[critical]\\: u",
+            "ce5c0d6d62bad3f1",
+            "3923f3f55e6f877b",
+            id="reference_body_rekey",
+        ),
+    ],
+)
+def test_markup_rekeys_once(
+    title: str, body: str, old_sections: str, sections: str, old_key: str, new_key: str
+) -> None:
+    finding: dict[str, object] = {
+        "file": "src/edited.py",
+        "line": 2,
+        "severity": "high",
+        "title": title,
+        "body": body,
+    }
+    old_material = "src/edited.py\0" + "2\0" + title + "\0" + old_sections
+    assert hashlib.sha256(old_material.encode("utf-8")).hexdigest()[:16] == old_key
+    assert post_review.key_material_body(finding) == sections
+    assert (
+        post_review.finding_key(
+            finding["file"],
+            finding["line"],
+            outbound_text.prepare_line(title),
+            sections,
+        )
+        == new_key
+    )
+    calls, _lookup = _deliver(
+        "gitlab",
+        [finding],
+        live=True,
+        prior=PriorDelivery(True, frozenset({old_key}), frozenset(), None),
+    )
+    assert isinstance(calls, list)
+    discussions = [
+        call.payload for call in calls if call.endpoint.endswith("/discussions")
+    ]
+    assert len(discussions) == 1
+    marker = review_marker.find_finding_marker(discussions[0]["body"])
+    assert marker is not None and marker["key"] == new_key
+    calls, _lookup = _deliver(
+        "gitlab",
+        [finding],
+        live=True,
+        prior=PriorDelivery(True, frozenset({old_key, new_key}), frozenset(), None),
+    )
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    "field", ("title", "body", "suggestion", "claude_md_rule", "spec_text")
+)
+def test_image_fields_preserve_patch_and_footer(field: str) -> None:
+    patch_text = "![a](u)\n[critical]: u"
+    finding = {
+        "severity": "critical",
+        "title": "Title",
+        "body": "Body",
+        field: "![a](u)",
+        "suggested_fix_code": patch_text,
+    }
+    rendered = post_review.render_comment_body(finding)
+    assert "\\![a](u)" in rendered
+    assert "```suggestion\n" + patch_text + "\n```" in rendered
+    assert rendered.endswith(post_review.BRAND_TRAILER)
+    assert "[CRITICAL]" in rendered
+
+
+@pytest.mark.parametrize(
+    "field", ("title", "body", "suggestion", "claude_md_rule", "spec_text")
+)
+def test_reference_fields_preserve_patch_and_footer(field: str) -> None:
+    patch_text = "![a](u)\n[critical]: u"
+    finding = {
+        "severity": "critical",
+        "title": "Title",
+        "body": "Body",
+        field: "[critical]: u",
+        "suggested_fix_code": patch_text,
+    }
+    rendered = post_review.render_comment_body(finding)
+    assert "[critical]\\: u" in rendered
+    assert "```suggestion\n" + patch_text + "\n```" in rendered
+    assert rendered.endswith(post_review.BRAND_TRAILER)
+    assert "[CRITICAL]" in rendered
+
+
+@pytest.mark.parametrize("field", ("body", "suggestion", "claude_md_rule", "spec_text"))
+@pytest.mark.parametrize(
+    "source",
+    ["[\ncritical\n]: u", "[critical\n]: u", "> [critical\n> ]: u"],
+    ids=["multiline_label", "multiline_closer", "multiline_quote"],
+)
+def test_reference_multiline_fields_keep_severity_label(
+    field: str, source: str
+) -> None:
+    rendered = post_review.render_comment_body(
+        {
+            "severity": "critical",
+            "title": "Title",
+            "body": "Body",
+            field: source,
+        }
+    )
+    assert "]\\: u" in rendered
+    assert "[CRITICAL]" in rendered
+    assert rendered.endswith(post_review.BRAND_TRAILER)
 
 
 @pytest.mark.parametrize(

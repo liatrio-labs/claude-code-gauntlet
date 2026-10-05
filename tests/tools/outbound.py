@@ -14,7 +14,12 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 TextOperation = Literal["prose", "line", "optional", "rule", "redact", "location"]
 
 
-class TextVector(TypedDict):
+class TextOptions(TypedDict, total=False):
+    rule_ids: list[str]
+    kind: Literal["regression", "control"]
+
+
+class TextVector(TextOptions):
     id: str
     operation: TextOperation
     input: object
@@ -45,7 +50,7 @@ def line_vectors() -> list[TextVector]:
     assert payload["algorithm"] == "outbound_line"
     return [
         cast(
-            TextVector, {**row, "id": "outbound_line:" + row["id"], "operation": "line"}
+            TextVector, {**row, "id": "outbound_line_" + row["id"], "operation": "line"}
         )
         for row in payload["cases"]
     ]
@@ -69,7 +74,6 @@ FoldOperation = Literal[
 
 
 class FoldOptions(TypedDict, total=False):
-    test_id: str
     platform: Platform
     surface: Surface
     py_allowance: int
@@ -118,6 +122,31 @@ def attack_corpus(seed: Literal[1729, 917]) -> list[str]:
     return generated
 
 
+def markup_corpus() -> list[str]:
+    generator = random.Random(414)
+    atoms = (
+        "[",
+        "]",
+        "(",
+        ")",
+        ":",
+        "!",
+        "\\",
+        "`",
+        " ",
+        "\n",
+        "a",
+        ">",
+        "-",
+        "1.",
+        "![a](u)",
+    )
+    return [
+        "".join(generator.choices(atoms, k=generator.randint(1, 30)))
+        for _ in range(5000)
+    ]
+
+
 _DANGEROUS_LT = re.compile(r"<(?=[A-Za-z/!?])")
 _DANGEROUS_AT = re.compile(r"(?<![A-Za-z0-9])@")
 _MULTILINE_QUOTE_OPENER = re.compile(
@@ -128,10 +157,17 @@ _MARKER_OPEN = re.compile(
     + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
     + r")\s*:"
 )
+_DEFINITION = re.compile(
+    r"(?m)^(?:[ \t>+*-]|[0-9]+[.)])*\["
+    r"((?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$))[ \t>]*)+)\]:"
+)
 
 
 def assert_outbound_string_invariant(
-    output: str, *, check_prose_rules: bool = True
+    output: str,
+    *,
+    check_prose_rules: bool = True,
+    literal_locations: tuple[str, ...] = (),
 ) -> None:
     fences: list[tuple[int, int]] = []
     open_fence(output, strict=True, intervals=fences)
@@ -143,6 +179,14 @@ def assert_outbound_string_invariant(
         cursor = end
     outside.append(output[cursor:])
     for fragment in outside:
+        markup = fragment
+        # Only caller-owned location wrappers bypass prose preparation.
+        for location in literal_locations:
+            markup = markup.replace(location, "")
+        assert not re.search(r"(?<!\\)(?:\\\\)*!\[", markup), markup
+        for definition in _DEFINITION.finditer(markup):
+            label = re.sub(r"\n[ \t>]*", "\n", definition.group(1))
+            assert len(label) > 999 or not label.strip(), markup
         for visible in (fragment, re.sub(r"`+", "", fragment)):
             assert not _DANGEROUS_LT.search(visible), visible
             assert not _DANGEROUS_AT.search(visible), visible

@@ -13,6 +13,10 @@ import pytest
 from tests.tools.outbound import (
     assert_outbound_string_invariant as _assert_outbound_string_invariant,
 )
+from tests.tools.outbound import (
+    line_vectors,
+    text_vectors,
+)
 from tests.tools.render_probes import (
     _skeleton,
     check_render,
@@ -38,6 +42,8 @@ _CONTAINMENT_RULES = (
     "container.boundary",
     "prose.leading_slash",
     "prose.multiline_quote",
+    "prose.image",
+    "prose.reference_definition",
 )
 
 
@@ -84,6 +90,20 @@ def _summary_inputs():
                     "id": "hostile-title",
                     "title": "Review @leehopper <table>",
                     "file": "src/review.py",
+                    "line_start": 4,
+                    "severity": "high",
+                },
+                {
+                    "id": "image_title",
+                    "title": "![a](u)",
+                    "file": "src/image.py",
+                    "line_start": 4,
+                    "severity": "high",
+                },
+                {
+                    "id": "reference_title",
+                    "title": "[critical]: u",
+                    "file": "src/reference.py",
                     "line_start": 4,
                     "severity": "high",
                 },
@@ -209,6 +229,11 @@ def test_fixture_schema_and_rule_coverage():
 
     for rule_id in _CONTAINMENT_RULES:
         kinds = {case["kind"] for case in CASES if rule_id in case["rule_ids"]}
+        kinds.update(
+            case["kind"]
+            for case in (*text_vectors(), *line_vectors())
+            if rule_id in case.get("rule_ids", [])
+        )
         assert kinds == {"regression", "control"}, rule_id
 
     required_probe_ids = {
@@ -457,6 +482,8 @@ def test_string_invariant_for_fixtures_seeded_corpus_and_poisoned_sinks():
         "suggestion": "@team <table>",
         "claude_md_rule": "@team <b>",
     }
+    for field in ("title", "body", "suggestion", "claude_md_rule"):
+        poison[field] += "\n![a](u)\n[critical]: u"
     for sink in (
         post_review.render_comment_body(poison),
         post_review.render_group_body(poison, [poison]),
@@ -485,6 +512,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
     assert result.returncode == 0, result.stderr
     summaries = json.loads(result.stdout)
     assert len(summaries) >= 2
+    assert "[critical]\\: u" in summaries[0]
     prepare_prose = getattr(outbound_text, "prepare_prose", None)
     assert callable(prepare_prose), "missing expected Python guard prepare_prose"
     for summary in summaries:
@@ -512,6 +540,33 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
     assert prepare_prose(guarded_summary) == guarded_summary
     location = "```src/dir/``/file.py:7-9```"
     assert location in summaries[0]
+
+
+def test_summary_image_location_is_literal_code_owned_text() -> None:
+    path = "src/![a](u).py"
+    result = _run_node(
+        """
+import { renderSummaryBody } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(renderSummaryBody(JSON.parse(source)));
+""",
+        {
+            "findings": [
+                {
+                    "id": "image_path",
+                    "file": path,
+                    "line_start": 1,
+                    "severity": "low",
+                    "title": "![a](u)",
+                }
+            ]
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    location = "`src/![a](u).py:1`"
+    assert outbound_text.prepare_location(path + ":1") == location
+    assert location + ": \\![a](u)" in result.stdout
 
 
 def test_summary_renderer_contains_hostile_title():

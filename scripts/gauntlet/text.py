@@ -145,7 +145,62 @@ def _escape_visible(text: str, *, code: bool = False) -> str:
     )
 
 
+def _escape_images(text: str) -> str:
+    # Inline spans and indentation cannot certify renderer code.
+    return re.sub(
+        r"(\\*)!\[",
+        lambda match: (
+            match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "!["
+        ),
+        text,
+    )
+
+
+_DEFINITION_START_RE = re.compile(r"(?m)^(?:[ \t>+*-]|[0-9]+[.)])*\[")
+_LABEL_CONTINUATION_RE = re.compile(r"[ \t>]*")
+
+
+def _escape_definitions(text: str) -> str:
+    # Escape the colon because escaping the closing bracket can discard footnotes.
+    colons: set[int] = set()
+    for match in _DEFINITION_START_RE.finditer(text):
+        index = match.end()
+        length = 0
+        nonblank = False
+        while index < len(text) and length <= 999:
+            character = text[index]
+            if character == "\\" and index + 1 < len(text) and text[index + 1] != "\n":
+                nonblank = True
+                length += 2
+                index += 2
+                continue
+            if character == "[":
+                break
+            if character == "]":
+                if nonblank and text[index + 1 : index + 2] == ":":
+                    colons.add(index + 1)
+                break
+            if character == "\n":
+                continuation = _LABEL_CONTINUATION_RE.match(text, index + 1)
+                assert continuation is not None
+                index = continuation.end()
+                if index == len(text) or text[index] == "\n":
+                    break
+            else:
+                nonblank = nonblank or not character.isspace()
+                index += 1
+            length += 1
+    out: list[str] = []
+    start = 0
+    for colon in sorted(colons):
+        out.append(text[start:colon] + "\\")
+        start = colon
+    out.append(text[start:])
+    return "".join(out)
+
+
 def _contain_line(line: str) -> str:
+    line = _escape_images(line)
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     out = []
     index = 0
@@ -210,12 +265,23 @@ def _prepare_text(
         else None
     )
     lines = text.split("\n")
-    prepared = []
-    protected_lines = []
+    protected_lines: list[bool] = []
     offset = 0
     for line in lines:
-        protected = any(start <= offset < end for start, end in intervals)
-        original_length = len(line)
+        protected_lines.append(any(start <= offset < end for start, end in intervals))
+        offset += len(line) + 1
+    start = 0
+    for index in range(1, len(lines) + 1):
+        if index == len(lines) or protected_lines[index] != protected_lines[start]:
+            block = "\n".join(lines[start:index])
+            lines[start:index] = (
+                _break_marker_openers(block)
+                if protected_lines[start]
+                else _escape_definitions(block)
+            ).split("\n")
+            start = index
+    prepared = []
+    for line, protected in zip(lines, protected_lines, strict=True):
         shape = _FENCE_SHAPE_RE.match(line) if not single_line else None
         if shape and not protected:
             tick = shape.start(1)
@@ -228,18 +294,6 @@ def _prepare_text(
                 index = quote.start(1)
                 line = line[:index] + "\\" + line[index:]
         prepared.append(line if protected else _contain_line(line))
-        protected_lines.append(protected)
-        offset += original_length + 1
-    start: int | None = None
-    for index in range(len(prepared) + 1):
-        if index < len(prepared) and protected_lines[index]:
-            if start is None:
-                start = index
-        elif start is not None:
-            prepared[start:index] = _break_marker_openers(
-                "\n".join(prepared[start:index])
-            ).split("\n")
-            start = None
     result = "\n".join(prepared)
     if fence is not None:
         result += "\n" + fence[0] * fence[1]
