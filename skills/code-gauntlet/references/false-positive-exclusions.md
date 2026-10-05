@@ -117,7 +117,7 @@ Test files frequently use patterns that would be problematic in production code.
 
 **Examples:**
 
-- Hardcoded credentials like `password: "test123"` or `apiKey: "sk-test-xxx"` in test fixtures.
+- Hardcoded credentials like `password: "test123"` or an `apiKey` value of `"sk-test-xxx"` in test fixtures.
 - Direct HTTP calls to `localhost:3000` in integration test setup, or mocked network responses with static data.
 
 ---

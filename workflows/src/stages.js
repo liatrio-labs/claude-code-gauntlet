@@ -2177,8 +2177,8 @@ const WRITTEN_SCHEMA = {
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
 
-// A stable token lets callers recognize invalid writer path receipts without parsing prose.
-export const PATH_ESCAPE_TOKEN = 'path-escape';
+// A stable marker lets callers recognize invalid writer path receipts without parsing prose.
+export const PATH_ESCAPE_MARKER = 'path-escape';
 
 export function requireAbsoluteOutputDir(outputDir) {
   const root = normalizeAbsoluteRoot(outputDir);
@@ -2209,7 +2209,7 @@ function pathEscapeReason(outputDir, fields) {
     }
   }
   if (!escaped.length) return null;
-  return `${PATH_ESCAPE_TOKEN}: writer-reported paths outside outputDir (${escaped.join(', ')})`;
+  return `${PATH_ESCAPE_MARKER}: writer-reported paths outside outputDir (${escaped.join(', ')})`;
 }
 
 // The four artifacts writeArtifacts plans (and asks the writer to echo). Exported so a

@@ -11,8 +11,8 @@ links are absolute::
 When ``curl -s -o /dev/null -w '%{http_code}' http://localhost:8929/api/v4/version``
 prints 401, export a root API token::
 
-    export GITLAB_TOKEN="$(docker exec cdr-gitlab gitlab-rails runner \
-      'u=User.find_by_username("root"); puts u.personal_access_tokens.create!(name: "render-probes", scopes: ["api"], expires_at: Date.today + 30).token')"
+    export GITLAB_TOKEN=$(docker exec cdr-gitlab gitlab-rails runner \
+      'u=User.find_by_username("root"); puts u.personal_access_tokens.create!(name: "render-probes", scopes: ["api"], expires_at: Date.today + 30).token')
 
 Then run ``python3 tests/tools/render_probes.py seed`` and
 ``python3 tests/tools/render_probes.py record --platform gitlab``. The GitHub probe

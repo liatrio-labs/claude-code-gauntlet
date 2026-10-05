@@ -1533,7 +1533,7 @@ class ChildProcessCredentialEnvTest(InvokeTestBase):
     """
 
     POLLUTED: ClassVar[dict[str, str]] = {
-        "ANTHROPIC_API_KEY": "sk-ambient-should-not-arrive",
+        "ANTHROPIC_API_KEY": "sk-ambient-polluted",
         "ANTHROPIC_AUTH_TOKEN": "at-ambient-should-not-arrive",
         "CLAUDE_CODE_USE_BEDROCK": "1",
         "CLAUDE_CODE_USE_VERTEX": "1",
