@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 from gauntlet.config import matches_rule
-from gauntlet.delivery.post import _fence_closer, _fold_review_body, prepare_line
+from gauntlet.delivery.post import _fold_review_body, prepare_line
 from gauntlet.jsjson import fnv1a32, js_stringify_pretty, normalize_content
+from gauntlet.markdown import fence_closer
 
 FIXTURES = Path(__file__).with_name("fixtures") / "cross_runtime"
 FAMILIES = ("fnv1a32", "json_spelling", "outbound_line", "outbound_fold", "config_rule")
@@ -64,7 +65,7 @@ def test_cross_runtime_python_vector(family, case):
         actual = matches_rule(args["rule"], args["value"], args["mode"])
     else:
         if case["operation"] == "closer":
-            actual = _fence_closer(case["input"])
+            actual = fence_closer(case["input"])
         else:
             source = case["input"]
             text = source["prefix"] + source["repeat"] * source["count"]

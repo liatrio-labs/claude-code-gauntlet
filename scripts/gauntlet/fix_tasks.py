@@ -42,6 +42,7 @@ from gauntlet import proc
 from gauntlet.cli import Command
 from gauntlet.fs import JsonReadError, confined, read_json
 from gauntlet.jsjson import write_result
+from gauntlet.markdown import code_span, fence_run
 from gauntlet.registry import (
     DETAIL_FIELDS_BY_DIMENSION as _DETAIL_FIELDS_BY_DIMENSION,
 )
@@ -97,18 +98,8 @@ def _safe_prose(value):
     return re.sub(r"(?m)^([ ]{0,3})(=+|-+)[ \t]*$", r"\1\\\2", text)
 
 
-def _code_span(value):
-    """Wrap value in a backtick run longer than every run inside it."""
-    runs = re.findall(r"`+", value)
-    fence = "`" * (max((len(run) for run in runs), default=0) + 1)
-    padding = " " if value.startswith("`") or value.endswith("`") else ""
-    return f"{fence}{padding}{value}{padding}{fence}"
-
-
 def _fence(value):
-    """Return a fenced evidence block with a safe delimiter length."""
-    runs = re.findall(r"`+", value)
-    fence = "`" * max(3, max((len(run) for run in runs), default=0) + 1)
+    fence = fence_run(value)
     return f"{fence}\n{value}\n{fence}"
 
 
@@ -408,7 +399,7 @@ def _render_description(finding, file_path, rejected, toolchain, severity):
             location = f"{file_path}:{line_start}"
         else:
             location = f"{file_path}:{line_start}-{line_end}"
-        sections.append(f"## Location\n{_code_span(_one_line(location))}")
+        sections.append(f"## Location\n{code_span(_one_line(location))}")
 
     evidence = finding.get("evidence")
     if _present(evidence):

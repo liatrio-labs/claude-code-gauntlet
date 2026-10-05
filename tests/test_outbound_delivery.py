@@ -17,6 +17,7 @@ import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
 import pytest
 from gauntlet.forge import JsonFetch, Platform, PostRequest, PostResult, ReviewTarget
+from gauntlet.markdown import fence_closer, open_fence
 from gauntlet.prior_review import PriorDelivery
 
 from tests.support.diff import diff_facts
@@ -407,7 +408,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
                 )
                 before_victim = body.split("**Suggested fix:**", 1)[0]
                 self.assertIn("\\~~~", before_victim)
-                self.assertIsNone(post_review._open_fence(before_victim))
+                self.assertIsNone(open_fence(before_victim))
                 self.assertIn("**Suggested fix:**", body)
                 self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
 
@@ -456,7 +457,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
             with self.subTest(rendered=rendered[:40]):
                 self.assertIn("  \\~~~", rendered)
                 self.assertIn("\uff20leehopper &lt;ins>x&lt;/ins>", rendered)
-                self.assertIsNone(post_review._open_fence(rendered))
+                self.assertIsNone(open_fence(rendered))
 
     def test_python_fixture_rows_match_the_ordered_prose_entry_points(self):
         prepare_prose = getattr(post_review, "prepare_prose", None)
@@ -657,7 +658,7 @@ class TestFoldAndGateContracts(unittest.TestCase):
                     f"{limits['bytes']}-byte {limits['label']} body limit]_"
                 )
                 reserve = post_review._utf8_len(
-                    f"\n\n{folded_note}\n{post_review._fence_closer('```')}"
+                    f"\n\n{folded_note}\n{fence_closer('```')}"
                 )
                 cut = prepared.index(line) + len(line) + 1
                 allowance = post_review._utf8_len(prepared[:cut]) + reserve

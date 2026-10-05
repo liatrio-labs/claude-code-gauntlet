@@ -16,7 +16,6 @@ from gauntlet.project_rules import (
     PROJECT_RULE_FILENAMES,
     _changed_path_sets,
     _find_imports,
-    _strip_code,
     main,
     render,
 )
@@ -1242,17 +1241,6 @@ class TestPureHelpers(unittest.TestCase):
 
         self.assertEqual(set(), realpaths)
 
-    def test_strip_code_blanks_fences_and_spans(self):
-        text = "a `@x.md` b\n```\n@y.md\n```\n@z.md\n"
-        stripped = _strip_code(text)
-        self.assertNotIn("@x.md", stripped)
-        self.assertNotIn("@y.md", stripped)
-        self.assertIn("@z.md", stripped)
-
-    def test_strip_code_nested_different_length_fences_dont_close_early(self):
-        text = "````\n@OUTER1.md\n```\n@MISPARSED.md\n````\n@AFTER.md\n"
-        self.assertEqual(_find_imports(text), ["AFTER.md"])
-
     def test_find_imports_handles_inline_and_trailing_punctuation(self):
         self.assertEqual(
             _find_imports("See @AI-AGENTS.md for all instructions."),
@@ -1274,6 +1262,76 @@ class TestPureHelpers(unittest.TestCase):
 
     def test_find_imports_deduplicates_preserving_order(self):
         self.assertEqual(_find_imports("@b.md @a.md @b.md"), ["b.md", "a.md"])
+
+
+_COMMONMARK_BLOCK_GAP = pytest.mark.xfail(
+    strict=True, reason="needs a CommonMark block parser"
+)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param("```\n```python\n@imp.md\n```\n", [], id="c1-opener-line"),
+        pytest.param(
+            "```\n@hidden.md\n``` trailing text\n@still-hidden.md\n```\n",
+            [],
+            id="c2-closer-trailing-text",
+        ),
+        pytest.param("```a`b\n@imp.md\n", ["imp.md"], id="c3-backtick-info"),
+        pytest.param("``@imp.md``\n", [], id="c4-equal-width-span"),
+        pytest.param("```\n@hidden.md\n```\n", [], id="c5-plain-fence"),
+        pytest.param("@imp.md\n", ["imp.md"], id="c6-live-import"),
+        pytest.param("~~~\n~~~x\n@imp.md\n~~~\n", [], id="c7-tilde-closer-text"),
+        pytest.param("    ```\n@imp.md\n", ["imp.md"], id="c8-four-space-indent"),
+        pytest.param("```\n@imp.md\n", [], id="c9-unclosed-fence"),
+        pytest.param(
+            "`open\n@imp.md`\n", [], marks=_COMMONMARK_BLOCK_GAP, id="d1-multiline-span"
+        ),
+        pytest.param(
+            "> ```\n> @imp.md\n> ```\n",
+            [],
+            marks=_COMMONMARK_BLOCK_GAP,
+            id="d2-blockquote-fence",
+        ),
+        pytest.param("- item\n  ```\n  @imp.md\n  ```\n", [], id="d3-list-fence"),
+        pytest.param(
+            "<!-- @imp.md -->\n", [], marks=_COMMONMARK_BLOCK_GAP, id="d4-html-comment"
+        ),
+        pytest.param(
+            "paragraph\n\n    @imp.md\n",
+            [],
+            marks=_COMMONMARK_BLOCK_GAP,
+            id="d5-indented-code",
+        ),
+        pytest.param("a`x`@imp.md", ["imp.md"], id="e1-span-leaves-import-boundary"),
+        pytest.param("`x`@imp.md", ["imp.md"], id="e2-span-before-import"),
+        pytest.param("word@imp.md", [], id="e3-midword-import"),
+        pytest.param("@imp`code`.md", [], id="f1-span-splits-import"),
+        pytest.param(
+            "`see @hidden.md here` and @live.md",
+            ["live.md"],
+            id="f2-mask-hidden-import-only",
+        ),
+        pytest.param(
+            "````\n@OUTER1.md\n```\n@MISPARSED.md\n````\n@AFTER.md\n",
+            ["AFTER.md"],
+            id="nested-fence-longer-closer",
+        ),
+        pytest.param(
+            "```\r@hidden.md\r```\r@live.md",
+            ["live.md"],
+            id="cr-only-fence-lines",
+        ),
+        pytest.param(
+            "```\r\n@hidden.md\r\n```\r\n@live.md",
+            ["live.md"],
+            id="crlf-fence-lines",
+        ),
+    ],
+)
+def test_find_imports_matches_markdown_probe(source, expected):
+    assert _find_imports(source) == expected
 
 
 if __name__ == "__main__":

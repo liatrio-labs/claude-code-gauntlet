@@ -607,11 +607,7 @@ class TestIdempotentRewrite(ReportPatchesTestBase):
 class TestFenceLengthening(ReportPatchesTestBase):
     """A patch payload containing a three-backtick run needs a four-backtick
     fence so the payload cannot close it early — the same rule
-    ``post_review._fence_run`` applies to delivery's own fences.
-
-    RED when the fence is fixed at three backticks: the rendered open/close
-    lines would then be exactly ``` ``` ``` (three backticks), which this test's
-    exact-line check rejects.
+    ``gauntlet.markdown.fence_run`` also drives delivery's suggestion fences.
     """
 
     def test_a_backtick_run_in_the_payload_lengthens_the_fence_to_four(self):
@@ -979,10 +975,6 @@ class TestRenderedDisclosures(ReportPatchesTestBase):
         ]
         self.assertEqual(receipt["warnings"], stderr_warning_lines)
         self.assertEqual(len(receipt["warnings"]), 2)
-
-    def test_code_span_lengthens_the_run_over_a_backtick_in_the_path(self):
-        self.assertEqual(report_patches._code_span("a`b"), "``a`b``")
-        self.assertEqual(report_patches._code_span("no ticks here"), "`no ticks here`")
 
 
 class TestReceiptContract(ReportPatchesTestBase):

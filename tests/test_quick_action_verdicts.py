@@ -12,6 +12,7 @@ from typing import Any
 
 import gauntlet.delivery.post as post_review
 import pytest
+from gauntlet.markdown import open_fence
 
 from tests.test_outbound_contract import _assert_outbound_string_invariant
 from tests.tools import render_probes
@@ -171,7 +172,7 @@ def test_composed_route_headers_and_trailers_are_outside_trusted_fences() -> Non
     for case in build_composed_quick_action_cases():
         body = case["text"]
         fences: list[tuple[int, int]] = []
-        post_review._open_fence(body, strict=True, intervals=fences)
+        open_fence(body, strict=True, intervals=fences)
         if case["route"] == "summary":
             header = post_review.BRAND_SUMMARY_HEADER
             trailer = post_review.build_prose_footer(sha)
