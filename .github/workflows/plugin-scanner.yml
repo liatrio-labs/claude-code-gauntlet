@@ -1,0 +1,33 @@
+# Runs the plugin catalog's scanner at the action commit the catalog pinned when read on 2026-10-05, with the same
+# score and severity gate and repository suppression off. Same scanner build; not a guaranteed listing pass.
+name: Marketplace Plugin Scanner
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scanner:
+    name: Marketplace Plugin Scanner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan plugin
+        uses: hashgraph-online/ai-plugin-scanner-action@caba2e96aa8ad2feb6cf6fca52442b52e22e779f # v1.2.635
+        with:
+          plugin_dir: "."
+          mode: "scan"
+          min_score: "80"
+          fail_on_severity: "high"
+          pr_comment: "off"
+          upload_sarif: "false"
+          online: "false"
+          submission_enabled: "false"
+          trust_repository_policy: "false"
