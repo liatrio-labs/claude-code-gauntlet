@@ -6,7 +6,10 @@
 
 Adversarial code review for Claude Code: each GitHub PR or GitLab MR runs a gauntlet of up to seven specialist agents for bugs, security, tests and cross-file impact, and every finding must survive verification, a skeptical validator, and a blind challenge before it is posted.
 
-<!-- pipeline-diagram -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-overview-dark.svg">
+  <img alt="Code Gauntlet pipeline overview: seven parallel reviewers feed merge, verify, validate, filter and blind challenge stages before delivery" src="docs/assets/pipeline-overview-light.svg">
+</picture>
 
 ## Quick start
 
@@ -71,6 +74,8 @@ If verification or validation itself breaks, the report records the gap and the 
 Agents see the full diff and follow callers, dependencies, and tests across files.
 Git blame separates new issues from older ones your changes exposed, which the report downgrades and groups separately.
 After new commits, the plugin offers to review only what changed since the last review.
+
+[How it works](docs/how-it-works.md) shows the full design, stage by stage.
 
 ## What it posts
 

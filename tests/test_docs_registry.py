@@ -30,6 +30,11 @@ ROOT_MD_ALLOW = {
 # maintainer standard. Entries may predate their file landing (an open PR may add
 # one); the guard is subset-only in that direction on purpose.
 DOCS_ALLOW = {
+    "docs/how-it-works.md",  # user-facing pipeline walkthrough, linked from the README
+    "docs/assets/pipeline-overview-light.svg",  # README diagram, light theme
+    "docs/assets/pipeline-overview-dark.svg",  # README diagram, dark theme
+    "docs/assets/pipeline-detail-light.svg",  # how-it-works diagram, light theme
+    "docs/assets/pipeline-detail-dark.svg",  # how-it-works diagram, dark theme
     "docs/engineering-audit-2026-07.md",  # point-in-time audit artifact, required by #55
     "docs/machine-parsed-strings.md",  # living registry, required by #37 (PR #119)
     "docs/maintainer-issues.md",  # maintainer work-queue standard
