@@ -1,4 +1,5 @@
-# Mirrors the catalog listing gate; this pin matches its scanner commit, so a pass here means a pass there.
+# Runs the plugin catalog's scanner at the action commit the catalog pinned when read on 2026-10-05, with the same
+# score and severity gate and repository suppression off. Same scanner build; not a guaranteed listing pass.
 name: Marketplace Plugin Scanner
 
 on:

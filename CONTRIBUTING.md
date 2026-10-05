@@ -269,8 +269,9 @@ One required check has no local command and is **CI-only**: `lint-pr-title` (nee
 merge gate is reproducible from the block above.
 
 The `Marketplace Plugin Scanner` job runs the plugin catalog's own scanner and fails under a score of 80 or on a
-high-severity finding. It is advisory, not a required check. A hit means: reshape the literal and keep its runtime
-value. `tests/test_scanner_literals.py` reports the file and line locally.
+high-severity finding. It is advisory, not a required check. A hardcoded-secret or dynamic-execution hit means:
+reshape the literal and keep its runtime value; `tests/test_scanner_literals.py` reports the file and line locally.
+For any other finding, read the job summary.
 
 Live bench smoke and paired measurements are **not** contributor gates — see
 [`bench/MEASUREMENT.md`](bench/MEASUREMENT.md).
