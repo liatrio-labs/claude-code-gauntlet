@@ -6,6 +6,9 @@
 
 Subagent contracts. Each `.md` is a system prompt with enforced YAML frontmatter.
 
+List every agent file under `agents` in `.claude-plugin/plugin.json`. That list replaces Claude Code's scan of this
+folder, which would otherwise register this file and its twin as subagents. `tests/test_agent_contracts.py` checks it.
+
 - **Frontmatter is system-enforced.** `tools`, `effort`, `model` and `color` are not advisory —
   Claude Code enforces them.
 - **LSP-first investigation.** Agents prefer `goToDefinition` / `findReferences` / `hover`, with

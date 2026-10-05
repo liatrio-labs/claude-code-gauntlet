@@ -5,6 +5,20 @@
   "author": {
     "name": "Lee Hopper"
   },
+  "agents": [
+    "./agents/artifact-writer.md",
+    "./agents/bug-detector.md",
+    "./agents/challenger.md",
+    "./agents/change-summarizer.md",
+    "./agents/code-simplifier.md",
+    "./agents/conventions-and-intent.md",
+    "./agents/cross-file-impact.md",
+    "./agents/executor.md",
+    "./agents/security-reviewer.md",
+    "./agents/test-analyzer.md",
+    "./agents/type-design-analyzer.md",
+    "./agents/validator.md"
+  ],
   "keywords": [
     "adversarial",
     "ai-agents",
