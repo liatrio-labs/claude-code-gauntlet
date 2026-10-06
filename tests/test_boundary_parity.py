@@ -47,9 +47,11 @@ def test_summary_and_skipped_location_bytes(filepath: str, expected: str) -> Non
             "node",
             "--input-type=module",
             "-e",
-            "import { renderSummaryBody } from './workflows/src/renderReport.js';"
-            "let source = ''; for await (const chunk of process.stdin) source += chunk;"
-            "process.stdout.write(renderSummaryBody(JSON.parse(source)));",
+            (
+                "import { renderSummaryBody } from './workflows/src/renderReport.js';"
+                "let source = ''; for await (const chunk of process.stdin) source += chunk;"
+                "process.stdout.write(renderSummaryBody(JSON.parse(source)));"
+            ),
         ],
         input=json.dumps({"findings": [finding]}),
         cwd=REPO,
