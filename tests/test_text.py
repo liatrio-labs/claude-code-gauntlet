@@ -164,7 +164,7 @@ def test_prose_tilde_runs_escape_all_container_prefixes(prefix: str) -> None:
             id="original-fence-offsets",
         ),
         pytest.param(
-            "x ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: //e/SENT](a b) after",
+            "x " + "ghp_" + "A" * 36 + ": //e/SENT](a b) after",
             "x [REDACTED]： //e/SENT](a b) after",
             id="redaction-before-definition-guard",
         ),

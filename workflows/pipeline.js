@@ -3458,15 +3458,12 @@ function outboundContain(line, forceColon = false) {
   output.push(outboundVisible(line.slice(cursor)));
   return outboundDefinitions(output.join(''), forceColon);
 }
-function prepareLineInternal(value, forceColon = false) {
+function prepareLine(value, forceColon = false) {
   const text = outboundBase(value);
-  return text.trim() === '' ? '' : outboundContain(text, forceColon);
-}
-function prepareLine(value) {
-  return prepareLineInternal(value);
+  return text.trim() === '' ? '' : outboundContain(text, forceColon === true);
 }
 function prepareSummaryTitle(value) {
-  return prepareLineInternal(foldInline(oneLine(outboundBase(value))), true);
+  return prepareLine(foldInline(oneLine(outboundBase(value))), true);
 }
 function inline(value) {
   return foldInline(oneLine(value));

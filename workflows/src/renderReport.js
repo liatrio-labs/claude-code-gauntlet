@@ -681,17 +681,13 @@ function outboundContain(line, forceColon = false) {
   return outboundDefinitions(output.join(''), forceColon);
 }
 
-function prepareLineInternal(value, forceColon = false) {
+export function prepareLine(value, forceColon = false) {
   const text = outboundBase(value);
-  return text.trim() === '' ? '' : outboundContain(text, forceColon);
-}
-
-export function prepareLine(value) {
-  return prepareLineInternal(value);
+  return text.trim() === '' ? '' : outboundContain(text, forceColon === true);
 }
 
 function prepareSummaryTitle(value) {
-  return prepareLineInternal(foldInline(oneLine(outboundBase(value))), true);
+  return prepareLine(foldInline(oneLine(outboundBase(value))), true);
 }
 
 function inline(value) {

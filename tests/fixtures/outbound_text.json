@@ -627,7 +627,7 @@
     {
       "id": "A-redaction",
       "operation": "prose",
-      "input": "x ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: //e/SENT](a b) after",
+      "input": "x ghp_\u0041AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: //e/SENT](a b) after",
       "expected": "x [REDACTED]\uff1a //e/SENT](a b) after"
     },
     {
