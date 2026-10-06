@@ -332,7 +332,7 @@ The Summary index prepares each title as a single line, folds it to 512 code poi
 contains raw HTML and visible mentions even in inline code. Its new definition-colon guard
 is forced because the containing bullet has a linked location: a Summary title `[x]: u`
 becomes `[x]` followed by U+FF1A FULLWIDTH COLON and `u`, while an ordinary single-line
-field keeps the existing `[x]\\: u` output. It counts the final bullet after preparation against
+field keeps the existing `[x]\: u` output. It counts the final bullet after preparation against
 the index budget. Its display path and line sit inside one code span whose delimiter exceeds
 every backtick run in the location. The colon rule is span-blind and rewrites `]` plus zero
 or more backslashes plus `:` inside location paths too: `src/[x]:.py:3` displays as
@@ -416,14 +416,17 @@ start or after a non-alphanumeric character are neutralized even inside inline c
 show fullwidth `＜` and `＠`, which paste differently; a wrong span guess may show literal
 `&lt;` or backslashes. URL text containing `/@` also shows fullwidth `＠`.
 Suggestions and cited rules use the same containment; the cited rule is capped before its
-blockquote markers. Trusted fences retain normalized and redacted bytes except for
-marker opening breaks across lines; accepted prose fence openers lose their entire info
-string. Outside trusted fences, every multiline prose line escapes runs of three or more
-tildes outside complete paired inline-code spans, adding a backslash only when the
-preceding backslash run has even length. After normalization and redaction, prose also escapes lines starting with `/`
+blockquote markers. Body text trusts column-zero backtick and tilde fences. Suggestion text
+and cited rules pass through `prepared_prose`, which collapses backtick runs of three or more
+to two before fence classification; only column-zero tilde fences are trusted in suggestion
+text, and cited rules trust no fences. Trusted body and suggestion payloads retain normalized
+and redacted bytes except for marker opening breaks across lines; accepted opener lines lose
+their entire info string. Outside trusted fences, every multiline prose line escapes runs of
+three or more tildes outside complete paired inline-code spans. Each tilde gains a backslash,
+except the first tilde when an odd preceding backslash run already escapes it. After normalization and redaction, prose also escapes lines starting with `/`
 and multiline quote openers starting with three or more `>` outside trusted fences; the
 checked patch stays byte-exact inside its suggestion fence. Single-line fields carry neither
-fence nor tilde escape. A line holding `](` or `]\\(` changes every `]` plus zero or more
+fence nor tilde escape. A line holding `](` or `]\(` changes every `]` plus zero or more
 backslashes plus `:` to U+FF1A FULLWIDTH COLON before the retained line-initial definition
 guard. This colon rule is span-blind: it rewrites everywhere on a triggered line, including
 inside inline code and location paths. Only containment and the tilde guard share span

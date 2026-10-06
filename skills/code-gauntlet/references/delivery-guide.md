@@ -172,9 +172,12 @@ fullwidth characters in prose, but leaves the text contained. Fullwidth `＜` an
 inside code and display locations paste as different characters. Permalink URLs are
 encoded separately and retain the original path.
 
-Column-zero fences in body and suggestion text retain payload after normalization and
-redaction, but accepted opener lines lose their entire info string. Finding-marker opening
-grammar is broken across the whole fence, including across newlines. Exact CommonMark
+Body text trusts column-zero backtick and tilde fences. Suggestion text and cited rules pass
+through `prepared_prose`, which collapses backtick runs of three or more to two before fence
+classification. Suggestion text therefore trusts only column-zero tilde fences; cited rules
+trust no fences. Trusted body and suggestion payloads retain normalized and redacted bytes,
+but accepted opener lines lose their entire info string. Finding-marker opening grammar is
+broken across the whole fence, including across newlines. Exact CommonMark
 closers end a trusted fence: up to three spaces of indent, the same fence character and at
 least the opener length, then only spaces or tabs. Every unprotected prose line escapes each
 tilde of a run of three or more outside complete paired inline-code spans. An even preceding
@@ -213,7 +216,7 @@ In prose, inline spans and quoted locations, the bracket after `!` or `[` (also
 across a run of backslashes) becomes U+FF3B FULLWIDTH LEFT SQUARE BRACKET.
 Both hosts render an image from `![`; GitLab also renders one from `[[`.
 GitLab parses text holding `](` a second time after backslashes are consumed,
-so a backslash does not hold there. On an unprotected physical line holding `](` or `]\\(`,
+so a backslash does not hold there. On an unprotected physical line holding `](` or `]\(`,
 every `]` plus zero or more backslashes plus `:` everywhere on that triggered line changes
 only its colon to U+FF1A FULLWIDTH COLON. Named HTML5 forms for the closing bracket, colon,
 parentheses and backslash decode
@@ -223,7 +226,9 @@ as `src/[x]:.py` shows U+FF1A as `src/[x]：.py`, while its permalink href is un
 Without that trigger, a line-initial
 reference-definition label
 (`[label]:`) keeps the existing backslash-before-colon rule when only non-letter characters
-precede `[` on its line; a preceding backslash or `[` prevents the match. In multiline fields,
+precede `[` on its line. A preceding backslash or another `[` prevents the match if it remains
+in the prefix when the guard runs. For `[[x]: u`, containment first turns the second bracket
+fullwidth, leaving the first bracket as the label opener, so its colon is escaped. In multiline fields,
 the old label may continue across lines, and it still applies inside code spans. This prevents
 a definition from turning code-owned text such as `[CRITICAL]` into a link. After the same
 line prefix, footnote labels start with `[^` and accept any run without `]` or newline before

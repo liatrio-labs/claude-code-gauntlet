@@ -223,6 +223,22 @@ def _run_node(script, value):
     )
 
 
+_SUMMARY_BATCH_SCRIPT = """
+import { renderSummaryBody } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
+"""
+
+
+def _render_summary_bodies(inputs):
+    result = _run_node(_SUMMARY_BATCH_SCRIPT, inputs)
+    assert result.returncode == 0, result.stderr
+    summaries = json.loads(result.stdout)
+    assert len(summaries) == len(inputs)
+    return summaries
+
+
 def _summary_inputs():
     title_cases = [case for case in CASES if case["id"] == "title_505_code_span"]
     assert title_cases, "fixture is missing the long summary-title probe"
@@ -733,15 +749,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
 
 
 def test_existing_generated_summaries_remain_unchanged_by_python_guard():
-    script = """
-import { renderSummaryBody } from './workflows/src/renderReport.js';
-let source = '';
-for await (const chunk of process.stdin) source += chunk;
-process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
-"""
-    result = _run_node(script, _summary_inputs())
-    assert result.returncode == 0, result.stderr
-    summaries = json.loads(result.stdout)
+    summaries = _render_summary_bodies(_summary_inputs())
     assert len(summaries) >= 2
     assert "[critical]\uff1a u" in summaries[0]
     prepare_prose = getattr(outbound_text, "prepare_prose", None)
@@ -749,8 +757,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
     for summary in summaries:
         assert prepare_prose(summary) == summary
     path = "src/a<`b.py"
-    result = _run_node(
-        script,
+    guarded_summary = _render_summary_bodies(
         [
             {
                 "findings": [
@@ -763,10 +770,8 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
                     }
                 ]
             }
-        ],
-    )
-    assert result.returncode == 0, result.stderr
-    guarded_summary = json.loads(result.stdout)[0]
+        ]
+    )[0]
     assert "``src/a\uff1c`b.py:1``" in guarded_summary
     assert prepare_prose(guarded_summary) == guarded_summary
     location = "```src/dir/``/file.py:7-9```"

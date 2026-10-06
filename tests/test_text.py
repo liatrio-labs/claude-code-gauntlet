@@ -11,7 +11,10 @@ import gauntlet.text as text
 import pytest
 from gauntlet.markdown import open_fence
 
-from tests.test_outbound_contract import assert_outbound_string_invariant
+from tests.test_outbound_contract import (
+    _render_summary_bodies,
+    assert_outbound_string_invariant,
+)
 from tests.tools.outbound import (
     TextOperation,
     TextVector,
@@ -436,6 +439,24 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
         assert text.prepare_line(line) == line, repr(source)
         prose = text.prepare_prose(source)
         assert text.prepare_prose(prose) == prose, repr(source)
+        assert_outbound_string_invariant(prose)
+    summary_inputs = [
+        {
+            "findings": [
+                {
+                    "id": f"markup-{index}",
+                    "title": source,
+                    "file": "src/markup.py",
+                    "line_start": 1,
+                    "severity": "low",
+                }
+            ]
+        }
+        for index, source in enumerate(sources)
+    ]
+    summaries = _render_summary_bodies(summary_inputs)
+    for source, summary in zip(sources, summaries, strict=True):
+        assert text.prepare_prose(summary) == summary, repr(source)
 
 
 @pytest.mark.parametrize(
