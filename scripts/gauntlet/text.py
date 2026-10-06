@@ -313,19 +313,6 @@ def _escape_definitions(text: str) -> str:
     return _DEFINITION_RE.sub(escape, text)
 
 
-def _escape_multiline_footnotes(line: str) -> str:
-    last_close = line.rfind("]")
-    return re.sub(
-        r"(?<!\\)(\\*)\[\^",
-        lambda match: (
-            match.group(1) + "\\[^"
-            if match.end() > last_close and len(match.group(1)) % 2 == 0
-            else match.group()
-        ),
-        line,
-    )
-
-
 def _escape_tilde_runs(line: str) -> str:
     spans = _containment_code_spans(line)
     span_index = 0
@@ -499,7 +486,6 @@ def _prepare_text(
                 line = line[:index] + "\\" + line[index:]
         line = line if protected else _contain_line(line)
         if not protected and not single_line:
-            line = _escape_multiline_footnotes(line)
             line = _escape_tilde_runs(line)
         prepared.append(line)
     # Bracket replacements can complete definition-shaped labels.

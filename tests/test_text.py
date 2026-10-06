@@ -94,8 +94,6 @@ def test_redaction_tokens(source: str, expected: str) -> None:
 def test_text_vector(case: TextVector) -> None:
     actual = PREPARERS[case["operation"]](case["input"])
     assert actual == case["expected"]
-    if case["id"].startswith("footnote_multiline_"):
-        assert text.prepare_prose(actual) == actual
     if case["operation"] != "redact":
         assert_outbound_string_invariant(
             actual or "", check_prose_rules=case["operation"] in ("prose", "rule")
@@ -587,11 +585,6 @@ def test_large_backslash_preparation(
             "[^" + "[\\a" * 100000 + "]: hidden text",
             "[^" + "[\\a" * 100000 + "]\\: hidden text",
             id="footnote_label",
-        ),
-        pytest.param(
-            "[^" + "[\\a" * 100000,
-            "\\[^" + "[\\a" * 100000,
-            id="unclosed_footnote",
         ),
     ],
 )

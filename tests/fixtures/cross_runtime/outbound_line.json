@@ -2279,6 +2279,38 @@
       },
       "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`",
       "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`"
+    },
+    {
+      "id": "footnote_opener_title_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/a.py",
+            "line_start": 3,
+            "title": "See [^The handler W1"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: See [^The handler W1",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: See [^The handler W1"
+    },
+    {
+      "id": "footnote_opener_path_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[^handler.py",
+            "line_start": 3,
+            "title": "Path W1"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[^handler.py:3`: Path W1",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[^handler.py:3`: Path W1"
     }
   ]
 }

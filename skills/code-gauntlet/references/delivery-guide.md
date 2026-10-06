@@ -222,8 +222,7 @@ the old label may continue across lines, and it still applies inside code spans.
 a definition from turning code-owned text such as `[CRITICAL]` into a link. After the same
 line prefix, footnote labels start with `[^` and accept any run without `]` or newline before
 `]:`, including backslashes and opening brackets; their colon gains a backslash on lines
-without the trigger and becomes U+FF1A on triggered lines. In multiline prose, an unescaped
-`[^` with no later `]` on its physical line gains a backslash before its opening bracket.
+without the trigger and becomes U+FF1A on triggered lines.
 Footnote definitions and reference-style links in finding text therefore show as literal text. The
 new colon becomes fullwidth even when copied; the retained line-initial escape displays its
 original colon.

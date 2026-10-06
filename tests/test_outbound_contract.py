@@ -18,6 +18,8 @@ from tests.tools.outbound import (
 )
 from tests.tools.render_probes import (
     _skeleton,
+    _TreeParser,
+    _walk,
     check_render,
     derive_handles,
     input_sha256,
@@ -440,6 +442,71 @@ def test_all_recorded_renders_pass_platform_containment_checks():
                 check_render(platform, case[f"{platform}_probe"]["html"])
             except ValueError as error:
                 raise AssertionError(f"{case['id']} {platform}: {error}") from error
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        case["id"]
+        for case in CASES
+        if case["id"].startswith(
+            (
+                "fence_info_",
+                "tilde_",
+                "colon_second_parse_",
+                "footnote_label_",
+                "nbsp_bracket_paren_",
+            )
+        )
+    ],
+)
+def test_recorded_prose_guards_preserve_visible_sentinels_and_plain_fences(
+    case_id: str,
+) -> None:
+    case = next(case for case in CASES if case["id"] == case_id)
+    sentinels = set(re.findall(r"\b(?:SENT|W\d+)\b", case["input"]))
+    assert sentinels, case_id
+    for platform in ("github", "gitlab"):
+        html = case[f"{platform}_probe"]["html"]
+        assert html, (
+            f"{case_id}: record with python tests/tools/render_probes.py record "
+            f"--platform {platform}"
+        )
+        parser = _TreeParser()
+        parser.feed(html)
+        parser.close()
+        nodes = _walk(parser.root)
+        visible_words = set(
+            re.findall(
+                r"\b\w+\b",
+                " ".join(
+                    child
+                    for node, _ in nodes
+                    if node.tag not in {"#comment", "script", "style"}
+                    for child in node.children
+                    if isinstance(child, str)
+                ),
+            )
+        )
+        assert sentinels <= visible_words, (case_id, platform, visible_words)
+        for node, _ in nodes:
+            attrs = dict(node.attrs)
+            classes = (attrs.get("class") or "").split()
+            if platform == "gitlab":
+                assert "data-canonical-lang" not in attrs, (case_id, attrs)
+                assert not any(
+                    (value.startswith("language-") and value != "language-plaintext")
+                    or value.startswith("js-render-")
+                    for value in classes
+                ), (case_id, classes)
+            else:
+                assert "lang" not in attrs, (case_id, attrs)
+                assert not any(
+                    value.startswith("highlight-source") for value in classes
+                ), (case_id, classes)
+                assert not (
+                    node.tag == "section" and "render-needs-enrichment" in classes
+                ), (case_id, classes)
 
 
 def test_divergences_are_text_only_and_bound_to_normalized_pairs():
