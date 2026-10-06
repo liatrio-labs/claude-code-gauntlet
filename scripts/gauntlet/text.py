@@ -4,8 +4,9 @@ JS_TRIM_CHARS is the Python twin of JS String.prototype.trim.
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from itertools import groupby
 from typing import Literal
 
 from gauntlet.markdown import (
@@ -13,6 +14,7 @@ from gauntlet.markdown import (
     code_span,
     open_fence,
     paired_code_spans,
+    protected_line_flags,
     tick_run_index,
 )
 from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
@@ -135,6 +137,62 @@ _DEFINITION_LINK_TRIGGER_RE = re.compile(r"\]\\?\(")
 _DEFINITION_CLOSE_COLON_RE = re.compile(r"\](\\*):")
 
 
+def _extend_name(entity: _EntityCandidate, character: str) -> _EntityCandidate | None:
+    name = entity.name + character
+    return (
+        _EntityCandidate(entity.start, "named", name=name)
+        if name in _NAMED_ENTITY_PREFIXES
+        else None
+    )
+
+
+def _advance_entity(
+    entity: _EntityCandidate | None, character: str
+) -> tuple[_EntityCandidate | None, str | None]:
+    if entity is None:
+        return None, None
+    if entity.kind == "start":
+        if character == "#":
+            return _EntityCandidate(entity.start, "numeric"), None
+        if "A" <= character <= "Z" or "a" <= character <= "z":
+            return _extend_name(entity, character), None
+    elif entity.kind == "numeric":
+        if character in "xX":
+            return _EntityCandidate(entity.start, "hex"), None
+        if "0" <= character <= "9":
+            return (
+                _EntityCandidate(
+                    entity.start, "decimal", min(127, ord(character) - 48), True
+                ),
+                None,
+            )
+    elif entity.kind in ("decimal", "hex"):
+        if character == ";" and entity.has_digit:
+            return entity, chr(entity.value) if 32 <= entity.value <= 126 else ""
+        digit = -1
+        if "0" <= character <= "9":
+            digit = ord(character) - 48
+        elif entity.kind == "hex" and "a" <= character.lower() <= "f":
+            digit = ord(character.lower()) - 87
+        radix = 10 if entity.kind == "decimal" else 16
+        if digit >= 0 and digit < radix:
+            return (
+                _EntityCandidate(
+                    entity.start,
+                    entity.kind,
+                    min(127, entity.value * radix + digit),
+                    True,
+                ),
+                None,
+            )
+    elif entity.kind == "named":
+        if character == ";" and entity.name in _NAMED_ENTITIES:
+            return entity, _NAMED_ENTITIES[entity.name]
+        if "A" <= character <= "Z" or "a" <= character <= "z":
+            return _extend_name(entity, character), None
+    return None, None
+
+
 def _normalize_outbound(text: str) -> str:
     """Decode bounded outbound entities and remove complete non-overlapping comments."""
     if _NORMALIZER_BOUNDARY_RE.search(text) is None:
@@ -151,67 +209,8 @@ def _normalize_outbound(text: str) -> str:
         replacement: str | None = None
         if character == "&":
             entity = _EntityCandidate(len(output), "start")
-        elif entity is not None:
-            if entity.kind == "start":
-                if character == "#":
-                    entity = _EntityCandidate(entity.start, "numeric")
-                elif "A" <= character <= "Z" or "a" <= character <= "z":
-                    name = entity.name + character
-                    entity = (
-                        _EntityCandidate(entity.start, "named", name=name)
-                        if name in _NAMED_ENTITY_PREFIXES
-                        else None
-                    )
-                else:
-                    entity = None
-            elif entity.kind == "numeric":
-                if character in "xX":
-                    entity = _EntityCandidate(entity.start, "hex")
-                elif "0" <= character <= "9":
-                    entity = _EntityCandidate(
-                        entity.start,
-                        "decimal",
-                        min(127, ord(character) - 48),
-                        True,
-                    )
-                else:
-                    entity = None
-            elif entity.kind in ("decimal", "hex"):
-                if character == ";" and entity.has_digit:
-                    replacement = chr(entity.value) if 32 <= entity.value <= 126 else ""
-                else:
-                    digit = (
-                        ord(character) - 48
-                        if "0" <= character <= "9"
-                        else ord(character.lower()) - 87
-                        if entity.kind == "hex" and "a" <= character.lower() <= "f"
-                        else -1
-                    )
-                    radix = 10 if entity.kind == "decimal" else 16
-                    if digit >= 0 and digit < radix:
-                        entity = _EntityCandidate(
-                            entity.start,
-                            entity.kind,
-                            min(127, entity.value * radix + digit),
-                            True,
-                        )
-                    else:
-                        entity = None
-            elif entity.kind == "named":
-                if character == ";":
-                    if entity.name in _NAMED_ENTITIES:
-                        replacement = _NAMED_ENTITIES[entity.name]
-                    else:
-                        entity = None
-                elif "A" <= character <= "Z" or "a" <= character <= "z":
-                    name = entity.name + character
-                    entity = (
-                        _EntityCandidate(entity.start, "named", name=name)
-                        if name in _NAMED_ENTITY_PREFIXES
-                        else None
-                    )
-                else:
-                    entity = None
+        else:
+            entity, replacement = _advance_entity(entity, character)
 
         if replacement is not None and entity is not None:
             del output[entity.start :]
@@ -382,14 +381,26 @@ def _contain_line(line: str) -> str:
             while run_index < len(index.runs) and index.runs[run_index].start < cursor:
                 run_index += 1
         else:
-            if not run.escaped:
-                out.append("\\`" * run.width)
-            else:
-                out.append("\\`" * (run.width - 1))
+            out.append("\\`" * (run.width - int(run.escaped)))
             cursor = run.end
             run_index += 1
     out.append(_escape_visible(line[cursor:]))
     return "".join(out)
+
+
+def _map_blocks(
+    lines: list[str],
+    protected_lines: list[bool],
+    on_protected: Callable[[str], str],
+    on_plain: Callable[[str], str],
+) -> list[str]:
+    mapped: list[str] = []
+    for protected, group in groupby(
+        zip(lines, protected_lines, strict=True), key=lambda pair: pair[1]
+    ):
+        block = "\n".join(line for line, _ in group)
+        mapped.extend((on_protected if protected else on_plain)(block).split("\n"))
+    return mapped
 
 
 def _prepare_text(
@@ -429,19 +440,7 @@ def _prepare_text(
         else None
     )
     lines = text.split("\n")
-    protected_lines: list[bool] = []
-    offset = 0
-    interval_index = 0
-    for line in lines:
-        while (
-            interval_index < len(intervals) and intervals[interval_index][1] <= offset
-        ):
-            interval_index += 1
-        protected_lines.append(
-            interval_index < len(intervals)
-            and intervals[interval_index][0] <= offset < intervals[interval_index][1]
-        )
-        offset += len(line) + 1
+    protected_lines = protected_line_flags(lines, intervals)
     suffix_index = 0
     offset = 0
     for index, line in enumerate(lines):
@@ -455,22 +454,9 @@ def _prepare_text(
                 break
             suffix_index += 1
         offset += len(line) + 1
-    classified_lines: list[str] = []
-    start = 0
-    while start < len(lines):
-        end = start + 1
-        while end < len(lines) and protected_lines[end] == protected_lines[start]:
-            end += 1
-        block = "\n".join(lines[start:end])
-        classified_lines.extend(
-            (
-                _break_marker_openers(block)
-                if protected_lines[start]
-                else _escape_definitions(block)
-            ).split("\n")
-        )
-        start = end
-    lines = classified_lines
+    lines = _map_blocks(
+        lines, protected_lines, _break_marker_openers, _escape_definitions
+    )
     prepared = []
     for line, protected in zip(lines, protected_lines, strict=True):
         shape = _BACKTICK_FENCE_SHAPE_RE.match(line) if not single_line else None
@@ -489,20 +475,7 @@ def _prepare_text(
             line = _escape_tilde_runs(line)
         prepared.append(line)
     # Bracket replacements can complete definition-shaped labels.
-    defined_lines: list[str] = []
-    start = 0
-    while start < len(prepared):
-        end = start + 1
-        while end < len(prepared) and protected_lines[end] == protected_lines[start]:
-            end += 1
-        block = "\n".join(prepared[start:end])
-        defined_lines.extend(
-            (_escape_definitions(block) if not protected_lines[start] else block).split(
-                "\n"
-            )
-        )
-        start = end
-    prepared = defined_lines
+    prepared = _map_blocks(prepared, protected_lines, str, _escape_definitions)
     result = "\n".join(prepared)
     if fence is not None:
         result += "\n" + fence[0] * fence[1]

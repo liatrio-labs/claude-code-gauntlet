@@ -444,22 +444,21 @@ def test_all_recorded_renders_pass_platform_containment_checks():
                 raise AssertionError(f"{case['id']} {platform}: {error}") from error
 
 
-@pytest.mark.parametrize(
-    "case_id",
-    [
-        case["id"]
-        for case in CASES
-        if case["id"].startswith(
-            (
-                "fence_info_",
-                "tilde_",
-                "colon_second_parse_",
-                "footnote_label_",
-                "nbsp_bracket_paren_",
-            )
+def _recorded_prose_guard_case_ids() -> list[str]:
+    prefixes = (
+        "fence_info_",
+        "tilde_",
+        "colon_second_parse_",
+        "footnote_label_",
+    )
+    for prefix in prefixes:
+        assert any(case["id"].startswith(prefix) for case in CASES), (
+            f"recorded prose guard prefix matches no case: {prefix}"
         )
-    ],
-)
+    return [case["id"] for case in CASES if case["id"].startswith(prefixes)]
+
+
+@pytest.mark.parametrize("case_id", _recorded_prose_guard_case_ids())
 def test_recorded_prose_guards_preserve_visible_sentinels_and_plain_fences(
     case_id: str,
 ) -> None:

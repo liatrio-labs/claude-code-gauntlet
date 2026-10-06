@@ -426,6 +426,7 @@ const OUTBOUND_NAMED_ENTITIES = {
 const OUTBOUND_NAMED_ENTITY_PREFIXES = new Set(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
   Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
 )));
+const entityAt = (start, kind, fields = {}) => ({ start, kind, value: 0, hasDigit: false, name: '', ...fields });
 
 export function normalizeOutboundText(value) {
   let text = reportAsText(value);
@@ -437,30 +438,27 @@ export function normalizeOutboundText(value) {
     let entity = previous ? previous.entity : null;
     let replacement;
     if (character === '&') {
-      entity = { start: output.length, kind: 'start', value: 0, hasDigit: false, name: '' };
+      entity = entityAt(output.length, 'start');
     } else if (entity) {
       if (entity.kind === 'start') {
         if (character === '#') {
-          entity = { start: entity.start, kind: 'numeric', value: 0, hasDigit: false, name: '' };
+          entity = entityAt(entity.start, 'numeric');
         } else if (/[A-Za-z]/.test(character)) {
           const name = entity.name + character;
           entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
-            ? { start: entity.start, kind: 'named', value: 0, hasDigit: false, name }
+            ? entityAt(entity.start, 'named', { name })
             : null;
         } else {
           entity = null;
         }
       } else if (entity.kind === 'numeric') {
         if (character === 'x' || character === 'X') {
-          entity = { start: entity.start, kind: 'hex', value: 0, hasDigit: false, name: '' };
+          entity = entityAt(entity.start, 'hex');
         } else if (character >= '0' && character <= '9') {
-          entity = {
-            start: entity.start,
-            kind: 'decimal',
+          entity = entityAt(entity.start, 'decimal', {
             value: Math.min(127, character.charCodeAt(0) - 48),
             hasDigit: true,
-            name: '',
-          };
+          });
         } else {
           entity = null;
         }
@@ -476,13 +474,10 @@ export function normalizeOutboundText(value) {
             ? String.fromCharCode(entity.value)
             : '';
         } else if (digit >= 0 && digit < radix) {
-          entity = {
-            start: entity.start,
-            kind: entity.kind,
+          entity = entityAt(entity.start, entity.kind, {
             value: Math.min(127, entity.value * radix + digit),
             hasDigit: true,
-            name: '',
-          };
+          });
         } else {
           entity = null;
         }
@@ -496,7 +491,7 @@ export function normalizeOutboundText(value) {
         } else if (/[A-Za-z]/.test(character)) {
           const name = entity.name + character;
           entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
-            ? { start: entity.start, kind: 'named', value: 0, hasDigit: false, name }
+            ? entityAt(entity.start, 'named', { name })
             : null;
         } else {
           entity = null;
@@ -664,8 +659,7 @@ function outboundContain(line, forceColon = false) {
       runIndex += 1;
       while (runIndex < index.runs.length && index.runs[runIndex].start < cursor) runIndex += 1;
     } else {
-      if (!run.escaped) output.push('\\`'.repeat(run.width));
-      else output.push('\\`'.repeat(run.width - 1));
+      output.push('\\`'.repeat(run.width - Number(run.escaped)));
       cursor = run.end;
       runIndex += 1;
     }

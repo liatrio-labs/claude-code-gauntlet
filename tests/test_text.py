@@ -368,7 +368,7 @@ def test_text_pass_order(
         pytest.param(
             1729,
             ("prose", "line", "optional"),
-            id="prose_and_line_idempotence",
+            id="prose_line_optional_idempotence",
         ),
         pytest.param(
             917,
@@ -430,8 +430,9 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
         check=True,
     )
     lines = [text.prepare_line(source) for source in sources]
-    assert json.loads(result.stdout) == lines
-    for source, line in zip(sources, lines, strict=True):
+    js_lines = json.loads(result.stdout)
+    for source, line, js_line in zip(sources, lines, js_lines, strict=True):
+        assert js_line == line, repr(source)
         assert text.prepare_line(line) == line, repr(source)
         prose = text.prepare_prose(source)
         assert text.prepare_prose(prose) == prose, repr(source)

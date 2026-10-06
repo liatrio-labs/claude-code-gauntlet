@@ -152,9 +152,11 @@ is consumed before the next input character. Decimal and hexadecimal accumulatio
 at 127; only ASCII values 32 through 126 are emitted. Other named references and query
 ampersands stay literal. Invisible code points, including CR, are discarded before matching;
 TAB and LF remain. Raw U+00A0 and its two named references become plain spaces everywhere,
-including inside inline code and trusted fences, like other decoded references, because
-GitLab's second parse can drop following text when NBSP shares bracket-paren text with
-`&`, `<` or `>`. Numeric references to 160 are removed before Markdown classification.
+including inside inline code and trusted fences, like other decoded references. Text loss
+was measured on GitLab CE 19.4.1 through its Markdown API for a bracket-paren shape holding
+U+00A0 next to `&`, `<` or `>`; the prepared form was measured to show all text.
+The shared vectors pin the bytes. Numeric references to 160 are removed before Markdown
+classification.
 Comments are removed only when a `-->` begins after the end of a live `<!--` opener. An
 overlapping closer in `<!-->tail` stays visible as `&lt;!-->tail`; a later non-overlapping
 closer still removes the comment. Eager reduction can expose text that the previous wave order
@@ -163,7 +165,8 @@ removed: `<!--&#38;#45;&#38;#45;&#38;#62;z-->tail` becomes `z-->tail`,
 `<!-<!--x-->- y --<!--z-->> w` becomes `> w`.
 Secrets are redacted before containment. Inline spans pair on one line at the next exact
 backtick-run length, retrying shorter opener suffixes when a complete run has no mate.
-Containment, the colon guard and the tilde guard share that span selection.
+Only containment and the tilde guard share that span selection. The colon guard is
+span-blind and rewrites inside inline code too.
 A wrong pairing can show literal `&lt;` or backslashes, or show
 fullwidth characters in prose, but leaves the text contained. Fullwidth `＜` and `＠`
 inside code and display locations paste as different characters. Permalink URLs are
@@ -211,10 +214,13 @@ across a run of backslashes) becomes U+FF3B FULLWIDTH LEFT SQUARE BRACKET.
 Both hosts render an image from `![`; GitLab also renders one from `[[`.
 GitLab parses text holding `](` a second time after backslashes are consumed,
 so a backslash does not hold there. On an unprotected physical line holding `](` or `]\\(`,
-every `]` plus zero or more backslashes plus `:` changes only its colon to U+FF1A FULLWIDTH
-COLON. Named HTML5 forms for the closing bracket, colon, parentheses and backslash decode
-before this check. The colon rule applies inside inline code and to location paths because
-a platform can assign a backtick to another construct. Without that trigger, a line-initial
+every `]` plus zero or more backslashes plus `:` everywhere on that triggered line changes
+only its colon to U+FF1A FULLWIDTH COLON. Named HTML5 forms for the closing bracket, colon,
+parentheses and backslash decode
+before this check. The colon rule is span-blind and applies inside inline code and to location
+paths because a platform can assign a backtick to another construct. A displayed path such
+as `src/[x]:.py` shows U+FF1A as `src/[x]：.py`, while its permalink href is unchanged.
+Without that trigger, a line-initial
 reference-definition label
 (`[label]:`) keeps the existing backslash-before-colon rule when only non-letter characters
 precede `[` on its line; a preceding backslash or `[` prevents the match. In multiline fields,

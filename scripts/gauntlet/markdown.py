@@ -134,6 +134,22 @@ def span_close(index: TickRunIndex, after: int, width: int) -> int | None:
     return starts[position] if position < len(starts) else None
 
 
+def _first_close(
+    index: TickRunIndex, run: TickRun, suffix_retry: bool
+) -> tuple[int, int, int] | None:
+    opener = run.start + int(run.escaped)
+    width = run.width - int(run.escaped)
+    while width > 0:
+        close = span_close(index, run.end, width)
+        if close is not None:
+            return opener, width, close
+        if not suffix_retry:
+            return None
+        width -= 1
+        opener += 1
+    return None
+
+
 def paired_code_spans(
     index: TickRunIndex, *, suffix_retry: bool = False
 ) -> list[tuple[int, int, int]]:
@@ -142,31 +158,36 @@ def paired_code_spans(
     run_index = 0
     while run_index < len(index.runs):
         run = index.runs[run_index]
-        opener = run.start + int(run.escaped)
-        width = run.width - int(run.escaped)
-        if width <= 0:
-            run_index += 1
+        found = _first_close(index, run, suffix_retry)
+        run_index += 1
+        if found is None:
             continue
-        while width > 0:
-            close = span_close(index, run.end, width)
-            if close is not None:
-                close_end = close + width
-                spans.append((opener, close, close_end))
-                run_index += 1
-                while (
-                    run_index < len(index.runs)
-                    and index.runs[run_index].start < close_end
-                ):
-                    run_index += 1
-                break
-            if not suffix_retry:
-                run_index += 1
-                break
-            width -= 1
-            opener += 1
-        else:
+        opener, width, close = found
+        close_end = close + width
+        spans.append((opener, close, close_end))
+        while run_index < len(index.runs) and index.runs[run_index].start < close_end:
             run_index += 1
     return spans
+
+
+def protected_line_flags(
+    lines: list[str], intervals: list[tuple[int, int]]
+) -> list[bool]:
+    """Mark line starts inside sorted, half-open fence intervals in one pass."""
+    protected: list[bool] = []
+    offset = 0
+    interval_index = 0
+    for line in lines:
+        while (
+            interval_index < len(intervals) and intervals[interval_index][1] <= offset
+        ):
+            interval_index += 1
+        protected.append(
+            interval_index < len(intervals)
+            and intervals[interval_index][0] <= offset < intervals[interval_index][1]
+        )
+        offset += len(line) + 1
+    return protected
 
 
 def code_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
@@ -175,14 +196,9 @@ def code_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]
     spans: list[tuple[int, int]] = []
     open_fence(text, intervals=fences)
     offset = 0
-    fence_index = 0
-    for line in text.split("\n"):
-        while fence_index < len(fences) and fences[fence_index][1] <= offset:
-            fence_index += 1
-        if (
-            fence_index < len(fences)
-            and fences[fence_index][0] <= offset < fences[fence_index][1]
-        ):
+    lines = text.split("\n")
+    for line, protected in zip(lines, protected_line_flags(lines, fences), strict=True):
+        if protected:
             offset += len(line) + 1
             continue
         spans.extend(
