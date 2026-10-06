@@ -258,11 +258,15 @@
     {
       "id": "image_inline_code",
       "input": "`![a](u)`",
-      "expected": "`\\![a](u)`",
+      "expected": "`!［a](u)`",
       "rule_ids": [
         "prose.image"
       ],
-      "kind": "regression"
+      "kind": "regression",
+      "operations": [
+        "prose",
+        "line"
+      ]
     },
     {
       "id": "image_indented_code",
@@ -276,11 +280,15 @@
     {
       "id": "image_span_destination",
       "input": "[x](https://a/`z) ![p](https://example.test/p.png) ` `",
-      "expected": "[x](https://a/`z) \\![p](https://example.test/p.png) ` \\`",
+      "expected": "[x](https://a/`z) !［p](https://example.test/p.png) ` \\`",
       "rule_ids": [
         "prose.image"
       ],
-      "kind": "regression"
+      "kind": "regression",
+      "operations": [
+        "prose",
+        "line"
+      ]
     },
     {
       "id": "image_linked",
@@ -821,6 +829,125 @@
         "line"
       ],
       "note": "Removal forms a comment that must disappear before another entity decode shortens it."
+    },
+    {
+      "id": "wikilink_inline_code",
+      "input": "`[[a]]`",
+      "expected": "`[［a]]`",
+      "rule_ids": [
+        "prose.wikilink"
+      ],
+      "kind": "regression",
+      "operations": [
+        "prose",
+        "line"
+      ]
+    },
+    {
+      "id": "wikilink_span_destination",
+      "input": "[x](https://a/`z) [[https://example.test/p.png]] `",
+      "expected": "[x](https://a/`z) [［https://example.test/p.png]] `",
+      "rule_ids": [
+        "prose.wikilink"
+      ],
+      "kind": "regression",
+      "operations": [
+        "prose",
+        "line"
+      ]
+    },
+    {
+      "id": "image_span_boundary",
+      "input": "!`[a](u)`",
+      "expected": "!`[a](u)`",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "control",
+      "operations": [
+        "prose",
+        "line"
+      ]
+    },
+    {
+      "id": "wikilink_span_boundary",
+      "input": "[`[a]]`",
+      "expected": "[`[a]]`",
+      "rule_ids": [
+        "prose.wikilink"
+      ],
+      "kind": "control",
+      "operations": [
+        "prose",
+        "line"
+      ]
+    },
+    {
+      "id": "image_unclosed_span",
+      "input": "`![a](u)",
+      "expected": "\\`\\![a](u)",
+      "rule_ids": [
+        "prose.image"
+      ],
+      "kind": "control",
+      "operations": [
+        "prose",
+        "line"
+      ]
+    },
+    {
+      "id": "wikilink_unclosed_span",
+      "input": "`[[a]]",
+      "expected": "\\`\\[[a]]",
+      "rule_ids": [
+        "prose.wikilink"
+      ],
+      "kind": "control",
+      "operations": [
+        "prose",
+        "line"
+      ]
+    },
+    {
+      "id": "wikilink_overlapping_code",
+      "input": "`[[[a`",
+      "expected": "`[［［a`",
+      "rule_ids": [
+        "prose.wikilink"
+      ],
+      "kind": "regression",
+      "operations": [
+        "prose",
+        "line"
+      ]
+    },
+    {
+      "id": "openers_code_backslashes",
+      "input": "`\\[[a]]/\\![a](u)`",
+      "expected": "`\\[［a]]/\\!［a](u)`",
+      "rule_ids": [
+        "prose.wikilink"
+      ],
+      "kind": "regression",
+      "operations": [
+        "prose",
+        "line"
+      ]
+    },
+    {
+      "id": "wikilink_code_definition_fixpoint",
+      "input": "`[[a]: u`",
+      "expected": "`[［a]\\: u`",
+      "rule_ids": [
+        "prose.wikilink",
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operations": [
+        "prose",
+        "line"
+      ],
+      "note": "Replacing the inner bracket completes a definition-shaped label; the colon rule must see the contained form."
     }
   ]
 }

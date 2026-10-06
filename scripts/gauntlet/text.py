@@ -134,6 +134,26 @@ def _break_marker_openers(text: str) -> str:
 
 
 def _escape_visible(text: str, *, code: bool = False) -> str:
+    if code:
+        # Fullwidth brackets contain openers even when scanner and renderer spans differ.
+        # Matching the original neighbours turns [[[ into [ followed by two U+FF3B.
+        text = re.sub(r"(?<=[!\[])\[", "\uff3b", text)
+    else:
+        # Start only at the first backslash so failed openers scan each run once.
+        text = re.sub(
+            r"(?<!\\)(\\*)!\[",
+            lambda match: (
+                match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "!["
+            ),
+            text,
+        )
+        text = re.sub(
+            r"(?<!\\)(\\*)\[(?=\[)",
+            lambda match: (
+                match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "["
+            ),
+            text,
+        )
     text = _DANGEROUS_LT_RE.sub("\uff1c" if code else "&lt;", text)
     return re.sub(
         r"@",
@@ -142,25 +162,6 @@ def _escape_visible(text: str, *, code: bool = False) -> str:
             if not match.start()
             or not re.match(r"[A-Za-z0-9]", text[match.start() - 1])
             else "@"
-        ),
-        text,
-    )
-
-
-def _escape_images(text: str) -> str:
-    # Inline spans and indentation cannot certify renderer code.
-    # Start only at the first backslash so failed openers scan each run once.
-    text = re.sub(
-        r"(?<!\\)(\\*)!\[",
-        lambda match: (
-            match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "!["
-        ),
-        text,
-    )
-    return re.sub(
-        r"(?<!\\)(\\*)\[(?=\[)",
-        lambda match: (
-            match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "["
         ),
         text,
     )
@@ -175,7 +176,7 @@ _DEFINITION_RE = re.compile(
 
 def _escape_definitions(text: str) -> str:
     # Escape the colon because escaping the closing bracket can discard footnotes.
-    # Twin: workflows/src/renderReport.js::outboundContain, plus LF continuation.
+    # Twin: workflows/src/renderReport.js::outboundDefinitions, plus LF continuation.
     return _DEFINITION_RE.sub(
         lambda match: (
             match.group()[:-1] + "\\:"
@@ -263,7 +264,7 @@ def _prepare_text(
             lines[start:index] = (
                 _break_marker_openers(block)
                 if protected_lines[start]
-                else _escape_definitions(_escape_images(block))
+                else _escape_definitions(block)
             ).split("\n")
             start = index
     prepared = []
@@ -280,6 +281,15 @@ def _prepare_text(
                 index = quote.start(1)
                 line = line[:index] + "\\" + line[index:]
         prepared.append(line if protected else _contain_line(line))
+    # Code-visible bracket replacements can complete definition-shaped labels.
+    start = 0
+    for index in range(1, len(prepared) + 1):
+        if index == len(prepared) or protected_lines[index] != protected_lines[start]:
+            if not protected_lines[start]:
+                prepared[start:index] = _escape_definitions(
+                    "\n".join(prepared[start:index])
+                ).split("\n")
+            start = index
     result = "\n".join(prepared)
     if fence is not None:
         result += "\n" + fence[0] * fence[1]

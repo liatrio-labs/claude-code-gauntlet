@@ -27,6 +27,47 @@ from tests.support.forge import FakeForge
 REPO = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize(
+    ("filepath", "expected"),
+    [
+        ("app/[[...slug]]/page.tsx", "`app/[\uff3b...slug]]/page.tsx:12`"),
+        ("src/![a](u).py", "`src/!\uff3ba](u).py:12`"),
+    ],
+)
+def test_summary_and_skipped_location_bytes(filepath: str, expected: str) -> None:
+    finding = {
+        "id": "location",
+        "severity": "high",
+        "file": filepath,
+        "line_start": 12,
+        "title": "Location",
+    }
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            "import { renderSummaryBody } from './workflows/src/renderReport.js';"
+            "let source = ''; for await (const chunk of process.stdin) source += chunk;"
+            "process.stdout.write(renderSummaryBody(JSON.parse(source)));",
+        ],
+        input=json.dumps({"findings": [finding]}),
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=True,
+    )
+    summary = result.stdout
+    assert expected in summary
+    assert outbound_text.prepare_prose(summary) == summary
+    skipped = post_review.build_skipped_section([(filepath, 12, finding)])
+    location = next(line[5:] for line in skipped.splitlines() if line.startswith("#### "))
+    assert location == expected
+    assert location.encode("utf-8") in summary.encode("utf-8")
+
+
 RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
 IDENTITY_SCRIPT = REPO / "scripts" / "resolve_pr_identity.py"
 
@@ -88,6 +129,20 @@ class TestSummaryIndexParity(unittest.TestCase):
                     "file": "src/a<`b.py",
                     "line_start": 1,
                     "title": "Path boundary",
+                },
+                {
+                    "id": "wikilink-location",
+                    "severity": "low",
+                    "file": "app/[[...slug]]/page.tsx",
+                    "line_start": 12,
+                    "title": "Wikilink path",
+                },
+                {
+                    "id": "image-location",
+                    "severity": "low",
+                    "file": "src/![a](u).py",
+                    "line_start": 12,
+                    "title": "Image path",
                 },
             ],
         }

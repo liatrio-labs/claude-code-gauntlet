@@ -3223,6 +3223,12 @@ function outboundBase(value) {
     .replace(/[\r\n]+/g, ' ');
 }
 function outboundVisible(text, code = false) {
+  if (code) {
+    text = text.replace(/(?<=[!\[])\[/g, '\uFF3B');
+  } else {
+    text = text.replace(/(?<!\\)(\\*)!\[/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}![`);
+    text = text.replace(/(?<!\\)(\\*)\[(?=\[)/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}[`);
+  }
   const escaped = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
   return escaped.replace(/@/g, (match, index) => (
     index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])
@@ -3234,12 +3240,13 @@ function outboundEscapedTick(text, index) {
   for (let at = index - 1; at >= 0 && text[at] === '\\'; at -= 1) slashes += 1;
   return slashes % 2 === 1;
 }
-function outboundContain(line) {
-  line = line.replace(/(?<!\\)(\\*)!\[/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}![`);
-  line = line.replace(/(?<!\\)(\\*)\[(?=\[)/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}[`);
-  line = line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
+function outboundDefinitions(line) {
+  return line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
     /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
   ));
+}
+function outboundContain(line) {
+  line = outboundDefinitions(line);
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
   let output = '';
   let index = 0;
@@ -3280,7 +3287,7 @@ function outboundContain(line) {
     output += outboundVisible(line.slice(index, next));
     index = next;
   }
-  return output;
+  return outboundDefinitions(output);
 }
 function prepareLine(value) {
   const text = outboundBase(value);

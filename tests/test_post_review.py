@@ -24,7 +24,6 @@ import gauntlet.prior_review as detect_prior_review
 import pytest
 from gauntlet import diff as diff_api
 from gauntlet import proc
-from gauntlet.delivery.fold import fold_inline_body
 from gauntlet.delivery.post import (
     _blockquote,
     _delivery_marker_suffix,
@@ -4540,7 +4539,7 @@ class TestInlineBodyBudget(unittest.TestCase):
             fold.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
             {"bytes": 220},
         ):
-            folded, dropped = fold_inline_body(
+            folded, dropped = fold.fold_inline_body(
                 "a" * 10 + "😀" + "b" * 200,
                 140,
                 "github",

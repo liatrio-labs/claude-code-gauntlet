@@ -201,6 +201,35 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
         assert text.prepare_prose(prose) == prose, repr(source)
 
 
+@pytest.mark.parametrize(
+    ("source", "expected", "prose"),
+    [
+        (
+            "app/[[...slug]]/page.tsx",
+            "`app/[\uff3b...slug]]/page.tsx`",
+            r"app/\[[...slug]]/page.tsx",
+        ),
+        ("src/![a](u).py", "`src/!\uff3ba](u).py`", r"src/\![a](u).py"),
+        ("src/[[[a.py", "`src/[\uff3b\uff3ba.py`", r"src/\[\[[a.py"),
+        (
+            "src/\\[[a]]/\\![a](u).py",
+            "`src/\\[\uff3ba]]/\\!\uff3ba](u).py`",
+            r"src/\[[a]]/\![a](u).py",
+        ),
+        ("src/\\\\[[[a.py", "`src/\\\\[\uff3b\uff3ba.py`", r"src/\\\[\[[a.py"),
+    ],
+)
+def test_location_openers_are_prose_fixed_points(
+    source: str, expected: str, prose: str
+) -> None:
+    location = text.prepare_location(source)
+    assert location == expected
+    assert text.prepare_prose(location) == expected
+    assert text.prepare_prose(text.prepare_prose(location)) == expected
+    assert text.prepare_prose(source) == prose
+    assert text.prepare_prose(prose) == prose
+
+
 @pytest.mark.parametrize("operation", ("prose", "line"))
 def test_seeded_markup_invariant(operation: TextOperation) -> None:
     for source in markup_corpus():

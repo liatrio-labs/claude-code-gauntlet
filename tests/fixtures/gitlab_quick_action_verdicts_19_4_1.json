@@ -1,6 +1,6 @@
 {
   "gitlab_version": "19.4.1",
-  "recorded": "2026-10-05",
+  "recorded": "2026-10-06",
   "cases": [
     {"id":"expected:user_mention","group":"expected","sha256":"df4f16e490fddc89e480c0e66873802604f5bfa605488b4332ac2f3429abf659","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"raw:user_mention","group":"raw","sha256":"f53288daadefc03b024b3c99d12e6b13464c45a272f5f49fd3f9cfccd365b161","paragraphs":[],"commands":[],"stored_equals_posted":true},
@@ -404,7 +404,7 @@
     {"id":"raw:image_shortcut","group":"raw","sha256":"6a0256225c5ee80f9447a173e2aca150cde7d2e6c381e45883720eeef9bc0726","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"expected:image_linked","group":"expected","sha256":"d8cc9042d940a95dea63152aad6e1ef97d246a68e70806159a5ac3c8e3c737b0","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"raw:image_linked","group":"raw","sha256":"a0b73b319b87ee0cc0c6700dc09b8dfb18cac8242af71a77206bd30224e7f346","paragraphs":[],"commands":[],"stored_equals_posted":true},
-    {"id":"expected:image_after_backtick_destination","group":"expected","sha256":"011f8502e2a5cc3697d72625e8b95521e3bd94630698d1712fa19a3c97ae40d3","paragraphs":[],"commands":[],"stored_equals_posted":true},
+    {"id":"expected:image_after_backtick_destination","group":"expected","sha256":"98f9cf0d8c0d108eb15861e35ed428ea7a634cfdbab431a0c212e1446c920acf","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"raw:image_after_backtick_destination","group":"raw","sha256":"e96df9735a3ba8dcf7cd6d5a4c67ef2a305a6a9203ce12c4a583a599bde0fc58","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"expected:image_already_escaped","group":"expected","sha256":"e31935fd58880d65abc013b3aba32abf96e68f3315accc7d7d83eaac17a427f0","paragraphs":[],"commands":[],"stored_equals_posted":true},
     {"id":"raw:image_already_escaped","group":"raw","sha256":"e31935fd58880d65abc013b3aba32abf96e68f3315accc7d7d83eaac17a427f0","paragraphs":[],"commands":[],"stored_equals_posted":true},

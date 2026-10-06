@@ -62,8 +62,13 @@ def assert_outbound_string_invariant(
         cursor = end
     outside.append(output[cursor:])
     for fragment in outside:
+        slashes = 0
+        for index, character in enumerate(fragment):
+            if slashes % 2 == 0:
+                assert fragment[index : index + 2] not in ("![", "[["), repr(fragment)
+            slashes = slashes + 1 if character == "\\" else 0
         markup = fragment
-        # Only caller-owned location wrappers bypass prose preparation.
+        # Code-owned locations cannot define references, but still contain openers.
         for location in literal_locations:
             markup = markup.replace(location, "")
         slashes = 0
@@ -71,9 +76,6 @@ def assert_outbound_string_invariant(
         first_bracket = True
         for index, character in enumerate(markup):
             escaped = slashes % 2 == 1
-            if not escaped:
-                assert markup[index : index + 2] != "![", repr(markup)
-                assert markup[index : index + 2] != "[[", repr(markup)
             if character == "[" and not escaped:
                 prefix = markup[line_start:index]
                 if first_bracket and not any(
@@ -133,6 +135,8 @@ def test_tracked_fixture_has_canonical_byte_layout():
         pytest.param("![a](u)", id="image"),
         pytest.param("[[alt|u]]", id="wikilink"),
         pytest.param("[[a", id="wikilink_bare_opener"),
+        pytest.param("`![a](u)`", id="image_in_code"),
+        pytest.param("`[[a]]`", id="wikilink_in_code"),
         pytest.param(": [critical]: u", id="colon_prefix"),
         pytest.param("~ [critical]: u", id="tilde_prefix"),
         pytest.param("[" + "a" * 5000 + "]: u", id="unbounded_label"),
@@ -635,7 +639,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
     assert location in summaries[0]
 
 
-def test_summary_image_location_is_literal_code_owned_text() -> None:
+def test_summary_image_location_uses_code_visible_brackets() -> None:
     path = "src/![a](u).py"
     result = _run_node(
         """
@@ -657,7 +661,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
         },
     )
     assert result.returncode == 0, result.stderr
-    location = "`src/![a](u).py:1`"
+    location = "`src/!\uff3ba](u).py:1`"
     assert outbound_text.prepare_location(path + ":1") == location
     assert location + ": \\![a](u)" in result.stdout
 

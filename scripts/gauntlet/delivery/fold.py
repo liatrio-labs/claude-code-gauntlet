@@ -158,13 +158,10 @@ def _fold(
     # synthetic closer. The final assembly measures the actual fence and retreats
     # whole lines when the closer is longer.
     reserve = utf8_len(f"\n\n{fold_line_for(total)}\n{fence_closer('```')}")
-    if allowance < reserve:
-        prefix = ""
-        cut_inside_line = False
-    else:
+    prefix = ""
+    cut_inside_line = False
+    if allowance >= reserve:
         prefix_allowance = allowance - reserve
-        prefix = ""
-        cut_inside_line = False
         for index, line in enumerate(text.split("\n")):
             next_part = line if index == 0 else f"\n{line}"
             remaining = prefix_allowance - utf8_len(prefix)

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, openProseFence, proseFenceCloser, normalizeReportSeverity, plural } from '../src/renderReport.js';
+import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, openProseFence, normalizeReportSeverity, plural } from '../src/renderReport.js';
 import { normalizeArgs, validateArgs } from '../src/args.js';
 import { SEVERITY_EMOJI, AGENTS, resolvePolicy } from '../src/registry.js';
 import { makeFinding, validArgs } from './helpers/pipelineMock.js';

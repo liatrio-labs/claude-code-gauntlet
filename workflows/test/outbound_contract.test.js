@@ -223,9 +223,9 @@ test('quoted locations contain path and line backticks inside their code span', 
   assert.equal(crossing.text, 'src/a＜`b.py:1');
 });
 
-test('summary image locations remain literal inside code-owned spans', () => {
+test('summary image locations use fullwidth brackets inside code-owned spans', () => {
   const bullet = summaryBullet({ file: 'src/![a](u).py', line_start: 1, line_end: 1, title: '![a](u)' });
-  assert.equal(locationSpan(bullet).text, 'src/![a](u).py:1');
+  assert.equal(locationSpan(bullet).text, 'src/!\uFF3Ba](u).py:1');
   assert.ok(bullet.endsWith(': \\![a](u)'));
 });
 
