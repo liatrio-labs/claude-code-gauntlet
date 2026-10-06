@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from gauntlet.markdown import (
+    TickRunIndex,
     code_span,
     open_fence,
     paired_code_spans,
-    span_close,
     tick_run_index,
 )
 from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
@@ -57,6 +57,8 @@ _EntityName = Literal[
     "lpar",
     "rpar",
     "bsol",
+    "nbsp",
+    "NonBreakingSpace",
 ]
 _NAMED_ENTITIES: dict[_EntityName, str] = {
     "commat": "@",
@@ -69,11 +71,11 @@ _NAMED_ENTITIES: dict[_EntityName, str] = {
     "lpar": "(",
     "rpar": ")",
     "bsol": "\\",
+    "nbsp": " ",
+    "NonBreakingSpace": " ",
 }
 _NAMED_ENTITY_PREFIXES = frozenset(
-    name[:length]
-    for name in _NAMED_ENTITIES
-    for length in range(1, len(name) + 1)
+    name[:length] for name in _NAMED_ENTITIES for length in range(1, len(name) + 1)
 )
 
 # A frozenset avoids CodeQL overly-large-range warnings while retaining TAB/LF.
@@ -97,7 +99,7 @@ _INVISIBLE_ORDS = frozenset(
     )
 )
 _NORMALIZER_BOUNDARY_RE = re.compile(
-    r"[&<>\-\x00-\x08\x0b-\x1f\x7f-\x9f\u00ad\u200b-\u200d"
+    r"[&<>\-\x00-\x08\x0b-\x1f\x7f-\x9f\u00a0\u00ad\u200b-\u200d"
     r"\ufeff\u2060\u202a-\u202e\u2066-\u2069]"
 )
 
@@ -140,6 +142,8 @@ def _normalize_outbound(text: str) -> str:
     output: list[_NormalizerEntry] = []
 
     def push(character: str) -> str | None:
+        if character == "\u00a0":
+            character = " "
         if ord(character) in _INVISIBLE_ORDS:
             return None
         previous = output[-1] if output else None
@@ -174,11 +178,7 @@ def _normalize_outbound(text: str) -> str:
                     entity = None
             elif entity.kind in ("decimal", "hex"):
                 if character == ";" and entity.has_digit:
-                    replacement = (
-                        chr(entity.value)
-                        if 32 <= entity.value <= 126
-                        else ""
-                    )
+                    replacement = chr(entity.value) if 32 <= entity.value <= 126 else ""
                 else:
                     digit = (
                         ord(character) - 48
@@ -228,7 +228,9 @@ def _normalize_outbound(text: str) -> str:
             and output[-2].character == "-"
             and output[-1].character == "-"
         ):
-            output[-1] = _NormalizerEntry(character, entity, len(output) - 4, len(output))
+            output[-1] = _NormalizerEntry(
+                character, entity, len(output) - 4, len(output)
+            )
             return None
         if (
             comment_start is not None
@@ -277,9 +279,9 @@ def _escape_visible(text: str, *, code: bool = False) -> str:
 
 
 _DEFINITION_RE = re.compile(
-    r"(?m)^[^A-Za-z\\\[\n]*\["
+    r"(?m)^[^A-Za-z\\\[\n]*\[(?:(\^[^\]\n]*)|"
     # The character alternative consumes continuation prefixes without rescans.
-    r"((?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$)))+)\]:"
+    r"((?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$)))+))\]:"
 )
 
 
@@ -313,21 +315,39 @@ def _escape_definitions(text: str) -> str:
     text = "\n".join(
         _escape_triggered_definition_colons(line) for line in text.split("\n")
     )
-    return _DEFINITION_RE.sub(
-        lambda match: (
-            match.group()[:-1] + "\\:"
-            if re.sub(r"\n[ \t>]*", "\n", match.group(1)).strip()
-            else match.group()
-        ),
-        text,
-    )
+
+    def escape(match: re.Match[str]) -> str:
+        colon = match.end() - 1
+        start = text.rfind("\n", 0, colon) + 1
+        end = text.find("\n", colon)
+        line = text[start : end if end >= 0 else len(text)]
+        # On triggered lines, remaining ASCII colons belong to selected code spans.
+        if _DEFINITION_LINK_TRIGGER_RE.search(line) is not None:
+            return match.group()
+        if (
+            match.group(1) is not None
+            or re.sub(r"\n[ \t>]*", "\n", match.group(2)).strip()
+        ):
+            return match.group()[:-1] + "\\:"
+        return match.group()
+
+    return _DEFINITION_RE.sub(escape, text)
 
 
 def _escape_tilde_runs(line: str) -> str:
+    spans = _containment_code_spans(line)
+    span_index = 0
     parts = []
     index = 0
     backslashes = 0
     while index < len(line):
+        if span_index < len(spans) and index == spans[span_index][0]:
+            end = spans[span_index][2]
+            parts.append(line[index:end])
+            index = end
+            span_index += 1
+            backslashes = 0
+            continue
         if line[index] == "~":
             end = index + 1
             while end < len(line) and line[end] == "~":
@@ -335,7 +355,7 @@ def _escape_tilde_runs(line: str) -> str:
             if end - index >= 3:
                 if backslashes % 2 == 0:
                     parts.append("\\")
-                parts.append(line[index:end])
+                parts.append("~" + "\\~" * (end - index - 1))
                 index = end
                 backslashes = 0
                 continue
@@ -346,13 +366,19 @@ def _escape_tilde_runs(line: str) -> str:
     return "".join(parts)
 
 
-def _containment_code_spans(line: str) -> list[tuple[int, int, int]]:
-    return paired_code_spans(tick_run_index(line))
+def _containment_code_spans(
+    line: str, index: TickRunIndex | None = None
+) -> list[tuple[int, int, int]]:
+    return paired_code_spans(
+        index if index is not None else tick_run_index(line), suffix_retry=True
+    )
 
 
 def _contain_line(line: str) -> str:
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     index = tick_run_index(line)
+    spans = _containment_code_spans(line, index)
+    span_index = 0
     out: list[str] = []
     cursor = 0
     run_index = 0
@@ -360,35 +386,22 @@ def _contain_line(line: str) -> str:
         run = index.runs[run_index]
         out.append(_escape_visible(line[cursor : run.start]))
         opener = run.start
-        width = run.width
         if run.escaped:
             out.append("`")
             opener += 1
-            width -= 1
-        paired = False
-        while width:
-            close = span_close(index, run.end, width)
-            if close is not None:
-                failed = run.width - int(run.escaped) - width
-                if failed:
-                    out.append("\\`" * failed)
-                opener_end = opener + width
-                out.append(line[opener:opener_end])
-                out.append(_escape_visible(line[opener_end:close], code=True))
-                close_end = close + width
-                out.append(line[close:close_end])
-                cursor = close_end
+        if span_index < len(spans) and spans[span_index][0] < run.end:
+            selected, close, close_end = spans[span_index]
+            span_index += 1
+            out.append("\\`" * (selected - opener))
+            opener_end = selected + close_end - close
+            out.append(line[selected:opener_end])
+            out.append(_escape_visible(line[opener_end:close], code=True))
+            out.append(line[close:close_end])
+            cursor = close_end
+            run_index += 1
+            while run_index < len(index.runs) and index.runs[run_index].start < cursor:
                 run_index += 1
-                while (
-                    run_index < len(index.runs)
-                    and index.runs[run_index].start < cursor
-                ):
-                    run_index += 1
-                paired = True
-                break
-            width -= 1
-            opener += 1
-        if not paired:
+        else:
             if not run.escaped:
                 out.append("\\`" * run.width)
             else:
@@ -440,7 +453,9 @@ def _prepare_text(
     offset = 0
     interval_index = 0
     for line in lines:
-        while interval_index < len(intervals) and intervals[interval_index][1] <= offset:
+        while (
+            interval_index < len(intervals) and intervals[interval_index][1] <= offset
+        ):
             interval_index += 1
         protected_lines.append(
             interval_index < len(intervals)
@@ -450,10 +465,9 @@ def _prepare_text(
     suffix_index = 0
     offset = 0
     for index, line in enumerate(lines):
-        while (
-            suffix_index < len(opener_suffixes)
-            and opener_suffixes[suffix_index][0] <= offset + len(line)
-        ):
+        while suffix_index < len(opener_suffixes) and opener_suffixes[suffix_index][
+            0
+        ] <= offset + len(line):
             start, _ = opener_suffixes[suffix_index]
             if offset <= start <= offset + len(line):
                 lines[index] = line[: start - offset]
@@ -469,14 +483,16 @@ def _prepare_text(
             end += 1
         block = "\n".join(lines[start:end])
         classified_lines.extend(
-            (_break_marker_openers(block) if protected_lines[start] else _escape_definitions(block)).split("\n")
+            (
+                _break_marker_openers(block)
+                if protected_lines[start]
+                else _escape_definitions(block)
+            ).split("\n")
         )
         start = end
     lines = classified_lines
     prepared = []
     for line, protected in zip(lines, protected_lines, strict=True):
-        if not protected and not single_line:
-            line = _escape_tilde_runs(line)
         shape = _BACKTICK_FENCE_SHAPE_RE.match(line) if not single_line else None
         if shape and not protected:
             tick = shape.start(1)
@@ -488,7 +504,10 @@ def _prepare_text(
             if quote:
                 index = quote.start(1)
                 line = line[:index] + "\\" + line[index:]
-        prepared.append(line if protected else _contain_line(line))
+        line = line if protected else _contain_line(line)
+        if not protected and not single_line:
+            line = _escape_tilde_runs(line)
+        prepared.append(line)
     # Bracket replacements can complete definition-shaped labels.
     defined_lines: list[str] = []
     start = 0
@@ -498,7 +517,9 @@ def _prepare_text(
             end += 1
         block = "\n".join(prepared[start:end])
         defined_lines.extend(
-            (_escape_definitions(block) if not protected_lines[start] else block).split("\n")
+            (_escape_definitions(block) if not protected_lines[start] else block).split(
+                "\n"
+            )
         )
         start = end
     prepared = defined_lines

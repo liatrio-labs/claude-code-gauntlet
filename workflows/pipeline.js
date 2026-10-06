@@ -3211,6 +3211,8 @@ const OUTBOUND_NAMED_ENTITIES = {
   lpar: '(',
   rpar: ')',
   bsol: '\\',
+  nbsp: ' ',
+  NonBreakingSpace: ' ',
 };
 const OUTBOUND_NAMED_ENTITY_PREFIXES = new Set(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
   Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
@@ -3219,6 +3221,7 @@ function normalizeOutboundText(value) {
   let text = reportAsText(value);
   const output = [];
   const push = (character) => {
+    if (character === '\u00A0') character = ' ';
     if (OUTBOUND_INVISIBLES.test(character)) return undefined;
     const previous = output.length ? output[output.length - 1] : null;
     let entity = previous ? previous.entity : null;
@@ -3384,37 +3387,46 @@ function outboundCodeSpans(line, index = outboundTickRunIndex(line)) {
       runIndex += 1;
       continue;
     }
-    const close = outboundSpanClose(index, run.end, width);
+    let close = -1;
+    while (width > 0) {
+      close = outboundSpanClose(index, run.end, width);
+      if (close >= 0) break;
+      width -= 1;
+      opener += 1;
+    }
     if (close < 0) {
       runIndex += 1;
       continue;
     }
     const closeEnd = close + width;
-    spans.push([opener, closeEnd]);
+    spans.push([opener, close, closeEnd]);
     runIndex += 1;
     while (runIndex < index.runs.length && index.runs[runIndex].start < closeEnd) runIndex += 1;
   }
   return spans;
 }
 function outboundDefinitions(line, forceColon = false) {
-  if (forceColon || /\]\\?\(/.test(line)) {
+  const guardColon = forceColon || /\]\\?\(/.test(line);
+  if (guardColon) {
     const spans = outboundCodeSpans(line);
     let spanIndex = 0;
     line = line.replace(/\](\\*):/g, (match, _slashes, offset) => {
       const colon = offset + match.length - 1;
-      while (spanIndex < spans.length && spans[spanIndex][1] <= colon) spanIndex += 1;
+      while (spanIndex < spans.length && spans[spanIndex][2] <= colon) spanIndex += 1;
       if (spanIndex < spans.length && spans[spanIndex][0] <= colon) return match;
       return `${match.slice(0, -1)}\uFF1A`;
     });
   }
-  return line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
-    /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
+  return line.replace(/^[^A-Za-z\\\[\n]*\[(?:(\^[^\]\n]*)|((?:\\[^\n]|[^\\\[\]\n])+))\]:/u, (match, footnote, label) => (
+    !guardColon && (footnote !== undefined || /\S/.test(label)) ? `${match.slice(0, -1)}\\:` : match
   ));
 }
 function outboundContain(line, forceColon = false) {
   line = outboundDefinitions(line, forceColon);
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
   const index = outboundTickRunIndex(line);
+  const spans = outboundCodeSpans(line, index);
+  let spanIndex = 0;
   const output = [];
   let cursor = 0;
   let runIndex = 0;
@@ -3422,33 +3434,22 @@ function outboundContain(line, forceColon = false) {
     const run = index.runs[runIndex];
     output.push(outboundVisible(line.slice(cursor, run.start)));
     let opener = run.start;
-    let width = run.width;
     if (run.escaped) {
       output.push('`');
       opener += 1;
-      width -= 1;
     }
-    let paired = false;
-    while (width > 0) {
-      const close = outboundSpanClose(index, run.end, width);
-      if (close >= 0) {
-        const failed = run.width - Number(run.escaped) - width;
-        if (failed) output.push('\\`'.repeat(failed));
-        const openerEnd = opener + width;
-        output.push(line.slice(opener, openerEnd));
-        output.push(outboundVisible(line.slice(openerEnd, close), true));
-        const closeEnd = close + width;
-        output.push(line.slice(close, closeEnd));
-        cursor = closeEnd;
-        runIndex += 1;
-        while (runIndex < index.runs.length && index.runs[runIndex].start < cursor) runIndex += 1;
-        paired = true;
-        break;
-      }
-      width -= 1;
-      opener += 1;
-    }
-    if (!paired) {
+    if (spanIndex < spans.length && spans[spanIndex][0] < run.end) {
+      const [selected, close, closeEnd] = spans[spanIndex];
+      spanIndex += 1;
+      output.push('\\`'.repeat(selected - opener));
+      const openerEnd = selected + closeEnd - close;
+      output.push(line.slice(selected, openerEnd));
+      output.push(outboundVisible(line.slice(openerEnd, close), true));
+      output.push(line.slice(close, closeEnd));
+      cursor = closeEnd;
+      runIndex += 1;
+      while (runIndex < index.runs.length && index.runs[runIndex].start < cursor) runIndex += 1;
+    } else {
       if (!run.escaped) output.push('\\`'.repeat(run.width));
       else output.push('\\`'.repeat(run.width - 1));
       cursor = run.end;
@@ -3463,7 +3464,40 @@ function prepareLine(value, forceColon = false) {
   return text.trim() === '' ? '' : outboundContain(text, forceColon === true);
 }
 function prepareSummaryTitle(value) {
-  return prepareLine(foldInline(oneLine(outboundBase(value))), true);
+  return outboundTildeRuns(prepareLine(foldInline(oneLine(outboundBase(value))), true));
+}
+function outboundTildeRuns(line) {
+  const spans = outboundCodeSpans(line);
+  let spanIndex = 0;
+  const parts = [];
+  let index = 0;
+  let backslashes = 0;
+  while (index < line.length) {
+    if (spanIndex < spans.length && index === spans[spanIndex][0]) {
+      const end = spans[spanIndex][2];
+      parts.push(line.slice(index, end));
+      index = end;
+      spanIndex += 1;
+      backslashes = 0;
+      continue;
+    }
+    if (line[index] === '~') {
+      let end = index + 1;
+      while (end < line.length && line[end] === '~') end += 1;
+      if (end - index >= 3) {
+        if (backslashes % 2 === 0) parts.push('\\');
+        parts.push(`~${'\\~'.repeat(end - index - 1)}`);
+        index = end;
+        backslashes = 0;
+        continue;
+      }
+    }
+    const character = line[index];
+    parts.push(character);
+    backslashes = character === '\\' ? backslashes + 1 : 0;
+    index += 1;
+  }
+  return parts.join('');
 }
 function inline(value) {
   return foldInline(oneLine(value));
@@ -3824,7 +3858,7 @@ function summaryBlock(builder, input) {
     const url = locationUrl(finding, permalinks);
     const link = url ? `[${where}](${url})` : where;
     const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
-    const bullet = `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`;
+    const bullet = outboundTildeRuns(`- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`);
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
     if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
       cutForLength = true;

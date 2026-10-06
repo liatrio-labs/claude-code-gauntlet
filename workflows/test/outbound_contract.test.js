@@ -43,6 +43,16 @@ const linePayload = JSON.parse(readFileSync(new URL('../../tests/fixtures/cross_
 assert.equal(linePayload.algorithm, 'outbound_line');
 const commentCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/outbound_comment_cases.json', import.meta.url), 'utf8')).cases;
 const summaryCases = linePayload.summary_cases;
+const tildeCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/outbound_text.json', import.meta.url), 'utf8')).cases
+  .filter((row) => row.id.startsWith('tilde_'));
+for (const row of tildeCases) {
+  test(`summary tilde: ${row.id}`, () => {
+    assert.equal(summaryBullet({ file: 'a.py', line_start: 3, line_end: 3, severity: 'high', title: row.input }),
+      `- 🟠 [HIGH] \`a.py:3\`: ${row.expected}`);
+    assert.equal(summaryBullet({ file: 'a.py', line_start: 3, line_end: 3, severity: 'high', title: row.expected }),
+      `- 🟠 [HIGH] \`a.py:3\`: ${row.expected}`);
+  });
+}
 const lineCases = [
   ...linePayload.cases,
   ...commentCases.filter((row) => ['single_line', 'location'].includes(row.field_class))
@@ -90,7 +100,7 @@ test('normalizer overlap semantics and seeded invariants', () => {
     assert.equal(reportRenderer.normalizeOutboundText(normalized), normalized, source);
     assert.equal(hasCompleteNonoverlappingComment(normalized), false, source);
   }
-  const alphabet = ['<!', '--', '>', '&', '#38;', '&#64;', '\u200b', 'x'];
+  const alphabet = ['<!', '--', '>', '&', '#38;', '&#64;', '\u200b', 'x', '\u00a0', '&nbsp;', '&NonBreakingSpace;'];
   let state = 0x471;
   for (let sample = 0; sample < 256; sample += 1) {
     let source = '';
@@ -102,7 +112,8 @@ test('normalizer overlap semantics and seeded invariants', () => {
     assert.equal(reportRenderer.normalizeOutboundText(normalized), normalized, source);
     assert.equal(hasCompleteNonoverlappingComment(normalized), false, source);
     assert.doesNotMatch(normalized, /&#(?:[0-9]+|[xX][0-9a-fA-F]+);/);
-    assert.doesNotMatch(normalized, /&(?:commat|excl|lbrack|lsqb|rsqb|rbrack|colon|lpar|rpar|bsol);/);
+    assert.doesNotMatch(normalized, /&(?:commat|excl|lbrack|lsqb|rsqb|rbrack|colon|lpar|rpar|bsol|nbsp|NonBreakingSpace);/);
+    assert.doesNotMatch(normalized, /\u00a0/);
     assert.doesNotMatch(normalized, /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/);
   }
 });
@@ -120,6 +131,8 @@ test('large_backslash_preparation', () => {
     ['image_split', `!${'\\'.repeat(500000)}[`, `!${'\\'.repeat(500000)}\uFF3B`],
     ['definition_pairs', `[${'\\a'.repeat(250000)}`, `[${'\\a'.repeat(250000)}`],
     ['definition_openers', `[${'\\a'.repeat(2500)} `.repeat(100), `[${'\\a'.repeat(2500)} `.repeat(100)],
+    ['footnote_label', `[^${'[\\a'.repeat(100000)}]: hidden text`, `[^${'[\\a'.repeat(100000)}]\\: hidden text`],
+    ['unclosed_footnote', `[^${'[\\a'.repeat(100000)}`, `[^${'[\\a'.repeat(100000)}`],
   ];
   const script = `
 import { prepareLine } from './workflows/src/renderReport.js';
@@ -143,6 +156,7 @@ const largePreparationCases = [
   ['comment-deletion-waves', `${'<!'.repeat(60000)}<!-- x -->${'-- y -->'.repeat(60000)}`, ''],
   ['tick-run', `x${'`'.repeat(350000)}`, `x${'\\`'.repeat(350000)}`],
   ['unequal-width-runs', `x ${Array.from({ length: 750 }, (_, index) => '`'.repeat(index + 1)).join(' ')}`, `x ${Array.from({ length: 750 }, (_, index) => '\\`'.repeat(index + 1)).join(' ')}`],
+  ['nbsp-references', `[&${'\u00a0&nbsp;&NonBreakingSpace;'.repeat(10000)}](a b) tail`, `[&${' '.repeat(30000)}](a b) tail`],
 ];
 
 for (const [id, source, expected] of largePreparationCases) {

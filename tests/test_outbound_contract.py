@@ -87,12 +87,10 @@ def assert_outbound_string_invariant(
                     assert line[definition.end() - 1] == "\uff1a", repr(line)
             if check_prose_rules:
                 for tilde in re.finditer(r"~{3,}", line):
-                    slashes = 0
-                    at = tilde.start() - 1
-                    while at >= 0 and line[at] == "\\":
-                        slashes += 1
-                        at -= 1
-                    assert slashes % 2 == 1, repr(line)
+                    position = line_offset + tilde.start()
+                    assert any(start <= position < end for start, end in spans), repr(
+                        line
+                    )
             line_offset += len(line) + 1
         slashes = 0
         line_start = 0
@@ -117,6 +115,12 @@ def assert_outbound_string_invariant(
                         if ch == "[":
                             break
                         if ch == "]":
+                            end = markup.find("\n", at)
+                            line = markup[line_start : end if end >= 0 else len(markup)]
+                            if re.search(r"\]\\?\(", line) and any(
+                                start <= at + 1 < end for start, end in spans
+                            ):
+                                break
                             assert not (nonblank and markup[at + 1 : at + 2] == ":"), (
                                 repr(markup)
                             )
@@ -166,8 +170,11 @@ def test_tracked_fixture_has_canonical_byte_layout():
         pytest.param("\\[[a]]", id="wikilink_escaped_bracket"),
         pytest.param(": [critical]: u", id="colon_prefix"),
         pytest.param("~ [critical]: u", id="tilde_prefix"),
-        pytest.param("before x [a]: //e/SENT](a b) after", id="midline_definition_pair"),
+        pytest.param(
+            "before x [a]: //e/SENT](a b) after", id="midline_definition_pair"
+        ),
         pytest.param("ordinary ~~~ text", id="midline_tilde_run"),
+        pytest.param(r"ordinary \~~~ text", id="partly_escaped_tilde_run"),
         pytest.param("~~~suggestion\nx = SENT\n~~~", id="fence_info"),
         pytest.param(": ~~~suggestion\nx = SENT\n~~~", id="definition_container_fence"),
         pytest.param("[" + "a" * 5000 + "]: u", id="unbounded_label"),

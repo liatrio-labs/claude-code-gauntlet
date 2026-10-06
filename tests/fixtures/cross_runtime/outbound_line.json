@@ -1508,6 +1508,213 @@
         "line",
         "prose"
       ]
+    },
+    {
+      "id": "nbsp_amp_raw",
+      "input": "[&\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0](a b)hidden text",
+      "expected": "[&                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_amp_named",
+      "input": "[&&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;](a b)hidden text",
+      "expected": "[&                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_amp_long_named",
+      "input": "[&&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;](a b)hidden text",
+      "expected": "[&                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_lt_raw",
+      "input": "[<\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0](a b)hidden text",
+      "expected": "[<                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_lt_named",
+      "input": "[<&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;](a b)hidden text",
+      "expected": "[<                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_lt_long_named",
+      "input": "[<&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;](a b)hidden text",
+      "expected": "[<                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_gt_raw",
+      "input": "[>\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0](a b)hidden text",
+      "expected": "[>                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_gt_named",
+      "input": "[>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;](a b)hidden text",
+      "expected": "[>                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_gt_long_named",
+      "input": "[>&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;](a b)hidden text",
+      "expected": "[>                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_decimal",
+      "input": "[&&#160;](a b)hidden text",
+      "expected": "[&](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_hex",
+      "input": "[&&#xA0;](a b)hidden text",
+      "expected": "[&](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_nested_named",
+      "input": "[&&#38;nbsp;&#38;NonBreakingSpace;](a b)tail",
+      "expected": "[&  ](a b)tail",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_suffix_short",
+      "input": "]](``[x]:`",
+      "expected": "]](\\``[x]:`",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_suffix_long",
+      "input": "``x [a]: u](a b) tail`",
+      "expected": "\\``x [a]: u](a b) tail`",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_slash_plain",
+      "input": "[^a\\]: hidden W1 text",
+      "expected": "[^a\\]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_bracket_plain",
+      "input": "[^x[a]: hidden W1 text",
+      "expected": "[^x[a]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_slash_list",
+      "input": "- [^a\\]: hidden W1 text",
+      "expected": "- [^a\\]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_bracket_list",
+      "input": "- [^x[a]: hidden W1 text",
+      "expected": "- [^x[a]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_slash_quote",
+      "input": "> [^a\\]: hidden W1 text",
+      "expected": "> [^a\\]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_bracket_quote",
+      "input": "> [^x[a]: hidden W1 text",
+      "expected": "> [^x[a]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_control_space",
+      "input": "[^x y]:",
+      "expected": "[^x y]\\:",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_control_empty",
+      "input": "[^]:",
+      "expected": "[^]\\:",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_control_even_slashes",
+      "input": "[^x\\\\]:",
+      "expected": "[^x\\\\]\\:",
+      "operations": [
+        "line",
+        "prose"
+      ]
     }
   ],
   "summary_cases": [
@@ -1744,6 +1951,84 @@
       },
       "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]:.py:3`: `x [a]: SENT](a b)`",
       "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]:.py:3`: `x [a]: SENT](a b)`"
+    },
+    {
+      "id": "tilde_interior_linked",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "a~~~b",
+            "line_start": 3,
+            "title": "a ~~~ b"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`a~~~b:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a\\~\\~\\~b#L3): a \\~\\~\\~ b",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`a~~~b:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a\\~\\~\\~b#L3): a \\~\\~\\~ b"
+    },
+    {
+      "id": "tilde_interior_plain",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "a~~~b",
+            "line_start": 3,
+            "title": "a ~~~ b"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `a~~~b:3`: a \\~\\~\\~ b",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `a~~~b:3`: a \\~\\~\\~ b"
+    },
+    {
+      "id": "tilde_segment_linked",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "~~~/x.py",
+            "line_start": 3,
+            "title": "a ~~~ b"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`~~~/x.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/\\~\\~\\~/x.py#L3): a \\~\\~\\~ b",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`~~~/x.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/\\~\\~\\~/x.py#L3): a \\~\\~\\~ b"
+    },
+    {
+      "id": "tilde_segment_plain",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "~~~/x.py",
+            "line_start": 3,
+            "title": "a ~~~ b"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `~~~/x.py:3`: a \\~\\~\\~ b",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `~~~/x.py:3`: a \\~\\~\\~ b"
     }
   ]
 }

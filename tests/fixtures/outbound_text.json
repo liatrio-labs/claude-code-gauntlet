@@ -520,25 +520,25 @@
       "id": "F-mid",
       "operation": "prose",
       "input": "ordinary ~~~ text",
-      "expected": "ordinary \\~~~ text"
+      "expected": "ordinary \\~\\~\\~ text"
     },
     {
       "id": "F-container-colon",
       "operation": "prose",
       "input": "lead\n\n: ~~~suggestion\n  x = SENT\n  ~~~\n\ntail",
-      "expected": "lead\n\n: \\~~~suggestion\n  x = SENT\n  \\~~~\n\ntail"
+      "expected": "lead\n\n: \\~\\~\\~suggestion\n  x = SENT\n  \\~\\~\\~\n\ntail"
     },
     {
       "id": "F-container-term",
       "operation": "prose",
       "input": "term\n: ~~~suggestion\n  x = SENT\n  ~~~\n\ntail",
-      "expected": "term\n: \\~~~suggestion\n  x = SENT\n  \\~~~\n\ntail"
+      "expected": "term\n: \\~\\~\\~suggestion\n  x = SENT\n  \\~\\~\\~\n\ntail"
     },
     {
       "id": "F-container-tilde",
       "operation": "prose",
       "input": "term\n~ ~~~suggestion\n  x = SENT\n  ~~~\n\ntail",
-      "expected": "term\n~ \\~~~suggestion\n  x = SENT\n  \\~~~\n\ntail"
+      "expected": "term\n~ \\~\\~\\~suggestion\n  x = SENT\n  \\~\\~\\~\n\ntail"
     },
     {
       "id": "A-mid",
@@ -845,6 +845,54 @@
       "operation": "location",
       "input": "src/[x]:.py:3",
       "expected": "`src/[x]:.py:3`"
+    },
+    {
+      "id": "tilde_code",
+      "operation": "prose",
+      "input": "Close with `~~~` not backticks.",
+      "expected": "Close with `~~~` not backticks."
+    },
+    {
+      "id": "tilde_strike",
+      "operation": "prose",
+      "input": "this is ~~~old~~~ text",
+      "expected": "this is \\~\\~\\~old\\~\\~\\~ text"
+    },
+    {
+      "id": "tilde_fixed",
+      "operation": "prose",
+      "input": "this is \\~\\~\\~old\\~\\~\\~ text",
+      "expected": "this is \\~\\~\\~old\\~\\~\\~ text"
+    },
+    {
+      "id": "tilde_odd",
+      "operation": "prose",
+      "input": "already \\~~~",
+      "expected": "already \\~\\~\\~"
+    },
+    {
+      "id": "tilde_even",
+      "operation": "prose",
+      "input": "even \\\\~~~",
+      "expected": "even \\\\\\~\\~\\~"
+    },
+    {
+      "id": "tilde_suffix_code",
+      "operation": "prose",
+      "input": "``x ~~~ tail`",
+      "expected": "\\``x ~~~ tail`"
+    },
+    {
+      "id": "tilde_long",
+      "operation": "prose",
+      "input": "a ~~~~~ b",
+      "expected": "a \\~\\~\\~\\~\\~ b"
+    },
+    {
+      "id": "tilde_short_control",
+      "operation": "prose",
+      "input": "a ~~ b ~ c",
+      "expected": "a ~~ b ~ c"
     }
   ]
 }

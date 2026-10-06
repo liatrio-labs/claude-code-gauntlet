@@ -151,7 +151,7 @@ def test_prose_fence_info_is_empty(delimiter: str, info: str, closed: bool) -> N
 def test_prose_tilde_runs_escape_all_container_prefixes(prefix: str) -> None:
     source = f"term\n{prefix}~~~suggestion\n  x = SENT\n  ~~~\n\ntail"
     assert text.prepare_prose(source) == (
-        f"term\n{prefix}\\~~~suggestion\n  x = SENT\n  \\~~~\n\ntail"
+        f"term\n{prefix}\\~\\~\\~suggestion\n  x = SENT\n  \\~\\~\\~\n\ntail"
     )
 
 
@@ -168,9 +168,9 @@ def test_prose_tilde_runs_escape_all_container_prefixes(prefix: str) -> None:
             "x [REDACTED]： //e/SENT](a b) after",
             id="redaction-before-definition-guard",
         ),
-        pytest.param(r"already \~~~", r"already \~~~", id="odd-slash-run"),
-        pytest.param(r"even \\~~~", r"even \\\~~~", id="even-slash-run"),
-        pytest.param("`~~~`", "`\\~~~`", id="inline-code-tilde-run"),
+        pytest.param(r"already \~~~", r"already \~\~\~", id="odd-slash-run"),
+        pytest.param(r"even \\~~~", r"even \\\~\~\~", id="even-slash-run"),
+        pytest.param("`~~~`", "`~~~`", id="inline-code-tilde-run"),
     ],
 )
 def test_prose_structure_pass_order(source: str, expected: str) -> None:
@@ -228,11 +228,17 @@ def test_entity_vocabulary_complete() -> None:
         "lpar;": "(",
         "rpar;": ")",
         "bsol;": "\\",
+        "nbsp;": "\u00a0",
+        "nbsp": "\u00a0",
+        "NonBreakingSpace;": "\u00a0",
     }
     targets = set(expected.values())
-    assert {name: value for name, value in html5.items() if value in targets} == expected
+    assert {
+        name: value for name, value in html5.items() if value in targets
+    } == expected
     for name, value in expected.items():
-        assert text._normalize_outbound("&" + name) == value
+        if name.endswith(";"):
+            assert text._normalize_outbound("&" + name) == value.replace("\u00a0", " ")
 
 
 @pytest.mark.parametrize(
@@ -250,9 +256,7 @@ def test_entity_vocabulary_complete() -> None:
             id="entity-decoded-closer",
         ),
         pytest.param("<!--x--\u200b>y-->z", "y-->z", id="invisible-completes-closer"),
-        pytest.param(
-            "<!-<!--x-->- y --<!--z-->> w", "> w", id="sibling-comment-join"
-        ),
+        pytest.param("<!-<!--x-->- y --<!--z-->> w", "> w", id="sibling-comment-join"),
         pytest.param(
             "<!-<!--x-->- a --&#6<!--y-->2; b -->",
             "2; b -->",
@@ -315,6 +319,8 @@ def test_seeded_normal_form(seed: Literal[1729, 917]) -> None:
         "lpar",
         "rpar",
         "bsol",
+        "nbsp",
+        "NonBreakingSpace",
     )
     sources = [row["input"] for row in VECTORS if isinstance(row["input"], str)]
     sources.extend(attack_corpus(seed))
@@ -323,6 +329,7 @@ def test_seeded_normal_form(seed: Literal[1729, 917]) -> None:
         assert not _has_complete_nonoverlapping_comment(normalized), repr(source)
         assert re.search(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);", normalized) is None
         assert all(f"&{name};" not in normalized for name in recognized_names)
+        assert "\u00a0" not in normalized
         assert not any(
             ord(character) in ord_range
             for character in normalized
@@ -530,6 +537,11 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
             "x " + " ".join("\\`" * width for width in range(1, 601)),
             id="unequal-width-runs",
         ),
+        pytest.param(
+            "[&" + "\u00a0&nbsp;&NonBreakingSpace;" * 10000 + "](a b) tail",
+            "[&" + " " * 30000 + "](a b) tail",
+            id="nbsp-references",
+        ),
     ],
 )
 def test_large_outbound_preparation(source: str, expected: str) -> None:
@@ -568,6 +580,16 @@ def test_large_backslash_preparation(
             ("[" + "\\a" * 2500 + "\n") * 100,
             ("[" + "\\a" * 2500 + "\n") * 100,
             id="unclosed_labels",
+        ),
+        pytest.param(
+            "[^" + "[\\a" * 100000 + "]: hidden text",
+            "[^" + "[\\a" * 100000 + "]\\: hidden text",
+            id="footnote_label",
+        ),
+        pytest.param(
+            "[^" + "[\\a" * 100000,
+            "[^" + "[\\a" * 100000,
+            id="unclosed_footnote",
         ),
     ],
 )
