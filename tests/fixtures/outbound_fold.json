@@ -224,6 +224,166 @@
       "expected_py": "\n\n_[folded: 99 more bytes; this review body reached the 65536-byte GitHub body limit]_",
       "expected_dropped_bytes": 99,
       "fits_allowance": false
+    },
+    {
+      "id": "review_unterminated_lf_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "keep\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 315,
+      "expected_py": "keep\n\n_[folded: 302 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 302,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix."
+    },
+    {
+      "id": "review_unterminated_crlf_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "keep\r\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 315,
+      "expected_py": "keep\n\n_[folded: 303 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 303,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix."
+    },
+    {
+      "id": "review_unterminated_cr_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "keep\r````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 315,
+      "expected_py": "keep\n\n_[folded: 302 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 302,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix."
+    },
+    {
+      "id": "inline_unterminated_lf_retreat",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "keep\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 325,
+      "expected_py": "keep\n\n_[folded: 302 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 302,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix.",
+      "surface": "inline"
+    },
+    {
+      "id": "inline_unterminated_crlf_retreat",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "keep\r\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 325,
+      "expected_py": "keep\n\n_[folded: 303 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 303,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix.",
+      "surface": "inline"
+    },
+    {
+      "id": "inline_unterminated_cr_retreat",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "keep\r````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 325,
+      "expected_py": "keep\n\n_[folded: 302 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 302,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix.",
+      "surface": "inline"
+    },
+    {
+      "id": "review_first_line_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 315,
+      "expected_py": "\n\n_[folded: 301 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 301,
+      "note": "An oversized closer forces removal of the first logical line, which has no earlier separator."
+    },
+    {
+      "id": "inline_first_line_retreat",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "surface": "inline",
+      "py_allowance": 325,
+      "expected_py": "\n\n_[folded: 301 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 301,
+      "note": "An oversized closer forces removal of the first logical line, which has no earlier separator."
+    },
+    {
+      "id": "review_repeated_whole_line_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+        "repeat": "y",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 420,
+      "expected_py": "\n\n_[folded: 402 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 402,
+      "note": "Retreating a complete content line leaves an unterminated opener that still exceeds the allowance; it must retreat as a whole line."
+    },
+    {
+      "id": "inline_suggestion_at_zero",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "```suggestion extra",
+        "repeat": "x",
+        "count": 1000
+      },
+      "platform": "github",
+      "surface": "inline",
+      "py_allowance": 130,
+      "expected_py": "\n\n_[folded: 1019 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1019,
+      "note": "Offset zero is a suggestion opener too; retiring this overlong info line must not expose a shortened suggestion label."
+    },
+    {
+      "id": "inline_suggestion_cr_span_retreat",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "right`\r```suggestion\rright`\n",
+        "repeat": "tail",
+        "count": 100
+      },
+      "platform": "github",
+      "surface": "inline",
+      "py_allowance": 140,
+      "expected_py": "right\n\n_[folded: 423 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 423,
+      "note": "The span scanner splits on LF; a lone-CR suggestion boundary can fall inside a completed span and must retreat to its opener."
     }
   ]
 }

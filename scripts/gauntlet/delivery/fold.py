@@ -108,7 +108,6 @@ def _retreat_fold_prefix(
 ) -> tuple[str, bool]:
     if suggestion_start is not None:
         prefix = prefix[:suggestion_start]
-        cut_inside_line = False
     elif cut_inside_line and not prefix.endswith(("\n", "\r")):
         prefix = prefix[:-1]
     else:
