@@ -681,7 +681,7 @@ export function prepareLine(value, forceColon = false) {
 }
 
 function prepareSummaryTitle(value) {
-  return outboundTildeRuns(prepareLine(foldInline(oneLine(outboundBase(value))), true));
+  return prepareLine(foldInline(oneLine(outboundBase(value))), true);
 }
 
 function outboundTildeRuns(line) {

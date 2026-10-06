@@ -914,6 +914,18 @@
       "input": "See [^The handler W1\nmore W2] tail W3",
       "expected": "See [^The handler W1\nmore W2] tail W3",
       "js": "n/a"
+    },
+    {
+      "id": "tilde_paired_span_then_outside_run",
+      "operation": "prose",
+      "input": "see `x` then ~~~ here",
+      "expected": "see `x` then \\~\\~\\~ here"
+    },
+    {
+      "id": "tilde_unpaired_tick_then_outside_run",
+      "operation": "prose",
+      "input": "see `x` then `unpaired ~~~ here",
+      "expected": "see `x` then \\`unpaired \\~\\~\\~ here"
     }
   ]
 }

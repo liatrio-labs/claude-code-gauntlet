@@ -526,6 +526,7 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
             id="entity-built-comment-openers",
         ),
         pytest.param("&" + "#38;" * 20000 + "#64;", "\uff20", id="nested-entities"),
+        pytest.param("&#" + "9" * 225000 + ";", "", id="numeric_saturation"),
         pytest.param(
             "<!" * 55000 + "<!-- x -->" + "-- y -->" * 55000,
             "",

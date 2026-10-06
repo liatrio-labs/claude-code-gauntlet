@@ -3457,7 +3457,7 @@ function prepareLine(value, forceColon = false) {
   return text.trim() === '' ? '' : outboundContain(text, forceColon === true);
 }
 function prepareSummaryTitle(value) {
-  return outboundTildeRuns(prepareLine(foldInline(oneLine(outboundBase(value))), true));
+  return prepareLine(foldInline(oneLine(outboundBase(value))), true);
 }
 function outboundTildeRuns(line) {
   const spans = outboundCodeSpans(line);

@@ -1880,6 +1880,61 @@
         "line",
         "prose"
       ]
+    },
+    {
+      "id": "colon_three_triggered_occurrences",
+      "input": "x [a]: [b]: [c]: u](a b)",
+      "expected": "x [a]\uff1a [b]\uff1a [c]\uff1a u](a b)"
+    },
+    {
+      "id": "invisible_c0",
+      "input": "A\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\u000b\f\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001fB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_del",
+      "input": "A\u007fB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_c1",
+      "input": "A\u0080\u0081\u0082\u0083\u0084\u0085\u0086\u0087\u0088\u0089\u008a\u008b\u008c\u008d\u008e\u008f\u0090\u0091\u0092\u0093\u0094\u0095\u0096\u0097\u0098\u0099\u009a\u009b\u009c\u009d\u009e\u009fB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_soft_hyphen",
+      "input": "A\u00adB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_zero_width",
+      "input": "A\u200b\u200c\u200dB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_bom",
+      "input": "A\ufeffB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_word_joiner",
+      "input": "A\u2060B",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_bidi_embedding",
+      "input": "A\u202a\u202b\u202c\u202d\u202eB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_bidi_isolates",
+      "input": "A\u2066\u2067\u2068\u2069B",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_cr",
+      "input": "A\rB",
+      "expected": "AB"
     }
   ],
   "summary_cases": [
