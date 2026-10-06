@@ -182,6 +182,7 @@
     },
     {
       "id": "safe_integer_bounds",
+      "also": "js_negative_zero",
       "input": [
         0,
         -0,
@@ -213,6 +214,7 @@
     },
     {
       "id": "key_order_boundaries",
+      "also": "python_key_order",
       "input": {
         "b": 1,
         "4294967295": 2,
@@ -236,6 +238,7 @@
     },
     {
       "id": "key_order_nested_array_object",
+      "also": "python_key_order",
       "input": {
         "outer": [
           {

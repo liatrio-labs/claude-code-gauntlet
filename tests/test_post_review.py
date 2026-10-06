@@ -4445,23 +4445,6 @@ class TestBuildSkippedSection(unittest.TestCase):
         self.assertNotIn("prose\n\n\n---", body)
 
 
-class TestProseFenceBudget(unittest.TestCase):
-    def test_drop_last_line_accepts_every_line_ending(self):
-        # Mutation: split on LF only, or keep one byte of a CRLF.
-        cases = {
-            "a\r\nb\r\n": "a\r\n",
-            "a\r\nb": "a",
-            "a\rb\r": "a\r",
-            "a\rb": "a",
-            "a\nb\n": "a\n",
-            "a\r\n": "",
-            "abc": "",
-        }
-        for prefix, expected in cases.items():
-            with self.subTest(prefix=prefix):
-                self.assertEqual(fold._drop_last_line(prefix), expected)
-
-
 class TestInlineBodyBudget(unittest.TestCase):
     SHA = "a" * 40
     KEY_A = "b" * 16

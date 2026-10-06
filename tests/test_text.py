@@ -9,10 +9,10 @@ import gauntlet.text as text
 import pytest
 from gauntlet.markdown import open_fence
 
+from tests.test_outbound_contract import assert_outbound_string_invariant
 from tests.tools.outbound import (
     TextOperation,
     TextVector,
-    assert_outbound_string_invariant,
     attack_corpus,
     comment_cases,
     line_vectors,
@@ -96,7 +96,7 @@ def test_text_vector(case: TextVector) -> None:
         assert_outbound_string_invariant(
             actual or "", check_prose_rules=case["operation"] in ("prose", "rule")
         )
-    if case["id"].startswith("fake_fence_") or case["id"] == "invalid_fence_info":
+    if case.get("also") == "untrusted_fence":
         assert isinstance(case["input"], str)
         assert open_fence(case["input"], strict=True) is None
 
@@ -106,10 +106,12 @@ def test_text_vector(case: TextVector) -> None:
     [
         ("&#62;&#62;&#62;", None, "\\>>>"),
         ("redactor output", "/close\n>>>", "\\/close\n\\>>>"),
+        ("redactor output", "[[alt|u]]", "\\[[alt|u]]"),
     ],
     ids=[
         "quote_after_normalization",
         "quote_after_redaction",
+        "wikilink_after_redaction",
     ],
 )
 def test_text_pass_order(
@@ -196,8 +198,14 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
         assert text.prepare_line(line) == line, repr(source)
         prose = text.prepare_prose(source)
         assert text.prepare_prose(prose) == prose, repr(source)
-        assert_outbound_string_invariant(line, check_prose_rules=False)
-        assert_outbound_string_invariant(prose)
+
+
+@pytest.mark.parametrize("operation", ("prose", "line"))
+def test_seeded_markup_invariant(operation: TextOperation) -> None:
+    for source in markup_corpus():
+        assert_outbound_string_invariant(
+            PREPARERS[operation](source) or "", check_prose_rules=operation == "prose"
+        )
 
 
 @pytest.mark.parametrize("operation", ("prose", "line", "optional", "rule"))

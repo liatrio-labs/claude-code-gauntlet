@@ -108,11 +108,8 @@ _MULTILINE_QUOTE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(
 
 
 def _remove_comments(text: str) -> str:
-    while True:
-        cleaned = _HTML_COMMENT_RE.sub("", text)
-        if cleaned == text:
-            return text
-        text = cleaned
+    # The normalization fixed point also removes comment openers made by removal.
+    return _HTML_COMMENT_RE.sub("", text)
 
 
 def _normalize_outbound(text: str) -> str:
@@ -147,60 +144,42 @@ def _escape_visible(text: str, *, code: bool = False) -> str:
 
 def _escape_images(text: str) -> str:
     # Inline spans and indentation cannot certify renderer code.
-    return re.sub(
+    text = re.sub(
         r"(\\*)!\[",
         lambda match: (
             match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "!["
         ),
         text,
     )
+    return re.sub(
+        r"(\\*)\[\[(?=(?:\\[\s\S]|[^\\\[])*?\]\])",
+        lambda match: (
+            match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "[["
+        ),
+        text,
+    )
 
 
-_DEFINITION_START_RE = re.compile(r"(?m)^(?:[ \t>+*-]|[0-9]+[.)])*\[")
-_LABEL_CONTINUATION_RE = re.compile(r"[ \t>]*")
+_DEFINITION_RE = re.compile(
+    r"(?m)^[^A-Za-z\\\[\n]*\["
+    r"((?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$))[ \t>]*)+)\]:"
+)
 
 
 def _escape_definitions(text: str) -> str:
     # Escape the colon because escaping the closing bracket can discard footnotes.
-    colons: set[int] = set()
-    for match in _DEFINITION_START_RE.finditer(text):
-        index = match.end()
-        length = 0
-        nonblank = False
-        while index < len(text) and length <= 999:
-            character = text[index]
-            if character == "\\" and index + 1 < len(text) and text[index + 1] != "\n":
-                nonblank = True
-                length += 2
-                index += 2
-                continue
-            if character == "[":
-                break
-            if character == "]":
-                if nonblank and text[index + 1 : index + 2] == ":":
-                    colons.add(index + 1)
-                break
-            if character == "\n":
-                continuation = _LABEL_CONTINUATION_RE.match(text, index + 1)
-                assert continuation is not None
-                index = continuation.end()
-                if index == len(text) or text[index] == "\n":
-                    break
-            else:
-                nonblank = nonblank or not character.isspace()
-                index += 1
-            length += 1
-    out: list[str] = []
-    start = 0
-    for colon in sorted(colons):
-        out.append(text[start:colon] + "\\")
-        start = colon
-    out.append(text[start:])
-    return "".join(out)
+    # Twin: workflows/src/renderReport.js::outboundContain, plus LF continuation.
+    return _DEFINITION_RE.sub(
+        lambda match: (
+            match.group()[:-1] + "\\:"
+            if re.sub(r"\n[ \t>]*", "\n", match.group(1)).strip()
+            else match.group()
+        ),
+        text,
+    )
 
 
 def _contain_line(line: str) -> str:
-    line = _escape_images(line)
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     out = []
     index = 0
@@ -277,7 +256,7 @@ def _prepare_text(
             lines[start:index] = (
                 _break_marker_openers(block)
                 if protected_lines[start]
-                else _escape_definitions(block)
+                else _escape_definitions(_escape_images(block))
             ).split("\n")
             start = index
     prepared = []

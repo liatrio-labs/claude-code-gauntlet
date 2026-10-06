@@ -9,10 +9,8 @@ from pathlib import Path
 import gauntlet.delivery.post as post_review
 import gauntlet.text as outbound_text
 import pytest
+from gauntlet.markdown import open_fence
 
-from tests.tools.outbound import (
-    assert_outbound_string_invariant as _assert_outbound_string_invariant,
-)
 from tests.tools.outbound import (
     line_vectors,
     text_vectors,
@@ -44,7 +42,94 @@ _CONTAINMENT_RULES = (
     "prose.multiline_quote",
     "prose.image",
     "prose.reference_definition",
+    "prose.wikilink",
 )
+
+
+def assert_outbound_string_invariant(
+    output: str,
+    *,
+    check_prose_rules: bool = True,
+    literal_locations: tuple[str, ...] = (),
+) -> None:
+    fences: list[tuple[int, int]] = []
+    open_fence(output, strict=True, intervals=fences)
+    cursor = 0
+    outside: list[str] = []
+    for start, end in fences:
+        outside.append(output[cursor:start])
+        assert not outbound_text.has_marker_opener(output[start:end])
+        cursor = end
+    outside.append(output[cursor:])
+    for fragment in outside:
+        markup = fragment
+        # Only caller-owned location wrappers bypass prose preparation.
+        for location in literal_locations:
+            markup = markup.replace(location, "")
+        slashes = 0
+        line_start = 0
+        first_bracket = True
+        for index, character in enumerate(markup):
+            escaped = slashes % 2 == 1
+            if not escaped:
+                assert markup[index : index + 2] != "![", repr(markup)
+            if character == "[" and not escaped:
+                if markup[index : index + 2] == "[[":
+                    at = index + 2
+                    while at < len(markup):
+                        if markup[at] == "\\":
+                            at += 2
+                            continue
+                        if markup[at] == "[":
+                            break
+                        assert markup[at : at + 2] != "]]", repr(markup)
+                        at += 1
+                prefix = markup[line_start:index]
+                if first_bracket and not any(
+                    "A" <= ch <= "Z" or "a" <= ch <= "z" or ch == "\\" for ch in prefix
+                ):
+                    at = index + 1
+                    nonblank = False
+                    while at < len(markup):
+                        ch = markup[at]
+                        if ch == "\\":
+                            if at + 1 == len(markup) or markup[at + 1] == "\n":
+                                break
+                            nonblank = True
+                            at += 2
+                            continue
+                        if ch == "[":
+                            break
+                        if ch == "]":
+                            assert not (nonblank and markup[at + 1 : at + 2] == ":"), (
+                                repr(markup)
+                            )
+                            break
+                        if ch == "\n":
+                            at += 1
+                            while at < len(markup) and markup[at] in " \t>":
+                                at += 1
+                            if at == len(markup) or markup[at] == "\n":
+                                break
+                            continue
+                        nonblank = nonblank or not ch.isspace()
+                        at += 1
+            if character == "[":
+                first_bracket = False
+            if character == "\n":
+                line_start = index + 1
+                first_bracket = True
+            slashes = slashes + 1 if character == "\\" else 0
+        for visible in (fragment, fragment.replace("`", "")):
+            assert not re.search(r"<(?=[A-Za-z/!?])", visible), repr(visible)
+            assert not re.search(r"(?<![A-Za-z0-9])@", visible), repr(visible)
+            assert not outbound_text.has_marker_opener(visible), repr(visible)
+        if check_prose_rules:
+            for line in fragment.splitlines():
+                assert not line.startswith("/"), line
+                assert not re.match(
+                    r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})", line
+                ), line
 
 
 def test_tracked_fixture_has_canonical_byte_layout():
@@ -52,9 +137,25 @@ def test_tracked_fixture_has_canonical_byte_layout():
 
 
 @pytest.mark.parametrize(
+    "output",
+    [
+        pytest.param("![a](u)", id="image"),
+        pytest.param("[[alt|u]]", id="wikilink"),
+        pytest.param(": [critical]: u", id="colon_prefix"),
+        pytest.param("~ [critical]: u", id="tilde_prefix"),
+        pytest.param("[" + "a" * 5000 + "]: u", id="unbounded_label"),
+        pytest.param("[crit\nical]: u", id="multiline_label"),
+    ],
+)
+def test_invariant_rejects_active_markup(output: str) -> None:
+    with pytest.raises(AssertionError):
+        assert_outbound_string_invariant(output)
+
+
+@pytest.mark.parametrize(
     "case_id",
     ["table_even_slashes"],
-    ids=["test_table_pipe_uses_plain_inline_pairing"],
+    ids=["table_even_slashes"],
 )
 def test_fixture_regression_classification(case_id: str) -> None:
     assert next(case for case in CASES if case["id"] == case_id)["kind"] == "regression"
@@ -426,7 +527,7 @@ def test_comment_only_rule_falls_back_to_spec_text():
 def test_outbound_invariant_rejects_unescaped_slash_and_quote_openers():
     for output in ("/close", ">>>"):
         with pytest.raises(AssertionError):
-            _assert_outbound_string_invariant(output)
+            assert_outbound_string_invariant(output)
 
 
 def test_rule_fixture_rows_are_contained_after_blockquote_prefix():
@@ -455,7 +556,7 @@ def test_rule_fixture_rows_are_contained_after_blockquote_prefix():
             quoted = "\n".join("> " + line for line in row["expected"].split("\n"))
             assert quoted in rendered, row["id"]
             unquoted = "\n".join(line[2:] for line in quoted.split("\n"))
-            _assert_outbound_string_invariant(unquoted)
+            assert_outbound_string_invariant(unquoted)
 
 
 def test_multiline_non_rule_fields_start_at_column_zero():
@@ -489,7 +590,7 @@ def test_string_invariant_for_fixtures_seeded_corpus_and_poisoned_sinks():
         post_review.render_group_body(poison, [poison]),
         post_review.build_skipped_section([("app/@modal/<Slot>.tsx", 8, poison)]),
     ):
-        _assert_outbound_string_invariant(sink)
+        assert_outbound_string_invariant(sink)
     summary_script = """
 import { renderSummaryBody } from './workflows/src/renderReport.js';
 let source = '';
@@ -498,7 +599,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
 """
     summary = _run_node(summary_script, _summary_inputs()[0])
     assert summary.returncode == 0, summary.stderr
-    _assert_outbound_string_invariant(summary.stdout)
+    assert_outbound_string_invariant(summary.stdout)
 
 
 def test_generated_summary_is_unchanged_by_python_guard():

@@ -216,7 +216,7 @@ export function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
   return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
 }
 
-// Twin of `_fold_review_body` in `scripts/gauntlet/delivery/post.py`.
+// Twin of fold_review_body in gauntlet.delivery.fold.
 export function openProseFence(text) {
   const value = reportAsText(text);
   let state = null;
@@ -450,8 +450,9 @@ function outboundEscapedTick(text, index) {
 function outboundContain(line) {
   // Twin of gauntlet.text containment; inline spans cannot certify renderer code.
   line = line.replace(/(\\*)!\[/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}![`);
-  line = line.replace(/^(?:[ \t>+*-]|[0-9]+[.)])*\[((?:\\[^\n]|[^\\\[\]\n]){1,999})\]:/u, (match, label) => (
-    [...label].length <= 999 && /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
+  line = line.replace(/(\\*)\[\[(?=(?:\\[\s\S]|[^\\\[])*?\]\])/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}[[`);
+  line = line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
+    /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
   ));
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
   let output = '';

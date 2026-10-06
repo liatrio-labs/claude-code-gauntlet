@@ -14,10 +14,10 @@ import gauntlet.delivery.post as post_review
 import pytest
 from gauntlet.markdown import open_fence
 
-from tests.tools import render_probes
-from tests.tools.outbound import (
+from tests.test_outbound_contract import (
     assert_outbound_string_invariant as _assert_outbound_string_invariant,
 )
+from tests.tools import render_probes
 from tests.tools.render_probes import (
     build_composed_quick_action_cases,
     build_quick_action_case_list,

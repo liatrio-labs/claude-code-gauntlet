@@ -56,9 +56,35 @@ for (const row of lineCases) {
 }
 
 function assertLineInvariant(output) {
-  assert.doesNotMatch(output, /(?<!\\)(?:\\\\)*!\[/);
-  for (const match of output.matchAll(/^(?:[ \t>+*-]|[0-9]+[.)])*\[((?:\\.|[^\\\[\]]){1,999})\]:/gu)) {
-    assert.ok([...match[1]].length > 999 || !/\S/.test(match[1]), output);
+  let slashes = 0;
+  let firstBracket = true;
+  for (let index = 0; index < output.length; index += 1) {
+    const character = output[index];
+    const escaped = slashes % 2 === 1;
+    if (!escaped) assert.notEqual(output.slice(index, index + 2), '![');
+    if (character === '[' && !escaped) {
+      if (output.slice(index, index + 2) === '[[') {
+        for (let at = index + 2; at < output.length; at += 1) {
+          if (output[at] === '\\') { at += 1; continue; }
+          if (output[at] === '[') break;
+          assert.notEqual(output.slice(at, at + 2), ']]');
+        }
+      }
+      if (firstBracket && ![...output.slice(0, index)].some((ch) => /[A-Za-z\\]/.test(ch))) {
+        let nonblank = false;
+        for (let at = index + 1; at < output.length; at += 1) {
+          if (output[at] === '\\') { nonblank = true; at += 1; continue; }
+          if (output[at] === '[') break;
+          if (output[at] === ']') {
+            assert.ok(!nonblank || output[at + 1] !== ':');
+            break;
+          }
+          nonblank ||= /\S/.test(output[at]);
+        }
+      }
+    }
+    if (character === '[') firstBracket = false;
+    slashes = character === '\\' ? slashes + 1 : 0;
   }
   for (const visible of [output, output.replaceAll('`', '')]) {
     assert.doesNotMatch(visible, /<(?=[A-Za-z/!?])/);
@@ -71,7 +97,7 @@ test('seeded_line_containment', () => {
   // The Python corpus also covers prose; this native corpus guards the JS line boundary.
   const alphabets = [
     '@<&#;`!?/0123456789abcdefghijklmnopqrstuvwxyz \n\r',
-    '@<&#;`!?/0123456789abcdefghijklmnopqrstuvwxyz []():\\ \n\r',
+    '@<&#;`!?/0123456789abcdefghijklmnopqrstuvwxyz []():~|\\ \n\r',
   ];
   let state = 1729;
   const next = () => {
@@ -89,6 +115,12 @@ test('seeded_line_containment', () => {
     }
   }
   sources.push('```\n<!--\n\ncode-gauntlet-findings: poisoned\n```');
+  const markupAtoms = [': ', '~ ', '[[', ']]', '|', 'a'.repeat(1000), '[critical]: u', '[[https://example.test/p.png]]', '[', ']: u'];
+  for (let index = 0; index < 5000; index += 1) {
+    let source = '';
+    for (let at = 0, count = next() % 8 + 1; at < count; at += 1) source += markupAtoms[next() % markupAtoms.length];
+    sources.push(source);
+  }
   for (const source of sources) {
     const prepared = prepareLine(source);
     assertLineInvariant(prepared);

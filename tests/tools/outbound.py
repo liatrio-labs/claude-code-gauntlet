@@ -1,14 +1,11 @@
-"""Literal outbound vectors and input-only seeded corpus builders."""
+"""Typed literal outbound rows, fixture readers and seeded input corpora."""
 
 import json
 import random
-import re
 from pathlib import Path
 from typing import Literal, TypedDict, cast, get_args
 
 from gauntlet.delivery.fold import Platform, Surface
-from gauntlet.markdown import open_fence
-from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 TextOperation = Literal["prose", "line", "optional", "rule", "redact", "location"]
@@ -17,6 +14,9 @@ TextOperation = Literal["prose", "line", "optional", "rule", "redact", "location
 class TextOptions(TypedDict, total=False):
     rule_ids: list[str]
     kind: Literal["regression", "control"]
+    also: Literal["untrusted_fence"]
+    note: str
+    operations: list[TextOperation]
 
 
 class TextVector(TextOptions):
@@ -50,9 +50,11 @@ def line_vectors() -> list[TextVector]:
     assert payload["algorithm"] == "outbound_line"
     return [
         cast(
-            TextVector, {**row, "id": "outbound_line_" + row["id"], "operation": "line"}
+            TextVector,
+            {**row, "id": f"outbound_{operation}_" + row["id"], "operation": operation},
         )
         for row in payload["cases"]
+        for operation in row.get("operations", ["line"])
     ]
 
 
@@ -83,6 +85,8 @@ class FoldOptions(TypedDict, total=False):
     js_limit: int
     expected_py: str | list[str | int] | None
     expected_js: str | list[str | int] | None
+    also: Literal["prepared_fixpoint", "string_invariant"]
+    note: str
 
 
 class FoldVector(FoldOptions):
@@ -140,58 +144,17 @@ def markup_corpus() -> list[str]:
         "-",
         "1.",
         "![a](u)",
+        ": ",
+        "~ ",
+        "[[",
+        "]]",
+        "|",
+        "a" * 1000,
+        "[critical]: u",
+        "[" + "a" * 1000 + "]: u",
+        "[[https://example.test/p.png]]",
     )
     return [
         "".join(generator.choices(atoms, k=generator.randint(1, 30)))
         for _ in range(5000)
     ]
-
-
-_DANGEROUS_LT = re.compile(r"<(?=[A-Za-z/!?])")
-_DANGEROUS_AT = re.compile(r"(?<![A-Za-z0-9])@")
-_MULTILINE_QUOTE_OPENER = re.compile(
-    r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})"
-)
-_MARKER_OPEN = re.compile(
-    r"<!--\s*(?:"
-    + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
-    + r")\s*:"
-)
-_DEFINITION = re.compile(
-    r"(?m)^(?:[ \t>+*-]|[0-9]+[.)])*\["
-    r"((?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$))[ \t>]*)+)\]:"
-)
-
-
-def assert_outbound_string_invariant(
-    output: str,
-    *,
-    check_prose_rules: bool = True,
-    literal_locations: tuple[str, ...] = (),
-) -> None:
-    fences: list[tuple[int, int]] = []
-    open_fence(output, strict=True, intervals=fences)
-    cursor = 0
-    outside = []
-    for start, end in fences:
-        outside.append(output[cursor:start])
-        assert not _MARKER_OPEN.search(output[start:end]), output[start:end]
-        cursor = end
-    outside.append(output[cursor:])
-    for fragment in outside:
-        markup = fragment
-        # Only caller-owned location wrappers bypass prose preparation.
-        for location in literal_locations:
-            markup = markup.replace(location, "")
-        assert not re.search(r"(?<!\\)(?:\\\\)*!\[", markup), markup
-        for definition in _DEFINITION.finditer(markup):
-            label = re.sub(r"\n[ \t>]*", "\n", definition.group(1))
-            assert len(label) > 999 or not label.strip(), markup
-        for visible in (fragment, re.sub(r"`+", "", fragment)):
-            assert not _DANGEROUS_LT.search(visible), visible
-            assert not _DANGEROUS_AT.search(visible), visible
-            assert not _MARKER_OPEN.search(visible), visible
-        if check_prose_rules:
-            for line in fragment.splitlines():
-                assert not line.startswith("/"), line
-                assert not _MULTILINE_QUOTE_OPENER.match(line), line

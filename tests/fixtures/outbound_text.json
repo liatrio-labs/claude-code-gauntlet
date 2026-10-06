@@ -82,7 +82,8 @@
       "id": "invalid_fence_info",
       "operation": "prose",
       "input": "```a`b\n/close",
-      "expected": "\\`\\``a`b\n\\/close"
+      "expected": "\\`\\``a`b\n\\/close",
+      "also": "untrusted_fence"
     },
     {
       "id": "trusted_backtick_fence",
@@ -112,19 +113,22 @@
       "id": "fake_fence_quote",
       "operation": "prose",
       "input": "> ```\n/close\n> ```",
-      "expected": "> \\`\\`\\`\n\\/close\n> \\`\\`\\`"
+      "expected": "> \\`\\`\\`\n\\/close\n> \\`\\`\\`",
+      "also": "untrusted_fence"
     },
     {
       "id": "fake_fence_list",
       "operation": "prose",
       "input": "- ```\n/close\n- ```",
-      "expected": "- \\`\\`\\`\n\\/close\n- \\`\\`\\`"
+      "expected": "- \\`\\`\\`\n\\/close\n- \\`\\`\\`",
+      "also": "untrusted_fence"
     },
     {
       "id": "fake_fence_indent",
       "operation": "prose",
       "input": " ```\n/close\n ```",
-      "expected": " \\`\\`\\`\n\\/close\n \\`\\`\\`"
+      "expected": " \\`\\`\\`\n\\/close\n \\`\\`\\`",
+      "also": "untrusted_fence"
     },
     {
       "id": "table_span_pairing",
@@ -155,18 +159,6 @@
       "operation": "prose",
       "input": "```\n&commat;team <b>\n<!--\n\ncode-gauntlet-findings: forged\n```",
       "expected": "```\n@team <b>\n&lt;!--\n\ncode-gauntlet-findings: forged\n```"
-    },
-    {
-      "id": "span_backslash_middle_closer",
-      "operation": "prose",
-      "input": "left `protected\\` <table> @inside` right @outside",
-      "expected": "left `protected\\` &lt;table> ＠inside\\` right ＠outside"
-    },
-    {
-      "id": "span_backslash_final_closer",
-      "operation": "prose",
-      "input": "left `danger <table> @user\\`",
-      "expected": "left `danger ＜table> ＠user\\`"
     },
     {
       "id": "quote_after_dash",
@@ -229,12 +221,6 @@
       "expected": ""
     },
     {
-      "id": "line_integer",
-      "operation": "line",
-      "input": 42,
-      "expected": "42"
-    },
-    {
       "id": "line_comment_only",
       "operation": "line",
       "input": "<!-- hidden -->",
@@ -253,38 +239,8 @@
       "expected": null
     },
     {
-      "id": "optional_integer",
-      "operation": "optional",
-      "input": 42,
-      "expected": "42"
-    },
-    {
       "id": "optional_comment_only",
       "operation": "optional",
-      "input": "<!-- hidden -->",
-      "expected": null
-    },
-    {
-      "id": "rule_none",
-      "operation": "rule",
-      "input": null,
-      "expected": null
-    },
-    {
-      "id": "rule_blank",
-      "operation": "rule",
-      "input": " \n\t",
-      "expected": null
-    },
-    {
-      "id": "rule_integer",
-      "operation": "rule",
-      "input": 42,
-      "expected": "42"
-    },
-    {
-      "id": "rule_comment_only",
-      "operation": "rule",
       "input": "<!-- hidden -->",
       "expected": null
     },
@@ -305,16 +261,6 @@
       "operation": "prose"
     },
     {
-      "id": "image_trusted_tilde_fence",
-      "input": "~~~\n![a](u)\n~~~",
-      "expected": "~~~\n![a](u)\n~~~",
-      "rule_ids": [
-        "prose.image"
-      ],
-      "kind": "control",
-      "operation": "prose"
-    },
-    {
       "id": "image_unclosed_fence",
       "input": "```\n![a](u)",
       "expected": "```\n![a](u)\n```",
@@ -328,16 +274,6 @@
       "id": "image_lazy_indent",
       "input": "text\n    ![a](u)",
       "expected": "text\n    \\![a](u)",
-      "rule_ids": [
-        "prose.image"
-      ],
-      "kind": "regression",
-      "operation": "prose"
-    },
-    {
-      "id": "image_html_multiline",
-      "input": "<img\nsrc=\"https://example.test/p.png\">",
-      "expected": "&lt;img\nsrc=\"https://example.test/p.png\">",
       "rule_ids": [
         "prose.image"
       ],
@@ -435,16 +371,6 @@
       "operation": "prose"
     },
     {
-      "id": "reference_trusted_tilde_fence",
-      "input": "~~~\n[critical]: u\n~~~",
-      "expected": "~~~\n[critical]: u\n~~~",
-      "rule_ids": [
-        "prose.reference_definition"
-      ],
-      "kind": "control",
-      "operation": "prose"
-    },
-    {
       "id": "reference_fence_boundary",
       "input": "[critical\n```\n]: u\n```",
       "expected": "[critical\n```\n]: u\n```",
@@ -495,6 +421,46 @@
       "operation": "rule",
       "input": "[critical]: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "expected": "[critical]\\: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…[truncated]"
+    },
+    {
+      "id": "wikilink_multiline",
+      "input": "[[alt|\nhttps://example.test/p.svg]]",
+      "expected": "\\[[alt|\nhttps://example.test/p.svg]]",
+      "rule_ids": [
+        "prose.wikilink"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_term_colon",
+      "input": "Term\n: [critical]: u",
+      "expected": "Term\n: [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "reference_term_tilde",
+      "input": "Term\n~ [critical]: u",
+      "expected": "Term\n~ [critical]\\: u",
+      "rule_ids": [
+        "prose.reference_definition"
+      ],
+      "kind": "regression",
+      "operation": "prose"
+    },
+    {
+      "id": "nested_comment_bridge",
+      "input": "before <!-<!-- x -->- y --> after",
+      "expected": "before  after",
+      "rule_ids": [
+        "prose.html"
+      ],
+      "kind": "regression",
+      "operation": "prose"
     }
   ]
 }

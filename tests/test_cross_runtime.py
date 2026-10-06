@@ -18,6 +18,7 @@ FAMILIES: tuple[Family, ...] = ("fnv1a32", "json_spelling", "config_rule")
 
 class VectorOptions(TypedDict, total=False):
     operation: Literal["normalize"]
+    also: Literal["python_key_order", "js_negative_zero"]
 
 
 class Vector(VectorOptions):
@@ -78,7 +79,7 @@ def test_cross_runtime_python_vector(family: Family, case: Vector) -> None:
         assert isinstance(case["input"], str)
         actual = fnv1a32(case["input"])
     elif family == "json_spelling":
-        if case["id"].startswith("key_order"):
+        if case.get("also") == "python_key_order":
             assert (
                 json.dumps(case["input"], indent=2, ensure_ascii=False)
                 != case["expected"]

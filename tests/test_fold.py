@@ -16,7 +16,7 @@ from gauntlet.delivery.fold import (
     utf8_len,
 )
 from gauntlet.delivery.post import (
-    _render_group_sections,
+    BRAND_TRAILER,
     build_skipped_section,
     compose_inline_body,
     compose_review_body,
@@ -31,14 +31,17 @@ from gauntlet.marker import (
 )
 from gauntlet.text import prepare_line, prepare_location, prepare_prose, prepared_prose
 
+from tests.test_outbound_contract import assert_outbound_string_invariant
 from tests.tools.outbound import (
+    FIXTURES,
     FoldVector,
-    assert_outbound_string_invariant,
     fold_vectors,
 )
 
 OWNED_FOLD_VECTORS = [
-    row for row in fold_vectors() if not row["operation"].endswith("_js")
+    row
+    for row in [*fold_vectors(), *fold_vectors(FIXTURES / "outbound_fold.json")]
+    if not row["operation"].endswith("_js")
 ]
 
 
@@ -48,8 +51,6 @@ OWNED_FOLD_VECTORS = [
     ids=[row["id"] for row in OWNED_FOLD_VECTORS],
 )
 def test_fold_fixture(case: FoldVector) -> None:
-    # A 200-byte closer can exceed the provisional reserve and force line retreat.
-    # CRLF must retreat together; lone CR also terminates a logical line.
     operation = case["operation"]
     source = case["input"]
     if operation in ("closer", "fence_state"):
@@ -73,7 +74,6 @@ def test_fold_fixture(case: FoldVector) -> None:
         else nullcontext()
     )
     with context:
-        # Closing a partial suggestion would make an incomplete patch committable.
         folded, dropped = (
             fold_inline_body(sections, case["py_allowance"], case["platform"], surface)
             if operation == "fold_inline_py"
@@ -87,9 +87,9 @@ def test_fold_fixture(case: FoldVector) -> None:
         # The poster refuses an envelope that cannot even fit the fold notice.
         assert len(folded.encode("utf-8")) > case["py_allowance"]
     assert open_fence(folded) is None
-    if case["id"] == "fold_trusted_unclosed_html":
+    if case.get("also") == "prepared_fixpoint":
         assert prepare_prose(sections) == sections
-    if case["id"].startswith("escaped_cut_"):
+    if case.get("also") == "string_invariant":
         assert_outbound_string_invariant(folded)
 
 
@@ -214,7 +214,7 @@ def test_prepared_and_composed_sections_contain_comment_openers() -> None:
             "suggestion": source,
             "claude_md_rule": source,
         }
-        sections = _render_group_sections(finding, [])
+        sections = render_comment_body(finding).removesuffix(f"\n\n{BRAND_TRAILER}")
         composed = (
             sections,
             render_comment_body(finding),

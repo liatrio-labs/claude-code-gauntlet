@@ -24,7 +24,7 @@ from gauntlet.prior_review import PriorDelivery
 from tests.support.diff import diff_facts
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 from tests.support.prior import prior_notes
-from tests.tools.outbound import (
+from tests.test_outbound_contract import (
     assert_outbound_string_invariant as _assert_outbound_string_invariant,
 )
 

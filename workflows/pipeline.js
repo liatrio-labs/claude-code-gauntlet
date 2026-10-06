@@ -3236,8 +3236,9 @@ function outboundEscapedTick(text, index) {
 }
 function outboundContain(line) {
   line = line.replace(/(\\*)!\[/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}![`);
-  line = line.replace(/^(?:[ \t>+*-]|[0-9]+[.)])*\[((?:\\[^\n]|[^\\\[\]\n]){1,999})\]:/u, (match, label) => (
-    [...label].length <= 999 && /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
+  line = line.replace(/(\\*)\[\[(?=(?:\\[\s\S]|[^\\\[])*?\]\])/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}[[`);
+  line = line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
+    /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
   ));
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
   let output = '';
