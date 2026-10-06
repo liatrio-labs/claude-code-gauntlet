@@ -63,7 +63,9 @@ def test_summary_and_skipped_location_bytes(filepath: str, expected: str) -> Non
     assert expected in summary
     assert outbound_text.prepare_prose(summary) == summary
     skipped = post_review.build_skipped_section([(filepath, 12, finding)])
-    location = next(line[5:] for line in skipped.splitlines() if line.startswith("#### "))
+    location = next(
+        line[5:] for line in skipped.splitlines() if line.startswith("#### ")
+    )
     assert location == expected
     assert location.encode("utf-8") in summary.encode("utf-8")
 
