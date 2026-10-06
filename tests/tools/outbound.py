@@ -12,6 +12,7 @@ TextOperation = Literal["prose", "line", "optional", "rule", "redact", "location
 
 
 class TextOptions(TypedDict, total=False):
+    js: Literal["n/a"]
     rule_ids: list[str]
     kind: Literal["regression", "control"]
     also: Literal["untrusted_fence"]

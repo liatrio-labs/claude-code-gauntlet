@@ -80,11 +80,7 @@ def assert_outbound_string_invariant(
         line_offset = 0
         for line in markup.split("\n"):
             if re.search(r"\]\\?\(", line):
-                for definition in re.finditer(r"\](\\*):", line):
-                    colon = line_offset + definition.end() - 1
-                    if any(start <= colon < end for start, end in spans):
-                        continue
-                    assert line[definition.end() - 1] == "\uff1a", repr(line)
+                assert re.search(r"\](\\*):", line) is None, repr(line)
             if check_prose_rules:
                 for tilde in re.finditer(r"~{3,}", line):
                     position = line_offset + tilde.start()
@@ -115,12 +111,6 @@ def assert_outbound_string_invariant(
                         if ch == "[":
                             break
                         if ch == "]":
-                            end = markup.find("\n", at)
-                            line = markup[line_start : end if end >= 0 else len(markup)]
-                            if re.search(r"\]\\?\(", line) and any(
-                                start <= at + 1 < end for start, end in spans
-                            ):
-                                break
                             assert not (nonblank and markup[at + 1 : at + 2] == ":"), (
                                 repr(markup)
                             )
@@ -723,7 +713,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
         if case["input"].get("prIdentity")
         and case["input"]["findings"][0]["file"] == "src/[x]:.py"
     )
-    assert "`src/[x]:.py:3`" in bracket_path["expected_js"]
+    assert "`src/[x]\uff1a.py:3`" in bracket_path["expected_js"]
     assert "src/%5Bx%5D%3A.py#L3" in bracket_path["expected_js"]
 
 

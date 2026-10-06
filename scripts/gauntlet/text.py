@@ -290,25 +290,9 @@ _DEFINITION_RE = re.compile(
 def _escape_triggered_definition_colons(line: str, *, force: bool = False) -> str:
     if not force and _DEFINITION_LINK_TRIGGER_RE.search(line) is None:
         return line
-    spans = _containment_code_spans(line)
-    parts: list[str] = []
-    cursor = 0
-    span_index = 0
-    for match in _DEFINITION_CLOSE_COLON_RE.finditer(line):
-        colon = match.end() - 1
-        while span_index < len(spans) and spans[span_index][2] <= colon:
-            span_index += 1
-        if (
-            span_index < len(spans)
-            and spans[span_index][0] <= colon < spans[span_index][2]
-        ):
-            continue
-        parts.extend((line[cursor:colon], "\uff1a"))
-        cursor = colon + 1
-    if cursor == 0:
-        return line
-    parts.append(line[cursor:])
-    return "".join(parts)
+    return _DEFINITION_CLOSE_COLON_RE.sub(
+        lambda match: match.group()[:-1] + "\uff1a", line
+    )
 
 
 def _escape_definitions(text: str) -> str:
@@ -319,13 +303,6 @@ def _escape_definitions(text: str) -> str:
     )
 
     def escape(match: re.Match[str]) -> str:
-        colon = match.end() - 1
-        start = text.rfind("\n", 0, colon) + 1
-        end = text.find("\n", colon)
-        line = text[start : end if end >= 0 else len(text)]
-        # On triggered lines, remaining ASCII colons belong to selected code spans.
-        if _DEFINITION_LINK_TRIGGER_RE.search(line) is not None:
-            return match.group()
         if (
             match.group(1) is not None
             or re.sub(r"\n[ \t>]*", "\n", match.group(2)).strip()
@@ -336,6 +313,19 @@ def _escape_definitions(text: str) -> str:
     return _DEFINITION_RE.sub(escape, text)
 
 
+def _escape_multiline_footnotes(line: str) -> str:
+    last_close = line.rfind("]")
+    return re.sub(
+        r"(?<!\\)(\\*)\[\^",
+        lambda match: (
+            match.group(1) + "\\[^"
+            if match.end() > last_close and len(match.group(1)) % 2 == 0
+            else match.group()
+        ),
+        line,
+    )
+
+
 def _escape_tilde_runs(line: str) -> str:
     spans = _containment_code_spans(line)
     span_index = 0
@@ -344,6 +334,7 @@ def _escape_tilde_runs(line: str) -> str:
     backslashes = 0
     while index < len(line):
         if span_index < len(spans) and index == spans[span_index][0]:
+            # A tilde fence needs line start; a span's earlier tick prevents it.
             end = spans[span_index][2]
             parts.append(line[index:end])
             index = end
@@ -508,6 +499,7 @@ def _prepare_text(
                 line = line[:index] + "\\" + line[index:]
         line = line if protected else _contain_line(line)
         if not protected and not single_line:
+            line = _escape_multiline_footnotes(line)
             line = _escape_tilde_runs(line)
         prepared.append(line)
     # Bracket replacements can complete definition-shaped labels.
@@ -571,4 +563,5 @@ def prepare_location(value: object) -> str:
     value = redact_secrets(_normalize_outbound(str(value)))
     value = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", value)
     value = _escape_visible(value, code=True).replace("\r", " ").replace("\n", " ")
+    value = _escape_triggered_definition_colons(value, force=True)
     return code_span(value, pad_space_edges=True)

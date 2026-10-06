@@ -151,7 +151,8 @@ syntax stays intact. Numeric references and `&commat;`, `&excl;`, `&lbrack;`, `&
 is consumed before the next input character. Decimal and hexadecimal accumulation saturates
 at 127; only ASCII values 32 through 126 are emitted. Other named references and query
 ampersands stay literal. Invisible code points, including CR, are discarded before matching;
-TAB and LF remain. Raw U+00A0 and its two named references become plain spaces because
+TAB and LF remain. Raw U+00A0 and its two named references become plain spaces everywhere,
+including inside inline code and trusted fences, like other decoded references, because
 GitLab's second parse can drop following text when NBSP shares bracket-paren text with
 `&`, `<` or `>`. Numeric references to 160 are removed before Markdown classification.
 Comments are removed only when a `-->` begins after the end of a live `<!--` opener. An
@@ -212,19 +213,23 @@ GitLab parses text holding `](` a second time after backslashes are consumed,
 so a backslash does not hold there. On an unprotected physical line holding `](` or `]\\(`,
 every `]` plus zero or more backslashes plus `:` changes only its colon to U+FF1A FULLWIDTH
 COLON. Named HTML5 forms for the closing bracket, colon, parentheses and backslash decode
-before this check. The new rule skips complete paired inline-code spans, which preserves
-code-owned linked locations. Without that trigger, a line-initial reference-definition label
+before this check. The colon rule applies inside inline code and to location paths because
+a platform can assign a backtick to another construct. Without that trigger, a line-initial
+reference-definition label
 (`[label]:`) keeps the existing backslash-before-colon rule when only non-letter characters
 precede `[` on its line; a preceding backslash or `[` prevents the match. In multiline fields,
 the old label may continue across lines, and it still applies inside code spans. This prevents
 a definition from turning code-owned text such as `[CRITICAL]` into a link. After the same
 line prefix, footnote labels start with `[^` and accept any run without `]` or newline before
-`]:`, including backslashes and opening brackets; their colon gains the same backslash.
+`]:`, including backslashes and opening brackets; their colon gains a backslash on lines
+without the trigger and becomes U+FF1A on triggered lines. In multiline prose, an unescaped
+`[^` with no later `]` on its physical line gains a backslash before its opening bracket.
 Footnote definitions and reference-style links in finding text therefore show as literal text. The
 new colon becomes fullwidth even when copied; the retained line-initial escape displays its
 original colon.
-None of these rules runs inside a trusted fenced payload. Summary titles force the fullwidth
-colon rule because the containing bullet has a link pair; ordinary single-line fields keep
+None of these rules runs inside a trusted fenced payload. Summary titles and location paths
+force the fullwidth colon rule to remain stable when the containing bullet has a link pair;
+ordinary single-line fields keep
 the trigger-based rule.
 
 - `review_body` — exactly the pipeline-rendered Summary section body: counts first, selected findings index,

@@ -94,6 +94,8 @@ def test_redaction_tokens(source: str, expected: str) -> None:
 def test_text_vector(case: TextVector) -> None:
     actual = PREPARERS[case["operation"]](case["input"])
     assert actual == case["expected"]
+    if case["id"].startswith("footnote_multiline_"):
+        assert text.prepare_prose(actual) == actual
     if case["operation"] != "redact":
         assert_outbound_string_invariant(
             actual or "", check_prose_rules=case["operation"] in ("prose", "rule")
@@ -196,7 +198,7 @@ def test_prose_structure_pass_order(source: str, expected: str) -> None:
         pytest.param("x [a]: u]\\\\(a b) q", "x [a]: u]\\\\(a b) q", id="two-slashes"),
         pytest.param(
             "`x [a]: SENT](a b)`",
-            "`x [a]: SENT](a b)`",
+            "`x [a]\uff1a SENT](a b)`",
             id="code-span-control",
         ),
         pytest.param("[[x]: u", "[\uff3bx]\\: u", id="after-containment-pass"),
@@ -588,7 +590,7 @@ def test_large_backslash_preparation(
         ),
         pytest.param(
             "[^" + "[\\a" * 100000,
-            "[^" + "[\\a" * 100000,
+            "\\[^" + "[\\a" * 100000,
             id="unclosed_footnote",
         ),
     ],

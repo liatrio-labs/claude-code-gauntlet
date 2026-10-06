@@ -640,7 +640,8 @@
       "id": "A-code-control",
       "operation": "prose",
       "input": "`x [a]: SENT](a b)`",
-      "expected": "`x [a]: SENT](a b)`"
+      "expected": "`x [a]\uff1a SENT](a b)`",
+      "note": "A trigger on the physical line forces fullwidth colons inside inline code too."
     },
     {
       "id": "A-fence-control",
@@ -844,7 +845,7 @@
       "id": "L-bracket",
       "operation": "location",
       "input": "src/[x]:.py:3",
-      "expected": "`src/[x]:.py:3`"
+      "expected": "`src/[x]\uff1a.py:3`"
     },
     {
       "id": "tilde_code",
@@ -893,6 +894,75 @@
       "operation": "prose",
       "input": "a ~~ b ~ c",
       "expected": "a ~~ b ~ c"
+    },
+    {
+      "id": "L-bracket-slashes",
+      "operation": "location",
+      "input": "src/[x]\\\\:.py:3",
+      "expected": "`src/[x]\\\\\uff1a.py:3`"
+    },
+    {
+      "id": "colon_tick_multiline_label",
+      "operation": "prose",
+      "input": "[a\n`b]: /u '... ` ](x'",
+      "expected": "[a\n`b]\uff1a /u '... ` ](x'",
+      "js": "n/a"
+    },
+    {
+      "id": "footnote_multiline_plain",
+      "operation": "prose",
+      "input": "See [^The handler trusts X-User W1\nwithout verifying the token W2] tail W3",
+      "expected": "See \\[^The handler trusts X-User W1\nwithout verifying the token W2] tail W3",
+      "js": "n/a"
+    },
+    {
+      "id": "footnote_multiline_list",
+      "operation": "prose",
+      "input": "- See [^The handler trusts X-User W1\n  without verifying the token W2] tail W3",
+      "expected": "- See \\[^The handler trusts X-User W1\n  without verifying the token W2] tail W3",
+      "js": "n/a"
+    },
+    {
+      "id": "footnote_multiline_quote",
+      "operation": "prose",
+      "input": "> See [^The handler trusts X-User W1\n> without verifying the token W2] tail W3",
+      "expected": "> See \\[^The handler trusts X-User W1\n> without verifying the token W2] tail W3",
+      "js": "n/a"
+    },
+    {
+      "id": "footnote_multiline_odd_slash",
+      "operation": "prose",
+      "input": "See \\[^a\nb] tail",
+      "expected": "See \\[^a\nb] tail",
+      "js": "n/a"
+    },
+    {
+      "id": "footnote_multiline_even_slashes",
+      "operation": "prose",
+      "input": "See \\\\[^a\nb] tail",
+      "expected": "See \\\\\\[^a\nb] tail",
+      "js": "n/a"
+    },
+    {
+      "id": "footnote_multiline_closed_label",
+      "operation": "prose",
+      "input": "See [^label] tail",
+      "expected": "See [^label] tail",
+      "js": "n/a"
+    },
+    {
+      "id": "footnote_multiline_trusted_fence",
+      "operation": "prose",
+      "input": "```\nSee [^a\nb] tail\n```",
+      "expected": "```\nSee [^a\nb] tail\n```",
+      "js": "n/a"
+    },
+    {
+      "id": "footnote_multiline_multiple_openers",
+      "operation": "prose",
+      "input": "See [^closed] and [^a [^b\nc] tail",
+      "expected": "See [^closed] and \\[^a \\[^b\nc] tail",
+      "js": "n/a"
     }
   ]
 }

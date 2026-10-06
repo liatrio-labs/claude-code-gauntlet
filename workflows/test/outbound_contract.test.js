@@ -185,7 +185,7 @@ test('summary location delimiter handles many tick runs', () => {
 function assertLineInvariant(output) {
   assert.doesNotMatch(output, /<!--/);
   assert.doesNotMatch(output, /[!\[]\\*\[/);
-  if (!output.includes('`') && /\]\\?\(/.test(output)) {
+  if (/\]\\?\(/.test(output)) {
     assert.doesNotMatch(output, /\](\\*):/);
   }
   let slashes = 0;

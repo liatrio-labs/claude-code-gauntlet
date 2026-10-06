@@ -1304,7 +1304,8 @@
     {
       "id": "A-code-control",
       "input": "`x [a]: SENT](a b)`",
-      "expected": "`x [a]: SENT](a b)`"
+      "expected": "`x [a]\uff1a SENT](a b)`",
+      "note": "A trigger on the physical line forces fullwidth colons inside inline code too."
     },
     {
       "id": "A-label-control",
@@ -1620,20 +1621,22 @@
     {
       "id": "colon_suffix_short",
       "input": "]](``[x]:`",
-      "expected": "]](\\``[x]:`",
+      "expected": "]](\\``[x]\uff1a`",
       "operations": [
         "line",
         "prose"
-      ]
+      ],
+      "note": "A trigger on the physical line forces fullwidth colons inside inline code too."
     },
     {
       "id": "colon_suffix_long",
       "input": "``x [a]: u](a b) tail`",
-      "expected": "\\``x [a]: u](a b) tail`",
+      "expected": "\\``x [a]\uff1a u](a b) tail`",
       "operations": [
         "line",
         "prose"
-      ]
+      ],
+      "note": "A trigger on the physical line forces fullwidth colons inside inline code too."
     },
     {
       "id": "footnote_slash_plain",
@@ -1715,6 +1718,168 @@
         "line",
         "prose"
       ]
+    },
+    {
+      "id": "colon_tick_footnote",
+      "input": "[^`]: The handler trusts `X-User` ...; see [docs](https://e.test/auth).",
+      "expected": "[^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth).",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_definition",
+      "input": "[`]: /u 'text ` ](x'",
+      "expected": "[`]\uff1a /u 'text ` ](x'",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_definition_list",
+      "input": "- [`]: /u 'text ` ](x'",
+      "expected": "- [`]\uff1a /u 'text ` ](x'",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_definition_quote",
+      "input": "> [`]: /u 'text ` ](x'",
+      "expected": "> [`]\uff1a /u 'text ` ](x'",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_code_backslashes",
+      "input": "`[a]\\\\: x` [d](u)",
+      "expected": "`[a]\\\\\uff1a x` [d](u)",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_destination",
+      "input": "See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "See [x](`) [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_link_title",
+      "input": "[x](u '`') See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "[x](u '`') See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_angle_destination",
+      "input": "[x](<`>) See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "[x](<`>) See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_bare_url",
+      "input": "https://e.test/` See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "https://e.test/` See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_www_url",
+      "input": "www.e.test/` See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "www.e.test/` See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_math",
+      "input": "$5`$ See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "$5`$ See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_display_math",
+      "input": "$$a`$$ See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "$$a`$$ See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_link_title_prefix",
+      "input": "[x](u '`') [label W5]: //e/dest](a b) ` W6",
+      "expected": "[x](u '`') [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_angle_destination_prefix",
+      "input": "[x](<`>) [label W5]: //e/dest](a b) ` W6",
+      "expected": "[x](<`>) [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_bare_url_prefix",
+      "input": "https://e.test/` [label W5]: //e/dest](a b) ` W6",
+      "expected": "https://e.test/` [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_www_url_prefix",
+      "input": "www.e.test/` [label W5]: //e/dest](a b) ` W6",
+      "expected": "www.e.test/` [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_math_prefix",
+      "input": "$5`$ [label W5]: //e/dest](a b) ` W6",
+      "expected": "$5`$ [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_display_math_prefix",
+      "input": "$$a`$$ [label W5]: //e/dest](a b) ` W6",
+      "expected": "$$a`$$ [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
     }
   ],
   "summary_cases": [
@@ -1777,8 +1942,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]:.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): before x [a]\uff1a //example.test/SENT](a b) after",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]:.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): before x [a]\uff1a //example.test/SENT](a b) after"
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): before x [a]\uff1a //example.test/SENT](a b) after",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): before x [a]\uff1a //example.test/SENT](a b) after"
     },
     {
       "id": "A-mid-src_bxbc_py-plain",
@@ -1793,8 +1958,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]:.py:3`: before x [a]\uff1a //example.test/SENT](a b) after",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]:.py:3`: before x [a]\uff1a //example.test/SENT](a b) after"
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after"
     },
     {
       "id": "A-title-summary-src_a_py-linked",
@@ -1855,8 +2020,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]:.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [x]\uff1a u",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]:.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [x]\uff1a u"
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [x]\uff1a u",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [x]\uff1a u"
     },
     {
       "id": "A-title-summary-src_bxbc_py-plain",
@@ -1871,8 +2036,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]:.py:3`: [x]\uff1a u",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]:.py:3`: [x]\uff1a u"
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: [x]\uff1a u",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: [x]\uff1a u"
     },
     {
       "id": "A-code-control-src_a_py-linked",
@@ -1894,8 +2059,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): `x [a]: SENT](a b)`",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): `x [a]: SENT](a b)`"
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): `x [a]\uff1a SENT](a b)`",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): `x [a]\uff1a SENT](a b)`"
     },
     {
       "id": "A-code-control-src_a_py-plain",
@@ -1910,8 +2075,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `x [a]: SENT](a b)`",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `x [a]: SENT](a b)`"
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `x [a]\uff1a SENT](a b)`",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `x [a]\uff1a SENT](a b)`"
     },
     {
       "id": "A-code-control-src_bxbc_py-linked",
@@ -1933,8 +2098,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]:.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): `x [a]: SENT](a b)`",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]:.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): `x [a]: SENT](a b)`"
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): `x [a]\uff1a SENT](a b)`",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): `x [a]\uff1a SENT](a b)`"
     },
     {
       "id": "A-code-control-src_bxbc_py-plain",
@@ -1949,8 +2114,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]:.py:3`: `x [a]: SENT](a b)`",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]:.py:3`: `x [a]: SENT](a b)`"
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: `x [a]\uff1a SENT](a b)`",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: `x [a]\uff1a SENT](a b)`"
     },
     {
       "id": "tilde_interior_linked",
@@ -2029,6 +2194,91 @@
       },
       "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `~~~/x.py:3`: a \\~\\~\\~ b",
       "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `~~~/x.py:3`: a \\~\\~\\~ b"
+    },
+    {
+      "id": "colon_tick_footnote_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "[^`]: The handler trusts `X-User` ...; see [docs](https://e.test/auth)."
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth).",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth)."
+    },
+    {
+      "id": "colon_tick_definition_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "[`]: /u 'text ` ](x'"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [`]\uff1a /u 'text ` ](x'",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [`]\uff1a /u 'text ` ](x'"
+    },
+    {
+      "id": "colon_tick_destination_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "See [x](`) [label W5]: //e/dest](a b) ` W6"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): See [x](`) [label W5]\uff1a //e/dest](a b) ` W6",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): See [x](`) [label W5]\uff1a //e/dest](a b) ` W6"
+    },
+    {
+      "id": "colon_forced_code_title_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/a.py",
+            "line_start": 3,
+            "title": "`[a]: x`"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`"
     }
   ]
 }

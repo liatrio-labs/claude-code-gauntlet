@@ -628,18 +628,10 @@ function outboundCodeSpans(line, index = outboundTickRunIndex(line)) {
 function outboundDefinitions(line, forceColon = false) {
   const guardColon = forceColon || /\]\\?\(/.test(line);
   if (guardColon) {
-    const spans = outboundCodeSpans(line);
-    let spanIndex = 0;
-    line = line.replace(/\](\\*):/g, (match, _slashes, offset) => {
-      const colon = offset + match.length - 1;
-      while (spanIndex < spans.length && spans[spanIndex][2] <= colon) spanIndex += 1;
-      if (spanIndex < spans.length && spans[spanIndex][0] <= colon) return match;
-      return `${match.slice(0, -1)}\uFF1A`;
-    });
+    line = line.replace(/\](\\*):/g, (match) => `${match.slice(0, -1)}\uFF1A`);
   }
-  // On triggered lines, remaining ASCII colons belong to selected code spans.
   return line.replace(/^[^A-Za-z\\\[\n]*\[(?:(\^[^\]\n]*)|((?:\\[^\n]|[^\\\[\]\n])+))\]:/u, (match, footnote, label) => (
-    !guardColon && (footnote !== undefined || /\S/.test(label)) ? `${match.slice(0, -1)}\\:` : match
+    footnote !== undefined || /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
   ));
 }
 
@@ -700,6 +692,7 @@ function outboundTildeRuns(line) {
   let backslashes = 0;
   while (index < line.length) {
     if (spanIndex < spans.length && index === spans[spanIndex][0]) {
+      // A tilde fence needs line start; a span's earlier tick prevents it.
       const end = spans[spanIndex][2];
       parts.push(line.slice(index, end));
       index = end;
@@ -837,6 +830,7 @@ function quotedSummaryLocation(finding) {
     }
   }
   display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
+  display = outboundDefinitions(display, true);
   let longest = 0;
   for (const match of display.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
   const delimiter = '`'.repeat(longest + 1);
