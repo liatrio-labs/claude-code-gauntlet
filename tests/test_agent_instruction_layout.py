@@ -99,41 +99,14 @@ class TestRulesFileQuotations(unittest.TestCase):
     }
 
     def _rules_corpus(self):
-        files = (
-            subprocess.run(
-                [
-                    "git",
-                    "ls-files",
-                    "-z",
-                    "--",
-                    "AGENTS.md",
-                    "*/AGENTS.md",
-                ],
-                cwd=REPO,
-                capture_output=True,
-                check=True,
-            )
-            .stdout.decode()
-            .split("\0")
-        )
         return "\n".join(
-            (REPO / path).read_text(encoding="utf-8") for path in files if path
+            (REPO / path).read_text(encoding="utf-8") for path in instruction_files()
         )
 
     def _docs(self):
-        paths = (
-            subprocess.run(
-                ["git", "ls-files", "-z", "--", "skills", "agents"],
-                cwd=REPO,
-                capture_output=True,
-                check=True,
-            )
-            .stdout.decode()
-            .split("\0")
-        )
         return [
             path
-            for path in paths
+            for path in tracked("skills", "agents")
             if path.endswith(".md")
             and (
                 path.startswith("skills/")
@@ -181,19 +154,9 @@ class TestClaimsResolve(unittest.TestCase):
         "node_modules",
     }
 
-    def repo_files(self):
-        out = subprocess.run(
-            ["git", "ls-files"],
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-        return set(out.stdout.split())
-
     def test_referenced_paths_exist(self):
-        tracked = self.repo_files()
-        basenames = {Path(p).name for p in tracked}
+        tracked_files = set(tracked())
+        basenames = {Path(p).name for p in tracked_files}
         pattern = re.compile(r"`([A-Za-z0-9_./-]+\.(?:py|js|md|json|yaml|yml))`")
         for doc in self.FILES:
             text = (REPO / doc).read_text(encoding="utf-8")
@@ -202,7 +165,7 @@ class TestClaimsResolve(unittest.TestCase):
                     continue
                 with self.subTest(doc=doc, ref=ref):
                     self.assertTrue(
-                        ref in tracked
+                        ref in tracked_files
                         or Path(ref).name in basenames
                         or (REPO / Path(doc).parent / ref).exists(),
                         f"{doc} names {ref}, which is not in this tree",
