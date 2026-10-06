@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import * as reportRenderer from '../src/renderReport.js';
 import { DIMENSIONS, FINDING_PROP_TYPES } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
@@ -54,6 +55,38 @@ for (const row of lineCases) {
     assertLineInvariant(actual);
   });
 }
+
+test('large_backslash_preparation', () => {
+  const cases = [
+    ['bare', '\\'.repeat(500000), '\\'.repeat(500000)],
+    ['image_even', `${'\\'.repeat(500000)}![`, `${'\\'.repeat(500001)}![`],
+    ['image_odd', `${'\\'.repeat(500001)}![`, `${'\\'.repeat(500001)}![`],
+    ['wiki_open_even', `${'\\'.repeat(500000)}[[`, `${'\\'.repeat(500000)}[[`],
+    ['wiki_open_odd', `${'\\'.repeat(500001)}[[`, `${'\\'.repeat(500001)}[[`],
+    ['wiki_even', `${'\\'.repeat(500000)}[[u]]`, `${'\\'.repeat(500001)}[[u]]`],
+    ['wiki_odd', `${'\\'.repeat(500001)}[[u]]`, `${'\\'.repeat(500001)}[[u]]`],
+    ['wiki_unclosed_runs', `[[${'\\'.repeat(5000)}`.repeat(100), `[[${'\\'.repeat(5000)}`.repeat(100)],
+    ['wiki_pairs', `[[${'\\a'.repeat(250000)}`, `[[${'\\a'.repeat(250000)}`],
+    ['definition_pairs', `[${'\\a'.repeat(250000)}`, `[${'\\a'.repeat(250000)}`],
+    ['definition_openers', `[${'\\a'.repeat(2500)} `.repeat(100), `[${'\\a'.repeat(2500)} `.repeat(100)],
+  ];
+  const script = `
+import { prepareLine } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(prepareLine(source));
+`;
+  for (const [id, source, expected] of cases) {
+    // A child timeout makes quadratic mutants fail without hanging the suite.
+    const start = performance.now();
+    const actual = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      input: source, encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024,
+    });
+    // These 500 KB inputs take under one second; five allows for CI contention.
+    assert.ok(performance.now() - start < 5000, id);
+    assert.equal(actual, expected, id);
+  }
+});
 
 function assertLineInvariant(output) {
   let slashes = 0;

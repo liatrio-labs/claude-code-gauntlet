@@ -144,15 +144,16 @@ def _escape_visible(text: str, *, code: bool = False) -> str:
 
 def _escape_images(text: str) -> str:
     # Inline spans and indentation cannot certify renderer code.
+    # Start only at the first backslash so failed openers scan each run once.
     text = re.sub(
-        r"(\\*)!\[",
+        r"(?<!\\)(\\*)!\[",
         lambda match: (
             match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "!["
         ),
         text,
     )
     return re.sub(
-        r"(\\*)\[\[(?=(?:\\[\s\S]|[^\\\[])*?\]\])",
+        r"(?<!\\)(\\*)\[\[(?=(?:\\[\s\S]|[^\\\[])*?\]\])",
         lambda match: (
             match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "[["
         ),
@@ -162,7 +163,8 @@ def _escape_images(text: str) -> str:
 
 _DEFINITION_RE = re.compile(
     r"(?m)^[^A-Za-z\\\[\n]*\["
-    r"((?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$))[ \t>]*)+)\]:"
+    # The character alternative consumes continuation prefixes without rescans.
+    r"((?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$)))+)\]:"
 )
 
 

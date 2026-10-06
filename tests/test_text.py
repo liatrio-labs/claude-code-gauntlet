@@ -2,7 +2,9 @@
 
 import json
 import subprocess
+import sys
 from collections.abc import Callable
+from time import perf_counter
 from typing import Literal
 
 import gauntlet.text as text
@@ -218,3 +220,71 @@ def test_image_redaction_bridge(operation: TextOperation) -> None:
 def test_reference_redaction_bridge(operation: TextOperation) -> None:
     source = "ghp_" + "A" * 36 + ": url"
     assert PREPARERS[operation](source) == "[REDACTED]\\: url"
+
+
+def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
+    # A child timeout makes quadratic mutants fail without hanging the suite.
+    start = perf_counter()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.path.insert(0, 'scripts'); "
+            f"from gauntlet.text import prepare_{operation}; "
+            f"sys.stdout.write(prepare_{operation}(sys.stdin.read()))",
+        ],
+        input=source,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=5,
+        check=True,
+    )
+    # These 500 KB inputs take under one second; five allows for CI contention.
+    assert perf_counter() - start < 5
+    return result.stdout
+
+
+@pytest.mark.parametrize("operation", ("prose", "line"))
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param("\\" * 500000, "\\" * 500000, id="bare"),
+        pytest.param("\\" * 500000 + "![", "\\" * 500001 + "![", id="image_even"),
+        pytest.param("\\" * 500001 + "![", "\\" * 500001 + "![", id="image_odd"),
+        pytest.param("\\" * 500000 + "[[", "\\" * 500000 + "[[", id="wiki_open_even"),
+        pytest.param("\\" * 500001 + "[[", "\\" * 500001 + "[[", id="wiki_open_odd"),
+        pytest.param("\\" * 500000 + "[[u]]", "\\" * 500001 + "[[u]]", id="wiki_even"),
+        pytest.param("\\" * 500001 + "[[u]]", "\\" * 500001 + "[[u]]", id="wiki_odd"),
+        pytest.param(
+            ("[[" + "\\" * 5000) * 100,
+            ("[[" + "\\" * 5000) * 100,
+            id="wiki_unclosed_runs",
+        ),
+        pytest.param("[[" + "\\a" * 250000, "[[" + "\\a" * 250000, id="wiki_pairs"),
+        pytest.param("[" + "\\a" * 250000, "[" + "\\a" * 250000, id="definition_pairs"),
+    ],
+)
+def test_large_backslash_preparation(
+    operation: Literal["prose", "line"], source: str, expected: str
+) -> None:
+    assert _timed_preparation(source, operation) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            "[a\n" + " " * 500000 + "\\a",
+            "[a\n" + " " * 500000 + "\\a",
+            id="continuation_prefix",
+        ),
+        pytest.param(
+            ("[" + "\\a" * 2500 + "\n") * 100,
+            ("[" + "\\a" * 2500 + "\n") * 100,
+            id="unclosed_labels",
+        ),
+    ],
+)
+def test_large_definition_preparation(source: str, expected: str) -> None:
+    assert _timed_preparation(source, "prose") == expected

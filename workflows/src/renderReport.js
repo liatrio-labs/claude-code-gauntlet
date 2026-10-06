@@ -449,8 +449,9 @@ function outboundEscapedTick(text, index) {
 
 function outboundContain(line) {
   // Twin of gauntlet.text containment; inline spans cannot certify renderer code.
-  line = line.replace(/(\\*)!\[/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}![`);
-  line = line.replace(/(\\*)\[\[(?=(?:\\[\s\S]|[^\\\[])*?\]\])/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}[[`);
+  // Start only at the first backslash so failed openers scan each run once.
+  line = line.replace(/(?<!\\)(\\*)!\[/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}![`);
+  line = line.replace(/(?<!\\)(\\*)\[\[(?=(?:\\[\s\S]|[^\\\[])*?\]\])/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}[[`);
   line = line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
     /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
   ));
