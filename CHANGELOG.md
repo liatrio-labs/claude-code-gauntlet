@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.42.23 (2026-10-06)
+
+### Bug Fixes
+
+- Neutralize prose fence info strings, contain GitLab's second parse and make outbound preparation
+  linear ([#476](https://github.com/liatrio-labs/claude-code-gauntlet/pull/476),
+  [`5da8b53`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5da8b536f1e327579196a4c789e8ce695355277e))
+
+
 ## v3.42.22 (2026-10-06)
 
 ### Bug Fixes
