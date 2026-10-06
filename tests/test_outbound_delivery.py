@@ -1276,6 +1276,33 @@ def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_
             "ec309d4c822c0bd4",
             id="second_parse_body_rekey",
         ),
+        pytest.param(
+            "Title",
+            "body <!--&#38;#45;&#38;#45;&#38;#62;z-->tail",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody tail",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody z-->tail",
+            "de054858eaa0eaa1",
+            "a467e2f5c3fed0ce",
+            id="normalizer_n1_rekey",
+        ),
+        pytest.param(
+            "Title",
+            "body <!--x--\u200b>y-->z",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody z",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody y-->z",
+            "2948992bd57f5d38",
+            "5c01326a67cf1f80",
+            id="normalizer_n2_rekey",
+        ),
+        pytest.param(
+            "Title",
+            "body <!-<!--x-->- y --<!--z-->> w",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody  w",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody > w",
+            "be38b8d6f2d56312",
+            "28b8fc9a36fb591a",
+            id="normalizer_n3_rekey",
+        ),
     ],
 )
 def test_markup_rekeys_once(

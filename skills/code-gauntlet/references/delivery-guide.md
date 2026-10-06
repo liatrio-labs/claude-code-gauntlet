@@ -146,9 +146,17 @@ including inside inline code, quoted locations and a URL segment such as `/@name
 `<` before an ASCII letter, `/`, `!` or `?` becomes `&lt;` in prose and U+FF1C
 FULLWIDTH LESS-THAN SIGN inside a paired inline span or quoted location. Email address
 syntax stays intact. Numeric references and `&commat;`, `&excl;`, `&lbrack;`, `&lsqb;`,
-`&rsqb;`, `&rbrack;`, `&colon;`, `&lpar;`, `&rpar;` and `&bsol;` decode to a fixpoint
-with comment removal and invisible stripping; other named references and query ampersands
-stay literal.
+`&rsqb;`, `&rbrack;`, `&colon;`, `&lpar;`, `&rpar;` and `&bsol;` decode as each replacement
+is consumed before the next input character. Decimal and hexadecimal accumulation saturates
+at 127; only ASCII values 32 through 126 are emitted. Other named references and query
+ampersands stay literal. Invisible code points, including CR, are discarded before matching;
+TAB and LF remain.
+Comments are removed only when a `-->` begins after the end of a live `<!--` opener. An
+overlapping closer in `<!-->tail` stays visible as `&lt;!-->tail`; a later non-overlapping
+closer still removes the comment. Eager reduction can expose text that the previous wave order
+removed: `<!--&#38;#45;&#38;#45;&#38;#62;z-->tail` becomes `z-->tail`,
+`<!--x--` + U+200B + `>y-->z` becomes `y-->z`, and
+`<!-<!--x-->- y --<!--z-->> w` becomes `> w`.
 Secrets are redacted before containment. Inline spans pair on one line at the next exact
 backtick-run length. A wrong pairing can show literal `&lt;` or backslashes, or show
 fullwidth characters in prose, but leaves the text contained. Fullwidth `＜` and `＠`

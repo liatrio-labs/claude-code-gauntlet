@@ -1,6 +1,8 @@
 """Top-level Markdown fences, one-line spans, and safe delimiter selection."""
 
 import re
+from bisect import bisect_left
+from dataclasses import dataclass
 
 
 # Twin of ``openProseFence`` in ``workflows/src/renderReport.js``.
@@ -82,35 +84,86 @@ def fence_closer(prefix: str) -> str:
     return "" if state is None else state[0] * state[1]
 
 
-def escaped_tick(text: str, index: int) -> bool:
-    backslashes = 0
-    index -= 1
-    while index >= 0 and text[index] == "\\":
-        backslashes += 1
-        index -= 1
-    return bool(backslashes % 2)
+@dataclass(frozen=True, slots=True)
+class TickRun:
+    start: int
+    end: int
+    width: int
+    escaped: bool
 
 
-def tick_run(line: str, start: int) -> int:
-    end = start
-    while end < len(line) and line[end] == "`":
-        end += 1
-    return end
+@dataclass(frozen=True, slots=True)
+class TickRunIndex:
+    runs: tuple[TickRun, ...]
+    starts_by_width: dict[int, tuple[int, ...]]
 
 
-def span_close(line: str, start: int, end: int) -> int | None:
-    """Find an equal-width closer; backslashes inside a CommonMark span are literal."""
-    width = end - start
-    cursor = end
-    while cursor < len(line):
-        tick = line.find("`", cursor)
-        if tick < 0:
-            return None
-        after = tick_run(line, tick)
-        if after - tick == width:
-            return tick
-        cursor = after
-    return None
+def tick_run_index(line: str) -> TickRunIndex:
+    runs: list[TickRun] = []
+    starts: dict[int, list[int]] = {}
+    index = 0
+    slash_parity = 0
+    while index < len(line):
+        character = line[index]
+        if character == "\\":
+            slash_parity ^= 1
+            index += 1
+            continue
+        if character == "`":
+            start = index
+            while index < len(line) and line[index] == "`":
+                index += 1
+            width = index - start
+            runs.append(TickRun(start, index, width, bool(slash_parity)))
+            starts.setdefault(width, []).append(start)
+        else:
+            index += 1
+        slash_parity = 0
+    return TickRunIndex(
+        tuple(runs),
+        {width: tuple(positions) for width, positions in starts.items()},
+    )
+
+
+def span_close(index: TickRunIndex, after: int, width: int) -> int | None:
+    """Return the first complete equal-width run; span contents ignore slashes."""
+    starts = index.starts_by_width.get(width)
+    if starts is None:
+        return None
+    position = bisect_left(starts, after)
+    return starts[position] if position < len(starts) else None
+
+
+def paired_code_spans(
+    index: TickRunIndex, *, suffix_retry: bool = False
+) -> list[tuple[int, int, int]]:
+    """Select paired spans with the requested unmatched-run policy."""
+    spans: list[tuple[int, int, int]] = []
+    run_index = 0
+    while run_index < len(index.runs):
+        run = index.runs[run_index]
+        opener = run.start + int(run.escaped)
+        width = run.width - int(run.escaped)
+        if width <= 0:
+            run_index += 1
+            continue
+        while width > 0:
+            close = span_close(index, run.end, width)
+            if close is not None:
+                close_end = close + width
+                spans.append((opener, close, close_end))
+                run_index += 1
+                while run_index < len(index.runs) and index.runs[run_index].start < close_end:
+                    run_index += 1
+                break
+            if not suffix_retry:
+                run_index += 1
+                break
+            width -= 1
+            opener += 1
+        else:
+            run_index += 1
+    return spans
 
 
 def code_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
@@ -119,26 +172,20 @@ def code_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]
     spans: list[tuple[int, int]] = []
     open_fence(text, intervals=fences)
     offset = 0
+    fence_index = 0
     for line in text.split("\n"):
-        if any(start <= offset < end for start, end in fences):
+        while fence_index < len(fences) and fences[fence_index][1] <= offset:
+            fence_index += 1
+        if (
+            fence_index < len(fences)
+            and fences[fence_index][0] <= offset < fences[fence_index][1]
+        ):
             offset += len(line) + 1
             continue
-        cursor = 0
-        while cursor < len(line):
-            start = line.find("`", cursor)
-            if start < 0:
-                break
-            end = tick_run(line, start)
-            if escaped_tick(line, start):
-                cursor = start + 1
-                continue
-            close = span_close(line, start, end)
-            if close is None:
-                cursor = end
-                continue
-            width = end - start
-            spans.append((offset + start, offset + close + width))
-            cursor = close + width
+        spans.extend(
+            (offset + start, offset + close_end)
+            for start, _close, close_end in paired_code_spans(tick_run_index(line))
+        )
         offset += len(line) + 1
     return spans, fences
 

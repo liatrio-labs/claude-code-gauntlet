@@ -1,6 +1,7 @@
 """Public outbound preparation contracts, independent of delivery composition."""
 
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -235,6 +236,102 @@ def test_entity_vocabulary_complete() -> None:
 
 
 @pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param("<!-->tail", "<!-->tail", id="overlapping-one"),
+        pytest.param("<!--->tail", "<!--->tail", id="overlapping-two"),
+        pytest.param("<!---->tail", "tail", id="empty-comment"),
+        pytest.param("<!-->x-->y", "y", id="later-closer-after-one"),
+        pytest.param("<!--->x-->y", "y", id="later-closer-after-two"),
+        pytest.param("<!-<!--x-->->tail", "<!-->tail", id="restored-overlap"),
+        pytest.param(
+            "<!--&#38;#45;&#38;#45;&#38;#62;z-->tail",
+            "z-->tail",
+            id="entity-decoded-closer",
+        ),
+        pytest.param("<!--x--\u200b>y-->z", "y-->z", id="invisible-completes-closer"),
+        pytest.param(
+            "<!-<!--x-->- y --<!--z-->> w", "> w", id="sibling-comment-join"
+        ),
+        pytest.param(
+            "<!-<!--x-->- a --&#6<!--y-->2; b -->",
+            "2; b -->",
+            id="sibling-join-with-decoded-tail",
+        ),
+    ],
+)
+def test_normalizer_overlap_and_semantics(source: str, expected: str) -> None:
+    assert text._normalize_outbound(source) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param("&#" + "0" * 5000 + "64;", "@", id="saturating-decimal"),
+        pytest.param("&#" + "9" * 5000 + ";", "", id="decimal-overflow"),
+        pytest.param("&#x" + "0" * 5000 + "40;", "@", id="saturating-hex"),
+    ],
+)
+def test_numeric_reference_outputs(source: str, expected: str) -> None:
+    assert text._normalize_outbound(source) == expected
+
+
+def _has_complete_nonoverlapping_comment(value: str) -> bool:
+    opener_end: int | None = None
+    index = 0
+    while index < len(value):
+        if opener_end is None and value.startswith("<!--", index):
+            opener_end = index + 4
+            index += 4
+            continue
+        if opener_end is not None and value.startswith("-->", index):
+            if index >= opener_end:
+                return True
+            index += 3
+            continue
+        index += 1
+    return False
+
+
+@pytest.mark.parametrize("seed", [1729], ids=["seeded_normal_form"])
+def test_seeded_normal_form(seed: Literal[1729, 917]) -> None:
+    invisible_ranges = (
+        range(0x00, 0x09),
+        (0x0B, 0x0C, 0x0D),
+        range(0x0E, 0x20),
+        range(0x7F, 0xA0),
+        (0x00AD, 0x200B, 0x200C, 0x200D, 0xFEFF, 0x2060),
+        range(0x202A, 0x202F),
+        range(0x2066, 0x206A),
+    )
+    recognized_names = (
+        "commat",
+        "excl",
+        "lbrack",
+        "lsqb",
+        "rsqb",
+        "rbrack",
+        "colon",
+        "lpar",
+        "rpar",
+        "bsol",
+    )
+    sources = [row["input"] for row in VECTORS if isinstance(row["input"], str)]
+    sources.extend(attack_corpus(seed))
+    for source in sources:
+        normalized = text._normalize_outbound(source)
+        assert not _has_complete_nonoverlapping_comment(normalized), repr(source)
+        assert re.search(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);", normalized) is None
+        assert all(f"&{name};" not in normalized for name in recognized_names)
+        assert not any(
+            ord(character) in ord_range
+            for character in normalized
+            for ord_range in invisible_ranges
+        )
+        assert text._normalize_outbound(normalized) == normalized, repr(source)
+
+
+@pytest.mark.parametrize(
     ("source", "redactor_output", "expected"),
     [
         ("&#62;&#62;&#62;", None, "\\>>>"),
@@ -263,7 +360,7 @@ def test_text_pass_order(
     [
         pytest.param(
             1729,
-            ("prose", "line"),
+            ("prose", "line", "optional"),
             id="prose_and_line_idempotence",
         ),
         pytest.param(
@@ -389,7 +486,7 @@ def test_reference_redaction_bridge(operation: TextOperation) -> None:
 
 
 def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
-    # These 500 KB inputs take under one second; five allows for CI contention.
+    # A child deadline bounds failures in preparation.
     result = subprocess.run(
         [
             sys.executable,
@@ -410,6 +507,35 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
         check=True,
     )
     return result.stdout
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param("<!--" * 25000, "&lt;!--" * 25000, id="comment-openers"),
+        pytest.param(
+            "<&excl;--" * 20000,
+            "&lt;!--" * 20000,
+            id="entity-built-comment-openers",
+        ),
+        pytest.param("&" + "#38;" * 20000 + "#64;", "＠", id="nested-entities"),
+        pytest.param(
+            "<!" * 55000 + "<!-- x -->" + "-- y -->" * 55000,
+            "",
+            id="comment-deletion-waves",
+        ),
+        pytest.param("x" + "`" * 250000, "x" + "\\`" * 250000, id="tick-run"),
+        pytest.param(
+            "x " + " ".join("`" * width for width in range(1, 601)),
+            "x " + " ".join("\\`" * width for width in range(1, 601)),
+            id="unequal-width-runs",
+        ),
+    ],
+)
+def test_large_outbound_preparation(source: str, expected: str) -> None:
+    actual = _timed_preparation(source, "line")
+    assert actual == expected
+    assert text.prepare_line(actual) == actual
 
 
 @pytest.mark.parametrize("operation", ("prose", "line"))

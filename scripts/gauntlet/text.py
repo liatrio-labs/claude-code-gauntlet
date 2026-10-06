@@ -5,13 +5,15 @@ JS_TRIM_CHARS is the Python twin of JS String.prototype.trim.
 
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Literal
 
 from gauntlet.markdown import (
     code_span,
-    escaped_tick,
     open_fence,
+    paired_code_spans,
     span_close,
-    tick_run,
+    tick_run_index,
 )
 from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 from gauntlet.registry import JS_TRIM_CHARS as JS_TRIM_CHARS
@@ -43,12 +45,20 @@ _TRUNCATION_MARKER = "…[truncated]"
 _GH_TOKEN_RE = re.compile(r"(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}")
 _GL_TOKEN_RE = re.compile(r"(?:glpat-|glrt-)[A-Za-z0-9_\-]{20,}")
 
-_ENTITY_DEC_RE = re.compile(r"&#([0-9]+);")
-_ENTITY_HEX_RE = re.compile(r"&#x([0-9a-fA-F]+);", re.IGNORECASE)
-_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
 _BACKTICK_RUN_RE = re.compile(r"`{3,}")
-_NAMED_ENTITY_RE = re.compile(r"&([A-Za-z]+);")
-_NAMED_ENTITIES = {
+_EntityName = Literal[
+    "commat",
+    "excl",
+    "lbrack",
+    "lsqb",
+    "rsqb",
+    "rbrack",
+    "colon",
+    "lpar",
+    "rpar",
+    "bsol",
+]
+_NAMED_ENTITIES: dict[_EntityName, str] = {
     "commat": "@",
     "excl": "!",
     "lbrack": "[",
@@ -60,6 +70,11 @@ _NAMED_ENTITIES = {
     "rpar": ")",
     "bsol": "\\",
 }
+_NAMED_ENTITY_PREFIXES = frozenset(
+    name[:length]
+    for name in _NAMED_ENTITIES
+    for length in range(1, len(name) + 1)
+)
 
 # A frozenset avoids CodeQL overly-large-range warnings while retaining TAB/LF.
 _INVISIBLE_ORDS = frozenset(
@@ -81,35 +96,27 @@ _INVISIBLE_ORDS = frozenset(
         *range(0x2066, 0x206A),
     )
 )
+_NORMALIZER_BOUNDARY_RE = re.compile(
+    r"[&<>\-\x00-\x08\x0b-\x1f\x7f-\x9f\u00ad\u200b-\u200d"
+    r"\ufeff\u2060\u202a-\u202e\u2066-\u2069]"
+)
 
 
-def _strip_invisibles(text: str) -> str:
-    return "".join(ch for ch in text if ord(ch) not in _INVISIBLE_ORDS)
+@dataclass(frozen=True, slots=True)
+class _EntityCandidate:
+    start: int
+    kind: Literal["start", "numeric", "decimal", "hex", "named"]
+    value: int = 0
+    has_digit: bool = False
+    name: str = ""
 
 
-def _decode_numeric_entities(text: str) -> str:
-    """Decode ASCII entities only, so decoding cannot reintroduce invisibles.
-
-    Markdown parses fences before entities; encoded backticks cannot form a fence.
-    """
-
-    def _dec(match: re.Match[str]) -> str:
-        num = int(match.group(1), 10)
-        if 32 <= num <= 126:
-            return chr(num)
-        return ""
-
-    def _hex(match: re.Match[str]) -> str:
-        num = int(match.group(1), 16)
-        if 32 <= num <= 126:
-            return chr(num)
-        return ""
-
-    text = _ENTITY_DEC_RE.sub(_dec, text)
-    text = _ENTITY_HEX_RE.sub(_hex, text)
-    return _NAMED_ENTITY_RE.sub(
-        lambda match: _NAMED_ENTITIES.get(match.group(1), match.group()), text
-    )
+@dataclass(frozen=True, slots=True)
+class _NormalizerEntry:
+    character: str
+    entity: _EntityCandidate | None
+    comment_start: int | None
+    comment_end: int | None
 
 
 _DANGEROUS_LT_RE = re.compile(r"<(?=[A-Za-z/!?])")
@@ -126,22 +133,118 @@ _DEFINITION_LINK_TRIGGER_RE = re.compile(r"\]\\?\(")
 _DEFINITION_CLOSE_COLON_RE = re.compile(r"\](\\*):")
 
 
-def _remove_comments(text: str) -> str:
-    # Removal can build a new comment from surrounding text; decoding between
-    # removals changes which text is removed.
-    while True:
-        cleaned = _HTML_COMMENT_RE.sub("", text)
-        if cleaned == text:
-            return text
-        text = cleaned
-
-
 def _normalize_outbound(text: str) -> str:
-    while True:
-        normalized = _strip_invisibles(_remove_comments(_decode_numeric_entities(text)))
-        if normalized == text:
-            return text
-        text = normalized
+    """Decode bounded outbound entities and remove complete non-overlapping comments."""
+    if _NORMALIZER_BOUNDARY_RE.search(text) is None:
+        return text
+    output: list[_NormalizerEntry] = []
+
+    def push(character: str) -> str | None:
+        if ord(character) in _INVISIBLE_ORDS:
+            return None
+        previous = output[-1] if output else None
+        entity = previous.entity if previous is not None else None
+        replacement: str | None = None
+        if character == "&":
+            entity = _EntityCandidate(len(output), "start")
+        elif entity is not None:
+            if entity.kind == "start":
+                if character == "#":
+                    entity = _EntityCandidate(entity.start, "numeric")
+                elif "A" <= character <= "Z" or "a" <= character <= "z":
+                    name = entity.name + character
+                    entity = (
+                        _EntityCandidate(entity.start, "named", name=name)
+                        if name in _NAMED_ENTITY_PREFIXES
+                        else None
+                    )
+                else:
+                    entity = None
+            elif entity.kind == "numeric":
+                if character in "xX":
+                    entity = _EntityCandidate(entity.start, "hex")
+                elif "0" <= character <= "9":
+                    entity = _EntityCandidate(
+                        entity.start,
+                        "decimal",
+                        min(127, ord(character) - 48),
+                        True,
+                    )
+                else:
+                    entity = None
+            elif entity.kind in ("decimal", "hex"):
+                if character == ";" and entity.has_digit:
+                    replacement = (
+                        chr(entity.value)
+                        if 32 <= entity.value <= 126
+                        else ""
+                    )
+                else:
+                    digit = (
+                        ord(character) - 48
+                        if "0" <= character <= "9"
+                        else ord(character.lower()) - 87
+                        if entity.kind == "hex" and "a" <= character.lower() <= "f"
+                        else -1
+                    )
+                    radix = 10 if entity.kind == "decimal" else 16
+                    if digit >= 0 and digit < radix:
+                        entity = _EntityCandidate(
+                            entity.start,
+                            entity.kind,
+                            min(127, entity.value * radix + digit),
+                            True,
+                        )
+                    else:
+                        entity = None
+            elif entity.kind == "named":
+                if character == ";":
+                    if entity.name in _NAMED_ENTITIES:
+                        replacement = _NAMED_ENTITIES[entity.name]
+                    else:
+                        entity = None
+                elif "A" <= character <= "Z" or "a" <= character <= "z":
+                    name = entity.name + character
+                    entity = (
+                        _EntityCandidate(entity.start, "named", name=name)
+                        if name in _NAMED_ENTITY_PREFIXES
+                        else None
+                    )
+                else:
+                    entity = None
+
+        if replacement is not None:
+            del output[entity.start :]
+            return replacement or None
+
+        comment_start = previous.comment_start if previous is not None else None
+        comment_end = previous.comment_end if previous is not None else None
+        output.append(_NormalizerEntry(character, entity, comment_start, comment_end))
+        if (
+            comment_start is None
+            and len(output) >= 4
+            and output[-4].character == "<"
+            and output[-3].character == "!"
+            and output[-2].character == "-"
+            and output[-1].character == "-"
+        ):
+            output[-1] = _NormalizerEntry(character, entity, len(output) - 4, len(output))
+            return None
+        if (
+            comment_start is not None
+            and len(output) >= 3
+            and output[-3].character == "-"
+            and output[-2].character == "-"
+            and output[-1].character == ">"
+            and len(output) - 3 >= comment_end
+        ):
+            del output[comment_start:]
+
+    for original in text:
+        character: str | None = original
+        while character is not None:
+            character = push(character)
+    return "".join([entry.character for entry in output])
 
 
 def has_marker_opener(text: str) -> bool:
@@ -244,57 +347,55 @@ def _escape_tilde_runs(line: str) -> str:
 
 
 def _containment_code_spans(line: str) -> list[tuple[int, int, int]]:
-    spans = []
-    index = 0
-    while index < len(line):
-        if line[index] != "`" or escaped_tick(line, index):
-            index += 1
-            continue
-        end = tick_run(line, index)
-        close = span_close(line, index, end)
-        if close is None:
-            index += 1
-            continue
-        close_end = close + end - index
-        spans.append((index, close, close_end))
-        index = close_end
-    return spans
+    return paired_code_spans(tick_run_index(line))
 
 
 def _contain_line(line: str) -> str:
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
-    out = []
-    index = 0
-    spans = _containment_code_spans(line)
-    span_index = 0
-    while index < len(line):
-        if line[index] == "`":
-            if escaped_tick(line, index):
-                out.append("`")
-                index += 1
-                continue
-            if span_index < len(spans) and spans[span_index][0] == index:
-                _, close, close_end = spans[span_index]
-                end = tick_run(line, index)
-                width = end - index
-                out.append(
-                    line[index : close + width].replace(
-                        line[end:close],
-                        _escape_visible(line[end:close], code=True),
-                        1,
-                    )
-                )
-                index = close_end
-                span_index += 1
-                continue
-            out.append("\\`")
-            index += 1
-            continue
-        next_tick = line.find("`", index)
-        if next_tick < 0:
-            next_tick = len(line)
-        out.append(_escape_visible(line[index:next_tick]))
-        index = next_tick
+    index = tick_run_index(line)
+    out: list[str] = []
+    cursor = 0
+    run_index = 0
+    while run_index < len(index.runs):
+        run = index.runs[run_index]
+        out.append(_escape_visible(line[cursor : run.start]))
+        opener = run.start
+        width = run.width
+        if run.escaped:
+            out.append("`")
+            opener += 1
+            width -= 1
+        paired = False
+        while width:
+            close = span_close(index, run.end, width)
+            if close is not None:
+                failed = run.width - int(run.escaped) - width
+                if failed:
+                    out.append("\\`" * failed)
+                opener_end = opener + width
+                out.append(line[opener:opener_end])
+                out.append(_escape_visible(line[opener_end:close], code=True))
+                close_end = close + width
+                out.append(line[close:close_end])
+                cursor = close_end
+                run_index += 1
+                while (
+                    run_index < len(index.runs)
+                    and index.runs[run_index].start < cursor
+                ):
+                    run_index += 1
+                paired = True
+                break
+            width -= 1
+            opener += 1
+        if not paired:
+            if not run.escaped:
+                out.append("\\`" * run.width)
+            else:
+                out.append("\\`" * (run.width - 1))
+            cursor = run.end
+            run_index += 1
+    out.append(_escape_visible(line[cursor:]))
     return "".join(out)
 
 
@@ -337,8 +438,14 @@ def _prepare_text(
     lines = text.split("\n")
     protected_lines: list[bool] = []
     offset = 0
+    interval_index = 0
     for line in lines:
-        protected_lines.append(any(start <= offset < end for start, end in intervals))
+        while interval_index < len(intervals) and intervals[interval_index][1] <= offset:
+            interval_index += 1
+        protected_lines.append(
+            interval_index < len(intervals)
+            and intervals[interval_index][0] <= offset < intervals[interval_index][1]
+        )
         offset += len(line) + 1
     suffix_index = 0
     offset = 0
@@ -354,16 +461,18 @@ def _prepare_text(
                 break
             suffix_index += 1
         offset += len(line) + 1
+    classified_lines: list[str] = []
     start = 0
-    for index in range(1, len(lines) + 1):
-        if index == len(lines) or protected_lines[index] != protected_lines[start]:
-            block = "\n".join(lines[start:index])
-            lines[start:index] = (
-                _break_marker_openers(block)
-                if protected_lines[start]
-                else _escape_definitions(block)
-            ).split("\n")
-            start = index
+    while start < len(lines):
+        end = start + 1
+        while end < len(lines) and protected_lines[end] == protected_lines[start]:
+            end += 1
+        block = "\n".join(lines[start:end])
+        classified_lines.extend(
+            (_break_marker_openers(block) if protected_lines[start] else _escape_definitions(block)).split("\n")
+        )
+        start = end
+    lines = classified_lines
     prepared = []
     for line, protected in zip(lines, protected_lines, strict=True):
         if not protected and not single_line:
@@ -381,14 +490,18 @@ def _prepare_text(
                 line = line[:index] + "\\" + line[index:]
         prepared.append(line if protected else _contain_line(line))
     # Bracket replacements can complete definition-shaped labels.
+    defined_lines: list[str] = []
     start = 0
-    for index in range(1, len(prepared) + 1):
-        if index == len(prepared) or protected_lines[index] != protected_lines[start]:
-            if not protected_lines[start]:
-                prepared[start:index] = _escape_definitions(
-                    "\n".join(prepared[start:index])
-                ).split("\n")
-            start = index
+    while start < len(prepared):
+        end = start + 1
+        while end < len(prepared) and protected_lines[end] == protected_lines[start]:
+            end += 1
+        block = "\n".join(prepared[start:end])
+        defined_lines.extend(
+            (_escape_definitions(block) if not protected_lines[start] else block).split("\n")
+        )
+        start = end
+    prepared = defined_lines
     result = "\n".join(prepared)
     if fence is not None:
         result += "\n" + fence[0] * fence[1]

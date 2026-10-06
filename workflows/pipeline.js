@@ -3199,7 +3199,7 @@ function fenceFor(text) {
 function oneLine(value) {
   return reportAsText(value).replace(/[\r\n]+/g, ' ').replace(/ +/g, ' ').trim();
 }
-const OUTBOUND_INVISIBLES = /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/g;
+const OUTBOUND_INVISIBLES = /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/;
 const OUTBOUND_NAMED_ENTITIES = {
   commat: '@',
   excl: '!',
@@ -3212,26 +3212,118 @@ const OUTBOUND_NAMED_ENTITIES = {
   rpar: ')',
   bsol: '\\',
 };
-function outboundBase(value) {
+const OUTBOUND_NAMED_ENTITY_PREFIXES = new Set(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
+  Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
+)));
+function normalizeOutboundText(value) {
   let text = reportAsText(value);
+  const output = [];
+  const push = (character) => {
+    if (OUTBOUND_INVISIBLES.test(character)) return undefined;
+    const previous = output.length ? output[output.length - 1] : null;
+    let entity = previous ? previous.entity : null;
+    let replacement;
+    if (character === '&') {
+      entity = { start: output.length, kind: 'start', value: 0, hasDigit: false, name: '' };
+    } else if (entity) {
+      if (entity.kind === 'start') {
+        if (character === '#') {
+          entity = { start: entity.start, kind: 'numeric', value: 0, hasDigit: false, name: '' };
+        } else if (/[A-Za-z]/.test(character)) {
+          const name = entity.name + character;
+          entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
+            ? { start: entity.start, kind: 'named', value: 0, hasDigit: false, name }
+            : null;
+        } else {
+          entity = null;
+        }
+      } else if (entity.kind === 'numeric') {
+        if (character === 'x' || character === 'X') {
+          entity = { start: entity.start, kind: 'hex', value: 0, hasDigit: false, name: '' };
+        } else if (character >= '0' && character <= '9') {
+          entity = {
+            start: entity.start,
+            kind: 'decimal',
+            value: Math.min(127, character.charCodeAt(0) - 48),
+            hasDigit: true,
+            name: '',
+          };
+        } else {
+          entity = null;
+        }
+      } else if (entity.kind === 'decimal' || entity.kind === 'hex') {
+        const radix = entity.kind === 'decimal' ? 10 : 16;
+        let digit = -1;
+        if (character >= '0' && character <= '9') digit = character.charCodeAt(0) - 48;
+        else if (radix === 16 && character.toLowerCase() >= 'a' && character.toLowerCase() <= 'f') {
+          digit = character.toLowerCase().charCodeAt(0) - 87;
+        }
+        if (character === ';' && entity.hasDigit) {
+          replacement = entity.value >= 32 && entity.value <= 126
+            ? String.fromCharCode(entity.value)
+            : '';
+        } else if (digit >= 0 && digit < radix) {
+          entity = {
+            start: entity.start,
+            kind: entity.kind,
+            value: Math.min(127, entity.value * radix + digit),
+            hasDigit: true,
+            name: '',
+          };
+        } else {
+          entity = null;
+        }
+      } else if (entity.kind === 'named') {
+        if (character === ';') {
+          if (Object.hasOwn(OUTBOUND_NAMED_ENTITIES, entity.name)) {
+            replacement = OUTBOUND_NAMED_ENTITIES[entity.name];
+          } else {
+            entity = null;
+          }
+        } else if (/[A-Za-z]/.test(character)) {
+          const name = entity.name + character;
+          entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
+            ? { start: entity.start, kind: 'named', value: 0, hasDigit: false, name }
+            : null;
+        } else {
+          entity = null;
+        }
+      }
+    }
+    if (replacement !== undefined) {
+      output.length = entity.start;
+      return replacement || undefined;
+    }
+    const commentStart = previous ? previous.commentStart : null;
+    const commentEnd = previous ? previous.commentEnd : null;
+    output.push({ character, entity, commentStart, commentEnd });
+    const length = output.length;
+    if (commentStart === null && length >= 4
+        && output[length - 4].character === '<'
+        && output[length - 3].character === '!'
+        && output[length - 2].character === '-'
+        && output[length - 1].character === '-') {
+      output[length - 1] = { character, entity, commentStart: length - 4, commentEnd: length };
+      return undefined;
+    }
+    if (commentStart !== null && length >= 3
+        && output[length - 3].character === '-'
+        && output[length - 2].character === '-'
+        && output[length - 1].character === '>'
+        && length - 3 >= commentEnd) {
+      output.length = commentStart;
+    }
+    return undefined;
+  };
+  for (let index = 0; index < text.length; index += 1) {
+    let character = text[index];
+    while (character !== undefined) character = push(character);
+  }
+  return output.map((entry) => entry.character).join('');
+}
+function outboundBase(value) {
+  const text = normalizeOutboundText(value);
   if (text.trim() === '') return '';
-  let previous;
-  do {
-    previous = text;
-    text = text.replace(/&#([0-9]+);|&#[xX]([0-9a-fA-F]+);/g, (_, decimal, hex) => {
-      const number = Number.parseInt(decimal || hex, decimal ? 10 : 16);
-      return number >= 32 && number <= 126 ? String.fromCharCode(number) : '';
-    });
-    text = text.replace(/&([A-Za-z]+);/g, (match, name) => (
-      Object.hasOwn(OUTBOUND_NAMED_ENTITIES, name) ? OUTBOUND_NAMED_ENTITIES[name] : match
-    ));
-    let uncommented;
-    do {
-      uncommented = text;
-      text = text.replace(/<!--[\s\S]*?-->/g, '');
-    } while (text !== uncommented);
-    text = text.replace(OUTBOUND_INVISIBLES, '');
-  } while (text !== previous);
   return text.replace(/(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}/g, '[REDACTED]')
     .replace(/(?:glpat-|glrt-)[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
     .replace(/[\r\n]+/g, ' ');
@@ -3244,45 +3336,63 @@ function outboundVisible(text, code = false) {
       ? '\uFF20' : match
   ));
 }
-function outboundEscapedTick(text, index) {
-  let slashes = 0;
-  for (let at = index - 1; at >= 0 && text[at] === '\\'; at -= 1) slashes += 1;
-  return slashes % 2 === 1;
-}
-function outboundSpanClose(line, start, end) {
-  const width = end - start;
-  let cursor = end;
-  while (cursor < line.length) {
-    const tick = line.indexOf('`', cursor);
-    if (tick < 0) break;
-    let after = tick;
-    while (after < line.length && line[after] === '`') after += 1;
-    if (after - tick === width) return tick;
-    cursor = after;
-  }
-  return -1;
-}
-function outboundCodeSpans(line) {
-  const spans = [];
+function outboundTickRunIndex(line) {
+  const runs = [];
+  const startsByWidth = new Map();
+  let slashParity = 0;
   let index = 0;
   while (index < line.length) {
-    if (line[index] !== '`') {
+    if (line[index] === '\\') {
+      slashParity ^= 1;
       index += 1;
       continue;
     }
-    if (outboundEscapedTick(line, index)) {
+    if (line[index] === '`') {
+      const start = index;
+      while (index < line.length && line[index] === '`') index += 1;
+      const width = index - start;
+      runs.push({ start, end: index, width, escaped: Boolean(slashParity) });
+      if (!startsByWidth.has(width)) startsByWidth.set(width, []);
+      startsByWidth.get(width).push(start);
+    } else {
       index += 1;
+    }
+    slashParity = 0;
+  }
+  return { runs, startsByWidth };
+}
+function outboundSpanClose(index, after, width) {
+  const starts = index.startsByWidth.get(width);
+  if (!starts) return -1;
+  let low = 0;
+  let high = starts.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (starts[middle] < after) low = middle + 1;
+    else high = middle;
+  }
+  return low < starts.length ? starts[low] : -1;
+}
+function outboundCodeSpans(line, index = outboundTickRunIndex(line)) {
+  const spans = [];
+  let runIndex = 0;
+  while (runIndex < index.runs.length) {
+    const run = index.runs[runIndex];
+    let opener = run.start + Number(run.escaped);
+    let width = run.width - Number(run.escaped);
+    if (width <= 0) {
+      runIndex += 1;
       continue;
     }
-    let end = index;
-    while (end < line.length && line[end] === '`') end += 1;
-    const close = outboundSpanClose(line, index, end);
+    const close = outboundSpanClose(index, run.end, width);
     if (close < 0) {
-      index += 1;
+      runIndex += 1;
       continue;
     }
-    spans.push([index, close + end - index]);
-    index = close + end - index;
+    const closeEnd = close + width;
+    spans.push([opener, closeEnd]);
+    runIndex += 1;
+    while (runIndex < index.runs.length && index.runs[runIndex].start < closeEnd) runIndex += 1;
   }
   return spans;
 }
@@ -3304,34 +3414,49 @@ function outboundDefinitions(line, forceColon = false) {
 function outboundContain(line, forceColon = false) {
   line = outboundDefinitions(line, forceColon);
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
-  let output = '';
-  let index = 0;
-  while (index < line.length) {
-    if (line[index] === '`') {
-      if (outboundEscapedTick(line, index)) {
-        output += '`';
-        index += 1;
-        continue;
-      }
-      let end = index;
-      while (end < line.length && line[end] === '`') end += 1;
-      const width = end - index;
-      const close = outboundSpanClose(line, index, end);
-      if (close >= 0) {
-        output += `${line.slice(index, end)}${outboundVisible(line.slice(end, close), true)}${line.slice(close, close + width)}`;
-        index = close + width;
-        continue;
-      }
-      output += '\\`';
-      index += 1;
-      continue;
+  const index = outboundTickRunIndex(line);
+  const output = [];
+  let cursor = 0;
+  let runIndex = 0;
+  while (runIndex < index.runs.length) {
+    const run = index.runs[runIndex];
+    output.push(outboundVisible(line.slice(cursor, run.start)));
+    let opener = run.start;
+    let width = run.width;
+    if (run.escaped) {
+      output.push('`');
+      opener += 1;
+      width -= 1;
     }
-    let next = line.indexOf('`', index);
-    if (next < 0) next = line.length;
-    output += outboundVisible(line.slice(index, next));
-    index = next;
+    let paired = false;
+    while (width > 0) {
+      const close = outboundSpanClose(index, run.end, width);
+      if (close >= 0) {
+        const failed = run.width - Number(run.escaped) - width;
+        if (failed) output.push('\\`'.repeat(failed));
+        const openerEnd = opener + width;
+        output.push(line.slice(opener, openerEnd));
+        output.push(outboundVisible(line.slice(openerEnd, close), true));
+        const closeEnd = close + width;
+        output.push(line.slice(close, closeEnd));
+        cursor = closeEnd;
+        runIndex += 1;
+        while (runIndex < index.runs.length && index.runs[runIndex].start < cursor) runIndex += 1;
+        paired = true;
+        break;
+      }
+      width -= 1;
+      opener += 1;
+    }
+    if (!paired) {
+      if (!run.escaped) output.push('\\`'.repeat(run.width));
+      else output.push('\\`'.repeat(run.width - 1));
+      cursor = run.end;
+      runIndex += 1;
+    }
   }
-  return outboundDefinitions(output, forceColon);
+  output.push(outboundVisible(line.slice(cursor)));
+  return outboundDefinitions(output.join(''), forceColon);
 }
 function prepareLineInternal(value, forceColon = false) {
   const text = outboundBase(value);
@@ -3432,7 +3557,8 @@ function quotedSummaryLocation(finding) {
     }
   }
   display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
-  const longest = Math.max(0, ...[...display.matchAll(/`+/g)].map((match) => match[0].length));
+  let longest = 0;
+  for (const match of display.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
   const delimiter = '`'.repeat(longest + 1);
   if (/^[` ]|[` ]$/.test(display)) display = ` ${display} `;
   return `${delimiter}${display}${delimiter}`;

@@ -181,6 +181,29 @@ def test_invariant_rejects_active_markup(output: str) -> None:
 
 @pytest.mark.parametrize(
     "case_id",
+    [
+        "D-overlap1",
+        "D-overlap2",
+        "D-restored-overlap",
+        "N1",
+        "N2",
+        "N3",
+        "comment_removal_before_decode",
+    ],
+)
+def test_prepared_normalizer_outputs_have_no_live_comments(case_id: str) -> None:
+    rows = text_vectors()
+    case = next((row for row in rows if row["id"] == case_id), None)
+    if case is None:
+        case = next(row for row in line_vectors() if row["id"].endswith(case_id))
+    output = outbound_text.prepare_line(case["input"])
+    assert output == case["expected"]
+    assert "<!--" not in output
+    assert not outbound_text.has_marker_opener(output)
+
+
+@pytest.mark.parametrize(
+    "case_id",
     ["table_even_slashes"],
     ids=["table_even_slashes"],
 )
