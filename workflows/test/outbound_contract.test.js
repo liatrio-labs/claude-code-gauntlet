@@ -42,6 +42,7 @@ function locationSpan(bullet) {
 const linePayload = JSON.parse(readFileSync(new URL('../../tests/fixtures/cross_runtime/outbound_line.json', import.meta.url), 'utf8'));
 assert.equal(linePayload.algorithm, 'outbound_line');
 const commentCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/outbound_comment_cases.json', import.meta.url), 'utf8')).cases;
+const summaryCases = linePayload.summary_cases;
 const lineCases = [
   ...linePayload.cases,
   ...commentCases.filter((row) => ['single_line', 'location'].includes(row.field_class))
@@ -53,6 +54,13 @@ for (const row of lineCases) {
     assert.equal(actual, row.expected);
     assert.equal(prepareLine(actual), actual);
     assertLineInvariant(actual);
+  });
+}
+
+for (const row of summaryCases) {
+  test(`summary parity: ${row.id}`, () => {
+    assert.equal(renderSummaryBody(row.input), row.expected_js);
+    assert.equal(row.expected_py, row.expected_js);
   });
 }
 
@@ -80,6 +88,9 @@ process.stdout.write(prepareLine(source));
 
 function assertLineInvariant(output) {
   assert.doesNotMatch(output, /[!\[]\\*\[/);
+  if (!output.includes('`') && /\]\\?\(/.test(output)) {
+    assert.doesNotMatch(output, /\](\\*):/);
+  }
   let slashes = 0;
   let firstBracket = true;
   for (let index = 0; index < output.length; index += 1) {

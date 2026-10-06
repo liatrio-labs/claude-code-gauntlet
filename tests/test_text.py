@@ -102,6 +102,138 @@ def test_text_vector(case: TextVector) -> None:
         assert open_fence(case["input"], strict=True) is None
 
 
+@pytest.mark.parametrize("delimiter", ("```", "~~~"), ids=["backtick", "tilde"])
+@pytest.mark.parametrize(
+    "info",
+    (
+        "suggestion",
+        " suggestion",
+        "suggestion foo",
+        "suggestion:-0+0",
+        "sug&#103;estion",
+        "Suggestion",
+        "SUGGESTION",
+        "{suggestion}",
+        "suggestion\\",
+        "python",
+        "future:params",
+    ),
+)
+@pytest.mark.parametrize("closed", (True, False), ids=["closed", "open"])
+def test_prose_fence_info_is_empty(delimiter: str, info: str, closed: bool) -> None:
+    source = f"{delimiter}{info}\nx = SENT"
+    if closed:
+        source += f"\n{delimiter}"
+    assert text.prepare_prose(source).splitlines() == [delimiter, "x = SENT", delimiter]
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    (
+        " ",
+        "  ",
+        "   ",
+        "    ",
+        "\t",
+        "> ",
+        "> - ",
+        "- ",
+        "+ ",
+        "* ",
+        "1. ",
+        "1) ",
+        ": ",
+        "~ ",
+        "text ",
+    ),
+)
+def test_prose_tilde_runs_escape_all_container_prefixes(prefix: str) -> None:
+    source = f"term\n{prefix}~~~suggestion\n  x = SENT\n  ~~~\n\ntail"
+    assert text.prepare_prose(source) == (
+        f"term\n{prefix}\\~~~suggestion\n  x = SENT\n  \\~~~\n\ntail"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            "é\n~~~python\nx\n~~~\ny\n```mermaid\nz\n```\n@out <b>",
+            "é\n~~~\nx\n~~~\ny\n```\nz\n```\n＠out &lt;b>",
+            id="original-fence-offsets",
+        ),
+        pytest.param(
+            "x ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: //e/SENT](a b) after",
+            "x [REDACTED]： //e/SENT](a b) after",
+            id="redaction-before-definition-guard",
+        ),
+        pytest.param(r"already \~~~", r"already \~~~", id="odd-slash-run"),
+        pytest.param(r"even \\~~~", r"even \\\~~~", id="even-slash-run"),
+        pytest.param("`~~~`", "`\\~~~`", id="inline-code-tilde-run"),
+    ],
+)
+def test_prose_structure_pass_order(source: str, expected: str) -> None:
+    assert text.prepare_prose(source) == expected
+    assert text.prepare_prose(expected) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            "before x [a]: //example.test/SENT](a b) after",
+            "before x [a]： //example.test/SENT](a b) after",
+            id="midline",
+        ),
+        pytest.param(
+            "x [a]: //e/SENT]\\(a b) after",
+            "x [a]： //e/SENT]\\(a b) after",
+            id="escaped-trigger",
+        ),
+        pytest.param("x [a]: u][a b] q", "x [a]: u][a b] q", id="no-pair"),
+        pytest.param("x [a]: u] (a b) q", "x [a]: u] (a b) q", id="spaced-pair"),
+        pytest.param("x [a]: u]\\\\(a b) q", "x [a]: u]\\\\(a b) q", id="two-slashes"),
+        pytest.param(
+            "`x [a]: SENT](a b)`",
+            "`x [a]: SENT](a b)`",
+            id="code-span-control",
+        ),
+        pytest.param("[[x]: u", "[\uff3bx]\\: u", id="after-containment-pass"),
+        pytest.param(
+            "**x [a]: u](a b)**",
+            "**x [a]： u](a b)**",
+            id="bold-prefix",
+        ),
+        pytest.param("> x [a]: u](a b)", "> x [a]： u](a b)", id="quote-prefix"),
+        pytest.param("- x [a]: u](a b)", "- x [a]： u](a b)", id="list-prefix"),
+    ],
+)
+def test_definition_colon_contract(source: str, expected: str) -> None:
+    assert text.prepare_prose(source) == expected
+    assert text.prepare_line(source) == expected
+
+
+def test_entity_vocabulary_complete() -> None:
+    from html.entities import html5
+
+    expected = {
+        "commat;": "@",
+        "excl;": "!",
+        "lbrack;": "[",
+        "lsqb;": "[",
+        "rsqb;": "]",
+        "rbrack;": "]",
+        "colon;": ":",
+        "lpar;": "(",
+        "rpar;": ")",
+        "bsol;": "\\",
+    }
+    targets = set(expected.values())
+    assert {name: value for name, value in html5.items() if value in targets} == expected
+    for name, value in expected.items():
+        assert text._normalize_outbound("&" + name) == value
+
+
 @pytest.mark.parametrize(
     ("source", "redactor_output", "expected"),
     [

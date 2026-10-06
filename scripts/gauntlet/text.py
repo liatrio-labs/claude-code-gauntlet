@@ -47,6 +47,19 @@ _ENTITY_DEC_RE = re.compile(r"&#([0-9]+);")
 _ENTITY_HEX_RE = re.compile(r"&#x([0-9a-fA-F]+);", re.IGNORECASE)
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
 _BACKTICK_RUN_RE = re.compile(r"`{3,}")
+_NAMED_ENTITY_RE = re.compile(r"&([A-Za-z]+);")
+_NAMED_ENTITIES = {
+    "commat": "@",
+    "excl": "!",
+    "lbrack": "[",
+    "lsqb": "[",
+    "rsqb": "]",
+    "rbrack": "]",
+    "colon": ":",
+    "lpar": "(",
+    "rpar": ")",
+    "bsol": "\\",
+}
 
 # A frozenset avoids CodeQL overly-large-range warnings while retaining TAB/LF.
 _INVISIBLE_ORDS = frozenset(
@@ -94,11 +107,8 @@ def _decode_numeric_entities(text: str) -> str:
 
     text = _ENTITY_DEC_RE.sub(_dec, text)
     text = _ENTITY_HEX_RE.sub(_hex, text)
-    return (
-        text.replace("&commat;", "@")
-        .replace("&excl;", "!")
-        .replace("&lbrack;", "[")
-        .replace("&lsqb;", "[")
+    return _NAMED_ENTITY_RE.sub(
+        lambda match: _NAMED_ENTITIES.get(match.group(1), match.group()), text
     )
 
 
@@ -108,8 +118,12 @@ _MARKER_OPEN_RE = re.compile(
     + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
     + r")\s*:"
 )
-_FENCE_SHAPE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*([`~])\1{2,}")
+_BACKTICK_FENCE_SHAPE_RE = re.compile(
+    r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*(`{3,})"
+)
 _MULTILINE_QUOTE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})")
+_DEFINITION_LINK_TRIGGER_RE = re.compile(r"\]\\?\(")
+_DEFINITION_CLOSE_COLON_RE = re.compile(r"\](\\*):")
 
 
 def _remove_comments(text: str) -> str:
@@ -166,9 +180,36 @@ _DEFINITION_RE = re.compile(
 )
 
 
+def _escape_triggered_definition_colons(line: str, *, force: bool = False) -> str:
+    if not force and _DEFINITION_LINK_TRIGGER_RE.search(line) is None:
+        return line
+    spans = _containment_code_spans(line)
+    parts = []
+    cursor = 0
+    span_index = 0
+    for match in _DEFINITION_CLOSE_COLON_RE.finditer(line):
+        colon = match.end() - 1
+        while span_index < len(spans) and spans[span_index][2] <= colon:
+            span_index += 1
+        if (
+            span_index < len(spans)
+            and spans[span_index][0] <= colon < spans[span_index][2]
+        ):
+            continue
+        parts.extend((line[cursor:colon], "\uff1a"))
+        cursor = colon + 1
+    if cursor == 0:
+        return line
+    parts.append(line[cursor:])
+    return "".join(parts)
+
+
 def _escape_definitions(text: str) -> str:
     # Escape the colon because escaping the closing bracket can discard footnotes.
     # Twin: workflows/src/renderReport.js::outboundDefinitions, plus LF continuation.
+    text = "\n".join(
+        _escape_triggered_definition_colons(line) for line in text.split("\n")
+    )
     return _DEFINITION_RE.sub(
         lambda match: (
             match.group()[:-1] + "\\:"
@@ -179,20 +220,63 @@ def _escape_definitions(text: str) -> str:
     )
 
 
+def _escape_tilde_runs(line: str) -> str:
+    parts = []
+    index = 0
+    backslashes = 0
+    while index < len(line):
+        if line[index] == "~":
+            end = index + 1
+            while end < len(line) and line[end] == "~":
+                end += 1
+            if end - index >= 3:
+                if backslashes % 2 == 0:
+                    parts.append("\\")
+                parts.append(line[index:end])
+                index = end
+                backslashes = 0
+                continue
+        character = line[index]
+        parts.append(character)
+        backslashes = backslashes + 1 if character == "\\" else 0
+        index += 1
+    return "".join(parts)
+
+
+def _containment_code_spans(line: str) -> list[tuple[int, int, int]]:
+    spans = []
+    index = 0
+    while index < len(line):
+        if line[index] != "`" or escaped_tick(line, index):
+            index += 1
+            continue
+        end = tick_run(line, index)
+        close = span_close(line, index, end)
+        if close is None:
+            index += 1
+            continue
+        close_end = close + end - index
+        spans.append((index, close, close_end))
+        index = close_end
+    return spans
+
+
 def _contain_line(line: str) -> str:
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
     out = []
     index = 0
+    spans = _containment_code_spans(line)
+    span_index = 0
     while index < len(line):
         if line[index] == "`":
             if escaped_tick(line, index):
                 out.append("`")
                 index += 1
                 continue
-            end = tick_run(line, index)
-            width = end - index
-            close = span_close(line, index, end)
-            if close is not None:
+            if span_index < len(spans) and spans[span_index][0] == index:
+                _, close, close_end = spans[span_index]
+                end = tick_run(line, index)
+                width = end - index
                 out.append(
                     line[index : close + width].replace(
                         line[end:close],
@@ -200,7 +284,8 @@ def _contain_line(line: str) -> str:
                         1,
                     )
                 )
-                index = close + width
+                index = close_end
+                span_index += 1
                 continue
             out.append("\\`")
             index += 1
@@ -238,8 +323,14 @@ def _prepare_text(
     if not text.strip():
         return ""
     intervals: list[tuple[int, int]] = []
+    opener_suffixes: list[tuple[int, int]] = []
     fence = (
-        open_fence(text, strict=True, intervals=intervals)
+        open_fence(
+            text,
+            strict=True,
+            intervals=intervals,
+            opener_suffixes=opener_suffixes,
+        )
         if not single_line and trust_fences
         else None
     )
@@ -248,6 +339,20 @@ def _prepare_text(
     offset = 0
     for line in lines:
         protected_lines.append(any(start <= offset < end for start, end in intervals))
+        offset += len(line) + 1
+    suffix_index = 0
+    offset = 0
+    for index, line in enumerate(lines):
+        while (
+            suffix_index < len(opener_suffixes)
+            and opener_suffixes[suffix_index][0] <= offset + len(line)
+        ):
+            start, _ = opener_suffixes[suffix_index]
+            if offset <= start <= offset + len(line):
+                lines[index] = line[: start - offset]
+                suffix_index += 1
+                break
+            suffix_index += 1
         offset += len(line) + 1
     start = 0
     for index in range(1, len(lines) + 1):
@@ -261,7 +366,9 @@ def _prepare_text(
             start = index
     prepared = []
     for line, protected in zip(lines, protected_lines, strict=True):
-        shape = _FENCE_SHAPE_RE.match(line) if not single_line else None
+        if not protected and not single_line:
+            line = _escape_tilde_runs(line)
+        shape = _BACKTICK_FENCE_SHAPE_RE.match(line) if not single_line else None
         if shape and not protected:
             tick = shape.start(1)
             line = line[:tick] + "\\" + line[tick:]

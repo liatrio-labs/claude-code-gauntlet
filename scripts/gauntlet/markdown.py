@@ -9,6 +9,7 @@ def open_fence(
     *,
     strict: bool = False,
     intervals: list[tuple[int, int]] | None = None,
+    opener_suffixes: list[tuple[int, int]] | None = None,
 ) -> tuple[str, int, int] | None:
     """Return the final open fence as ``(char, run length, opener offset)``.
 
@@ -53,6 +54,8 @@ def open_fence(
         ):
             state = (run[0], run[1], offset + run[3])
             opened_at = offset
+            if opener_suffixes is not None:
+                opener_suffixes.append((offset + run[2], offset + len(line)))
 
     while index < len(text):
         if text[index] in "\r\n":

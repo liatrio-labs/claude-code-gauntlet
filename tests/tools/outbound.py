@@ -33,6 +33,37 @@ class CommentCase(TypedDict):
     expected: str
 
 
+class SummaryFinding(TypedDict):
+    id: str
+    severity: str
+    file: str
+    line_start: int
+    title: str
+
+
+class SummaryIdentity(TypedDict):
+    platform: str
+    web_origin: str
+    owner: str
+    repo: str
+    sha_full: str
+
+
+class SummaryInput(TypedDict):
+    findings: list[SummaryFinding]
+
+
+class LinkedSummaryInput(SummaryInput):
+    prIdentity: SummaryIdentity
+
+
+class SummaryCase(TypedDict):
+    id: str
+    input: SummaryInput | LinkedSummaryInput
+    expected_py: str
+    expected_js: str
+
+
 def comment_cases() -> list[CommentCase]:
     payload = json.loads((FIXTURES / "outbound_comment_cases.json").read_text("utf-8"))
     return cast(list[CommentCase], payload["cases"])
@@ -56,6 +87,14 @@ def line_vectors() -> list[TextVector]:
         for row in payload["cases"]
         for operation in row.get("operations", ["line"])
     ]
+
+
+def summary_cases() -> list[SummaryCase]:
+    payload = json.loads(
+        (FIXTURES / "cross_runtime" / "outbound_line.json").read_text("utf-8")
+    )
+    assert payload["algorithm"] == "outbound_line"
+    return cast(list[SummaryCase], payload["summary_cases"])
 
 
 class FoldInput(TypedDict):

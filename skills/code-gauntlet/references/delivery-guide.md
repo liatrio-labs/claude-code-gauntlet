@@ -145,26 +145,31 @@ ASCII `@` at text start or after a non-alphanumeric character becomes U+FF20 FUL
 including inside inline code, quoted locations and a URL segment such as `/@name`.
 `<` before an ASCII letter, `/`, `!` or `?` becomes `&lt;` in prose and U+FF1C
 FULLWIDTH LESS-THAN SIGN inside a paired inline span or quoted location. Email address
-syntax stays intact. Numeric references and `&commat;`, `&excl;`, `&lbrack;` and `&lsqb;`
-decode to a fixpoint with comment removal and invisible stripping; other named references
-and query ampersands stay literal.
+syntax stays intact. Numeric references and `&commat;`, `&excl;`, `&lbrack;`, `&lsqb;`,
+`&rsqb;`, `&rbrack;`, `&colon;`, `&lpar;`, `&rpar;` and `&bsol;` decode to a fixpoint
+with comment removal and invisible stripping; other named references and query ampersands
+stay literal.
 Secrets are redacted before containment. Inline spans pair on one line at the next exact
 backtick-run length. A wrong pairing can show literal `&lt;` or backslashes, or show
 fullwidth characters in prose, but leaves the text contained. Fullwidth `＜` and `＠`
 inside code and display locations paste as different characters. Permalink URLs are
 encoded separately and retain the original path.
 
-Column-zero fences in body and suggestion text keep raw content after normalization and
-redaction, except that finding-marker opening grammar is broken across the whole fence,
-including across
-newlines. Exact CommonMark closers end a trusted fence: up to three spaces of indent,
-the same fence character and at least the opener length, then only spaces or tabs.
-Other fence-shaped lines have their first fence character escaped, including lines after
-bullets or `[0-9]{1,9}[.)]` list markers followed by a space or tab. Single-line fields
-do not track fences. Cited rules trust no fences: every fence-shaped rule line has its first
-fence character escaped and every line receives outside-fence containment before blockquoting.
-An unclosed trusted body or suggestion fence gets a synthetic closer. A terminated
-HTML comment inside code is removed before fence or inline classification. Fields
+Column-zero fences in body and suggestion text retain payload after normalization and
+redaction, but accepted opener lines lose their entire info string. Finding-marker opening
+grammar is broken across the whole fence, including across newlines. Exact CommonMark
+closers end a trusted fence: up to three spaces of indent, the same fence character and at
+least the opener length, then only spaces or tabs. Every unprotected prose line escapes each
+run of three or more tildes with a backslash, wherever it appears; an even preceding
+backslash run gains one slash and an odd run is already escaped. Ordinary mid-line `~~~`
+therefore displays as punctuation. Other untrusted backtick fence-shaped lines have their
+first fence character escaped, including lines after bullets or `[0-9]{1,9}[.)]` list
+markers followed by a space or tab. Single-line fields do not track fences or escape tilde
+runs. Cited rules trust no fences: every backtick fence-shaped rule line has its first fence
+character escaped, every tilde run is escaped, and every line receives outside-fence
+containment before blockquoting. An unclosed trusted body or suggestion fence gets a
+synthetic closer. A terminated HTML comment inside code is removed before fence or inline
+classification. Fields
 containing only Unicode whitespace are absent; Markdown blank lines still use only
 spaces and tabs.
 
@@ -188,15 +193,21 @@ In prose, inline spans and quoted locations, the bracket after `!` or `[` (also
 across a run of backslashes) becomes U+FF3B FULLWIDTH LEFT SQUARE BRACKET.
 Both hosts render an image from `![`; GitLab also renders one from `[[`.
 GitLab parses text holding `](` a second time after backslashes are consumed,
-so a backslash does not hold there. A line-initial reference-definition label (`[label]:`) gets a
-backslash before its colon when only non-letter characters precede `[` on its
-line; a preceding backslash or `[` prevents the match. In multiline fields,
-the label may continue across lines, and this rule also applies inside code
-spans. This prevents a definition from turning code-owned text such as
-`[CRITICAL]` into a link. Footnote definitions and reference-style links in
-finding text therefore show as literal text. A quoted location is not passed
-through the definition-colon rule.
-None of these rules runs inside a fenced block the preparer leaves verbatim.
+so a backslash does not hold there. On an unprotected physical line holding `](` or `]\\(`,
+every `]` plus zero or more backslashes plus `:` changes only its colon to U+FF1A FULLWIDTH
+COLON. Named HTML5 forms for the closing bracket, colon, parentheses and backslash decode
+before this check. The new rule skips complete paired inline-code spans, which preserves
+code-owned linked locations. Without that trigger, a line-initial reference-definition label
+(`[label]:`) keeps the existing backslash-before-colon rule when only non-letter characters
+precede `[` on its line; a preceding backslash or `[` prevents the match. In multiline fields,
+the old label may continue across lines, and it still applies inside code spans. This prevents
+a definition from turning code-owned text such as `[CRITICAL]` into a link. Footnote
+definitions and reference-style links in finding text therefore show as literal text. The
+new colon becomes fullwidth even when copied; the retained line-initial escape displays its
+original colon.
+None of these rules runs inside a trusted fenced payload. Summary titles force only the new
+colon rule because the containing bullet has a link pair; ordinary single-line fields keep
+the trigger-based rule.
 
 - `review_body` — exactly the pipeline-rendered Summary section body: counts first, selected findings index,
   and any remainder with selection reasons. Whole index bullets fit within a 12,000-code-point

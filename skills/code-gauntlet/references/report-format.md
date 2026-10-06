@@ -329,9 +329,13 @@ before the poster applies its byte budget. Each bullet places its location link 
 the optional improvement-suggestion label, then the colon and folded title, so title Markdown cannot
 alter the location.
 The Summary index prepares each title as a single line, folds it to 512 code points, then
-contains raw HTML and visible mentions even in inline code. It counts the final bullet after preparation against
+contains raw HTML and visible mentions even in inline code. Its new definition-colon guard
+is forced because the containing bullet has a linked location: a Summary title `[x]: u`
+becomes `[x]` followed by U+FF1A FULLWIDTH COLON and ` u`, while an ordinary single-line
+field keeps the existing `[x]\\: u` output. It counts the final bullet after preparation against
 the index budget. Its display path and line sit inside one code span whose delimiter exceeds
-every backtick run in the location; edge spaces receive CommonMark padding. Display paths
+every backtick run in the location; the new colon rule skips that complete code span, so a
+linked path such as `src/[x]:.py:3` remains code-owned. Edge spaces receive CommonMark padding. Display paths
 use fullwidth `＜` and `＠` for dangerous characters, so copying them yields different
 characters. The structured permalink destination percent-encodes the original valid path,
 including any `<` or `@`. Normalization or redaction of the original path suppresses
@@ -411,10 +415,16 @@ show fullwidth `＜` and `＠`, which paste differently; a wrong span guess may 
 `&lt;` or backslashes. URL text containing `/@` also shows fullwidth `＠`.
 Suggestions and cited rules use the same containment; the cited rule is capped before its
 blockquote markers. Trusted fences retain normalized and redacted bytes except for
-marker opening breaks across lines. After normalization and redaction, prose also escapes
-lines starting with `/` and multiline quote openers starting with three or more `>` outside
-trusted fences; the checked patch stays byte-exact inside its suggestion fence. Single-line
-fields carry neither escape. In ordinary prose, Markdown consumes the backslash and displays
+marker opening breaks across lines; accepted prose fence openers lose their entire info
+string. Outside trusted fences, every multiline prose line escapes runs of three or more
+tildes anywhere on the line, adding a backslash only when the preceding backslash run has
+even length. After normalization and redaction, prose also escapes lines starting with `/`
+and multiline quote openers starting with three or more `>` outside trusted fences; the
+checked patch stays byte-exact inside its suggestion fence. Single-line fields carry neither
+fence nor tilde escape. A line holding `](` or `]\\(` changes every `]` plus zero or more
+backslashes plus `:` to U+FF1A FULLWIDTH COLON before the retained line-initial definition
+guard; complete paired code spans keep their contents. Summary titles force only that new
+colon rule. In ordinary prose, Markdown consumes the backslash and displays
 the punctuation as intended; on an indented-code line the backslash shows. GitLab CE 19.4.1
 passes a backslash inside `$$` display math to its math renderer. Nested-quote shorthand such
 as `>>> text` displays literally. This contract also applies to corroborator sections, skipped

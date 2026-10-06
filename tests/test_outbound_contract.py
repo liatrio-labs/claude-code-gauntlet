@@ -9,10 +9,11 @@ from pathlib import Path
 import gauntlet.delivery.post as post_review
 import gauntlet.text as outbound_text
 import pytest
-from gauntlet.markdown import open_fence
+from gauntlet.markdown import code_spans, open_fence
 
 from tests.tools.outbound import (
     line_vectors,
+    summary_cases,
     text_vectors,
 )
 from tests.tools.render_probes import (
@@ -54,6 +55,14 @@ def assert_outbound_string_invariant(
 ) -> None:
     fences: list[tuple[int, int]] = []
     open_fence(output, strict=True, intervals=fences)
+    if check_prose_rules:
+        for start, _ in fences:
+            line_end = output.find("\n", start)
+            if line_end < 0:
+                line_end = len(output)
+            opener = re.match(r"(`{3,}|~{3,})", output[start:line_end])
+            assert opener is not None
+            assert not output[start + opener.end() : line_end].strip(" \t")
     cursor = 0
     outside: list[str] = []
     for start, end in fences:
@@ -67,6 +76,24 @@ def assert_outbound_string_invariant(
         # Code-owned locations cannot define references, but still contain openers.
         for location in literal_locations:
             markup = markup.replace(location, "")
+        spans, _ = code_spans(markup)
+        line_offset = 0
+        for line in markup.split("\n"):
+            if re.search(r"\]\\?\(", line):
+                for definition in re.finditer(r"\](\\*):", line):
+                    colon = line_offset + definition.end() - 1
+                    if any(start <= colon < end for start, end in spans):
+                        continue
+                    assert line[definition.end() - 1] == "\uff1a", repr(line)
+            if check_prose_rules:
+                for tilde in re.finditer(r"~{3,}", line):
+                    slashes = 0
+                    at = tilde.start() - 1
+                    while at >= 0 and line[at] == "\\":
+                        slashes += 1
+                        at -= 1
+                    assert slashes % 2 == 1, repr(line)
+            line_offset += len(line) + 1
         slashes = 0
         line_start = 0
         first_bracket = True
@@ -139,6 +166,10 @@ def test_tracked_fixture_has_canonical_byte_layout():
         pytest.param("\\[[a]]", id="wikilink_escaped_bracket"),
         pytest.param(": [critical]: u", id="colon_prefix"),
         pytest.param("~ [critical]: u", id="tilde_prefix"),
+        pytest.param("before x [a]: //e/SENT](a b) after", id="midline_definition_pair"),
+        pytest.param("ordinary ~~~ text", id="midline_tilde_run"),
+        pytest.param("~~~suggestion\nx = SENT\n~~~", id="fence_info"),
+        pytest.param(": ~~~suggestion\nx = SENT\n~~~", id="definition_container_fence"),
         pytest.param("[" + "a" * 5000 + "]: u", id="unbounded_label"),
         pytest.param("[crit\nical]: u", id="multiline_label"),
     ],
@@ -598,7 +629,24 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
     assert_outbound_string_invariant(summary.stdout)
 
 
-def test_generated_summary_is_unchanged_by_python_guard():
+@pytest.mark.parametrize("case", summary_cases(), ids=lambda case: case["id"])
+def test_generated_summary_is_unchanged_by_python_guard(case):
+    result = _run_node(
+        """
+import { renderSummaryBody } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(renderSummaryBody(JSON.parse(source)));
+""",
+        case["input"],
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == case["expected_js"]
+    assert outbound_text.prepare_prose(result.stdout) == case["expected_py"]
+    assert case["expected_py"] == case["expected_js"]
+
+
+def test_existing_generated_summaries_remain_unchanged_by_python_guard():
     script = """
 import { renderSummaryBody } from './workflows/src/renderReport.js';
 let source = '';
@@ -609,7 +657,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
     assert result.returncode == 0, result.stderr
     summaries = json.loads(result.stdout)
     assert len(summaries) >= 2
-    assert "[critical]\\: u" in summaries[0]
+    assert "[critical]： u" in summaries[0]
     prepare_prose = getattr(outbound_text, "prepare_prose", None)
     assert callable(prepare_prose), "missing expected Python guard prepare_prose"
     for summary in summaries:
@@ -637,6 +685,16 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
     assert prepare_prose(guarded_summary) == guarded_summary
     location = "```src/dir/``/file.py:7-9```"
     assert location in summaries[0]
+    assert outbound_text.prepare_line("[x]: u") == "[x]\\: u"
+
+    bracket_path = next(
+        case
+        for case in summary_cases()
+        if case["input"].get("prIdentity")
+        and case["input"]["findings"][0]["file"] == "src/[x]:.py"
+    )
+    assert "`src/[x]:.py:3`" in bracket_path["expected_js"]
+    assert "src/%5Bx%5D%3A.py#L3" in bracket_path["expected_js"]
 
 
 def test_summary_image_location_uses_code_visible_brackets() -> None:

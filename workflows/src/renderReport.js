@@ -409,6 +409,18 @@ function oneLine(value) {
 }
 
 const OUTBOUND_INVISIBLES = /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/g;
+const OUTBOUND_NAMED_ENTITIES = {
+  commat: '@',
+  excl: '!',
+  lbrack: '[',
+  lsqb: '[',
+  rsqb: ']',
+  rbrack: ']',
+  colon: ':',
+  lpar: '(',
+  rpar: ')',
+  bsol: '\\',
+};
 
 function outboundBase(value) {
   let text = reportAsText(value);
@@ -420,10 +432,9 @@ function outboundBase(value) {
       const number = Number.parseInt(decimal || hex, decimal ? 10 : 16);
       return number >= 32 && number <= 126 ? String.fromCharCode(number) : '';
     });
-    text = text.replaceAll('&commat;', '@')
-      .replaceAll('&excl;', '!')
-      .replaceAll('&lbrack;', '[')
-      .replaceAll('&lsqb;', '[');
+    text = text.replace(/&([A-Za-z]+);/g, (match, name) => (
+      Object.hasOwn(OUTBOUND_NAMED_ENTITIES, name) ? OUTBOUND_NAMED_ENTITIES[name] : match
+    ));
     // Removal can build a new comment from surrounding text; decoding between
     // removals changes which text is removed.
     let uncommented;
@@ -454,14 +465,63 @@ function outboundEscapedTick(text, index) {
   return slashes % 2 === 1;
 }
 
-function outboundDefinitions(line) {
+function outboundSpanClose(line, start, end) {
+  const width = end - start;
+  let cursor = end;
+  while (cursor < line.length) {
+    const tick = line.indexOf('`', cursor);
+    if (tick < 0) break;
+    let after = tick;
+    while (after < line.length && line[after] === '`') after += 1;
+    if (after - tick === width) return tick;
+    cursor = after;
+  }
+  return -1;
+}
+
+function outboundCodeSpans(line) {
+  const spans = [];
+  let index = 0;
+  while (index < line.length) {
+    if (line[index] !== '`') {
+      index += 1;
+      continue;
+    }
+    if (outboundEscapedTick(line, index)) {
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < line.length && line[end] === '`') end += 1;
+    const close = outboundSpanClose(line, index, end);
+    if (close < 0) {
+      index += 1;
+      continue;
+    }
+    spans.push([index, close + end - index]);
+    index = close + end - index;
+  }
+  return spans;
+}
+
+function outboundDefinitions(line, forceColon = false) {
+  if (forceColon || /\]\\?\(/.test(line)) {
+    const spans = outboundCodeSpans(line);
+    let spanIndex = 0;
+    line = line.replace(/\](\\*):/g, (match, _slashes, offset) => {
+      const colon = offset + match.length - 1;
+      while (spanIndex < spans.length && spans[spanIndex][1] <= colon) spanIndex += 1;
+      if (spanIndex < spans.length && spans[spanIndex][0] <= colon) return match;
+      return `${match.slice(0, -1)}\uFF1A`;
+    });
+  }
   return line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
     /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
   ));
 }
 
-function outboundContain(line) {
-  line = outboundDefinitions(line);
+function outboundContain(line, forceColon = false) {
+  line = outboundDefinitions(line, forceColon);
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
   let output = '';
   let index = 0;
@@ -477,19 +537,7 @@ function outboundContain(line) {
       const width = end - index;
       // Only a complete run of exactly this width closes; backslashes
       // inside the span have no escape meaning.
-      let close = -1;
-      let cursor = end;
-      while (cursor < line.length) {
-        const tick = line.indexOf('`', cursor);
-        if (tick < 0) break;
-        let after = tick;
-        while (after < line.length && line[after] === '`') after += 1;
-        if (after - tick === width) {
-          close = tick;
-          break;
-        }
-        cursor = after;
-      }
+      const close = outboundSpanClose(line, index, end);
       if (close >= 0) {
         output += `${line.slice(index, end)}${outboundVisible(line.slice(end, close), true)}${line.slice(close, close + width)}`;
         index = close + width;
@@ -505,16 +553,20 @@ function outboundContain(line) {
     index = next;
   }
   // Bracket replacements can complete definition-shaped labels.
-  return outboundDefinitions(output);
+  return outboundDefinitions(output, forceColon);
+}
+
+function prepareLineInternal(value, forceColon = false) {
+  const text = outboundBase(value);
+  return text.trim() === '' ? '' : outboundContain(text, forceColon);
 }
 
 export function prepareLine(value) {
-  const text = outboundBase(value);
-  return text.trim() === '' ? '' : outboundContain(text);
+  return prepareLineInternal(value);
 }
 
 function prepareSummaryTitle(value) {
-  return prepareLine(foldInline(oneLine(outboundBase(value))));
+  return prepareLineInternal(foldInline(oneLine(outboundBase(value))), true);
 }
 
 function inline(value) {
