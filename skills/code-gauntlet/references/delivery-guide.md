@@ -145,8 +145,9 @@ ASCII `@` at text start or after a non-alphanumeric character becomes U+FF20 FUL
 including inside inline code, quoted locations and a URL segment such as `/@name`.
 `<` before an ASCII letter, `/`, `!` or `?` becomes `&lt;` in prose and U+FF1C
 FULLWIDTH LESS-THAN SIGN inside a paired inline span or quoted location. Email address
-syntax stays intact. Numeric references and `&commat;` decode to a fixpoint with comment
-removal and invisible stripping; other named references and query ampersands stay literal.
+syntax stays intact. Numeric references and `&commat;`, `&excl;`, `&lbrack;` and `&lsqb;`
+decode to a fixpoint with comment removal and invisible stripping; other named references
+and query ampersands stay literal.
 Secrets are redacted before containment. Inline spans pair on one line at the next exact
 backtick-run length. A wrong pairing can show literal `&lt;` or backslashes, or show
 fullwidth characters in prose, but leaves the text contained. Fullwidth `＜` and `＠`
