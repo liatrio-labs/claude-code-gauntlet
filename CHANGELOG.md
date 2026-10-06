@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.42.22 (2026-10-06)
+
+### Bug Fixes
+
+- Neutralize images, wikilinks and reference definitions in posted prose; give outbound text and the
+  fold their own modules ([#473](https://github.com/liatrio-labs/claude-code-gauntlet/pull/473),
+  [`687c3d9`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/687c3d9578ef1f30730ba35dcb57a497d369b7e0))
+
+### Continuous Integration
+
+- Replace the unstartable marketplace publish with a bump script and a weekly reminder
+  ([#469](https://github.com/liatrio-labs/claude-code-gauntlet/pull/469),
+  [`d162c52`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d162c52e2775ba282a40fe952d20dac1d8077c2a))
+
+
 ## v3.42.21 (2026-10-05)
 
 ### Bug Fixes
