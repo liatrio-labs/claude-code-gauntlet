@@ -1,7 +1,14 @@
 """Markdown fence, span, and delimiter rules shared across the Python pipeline."""
 
 import pytest
-from gauntlet.markdown import code_span, code_spans, fence_run, open_fence
+from gauntlet.markdown import (
+    code_span,
+    code_spans,
+    fence_run,
+    open_fence,
+    paired_code_spans,
+    tick_run_index,
+)
 
 
 @pytest.mark.parametrize(
@@ -87,6 +94,69 @@ def test_code_spans_pair_exact_runs_with_literal_backslashes():
 def test_code_spans_even_backslashes_leave_the_opener_live():
     text = r"a \\`x`"
     assert code_spans(text)[0] == [(4, 7)]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        pytest.param(
+            "left `x ``` <ins> @user`", [(5, 23, 24)], id="unequal-run-payload"
+        ),
+        pytest.param(r"left \``<ins> @inside`", [(7, 21, 22)], id="escaped-first-tick"),
+        pytest.param("`a``b`", [(0, 5, 6)], id="exact-width-closer"),
+        pytest.param(r"a \\`x`", [(4, 6, 7)], id="even-slash-opener"),
+    ],
+)
+def test_code_span_index_contract(value, expected):
+    index = tick_run_index(value)
+    assert paired_code_spans(index) == expected
+    assert code_spans(value)[0] == [(start, end) for start, _close, end in expected]
+
+
+def test_code_span_index_retries_unmatched_run_suffix():
+    index = tick_run_index("``a`b")
+    assert paired_code_spans(index) == []
+    assert paired_code_spans(index, suffix_retry=True) == [(1, 3, 4)]
+    assert index.starts_by_width == {2: (0,), 1: (3,)}
+
+
+def _large_analysis(source, operation):
+    import json
+    import subprocess
+    import sys
+
+    script = """
+import json, sys
+sys.path.insert(0, 'scripts')
+source = sys.stdin.read()
+if sys.argv[1] == 'prepare':
+    from gauntlet.text import prepare_prose
+    sys.stdout.write(prepare_prose(source))
+else:
+    from gauntlet.markdown import code_spans
+    sys.stdout.write(json.dumps(code_spans(source), separators=(',', ':')))
+"""
+    result = subprocess.run(
+        [sys.executable, "-X", "utf8", "-c", script, operation],
+        input=source,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=5,
+        check=True,
+    )
+    return json.loads(result.stdout) if operation == "spans" else result.stdout
+
+
+def test_large_markdown_analysis():
+    count = 40000
+    fences_text = "~~~\nx\n~~~\ny\n" * count
+    assert _large_analysis(fences_text, "prepare") == fences_text
+
+    source = "`outside`\n" + fences_text + "`after`"
+    spans, fences = _large_analysis(source, "spans")
+    assert spans == [[0, 9], [len(fences_text) + 10, len(fences_text) + 17]]
+    assert fences == [[10 + 12 * index, 20 + 12 * index] for index in range(count)]
 
 
 def test_code_spans_skip_trusted_fence_contents():

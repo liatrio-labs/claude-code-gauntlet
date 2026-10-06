@@ -42,6 +42,17 @@ function locationSpan(bullet) {
 const linePayload = JSON.parse(readFileSync(new URL('../../tests/fixtures/cross_runtime/outbound_line.json', import.meta.url), 'utf8'));
 assert.equal(linePayload.algorithm, 'outbound_line');
 const commentCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/outbound_comment_cases.json', import.meta.url), 'utf8')).cases;
+const summaryCases = linePayload.summary_cases;
+const tildeCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/outbound_text.json', import.meta.url), 'utf8')).cases
+  .filter((row) => row.id.startsWith('tilde_'));
+for (const row of tildeCases) {
+  test(`summary tilde: ${row.id}`, () => {
+    assert.equal(summaryBullet({ file: 'a.py', line_start: 3, line_end: 3, severity: 'high', title: row.input }),
+      `- 🟠 [HIGH] \`a.py:3\`: ${row.expected}`);
+    assert.equal(summaryBullet({ file: 'a.py', line_start: 3, line_end: 3, severity: 'high', title: row.expected }),
+      `- 🟠 [HIGH] \`a.py:3\`: ${row.expected}`);
+  });
+}
 const lineCases = [
   ...linePayload.cases,
   ...commentCases.filter((row) => ['single_line', 'location'].includes(row.field_class))
@@ -56,12 +67,72 @@ for (const row of lineCases) {
   });
 }
 
+function hasCompleteNonoverlappingComment(value) {
+  let openerEnd = -1;
+  for (let index = 0; index < value.length; index += 1) {
+    if (openerEnd < 0 && value.startsWith('<!--', index)) {
+      openerEnd = index + 4;
+      index += 3;
+    } else if (openerEnd >= 0 && value.startsWith('-->', index)) {
+      if (index >= openerEnd) return true;
+      index += 2;
+    }
+  }
+  return false;
+}
+
+test('normalizer overlap semantics and seeded invariants', () => {
+  const cases = [
+    ['<!-->tail', '<!-->tail'],
+    ['<!--->tail', '<!--->tail'],
+    ['<!---->tail', 'tail'],
+    ['<!-->x-->y', 'y'],
+    ['<!--->x-->y', 'y'],
+    ['<!-<!--x-->->tail', '<!-->tail'],
+    ['<!--&#38;#45;&#38;#45;&#38;#62;z-->tail', 'z-->tail'],
+    ['<!--x--\u200b>y-->z', 'y-->z'],
+    ['<!-<!--x-->- y --<!--z-->> w', '> w'],
+    ['<!-<!--x-->- a --&#6<!--y-->2; b -->', '2; b -->'],
+  ];
+  for (const [source, expected] of cases) {
+    const normalized = reportRenderer.normalizeOutboundText(source);
+    assert.equal(normalized, expected, source);
+    assert.equal(reportRenderer.normalizeOutboundText(normalized), normalized, source);
+    assert.equal(hasCompleteNonoverlappingComment(normalized), false, source);
+  }
+  const alphabet = ['<!', '--', '>', '&', '#38;', '&#64;', '\u200b', 'x', '\u00a0', '&nbsp;', '&NonBreakingSpace;'];
+  let state = 0x471;
+  for (let sample = 0; sample < 256; sample += 1) {
+    let source = '';
+    for (let index = 0; index < 16; index += 1) {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      source += alphabet[state % alphabet.length];
+    }
+    const normalized = reportRenderer.normalizeOutboundText(source);
+    assert.equal(reportRenderer.normalizeOutboundText(normalized), normalized, source);
+    assert.equal(hasCompleteNonoverlappingComment(normalized), false, source);
+    assert.doesNotMatch(normalized, /&#(?:[0-9]+|[xX][0-9a-fA-F]+);/);
+    assert.doesNotMatch(normalized, /&(?:commat|excl|lbrack|lsqb|rsqb|rbrack|colon|lpar|rpar|bsol|nbsp|NonBreakingSpace);/);
+    assert.doesNotMatch(normalized, /\u00a0/);
+    assert.doesNotMatch(normalized, /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/);
+  }
+});
+
+for (const row of summaryCases) {
+  test(`summary parity: ${row.id}`, () => {
+    assert.equal(renderSummaryBody(row.input), row.expected_js);
+    assert.equal(row.expected_py, row.expected_js);
+  });
+}
+
 test('large_backslash_preparation', () => {
   const cases = [
     ['bare', '\\'.repeat(500000), '\\'.repeat(500000)],
     ['image_split', `!${'\\'.repeat(500000)}[`, `!${'\\'.repeat(500000)}\uFF3B`],
     ['definition_pairs', `[${'\\a'.repeat(250000)}`, `[${'\\a'.repeat(250000)}`],
     ['definition_openers', `[${'\\a'.repeat(2500)} `.repeat(100), `[${'\\a'.repeat(2500)} `.repeat(100)],
+    ['footnote_label', `[^${'[\\a'.repeat(100000)}]: hidden text`, `[^${'[\\a'.repeat(100000)}]\\: hidden text`],
+    ['unclosed_footnote', `[^${'[\\a'.repeat(100000)}`, `[^${'[\\a'.repeat(100000)}`],
   ];
   const script = `
 import { prepareLine } from './workflows/src/renderReport.js';
@@ -78,8 +149,45 @@ process.stdout.write(prepareLine(source));
   }
 });
 
+const largePreparationCases = [
+  ['comment-openers', '<!--'.repeat(125000), '&lt;!--'.repeat(125000)],
+  ['entity-built-comment-openers', '<&excl;--'.repeat(62500), '&lt;!--'.repeat(62500)],
+  ['nested-entities', `&#38;${'#38;'.repeat(124999)}#64;`, '＠'],
+  ['comment-deletion-waves', `${'<!'.repeat(60000)}<!-- x -->${'-- y -->'.repeat(60000)}`, ''],
+  ['tick-run', `x${'`'.repeat(350000)}`, `x${'\\`'.repeat(350000)}`],
+  ['unequal-width-runs', `x ${Array.from({ length: 750 }, (_, index) => '`'.repeat(index + 1)).join(' ')}`, `x ${Array.from({ length: 750 }, (_, index) => '\\`'.repeat(index + 1)).join(' ')}`],
+  ['nbsp-references', `[&${'\u00a0&nbsp;&NonBreakingSpace;'.repeat(10000)}](a b) tail`, `[&${' '.repeat(30000)}](a b) tail`],
+];
+
+for (const [id, source, expected] of largePreparationCases) {
+  test(`large_outbound_preparation: ${id}`, () => {
+    const script = `
+import { prepareLine } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(prepareLine(source));
+`;
+    const actual = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      input: source, encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024,
+    });
+    assert.equal(actual, expected);
+    assert.equal(prepareLine(actual), actual);
+  });
+}
+
+test('summary location delimiter handles many tick runs', () => {
+  const body = renderSummaryBody({
+    findings: [finding('many-ticks', { file: `src/${'a` '.repeat(125000)}`, severity: 'low', title: 'T' })],
+  });
+  assert.equal(body, '1 finding after the gauntlet — 1 low.\n\n1 more finding not listed here (over the summary length limit).');
+});
+
 function assertLineInvariant(output) {
+  assert.doesNotMatch(output, /<!--/);
   assert.doesNotMatch(output, /[!\[]\\*\[/);
+  if (/\]\\?\(/.test(output)) {
+    assert.doesNotMatch(output, /\](\\*):/);
+  }
   let slashes = 0;
   let firstBracket = true;
   for (let index = 0; index < output.length; index += 1) {
@@ -108,6 +216,10 @@ function assertLineInvariant(output) {
     assert.doesNotMatch(visible, /<!--\s*(?:code-gauntlet|deep-review)(?:-findings)?\s*:/);
   }
 }
+
+test('line invariant rejects an overlapping live comment opener', () => {
+  assert.throws(() => assertLineInvariant('<!-->tail'), assert.AssertionError);
+});
 
 test('seeded_line_containment', () => {
   // The Python corpus also covers prose; this native corpus guards the JS line boundary.

@@ -4,14 +4,18 @@ JS_TRIM_CHARS is the Python twin of JS String.prototype.trim.
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from itertools import groupby
+from typing import Literal
 
 from gauntlet.markdown import (
+    TickRunIndex,
     code_span,
-    escaped_tick,
     open_fence,
-    span_close,
-    tick_run,
+    paired_code_spans,
+    protected_line_flags,
+    tick_run_index,
 )
 from gauntlet.marker import FINDING_MARKER_TOKEN, MARKER_TOKENS
 from gauntlet.registry import JS_TRIM_CHARS as JS_TRIM_CHARS
@@ -43,10 +47,38 @@ _TRUNCATION_MARKER = "…[truncated]"
 _GH_TOKEN_RE = re.compile(r"(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}")
 _GL_TOKEN_RE = re.compile(r"(?:glpat-|glrt-)[A-Za-z0-9_\-]{20,}")
 
-_ENTITY_DEC_RE = re.compile(r"&#([0-9]+);")
-_ENTITY_HEX_RE = re.compile(r"&#x([0-9a-fA-F]+);", re.IGNORECASE)
-_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
 _BACKTICK_RUN_RE = re.compile(r"`{3,}")
+_EntityName = Literal[
+    "commat",
+    "excl",
+    "lbrack",
+    "lsqb",
+    "rsqb",
+    "rbrack",
+    "colon",
+    "lpar",
+    "rpar",
+    "bsol",
+    "nbsp",
+    "NonBreakingSpace",
+]
+_NAMED_ENTITIES: dict[_EntityName, str] = {
+    "commat": "@",
+    "excl": "!",
+    "lbrack": "[",
+    "lsqb": "[",
+    "rsqb": "]",
+    "rbrack": "]",
+    "colon": ":",
+    "lpar": "(",
+    "rpar": ")",
+    "bsol": "\\",
+    "nbsp": " ",
+    "NonBreakingSpace": " ",
+}
+_NAMED_ENTITY_PREFIXES = frozenset(
+    name[:length] for name in _NAMED_ENTITIES for length in range(1, len(name) + 1)
+)
 
 # A frozenset avoids CodeQL overly-large-range warnings while retaining TAB/LF.
 _INVISIBLE_ORDS = frozenset(
@@ -68,38 +100,27 @@ _INVISIBLE_ORDS = frozenset(
         *range(0x2066, 0x206A),
     )
 )
+_NORMALIZER_BOUNDARY_RE = re.compile(
+    r"[&<>\-\x00-\x08\x0b-\x1f\x7f-\x9f\u00a0\u00ad\u200b-\u200d"
+    r"\ufeff\u2060\u202a-\u202e\u2066-\u2069]"
+)
 
 
-def _strip_invisibles(text: str) -> str:
-    return "".join(ch for ch in text if ord(ch) not in _INVISIBLE_ORDS)
+@dataclass(frozen=True, slots=True)
+class _EntityCandidate:
+    start: int
+    kind: Literal["start", "numeric", "decimal", "hex", "named"]
+    value: int = 0
+    has_digit: bool = False
+    name: str = ""
 
 
-def _decode_numeric_entities(text: str) -> str:
-    """Decode ASCII entities only, so decoding cannot reintroduce invisibles.
-
-    Markdown parses fences before entities; encoded backticks cannot form a fence.
-    """
-
-    def _dec(match: re.Match[str]) -> str:
-        num = int(match.group(1), 10)
-        if 32 <= num <= 126:
-            return chr(num)
-        return ""
-
-    def _hex(match: re.Match[str]) -> str:
-        num = int(match.group(1), 16)
-        if 32 <= num <= 126:
-            return chr(num)
-        return ""
-
-    text = _ENTITY_DEC_RE.sub(_dec, text)
-    text = _ENTITY_HEX_RE.sub(_hex, text)
-    return (
-        text.replace("&commat;", "@")
-        .replace("&excl;", "!")
-        .replace("&lbrack;", "[")
-        .replace("&lsqb;", "[")
-    )
+@dataclass(frozen=True, slots=True)
+class _NormalizerEntry:
+    character: str
+    entity: _EntityCandidate | None
+    comment_start: int | None
+    comment_end: int | None
 
 
 _DANGEROUS_LT_RE = re.compile(r"<(?=[A-Za-z/!?])")
@@ -108,26 +129,125 @@ _MARKER_OPEN_RE = re.compile(
     + "|".join(re.escape(token) for token in (*MARKER_TOKENS, FINDING_MARKER_TOKEN))
     + r")\s*:"
 )
-_FENCE_SHAPE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*([`~])\1{2,}")
+_BACKTICK_FENCE_SHAPE_RE = re.compile(
+    r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*(`{3,})"
+)
 _MULTILINE_QUOTE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(>{3,})")
+_DEFINITION_LINK_TRIGGER_RE = re.compile(r"\]\\?\(")
+_DEFINITION_CLOSE_COLON_RE = re.compile(r"\](\\*):")
 
 
-def _remove_comments(text: str) -> str:
-    # Removal can build a new comment from surrounding text; decoding between
-    # removals changes which text is removed.
-    while True:
-        cleaned = _HTML_COMMENT_RE.sub("", text)
-        if cleaned == text:
-            return text
-        text = cleaned
+def _extend_name(entity: _EntityCandidate, character: str) -> _EntityCandidate | None:
+    name = entity.name + character
+    return (
+        _EntityCandidate(entity.start, "named", name=name)
+        if name in _NAMED_ENTITY_PREFIXES
+        else None
+    )
+
+
+def _advance_entity(
+    entity: _EntityCandidate | None, character: str
+) -> tuple[_EntityCandidate | None, str | None]:
+    if entity is None:
+        return None, None
+    if entity.kind == "start":
+        if character == "#":
+            return _EntityCandidate(entity.start, "numeric"), None
+        if "A" <= character <= "Z" or "a" <= character <= "z":
+            return _extend_name(entity, character), None
+    elif entity.kind == "numeric":
+        if character in "xX":
+            return _EntityCandidate(entity.start, "hex"), None
+        if "0" <= character <= "9":
+            return (
+                _EntityCandidate(
+                    entity.start, "decimal", min(127, ord(character) - 48), True
+                ),
+                None,
+            )
+    elif entity.kind in ("decimal", "hex"):
+        if character == ";" and entity.has_digit:
+            return entity, chr(entity.value) if 32 <= entity.value <= 126 else ""
+        digit = -1
+        if "0" <= character <= "9":
+            digit = ord(character) - 48
+        elif entity.kind == "hex" and "a" <= character.lower() <= "f":
+            digit = ord(character.lower()) - 87
+        radix = 10 if entity.kind == "decimal" else 16
+        if digit >= 0 and digit < radix:
+            return (
+                _EntityCandidate(
+                    entity.start,
+                    entity.kind,
+                    min(127, entity.value * radix + digit),
+                    True,
+                ),
+                None,
+            )
+    elif entity.kind == "named":
+        if character == ";" and entity.name in _NAMED_ENTITIES:
+            return entity, _NAMED_ENTITIES[entity.name]
+        if "A" <= character <= "Z" or "a" <= character <= "z":
+            return _extend_name(entity, character), None
+    return None, None
 
 
 def _normalize_outbound(text: str) -> str:
-    while True:
-        normalized = _strip_invisibles(_remove_comments(_decode_numeric_entities(text)))
-        if normalized == text:
-            return text
-        text = normalized
+    """Decode bounded outbound entities and remove complete non-overlapping comments."""
+    if _NORMALIZER_BOUNDARY_RE.search(text) is None:
+        return text
+    output: list[_NormalizerEntry] = []
+
+    def push(character: str) -> str | None:
+        if character == "\u00a0":
+            character = " "
+        if ord(character) in _INVISIBLE_ORDS:
+            return None
+        previous = output[-1] if output else None
+        entity = previous.entity if previous is not None else None
+        replacement: str | None = None
+        if character == "&":
+            entity = _EntityCandidate(len(output), "start")
+        else:
+            entity, replacement = _advance_entity(entity, character)
+
+        if replacement is not None and entity is not None:
+            del output[entity.start :]
+            return replacement or None
+
+        comment_start = previous.comment_start if previous is not None else None
+        comment_end = previous.comment_end if previous is not None else None
+        output.append(_NormalizerEntry(character, entity, comment_start, comment_end))
+        if (
+            comment_start is None
+            and len(output) >= 4
+            and output[-4].character == "<"
+            and output[-3].character == "!"
+            and output[-2].character == "-"
+            and output[-1].character == "-"
+        ):
+            output[-1] = _NormalizerEntry(
+                character, entity, len(output) - 4, len(output)
+            )
+            return None
+        if (
+            comment_start is not None
+            and len(output) >= 3
+            and output[-3].character == "-"
+            and output[-2].character == "-"
+            and output[-1].character == ">"
+            and comment_end is not None
+            and len(output) - 3 >= comment_end
+        ):
+            del output[comment_start:]
+        return None
+
+    for original in text:
+        character: str | None = original
+        while character is not None:
+            character = push(character)
+    return "".join([entry.character for entry in output])
 
 
 def has_marker_opener(text: str) -> bool:
@@ -160,57 +280,127 @@ def _escape_visible(text: str, *, code: bool = False) -> str:
 
 
 _DEFINITION_RE = re.compile(
-    r"(?m)^[^A-Za-z\\\[\n]*\["
+    r"(?m)^[^A-Za-z\\\[\n]*\[(?:(\^[^\]\n]*)|"
     # The character alternative consumes continuation prefixes without rescans.
-    r"((?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$)))+)\]:"
+    r"((?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$)))+))\]:"
 )
+
+
+def _escape_triggered_definition_colons(line: str, *, force: bool = False) -> str:
+    if not force and _DEFINITION_LINK_TRIGGER_RE.search(line) is None:
+        return line
+    return _DEFINITION_CLOSE_COLON_RE.sub(
+        lambda match: match.group()[:-1] + "\uff1a", line
+    )
 
 
 def _escape_definitions(text: str) -> str:
     # Escape the colon because escaping the closing bracket can discard footnotes.
     # Twin: workflows/src/renderReport.js::outboundDefinitions, plus LF continuation.
-    return _DEFINITION_RE.sub(
-        lambda match: (
-            match.group()[:-1] + "\\:"
-            if re.sub(r"\n[ \t>]*", "\n", match.group(1)).strip()
-            else match.group()
-        ),
-        text,
+    text = "\n".join(
+        _escape_triggered_definition_colons(line) for line in text.split("\n")
+    )
+
+    def escape(match: re.Match[str]) -> str:
+        if (
+            match.group(1) is not None
+            or re.sub(r"\n[ \t>]*", "\n", match.group(2)).strip()
+        ):
+            return match.group()[:-1] + "\\:"
+        return match.group()
+
+    return _DEFINITION_RE.sub(escape, text)
+
+
+def _escape_tilde_runs(line: str) -> str:
+    spans = _containment_code_spans(line)
+    span_index = 0
+    parts = []
+    index = 0
+    backslashes = 0
+    while index < len(line):
+        if span_index < len(spans) and index == spans[span_index][0]:
+            # A tilde fence needs line start; a span's earlier tick prevents it.
+            end = spans[span_index][2]
+            parts.append(line[index:end])
+            index = end
+            span_index += 1
+            backslashes = 0
+            continue
+        if line[index] == "~":
+            end = index + 1
+            while end < len(line) and line[end] == "~":
+                end += 1
+            if end - index >= 3:
+                if backslashes % 2 == 0:
+                    parts.append("\\")
+                parts.append("~" + "\\~" * (end - index - 1))
+                index = end
+                backslashes = 0
+                continue
+        character = line[index]
+        parts.append(character)
+        backslashes = backslashes + 1 if character == "\\" else 0
+        index += 1
+    return "".join(parts)
+
+
+def _containment_code_spans(
+    line: str, index: TickRunIndex | None = None
+) -> list[tuple[int, int, int]]:
+    return paired_code_spans(
+        index if index is not None else tick_run_index(line), suffix_retry=True
     )
 
 
 def _contain_line(line: str) -> str:
     line = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", line)
-    out = []
-    index = 0
-    while index < len(line):
-        if line[index] == "`":
-            if escaped_tick(line, index):
-                out.append("`")
-                index += 1
-                continue
-            end = tick_run(line, index)
-            width = end - index
-            close = span_close(line, index, end)
-            if close is not None:
-                out.append(
-                    line[index : close + width].replace(
-                        line[end:close],
-                        _escape_visible(line[end:close], code=True),
-                        1,
-                    )
-                )
-                index = close + width
-                continue
-            out.append("\\`")
-            index += 1
-            continue
-        next_tick = line.find("`", index)
-        if next_tick < 0:
-            next_tick = len(line)
-        out.append(_escape_visible(line[index:next_tick]))
-        index = next_tick
+    index = tick_run_index(line)
+    spans = _containment_code_spans(line, index)
+    span_index = 0
+    out: list[str] = []
+    cursor = 0
+    run_index = 0
+    while run_index < len(index.runs):
+        run = index.runs[run_index]
+        out.append(_escape_visible(line[cursor : run.start]))
+        opener = run.start
+        if run.escaped:
+            out.append("`")
+            opener += 1
+        if span_index < len(spans) and spans[span_index][0] < run.end:
+            selected, close, close_end = spans[span_index]
+            span_index += 1
+            out.append("\\`" * (selected - opener))
+            opener_end = selected + close_end - close
+            out.append(line[selected:opener_end])
+            out.append(_escape_visible(line[opener_end:close], code=True))
+            out.append(line[close:close_end])
+            cursor = close_end
+            run_index += 1
+            while run_index < len(index.runs) and index.runs[run_index].start < cursor:
+                run_index += 1
+        else:
+            out.append("\\`" * (run.width - int(run.escaped)))
+            cursor = run.end
+            run_index += 1
+    out.append(_escape_visible(line[cursor:]))
     return "".join(out)
+
+
+def _map_blocks(
+    lines: list[str],
+    protected_lines: list[bool],
+    on_protected: Callable[[str], str],
+    on_plain: Callable[[str], str],
+) -> list[str]:
+    mapped: list[str] = []
+    for protected, group in groupby(
+        zip(lines, protected_lines, strict=True), key=lambda pair: pair[1]
+    ):
+        block = "\n".join(line for line, _ in group)
+        mapped.extend((on_protected if protected else on_plain)(block).split("\n"))
+    return mapped
 
 
 def _prepare_text(
@@ -238,30 +428,38 @@ def _prepare_text(
     if not text.strip():
         return ""
     intervals: list[tuple[int, int]] = []
+    opener_suffixes: list[tuple[int, int]] = []
     fence = (
-        open_fence(text, strict=True, intervals=intervals)
+        open_fence(
+            text,
+            strict=True,
+            intervals=intervals,
+            opener_suffixes=opener_suffixes,
+        )
         if not single_line and trust_fences
         else None
     )
     lines = text.split("\n")
-    protected_lines: list[bool] = []
+    protected_lines = protected_line_flags(lines, intervals)
+    suffix_index = 0
     offset = 0
-    for line in lines:
-        protected_lines.append(any(start <= offset < end for start, end in intervals))
+    for index, line in enumerate(lines):
+        while suffix_index < len(opener_suffixes) and opener_suffixes[suffix_index][
+            0
+        ] <= offset + len(line):
+            start, _ = opener_suffixes[suffix_index]
+            if offset <= start <= offset + len(line):
+                lines[index] = line[: start - offset]
+                suffix_index += 1
+                break
+            suffix_index += 1
         offset += len(line) + 1
-    start = 0
-    for index in range(1, len(lines) + 1):
-        if index == len(lines) or protected_lines[index] != protected_lines[start]:
-            block = "\n".join(lines[start:index])
-            lines[start:index] = (
-                _break_marker_openers(block)
-                if protected_lines[start]
-                else _escape_definitions(block)
-            ).split("\n")
-            start = index
+    lines = _map_blocks(
+        lines, protected_lines, _break_marker_openers, _escape_definitions
+    )
     prepared = []
     for line, protected in zip(lines, protected_lines, strict=True):
-        shape = _FENCE_SHAPE_RE.match(line) if not single_line else None
+        shape = _BACKTICK_FENCE_SHAPE_RE.match(line) if not single_line else None
         if shape and not protected:
             tick = shape.start(1)
             line = line[:tick] + "\\" + line[tick:]
@@ -272,16 +470,12 @@ def _prepare_text(
             if quote:
                 index = quote.start(1)
                 line = line[:index] + "\\" + line[index:]
-        prepared.append(line if protected else _contain_line(line))
+        line = line if protected else _contain_line(line)
+        if not protected and not single_line:
+            line = _escape_tilde_runs(line)
+        prepared.append(line)
     # Bracket replacements can complete definition-shaped labels.
-    start = 0
-    for index in range(1, len(prepared) + 1):
-        if index == len(prepared) or protected_lines[index] != protected_lines[start]:
-            if not protected_lines[start]:
-                prepared[start:index] = _escape_definitions(
-                    "\n".join(prepared[start:index])
-                ).split("\n")
-            start = index
+    prepared = _map_blocks(prepared, protected_lines, str, _escape_definitions)
     result = "\n".join(prepared)
     if fence is not None:
         result += "\n" + fence[0] * fence[1]
@@ -328,4 +522,5 @@ def prepare_location(value: object) -> str:
     value = redact_secrets(_normalize_outbound(str(value)))
     value = re.sub(r"<(?=`+[A-Za-z/!?])", "\uff1c", value)
     value = _escape_visible(value, code=True).replace("\r", " ").replace("\n", " ")
+    value = _escape_triggered_definition_colons(value, force=True)
     return code_span(value, pad_space_edges=True)

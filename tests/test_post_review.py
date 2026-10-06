@@ -4949,8 +4949,9 @@ class TestSummaryBodyBudget(_DryRunTestBase):
 
     def test_fold_closes_an_open_fence(self):
         # Mutation: remove the fence close or measure dropped bytes after appending
-        # it; the pre-fold fence count or hand-typed 4804 turns red.
-        # 4804 = 70010 - (65536 - 24 - 2 - 211 - 93); the 4-byte fence close is excluded.
+        # it; the pre-fold fence count or hand-typed 4802 turns red.
+        # The six-byte `python` info string is erased before folding.
+        # The fence close is excluded.
         payload, _, _, exit_code = self._run_poster(
             "github", "```python\n" + "x" * 70000, []
         )
@@ -4960,7 +4961,7 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertEqual(fence_closer(before_fold), "")
         self.assertIn("\n```\n\n", before_fold)
         self.assertIn(
-            "_[folded: 4808 more bytes; this review body reached the 65536-byte "
+            "_[folded: 4802 more bytes; this review body reached the 65536-byte "
             "GitHub body limit]_",
             body,
         )

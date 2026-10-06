@@ -1,6 +1,7 @@
 """Public outbound preparation contracts, independent of delivery composition."""
 
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -10,7 +11,10 @@ import gauntlet.text as text
 import pytest
 from gauntlet.markdown import open_fence
 
-from tests.test_outbound_contract import assert_outbound_string_invariant
+from tests.test_outbound_contract import (
+    _render_summary_bodies,
+    assert_outbound_string_invariant,
+)
 from tests.tools.outbound import (
     TextOperation,
     TextVector,
@@ -102,6 +106,241 @@ def test_text_vector(case: TextVector) -> None:
         assert open_fence(case["input"], strict=True) is None
 
 
+@pytest.mark.parametrize("delimiter", ("```", "~~~"), ids=["backtick", "tilde"])
+@pytest.mark.parametrize(
+    "info",
+    (
+        "suggestion",
+        " suggestion",
+        "suggestion foo",
+        "suggestion:-0+0",
+        "sug&#103;estion",
+        "Suggestion",
+        "SUGGESTION",
+        "{suggestion}",
+        "suggestion\\",
+        "python",
+        "future:params",
+    ),
+)
+@pytest.mark.parametrize("closed", (True, False), ids=["closed", "open"])
+def test_prose_fence_info_is_empty(delimiter: str, info: str, closed: bool) -> None:
+    source = f"{delimiter}{info}\nx = SENT"
+    if closed:
+        source += f"\n{delimiter}"
+    assert text.prepare_prose(source).splitlines() == [delimiter, "x = SENT", delimiter]
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    (
+        " ",
+        "  ",
+        "   ",
+        "    ",
+        "\t",
+        "> ",
+        "> - ",
+        "- ",
+        "+ ",
+        "* ",
+        "1. ",
+        "1) ",
+        ": ",
+        "~ ",
+        "text ",
+    ),
+)
+def test_prose_tilde_runs_escape_all_container_prefixes(prefix: str) -> None:
+    source = f"term\n{prefix}~~~suggestion\n  x = SENT\n  ~~~\n\ntail"
+    assert text.prepare_prose(source) == (
+        f"term\n{prefix}\\~\\~\\~suggestion\n  x = SENT\n  \\~\\~\\~\n\ntail"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            "é\n~~~python\nx\n~~~\ny\n```mermaid\nz\n```\n@out <b>",
+            "é\n~~~\nx\n~~~\ny\n```\nz\n```\n\uff20out &lt;b>",
+            id="original-fence-offsets",
+        ),
+        pytest.param(
+            "x " + "ghp_" + "A" * 36 + "\uff1a //e/SENT](a b) after",
+            "x [REDACTED]\uff1a //e/SENT](a b) after",
+            id="redaction-before-definition-guard",
+        ),
+        pytest.param(r"already \~~~", r"already \~\~\~", id="odd-slash-run"),
+        pytest.param(r"even \\~~~", r"even \\\~\~\~", id="even-slash-run"),
+        pytest.param("`~~~`", "`~~~`", id="inline-code-tilde-run"),
+    ],
+)
+def test_prose_structure_pass_order(source: str, expected: str) -> None:
+    assert text.prepare_prose(source) == expected
+    assert text.prepare_prose(expected) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            "before x [a]: //example.test/SENT](a b) after",
+            "before x [a]\uff1a //example.test/SENT](a b) after",
+            id="midline",
+        ),
+        pytest.param(
+            "x [a]: //e/SENT]\\(a b) after",
+            "x [a]\uff1a //e/SENT]\\(a b) after",
+            id="escaped-trigger",
+        ),
+        pytest.param("x [a]: u][a b] q", "x [a]: u][a b] q", id="no-pair"),
+        pytest.param("x [a]: u] (a b) q", "x [a]: u] (a b) q", id="spaced-pair"),
+        pytest.param("x [a]: u]\\\\(a b) q", "x [a]: u]\\\\(a b) q", id="two-slashes"),
+        pytest.param(
+            "`x [a]: SENT](a b)`",
+            "`x [a]\uff1a SENT](a b)`",
+            id="code-span-control",
+        ),
+        pytest.param("[[x]: u", "[\uff3bx]\\: u", id="after-containment-pass"),
+        pytest.param(
+            "**x [a]: u](a b)**",
+            "**x [a]\uff1a u](a b)**",
+            id="bold-prefix",
+        ),
+        pytest.param("> x [a]: u](a b)", "> x [a]\uff1a u](a b)", id="quote-prefix"),
+        pytest.param("- x [a]: u](a b)", "- x [a]\uff1a u](a b)", id="list-prefix"),
+    ],
+)
+def test_definition_colon_contract(source: str, expected: str) -> None:
+    assert text.prepare_prose(source) == expected
+    assert text.prepare_line(source) == expected
+
+
+def test_entity_vocabulary_complete() -> None:
+    from html.entities import html5
+
+    expected = {
+        "commat;": "@",
+        "excl;": "!",
+        "lbrack;": "[",
+        "lsqb;": "[",
+        "rsqb;": "]",
+        "rbrack;": "]",
+        "colon;": ":",
+        "lpar;": "(",
+        "rpar;": ")",
+        "bsol;": "\\",
+        "nbsp;": "\u00a0",
+        "nbsp": "\u00a0",
+        "NonBreakingSpace;": "\u00a0",
+    }
+    targets = set(expected.values())
+    assert {
+        name: value for name, value in html5.items() if value in targets
+    } == expected
+    for name, value in expected.items():
+        if name.endswith(";"):
+            assert text._normalize_outbound("&" + name) == value.replace("\u00a0", " ")
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param("<!-->tail", "<!-->tail", id="overlapping-one"),
+        pytest.param("<!--->tail", "<!--->tail", id="overlapping-two"),
+        pytest.param("<!---->tail", "tail", id="empty-comment"),
+        pytest.param("<!-->x-->y", "y", id="later-closer-after-one"),
+        pytest.param("<!--->x-->y", "y", id="later-closer-after-two"),
+        pytest.param("<!-<!--x-->->tail", "<!-->tail", id="restored-overlap"),
+        pytest.param(
+            "<!--&#38;#45;&#38;#45;&#38;#62;z-->tail",
+            "z-->tail",
+            id="entity-decoded-closer",
+        ),
+        pytest.param("<!--x--\u200b>y-->z", "y-->z", id="invisible-completes-closer"),
+        pytest.param("<!-<!--x-->- y --<!--z-->> w", "> w", id="sibling-comment-join"),
+        pytest.param(
+            "<!-<!--x-->- a --&#6<!--y-->2; b -->",
+            "2; b -->",
+            id="sibling-join-with-decoded-tail",
+        ),
+    ],
+)
+def test_normalizer_overlap_and_semantics(source: str, expected: str) -> None:
+    assert text._normalize_outbound(source) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param("&#" + "0" * 5000 + "64;", "@", id="saturating-decimal"),
+        pytest.param("&#" + "9" * 5000 + ";", "", id="decimal-overflow"),
+        pytest.param("&#x" + "0" * 5000 + "40;", "@", id="saturating-hex"),
+    ],
+)
+def test_numeric_reference_outputs(source: str, expected: str) -> None:
+    assert text._normalize_outbound(source) == expected
+
+
+def _has_complete_nonoverlapping_comment(value: str) -> bool:
+    opener_end: int | None = None
+    index = 0
+    while index < len(value):
+        if opener_end is None and value.startswith("<!--", index):
+            opener_end = index + 4
+            index += 4
+            continue
+        if opener_end is not None and value.startswith("-->", index):
+            if index >= opener_end:
+                return True
+            index += 3
+            continue
+        index += 1
+    return False
+
+
+@pytest.mark.parametrize("seed", [1729], ids=["seeded_normal_form"])
+def test_seeded_normal_form(seed: Literal[1729, 917]) -> None:
+    invisible_ranges = (
+        range(0x00, 0x09),
+        (0x0B, 0x0C, 0x0D),
+        range(0x0E, 0x20),
+        range(0x7F, 0xA0),
+        (0x00AD, 0x200B, 0x200C, 0x200D, 0xFEFF, 0x2060),
+        range(0x202A, 0x202F),
+        range(0x2066, 0x206A),
+    )
+    recognized_names = (
+        "commat",
+        "excl",
+        "lbrack",
+        "lsqb",
+        "rsqb",
+        "rbrack",
+        "colon",
+        "lpar",
+        "rpar",
+        "bsol",
+        "nbsp",
+        "NonBreakingSpace",
+    )
+    sources = [row["input"] for row in VECTORS if isinstance(row["input"], str)]
+    sources.extend(attack_corpus(seed))
+    for source in sources:
+        normalized = text._normalize_outbound(source)
+        assert not _has_complete_nonoverlapping_comment(normalized), repr(source)
+        assert re.search(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);", normalized) is None
+        assert all(f"&{name};" not in normalized for name in recognized_names)
+        assert "\u00a0" not in normalized
+        assert not any(
+            ord(character) in ord_range
+            for character in normalized
+            for ord_range in invisible_ranges
+        )
+        assert text._normalize_outbound(normalized) == normalized, repr(source)
+
+
 @pytest.mark.parametrize(
     ("source", "redactor_output", "expected"),
     [
@@ -131,8 +370,8 @@ def test_text_pass_order(
     [
         pytest.param(
             1729,
-            ("prose", "line"),
-            id="prose_and_line_idempotence",
+            ("prose", "line", "optional"),
+            id="prose_line_optional_idempotence",
         ),
         pytest.param(
             917,
@@ -194,11 +433,30 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
         check=True,
     )
     lines = [text.prepare_line(source) for source in sources]
-    assert json.loads(result.stdout) == lines
-    for source, line in zip(sources, lines, strict=True):
+    js_lines = json.loads(result.stdout)
+    for source, line, js_line in zip(sources, lines, js_lines, strict=True):
+        assert js_line == line, repr(source)
         assert text.prepare_line(line) == line, repr(source)
         prose = text.prepare_prose(source)
         assert text.prepare_prose(prose) == prose, repr(source)
+        assert_outbound_string_invariant(prose)
+    summary_inputs = [
+        {
+            "findings": [
+                {
+                    "id": f"markup-{index}",
+                    "title": source,
+                    "file": "src/markup.py",
+                    "line_start": 1,
+                    "severity": "low",
+                }
+            ]
+        }
+        for index, source in enumerate(sources)
+    ]
+    summaries = _render_summary_bodies(summary_inputs)
+    for source, summary in zip(sources, summaries, strict=True):
+        assert text.prepare_prose(summary) == summary, repr(source)
 
 
 @pytest.mark.parametrize(
@@ -257,7 +515,7 @@ def test_reference_redaction_bridge(operation: TextOperation) -> None:
 
 
 def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
-    # These 500 KB inputs take under one second; five allows for CI contention.
+    # A child deadline bounds failures in preparation.
     result = subprocess.run(
         [
             sys.executable,
@@ -278,6 +536,41 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
         check=True,
     )
     return result.stdout
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param("<!--" * 25000, "&lt;!--" * 25000, id="comment-openers"),
+        pytest.param(
+            "<&excl;--" * 20000,
+            "&lt;!--" * 20000,
+            id="entity-built-comment-openers",
+        ),
+        pytest.param("&" + "#38;" * 20000 + "#64;", "\uff20", id="nested-entities"),
+        pytest.param("&#" + "9" * 225000 + ";", "", id="numeric_saturation"),
+        pytest.param(
+            "<!" * 55000 + "<!-- x -->" + "-- y -->" * 55000,
+            "",
+            id="comment-deletion-waves",
+        ),
+        pytest.param("x" + "`" * 250000, "x" + "\\`" * 250000, id="tick-run"),
+        pytest.param(
+            "x " + " ".join("`" * width for width in range(1, 601)),
+            "x " + " ".join("\\`" * width for width in range(1, 601)),
+            id="unequal-width-runs",
+        ),
+        pytest.param(
+            "[&" + "\u00a0&nbsp;&NonBreakingSpace;" * 10000 + "](a b) tail",
+            "[&" + " " * 30000 + "](a b) tail",
+            id="nbsp-references",
+        ),
+    ],
+)
+def test_large_outbound_preparation(source: str, expected: str) -> None:
+    actual = _timed_preparation(source, "line")
+    assert actual == expected
+    assert text.prepare_line(actual) == actual
 
 
 @pytest.mark.parametrize("operation", ("prose", "line"))
@@ -310,6 +603,11 @@ def test_large_backslash_preparation(
             ("[" + "\\a" * 2500 + "\n") * 100,
             ("[" + "\\a" * 2500 + "\n") * 100,
             id="unclosed_labels",
+        ),
+        pytest.param(
+            "[^" + "[\\a" * 100000 + "]: hidden text",
+            "[^" + "[\\a" * 100000 + "]\\: hidden text",
+            id="footnote_label",
         ),
     ],
 )

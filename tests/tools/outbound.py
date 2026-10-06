@@ -12,6 +12,7 @@ TextOperation = Literal["prose", "line", "optional", "rule", "redact", "location
 
 
 class TextOptions(TypedDict, total=False):
+    js: Literal["n/a"]
     rule_ids: list[str]
     kind: Literal["regression", "control"]
     also: Literal["untrusted_fence"]
@@ -31,6 +32,37 @@ class CommentCase(TypedDict):
     field_class: Literal["prose", "rule", "single_line", "location"]
     input: str
     expected: str
+
+
+class SummaryFinding(TypedDict):
+    id: str
+    severity: str
+    file: str
+    line_start: int
+    title: str
+
+
+class SummaryIdentity(TypedDict):
+    platform: str
+    web_origin: str
+    owner: str
+    repo: str
+    sha_full: str
+
+
+class SummaryInput(TypedDict):
+    findings: list[SummaryFinding]
+
+
+class LinkedSummaryInput(SummaryInput):
+    prIdentity: SummaryIdentity
+
+
+class SummaryCase(TypedDict):
+    id: str
+    input: SummaryInput | LinkedSummaryInput
+    expected_py: str
+    expected_js: str
 
 
 def comment_cases() -> list[CommentCase]:
@@ -56,6 +88,14 @@ def line_vectors() -> list[TextVector]:
         for row in payload["cases"]
         for operation in row.get("operations", ["line"])
     ]
+
+
+def summary_cases() -> list[SummaryCase]:
+    payload = json.loads(
+        (FIXTURES / "cross_runtime" / "outbound_line.json").read_text("utf-8")
+    )
+    assert payload["algorithm"] == "outbound_line"
+    return cast(list[SummaryCase], payload["summary_cases"])
 
 
 class FoldInput(TypedDict):
@@ -158,6 +198,29 @@ def markup_corpus() -> list[str]:
         "[critical]: u",
         "[" + "a" * 1000 + "]: u",
         "[[https://example.test/p.png]]",
+        "<!--",
+        "-->",
+        "<!",
+        "--",
+        "&#",
+        "&#x",
+        "58;",
+        "x3a;",
+        "93;",
+        "40;",
+        "x5c;",
+        "&colon;",
+        "&rsqb;",
+        "&lpar;",
+        "&bsol;",
+        "&nbsp;",
+        "&NonBreakingSpace;",
+        "\u00a0",
+        "\u200b",
+        "~~~",
+        "](",
+        "]:",
+        "[^",
     )
     return [
         "".join(generator.choices(atoms, k=generator.randint(1, 30)))

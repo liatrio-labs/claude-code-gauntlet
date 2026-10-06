@@ -9,14 +9,17 @@ from pathlib import Path
 import gauntlet.delivery.post as post_review
 import gauntlet.text as outbound_text
 import pytest
-from gauntlet.markdown import open_fence
+from gauntlet.markdown import code_spans, open_fence
 
 from tests.tools.outbound import (
     line_vectors,
+    summary_cases,
     text_vectors,
 )
 from tests.tools.render_probes import (
     _skeleton,
+    _TreeParser,
+    _walk,
     check_render,
     derive_handles,
     input_sha256,
@@ -54,6 +57,14 @@ def assert_outbound_string_invariant(
 ) -> None:
     fences: list[tuple[int, int]] = []
     open_fence(output, strict=True, intervals=fences)
+    if check_prose_rules:
+        for start, _ in fences:
+            line_end = output.find("\n", start)
+            if line_end < 0:
+                line_end = len(output)
+            opener = re.match(r"(`{3,}|~{3,})", output[start:line_end])
+            assert opener is not None
+            assert not output[start + opener.end() : line_end].strip(" \t")
     cursor = 0
     outside: list[str] = []
     for start, end in fences:
@@ -67,6 +78,18 @@ def assert_outbound_string_invariant(
         # Code-owned locations cannot define references, but still contain openers.
         for location in literal_locations:
             markup = markup.replace(location, "")
+        spans, _ = code_spans(markup)
+        line_offset = 0
+        for line in markup.split("\n"):
+            if re.search(r"\]\\?\(", line):
+                assert re.search(r"\](\\*):", line) is None, repr(line)
+            if check_prose_rules:
+                for tilde in re.finditer(r"~{3,}", line):
+                    position = line_offset + tilde.start()
+                    assert any(start <= position < end for start, end in spans), repr(
+                        line
+                    )
+            line_offset += len(line) + 1
         slashes = 0
         line_start = 0
         first_bracket = True
@@ -139,6 +162,13 @@ def test_tracked_fixture_has_canonical_byte_layout():
         pytest.param("\\[[a]]", id="wikilink_escaped_bracket"),
         pytest.param(": [critical]: u", id="colon_prefix"),
         pytest.param("~ [critical]: u", id="tilde_prefix"),
+        pytest.param(
+            "before x [a]: //e/SENT](a b) after", id="midline_definition_pair"
+        ),
+        pytest.param("ordinary ~~~ text", id="midline_tilde_run"),
+        pytest.param(r"ordinary \~~~ text", id="partly_escaped_tilde_run"),
+        pytest.param("~~~suggestion\nx = SENT\n~~~", id="fence_info"),
+        pytest.param(": ~~~suggestion\nx = SENT\n~~~", id="definition_container_fence"),
         pytest.param("[" + "a" * 5000 + "]: u", id="unbounded_label"),
         pytest.param("[crit\nical]: u", id="multiline_label"),
     ],
@@ -146,6 +176,29 @@ def test_tracked_fixture_has_canonical_byte_layout():
 def test_invariant_rejects_active_markup(output: str) -> None:
     with pytest.raises(AssertionError):
         assert_outbound_string_invariant(output)
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "D-overlap1",
+        "D-overlap2",
+        "D-restored-overlap",
+        "N1",
+        "N2",
+        "N3",
+        "comment_removal_before_decode",
+    ],
+)
+def test_prepared_normalizer_outputs_have_no_live_comments(case_id: str) -> None:
+    rows = text_vectors()
+    case = next((row for row in rows if row["id"] == case_id), None)
+    if case is None:
+        case = next(row for row in line_vectors() if row["id"].endswith(case_id))
+    output = outbound_text.prepare_line(case["input"])
+    assert output == case["expected"]
+    assert "<!--" not in output
+    assert not outbound_text.has_marker_opener(output)
 
 
 @pytest.mark.parametrize(
@@ -168,6 +221,22 @@ def _run_node(script, value):
         timeout=30,
         check=False,
     )
+
+
+_SUMMARY_BATCH_SCRIPT = """
+import { renderSummaryBody } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
+"""
+
+
+def _render_summary_bodies(inputs):
+    result = _run_node(_SUMMARY_BATCH_SCRIPT, inputs)
+    assert result.returncode == 0, result.stderr
+    summaries = json.loads(result.stdout)
+    assert len(summaries) == len(inputs)
+    return summaries
 
 
 def _summary_inputs():
@@ -391,6 +460,70 @@ def test_all_recorded_renders_pass_platform_containment_checks():
                 raise AssertionError(f"{case['id']} {platform}: {error}") from error
 
 
+def _recorded_prose_guard_case_ids() -> list[str]:
+    prefixes = (
+        "fence_info_",
+        "tilde_",
+        "colon_second_parse_",
+        "footnote_label_",
+    )
+    for prefix in prefixes:
+        assert any(case["id"].startswith(prefix) for case in CASES), (
+            f"recorded prose guard prefix matches no case: {prefix}"
+        )
+    return [case["id"] for case in CASES if case["id"].startswith(prefixes)]
+
+
+@pytest.mark.parametrize("case_id", _recorded_prose_guard_case_ids())
+def test_recorded_prose_guards_preserve_visible_sentinels_and_plain_fences(
+    case_id: str,
+) -> None:
+    case = next(case for case in CASES if case["id"] == case_id)
+    sentinels = set(re.findall(r"\b(?:SENT|W\d+)\b", case["input"]))
+    assert sentinels, case_id
+    for platform in ("github", "gitlab"):
+        html = case[f"{platform}_probe"]["html"]
+        assert html, (
+            f"{case_id}: record with python tests/tools/render_probes.py record "
+            f"--platform {platform}"
+        )
+        parser = _TreeParser()
+        parser.feed(html)
+        parser.close()
+        nodes = _walk(parser.root)
+        visible_words = set(
+            re.findall(
+                r"\b\w+\b",
+                " ".join(
+                    child
+                    for node, _ in nodes
+                    if node.tag not in {"#comment", "script", "style"}
+                    for child in node.children
+                    if isinstance(child, str)
+                ),
+            )
+        )
+        assert sentinels <= visible_words, (case_id, platform, visible_words)
+        for node, _ in nodes:
+            attrs = dict(node.attrs)
+            classes = (attrs.get("class") or "").split()
+            if platform == "gitlab":
+                assert "data-canonical-lang" not in attrs, (case_id, attrs)
+                assert not any(
+                    (value.startswith("language-") and value != "language-plaintext")
+                    or value.startswith("js-render-")
+                    for value in classes
+                ), (case_id, classes)
+            else:
+                assert "lang" not in attrs, (case_id, attrs)
+                assert not any(
+                    value.startswith("highlight-source") for value in classes
+                ), (case_id, classes)
+                assert not (
+                    node.tag == "section" and "render-needs-enrichment" in classes
+                ), (case_id, classes)
+
+
 def test_divergences_are_text_only_and_bound_to_normalized_pairs():
     for case in CASES:
         github = case["github_probe"]
@@ -598,25 +731,33 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
     assert_outbound_string_invariant(summary.stdout)
 
 
-def test_generated_summary_is_unchanged_by_python_guard():
-    script = """
+@pytest.mark.parametrize("case", summary_cases(), ids=lambda case: case["id"])
+def test_generated_summary_is_unchanged_by_python_guard(case):
+    result = _run_node(
+        """
 import { renderSummaryBody } from './workflows/src/renderReport.js';
 let source = '';
 for await (const chunk of process.stdin) source += chunk;
-process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
-"""
-    result = _run_node(script, _summary_inputs())
+process.stdout.write(renderSummaryBody(JSON.parse(source)));
+""",
+        case["input"],
+    )
     assert result.returncode == 0, result.stderr
-    summaries = json.loads(result.stdout)
+    assert result.stdout == case["expected_js"]
+    assert outbound_text.prepare_prose(result.stdout) == case["expected_py"]
+    assert case["expected_py"] == case["expected_js"]
+
+
+def test_existing_generated_summaries_remain_unchanged_by_python_guard():
+    summaries = _render_summary_bodies(_summary_inputs())
     assert len(summaries) >= 2
-    assert "[critical]\\: u" in summaries[0]
+    assert "[critical]\uff1a u" in summaries[0]
     prepare_prose = getattr(outbound_text, "prepare_prose", None)
     assert callable(prepare_prose), "missing expected Python guard prepare_prose"
     for summary in summaries:
         assert prepare_prose(summary) == summary
     path = "src/a<`b.py"
-    result = _run_node(
-        script,
+    guarded_summary = _render_summary_bodies(
         [
             {
                 "findings": [
@@ -629,14 +770,22 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
                     }
                 ]
             }
-        ],
-    )
-    assert result.returncode == 0, result.stderr
-    guarded_summary = json.loads(result.stdout)[0]
+        ]
+    )[0]
     assert "``src/a\uff1c`b.py:1``" in guarded_summary
     assert prepare_prose(guarded_summary) == guarded_summary
     location = "```src/dir/``/file.py:7-9```"
     assert location in summaries[0]
+    assert outbound_text.prepare_line("[x]: u") == "[x]\\: u"
+
+    bracket_path = next(
+        case
+        for case in summary_cases()
+        if case["input"].get("prIdentity")
+        and case["input"]["findings"][0]["file"] == "src/[x]:.py"
+    )
+    assert "`src/[x]\uff1a.py:3`" in bracket_path["expected_js"]
+    assert "src/%5Bx%5D%3A.py#L3" in bracket_path["expected_js"]
 
 
 def test_summary_image_location_uses_code_visible_brackets() -> None:

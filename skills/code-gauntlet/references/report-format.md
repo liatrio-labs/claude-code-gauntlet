@@ -329,9 +329,15 @@ before the poster applies its byte budget. Each bullet places its location link 
 the optional improvement-suggestion label, then the colon and folded title, so title Markdown cannot
 alter the location.
 The Summary index prepares each title as a single line, folds it to 512 code points, then
-contains raw HTML and visible mentions even in inline code. It counts the final bullet after preparation against
+contains raw HTML and visible mentions even in inline code. Its new definition-colon guard
+is forced because the containing bullet has a linked location: a Summary title `[x]: u`
+becomes `[x]` followed by U+FF1A FULLWIDTH COLON and `u`, while an ordinary single-line
+field keeps the existing `[x]\: u` output. It counts the final bullet after preparation against
 the index budget. Its display path and line sit inside one code span whose delimiter exceeds
-every backtick run in the location; edge spaces receive CommonMark padding. Display paths
+every backtick run in the location. The colon rule is span-blind and rewrites `]` plus zero
+or more backslashes plus `:` inside location paths too: `src/[x]:.py:3` displays as
+`src/[x]：.py:3` with U+FF1A, so copying it no longer yields the original path.
+The permalink href is unchanged. Edge spaces receive CommonMark padding. Display paths
 use fullwidth `＜` and `＠` for dangerous characters, so copying them yields different
 characters. The structured permalink destination percent-encodes the original valid path,
 including any `<` or `@`. Normalization or redaction of the original path suppresses
@@ -410,11 +416,21 @@ start or after a non-alphanumeric character are neutralized even inside inline c
 show fullwidth `＜` and `＠`, which paste differently; a wrong span guess may show literal
 `&lt;` or backslashes. URL text containing `/@` also shows fullwidth `＠`.
 Suggestions and cited rules use the same containment; the cited rule is capped before its
-blockquote markers. Trusted fences retain normalized and redacted bytes except for
-marker opening breaks across lines. After normalization and redaction, prose also escapes
-lines starting with `/` and multiline quote openers starting with three or more `>` outside
-trusted fences; the checked patch stays byte-exact inside its suggestion fence. Single-line
-fields carry neither escape. In ordinary prose, Markdown consumes the backslash and displays
+blockquote markers. Body text trusts column-zero backtick and tilde fences. Suggestion text
+and cited rules pass through `prepared_prose`, which collapses backtick runs of three or more
+to two before fence classification; only column-zero tilde fences are trusted in suggestion
+text, and cited rules trust no fences. Trusted body and suggestion payloads retain normalized
+and redacted bytes except for marker opening breaks across lines; accepted opener lines lose
+their entire info string. Outside trusted fences, every multiline prose line escapes runs of
+three or more tildes outside complete paired inline-code spans. Each tilde gains a backslash,
+except the first tilde when an odd preceding backslash run already escapes it. After normalization and redaction, prose also escapes lines starting with `/`
+and multiline quote openers starting with three or more `>` outside trusted fences; the
+checked patch stays byte-exact inside its suggestion fence. Single-line fields carry neither
+fence nor tilde escape. A line holding `](` or `]\(` changes every `]` plus zero or more
+backslashes plus `:` to U+FF1A FULLWIDTH COLON before the retained line-initial definition
+guard. This colon rule is span-blind: it rewrites everywhere on a triggered line, including
+inside inline code and location paths. Only containment and the tilde guard share span
+selection. Summary titles force only that new colon rule. In ordinary prose, Markdown consumes the backslash and displays
 the punctuation as intended; on an indented-code line the backslash shows. GitLab CE 19.4.1
 passes a backslash inside `$$` display math to its math renderer. Nested-quote shorthand such
 as `>>> text` displays literally. This contract also applies to corroborator sections, skipped

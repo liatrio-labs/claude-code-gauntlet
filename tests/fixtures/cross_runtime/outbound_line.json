@@ -911,7 +911,7 @@
     {
       "id": "comment_removal_before_decode",
       "input": "<!-<!--x-->- a --&#6<!--y-->2; b -->",
-      "expected": "",
+      "expected": "2; b -->",
       "operations": [
         "prose",
         "line"
@@ -1157,7 +1157,7 @@
     {
       "id": "wikilink_named_lbrack",
       "input": "&lbrack;&lbrack;page&rsqb;&rsqb;(a)",
-      "expected": "[\uff3bpage&rsqb;&rsqb;(a)",
+      "expected": "[\uff3bpage]](a)",
       "rule_ids": [
         "prose.wikilink"
       ],
@@ -1220,6 +1220,1152 @@
         "line"
       ],
       "note": "Containing the inner bracket completes a label that needs the final colon pass."
+    },
+    {
+      "id": "A-mid",
+      "input": "before x [a]: //example.test/SENT](a b) after",
+      "expected": "before x [a]\uff1a //example.test/SENT](a b) after"
+    },
+    {
+      "id": "A-start",
+      "input": "[a]: //e/SENT](a b) after",
+      "expected": "[a]\uff1a //e/SENT](a b) after"
+    },
+    {
+      "id": "A-depth2",
+      "input": "p [x [a]: //e/SENT](a b) after",
+      "expected": "p [x [a]\uff1a //e/SENT](a b) after"
+    },
+    {
+      "id": "A-depth3",
+      "input": "p [w [x [a]: //e/SENT](a b) after",
+      "expected": "p [w [x [a]\uff1a //e/SENT](a b) after"
+    },
+    {
+      "id": "A-depth4",
+      "input": "p [v [w [x [a]: //e/SENT](a b) after",
+      "expected": "p [v [w [x [a]\uff1a //e/SENT](a b) after"
+    },
+    {
+      "id": "A-escaped-outer",
+      "input": "p \\[w [x [a]: //e/SENT](a b) after",
+      "expected": "p \\[w [x [a]\uff1a //e/SENT](a b) after"
+    },
+    {
+      "id": "A-footnote",
+      "input": "x [^a]: note SENT](a b) after",
+      "expected": "x [^a]\uff1a note SENT](a b) after"
+    },
+    {
+      "id": "A-slashes",
+      "input": "x [a]\\\\: //e/SENT](a b) after",
+      "expected": "x [a]\\\\\uff1a //e/SENT](a b) after"
+    },
+    {
+      "id": "A-close",
+      "input": "p [a\\\\]b]: //e/SENT](c d) after",
+      "expected": "p [a\\\\]b]\uff1a //e/SENT](c d) after"
+    },
+    {
+      "id": "A-trigger-escape",
+      "input": "x [a]: //e/SENT]\\(a b) after",
+      "expected": "x [a]\uff1a //e/SENT]\\(a b) after"
+    },
+    {
+      "id": "A-trigger-no-space",
+      "input": "x [a]: //e/SENT](ab) after",
+      "expected": "x [a]\uff1a //e/SENT](ab) after"
+    },
+    {
+      "id": "A-aliases",
+      "input": "x &lbrack;a&rbrack;&colon; //e/SENT&rsqb;&lpar;a b&rpar; after",
+      "expected": "x [a]\uff1a //e/SENT](a b) after"
+    },
+    {
+      "id": "A-bsol",
+      "input": "p [a&bsol;\\]b]: //e/SENT](c d) after",
+      "expected": "p [a\\\\]b]\uff1a //e/SENT](c d) after"
+    },
+    {
+      "id": "A-numeric",
+      "input": "x &#91;a&#93;&#58; //e/SENT](a b) after",
+      "expected": "x [a]\uff1a //e/SENT](a b) after"
+    },
+    {
+      "id": "A-redaction",
+      "input": "x ghp_\u0041AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: //e/SENT](a b) after",
+      "expected": "x [REDACTED]\uff1a //e/SENT](a b) after"
+    },
+    {
+      "id": "A-two",
+      "input": "x [a]: u](a b) [b]: v](c d) q",
+      "expected": "x [a]\uff1a u](a b) [b]\uff1a v](c d) q"
+    },
+    {
+      "id": "A-code-control",
+      "input": "`x [a]: SENT](a b)`",
+      "expected": "`x [a]\uff1a SENT](a b)`",
+      "note": "A trigger on the physical line forces fullwidth colons inside inline code too."
+    },
+    {
+      "id": "A-label-control",
+      "input": "see [note]: https://example.test/x",
+      "expected": "see [note]: https://example.test/x"
+    },
+    {
+      "id": "A-link-control",
+      "input": "see [note](https://example.test/x)",
+      "expected": "see [note](https://example.test/x)"
+    },
+    {
+      "id": "A-trigger-control-close",
+      "input": "x [a]: u][a b] q",
+      "expected": "x [a]: u][a b] q"
+    },
+    {
+      "id": "A-trigger-control-space",
+      "input": "x [a]: u] (a b) q",
+      "expected": "x [a]: u] (a b) q"
+    },
+    {
+      "id": "A-trigger-control-two-slashes",
+      "input": "x [a]: u]\\\\(a b) q",
+      "expected": "x [a]: u]\\\\(a b) q"
+    },
+    {
+      "id": "A-title-line",
+      "input": "[x]: u",
+      "expected": "[x]\\: u"
+    },
+    {
+      "id": "A-title-triggered",
+      "input": "x [a]: u](a b)",
+      "expected": "x [a]\uff1a u](a b)"
+    },
+    {
+      "id": "F-line-control",
+      "input": "~~~ x",
+      "expected": "~~~ x"
+    },
+    {
+      "id": "A-split-label-flattened",
+      "input": "x [a\nb]: //e/SENT\n](a b) after",
+      "expected": "x [a b]\uff1a //e/SENT ](a b) after"
+    },
+    {
+      "id": "A-split-destination-flattened",
+      "input": "x [a]: //e/\nSENT](a b) after",
+      "expected": "x [a]\uff1a //e/ SENT](a b) after"
+    },
+    {
+      "id": "D-overlap1",
+      "input": "<!-->tail",
+      "expected": "&lt;!-->tail",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-overlap2",
+      "input": "<!--->tail",
+      "expected": "&lt;!--->tail",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-empty",
+      "input": "<!---->tail",
+      "expected": "tail",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-late1",
+      "input": "<!-->x-->y",
+      "expected": "y",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-late2",
+      "input": "<!--->x-->y",
+      "expected": "y",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-restored-overlap",
+      "input": "<!-<!--x-->->tail",
+      "expected": "&lt;!-->tail",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "N1",
+      "input": "<!--&#38;#45;&#38;#45;&#38;#62;z-->tail",
+      "expected": "z-->tail",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "N2",
+      "input": "<!--x--\u200b>y-->z",
+      "expected": "y-->z",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "N3",
+      "input": "<!-<!--x-->- y --<!--z-->> w",
+      "expected": "> w",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-join",
+      "input": "&<!-- x -->#64;user",
+      "expected": "\uff20user",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-nested",
+      "input": "before <!-<!-- x -->- y --> after",
+      "expected": "before  after",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-unknown",
+      "input": "&amp;commat;team &unknown; a&b=2",
+      "expected": "&amp;commat;team &unknown; a&b=2",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-zero-dec",
+      "input": "&#0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000064;",
+      "expected": "\uff20",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-overflow-dec",
+      "input": "&#99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999;",
+      "expected": "",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "D-zero-hex",
+      "input": "&#x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040;",
+      "expected": "\uff20",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "T-suffix",
+      "input": "``a`b",
+      "expected": "\\``a`b",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "T-escaped",
+      "input": "\\``a`b",
+      "expected": "\\``a`b",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_amp_raw",
+      "input": "[&\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0](a b)hidden text",
+      "expected": "[&                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_amp_named",
+      "input": "[&&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;](a b)hidden text",
+      "expected": "[&                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_amp_long_named",
+      "input": "[&&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;](a b)hidden text",
+      "expected": "[&                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_lt_raw",
+      "input": "[<\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0](a b)hidden text",
+      "expected": "[<                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_lt_named",
+      "input": "[<&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;](a b)hidden text",
+      "expected": "[<                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_lt_long_named",
+      "input": "[<&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;](a b)hidden text",
+      "expected": "[<                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_gt_raw",
+      "input": "[>\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0](a b)hidden text",
+      "expected": "[>                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_gt_named",
+      "input": "[>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;](a b)hidden text",
+      "expected": "[>                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_gt_long_named",
+      "input": "[>&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;&NonBreakingSpace;](a b)hidden text",
+      "expected": "[>                        ](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_decimal",
+      "input": "[&&#160;](a b)hidden text",
+      "expected": "[&](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_hex",
+      "input": "[&&#xA0;](a b)hidden text",
+      "expected": "[&](a b)hidden text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "nbsp_nested_named",
+      "input": "[&&#38;nbsp;&#38;NonBreakingSpace;](a b)tail",
+      "expected": "[&  ](a b)tail",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_suffix_short",
+      "input": "]](``[x]:`",
+      "expected": "]](\\``[x]\uff1a`",
+      "operations": [
+        "line",
+        "prose"
+      ],
+      "note": "A trigger on the physical line forces fullwidth colons inside inline code too."
+    },
+    {
+      "id": "colon_suffix_long",
+      "input": "``x [a]: u](a b) tail`",
+      "expected": "\\``x [a]\uff1a u](a b) tail`",
+      "operations": [
+        "line",
+        "prose"
+      ],
+      "note": "A trigger on the physical line forces fullwidth colons inside inline code too."
+    },
+    {
+      "id": "footnote_slash_plain",
+      "input": "[^a\\]: hidden W1 text",
+      "expected": "[^a\\]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_bracket_plain",
+      "input": "[^x[a]: hidden W1 text",
+      "expected": "[^x[a]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_slash_list",
+      "input": "- [^a\\]: hidden W1 text",
+      "expected": "- [^a\\]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_bracket_list",
+      "input": "- [^x[a]: hidden W1 text",
+      "expected": "- [^x[a]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_slash_quote",
+      "input": "> [^a\\]: hidden W1 text",
+      "expected": "> [^a\\]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_bracket_quote",
+      "input": "> [^x[a]: hidden W1 text",
+      "expected": "> [^x[a]\\: hidden W1 text",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_control_space",
+      "input": "[^x y]:",
+      "expected": "[^x y]\\:",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_control_empty",
+      "input": "[^]:",
+      "expected": "[^]\\:",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "footnote_control_even_slashes",
+      "input": "[^x\\\\]:",
+      "expected": "[^x\\\\]\\:",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_footnote",
+      "input": "[^`]: The handler trusts `X-User` ...; see [docs](https://e.test/auth).",
+      "expected": "[^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth).",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_definition",
+      "input": "[`]: /u 'text ` ](x'",
+      "expected": "[`]\uff1a /u 'text ` ](x'",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_definition_list",
+      "input": "- [`]: /u 'text ` ](x'",
+      "expected": "- [`]\uff1a /u 'text ` ](x'",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_definition_quote",
+      "input": "> [`]: /u 'text ` ](x'",
+      "expected": "> [`]\uff1a /u 'text ` ](x'",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_code_backslashes",
+      "input": "`[a]\\\\: x` [d](u)",
+      "expected": "`[a]\\\\\uff1a x` [d](u)",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_destination",
+      "input": "See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "See [x](`) [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_link_title",
+      "input": "[x](u '`') See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "[x](u '`') See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_angle_destination",
+      "input": "[x](<`>) See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "[x](<`>) See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_bare_url",
+      "input": "https://e.test/` See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "https://e.test/` See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_www_url",
+      "input": "www.e.test/` See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "www.e.test/` See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_math",
+      "input": "$5`$ See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "$5`$ See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_display_math",
+      "input": "$$a`$$ See [x](`) [label W5]: //e/dest](a b) ` W6",
+      "expected": "$$a`$$ See [x](`) [label W5]\uff1a //e/dest](a b) \\` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_link_title_prefix",
+      "input": "[x](u '`') [label W5]: //e/dest](a b) ` W6",
+      "expected": "[x](u '`') [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_angle_destination_prefix",
+      "input": "[x](<`>) [label W5]: //e/dest](a b) ` W6",
+      "expected": "[x](<`>) [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_bare_url_prefix",
+      "input": "https://e.test/` [label W5]: //e/dest](a b) ` W6",
+      "expected": "https://e.test/` [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_www_url_prefix",
+      "input": "www.e.test/` [label W5]: //e/dest](a b) ` W6",
+      "expected": "www.e.test/` [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_math_prefix",
+      "input": "$5`$ [label W5]: //e/dest](a b) ` W6",
+      "expected": "$5`$ [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_tick_display_math_prefix",
+      "input": "$$a`$$ [label W5]: //e/dest](a b) ` W6",
+      "expected": "$$a`$$ [label W5]\uff1a //e/dest](a b) ` W6",
+      "operations": [
+        "line",
+        "prose"
+      ]
+    },
+    {
+      "id": "colon_three_triggered_occurrences",
+      "input": "x [a]: [b]: [c]: u](a b)",
+      "expected": "x [a]\uff1a [b]\uff1a [c]\uff1a u](a b)"
+    },
+    {
+      "id": "invisible_c0",
+      "input": "A\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\u000b\f\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001fB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_del",
+      "input": "A\u007fB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_c1",
+      "input": "A\u0080\u0081\u0082\u0083\u0084\u0085\u0086\u0087\u0088\u0089\u008a\u008b\u008c\u008d\u008e\u008f\u0090\u0091\u0092\u0093\u0094\u0095\u0096\u0097\u0098\u0099\u009a\u009b\u009c\u009d\u009e\u009fB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_soft_hyphen",
+      "input": "A\u00adB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_zero_width",
+      "input": "A\u200b\u200c\u200dB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_bom",
+      "input": "A\ufeffB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_word_joiner",
+      "input": "A\u2060B",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_bidi_embedding",
+      "input": "A\u202a\u202b\u202c\u202d\u202eB",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_bidi_isolates",
+      "input": "A\u2066\u2067\u2068\u2069B",
+      "expected": "AB"
+    },
+    {
+      "id": "invisible_cr",
+      "input": "A\rB",
+      "expected": "AB"
+    }
+  ],
+  "summary_cases": [
+    {
+      "id": "A-mid-src_a_py-linked",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/a.py",
+            "line_start": 3,
+            "title": "before x [a]: //example.test/SENT](a b) after"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): before x [a]\uff1a //example.test/SENT](a b) after",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): before x [a]\uff1a //example.test/SENT](a b) after"
+    },
+    {
+      "id": "A-mid-src_a_py-plain",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/a.py",
+            "line_start": 3,
+            "title": "before x [a]: //example.test/SENT](a b) after"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after"
+    },
+    {
+      "id": "A-mid-src_bxbc_py-linked",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "before x [a]: //example.test/SENT](a b) after"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): before x [a]\uff1a //example.test/SENT](a b) after",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): before x [a]\uff1a //example.test/SENT](a b) after"
+    },
+    {
+      "id": "A-mid-src_bxbc_py-plain",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "before x [a]: //example.test/SENT](a b) after"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after"
+    },
+    {
+      "id": "A-title-summary-src_a_py-linked",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/a.py",
+            "line_start": 3,
+            "title": "[x]: u"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): [x]\uff1a u",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): [x]\uff1a u"
+    },
+    {
+      "id": "A-title-summary-src_a_py-plain",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/a.py",
+            "line_start": 3,
+            "title": "[x]: u"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: [x]\uff1a u",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: [x]\uff1a u"
+    },
+    {
+      "id": "A-title-summary-src_bxbc_py-linked",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "[x]: u"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [x]\uff1a u",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [x]\uff1a u"
+    },
+    {
+      "id": "A-title-summary-src_bxbc_py-plain",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "[x]: u"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: [x]\uff1a u",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: [x]\uff1a u"
+    },
+    {
+      "id": "A-code-control-src_a_py-linked",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/a.py",
+            "line_start": 3,
+            "title": "`x [a]: SENT](a b)`"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): `x [a]\uff1a SENT](a b)`",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): `x [a]\uff1a SENT](a b)`"
+    },
+    {
+      "id": "A-code-control-src_a_py-plain",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/a.py",
+            "line_start": 3,
+            "title": "`x [a]: SENT](a b)`"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `x [a]\uff1a SENT](a b)`",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `x [a]\uff1a SENT](a b)`"
+    },
+    {
+      "id": "A-code-control-src_bxbc_py-linked",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "`x [a]: SENT](a b)`"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): `x [a]\uff1a SENT](a b)`",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): `x [a]\uff1a SENT](a b)`"
+    },
+    {
+      "id": "A-code-control-src_bxbc_py-plain",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "`x [a]: SENT](a b)`"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: `x [a]\uff1a SENT](a b)`",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: `x [a]\uff1a SENT](a b)`"
+    },
+    {
+      "id": "tilde_interior_linked",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "a~~~b",
+            "line_start": 3,
+            "title": "a ~~~ b"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`a~~~b:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a\\~\\~\\~b#L3): a \\~\\~\\~ b",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`a~~~b:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a\\~\\~\\~b#L3): a \\~\\~\\~ b"
+    },
+    {
+      "id": "tilde_interior_plain",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "a~~~b",
+            "line_start": 3,
+            "title": "a ~~~ b"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `a~~~b:3`: a \\~\\~\\~ b",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `a~~~b:3`: a \\~\\~\\~ b"
+    },
+    {
+      "id": "tilde_segment_linked",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "~~~/x.py",
+            "line_start": 3,
+            "title": "a ~~~ b"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`~~~/x.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/\\~\\~\\~/x.py#L3): a \\~\\~\\~ b",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`~~~/x.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/\\~\\~\\~/x.py#L3): a \\~\\~\\~ b"
+    },
+    {
+      "id": "tilde_segment_plain",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "~~~/x.py",
+            "line_start": 3,
+            "title": "a ~~~ b"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `~~~/x.py:3`: a \\~\\~\\~ b",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `~~~/x.py:3`: a \\~\\~\\~ b"
+    },
+    {
+      "id": "colon_tick_footnote_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "[^`]: The handler trusts `X-User` ...; see [docs](https://e.test/auth)."
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth).",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth)."
+    },
+    {
+      "id": "colon_tick_definition_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "[`]: /u 'text ` ](x'"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [`]\uff1a /u 'text ` ](x'",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [`]\uff1a /u 'text ` ](x'"
+    },
+    {
+      "id": "colon_tick_destination_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[x]:.py",
+            "line_start": 3,
+            "title": "See [x](`) [label W5]: //e/dest](a b) ` W6"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): See [x](`) [label W5]\uff1a //e/dest](a b) ` W6",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): See [x](`) [label W5]\uff1a //e/dest](a b) ` W6"
+    },
+    {
+      "id": "colon_forced_code_title_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/a.py",
+            "line_start": 3,
+            "title": "`[a]: x`"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`"
+    },
+    {
+      "id": "footnote_opener_title_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/a.py",
+            "line_start": 3,
+            "title": "See [^The handler W1"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: See [^The handler W1",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: See [^The handler W1"
+    },
+    {
+      "id": "footnote_opener_path_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "S",
+            "severity": "high",
+            "file": "src/[^handler.py",
+            "line_start": 3,
+            "title": "Path W1"
+          }
+        ]
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[^handler.py:3`: Path W1",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[^handler.py:3`: Path W1"
     }
   ]
 }

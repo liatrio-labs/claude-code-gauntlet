@@ -468,7 +468,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
                     }
                 )
                 before_victim = body.split("**Suggested fix:**", 1)[0]
-                self.assertIn("\\~~~", before_victim)
+                self.assertIn("\\~\\~\\~", before_victim)
                 self.assertIsNone(open_fence(before_victim))
                 self.assertIn("**Suggested fix:**", body)
                 self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
@@ -482,7 +482,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
                 "suggested_fix_code": "~~~\n@leehopper <ins>x</ins>\n",
             }
         )
-        self.assertIn("  \\~~~\n", body)
+        self.assertIn("  \\~\\~\\~\n", body)
         self.assertIn("\n```suggestion\n~~~\n@leehopper <ins>x</ins>\n```\n", body)
         self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
 
@@ -495,7 +495,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
                 "claude_md_rule": "~~~\n@user <b>",
             }
         )
-        self.assertIn("> \\~~~", body)
+        self.assertIn("> \\~\\~\\~", body)
         self.assertIn("> \uff20user &lt;b>", body)
         self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
 
@@ -516,7 +516,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
             post_review.render_group_body(primary, [corroborator]),
         ):
             with self.subTest(rendered=rendered[:40]):
-                self.assertIn("  \\~~~", rendered)
+                self.assertIn("  \\~\\~\\~", rendered)
                 self.assertIn("\uff20leehopper &lt;ins>x&lt;/ins>", rendered)
                 self.assertIsNone(open_fence(rendered))
 
@@ -551,7 +551,9 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
         )
         self.assertIn("\\>>>\nSee the patch below.", rendered)
         self.assertIn(f"\n```suggestion\n{patch_text}\n```", rendered)
-        _assert_outbound_string_invariant(rendered)
+        _assert_outbound_string_invariant(
+            rendered.replace(f"\n```suggestion\n{patch_text}\n```", "")
+        )
 
     def test_corroborator_header_and_body_use_the_same_text_contract(self):
         primary = {"severity": "high", "title": "Safe", "body": "Safe body"}
@@ -1265,6 +1267,42 @@ def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_
             "3923f3f55e6f877b",
             id="reference_body_rekey",
         ),
+        pytest.param(
+            "Title",
+            "Body before x [a]: //example.test/SENT](a b) after",
+            "**\U0001f7e0 [HIGH] Title**\n\nBody before x [a]: //example.test/SENT](a b) after",
+            "**\U0001f7e0 [HIGH] Title**\n\nBody before x [a]\uff1a //example.test/SENT](a b) after",
+            "abb8231504bb53a2",
+            "ec309d4c822c0bd4",
+            id="second_parse_body_rekey",
+        ),
+        pytest.param(
+            "Title",
+            "body <!--&#38;#45;&#38;#45;&#38;#62;z-->tail",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody tail",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody z-->tail",
+            "de054858eaa0eaa1",
+            "a467e2f5c3fed0ce",
+            id="normalizer_n1_rekey",
+        ),
+        pytest.param(
+            "Title",
+            "body <!--x--\u200b>y-->z",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody z",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody y-->z",
+            "2948992bd57f5d38",
+            "5c01326a67cf1f80",
+            id="normalizer_n2_rekey",
+        ),
+        pytest.param(
+            "Title",
+            "body <!-<!--x-->- y --<!--z-->> w",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody  w",
+            "**\U0001f7e0 [HIGH] Title**\n\nbody > w",
+            "be38b8d6f2d56312",
+            "28b8fc9a36fb591a",
+            id="normalizer_n3_rekey",
+        ),
     ],
 )
 def test_markup_rekeys_once(
@@ -1506,3 +1544,76 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
     _assert_prepared_poison(
         payload["body"], property_names, expected_markers=note_markers
     )
+
+
+@pytest.mark.parametrize(
+    ("platform", "end_line", "patch_text", "patch_header"),
+    [
+        pytest.param("github", 2, "replacement = 1", "```suggestion", id="single-line"),
+        pytest.param(
+            "gitlab",
+            3,
+            "replacement = 1\nreplacement = 2",
+            "```suggestion:-0+1",
+            id="gitlab-offsets",
+        ),
+    ],
+)
+def test_prose_active_fences_preserve_owned_patch(
+    platform: Platform, end_line: int, patch_text: str, patch_header: str
+) -> None:
+    finding = {
+        "file": "src/edited.py",
+        "line": 2,
+        "end_line": end_line,
+        "severity": "high",
+        "title": "before x [a]: //example.test/SENT](a b) after",
+        "body": "term\n: ~~~suggestion\n  x = SENT\n  ~~~\n\ntail",
+        "suggestion": "ordinary ~~~ text",
+        "claude_md_rule": "x [^a]: note SENT](a b) after",
+        "suggested_fix_code": patch_text,
+    }
+    payload, _ = _deliver(
+        platform,
+        [finding],
+        lines={("src/edited.py", 2): None, ("src/edited.py", 3): None},
+        texts={("src/edited.py", 2): "changed", ("src/edited.py", 3): "changed"},
+    )
+
+    def string_leaves(value):
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, dict):
+            return [part for child in value.values() for part in string_leaves(child)]
+        if isinstance(value, list):
+            return [part for child in value for part in string_leaves(child)]
+        return []
+
+    rendered = "\n".join(string_leaves(payload))
+    assert "before x [a]\uff1a //example.test/SENT](a b) after" in rendered
+    assert ": \\~\\~\\~suggestion\n  x = SENT\n  \\~\\~\\~" in rendered
+    assert "ordinary \\~\\~\\~ text" in rendered
+    assert "x [^a]\uff1a note SENT](a b) after" in rendered
+    assert f"{patch_header}\n{patch_text}\n```" in rendered
+    assert post_review.BRAND_TRAILER in rendered
+
+    corroborator = {
+        "severity": "low",
+        "title": "corroborator [a]: //e/SENT](a b)",
+        "body": "term\n~ ~~~mermaid\n  x = SENT\n  ~~~\n\ntail",
+        "agent": "Corroborator",
+    }
+    grouped = post_review.render_group_body(finding, [corroborator])
+    assert "corroborator [a]\uff1a //e/SENT](a b)" in grouped
+    assert "~ \\~\\~\\~mermaid" in grouped
+
+    skipped = post_review.build_skipped_section(
+        [
+            (
+                "src/a.py",
+                3,
+                {"severity": "high", "title": "Skipped", "body": finding["body"]},
+            )
+        ]
+    )
+    assert ": \\~\\~\\~suggestion" in skipped
