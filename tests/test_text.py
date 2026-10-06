@@ -261,6 +261,10 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
     result = subprocess.run(
         [
             sys.executable,
+            # The child's stdio defaults to the Windows code page, which cannot
+            # encode the fullwidth bracket.
+            "-X",
+            "utf8",
             "-c",
             "import sys; sys.path.insert(0, 'scripts'); "
             f"from gauntlet.text import prepare_{operation}; "
