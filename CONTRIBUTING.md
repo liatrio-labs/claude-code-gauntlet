@@ -154,8 +154,8 @@ The review pipeline runs inside Claude Code's workflow runtime, so it carries co
   the result.
 - **Only JSON-safe language globals are guaranteed.** Host globals that `node --test` hands you — `structuredClone`,
   `setTimeout`/`queueMicrotask`, `process`, and others — are absent from the workflow runtime sandbox, so a
-  reference keeps every local test green and then throws on the first live dispatch. `workflows/AGENTS.md` holds the
-  normative list; deep-clone with the bundle's `deepClone` helper, never `structuredClone`.
+  reference keeps every local test green and then throws on the first live dispatch. `workflows/biome.json`
+  (`deniedGlobals`) holds the normative list; deep-clone with the bundle's `deepClone` helper, never `structuredClone`.
 - **CI pins Node `24.18.0` exactly.** Coverage floors are sensitive to the V8 build; the patch pin stops an
   unrelated Node bump from moving percentages. The bare inner-loop command is `node --test workflows/test/*.test.js`;
   the CI coverage gate (floors + allowlist + presence) is the JS command in the [Coverage gates](#coverage-gates) block

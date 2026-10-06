@@ -389,7 +389,7 @@ class TestPromptInjectionArtifactsMirror(unittest.TestCase):
     canonical skills reference (skills/code-gauntlet/references/
     false-positive-exclusions.md) is deliberately NOT part of the equality set: it
     is third person ("a finding's" / "agent OUTPUT") where the 7 agent copies are
-    second person ("your finding's" / "your OUTPUT") -- see agents/AGENTS.md.
+    second person ("your finding's" / "your OUTPUT").
     """
 
     def test_seven_agent_copies_of_injection_artifacts_block_are_byte_identical(

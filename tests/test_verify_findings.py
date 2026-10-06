@@ -1756,8 +1756,8 @@ class TestDeltaConfidence(unittest.TestCase):
 
 class TestDeltasChecksum(unittest.TestCase):
     """deltas_checksum is fnv1a32(js_stringify_pretty(deltas)) -- the SAME checksum
-    pair the persist boundary's content proofs use (CLAUDE.md: "one checksum
-    definition in the plugin and one parity test guarding it"). These tests pin that
+    pair the persist boundary's content proofs use: one checksum definition in the
+    plugin and one parity test guarding it. These tests pin that
     the workflow's trustSlice recomputation is an actual CONTENT proof and not a
     constant that would validate any echo regardless of what it says.
     """
@@ -1867,7 +1867,7 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
 
     def test_result_key_order_starts_with_deltas_full_arrays_unchanged(self):
         # Regression this guards: the executor's Read of this file is length-capped
-        # with NO truncation notice (CLAUDE.md), so the delta MUST be a prefix of the
+        # with NO truncation notice, so the delta MUST be a prefix of the
         # document rather than sitting after two full finding arrays. list(dict)
         # preserves json.load's insertion order, so this is a real structural
         # assertion on the file as written, not a restatement of the docstring.

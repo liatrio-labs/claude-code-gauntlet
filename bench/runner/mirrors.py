@@ -6,7 +6,7 @@ mirror of its repo. Before the worktree is created, the pinned head/base SHAs
 force-push or rebase upstream can never be scored silently — it is flagged as
 input drift instead.
 
-Stdlib-only (repo CLAUDE.md). Every git call goes through ``subprocess.run`` with
+Stdlib-only. Every git call goes through ``subprocess.run`` with
 an argument list — never ``shell=True``.
 """
 

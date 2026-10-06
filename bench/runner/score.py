@@ -14,7 +14,7 @@ This is the seam between a completed bench run (per-PR dry-run payloads under
    URL — without it step3 judges nothing.
 3. Run the scorer's dedup (step2_5) then judge (step3) stages under the pinned
    dated Opus judge snapshot (baselines.json ``judge_pin``) via ``uv run``
-   (never imported — CLAUDE.md stdlib-only).
+   (never imported — stdlib-only).
 4. Parse ``evaluations.json`` and perform the BUCKET JOIN: every candidate whose
    text is a ``matched_candidate`` in ``true_positives`` is golden-matched; every
    other candidate goes to the adjudicator. The join is by exact candidate text

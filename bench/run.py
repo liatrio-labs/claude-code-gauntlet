@@ -18,7 +18,7 @@ manifest (run_id, tier, git_sha, start ts, env fingerprint).
 completed run directory — payload/schema, no silent degrade, plugin scriptPath identity,
 and ≥1 delivered comment. It never invokes the judge.
 
-Stdlib-only (repo CLAUDE.md). The vendored scorer keeps its own deps behind ``uv`` and is
+Stdlib-only. The vendored scorer keeps its own deps behind ``uv`` and is
 never imported here; ``--score-only`` lazily imports the (Task 13) score module and errors
 cleanly if it is not present yet. ``--check`` imports ``bench.runner.check`` only.
 """

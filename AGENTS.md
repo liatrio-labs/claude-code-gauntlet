@@ -30,16 +30,17 @@ pre-commit sees tracked files only, so `git add` a new file before trusting a gr
 
 ## Constraints
 
-- **No package manifest in the tree.** `scripts/` is stdlib-only Python 3.10, and the shipped
-  bundle has zero dependencies. Tests enforce both, so do not reach for a dependency.
+- **No `package.json`, lockfile, or `node_modules`.** `scripts/` is stdlib-only Python 3.10, and
+  the shipped bundle has zero dependencies.
 - **Language-agnostic.** Never assume the reviewed codebase's language: exclude non-source
   directories, never include by extension.
 - **Python shape.** A JSON wire shape is a `TypedDict`, an internal record is a frozen slotted
   dataclass, a closed vocabulary is a `Literal`. `scripts/*.py` are thin entry files; logic lives
   in `scripts/gauntlet/`.
-- **Tests are pytest functions** that prove a behaviour once, at the boundary callers use. A
-  regression test must fail against the bug it names: mutate the whole mechanism and watch it go
-  red, because a partial mutation falls through to a neighbouring fallback and passes.
+- **New and rewritten tests are pytest functions** that prove a behaviour once, at the boundary
+  callers use. A regression test must fail against the bug it names: mutate the whole mechanism
+  and watch it go red, because a partial mutation falls through to a neighbouring fallback and
+  passes.
 - **Comments say why.** No history, dates, or issue numbers in code; those belong in the PR.
 - **Never write the literal skip-ci token in a commit message**, even when writing about it.
   GitHub Actions scans the whole message and silently skips every workflow.

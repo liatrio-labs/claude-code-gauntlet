@@ -26,7 +26,7 @@ REPO = Path(__file__).resolve().parents[1]
 # quantity of the thing being prevented. A cut or an equal-size correction passes; only net
 # growth trips it, and raising the number on a line every reviewer sees is the mechanism.
 # Before raising it, apply the test at the foot of the root AGENTS.md to the addition.
-AGENTS_SET_BUDGET_BYTES = 4_239
+AGENTS_SET_BUDGET_BYTES = 4_131
 
 SHADOWING_NAMES = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")
 
@@ -46,20 +46,26 @@ def instruction_files():
 
 
 class TestNothingShadowsAgentsMd(unittest.TestCase):
-    def test_no_claude_md_sits_at_or_above_an_agents_md(self):
-        everything = set(tracked())
-        shadows = sorted(
-            f"{directory.as_posix()}/{name}".removeprefix("./")
-            for path in instruction_files()
-            for directory in Path(path).parents
-            for name in SHADOWING_NAMES
-            if f"{directory.as_posix()}/{name}".removeprefix("./") in everything
-        )
+    def test_no_claude_md_exists(self):
+        """Tracked anywhere, or on disk beside or above an `AGENTS.md`.
+
+        The on-disk half matters because `CLAUDE.local.md` is normally personal and
+        untracked, and a session started in any subdirectory counts files above it.
+        """
+        names = {Path(name).name for name in SHADOWING_NAMES}
+        shadows = {path for path in tracked() if Path(path).name in names}
+        for path in instruction_files():
+            for directory in Path(path).parents:
+                shadows.update(
+                    (directory / name).as_posix()
+                    for name in SHADOWING_NAMES
+                    if (REPO / directory / name).exists()
+                )
         self.assertEqual(
-            shadows,
+            sorted(shadows),
             [],
-            "Claude Code stops reading AGENTS.md once one of these exists at or above it. "
-            "Put the content in AGENTS.md instead.",
+            "Claude Code stops reading AGENTS.md once one of these exists at or above "
+            "the working directory. Put the content in AGENTS.md instead.",
         )
 
 
@@ -171,6 +177,8 @@ class TestClaimsResolve(unittest.TestCase):
         "process",
         "Buffer",
         "TextEncoder",
+        "package.json",
+        "node_modules",
     }
 
     def repo_files(self):
