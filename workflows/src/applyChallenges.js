@@ -11,8 +11,7 @@ import { pyIntStrict } from './applyValidations.js';
 // structuredClone (a node/browser global, absent here — it crashed the live smoke
 // run at the call site below). Findings are JSON-safe by construction (strings,
 // numbers, booleans, null, plain arrays/objects — no Date/Map/Set/undefined/
-// functions), so a JSON round-trip is a faithful deep copy. See CLAUDE.md
-// (Workflow runtime section — only JSON-safe globals are guaranteed here).
+// functions), so a JSON round-trip is a faithful deep copy.
 export function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
 }

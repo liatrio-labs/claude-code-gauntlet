@@ -12,7 +12,7 @@ orphans), scans the output for AskUserQuestion (defense-in-depth -> ``invalid``)
 verifies the ``Headless config:`` echo receipt (accepted from raw stdout, the result
 envelope's ``.result``, or a collected report ``*.md`` -- see ``_echo_ok``), parses costs,
 reads the child's Workflow-record return envelope for pipeline failures, and locates the
-dry-run payload. See CLAUDE.md: stdlib-only.
+dry-run payload. Stdlib-only.
 """
 
 import hashlib

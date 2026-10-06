@@ -84,22 +84,14 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
-      # The hook above is scoped `types: [python]`, so a CLAUDE.md-only commit never
-      # fires it — and CLAUDE.md-only commits are exactly how this file grows. This
-      # runs the budget test at commit time for local feedback; CI's unconditional
-      # pytest job is the check that cannot be skipped (issue #46).
-      #
-      # Use stdlib unittest — NOT pytest. CI's lint job installs only pre-commit
-      # (ci.yml `lint`), so `python -m pytest` fails with "No module named pytest"
-      # on every `pre-commit run --all-files` there. unittest is always available.
+      # The hook above is scoped `types: [python]`, so a markdown-only commit never fires
+      # it, and markdown-only commits are how instruction files grow or gain a shadowing
+      # CLAUDE.md. Stdlib unittest, not pytest: CI's lint job installs only pre-commit.
       - id: agent-instruction-layout
-        name: agent instruction layout stays within budget and its pointers resolve
+        name: agent instruction files stay small, unshadowed, and name real code
         entry: env PYTHONPATH=scripts python -m unittest tests.test_agent_instruction_layout
         language: system
-        # Any file in the layout can break it: a rule pointer can go stale when its target
-        # is renamed, and the Codex size cap is a property of the AGENTS.md set as a whole,
-        # not of whichever file happens to be edited.
-        files: ^(CLAUDE\.md|AGENTS\.md|[^/]+/(AGENTS|CLAUDE)\.md|scripts/(sync_agent_rules|gauntlet/agent_rules)\.py)$
+        files: (^|/)(AGENTS|CLAUDE|CLAUDE\.local)\.md$|^REVIEW\.md$
         pass_filenames: false
 
       # This checks generated contract fences and tables against the registry and renderer.

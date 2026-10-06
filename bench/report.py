@@ -10,7 +10,7 @@ the page::
 
     python3 bench/report.py [--ledger PATH] [--baselines PATH] [--out PATH]
 
-stdlib only (CLAUDE.md): no pip dependencies, no language assumptions.
+stdlib only: no pip dependencies, no language assumptions.
 """
 
 import argparse

@@ -35,7 +35,8 @@
               "clearTimeout": "Sandbox-absent. See workflows/AGENTS.md.",
               "queueMicrotask": "Sandbox-absent. See workflows/AGENTS.md.",
               "process": "Sandbox-absent. See workflows/AGENTS.md.",
-              "console": "Sandbox-absent. See workflows/AGENTS.md."
+              "console": "Sandbox-absent. See workflows/AGENTS.md.",
+              "Date": "No wall-clock in the sandbox; timestamps arrive through args. See workflows/AGENTS.md."
             }
           }
         }

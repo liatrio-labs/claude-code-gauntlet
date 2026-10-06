@@ -25,7 +25,6 @@ MIGRATING_PYTHON = {
     "delivery/post.py",
     "fix_tasks.py",
     "config.py",
-    "agent_rules.py",
     "verify/decide.py",
 }
 MIGRATING_JS = {

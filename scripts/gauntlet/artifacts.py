@@ -5,7 +5,7 @@ assemble_artifacts.py — derive the projected code-gauntlet artifacts on disk.
 Usage:
     python3 assemble_artifacts.py --plan <path>
 
-A single invocation whose tokens are AST-safe (CLAUDE.md AST-safe emission: no
+A single invocation whose tokens are AST-safe (no
 command substitution, heredocs, env prefixes, or shell operators), each
 single-quoted only as the token needs it, so the executor agent can run it
 inside a sandbox-auto-approved Bash call.

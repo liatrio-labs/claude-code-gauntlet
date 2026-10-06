@@ -28,7 +28,7 @@ keyed by ``golden_url``. Its ``stats["n_candidates"]`` is the total across all
 inputs; ``stats["n_skipped"]`` is always 0 — skip accounting is a payload-level
 concern surfaced by ``payload_to_candidates``, not retained in candidate files.
 
-stdlib-only (CLAUDE.md).
+stdlib-only.
 """
 
 import json

@@ -1,235 +1,89 @@
-"""Guards for the cross-tool agent-instruction layout.
+"""Guards for the agent-instruction files.
 
-`AGENTS.md` is canonical — the file Codex and Cursor read natively. Root `CLAUDE.md` is a
-pointer at it plus a Claude-only tail. Each directory's `CLAUDE.md` is a GENERATED twin of
-its `AGENTS.md` (`scripts/sync_agent_rules.py`), because Claude Code's on-demand loader
-injects a subdirectory memory file verbatim and does not expand `@imports` — measured, and
-the reason two earlier pointer-based designs were thrown away.
+`AGENTS.md` is the only instruction file, at the root and in the directories that need one.
+Codex and Cursor read it natively. Claude Code reads it too, at launch for the root file and
+on a Read for a nested one, but only where no `CLAUDE.md` or `CLAUDE.local.md` sits in that
+directory or above it. Measured on Claude Code 2.1.292 with one scratch repository per layout,
+each file carrying its own codeword: with no `CLAUDE.md` both the root and the nested
+`AGENTS.md` loaded, and a `CLAUDE.md` beside an `AGENTS.md` loaded in its place.
 
-Every failure guarded here is SILENT. None raise, and all leave a file that still looks
-correct to a human:
+The failures guarded here are silent: a shadowing file hides every rule from one tool, a rule
+names code that no longer exists, and the files grow one reasonable line at a time.
 
-* Codex truncates its concatenated instructions at 32 KiB with no notice.
-* Claude's launch-time import parser skips code spans, so one backtick around the root
-  pointer turns it into decoration and CLAUDE.md carries nothing.
-* A generated twin drifts from its source, and the two tools then read different rules.
-* An `AGENTS.md` is added with no twin, so Cursor and Codex see it and Claude never does.
-* Prose migrates back into root CLAUDE.md, which is the bloat the layout removed.
-
-Budgets here are budgets, not measurements of the current files. Raising one is the
-deliberate, reviewable act.
+This module stays stdlib `unittest`: the pre-commit hook that runs it lives in CI's lint job,
+which installs no pytest.
 """
 
-import os
 import re
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 from typing import ClassVar
 
-from gauntlet.project_rules import _strip_code
-
 REPO = Path(__file__).resolve().parents[1]
 
-# Codex concatenates AGENTS.md from the repo root down to the working directory and stops
-# adding files past 32 KiB (`project_doc_max_bytes`), silently. That is the hard ceiling.
-CODEX_CAP_BYTES = 32_768
+# A ratchet pinned at the measured size with no headroom, because a cushion is a smaller
+# quantity of the thing being prevented. A cut or an equal-size correction passes; only net
+# growth trips it, and raising the number on a line every reviewer sees is the mechanism.
+# Before raising it, apply the test at the foot of the root AGENTS.md to the addition.
+AGENTS_SET_BUDGET_BYTES = 4_131
 
-# THESE TWO ARE RATCHETS, PINNED AT THE MEASURED SIZE WITH NO HEADROOM.
-#
-# This property was in the byte-budget test these guards replaced, and dropping it was a
-# regression: the replacement checked shape and truth (symbols resolve, twins are fresh,
-# the Codex cap is respected) but carried ~9 KB of slack, so the first PR after it landed
-# grew the instruction files and nothing asked anyone to think about it.
-#
-# The reasoning from the original, which still holds: a cushion is just a smaller quantity
-# of the exact thing being prevented. A reduction always passes. So does a correction that
-# trades text of equal or smaller size. Only NET GROWTH trips it — and then someone must
-# raise a number on a line every reviewer sees, which is the whole mechanism.
-#
-# Raising one is a deliberate act, not a formality. Before you do, apply the two-part test
-# to the addition: (1) does it fail to be derivable from the code, and (2) is it NOT
-# already stated by a comment at the site that owns it? If either answer is no, the content
-# belongs in a code comment. If both are yes, raise the number in the same commit and say
-# what the addition buys.
-#
-AGENTS_SET_BUDGET_BYTES = 22_310
-CLAUDE_MD_MAX_BYTES = 856
-
-# Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
-# slack deliberately — the byte ratchet above is what stops growth; this stops a wall of
-# short lines that would satisfy the byte count only by being terse.
-CLAUDE_MD_MAX_LINES = 40
+SHADOWING_NAMES = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")
 
 
-def agents_dirs():
-    """Directories carrying an AGENTS.md, excluding the repo root."""
-    return [
-        p.parent
-        for p in sorted(REPO.glob("*/AGENTS.md"))
-        if not p.parent.name.startswith(".")
-    ]
+def tracked(*patterns):
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "--", *patterns],
+        cwd=REPO,
+        capture_output=True,
+        check=True,
+    ).stdout.decode()
+    return [path for path in out.split("\0") if path]
 
 
-class TestCanonicalPointer(unittest.TestCase):
-    def test_root_claude_md_imports_agents_md_outside_any_code_span(self):
-        """Must be a bare `@AGENTS.md` at line start: Claude Code's import parser skips
-        code spans and fenced blocks, so backticks around
-        the pointer leave a CLAUDE.md that reads correctly to a human and imports nothing.
-        This is the one import in the layout that DOES expand — it is launch-time and
-        root-level, unlike the on-demand subdirectory path.
+def instruction_files():
+    return tracked("AGENTS.md", "*/AGENTS.md")
+
+
+class TestNothingShadowsAgentsMd(unittest.TestCase):
+    def test_no_claude_md_exists(self):
+        """Tracked anywhere, or on disk beside or above an `AGENTS.md`.
+
+        The on-disk half matters because `CLAUDE.local.md` is normally personal and
+        untracked, and a session started in any subdirectory counts files above it.
         """
-        text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
-        uncoded = _strip_code(text)
-        self.assertRegex(
-            uncoded,
-            r"(?m)^@AGENTS\.md\s*$",
-            "root CLAUDE.md must carry a bare `@AGENTS.md` on its own line, outside "
-            "backticks and fences — otherwise the import silently does not expand.",
+        names = {Path(name).name for name in SHADOWING_NAMES}
+        shadows = {path for path in tracked() if Path(path).name in names}
+        for path in instruction_files():
+            for directory in Path(path).parents:
+                shadows.update(
+                    (directory / name).as_posix()
+                    for name in SHADOWING_NAMES
+                    if (REPO / directory / name).exists()
+                )
+        self.assertEqual(
+            sorted(shadows),
+            [],
+            "Claude Code stops reading AGENTS.md once one of these exists at or above "
+            "the working directory. Put the content in AGENTS.md instead.",
         )
 
-    def test_root_claude_md_stays_a_pointer(self):
-        text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
-        lines, size = len(text.splitlines()), len(text.encode("utf-8"))
-        self.assertLessEqual(
-            lines, CLAUDE_MD_MAX_LINES, f"root CLAUDE.md is {lines} lines"
-        )
-        self.assertLessEqual(
-            size,
-            CLAUDE_MD_MAX_BYTES,
-            f"root CLAUDE.md is {size} bytes against a {CLAUDE_MD_MAX_BYTES}-byte budget. "
-            "It is loaded on every turn. Portable content belongs in AGENTS.md; "
-            "directory content belongs in that directory's AGENTS.md.",
-        )
 
-    def test_no_section_heading_lives_in_both_root_files(self):
-        def headings(p):
-            return {
-                line.strip().lstrip("#").strip().lower()
-                for line in p.read_text(encoding="utf-8").splitlines()
-                if line.startswith("##")
-            }
-
-        shared = headings(REPO / "CLAUDE.md") & headings(REPO / "AGENTS.md")
-        self.assertEqual(shared, set(), f"headings in both files: {sorted(shared)}")
-
-
-class TestCodexSizeCap(unittest.TestCase):
-    def test_canonical_set_fits_under_the_codex_cap(self):
-        """Only AGENTS.md files count — the generated twins are the same bytes again."""
-        files = [REPO / "AGENTS.md"] + [d / "AGENTS.md" for d in agents_dirs()]
-        total = sum(os.stat(p).st_size for p in files)
-        detail = ", ".join(f"{p.relative_to(REPO)}={os.stat(p).st_size}" for p in files)
-        # LessEqual, not Less: the ratchet is pinned AT the measured size, so the current
-        # tree passes exactly and one added byte does not.
+class TestSizeRatchet(unittest.TestCase):
+    def test_instruction_files_do_not_grow(self):
+        sizes = {path: (REPO / path).stat().st_size for path in instruction_files()}
+        total = sum(sizes.values())
         self.assertLessEqual(
             total,
             AGENTS_SET_BUDGET_BYTES,
-            f"AGENTS.md set grew to {total} bytes against a ratchet pinned at "
-            f"{AGENTS_SET_BUDGET_BYTES} (Codex hard cap {CODEX_CAP_BYTES}, truncated "
-            f"silently). This is the guard asking you to justify the addition, not a "
-            f"limit you have reached — apply the two-part test at the constant, then "
-            f"raise it in the same commit. {detail}",
+            f"AGENTS.md files grew to {total} bytes against a ratchet pinned at "
+            f"{AGENTS_SET_BUDGET_BYTES}. Justify the addition at the constant, then raise "
+            f"it in the same commit. {sizes}",
         )
-
-    def test_root_agents_md_leaves_room_for_a_nested_file(self):
-        size = os.stat(REPO / "AGENTS.md").st_size
-        self.assertLess(size, CODEX_CAP_BYTES // 2, f"root AGENTS.md is {size} bytes")
-
-
-class TestGeneratedTwins(unittest.TestCase):
-    """The twins are the ONLY way directory rules reach Claude. Drift is silent."""
-
-    def test_every_agents_md_has_a_twin(self):
-        for directory in agents_dirs():
-            with self.subTest(directory=directory.name):
-                self.assertTrue(
-                    (directory / "CLAUDE.md").is_file(),
-                    f"{directory.name}/AGENTS.md has no CLAUDE.md twin, so Cursor and "
-                    "Codex read these rules and Claude Code never does. Run "
-                    "scripts/sync_agent_rules.py.",
-                )
-
-    def test_twin_carries_the_do_not_edit_banner(self):
-        """The banner is an HTML comment: stripped before injection, so it is free."""
-        for directory in agents_dirs():
-            with self.subTest(directory=directory.name):
-                head = (directory / "CLAUDE.md").read_text(encoding="utf-8")[:400]
-                self.assertIn("GENERATED from AGENTS.md", head)
-                self.assertTrue(head.lstrip().startswith("<!--"))
-
-
-class TestCollectorDedup(unittest.TestCase):
-    """A repo shipping CLAUDE.md as a copy of AGENTS.md must not pay for both.
-
-    This layout IS that shape, so the collector has to collapse it — otherwise every
-    review of such a repo carries every rule twice. Exercises the real collector rather
-    than its helper: an earlier version of this test asserted only that the twin and its
-    source normalise alike, and stayed green with dedup disabled outright.
-    """
-
-    def collect(self):
-        sys.path.insert(0, str(REPO))
-        import json
-        import tempfile
-
-        changed = [str(d.name) + "/x" for d in agents_dirs()]
-        with tempfile.TemporaryDirectory() as tmp:
-            listing = Path(tmp) / "changed.json"
-            listing.write_text(json.dumps(changed), encoding="utf-8")
-            out = Path(tmp) / "rules.md"
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(REPO / "scripts" / "collect_project_rules.py"),
-                    "--repo-root",
-                    str(REPO),
-                    "--changed-files",
-                    str(listing),
-                    "--out",
-                    str(out),
-                ],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            return json.loads(result.stdout)
-
-    def test_each_rule_set_is_collected_exactly_once(self):
-        from gauntlet.project_rules import _effective
-
-        report = self.collect()
-        seen = {}
-        for source in report["sources"]:
-            text = (REPO / source["path"]).read_text(encoding="utf-8")
-            key = _effective(text)
-            self.assertNotIn(
-                key,
-                seen,
-                f"{source['path']} duplicates {seen.get(key)} — the agents would read "
-                "these rules twice and the payload pays for both",
-            )
-            seen[key] = source["path"]
-
-    def test_the_twins_are_the_pairs_being_collapsed(self):
-        """Precondition: without dedup this repo really would double-count."""
-        report = self.collect()
-        skipped = {
-            s["path"] for s in report["skipped"] if s["reason"] == "duplicate_of"
-        }
-        for directory in agents_dirs():
-            with self.subTest(directory=directory.name):
-                pair = {f"{directory.name}/AGENTS.md", f"{directory.name}/CLAUDE.md"}
-                self.assertTrue(
-                    pair & skipped,
-                    f"neither half of {sorted(pair)} was collapsed",
-                )
 
 
 class TestRulesFileQuotations(unittest.TestCase):
-    """Quoted spans attributed to AGENTS.md/CLAUDE.md must exist in a rules file."""
+    """Quoted spans attributed to AGENTS.md/CLAUDE.md must exist in an instruction file."""
 
     QUOTE_NEAR_RULES: ClassVar[re.Pattern[str]] = re.compile(
         r"`?(?:[A-Za-z0-9_./-]+/)?(?:CLAUDE|AGENTS)\.md`?"
@@ -245,43 +99,14 @@ class TestRulesFileQuotations(unittest.TestCase):
     }
 
     def _rules_corpus(self):
-        files = (
-            subprocess.run(
-                [
-                    "git",
-                    "ls-files",
-                    "-z",
-                    "--",
-                    "AGENTS.md",
-                    "CLAUDE.md",
-                    "*/AGENTS.md",
-                    "*/CLAUDE.md",
-                ],
-                cwd=REPO,
-                capture_output=True,
-                check=True,
-            )
-            .stdout.decode()
-            .split("\0")
-        )
         return "\n".join(
-            (REPO / path).read_text(encoding="utf-8") for path in files if path
+            (REPO / path).read_text(encoding="utf-8") for path in instruction_files()
         )
 
     def _docs(self):
-        paths = (
-            subprocess.run(
-                ["git", "ls-files", "-z", "--", "skills", "agents"],
-                cwd=REPO,
-                capture_output=True,
-                check=True,
-            )
-            .stdout.decode()
-            .split("\0")
-        )
         return [
             path
-            for path in paths
+            for path in tracked("skills", "agents")
             if path.endswith(".md")
             and (
                 path.startswith("skills/")
@@ -302,78 +127,36 @@ class TestRulesFileQuotations(unittest.TestCase):
         self.assertEqual(
             missing,
             [],
-            f"rules quotations not found in any AGENTS/CLAUDE: {missing}",
+            f"rules quotations not found in any AGENTS.md: {missing}",
         )
 
 
 class TestClaimsResolve(unittest.TestCase):
-    """Every file and symbol an instruction file names must exist in THIS tree.
+    """Every file and symbol an instruction file names must exist in this tree.
 
-    Instruction files are read as fact by four different tools. A rule naming a function
-    that does not exist sends an agent looking for it, and nothing reports the dangling
-    reference — the same silent-failure shape as the rest of this module.
-
-    This caught three real defects on the branch that introduced it: a cross-runtime
-    constant, a proof-kind rule, and a whole section on health derivation, all describing
-    code that lived only on an unmerged branch. Documenting code before it lands reads
-    exactly like documenting code that shipped.
-
-    Deliberately no exclusion list for this module: naming a missing symbol here would let
-    it vouch for itself, so this docstring describes those defects without spelling them.
+    A rule naming code that does not exist sends an agent looking for it, and nothing
+    reports the dangling reference. Hits inside the instruction files themselves do not
+    count, so a missing symbol cannot vouch for itself.
     """
 
-    FILES: ClassVar[list[str]] = [
-        "AGENTS.md",
-        "CLAUDE.md",
-        "REVIEW.md",
-        "workflows/AGENTS.md",
-        "scripts/AGENTS.md",
-        "agents/AGENTS.md",
-    ]
+    FILES: ClassVar[list[str]] = [*instruction_files(), "REVIEW.md"]
 
     # Backticked prose terms that are English, schema field names, or host globals named
     # precisely because they are ABSENT — none of them are repo symbols.
     NOT_SYMBOLS: ClassVar[set[str]] = {
-        "description",
-        "evidence",
-        "suggestion",
-        "severity",
-        "confidence",
-        "dimension",
-        "origin",
-        "criticality",
-        "findings",
-        "complete",
-        "total_seen",
-        "markdown",
-        "optimized",
-        "realpath",
         "structuredClone",
         "setTimeout",
-        "queueMicrotask",
         "console",
         "process",
         "Buffer",
         "TextEncoder",
-        "TextDecoder",
         "package.json",
         "node_modules",
-        "noControlCharactersInRegex",  # Biome rule id in deferred-rules table
     }
 
-    def repo_files(self):
-        out = subprocess.run(
-            ["git", "ls-files"],
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-        return set(out.stdout.split())
-
     def test_referenced_paths_exist(self):
-        tracked = self.repo_files()
-        basenames = {Path(p).name for p in tracked}
+        tracked_files = set(tracked())
+        basenames = {Path(p).name for p in tracked_files}
         pattern = re.compile(r"`([A-Za-z0-9_./-]+\.(?:py|js|md|json|yaml|yml))`")
         for doc in self.FILES:
             text = (REPO / doc).read_text(encoding="utf-8")
@@ -382,7 +165,7 @@ class TestClaimsResolve(unittest.TestCase):
                     continue
                 with self.subTest(doc=doc, ref=ref):
                     self.assertTrue(
-                        ref in tracked
+                        ref in tracked_files
                         or Path(ref).name in basenames
                         or (REPO / Path(doc).parent / ref).exists(),
                         f"{doc} names {ref}, which is not in this tree",
@@ -405,13 +188,8 @@ class TestClaimsResolve(unittest.TestCase):
                         text=True,
                         encoding="utf-8",
                     ).stdout.split()
-                    # Hits in the instruction files themselves prove nothing: the twins
-                    # are copies, so a symbol could otherwise vouch for itself.
-                    real = [
-                        f
-                        for f in found
-                        if f not in docs and not f.endswith("/CLAUDE.md")
-                    ]
+                    # A hit in the instruction files themselves proves nothing.
+                    real = [f for f in found if f not in docs]
                     self.assertTrue(
                         real,
                         f"{doc} names `{sym}`, which appears nowhere in the code. If it "

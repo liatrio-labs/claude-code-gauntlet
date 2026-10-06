@@ -70,7 +70,7 @@ envelope the workflow's verify stage consumes, and adds the DELTA ECHO:
     re-typing every finding it was handed. The workflow joins the delta onto the findings
     it already holds by value. `deltas` is deliberately the FIRST key of `result`: the
     executor reads this file with a tool whose return is length-capped and gives NO
-    truncation notice (CLAUDE.md), so the answer it must echo is a short PREFIX of the
+    truncation notice, so the answer it must echo is a short PREFIX of the
     document rather than something buried after two full finding arrays.
 
     The full `verified`/`eliminated`/`batches`/`stats` arrays stay on disk unchanged for

@@ -22,7 +22,7 @@ def test_manifest_agents_list_every_contract():
     )
     # The list replaces Claude Code's scan of agents/, which would register the
     # folder's rule files as subagents. Every other file there must be listed.
-    rules = {"AGENTS.md", "CLAUDE.md"}
+    rules = {"AGENTS.md"}
     contracts = [
         f"./agents/{path.name}"
         for path in sorted((REPO / "agents").rglob("*.md"))
@@ -102,7 +102,7 @@ RESIDUE = re.compile(r"printf|ndjson|Bash", re.IGNORECASE)
 # apostrophe rule from `\u0027` to a bare `'` — a real defect in a shell-quoting rule for
 # a shell command no agent can run, which is the tell that the section itself was stale.
 def tracked_rules_files():
-    """Root and one-level AGENTS.md / CLAUDE.md, same shape as sync_agent_rules."""
+    """Root and one-level AGENTS.md."""
     out = subprocess.run(
         [
             "git",
@@ -110,9 +110,7 @@ def tracked_rules_files():
             "-z",
             "--",
             "AGENTS.md",
-            "CLAUDE.md",
             "*/AGENTS.md",
-            "*/CLAUDE.md",
         ],
         cwd=REPO,
         capture_output=True,
@@ -146,12 +144,12 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
 
     def test_no_bash_residue_in_agents_directory_rules(self):
         offenders = {}
-        for name in ("AGENTS.md", "CLAUDE.md"):
-            rel = Path("agents") / name
-            text = (REPO / rel).read_text(encoding="utf-8")
-            hits = sorted(set(BASH_RESIDUE.findall(text)))
-            if hits:
-                offenders[str(rel)] = hits
+        rel = Path("agents") / "AGENTS.md"
+        hits = sorted(
+            set(BASH_RESIDUE.findall((REPO / rel).read_text(encoding="utf-8")))
+        )
+        if hits:
+            offenders[str(rel)] = hits
         self.assertEqual(
             offenders,
             {},
@@ -391,7 +389,7 @@ class TestPromptInjectionArtifactsMirror(unittest.TestCase):
     canonical skills reference (skills/code-gauntlet/references/
     false-positive-exclusions.md) is deliberately NOT part of the equality set: it
     is third person ("a finding's" / "agent OUTPUT") where the 7 agent copies are
-    second person ("your finding's" / "your OUTPUT") -- see agents/AGENTS.md.
+    second person ("your finding's" / "your OUTPUT").
     """
 
     def test_seven_agent_copies_of_injection_artifacts_block_are_byte_identical(

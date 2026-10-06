@@ -17,7 +17,6 @@ REPO = Path(__file__).resolve().parents[1]
 ROOT_MD_ALLOW = {
     "AGENTS.md",
     "CHANGELOG.md",
-    "CLAUDE.md",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "PRIVACY.md",

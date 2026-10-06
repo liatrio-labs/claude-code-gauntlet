@@ -23,7 +23,7 @@ It emits BOTH a machine-readable JSON profile and a human markdown report coveri
   - output-byte accounting for Write-shaped agents (artifact-writer, verify-input-writer)
   - orchestrator phase spans + Phase 2 Bash-call latency breakdown
 
-Stdlib-only (repo CLAUDE.md). Never guesses when data is missing — prints an explicit
+Stdlib-only. Never guesses when data is missing — prints an explicit
 "unavailable" marker (``UNAVAILABLE`` sentinel / ``notes`` list) instead.
 
 Usage::
@@ -49,7 +49,7 @@ UNAVAILABLE = "UNAVAILABLE"
 
 DEFAULT_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
-# Discovery agentTypes that make up the "discover" stage (CLAUDE.md's 7-agent list,
+# Discovery agentTypes that make up the "discover" stage (the 7-agent list,
 # minus change-summarizer/artifact-writer/executor/validator/challenger, which have
 # their own stages).
 DISCOVER_AGENT_TYPES = {

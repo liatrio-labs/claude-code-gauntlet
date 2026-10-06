@@ -25,7 +25,7 @@ Gates (aligned with ``bench/MEASUREMENT.md``):
       ``test_workflow_timeout_is_not_in_pipeline_artifacts`` goes red and the G3/G6
       calculus is redone (#146).
 
-Stdlib-only (CLAUDE.md).
+Stdlib-only.
 """
 
 import json

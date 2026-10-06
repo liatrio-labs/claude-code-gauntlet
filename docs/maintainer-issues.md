@@ -161,7 +161,7 @@ Two more rules that are easy to get wrong:
   `tests/test_contribution_surface.py` fails on any singular spelling of those
   five inside the file set it scans: every `.md`, `.yml`, `.yaml`, and `.json`
   file under `.github/` and `docs/`, plus `CONTRIBUTING.md`, `README.md`,
-  `SECURITY.md`, `CLAUDE.md`, and `AGENTS.md`. That is the whole guarantee.
+  `SECURITY.md`, and `AGENTS.md`. That is the whole guarantee.
   Drift in an issue body, a PR description, a commit message, or a source file
   is outside the scan and nothing catches it.
 - **A label must already exist in the repo before an issue form or an issue
