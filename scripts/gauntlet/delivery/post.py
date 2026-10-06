@@ -993,11 +993,9 @@ def _finding_sections(finding, *, fence_offsets=None):
 
     # A comment-only rule must not block the fallback or select its source label.
     clause_rule = prepared_prose(finding.get("claude_md_rule"), cap=True)
-    rule_text = clause_rule
-    if not rule_text:
-        rule_text = prepared_prose(finding.get("spec_text"), cap=True)
+    rule_text = clause_rule or prepared_prose(finding.get("spec_text"), cap=True)
     rule_label = RULE_SOURCE_LABEL_FALLBACK
-    if rule_text and clause_rule:
+    if clause_rule:
         source = finding.get("rule_source")
         if isinstance(source, str):
             rule_label = RULE_SOURCE_LABELS.get(source, RULE_SOURCE_LABEL_FALLBACK)
@@ -1809,10 +1807,8 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
 
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    # The pre-partition above is complete before the summary note. The fast path
-    # checks the marker against the full review_body and prose against standalone
-    # lines carrying the head SHA; the bounded path always appends the full canonical
-    # footer, and skipped-finding text never reaches the dedup.
+    # Only standalone prepared prose-footer lines carrying this SHA drive dedup.
+    # The bounded path uses a canonical footer; skipped text cannot suppress it.
     composed = compose_review_body(
         review_body,
         skipped_groups,

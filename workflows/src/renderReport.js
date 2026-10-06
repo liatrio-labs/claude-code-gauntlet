@@ -216,7 +216,7 @@ export function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
   return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
 }
 
-// Twin of fold_review_body in gauntlet.delivery.fold.
+// Twin of open_fence in gauntlet.markdown.
 export function openProseFence(text) {
   const value = reportAsText(text);
   let state = null;
@@ -263,6 +263,7 @@ export function proseFenceCloser(prefix) {
   return state === null ? '' : state[0].repeat(state[1]);
 }
 
+// Twin of fold_review_body in gauntlet.delivery.fold.
 export function foldProse(text, limit) {
   const value = reportAsText(text);
   const length = codePointLength(value);

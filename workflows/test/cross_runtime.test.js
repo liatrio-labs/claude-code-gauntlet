@@ -12,7 +12,6 @@ const vectors = new Map(families.map((family) => {
   assert.equal(payload.algorithm, family);
   if (family === 'outbound_fold') {
     for (const row of payload.cases) assert.ok(foldOperations.has(row.operation), `unknown fold operation: ${row.operation}`);
-    return [family, payload.cases];
   }
   return [family, payload.cases];
 }));

@@ -144,15 +144,6 @@ test('seeded_line_containment', () => {
   }
 });
 
-
-
-
-
-
-
-
-
-
 test('summary titles neutralize mentions while retaining single-line code spans', () => {
   const bullet = summaryBullet({ title: 'code `@inside <tag>` and @outside' });
   assert.ok(bullet.endsWith(': code `＠inside ＜tag>` and ＠outside'));
