@@ -2,10 +2,9 @@
 
 `workflows/src/registry.js` declares the WHOLE finding schema — `FINDING_PROP_TYPES`
 (canonical), `FINDING_REQUIRED` (the flat required subset) and each `DIMENSIONS` row's
-`schemaExtra` (per-dimension). Three other places describe that same schema in prose: the
-nine dimension names in agents/AGENTS.md, the field lists there,
-and `references/report-format.md`'s Finding Fields Reference tables. A fourth — the seven
-discovery agents' `.md` output contracts — tells the models what to emit.
+`schemaExtra` (per-dimension). `references/report-format.md`'s Finding Fields Reference tables
+describe that same schema in prose, and the seven discovery agents' `.md` output contracts tell
+the models what to emit.
 
 Every one of those can drift from the registry silently, and drift is not cosmetic here: the
 discovery item schema is CLOSED (`additionalProperties: false`, issue #53), so a field an agent
@@ -31,7 +30,7 @@ A block that will not parse raises, naming the file — never a silent skip, whi
 failure mode that would let this guard quietly stop guarding. A grep for the field NAME would
 not do: "suggestion" occurs dozens of times across the repo as an ordinary English word and as
 the `report_tag` value, and a prose-frequency check is exactly the kind of guard an adversarial
-edit walks around (see CLAUDE.md, "Do not replace a structural property with a phrase count").
+edit walks around.
 """
 
 import json
@@ -402,22 +401,6 @@ def convention_output_requirements(text):
     return match.group("body")
 
 
-def claude_md_bullet(anchor):
-    """The single agents/AGENTS.md line containing `anchor`."""
-    lines = [
-        line
-        for line in (REPO / "agents" / "AGENTS.md")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if anchor in line
-    ]
-    if len(lines) != 1:
-        raise AssertionError(
-            f"expected exactly one agents/AGENTS.md line containing {anchor!r}, found {len(lines)}"
-        )
-    return lines[0]
-
-
 def full_report_template_region(text: str) -> str:
     """Bytes between ## Full Report Template and ## PR Comment Format.
 
@@ -461,20 +444,6 @@ def delivery_guide_json_object(text: str) -> dict:
 
 
 class TestDimensionsRegistry(unittest.TestCase):
-    def test_claude_md_dimension_list_matches_registry(self):
-        registry_dims = {d["dimension"] for d in registry()["dimensions"]}
-        # agents/AGENTS.md lists the dimensions on the bullet line that
-        # contains "short name from agent output", each as a `"name"` token. The
-        # leading token is `- `dimension`` (with backticks), so splitting on the
-        # bare string "dimension —" would not match — grab the whole line instead.
-        line = claude_md_bullet("short name from agent output")
-        listed = set(re.findall(r'`"(\w+)"`', line))
-        self.assertEqual(
-            registry_dims,
-            listed,
-            f"registry {registry_dims} != agents/AGENTS.md {listed}",
-        )
-
     def test_every_dimension_maps_to_an_agent_contract_file(self):
         for row in registry()["dimensions"]:
             path = REPO / "agents" / f"{agent_name(row['agentType'])}.md"
@@ -1030,30 +999,6 @@ class TestContractSchemaLockstep(unittest.TestCase):
         # constants so a future reword of either phrase cannot silently reintroduce the
         # collision without failing this test.
         self.assertNotIn(_DISPATCH_REQUIRED_PHRASE, _DIMENSION_CONDITIONAL_PHRASE)
-
-
-class TestClaudeMdFieldLists(unittest.TestCase):
-    """agents/AGENTS.md's two field enumerations are the human index of the registry."""
-
-    def test_canonical_bullet_matches_registry(self):
-        line = claude_md_bullet("**Canonical fields**")
-        listed = set(_BACKTICKED_FIELD.findall(line))
-        self.assertEqual(
-            set(registry()["propTypes"]),
-            listed,
-            "agents/AGENTS.md's canonical field bullet has drifted from "
-            "registry.js FINDING_PROP_TYPES",
-        )
-
-    def test_per_dimension_bullet_matches_registry(self):
-        line = claude_md_bullet("**Per-dimension extras**")
-        listed = set(_BACKTICKED_FIELD.findall(line))
-        self.assertEqual(
-            set(all_extras()),
-            listed,
-            "agents/AGENTS.md's per-dimension extras bullet has drifted from "
-            "registry.js DIMENSIONS[].schemaExtra",
-        )
 
 
 class TestConventionOutputRequirements(unittest.TestCase):

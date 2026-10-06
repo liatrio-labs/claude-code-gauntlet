@@ -10,7 +10,6 @@ PARITY_RECORDER = "workflows/test/tools/record_parity.py"
 COMMANDS = (
     (sys.executable, "scripts/generate_contract_requirements.py", "--check"),
     (sys.executable, "scripts/build_style_artifacts.py", "--check"),
-    (sys.executable, "scripts/sync_agent_rules.py", "--check"),
     (sys.executable, PARITY_RECORDER, "--check"),
 )
 

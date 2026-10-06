@@ -393,7 +393,6 @@ MAIN_FAILURE = {
     "resolve_config": "--target local --cwd {missing}",
     "resolve_pr_identity": f"--platform github --url {{missing}} --sha {FULL}",
     "stale_truncate": "--output-dir {missing} --head-sha abcd",
-    "sync_agent_rules": "--repo-root {missing} --check",
     "verify_findings": "--input {missing} --output {missing}",
     "write_shared_context": "--output-dir {missing} --head-sha abcd",
 }
@@ -413,7 +412,6 @@ BAD_INPUT = {
     "resolve_config": "--target bitbucket",
     "resolve_pr_identity": "--platform bitbucket",
     "stale_truncate": "--output-dir {missing} --head-sha invalid",
-    "sync_agent_rules": "--repo-root {invalid} --check",
     "verify_findings": "--input {invalid} --output {missing}",
     "write_shared_context": "--output-dir {missing} --head-sha invalid",
 }
@@ -451,7 +449,6 @@ SUCCESS = {
         {f"code-gauntlet-report-{SHA}.md": "stale"},
         f"--output-dir {{dir}} --head-sha {SHA} --unconditional",
     ),
-    "sync_agent_rules": ({}, "--repo-root {root} --check"),
     "verify_findings": (
         {"findings.json": '{"findings": []}', "diff.patch": PATCH},
         "{dir}/findings.json --diff-file {dir}/diff.patch",

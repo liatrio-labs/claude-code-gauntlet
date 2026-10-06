@@ -1412,8 +1412,7 @@ export const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'des
 // key order, with absent fields left absent (never written as null — an omitted key and an
 // explicit null are different signals to the script's own `.get()` defaults). The delta
 // echo (joinVerifyDeltas) rebuilds every verified finding from the workflow's OWN in-memory
-// copy, never from this projection, so a field dropped here loses nothing downstream (see
-// workflows/AGENTS.md, "The verify boundary"). Numeric fields get the identical
+// copy, never from this projection, so a field dropped here loses nothing downstream. Numeric fields get the identical
 // pinNumericFields treatment applied to the full finding elsewhere (degradedSlice,
 // joinVerifyDeltas) so a slice's on-disk numbers and its in-memory numbers never diverge.
 export function projectVerifySliceFinding(finding) {
@@ -1650,7 +1649,7 @@ function shellWord(tok) {
 }
 
 // The pinned command: a single `python3 <script> --flags...` invocation whose tokens are
-// AST-safe (CLAUDE.md AST-safe emission — no command substitution, heredocs, env prefix,
+// AST-safe (no command substitution, heredocs, env prefix,
 // or shell operators), each shellWord-quoted so a path bearing a space stays ONE argv word
 // (issue #75). Per-slice input/output paths are sha-scoped and index-suffixed; verifyStage
 // supplies the slice document inline before dispatch, then the executor reads the slice
@@ -1681,7 +1680,7 @@ function verifyCommand(inp, i, sliceNonce, inlinePayload) {
 
 // What the executor is asked for is now a PREFIX of the output document, not the whole of
 // it: the script writes `result.deltas` as the first key precisely so a length-capped Read
-// (which returns no truncation notice — CLAUDE.md) still contains everything this prompt
+// (which returns no truncation notice) still contains everything this prompt
 // names. The large verified/eliminated arrays that follow are for bench and v2 consumers;
 // naming them here as explicitly-not-wanted is cheaper than letting the agent decide.
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
@@ -3218,7 +3217,7 @@ const ASSEMBLE_RECEIPT_SCHEMA = {
 };
 
 // The pinned command: a single `python3 <script> --plan <plan>` invocation whose tokens are
-// AST-safe (CLAUDE.md AST-safe emission — no command substitution, heredocs, env prefix, or
+// AST-safe (no command substitution, heredocs, env prefix, or
 // shell operators), each shellWord-quoted so a path bearing a space stays ONE argv word
 // (issue #75) — exactly like verifyCommand.
 function assemblePrompt(scriptPath, planPath) {

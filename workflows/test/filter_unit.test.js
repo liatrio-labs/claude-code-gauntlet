@@ -677,8 +677,8 @@ test('applyInjectionFilter: an edge blank line (second trailing newline) is cont
 });
 
 // #63 round-1 F6: JS must count CODE POINTS, not UTF-16 units, or an astral character near
-// the 8000 boundary makes this twin disagree with the Python gate/twin (scripts/CLAUDE.md
-// parity rule). Complements the astral case recorded in the suggested_fix_code_scan golden.
+// the 8000 boundary makes this twin disagree with the Python gate/twin.
+// Complements the astral case recorded in the suggested_fix_code_scan golden.
 test('applyInjectionFilter: keeps suggested_fix_code at the char bound in CODE POINTS, not UTF-16 units', () => {
   const code = `${'x'.repeat(7999)}\u{1F600}`; // 7999 ASCII + one astral emoji (surrogate pair)
   assert.equal([...code].length, 8000, 'sanity: 8000 code points, exactly at the bound');

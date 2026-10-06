@@ -405,7 +405,6 @@ class TestLabelTaxonomy(unittest.TestCase):
                 "CONTRIBUTING.md",
                 "README.md",
                 "SECURITY.md",
-                "CLAUDE.md",
                 "AGENTS.md",
             )
         ]
@@ -1108,7 +1107,6 @@ class TestBiomeLintSurface(unittest.TestCase):
         paths = (
             ".github/workflows/ci.yml",
             "workflows/AGENTS.md",
-            "workflows/CLAUDE.md",
             "CONTRIBUTING.md",
             "README.md",
             ".github/pull_request_template.md",
@@ -1270,16 +1268,16 @@ class TestRequiredPrCheckContexts(unittest.TestCase):
 GATE_MARKERS = ("--cov-fail-under=", "--test-coverage-lines=")
 
 
-def _agents_coverage_gate_commands(text: str) -> set[str]:
+def _documented_coverage_gate_commands(text: str) -> set[str]:
     """Commands inside the Coverage gates fenced bash block, split on blank lines."""
     # Find the section heading, then the first ```bash fence after it.
     heading = re.search(r"(?m)^Coverage gates\b.*$", text)
     if not heading:
-        raise AssertionError("AGENTS.md missing 'Coverage gates' section")
+        raise AssertionError("CONTRIBUTING.md missing 'Coverage gates' paragraph")
     rest = text[heading.end() :]
     fence = re.search(r"```bash\n(.*?)```", rest, re.DOTALL)
     if not fence:
-        raise AssertionError("AGENTS.md Coverage gates missing ```bash fence")
+        raise AssertionError("CONTRIBUTING.md Coverage gates missing ```bash fence")
     body = fence.group(1)
     chunks = re.split(r"\n\s*\n", body.strip("\n"))
     # rstrip trailing newlines only — cosmetic blank lines after a command must
@@ -1287,7 +1285,7 @@ def _agents_coverage_gate_commands(text: str) -> set[str]:
     commands = {c.rstrip("\n") for c in chunks if c.strip()}
     if len(commands) < 3:
         raise AssertionError(
-            f"expected ≥3 gate commands in AGENTS.md, found {len(commands)}"
+            f"expected ≥3 gate commands in CONTRIBUTING.md, found {len(commands)}"
         )
     return commands
 
@@ -1626,15 +1624,15 @@ class TestCiNodePin(unittest.TestCase):
 
 
 class TestCoverageGateCommandIdentity(unittest.TestCase):
-    def test_agents_and_ci_gate_commands_are_byte_identical_sets(self):
-        agents = _agents_coverage_gate_commands(_read("AGENTS.md"))
+    def test_documented_and_ci_gate_commands_are_byte_identical_sets(self):
+        documented = _documented_coverage_gate_commands(_read("CONTRIBUTING.md"))
         ci = _ci_gate_commands(_read(".github/workflows/ci.yml"))
-        self.assertEqual(agents, ci)
+        self.assertEqual(documented, ci)
 
     def test_js_gate_includes_match_coverage_scope_json(self):
         scope = json.loads(_read("workflows/test/tools/coverage_scope.json"))
-        agents = _agents_coverage_gate_commands(_read("AGENTS.md"))
-        js_gates = [c for c in agents if "--test-coverage-lines=" in c]
+        documented = _documented_coverage_gate_commands(_read("CONTRIBUTING.md"))
+        js_gates = [c for c in documented if "--test-coverage-lines=" in c]
         self.assertEqual(len(js_gates), 1, js_gates)
         flags = re.findall(r"--test-coverage-include='([^']+)'", js_gates[0])
         self.assertEqual(set(flags), set(scope["includes"]))

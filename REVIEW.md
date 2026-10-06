@@ -69,7 +69,7 @@ obvious from the diff alone; the full engineering rules live in `AGENTS.md`.
 - **A new finding field must appear in `workflows/src/registry.js`.** A field declared only in an
   agent contract is rejected at dispatch by the closed item schema (`additionalProperties: false`)
   — schema retries, then a terminal agent failure that degrades the dimension.
-- **Instruction files are loaded on every turn.** Flag additions to `CLAUDE.md` or `AGENTS.md`
+- **Instruction files are loaded on every turn.** Flag additions to an `AGENTS.md`
   that are derivable from the code, already stated in a comment at the site, or that record
   history, version numbers, or past incidents.
 - **Claims must name their measurement.** Flag a comment or doc that asserts a behaviour,

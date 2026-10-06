@@ -158,8 +158,8 @@ The review pipeline runs inside Claude Code's workflow runtime, so it carries co
   normative list; deep-clone with the bundle's `deepClone` helper, never `structuredClone`.
 - **CI pins Node `24.18.0` exactly.** Coverage floors are sensitive to the V8 build; the patch pin stops an
   unrelated Node bump from moving percentages. The bare inner-loop command is `node --test workflows/test/*.test.js`;
-  the CI coverage gate (floors + allowlist + presence) is the JS command in the root `AGENTS.md` Coverage gates
-  block and must stay byte-identical to `.github/workflows/ci.yml`. There is no `package.json` and no
+  the CI coverage gate (floors + allowlist + presence) is the JS command in the [Coverage gates](#coverage-gates) block
+  and must stay byte-identical to `.github/workflows/ci.yml`. There is no `package.json` and no
   `node_modules`; use Node built-ins only.
 - **Bundle freshness is enforced.** `tests/test_bundle_fresh.py` and CI both rebuild and compare, so a stale or
   hand-edited bundle fails the build:
@@ -168,6 +168,29 @@ The review pipeline runs inside Claude Code's workflow runtime, so it carries co
 node workflows/build.js
 git diff --exit-code workflows/pipeline.js
 ```
+
+### JS lint
+
+CI and contributors run the same `python3 workflows/test/tools/biome_check.py`; the operational
+version and per-asset SHA-256 pins live only in `workflows/biome-pin.json`.
+To bump, list the new digests with
+`gh api repos/biomejs/biome/releases/tags/@biomejs/biome@<new> --jq '.assets[] | {name, digest}'`
+and update every entry in `biome-pin.json` together. Never add a package manifest for auto-bumps.
+Formatter is **off**: default `lineWidth: 80` would wrap long `import … from` lines and break
+`build.js`'s single-line import `strip()` regex, failing `tests/test_bundle_fresh.py`.
+`noRestrictedGlobals` applies to `src/` only; `test/**` and `build.js` override it (they
+legitimately use `process` / `console`).
+
+Deferred rules (measured 2026-07-30, HEAD `ebf399d`) — hit counts are why they
+stay off so a later re-evaluation need not re-derive them:
+
+| Rule | Hits | Why deferred |
+| --- | --- | --- |
+| `useOptionalChain` | 51 | Style churn; no reliability delta |
+| `noUnusedFunctionParameters` | 55 | Dominated by positional mock callback params in tests |
+| `noAssignInExpressions` | 7 | Six are intentional `args.js` pattern |
+| `noControlCharactersInRegex` | 2 | Intentional U+0000/U+001F sanitization in `args.js` |
+| `organizeImports` | 24 | Assist/format-adjacent; out of scope with formatter off |
 
 ### Parity fixtures
 
@@ -222,6 +245,43 @@ python3 tests/tools/render_probes.py quick-actions --check             # compare
 - YAML and TOML files are validated for syntax errors.
 - Commit messages must follow the Conventional Commits specification (enforced via commitlint).
 - Keep documentation consistent with `README.md`.
+
+## Coverage gates
+
+Coverage gates (CI; JS on Node 24.18.0, Python on 3.12). Each command is
+self-contained and byte-identical to the matching `run:` body in
+`.github/workflows/ci.yml`. Locally, coverage data files must stay out of the
+repo tree (an in-tree data file trips the bench plugin-mutation guard):
+
+```bash
+COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
+  --cov=scripts --cov=.github --cov-fail-under=94.6
+
+COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
+  --cov=bench --cov-fail-under=88.6
+
+LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage \
+  --test-coverage-include='workflows/src/*.js' \
+  --test-coverage-include='workflows/build.js' \
+  --test-coverage-lines=98.6 \
+  --test-coverage-branches=91.8 \
+  --test-coverage-functions=98.5 \
+  --test-reporter=spec --test-reporter-destination=stdout \
+  --test-reporter=lcov --test-reporter-destination="$LCOV" \
+  workflows/test/*.test.js \
+  && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
+```
+
+Floors: Python 94.6 / 88.6, JS 98.6 / 91.8 / 98.5, each pinned from a PR's CI measurement;
+the ratchet history is in git. Policy: a floor sits no more than 1.0 pp below the CI
+measurement for that gate; lower a floor only in the PR that causes the drop, with
+the reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
+multi-point JS drop usually means a deleted fixture group or an unloaded
+module (presence check); a sudden multi-point Python drop means broken
+subprocess capture — fix capture, do not lower.
+`workflows/test/tools/record_parity.py` is test infrastructure, outside Python
+scopes. JS measures `workflows/build.js` + loaded `workflows/src/*.js` via the
+include allowlist; `pipeline_entry.js` is exempt from presence only.
 
 ## Testing
 
@@ -368,7 +428,9 @@ Use the GitHub issue templates under `.github/ISSUE_TEMPLATE/` for bug reports, 
 
 The label taxonomy those forms draw from is checked in at `.github/labels.json`. GitHub applies an issue-form label
 only when the label already exists in the repository, and silently drops it otherwise — so a new form label has to
-land in `labels.json` and in the repository before the form can apply it.
+land in `labels.json` and in the repository before the form can apply it. GitHub serves issue forms from the
+default branch only and refuses to render an invalid form without erroring, so a form can be exercised only
+after its change merges.
 
 Maintainer-authored work-queue issues follow a stricter standard than the public forms:
 [`docs/maintainer-issues.md`](docs/maintainer-issues.md) defines the required sections and the evidence an issue
@@ -388,9 +450,9 @@ enforcement contact the Code of Conduct names. Suspected vulnerabilities are a d
 ## References
 
 - `README.md` — overview and quick start
-- `AGENTS.md` — repo conventions the pipeline itself is held to (schema, runtime, plugin layout).
-  Directory-specific rules live in `workflows/`, `scripts/` and `agents/` AGENTS.md; each has a
-  generated `CLAUDE.md` twin, so edit AGENTS.md and run `python3 scripts/sync_agent_rules.py`
+- `AGENTS.md` — the instructions coding agents load, with a short one in `workflows/` and `agents/`.
+  There is deliberately no `CLAUDE.md`: Claude Code reads `AGENTS.md` only where no `CLAUDE.md` or
+  `CLAUDE.local.md` sits at or above the working directory, so adding either one hides these files from it
 - `SECURITY.md` — supported versions, private reporting channel, and scope
 - `bench/MEASUREMENT.md` — ratcheted measurement policy (canonical)
 - `docs/maintainer-issues.md` — maintainer work-queue issue standard
