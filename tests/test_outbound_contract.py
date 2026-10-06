@@ -687,7 +687,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
     assert result.returncode == 0, result.stderr
     summaries = json.loads(result.stdout)
     assert len(summaries) >= 2
-    assert "[critical]： u" in summaries[0]
+    assert "[critical]\uff1a u" in summaries[0]
     prepare_prose = getattr(outbound_text, "prepare_prose", None)
     assert callable(prepare_prose), "missing expected Python guard prepare_prose"
     for summary in summaries:

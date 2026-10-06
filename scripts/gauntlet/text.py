@@ -213,7 +213,7 @@ def _normalize_outbound(text: str) -> str:
                 else:
                     entity = None
 
-        if replacement is not None:
+        if replacement is not None and entity is not None:
             del output[entity.start :]
             return replacement or None
 
@@ -238,9 +238,11 @@ def _normalize_outbound(text: str) -> str:
             and output[-3].character == "-"
             and output[-2].character == "-"
             and output[-1].character == ">"
+            and comment_end is not None
             and len(output) - 3 >= comment_end
         ):
             del output[comment_start:]
+        return None
 
     for original in text:
         character: str | None = original
@@ -289,7 +291,7 @@ def _escape_triggered_definition_colons(line: str, *, force: bool = False) -> st
     if not force and _DEFINITION_LINK_TRIGGER_RE.search(line) is None:
         return line
     spans = _containment_code_spans(line)
-    parts = []
+    parts: list[str] = []
     cursor = 0
     span_index = 0
     for match in _DEFINITION_CLOSE_COLON_RE.finditer(line):

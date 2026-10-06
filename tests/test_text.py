@@ -160,12 +160,12 @@ def test_prose_tilde_runs_escape_all_container_prefixes(prefix: str) -> None:
     [
         pytest.param(
             "é\n~~~python\nx\n~~~\ny\n```mermaid\nz\n```\n@out <b>",
-            "é\n~~~\nx\n~~~\ny\n```\nz\n```\n＠out &lt;b>",
+            "é\n~~~\nx\n~~~\ny\n```\nz\n```\n\uff20out &lt;b>",
             id="original-fence-offsets",
         ),
         pytest.param(
-            "x " + "ghp_" + "A" * 36 + ": //e/SENT](a b) after",
-            "x [REDACTED]： //e/SENT](a b) after",
+            "x " + "ghp_" + "A" * 36 + "\uff1a //e/SENT](a b) after",
+            "x [REDACTED]\uff1a //e/SENT](a b) after",
             id="redaction-before-definition-guard",
         ),
         pytest.param(r"already \~~~", r"already \~\~\~", id="odd-slash-run"),
@@ -183,12 +183,12 @@ def test_prose_structure_pass_order(source: str, expected: str) -> None:
     [
         pytest.param(
             "before x [a]: //example.test/SENT](a b) after",
-            "before x [a]： //example.test/SENT](a b) after",
+            "before x [a]\uff1a //example.test/SENT](a b) after",
             id="midline",
         ),
         pytest.param(
             "x [a]: //e/SENT]\\(a b) after",
-            "x [a]： //e/SENT]\\(a b) after",
+            "x [a]\uff1a //e/SENT]\\(a b) after",
             id="escaped-trigger",
         ),
         pytest.param("x [a]: u][a b] q", "x [a]: u][a b] q", id="no-pair"),
@@ -202,11 +202,11 @@ def test_prose_structure_pass_order(source: str, expected: str) -> None:
         pytest.param("[[x]: u", "[\uff3bx]\\: u", id="after-containment-pass"),
         pytest.param(
             "**x [a]: u](a b)**",
-            "**x [a]： u](a b)**",
+            "**x [a]\uff1a u](a b)**",
             id="bold-prefix",
         ),
-        pytest.param("> x [a]: u](a b)", "> x [a]： u](a b)", id="quote-prefix"),
-        pytest.param("- x [a]: u](a b)", "- x [a]： u](a b)", id="list-prefix"),
+        pytest.param("> x [a]: u](a b)", "> x [a]\uff1a u](a b)", id="quote-prefix"),
+        pytest.param("- x [a]: u](a b)", "- x [a]\uff1a u](a b)", id="list-prefix"),
     ],
 )
 def test_definition_colon_contract(source: str, expected: str) -> None:
@@ -525,7 +525,7 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
             "&lt;!--" * 20000,
             id="entity-built-comment-openers",
         ),
-        pytest.param("&" + "#38;" * 20000 + "#64;", "＠", id="nested-entities"),
+        pytest.param("&" + "#38;" * 20000 + "#64;", "\uff20", id="nested-entities"),
         pytest.param(
             "<!" * 55000 + "<!-- x -->" + "-- y -->" * 55000,
             "",

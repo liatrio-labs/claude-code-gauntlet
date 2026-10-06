@@ -99,7 +99,9 @@ def test_code_spans_even_backslashes_leave_the_opener_live():
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        pytest.param("left `x ``` <ins> @user`", [(5, 23, 24)], id="unequal-run-payload"),
+        pytest.param(
+            "left `x ``` <ins> @user`", [(5, 23, 24)], id="unequal-run-payload"
+        ),
         pytest.param(r"left \``<ins> @inside`", [(7, 21, 22)], id="escaped-first-tick"),
         pytest.param("`a``b`", [(0, 5, 6)], id="exact-width-closer"),
         pytest.param(r"a \\`x`", [(4, 6, 7)], id="even-slash-opener"),
@@ -154,9 +156,7 @@ def test_large_markdown_analysis():
     source = "`outside`\n" + fences_text + "`after`"
     spans, fences = _large_analysis(source, "spans")
     assert spans == [[0, 9], [len(fences_text) + 10, len(fences_text) + 17]]
-    assert fences == [
-        [10 + 12 * index, 20 + 12 * index] for index in range(count)
-    ]
+    assert fences == [[10 + 12 * index, 20 + 12 * index] for index in range(count)]
 
 
 def test_code_spans_skip_trusted_fence_contents():

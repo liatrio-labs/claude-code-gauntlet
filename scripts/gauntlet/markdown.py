@@ -153,7 +153,10 @@ def paired_code_spans(
                 close_end = close + width
                 spans.append((opener, close, close_end))
                 run_index += 1
-                while run_index < len(index.runs) and index.runs[run_index].start < close_end:
+                while (
+                    run_index < len(index.runs)
+                    and index.runs[run_index].start < close_end
+                ):
                     run_index += 1
                 break
             if not suffix_retry:

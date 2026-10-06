@@ -331,7 +331,7 @@ alter the location.
 The Summary index prepares each title as a single line, folds it to 512 code points, then
 contains raw HTML and visible mentions even in inline code. Its new definition-colon guard
 is forced because the containing bullet has a linked location: a Summary title `[x]: u`
-becomes `[x]` followed by U+FF1A FULLWIDTH COLON and ` u`, while an ordinary single-line
+becomes `[x]` followed by U+FF1A FULLWIDTH COLON and `u`, while an ordinary single-line
 field keeps the existing `[x]\\: u` output. It counts the final bullet after preparation against
 the index budget. Its display path and line sit inside one code span whose delimiter exceeds
 every backtick run in the location; the new colon rule skips that complete code span, so a

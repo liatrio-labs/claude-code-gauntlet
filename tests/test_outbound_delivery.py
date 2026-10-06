@@ -1590,10 +1590,10 @@ def test_prose_active_fences_preserve_owned_patch(
         return []
 
     rendered = "\n".join(string_leaves(payload))
-    assert "before x [a]： //example.test/SENT](a b) after" in rendered
+    assert "before x [a]\uff1a //example.test/SENT](a b) after" in rendered
     assert ": \\~\\~\\~suggestion\n  x = SENT\n  \\~\\~\\~" in rendered
     assert "ordinary \\~\\~\\~ text" in rendered
-    assert "x [^a]： note SENT](a b) after" in rendered
+    assert "x [^a]\uff1a note SENT](a b) after" in rendered
     assert f"{patch_header}\n{patch_text}\n```" in rendered
     assert post_review.BRAND_TRAILER in rendered
 
@@ -1604,7 +1604,7 @@ def test_prose_active_fences_preserve_owned_patch(
         "agent": "Corroborator",
     }
     grouped = post_review.render_group_body(finding, [corroborator])
-    assert "corroborator [a]： //e/SENT](a b)" in grouped
+    assert "corroborator [a]\uff1a //e/SENT](a b)" in grouped
     assert "~ \\~\\~\\~mermaid" in grouped
 
     skipped = post_review.build_skipped_section(
