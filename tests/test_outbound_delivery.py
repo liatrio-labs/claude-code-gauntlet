@@ -45,21 +45,21 @@ pytestmark = pytest.mark.usefixtures("poster_state")
             "[[a",
             "|https://example.test/p.png]]",
             "0.9",
-            "\\[[a (|https://example.test/p.png]], confidence 0.9)",
+            "[\uff3ba (|https://example.test/p.png]], confidence 0.9)",
             id="agent_dimension",
         ),
         pytest.param(
             "[[a",
             "correctness",
             "|https://example.test/p.png]]",
-            "\\[[a (correctness, confidence |https://example.test/p.png]])",
+            "[\uff3ba (correctness, confidence |https://example.test/p.png]])",
             id="agent_confidence",
         ),
         pytest.param(
             "bug-hunter",
             "[[a",
             "|https://example.test/p.png]]",
-            "bug-hunter (\\[[a, confidence |https://example.test/p.png]])",
+            "bug-hunter ([\uff3ba, confidence |https://example.test/p.png]])",
             id="dimension_confidence",
         ),
     ],
@@ -1251,9 +1251,9 @@ def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_
             "![a](u)",
             "Body one",
             "**\U0001f7e0 [HIGH] ![a](u)**\n\nBody one",
-            "**\U0001f7e0 [HIGH] \\![a](u)**\n\nBody one",
+            "**\U0001f7e0 [HIGH] !\uff3ba](u)**\n\nBody one",
             "0899e2af08bef3b4",
-            "a34e0a8d932df39f",
+            "6b732848339348e1",
             id="image_title_rekey",
         ),
         pytest.param(
@@ -1324,7 +1324,7 @@ def test_image_fields_preserve_patch_and_footer(field: str) -> None:
         "suggested_fix_code": patch_text,
     }
     rendered = post_review.render_comment_body(finding)
-    assert "\\![a](u)" in rendered
+    assert "!\uff3ba](u)" in rendered
     assert "```suggestion\n" + patch_text + "\n```" in rendered
     assert rendered.endswith(post_review.BRAND_TRAILER)
     assert "[CRITICAL]" in rendered

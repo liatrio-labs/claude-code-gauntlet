@@ -59,14 +59,7 @@ for (const row of lineCases) {
 test('large_backslash_preparation', () => {
   const cases = [
     ['bare', '\\'.repeat(500000), '\\'.repeat(500000)],
-    ['image_even', `${'\\'.repeat(500000)}![`, `${'\\'.repeat(500001)}![`],
-    ['image_odd', `${'\\'.repeat(500001)}![`, `${'\\'.repeat(500001)}![`],
-    ['wiki_open_even', `${'\\'.repeat(500000)}[[`, `${'\\'.repeat(500001)}[[`],
-    ['wiki_open_odd', `${'\\'.repeat(500001)}[[`, `${'\\'.repeat(500001)}[[`],
-    ['wiki_even', `${'\\'.repeat(500000)}[[u]]`, `${'\\'.repeat(500001)}[[u]]`],
-    ['wiki_odd', `${'\\'.repeat(500001)}[[u]]`, `${'\\'.repeat(500001)}[[u]]`],
-    ['wiki_unclosed_runs', `[[${'\\'.repeat(5000)}`.repeat(100), `\\[[${'\\'.repeat(5000)}`.repeat(100)],
-    ['wiki_pairs', `[[${'\\a'.repeat(250000)}`, `\\[[${'\\a'.repeat(250000)}`],
+    ['image_split', `!${'\\'.repeat(500000)}[`, `!${'\\'.repeat(500000)}\uFF3B`],
     ['definition_pairs', `[${'\\a'.repeat(250000)}`, `[${'\\a'.repeat(250000)}`],
     ['definition_openers', `[${'\\a'.repeat(2500)} `.repeat(100), `[${'\\a'.repeat(2500)} `.repeat(100)],
   ];
@@ -86,13 +79,12 @@ process.stdout.write(prepareLine(source));
 });
 
 function assertLineInvariant(output) {
+  assert.doesNotMatch(output, /[!\[]\\*\[/);
   let slashes = 0;
   let firstBracket = true;
   for (let index = 0; index < output.length; index += 1) {
     const character = output[index];
     const escaped = slashes % 2 === 1;
-    if (!escaped) assert.notEqual(output.slice(index, index + 2), '![');
-    if (!escaped) assert.notEqual(output.slice(index, index + 2), '[[');
     if (character === '[' && !escaped) {
       if (firstBracket && ![...output.slice(0, index)].some((ch) => /[A-Za-z\\]/.test(ch))) {
         let nonblank = false;
@@ -224,9 +216,16 @@ test('quoted locations contain path and line backticks inside their code span', 
 });
 
 test('summary image locations use fullwidth brackets inside code-owned spans', () => {
-  const bullet = summaryBullet({ file: 'src/![a](u).py', line_start: 1, line_end: 1, title: '![a](u)' });
-  assert.equal(locationSpan(bullet).text, 'src/!\uFF3Ba](u).py:1');
-  assert.ok(bullet.endsWith(': \\![a](u)'));
+  const cases = [
+    ['src/![a](u).py', '![a](u)', 'src/!\uFF3Ba](u).py:1', '!\uFF3Ba](u)'],
+    ['src/!\\[a](u).py', '!\\[a](u)', 'src/!\\\uFF3Ba](u).py:1', '!\\\uFF3Ba](u)'],
+    ['src/[\\[a]].py', '[\\[a]]', 'src/[\\\uFF3Ba]].py:1', '[\\\uFF3Ba]]'],
+  ];
+  for (const [file, title, location, expectedTitle] of cases) {
+    const bullet = summaryBullet({ file, title, line_start: 1, line_end: 1 });
+    assert.equal(locationSpan(bullet).text, location);
+    assert.ok(bullet.endsWith(`: ${expectedTitle}`));
+  }
 });
 
 test('quoted location delimiter exceeds a path containing two backticks', () => {

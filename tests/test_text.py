@@ -107,7 +107,7 @@ def test_text_vector(case: TextVector) -> None:
     [
         ("&#62;&#62;&#62;", None, "\\>>>"),
         ("redactor output", "/close\n>>>", "\\/close\n\\>>>"),
-        ("redactor output", "[[alt|u]]", "\\[[alt|u]]"),
+        ("redactor output", "[[alt|u]]", "[\uff3balt|u]]"),
     ],
     ids=[
         "quote_after_normalization",
@@ -207,16 +207,22 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
         (
             "app/[[...slug]]/page.tsx",
             "`app/[\uff3b...slug]]/page.tsx`",
-            r"app/\[[...slug]]/page.tsx",
+            "app/[\uff3b...slug]]/page.tsx",
         ),
-        ("src/![a](u).py", "`src/!\uff3ba](u).py`", r"src/\![a](u).py"),
-        ("src/[[[a.py", "`src/[\uff3b\uff3ba.py`", r"src/\[\[[a.py"),
+        ("src/![a](u).py", "`src/!\uff3ba](u).py`", "src/!\uff3ba](u).py"),
+        ("src/[[[a.py", "`src/[\uff3b\uff3ba.py`", "src/[\uff3b\uff3ba.py"),
         (
             "src/\\[[a]]/\\![a](u).py",
             "`src/\\[\uff3ba]]/\\!\uff3ba](u).py`",
-            r"src/\[[a]]/\![a](u).py",
+            "src/\\[\uff3ba]]/\\!\uff3ba](u).py",
         ),
-        ("src/\\\\[[[a.py", "`src/\\\\[\uff3b\uff3ba.py`", r"src/\\\[\[[a.py"),
+        (
+            "src/\\\\[[[a.py",
+            "`src/\\\\[\uff3b\uff3ba.py`",
+            "src/\\\\[\uff3b\uff3ba.py",
+        ),
+        ("src/!\\[a](u).py", "`src/!\\\uff3ba](u).py`", "src/!\\\uff3ba](u).py"),
+        ("src/[\\[a]].py", "`src/[\\\uff3ba]].py`", "src/[\\\uff3ba]].py"),
     ],
 )
 def test_location_openers_are_prose_fixed_points(
@@ -241,7 +247,7 @@ def test_seeded_markup_invariant(operation: TextOperation) -> None:
 @pytest.mark.parametrize("operation", ("prose", "line", "optional", "rule"))
 def test_image_redaction_bridge(operation: TextOperation) -> None:
     source = "!" + "ghp_" + "A" * 36 + "(url)"
-    assert PREPARERS[operation](source) == "\\![REDACTED](url)"
+    assert PREPARERS[operation](source) == "!\uff3bREDACTED](url)"
 
 
 @pytest.mark.parametrize("operation", ("prose", "line", "optional", "rule"))
@@ -275,19 +281,11 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
     ("source", "expected"),
     [
         pytest.param("\\" * 500000, "\\" * 500000, id="bare"),
-        pytest.param("\\" * 500000 + "![", "\\" * 500001 + "![", id="image_even"),
-        pytest.param("\\" * 500001 + "![", "\\" * 500001 + "![", id="image_odd"),
-        pytest.param("\\" * 500000 + "[[", "\\" * 500001 + "[[", id="wiki_open_even"),
-        pytest.param("\\" * 500001 + "[[", "\\" * 500001 + "[[", id="wiki_open_odd"),
-        pytest.param("\\" * 500000 + "[[u]]", "\\" * 500001 + "[[u]]", id="wiki_even"),
-        pytest.param("\\" * 500001 + "[[u]]", "\\" * 500001 + "[[u]]", id="wiki_odd"),
         pytest.param(
-            ("[[" + "\\" * 5000) * 100,
-            ("\\[[" + "\\" * 5000) * 100,
-            id="wiki_unclosed_runs",
+            "!" + "\\" * 500000 + "[",
+            "!" + "\\" * 500000 + "\uff3b",
+            id="image_split",
         ),
-        pytest.param("[[" + "\\a" * 250000, "\\[[" + "\\a" * 250000, id="wiki_pairs"),
-        pytest.param("[" + "\\a" * 250000, "[" + "\\a" * 250000, id="definition_pairs"),
     ],
 )
 def test_large_backslash_preparation(

@@ -183,18 +183,19 @@ displays the punctuation as intended. An opener on an indented-code line shows i
 GitLab CE 19.4.1 passes a backslash inside `$$` display math to its math renderer.
 Nested-quote shorthand such as `>>> text` displays literally.
 
-Outside code, an image opener `![` and a wikilink opener `[[` get a backslash;
-already-escaped openers are left alone. Inside a paired inline span or a quoted
-location, the bracket after `!` or `[` becomes U+FF3B FULLWIDTH LEFT SQUARE
-BRACKET instead. Both hosts render images from `![`; GitLab also renders one
-from `[[`. A line-initial reference-definition label (`[label]:`) gets a
+In prose, inline spans and quoted locations, the bracket after `!` or `[` (also
+across a run of backslashes) becomes U+FF3B FULLWIDTH LEFT SQUARE BRACKET.
+Both hosts render an image from `![`; GitLab also renders one from `[[`.
+GitLab parses text holding `](` a second time after backslashes are consumed,
+so a backslash does not hold there. A line-initial reference-definition label (`[label]:`) gets a
 backslash before its colon when only non-letter characters precede `[` on its
 line; a preceding backslash or `[` prevents the match. In multiline fields,
 the label may continue across lines, and this rule also applies inside code
 spans. This prevents a definition from turning code-owned text such as
 `[CRITICAL]` into a link. Footnote definitions and reference-style links in
-finding text therefore show as literal text. Neither rule runs inside a fenced
-block the preparer leaves verbatim.
+finding text therefore show as literal text. A quoted location is not passed
+through the definition-colon rule.
+None of these rules runs inside a fenced block the preparer leaves verbatim.
 
 - `review_body` — exactly the pipeline-rendered Summary section body: counts first, selected findings index,
   and any remainder with selection reasons. Whole index bullets fit within a 12,000-code-point

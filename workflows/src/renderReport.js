@@ -419,7 +419,10 @@ function outboundBase(value) {
       const number = Number.parseInt(decimal || hex, decimal ? 10 : 16);
       return number >= 32 && number <= 126 ? String.fromCharCode(number) : '';
     });
-    text = text.replaceAll('&commat;', '@');
+    text = text.replaceAll('&commat;', '@')
+      .replaceAll('&excl;', '!')
+      .replaceAll('&lbrack;', '[')
+      .replaceAll('&lsqb;', '[');
     // Removal can build a new comment from surrounding text; decoding between
     // removals changes which text is removed.
     let uncommented;
@@ -435,14 +438,8 @@ function outboundBase(value) {
 }
 
 function outboundVisible(text, code = false) {
-  if (code) {
-    // Twin: gauntlet.text._escape_visible; [[[ becomes [ followed by two U+FF3B.
-    text = text.replace(/(?<=[!\[])\[/g, '\uFF3B');
-  } else {
-    // Start only at the first backslash so failed openers scan each run once.
-    text = text.replace(/(?<!\\)(\\*)!\[/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}![`);
-    text = text.replace(/(?<!\\)(\\*)\[(?=\[)/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}[`);
-  }
+  // Twin: gauntlet.text._escape_visible; lookbehind anchors each backslash run.
+  text = text.replace(/(?<=[!\[])\\*\[/g, (match) => `${match.slice(0, -1)}\uFF3B`);
   const escaped = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
   return escaped.replace(/@/g, (match, index) => (
     index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])
@@ -506,7 +503,7 @@ function outboundContain(line) {
     output += outboundVisible(line.slice(index, next));
     index = next;
   }
-  // Code-visible bracket replacements can complete definition-shaped labels.
+  // Bracket replacements can complete definition-shaped labels.
   return outboundDefinitions(output);
 }
 

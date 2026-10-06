@@ -3210,7 +3210,10 @@ function outboundBase(value) {
       const number = Number.parseInt(decimal || hex, decimal ? 10 : 16);
       return number >= 32 && number <= 126 ? String.fromCharCode(number) : '';
     });
-    text = text.replaceAll('&commat;', '@');
+    text = text.replaceAll('&commat;', '@')
+      .replaceAll('&excl;', '!')
+      .replaceAll('&lbrack;', '[')
+      .replaceAll('&lsqb;', '[');
     let uncommented;
     do {
       uncommented = text;
@@ -3223,12 +3226,7 @@ function outboundBase(value) {
     .replace(/[\r\n]+/g, ' ');
 }
 function outboundVisible(text, code = false) {
-  if (code) {
-    text = text.replace(/(?<=[!\[])\[/g, '\uFF3B');
-  } else {
-    text = text.replace(/(?<!\\)(\\*)!\[/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}![`);
-    text = text.replace(/(?<!\\)(\\*)\[(?=\[)/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}[`);
-  }
+  text = text.replace(/(?<=[!\[])\\*\[/g, (match) => `${match.slice(0, -1)}\uFF3B`);
   const escaped = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
   return escaped.replace(/@/g, (match, index) => (
     index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])

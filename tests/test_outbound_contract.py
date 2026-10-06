@@ -62,11 +62,7 @@ def assert_outbound_string_invariant(
         cursor = end
     outside.append(output[cursor:])
     for fragment in outside:
-        slashes = 0
-        for index, character in enumerate(fragment):
-            if slashes % 2 == 0:
-                assert fragment[index : index + 2] not in ("![", "[["), repr(fragment)
-            slashes = slashes + 1 if character == "\\" else 0
+        assert re.search(r"[!\[]\\*\[", fragment) is None, repr(fragment)
         markup = fragment
         # Code-owned locations cannot define references, but still contain openers.
         for location in literal_locations:
@@ -137,6 +133,10 @@ def test_tracked_fixture_has_canonical_byte_layout():
         pytest.param("[[a", id="wikilink_bare_opener"),
         pytest.param("`![a](u)`", id="image_in_code"),
         pytest.param("`[[a]]`", id="wikilink_in_code"),
+        pytest.param("!\\[a](u)", id="image_backslash_split"),
+        pytest.param("[\\[a]]", id="wikilink_backslash_split"),
+        pytest.param("\\![a](u)", id="image_escaped_bang"),
+        pytest.param("\\[[a]]", id="wikilink_escaped_bracket"),
         pytest.param(": [critical]: u", id="colon_prefix"),
         pytest.param("~ [critical]: u", id="tilde_prefix"),
         pytest.param("[" + "a" * 5000 + "]: u", id="unbounded_label"),
@@ -663,7 +663,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
     assert result.returncode == 0, result.stderr
     location = "`src/!\uff3ba](u).py:1`"
     assert outbound_text.prepare_location(path + ":1") == location
-    assert location + ": \\![a](u)" in result.stdout
+    assert location + ": !\uff3ba](u)" in result.stdout
 
 
 def test_summary_renderer_contains_hostile_title():

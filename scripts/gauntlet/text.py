@@ -75,7 +75,7 @@ def _strip_invisibles(text: str) -> str:
 
 
 def _decode_numeric_entities(text: str) -> str:
-    """Decode ASCII and &commat; only, so decoding cannot reintroduce invisibles.
+    """Decode ASCII entities only, so decoding cannot reintroduce invisibles.
 
     Markdown parses fences before entities; encoded backticks cannot form a fence.
     """
@@ -94,7 +94,12 @@ def _decode_numeric_entities(text: str) -> str:
 
     text = _ENTITY_DEC_RE.sub(_dec, text)
     text = _ENTITY_HEX_RE.sub(_hex, text)
-    return text.replace("&commat;", "@")
+    return (
+        text.replace("&commat;", "@")
+        .replace("&excl;", "!")
+        .replace("&lbrack;", "[")
+        .replace("&lsqb;", "[")
+    )
 
 
 _DANGEROUS_LT_RE = re.compile(r"<(?=[A-Za-z/!?])")
@@ -134,26 +139,13 @@ def _break_marker_openers(text: str) -> str:
 
 
 def _escape_visible(text: str, *, code: bool = False) -> str:
-    if code:
-        # Fullwidth brackets contain openers even when scanner and renderer spans differ.
-        # Matching the original neighbours turns [[[ into [ followed by two U+FF3B.
-        text = re.sub(r"(?<=[!\[])\[", "\uff3b", text)
-    else:
-        # Start only at the first backslash so failed openers scan each run once.
-        text = re.sub(
-            r"(?<!\\)(\\*)!\[",
-            lambda match: (
-                match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "!["
-            ),
-            text,
-        )
-        text = re.sub(
-            r"(?<!\\)(\\*)\[(?=\[)",
-            lambda match: (
-                match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "["
-            ),
-            text,
-        )
+    # GitLab reparses text after consuming escapes; fullwidth brackets survive.
+    # Original neighbours keep overlapping openers; the lookbehind anchors each run.
+    text = re.sub(
+        r"(?<=[!\[])\\*\[",
+        lambda match: match.group()[:-1] + "\uff3b",
+        text,
+    )
     text = _DANGEROUS_LT_RE.sub("\uff1c" if code else "&lt;", text)
     return re.sub(
         r"@",
@@ -281,7 +273,7 @@ def _prepare_text(
                 index = quote.start(1)
                 line = line[:index] + "\\" + line[index:]
         prepared.append(line if protected else _contain_line(line))
-    # Code-visible bracket replacements can complete definition-shaped labels.
+    # Bracket replacements can complete definition-shaped labels.
     start = 0
     for index in range(1, len(prepared) + 1):
         if index == len(prepared) or protected_lines[index] != protected_lines[start]:
