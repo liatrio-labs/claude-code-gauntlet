@@ -216,7 +216,7 @@ export function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
   return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
 }
 
-// Twin of `_fold_review_body` in `scripts/gauntlet/delivery/post.py`.
+// Twin of open_fence in gauntlet.markdown.
 export function openProseFence(text) {
   const value = reportAsText(text);
   let state = null;
@@ -263,6 +263,7 @@ export function proseFenceCloser(prefix) {
   return state === null ? '' : state[0].repeat(state[1]);
 }
 
+// Twin of fold_review_body in gauntlet.delivery.fold.
 export function foldProse(text, limit) {
   const value = reportAsText(text);
   const length = codePointLength(value);
@@ -419,8 +420,12 @@ function outboundBase(value) {
       const number = Number.parseInt(decimal || hex, decimal ? 10 : 16);
       return number >= 32 && number <= 126 ? String.fromCharCode(number) : '';
     });
-    text = text.replaceAll('&commat;', '@');
-    // Its own fixpoint loop so static analysis sees the removal repeat; the outer loop alone already converges.
+    text = text.replaceAll('&commat;', '@')
+      .replaceAll('&excl;', '!')
+      .replaceAll('&lbrack;', '[')
+      .replaceAll('&lsqb;', '[');
+    // Removal can build a new comment from surrounding text; decoding between
+    // removals changes which text is removed.
     let uncommented;
     do {
       uncommented = text;
@@ -434,6 +439,8 @@ function outboundBase(value) {
 }
 
 function outboundVisible(text, code = false) {
+  // Twin: gauntlet.text._escape_visible; lookbehind anchors each backslash run.
+  text = text.replace(/(?<=[!\[])\\*\[/g, (match) => `${match.slice(0, -1)}\uFF3B`);
   const escaped = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
   return escaped.replace(/@/g, (match, index) => (
     index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])
@@ -447,7 +454,14 @@ function outboundEscapedTick(text, index) {
   return slashes % 2 === 1;
 }
 
+function outboundDefinitions(line) {
+  return line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
+    /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
+  ));
+}
+
 function outboundContain(line) {
+  line = outboundDefinitions(line);
   line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
   let output = '';
   let index = 0;
@@ -490,7 +504,8 @@ function outboundContain(line) {
     output += outboundVisible(line.slice(index, next));
     index = next;
   }
-  return output;
+  // Bracket replacements can complete definition-shaped labels.
+  return outboundDefinitions(output);
 }
 
 export function prepareLine(value) {

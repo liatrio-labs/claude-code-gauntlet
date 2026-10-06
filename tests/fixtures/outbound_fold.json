@@ -1,0 +1,389 @@
+{
+  "algorithm": "outbound_fold",
+  "cases": [
+    {
+      "id": "review_long_closer",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "keep\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 1000
+      },
+      "platform": "github",
+      "py_allowance": 493,
+      "expected_py": "keep\n\n\n_[folded: 1201 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1201,
+      "note": "A 200-byte closer exceeds the provisional reserve and forces line retreat."
+    },
+    {
+      "id": "fold_crlf_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\r\nkeep\r\nmore\r\n",
+        "repeat": "DROP\r\n",
+        "count": 300
+      },
+      "platform": "github",
+      "py_allowance": 501,
+      "expected_py": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\r\nkeep\r\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n\n_[folded: 1806 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1806,
+      "note": "CRLF retreats together; lone CR also terminates a logical line."
+    },
+    {
+      "id": "fold_lone_cr_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\rkeep\rmore\r",
+        "repeat": "DROP\r",
+        "count": 300
+      },
+      "platform": "github",
+      "py_allowance": 495,
+      "expected_py": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\rkeep\r````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n\n_[folded: 1505 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1505,
+      "note": "CRLF retreats together; lone CR also terminates a logical line."
+    },
+    {
+      "id": "review_multibyte_boundary",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "aaaaaaaaaa😀bbbbbbbbbb",
+        "repeat": "",
+        "count": 0
+      },
+      "platform": "github",
+      "py_allowance": 103,
+      "expected_py": "aaaaaaaaaa\n\n_[folded: 14 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 14
+    },
+    {
+      "id": "fold_notice_only",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "repeat": "",
+        "count": 0
+      },
+      "platform": "github",
+      "py_allowance": 86,
+      "expected_py": "\n\n_[folded: 99 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 99
+    },
+    {
+      "id": "inline_partial_suggestion",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "**heading**\nkeep\nkeep\n````suggestion\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\nbad\n````",
+        "repeat": "\ntail\n",
+        "count": 30
+      },
+      "platform": "github",
+      "py_allowance": 200,
+      "expected_py": "**heading**\nkeep\nkeep\n\n\n_[folded: 439 more bytes; this inline review comment reached the 285-byte GitHub body limit]_",
+      "expected_dropped_bytes": 439,
+      "surface": "inline",
+      "limit_bytes": 285,
+      "note": "Closing a partial suggestion would make an incomplete patch committable."
+    },
+    {
+      "id": "inline_long_closer",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "keep\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 1000
+      },
+      "platform": "github",
+      "py_allowance": 493,
+      "expected_py": "keep\n\n\n_[folded: 1201 more bytes; this inline review comment reached the 500-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1201,
+      "surface": "inline",
+      "limit_bytes": 500,
+      "note": "A 200-byte closer exceeds the provisional reserve and forces line retreat."
+    },
+    {
+      "id": "inline_multibyte_boundary",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "aaaaaaaaaa😀",
+        "repeat": "b",
+        "count": 200
+      },
+      "platform": "github",
+      "py_allowance": 140,
+      "expected_py": "aaaaaaaaaa😀bbbbbbbbbbbbbbbbbbbbbbbbbbb\n\n_[folded: 173 more bytes; this inline review comment reached the 220-byte GitHub body limit]_",
+      "expected_dropped_bytes": 173,
+      "surface": "inline",
+      "limit_bytes": 220
+    },
+    {
+      "id": "inline_cut_span_fold_review_py",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx `<table><tr><td>`",
+        "repeat": "y",
+        "count": 200
+      },
+      "platform": "github",
+      "py_allowance": 203,
+      "expected_py": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \n\n_[folded: 217 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 217
+    },
+    {
+      "id": "inline_cut_span_fold_inline_py",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx `<table><tr><td>`",
+        "repeat": "y",
+        "count": 200
+      },
+      "platform": "github",
+      "py_allowance": 217,
+      "expected_py": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \n\n_[folded: 217 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 217,
+      "surface": "inline"
+    },
+    {
+      "id": "inline_complete_span_fold_review_py",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n`<table><tr><td>`\n",
+        "repeat": "tail ",
+        "count": 1000
+      },
+      "platform": "github",
+      "py_allowance": 211,
+      "expected_py": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n`<table><tr><td>`\n\n\n_[folded: 5000 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 5000
+    },
+    {
+      "id": "inline_complete_span_fold_inline_py",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n`<table><tr><td>`\n",
+        "repeat": "tail ",
+        "count": 1000
+      },
+      "platform": "github",
+      "py_allowance": 221,
+      "expected_py": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n`<table><tr><td>`\n\n\n_[folded: 5000 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 5000,
+      "surface": "inline"
+    },
+    {
+      "id": "escaped_cut_slash",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "context\n\\/close\n",
+        "repeat": "tail ",
+        "count": 15000
+      },
+      "platform": "github",
+      "py_allowance": 109,
+      "expected_py": "context\n\\/close\n\n\n_[folded: 75000 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 75000,
+      "also": "string_invariant"
+    },
+    {
+      "id": "escaped_cut_quote",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "context\n\\>>>\n",
+        "repeat": "tail ",
+        "count": 15000
+      },
+      "platform": "github",
+      "py_allowance": 106,
+      "expected_py": "context\n\\>>>\n\n\n_[folded: 75000 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 75000,
+      "also": "string_invariant"
+    },
+    {
+      "id": "short_next_line",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+        "repeat": "b",
+        "count": 50
+      },
+      "platform": "github",
+      "py_allowance": 210,
+      "expected_py": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n_[folded: 51 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 51
+    },
+    {
+      "id": "fold_impossible_allowance",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "repeat": "",
+        "count": 0
+      },
+      "platform": "github",
+      "py_allowance": 1,
+      "expected_py": "\n\n_[folded: 99 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 99,
+      "fits_allowance": false
+    },
+    {
+      "id": "review_unterminated_lf_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "keep\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 315,
+      "expected_py": "keep\n\n_[folded: 302 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 302,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix."
+    },
+    {
+      "id": "review_unterminated_crlf_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "keep\r\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 315,
+      "expected_py": "keep\n\n_[folded: 303 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 303,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix."
+    },
+    {
+      "id": "review_unterminated_cr_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "keep\r````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 315,
+      "expected_py": "keep\n\n_[folded: 302 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 302,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix."
+    },
+    {
+      "id": "inline_unterminated_lf_retreat",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "keep\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 325,
+      "expected_py": "keep\n\n_[folded: 302 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 302,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix.",
+      "surface": "inline"
+    },
+    {
+      "id": "inline_unterminated_crlf_retreat",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "keep\r\n````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 325,
+      "expected_py": "keep\n\n_[folded: 303 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 303,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix.",
+      "surface": "inline"
+    },
+    {
+      "id": "inline_unterminated_cr_retreat",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "keep\r````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 325,
+      "expected_py": "keep\n\n_[folded: 302 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 302,
+      "note": "A complete opener fits without its following LF; its 200-byte closer forces retreat from an unterminated prefix.",
+      "surface": "inline"
+    },
+    {
+      "id": "review_first_line_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 315,
+      "expected_py": "\n\n_[folded: 301 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 301,
+      "note": "An oversized closer forces removal of the first logical line, which has no earlier separator."
+    },
+    {
+      "id": "inline_first_line_retreat",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\n",
+        "repeat": "x",
+        "count": 100
+      },
+      "platform": "github",
+      "surface": "inline",
+      "py_allowance": 325,
+      "expected_py": "\n\n_[folded: 301 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 301,
+      "note": "An oversized closer forces removal of the first logical line, which has no earlier separator."
+    },
+    {
+      "id": "review_repeated_whole_line_retreat",
+      "operation": "fold_review_py",
+      "input": {
+        "prefix": "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+        "repeat": "y",
+        "count": 100
+      },
+      "platform": "github",
+      "py_allowance": 420,
+      "expected_py": "\n\n_[folded: 402 more bytes; this review body reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 402,
+      "note": "Retreating a complete content line leaves an unterminated opener that still exceeds the allowance; it must retreat as a whole line."
+    },
+    {
+      "id": "inline_suggestion_at_zero",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "```suggestion extra",
+        "repeat": "x",
+        "count": 1000
+      },
+      "platform": "github",
+      "surface": "inline",
+      "py_allowance": 130,
+      "expected_py": "\n\n_[folded: 1019 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 1019,
+      "note": "Offset zero is a suggestion opener too; retiring this overlong info line must not expose a shortened suggestion label."
+    },
+    {
+      "id": "inline_suggestion_cr_span_retreat",
+      "operation": "fold_inline_py",
+      "input": {
+        "prefix": "right`\r```suggestion\rright`\n",
+        "repeat": "tail",
+        "count": 100
+      },
+      "platform": "github",
+      "surface": "inline",
+      "py_allowance": 140,
+      "expected_py": "right\n\n_[folded: 423 more bytes; this inline review comment reached the 65536-byte GitHub body limit]_",
+      "expected_dropped_bytes": 423,
+      "note": "The span scanner splits on LF; a lone-CR suggestion boundary can fall inside a completed span and must retreat to its opener."
+    }
+  ]
+}

@@ -145,8 +145,9 @@ ASCII `@` at text start or after a non-alphanumeric character becomes U+FF20 FUL
 including inside inline code, quoted locations and a URL segment such as `/@name`.
 `<` before an ASCII letter, `/`, `!` or `?` becomes `&lt;` in prose and U+FF1C
 FULLWIDTH LESS-THAN SIGN inside a paired inline span or quoted location. Email address
-syntax stays intact. Numeric references and `&commat;` decode to a fixpoint with comment
-removal and invisible stripping; other named references and query ampersands stay literal.
+syntax stays intact. Numeric references and `&commat;`, `&excl;`, `&lbrack;` and `&lsqb;`
+decode to a fixpoint with comment removal and invisible stripping; other named references
+and query ampersands stay literal.
 Secrets are redacted before containment. Inline spans pair on one line at the next exact
 backtick-run length. A wrong pairing can show literal `&lt;` or backslashes, or show
 fullwidth characters in prose, but leaves the text contained. Fullwidth `＜` and `＠`
@@ -182,6 +183,20 @@ or sit inside a code span. In ordinary prose, CommonMark consumes the escape bac
 displays the punctuation as intended. An opener on an indented-code line shows its backslash.
 GitLab CE 19.4.1 passes a backslash inside `$$` display math to its math renderer.
 Nested-quote shorthand such as `>>> text` displays literally.
+
+In prose, inline spans and quoted locations, the bracket after `!` or `[` (also
+across a run of backslashes) becomes U+FF3B FULLWIDTH LEFT SQUARE BRACKET.
+Both hosts render an image from `![`; GitLab also renders one from `[[`.
+GitLab parses text holding `](` a second time after backslashes are consumed,
+so a backslash does not hold there. A line-initial reference-definition label (`[label]:`) gets a
+backslash before its colon when only non-letter characters precede `[` on its
+line; a preceding backslash or `[` prevents the match. In multiline fields,
+the label may continue across lines, and this rule also applies inside code
+spans. This prevents a definition from turning code-owned text such as
+`[CRITICAL]` into a link. Footnote definitions and reference-style links in
+finding text therefore show as literal text. A quoted location is not passed
+through the definition-colon rule.
+None of these rules runs inside a fenced block the preparer leaves verbatim.
 
 - `review_body` — exactly the pipeline-rendered Summary section body: counts first, selected findings index,
   and any remainder with selection reasons. Whole index bullets fit within a 12,000-code-point

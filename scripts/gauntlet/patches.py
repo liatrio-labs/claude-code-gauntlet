@@ -18,12 +18,12 @@ from gauntlet.delivery.post import (
     _SKIP_WARNINGS,
     _fix_code_text,
     _gated_finding,
-    _redact_secrets,
     reset_run_state,
 )
 from gauntlet.diff import parse_diff, patch_report_policy
 from gauntlet.fs import JsonReadError, confined, read_json, write_atomic
 from gauntlet.markdown import code_span, fence_run
+from gauntlet.text import redact_secrets
 
 _HEAD_SHA_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _EXT_RE = re.compile(r"^[A-Za-z0-9_+#-]{1,12}$")
@@ -182,7 +182,7 @@ def _render(kept, candidates, filtered_earlier, oracle_state, sha):
         emit(f"## {code_span(file_)}:{line}-{end_line} — {title}")
 
         text = _fix_code_text(finding.get("suggested_fix_code"))
-        text = _redact_secrets(
+        text = redact_secrets(
             text
         )  # defense in depth: the gate already proved this is a no-op
         fence = fence_run(text)

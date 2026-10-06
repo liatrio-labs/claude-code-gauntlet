@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 import gauntlet.delivery.post as post_review
 import gauntlet.patches as report_patches
+import gauntlet.text as outbound_text
 import pytest
 from gauntlet import config as resolve_config
 from gauntlet import contract_gen as generate_contract_requirements
@@ -24,6 +25,51 @@ from bench.runner import invoke
 from tests.support.forge import FakeForge
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(
+    ("filepath", "expected"),
+    [
+        ("app/[[...slug]]/page.tsx", "`app/[\uff3b...slug]]/page.tsx:12`"),
+        ("src/![a](u).py", "`src/!\uff3ba](u).py:12`"),
+    ],
+)
+def test_summary_and_skipped_location_bytes(filepath: str, expected: str) -> None:
+    finding = {
+        "id": "location",
+        "severity": "high",
+        "file": filepath,
+        "line_start": 12,
+        "title": "Location",
+    }
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            (
+                "import { renderSummaryBody } from './workflows/src/renderReport.js';"
+                "let source = ''; for await (const chunk of process.stdin) source += chunk;"
+                "process.stdout.write(renderSummaryBody(JSON.parse(source)));"
+            ),
+        ],
+        input=json.dumps({"findings": [finding]}),
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=True,
+    )
+    summary = result.stdout
+    assert expected in summary
+    assert outbound_text.prepare_prose(summary) == summary
+    skipped = post_review.build_skipped_section([(filepath, 12, finding)])
+    location = next(
+        line[5:] for line in skipped.splitlines() if line.startswith("#### ")
+    )
+    assert location == expected
+    assert location.encode("utf-8") in summary.encode("utf-8")
 
 
 RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
@@ -88,6 +134,20 @@ class TestSummaryIndexParity(unittest.TestCase):
                     "line_start": 1,
                     "title": "Path boundary",
                 },
+                {
+                    "id": "wikilink-location",
+                    "severity": "low",
+                    "file": "app/[[...slug]]/page.tsx",
+                    "line_start": 12,
+                    "title": "Wikilink path",
+                },
+                {
+                    "id": "image-location",
+                    "severity": "low",
+                    "file": "src/![a](u).py",
+                    "line_start": 12,
+                    "title": "Image path",
+                },
             ],
         }
         script = (
@@ -107,7 +167,7 @@ class TestSummaryIndexParity(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         report, summary = json.loads(result.stdout)
         self.assertEqual(post_review.summary_body_from_report(report), summary)
-        self.assertEqual(post_review.prepare_prose(summary), summary)
+        self.assertEqual(outbound_text.prepare_prose(summary), summary)
         self.assertIn("app/\uff20modal/\uff1cSlot>.tsx", summary)
         self.assertIn("dev@example.test", summary)
         self.assertIn("&#٦٤;", summary)

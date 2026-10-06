@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, foldInline, openProseFence, proseFenceCloser, normalizeReportSeverity, plural } from '../src/renderReport.js';
+import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, openProseFence, normalizeReportSeverity, plural } from '../src/renderReport.js';
 import { normalizeArgs, validateArgs } from '../src/args.js';
 import { SEVERITY_EMOJI, AGENTS, resolvePolicy } from '../src/registry.js';
 import { makeFinding, validArgs } from './helpers/pipelineMock.js';
@@ -248,10 +248,6 @@ test('T-FOLDS: every exact cap and cap-plus-one has deterministic bytes', () => 
   assert.equal(REPORT_FOLD_LIMITS.evidenceLines, 40);
   assert.equal(REPORT_FOLD_LIMITS.evidenceChars, 8000);
   assert.equal(REPORT_FOLD_LIMITS.inlineChars, 512);
-  assert.equal(foldProse('p'.repeat(4000), 4000), 'p'.repeat(4000));
-  assert.equal(foldProse('p'.repeat(4001), 4000), `${'p'.repeat(4000)}\n\n_[folded: 1 more characters]_`);
-  assert.equal(foldInline('i'.repeat(512), 512), 'i'.repeat(512));
-  assert.equal(foldInline('i'.repeat(513), 512), `${'i'.repeat(512)} [folded: 1 more characters]`);
   assert.equal(foldEvidence('e'.repeat(8000)), 'e'.repeat(8000));
   assert.equal(foldEvidence('e'.repeat(8001)), `${'e'.repeat(8000)}\n... [folded: 1 more characters]`);
   const forty = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n');
@@ -264,11 +260,6 @@ test('T-FOLDS: every exact cap and cap-plus-one has deterministic bytes', () => 
   assert.ok(foldedSummary.includes(`${'s'.repeat(12000)}\n\n_[folded: 1 more characters]_`));
 });
 
-test('T-FOLDS-FENCE-SHAPE: open fences expose the shared state tuple', () => {
-  assert.deepEqual(openProseFence('   ````x'), ['`', 4, 3]);
-  assert.deepEqual(openProseFence('prose\r````\rx'), ['`', 4, 6]);
-  assert.equal(openProseFence('````\n````\nprose'), null);
-});
 
 test('T-FOLDS-FENCE-SURFACES: every prose surface closes F4 before its notice', () => {
   const f4 = '````py\nkeep';
@@ -317,8 +308,6 @@ test('T-FOLDS-CORPUS: measured corpus maxima stay unfolded', () => {
 test('T-FOLDS-UNICODE: boundaries never split an astral pair', () => {
   // Mutation: replace code-point slicing with text.slice; at least one result contains a lone surrogate.
   const values = [
-    foldProse(`${'p'.repeat(3999)}\u{1F680}x`, 4000),
-    foldInline(`${'i'.repeat(511)}\u{1F680}x`, 512),
     foldEvidence(`${'e'.repeat(7999)}\u{1F680}x`),
     rendered({ summary: `${'s'.repeat(11999)}\u{1F680}x` }),
   ];

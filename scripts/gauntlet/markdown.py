@@ -3,7 +3,7 @@
 import re
 
 
-# Twin of ``foldProse`` in ``workflows/src/renderReport.js``.
+# Twin of ``openProseFence`` in ``workflows/src/renderReport.js``.
 def open_fence(
     text: str,
     *,

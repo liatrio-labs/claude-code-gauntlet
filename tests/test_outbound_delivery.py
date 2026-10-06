@@ -4,7 +4,6 @@ import contextlib
 import hashlib
 import io
 import json
-import random
 import re
 import subprocess
 import sys
@@ -13,17 +12,21 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import gauntlet.delivery.fold as outbound_fold
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
+import gauntlet.text as outbound_text
 import pytest
 from gauntlet.forge import JsonFetch, Platform, PostRequest, PostResult, ReviewTarget
-from gauntlet.markdown import fence_closer, open_fence
+from gauntlet.markdown import code_spans, open_fence
 from gauntlet.prior_review import PriorDelivery
 
 from tests.support.diff import diff_facts
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 from tests.support.prior import prior_notes
-from tests.test_outbound_contract import _assert_outbound_string_invariant
+from tests.test_outbound_contract import (
+    assert_outbound_string_invariant as _assert_outbound_string_invariant,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 NODE = "node"
@@ -33,6 +36,54 @@ OUTBOUND_CASES = json.loads(
 SHA = "a" * 40
 FAKE_FINDING_MARKER = review_marker.build_finding_marker(SHA, "0123456789abcdef")
 pytestmark = pytest.mark.usefixtures("poster_state")
+
+
+@pytest.mark.parametrize(
+    ("agent", "dimension", "confidence", "expected_identity"),
+    [
+        pytest.param(
+            "[[a",
+            "|https://example.test/p.png]]",
+            "0.9",
+            "[\uff3ba (|https://example.test/p.png]], confidence 0.9)",
+            id="agent_dimension",
+        ),
+        pytest.param(
+            "[[a",
+            "correctness",
+            "|https://example.test/p.png]]",
+            "[\uff3ba (correctness, confidence |https://example.test/p.png]])",
+            id="agent_confidence",
+        ),
+        pytest.param(
+            "bug-hunter",
+            "[[a",
+            "|https://example.test/p.png]]",
+            "bug-hunter ([\uff3ba, confidence |https://example.test/p.png]])",
+            id="dimension_confidence",
+        ),
+    ],
+)
+def test_corroborator_cross_field_wikilink(
+    agent: str, dimension: str, confidence: str, expected_identity: str
+) -> None:
+    primary: dict[str, object] = {
+        "file": "src/edited.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Primary",
+        "body": "Primary body",
+    }
+    corroborator: dict[str, object] = {
+        "agent": agent,
+        "dimension": dimension,
+        "confidence": confidence,
+        "title": "Corroboration",
+        "body": "Corroborating body",
+    }
+    body = post_review.render_group_body(primary, [corroborator])
+    _assert_outbound_string_invariant(body)
+    assert expected_identity in body
 
 
 def _hostile_finding(**overrides):
@@ -156,6 +207,8 @@ def _poison(key):
     return (
         f"@zz363{key} <ins data-zz363{key}> {marker} ```` &#38;#64;zz363{key}"
         f"\n/zz377{key}\n>>>\n```\n/zz377{key}\n```"
+        "\n![a](u)"
+        "\n[critical]: u"
     )
 
 
@@ -295,7 +348,15 @@ def _assert_poison_containment(test, body, property_names, expected_markers=()):
         without_live_markers = without_live_markers.replace(
             review_marker.build_finding_marker(marker["sha"], marker["key"]), ""
         )
-    _assert_outbound_string_invariant(without_live_markers)
+    spans, _fences = code_spans(without_live_markers)
+    locations = tuple(
+        without_live_markers[start:end]
+        for start, end in spans
+        if any(
+            f"zz363{name}" in without_live_markers[start:end] for name in location_names
+        )
+    )
+    _assert_outbound_string_invariant(without_live_markers, literal_locations=locations)
 
 
 @pytest.mark.usefixtures("forge_factory", "poster_state")
@@ -310,7 +371,7 @@ class TestOutboundComposerContracts(unittest.TestCase):
             post_review.build_skipped_section([("src/file.py", 3, finding)]),
         ):
             with self.subTest(rendered=rendered[:40]):
-                prepared = post_review.prepare_prose(body)
+                prepared = outbound_text.prepare_prose(body)
                 self.assertIn(prepared, rendered)
                 for paragraph in rendered.split("\n\n"):
                     if prepared in paragraph:
@@ -346,7 +407,7 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
         bullet = next(
             line for line in summary.stdout.splitlines() if line.startswith("- ")
         )
-        prepared_title = post_review.prepare_line(body)
+        prepared_title = outbound_text.prepare_line(body)
         self.assertIn(prepared_title, bullet)
         self.assertNotIn("`", bullet.split(prepared_title, 1)[1])
         fenced = post_review.render_comment_body(
@@ -458,38 +519,6 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
                 self.assertIn("  \\~~~", rendered)
                 self.assertIn("\uff20leehopper &lt;ins>x&lt;/ins>", rendered)
                 self.assertIsNone(open_fence(rendered))
-
-    def test_python_fixture_rows_match_the_ordered_prose_entry_points(self):
-        prepare_prose = getattr(post_review, "prepare_prose", None)
-        prepare_line = getattr(post_review, "prepare_line", None)
-        self.assertTrue(callable(prepare_prose), "prepare_prose entry point is missing")
-        self.assertTrue(callable(prepare_line), "prepare_line entry point is missing")
-        prepare = {
-            "single_line": prepare_line,
-            "location": prepare_line,
-            "prose": prepare_prose,
-            "rule": lambda value: post_review._prepared_prose(value, cap=True) or "",
-        }
-        for row in OUTBOUND_CASES:
-            with self.subTest(case=row["id"]):
-                self.assertEqual(
-                    prepare[row["field_class"]](row["input"]), row["expected"]
-                )
-
-    def test_prose_preparation_is_idempotent_for_fixtures_and_seeded_inputs(self):
-        prepare_prose = getattr(post_review, "prepare_prose", None)
-        self.assertTrue(callable(prepare_prose), "prepare_prose entry point is missing")
-        values = [row["input"] for row in OUTBOUND_CASES]
-        rng = random.Random(917)
-        alphabet = "@<&#!/?`\\0123456789abc\n\r "
-        values.extend(
-            "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 64)))
-            for _ in range(5000)
-        )
-        for value in values:
-            with self.subTest(value=value[:24]):
-                once = prepare_prose(value)
-                self.assertEqual(prepare_prose(once), once)
 
     def test_primary_title_and_body_are_contained_before_the_footer(self):
         rendered = post_review.render_comment_body(_hostile_finding())
@@ -644,40 +673,14 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
 
 
 class TestFoldAndGateContracts(unittest.TestCase):
-    def test_forced_review_folds_keep_escaped_lines_at_the_cut(self):
-        limits = post_review._body_limit("github")
-        for line, source in (
-            ("\\/close", "context\n/close\n" + "tail " * 15000),
-            ("\\>>>", "context\n>>>\n" + "tail " * 15000),
-        ):
-            with self.subTest(line=line):
-                prepared = post_review.prepare_prose(source)
-                total = post_review._utf8_len(prepared)
-                folded_note = (
-                    f"_[folded: {total} more bytes; this {limits['surface']} reached the "
-                    f"{limits['bytes']}-byte {limits['label']} body limit]_"
-                )
-                reserve = post_review._utf8_len(
-                    f"\n\n{folded_note}\n{fence_closer('```')}"
-                )
-                cut = prepared.index(line) + len(line) + 1
-                allowance = post_review._utf8_len(prepared[:cut]) + reserve
-                folded, dropped = post_review._fold_review_body(
-                    prepared, allowance, "github"
-                )
-                self.assertGreater(dropped, 0)
-                prefix = folded.split("\n\n_[folded:", 1)[0]
-                self.assertTrue(prefix.endswith(line + "\n"), prefix[-80:])
-                _assert_outbound_string_invariant(folded)
-
     def test_forced_composer_folds_keep_escaped_quote_prefixes(self):
         for platform in ("github", "gitlab"):
             with self.subTest(platform=platform):
-                review_limit = post_review._body_limit(platform, "summary")["bytes"]
+                review_limit = outbound_fold.body_limit(platform, "summary").bytes
                 surface = "inline" if platform == "github" else "discussion"
-                inline_limit = post_review._body_limit(platform, surface)["bytes"]
+                inline_limit = outbound_fold.body_limit(platform, surface).bytes
                 source = ">>>" + "x" * (max(review_limit, inline_limit) + 128)
-                prepared = post_review.prepare_prose(source)
+                prepared = outbound_text.prepare_prose(source)
                 review = post_review.compose_review_body(
                     source,
                     [],
@@ -703,9 +706,9 @@ class TestFoldAndGateContracts(unittest.TestCase):
     def test_forced_inline_composer_folds_keep_escaped_slash_lines(self):
         for platform, surface in (("github", "inline"), ("gitlab", "discussion")):
             with self.subTest(platform=platform):
-                limit = post_review._body_limit(platform, surface)["bytes"]
+                limit = outbound_fold.body_limit(platform, surface).bytes
                 source = "context\n/close\n" + "tail " * (limit // 5 + 1000)
-                prepared = post_review.prepare_prose(source)
+                prepared = outbound_text.prepare_prose(source)
                 composed = post_review.compose_inline_body(
                     prepared, platform=platform, surface=surface
                 )
@@ -716,65 +719,6 @@ class TestFoldAndGateContracts(unittest.TestCase):
                     "prepared slash line was not kept",
                 )
                 _assert_outbound_string_invariant(composed.body)
-
-    def test_midline_fold_retires_the_open_code_span_in_both_composers(self):
-        text = "x" * 65213 + " `<table><tr><td>`" + "y" * 1000
-        for name, fold in (
-            (
-                "inline",
-                lambda: post_review._fold_inline_body(text, 65336, "github", "inline"),
-            ),
-            (
-                "review",
-                lambda: post_review._fold_review_body(text, 65336, "github"),
-            ),
-        ):
-            with self.subTest(composer=name):
-                folded, dropped = fold()
-                self.assertGreater(dropped, 0)
-                prefix = folded.split("\n\n_[folded:", 1)[0]
-                if "<table" in prefix:
-                    self.assertTrue(_contains_code_span(prefix, "<table><tr><td>"))
-                shorter, _ = (
-                    post_review._fold_inline_body(text, 65320, "github", "inline")
-                    if name == "inline"
-                    else post_review._fold_review_body(text, 65320, "github")
-                )
-                self.assertNotIn("<table", shorter)
-
-    def test_line_boundary_fold_keeps_a_complete_single_line_code_span(self):
-        span = "`<table><tr><td>`"
-        text = "x" * 65213 + "\n" + span + "\n" + "tail " * 1000
-        for name, fold in (
-            (
-                "inline",
-                lambda: post_review._fold_inline_body(text, 65336, "github", "inline"),
-            ),
-            (
-                "review",
-                lambda: post_review._fold_review_body(text, 65336, "github"),
-            ),
-        ):
-            with self.subTest(composer=name):
-                folded, dropped = fold()
-                self.assertGreater(dropped, 0)
-                self.assertIn("\n" + span + "\n", folded)
-
-    def test_unclosed_comment_cut_ignores_comment_opener_inside_code_span(self):
-        text = "`<!--` code survives\n<!-- unclosed comment"
-        self.assertEqual(
-            post_review._cut_unclosed_comment(text), "`<!--` code survives\n"
-        )
-
-    def test_unclosed_comment_cut_ignores_comment_opener_inside_fence(self):
-        text = "```text\n<!-- literal -->\n```\n<!-- unclosed comment"
-        self.assertEqual(
-            post_review._cut_unclosed_comment(text), "```text\n<!-- literal -->\n```\n"
-        )
-        self.assertEqual(
-            post_review._cut_unclosed_comment("```text\n<!-- literal\n```\nafter"),
-            "```text\n<!-- literal\n```\nafter",
-        )
 
     def test_patch_with_a_finding_marker_opener_is_rejected_as_marker_shaped(self):
         finding = {
@@ -1299,6 +1243,134 @@ def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_
     assert not (second_calls)
 
 
+@pytest.mark.usefixtures("forge_factory")
+@pytest.mark.parametrize(
+    ("title", "body", "old_sections", "sections", "old_key", "new_key"),
+    [
+        pytest.param(
+            "![a](u)",
+            "Body one",
+            "**\U0001f7e0 [HIGH] ![a](u)**\n\nBody one",
+            "**\U0001f7e0 [HIGH] !\uff3ba](u)**\n\nBody one",
+            "0899e2af08bef3b4",
+            "6b732848339348e1",
+            id="image_title_rekey",
+        ),
+        pytest.param(
+            "Title",
+            "[critical]: u",
+            "**\U0001f7e0 [HIGH] Title**\n\n[critical]: u",
+            "**\U0001f7e0 [HIGH] Title**\n\n[critical]\\: u",
+            "ce5c0d6d62bad3f1",
+            "3923f3f55e6f877b",
+            id="reference_body_rekey",
+        ),
+    ],
+)
+def test_markup_rekeys_once(
+    title: str, body: str, old_sections: str, sections: str, old_key: str, new_key: str
+) -> None:
+    finding: dict[str, object] = {
+        "file": "src/edited.py",
+        "line": 2,
+        "severity": "high",
+        "title": title,
+        "body": body,
+    }
+    old_material = "src/edited.py\0" + "2\0" + title + "\0" + old_sections
+    assert hashlib.sha256(old_material.encode("utf-8")).hexdigest()[:16] == old_key
+    assert post_review.key_material_body(finding) == sections
+    assert (
+        post_review.finding_key(
+            finding["file"],
+            finding["line"],
+            outbound_text.prepare_line(title),
+            sections,
+        )
+        == new_key
+    )
+    calls, _lookup = _deliver(
+        "gitlab",
+        [finding],
+        live=True,
+        prior=PriorDelivery(True, frozenset({old_key}), frozenset(), None),
+    )
+    assert isinstance(calls, list)
+    discussions = [
+        call.payload for call in calls if call.endpoint.endswith("/discussions")
+    ]
+    assert len(discussions) == 1
+    marker = review_marker.find_finding_marker(discussions[0]["body"])
+    assert marker is not None and marker["key"] == new_key
+    calls, _lookup = _deliver(
+        "gitlab",
+        [finding],
+        live=True,
+        prior=PriorDelivery(True, frozenset({old_key, new_key}), frozenset(), None),
+    )
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    "field", ("title", "body", "suggestion", "claude_md_rule", "spec_text")
+)
+def test_image_fields_preserve_patch_and_footer(field: str) -> None:
+    patch_text = "![a](u)\n[critical]: u"
+    finding = {
+        "severity": "critical",
+        "title": "Title",
+        "body": "Body",
+        field: "![a](u)",
+        "suggested_fix_code": patch_text,
+    }
+    rendered = post_review.render_comment_body(finding)
+    assert "!\uff3ba](u)" in rendered
+    assert "```suggestion\n" + patch_text + "\n```" in rendered
+    assert rendered.endswith(post_review.BRAND_TRAILER)
+    assert "[CRITICAL]" in rendered
+
+
+@pytest.mark.parametrize(
+    "field", ("title", "body", "suggestion", "claude_md_rule", "spec_text")
+)
+def test_reference_fields_preserve_patch_and_footer(field: str) -> None:
+    patch_text = "![a](u)\n[critical]: u"
+    finding = {
+        "severity": "critical",
+        "title": "Title",
+        "body": "Body",
+        field: "[critical]: u",
+        "suggested_fix_code": patch_text,
+    }
+    rendered = post_review.render_comment_body(finding)
+    assert "[critical]\\: u" in rendered
+    assert "```suggestion\n" + patch_text + "\n```" in rendered
+    assert rendered.endswith(post_review.BRAND_TRAILER)
+    assert "[CRITICAL]" in rendered
+
+
+@pytest.mark.parametrize("field", ("body", "suggestion", "claude_md_rule", "spec_text"))
+@pytest.mark.parametrize(
+    "source",
+    ["[\ncritical\n]: u", "[critical\n]: u", "> [critical\n> ]: u"],
+    ids=["multiline_label", "multiline_closer", "multiline_quote"],
+)
+def test_reference_multiline_fields_keep_severity_label(
+    field: str, source: str
+) -> None:
+    rendered = post_review.render_comment_body(
+        {
+            "severity": "critical",
+            "title": "Title",
+            "body": "Body",
+            field: source,
+        }
+    )
+    assert "]\\: u" in rendered
+    assert "[CRITICAL]" in rendered
+    assert rendered.endswith(post_review.BRAND_TRAILER)
+
+
 @pytest.mark.parametrize(
     "line, endpoint",
     [(3, "/discussions"), (None, "/notes")],
@@ -1310,7 +1382,7 @@ def test_gitlab_live_fallback_contracts__partial_prior_delivery_posts_only_the_m
     primary = _hostile_finding(
         consolidation_key="src/edited.py:2", consolidation_primary=True
     )
-    title = post_review.prepare_line(primary["title"])
+    title = outbound_text.prepare_line(primary["title"])
     prior_key = post_review.finding_key(
         primary["file"],
         primary["line"],

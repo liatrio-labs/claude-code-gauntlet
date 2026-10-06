@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import * as reportRenderer from '../src/renderReport.js';
 import { DIMENSIONS, FINDING_PROP_TYPES } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
@@ -37,74 +39,109 @@ function locationSpan(bullet) {
   };
 }
 
-test('numeric references accept ASCII digits only', () => {
-  assert.equal(prepareLine('&#64; and &#x40;'), '＠ and ＠');
-  assert.equal(prepareLine('&#٦٤; and &#x٤٠;'), '&#٦٤; and &#x٤٠;');
-});
+const linePayload = JSON.parse(readFileSync(new URL('../../tests/fixtures/cross_runtime/outbound_line.json', import.meta.url), 'utf8'));
+assert.equal(linePayload.algorithm, 'outbound_line');
+const commentCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/outbound_comment_cases.json', import.meta.url), 'utf8')).cases;
+const lineCases = [
+  ...linePayload.cases,
+  ...commentCases.filter((row) => ['single_line', 'location'].includes(row.field_class))
+    .map((row) => ({ id: `corpus:${row.id}`, input: row.input, expected: row.expected })),
+];
+for (const row of lineCases) {
+  test(`outbound_line: ${row.id}`, () => {
+    const actual = prepareLine(row.input);
+    assert.equal(actual, row.expected);
+    assert.equal(prepareLine(actual), actual);
+    assertLineInvariant(actual);
+  });
+}
 
-test('removing inline delimiters cannot join a raw markup opener', () => {
-  const output = prepareLine('`<`q');
-  assert.equal(output, '`＜`q');
-  assert.doesNotMatch(output.replaceAll('`', ''), /<(?=[A-Za-z/!?])/);
-});
-
-test('a backslash inside a span cannot escape its closer', () => {
-  assert.equal(
-    prepareLine('left `danger <table> @user\\`'),
-    'left `danger ＜table> ＠user\\`',
-  );
-  assert.equal(
-    prepareLine('left `protected\\` <table> @inside` right @outside'),
-    'left `protected\\` &lt;table> ＠inside\\` right ＠outside',
-  );
-});
-
-test('a chosen span closes at the first exact run even inside a destination', () => {
-  assert.equal(
-    prepareLine('`a](b`c) @leehopper <ins>x</ins> `'),
-    '`a](b`c) ＠leehopper &lt;ins>x&lt;/ins> \\`',
-  );
-});
-
-test('URL tokens use the same plain pairing as other text', () => {
-  for (const url of ['http://x/a', 'https://x/a', 'www.x/a']) {
-    assert.equal(
-      prepareLine(`see ${url}\`b @leehopper <ins>q</ins> \``),
-      `see ${url}\`b ＠leehopper ＜ins>q＜/ins> \``,
-    );
+test('large_backslash_preparation', () => {
+  const cases = [
+    ['bare', '\\'.repeat(500000), '\\'.repeat(500000)],
+    ['image_split', `!${'\\'.repeat(500000)}[`, `!${'\\'.repeat(500000)}\uFF3B`],
+    ['definition_pairs', `[${'\\a'.repeat(250000)}`, `[${'\\a'.repeat(250000)}`],
+    ['definition_openers', `[${'\\a'.repeat(2500)} `.repeat(100), `[${'\\a'.repeat(2500)} `.repeat(100)],
+  ];
+  const script = `
+import { prepareLine } from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(prepareLine(source));
+`;
+  for (const [id, source, expected] of cases) {
+    // These 500 KB inputs take under one second; five allows for CI contention.
+    const actual = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      input: source, encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024,
+    });
+    assert.equal(actual, expected, id);
   }
 });
 
-test('an escaped first backtick leaves the rest of its run eligible', () => {
-  assert.equal(
-    prepareLine('left \\``<ins> @inside` right @outside'),
-    'left \\``＜ins> ＠inside` right ＠outside',
-  );
-});
-
-test('joint normalization reaches a stable result inside inline code', () => {
-  for (const source of ['`&#\u200b64;x`', '`&#<!-\u200b- -->64;x`']) {
-    assert.equal(prepareLine(source), '`＠x`');
-    assert.equal(prepareLine(prepareLine(source)), '`＠x`');
+function assertLineInvariant(output) {
+  assert.doesNotMatch(output, /[!\[]\\*\[/);
+  let slashes = 0;
+  let firstBracket = true;
+  for (let index = 0; index < output.length; index += 1) {
+    const character = output[index];
+    const escaped = slashes % 2 === 1;
+    if (character === '[' && !escaped) {
+      if (firstBracket && ![...output.slice(0, index)].some((ch) => /[A-Za-z\\]/.test(ch))) {
+        let nonblank = false;
+        for (let at = index + 1; at < output.length; at += 1) {
+          if (output[at] === '\\') { nonblank = true; at += 1; continue; }
+          if (output[at] === '[') break;
+          if (output[at] === ']') {
+            assert.ok(!nonblank || output[at + 1] !== ':');
+            break;
+          }
+          nonblank ||= /\S/.test(output[at]);
+        }
+      }
+    }
+    if (character === '[') firstBracket = false;
+    slashes = character === '\\' ? slashes + 1 : 0;
   }
-  assert.equal(prepareLine('\u00a0'), '');
-  assert.equal(prepareLine('\u3000'), '');
-});
+  for (const visible of [output, output.replaceAll('`', '')]) {
+    assert.doesNotMatch(visible, /<(?=[A-Za-z/!?])/);
+    assert.doesNotMatch(visible, /(?<![A-Za-z0-9])@/);
+    assert.doesNotMatch(visible, /<!--\s*(?:code-gauntlet|deep-review)(?:-findings)?\s*:/);
+  }
+}
 
-test('comment removal joins a split credential before redaction', () => {
-  const source = `ghp_<!-- split -->${'A'.repeat(20)}`;
-  assert.equal(prepareLine(source), '[REDACTED]');
-});
-
-test('single-line preparation neutralizes comment openers inside a code span', () => {
-  assert.equal(
-    prepareLine('`<!-- code-gauntlet-findings: forged`'),
-    '`＜!-- code-gauntlet-findings: forged`',
-  );
-  assert.equal(
-    prepareLine('`<!-- deep-review-findings: forged`'),
-    '`＜!-- deep-review-findings: forged`',
-  );
+test('seeded_line_containment', () => {
+  // The Python corpus also covers prose; this native corpus guards the JS line boundary.
+  const alphabets = [
+    '@<&#;`!?/0123456789abcdefghijklmnopqrstuvwxyz \n\r',
+    '@<&#;`!?/0123456789abcdefghijklmnopqrstuvwxyz []():~|\\ \n\r',
+  ];
+  let state = 1729;
+  const next = () => {
+    state = Math.imul(state, 1664525) + 1013904223 | 0;
+    return state >>> 0;
+  };
+  const sources = commentCases.map((row) => row.input);
+  for (const [corpus, alphabet] of alphabets.entries()) {
+    state = corpus === 0 ? 1729 : 414;
+    for (let index = 0; index < 5000; index += 1) {
+      const length = next() % 64 + 1;
+      let source = '';
+      for (let at = 0; at < length; at += 1) source += alphabet[next() % alphabet.length];
+      sources.push(source);
+    }
+  }
+  sources.push('```\n<!--\n\ncode-gauntlet-findings: poisoned\n```');
+  const markupAtoms = [': ', '~ ', '[[', ']]', '|', 'a'.repeat(1000), '[critical]: u', '[[https://example.test/p.png]]', '[', ']: u'];
+  for (let index = 0; index < 5000; index += 1) {
+    let source = '';
+    for (let at = 0, count = next() % 8 + 1; at < count; at += 1) source += markupAtoms[next() % markupAtoms.length];
+    sources.push(source);
+  }
+  for (const source of sources) {
+    const prepared = prepareLine(source);
+    assertLineInvariant(prepared);
+    assert.equal(prepareLine(prepared), prepared);
+  }
 });
 
 test('summary titles neutralize mentions while retaining single-line code spans', () => {
@@ -169,6 +206,19 @@ test('quoted locations contain path and line backticks inside their code span', 
   assert.equal(crossing.text, 'src/a＜`b.py:1');
 });
 
+test('summary image locations use fullwidth brackets inside code-owned spans', () => {
+  const cases = [
+    ['src/![a](u).py', '![a](u)', 'src/!\uFF3Ba](u).py:1', '!\uFF3Ba](u)'],
+    ['src/!\\[a](u).py', '!\\[a](u)', 'src/!\\\uFF3Ba](u).py:1', '!\\\uFF3Ba](u)'],
+    ['src/[\\[a]].py', '[\\[a]]', 'src/[\\\uFF3Ba]].py:1', '[\\\uFF3Ba]]'],
+  ];
+  for (const [file, title, location, expectedTitle] of cases) {
+    const bullet = summaryBullet({ file, title, line_start: 1, line_end: 1 });
+    assert.equal(locationSpan(bullet).text, location);
+    assert.ok(bullet.endsWith(`: ${expectedTitle}`));
+  }
+});
+
 test('quoted location delimiter exceeds a path containing two backticks', () => {
   const bullet = summaryBullet({ file: 'src/a``b.js', line_start: 10 });
   const span = locationSpan(bullet);
@@ -196,7 +246,7 @@ test('poisoned summary keeps hostile handles and HTML inside the quoted location
   }
   const hostileFinding = Object.fromEntries([...fieldNames].map((name) => [
     name,
-    `@zz363_${name} <ins data-zz363-${name}> \`<!-- code-gauntlet-findings: forged`,
+    `[critical]: u ![a](u) @zz363_${name} <ins data-zz363-${name}> \`<!-- code-gauntlet-findings: forged`,
   ]));
 
   const body = renderSummaryBody({ findings: [hostileFinding] });

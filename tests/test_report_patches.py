@@ -626,7 +626,7 @@ def test_report_patch_fence_uses_shared_fence_run(monkeypatch):
 
 class TestSecretBearingPatchRedacted(ReportPatchesTestBase):
     """A patch whose bytes are credential-shaped (the same prefixed formats
-    ``post_review._redact_secrets`` matches) downgrades as ``redacted`` and is
+    ``gauntlet.text.redact_secrets`` matches) downgrades as ``redacted`` and is
     never rendered — the raw secret and the ``[REDACTED]`` placeholder alike
     are absent from the artifact, since the finding is dropped entirely rather
     than rendered with a substituted body."""
@@ -1416,7 +1416,7 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         self.assertEqual(after - before, {f"code-gauntlet-patches-{self.SHA}.md"})
 
     def test_render_defense_in_depth_redacts_a_secret_shaped_kept_payload(self):
-        """``_render`` calls ``_redact_secrets`` a SECOND time on kept patch
+        """``_render`` calls ``redact_secrets`` a SECOND time on kept patch
         text — defense in depth against a finding that reached "kept" some
         way other than the gate (the gate itself already refuses to keep a
         credential-shaped patch — see TestSecretBearingPatchRedacted).
@@ -1425,12 +1425,12 @@ class TestOperationalHygiene(ReportPatchesTestBase):
         this assertion non-vacuous.
 
         NOTE: no AWS ``AKIA...`` pattern exists in
-        ``post_review._redact_secrets`` — only prefixed GitHub/GitLab token
+        ``gauntlet.text.redact_secrets`` — only prefixed GitHub/GitLab token
         shapes are implemented — so this test uses the GitHub shape that is
         actually there rather than asserting against a pattern the code does
         not have.
 
-        RED when the ``_redact_secrets(text)`` call inside ``_render`` is
+        RED when the ``redact_secrets(text)`` call inside ``_render`` is
         removed: the raw secret would then appear in the rendered fence.
         """
         secret = "ghp_" + "A" * 24
