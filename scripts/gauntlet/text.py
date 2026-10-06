@@ -108,8 +108,13 @@ _MULTILINE_QUOTE_RE = re.compile(r"^(?:[ \t>]|[-+*][ \t]|[0-9]{1,9}[.)][ \t])*?(
 
 
 def _remove_comments(text: str) -> str:
-    # The normalization fixed point also removes comment openers made by removal.
-    return _HTML_COMMENT_RE.sub("", text)
+    # Removal can build a new comment from surrounding text; decoding between
+    # removals changes which text is removed.
+    while True:
+        cleaned = _HTML_COMMENT_RE.sub("", text)
+        if cleaned == text:
+            return text
+        text = cleaned
 
 
 def _normalize_outbound(text: str) -> str:
@@ -153,9 +158,9 @@ def _escape_images(text: str) -> str:
         text,
     )
     return re.sub(
-        r"(?<!\\)(\\*)\[\[(?=(?:\\[\s\S]|[^\\\[])*?\]\])",
+        r"(?<!\\)(\\*)\[(?=\[)",
         lambda match: (
-            match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "[["
+            match.group(1) + ("\\" if len(match.group(1)) % 2 == 0 else "") + "["
         ),
         text,
     )

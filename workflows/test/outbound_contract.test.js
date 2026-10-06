@@ -61,12 +61,12 @@ test('large_backslash_preparation', () => {
     ['bare', '\\'.repeat(500000), '\\'.repeat(500000)],
     ['image_even', `${'\\'.repeat(500000)}![`, `${'\\'.repeat(500001)}![`],
     ['image_odd', `${'\\'.repeat(500001)}![`, `${'\\'.repeat(500001)}![`],
-    ['wiki_open_even', `${'\\'.repeat(500000)}[[`, `${'\\'.repeat(500000)}[[`],
+    ['wiki_open_even', `${'\\'.repeat(500000)}[[`, `${'\\'.repeat(500001)}[[`],
     ['wiki_open_odd', `${'\\'.repeat(500001)}[[`, `${'\\'.repeat(500001)}[[`],
     ['wiki_even', `${'\\'.repeat(500000)}[[u]]`, `${'\\'.repeat(500001)}[[u]]`],
     ['wiki_odd', `${'\\'.repeat(500001)}[[u]]`, `${'\\'.repeat(500001)}[[u]]`],
-    ['wiki_unclosed_runs', `[[${'\\'.repeat(5000)}`.repeat(100), `[[${'\\'.repeat(5000)}`.repeat(100)],
-    ['wiki_pairs', `[[${'\\a'.repeat(250000)}`, `[[${'\\a'.repeat(250000)}`],
+    ['wiki_unclosed_runs', `[[${'\\'.repeat(5000)}`.repeat(100), `\\[[${'\\'.repeat(5000)}`.repeat(100)],
+    ['wiki_pairs', `[[${'\\a'.repeat(250000)}`, `\\[[${'\\a'.repeat(250000)}`],
     ['definition_pairs', `[${'\\a'.repeat(250000)}`, `[${'\\a'.repeat(250000)}`],
     ['definition_openers', `[${'\\a'.repeat(2500)} `.repeat(100), `[${'\\a'.repeat(2500)} `.repeat(100)],
   ];
@@ -77,13 +77,10 @@ for await (const chunk of process.stdin) source += chunk;
 process.stdout.write(prepareLine(source));
 `;
   for (const [id, source, expected] of cases) {
-    // A child timeout makes quadratic mutants fail without hanging the suite.
-    const start = performance.now();
+    // These 500 KB inputs take under one second; five allows for CI contention.
     const actual = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
       input: source, encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024,
     });
-    // These 500 KB inputs take under one second; five allows for CI contention.
-    assert.ok(performance.now() - start < 5000, id);
     assert.equal(actual, expected, id);
   }
 });
@@ -95,14 +92,8 @@ function assertLineInvariant(output) {
     const character = output[index];
     const escaped = slashes % 2 === 1;
     if (!escaped) assert.notEqual(output.slice(index, index + 2), '![');
+    if (!escaped) assert.notEqual(output.slice(index, index + 2), '[[');
     if (character === '[' && !escaped) {
-      if (output.slice(index, index + 2) === '[[') {
-        for (let at = index + 2; at < output.length; at += 1) {
-          if (output[at] === '\\') { at += 1; continue; }
-          if (output[at] === '[') break;
-          assert.notEqual(output.slice(at, at + 2), ']]');
-        }
-      }
       if (firstBracket && ![...output.slice(0, index)].some((ch) => /[A-Za-z\\]/.test(ch))) {
         let nonblank = false;
         for (let at = index + 1; at < output.length; at += 1) {

@@ -681,6 +681,34 @@
       "kind": "regression"
     },
     {
+      "id": "wikilink_bare_opener",
+      "input": "[[a",
+      "expected": "\\[[a",
+      "rule_ids": [
+        "prose.wikilink"
+      ],
+      "kind": "regression",
+      "operations": [
+        "prose",
+        "line"
+      ],
+      "note": "A closer in another composed field must not complete an unescaped opener."
+    },
+    {
+      "id": "wikilink_overlapping_openers",
+      "input": "[[[a",
+      "expected": "\\[\\[[a",
+      "rule_ids": [
+        "prose.wikilink"
+      ],
+      "kind": "regression",
+      "operations": [
+        "prose",
+        "line"
+      ],
+      "note": "Escaping one opener must also contain the overlapping opener."
+    },
+    {
       "id": "wikilink_image",
       "input": "[[https://example.test/p.png]]",
       "expected": "\\[[https://example.test/p.png]]",
@@ -710,12 +738,16 @@
     {
       "id": "wikilink_array",
       "input": "[[1, 2], [3]]",
-      "expected": "[[1, 2], [3]]",
+      "expected": "\\[[1, 2], [3]]",
       "rule_ids": [
         "prose.wikilink"
       ],
-      "kind": "control",
-      "note": "The unescaped inner bracket stops pairing, so the array stays literal."
+      "kind": "regression",
+      "note": "Every unescaped wikilink opener is contained even when inner brackets interrupt pairing.",
+      "operations": [
+        "prose",
+        "line"
+      ]
     },
     {
       "id": "wikilink_already_escaped",
@@ -779,6 +811,16 @@
         "prose.wikilink"
       ],
       "kind": "regression"
+    },
+    {
+      "id": "comment_removal_before_decode",
+      "input": "<!-<!--x-->- a --&#6<!--y-->2; b -->",
+      "expected": "",
+      "operations": [
+        "prose",
+        "line"
+      ],
+      "note": "Removal forms a comment that must disappear before another entity decode shortens it."
     }
   ]
 }

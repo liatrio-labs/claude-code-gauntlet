@@ -420,7 +420,8 @@ function outboundBase(value) {
       return number >= 32 && number <= 126 ? String.fromCharCode(number) : '';
     });
     text = text.replaceAll('&commat;', '@');
-    // Its own fixpoint loop so static analysis sees the removal repeat; the outer loop alone already converges.
+    // Removal can build a new comment from surrounding text; decoding between
+    // removals changes which text is removed.
     let uncommented;
     do {
       uncommented = text;
@@ -451,7 +452,7 @@ function outboundContain(line) {
   // Twin of gauntlet.text containment; inline spans cannot certify renderer code.
   // Start only at the first backslash so failed openers scan each run once.
   line = line.replace(/(?<!\\)(\\*)!\[/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}![`);
-  line = line.replace(/(?<!\\)(\\*)\[\[(?=(?:\\[\s\S]|[^\\\[])*?\]\])/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}[[`);
+  line = line.replace(/(?<!\\)(\\*)\[(?=\[)/g, (_, slashes) => `${slashes}${slashes.length % 2 === 0 ? '\\' : ''}[`);
   line = line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
     /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
   ));

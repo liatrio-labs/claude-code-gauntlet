@@ -73,17 +73,8 @@ def assert_outbound_string_invariant(
             escaped = slashes % 2 == 1
             if not escaped:
                 assert markup[index : index + 2] != "![", repr(markup)
+                assert markup[index : index + 2] != "[[", repr(markup)
             if character == "[" and not escaped:
-                if markup[index : index + 2] == "[[":
-                    at = index + 2
-                    while at < len(markup):
-                        if markup[at] == "\\":
-                            at += 2
-                            continue
-                        if markup[at] == "[":
-                            break
-                        assert markup[at : at + 2] != "]]", repr(markup)
-                        at += 1
                 prefix = markup[line_start:index]
                 if first_bracket and not any(
                     "A" <= ch <= "Z" or "a" <= ch <= "z" or ch == "\\" for ch in prefix
@@ -141,6 +132,7 @@ def test_tracked_fixture_has_canonical_byte_layout():
     [
         pytest.param("![a](u)", id="image"),
         pytest.param("[[alt|u]]", id="wikilink"),
+        pytest.param("[[a", id="wikilink_bare_opener"),
         pytest.param(": [critical]: u", id="colon_prefix"),
         pytest.param("~ [critical]: u", id="tilde_prefix"),
         pytest.param("[" + "a" * 5000 + "]: u", id="unbounded_label"),

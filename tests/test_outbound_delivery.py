@@ -38,6 +38,54 @@ FAKE_FINDING_MARKER = review_marker.build_finding_marker(SHA, "0123456789abcdef"
 pytestmark = pytest.mark.usefixtures("poster_state")
 
 
+@pytest.mark.parametrize(
+    ("agent", "dimension", "confidence", "expected_identity"),
+    [
+        pytest.param(
+            "[[a",
+            "|https://example.test/p.png]]",
+            "0.9",
+            "\\[[a (|https://example.test/p.png]], confidence 0.9)",
+            id="agent_dimension",
+        ),
+        pytest.param(
+            "[[a",
+            "correctness",
+            "|https://example.test/p.png]]",
+            "\\[[a (correctness, confidence |https://example.test/p.png]])",
+            id="agent_confidence",
+        ),
+        pytest.param(
+            "bug-hunter",
+            "[[a",
+            "|https://example.test/p.png]]",
+            "bug-hunter (\\[[a, confidence |https://example.test/p.png]])",
+            id="dimension_confidence",
+        ),
+    ],
+)
+def test_corroborator_cross_field_wikilink(
+    agent: str, dimension: str, confidence: str, expected_identity: str
+) -> None:
+    primary: dict[str, object] = {
+        "file": "src/edited.py",
+        "line": 2,
+        "severity": "high",
+        "title": "Primary",
+        "body": "Primary body",
+    }
+    corroborator: dict[str, object] = {
+        "agent": agent,
+        "dimension": dimension,
+        "confidence": confidence,
+        "title": "Corroboration",
+        "body": "Corroborating body",
+    }
+    body = post_review.render_group_body(primary, [corroborator])
+    _assert_outbound_string_invariant(body)
+    assert expected_identity in body
+
+
 def _hostile_finding(**overrides):
     finding = {
         "file": "src/edited.py",

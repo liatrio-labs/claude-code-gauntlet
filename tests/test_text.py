@@ -4,7 +4,6 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable
-from time import perf_counter
 from typing import Literal
 
 import gauntlet.text as text
@@ -223,8 +222,7 @@ def test_reference_redaction_bridge(operation: TextOperation) -> None:
 
 
 def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
-    # A child timeout makes quadratic mutants fail without hanging the suite.
-    start = perf_counter()
+    # These 500 KB inputs take under one second; five allows for CI contention.
     result = subprocess.run(
         [
             sys.executable,
@@ -240,8 +238,6 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
         timeout=5,
         check=True,
     )
-    # These 500 KB inputs take under one second; five allows for CI contention.
-    assert perf_counter() - start < 5
     return result.stdout
 
 
@@ -252,16 +248,16 @@ def _timed_preparation(source: str, operation: Literal["prose", "line"]) -> str:
         pytest.param("\\" * 500000, "\\" * 500000, id="bare"),
         pytest.param("\\" * 500000 + "![", "\\" * 500001 + "![", id="image_even"),
         pytest.param("\\" * 500001 + "![", "\\" * 500001 + "![", id="image_odd"),
-        pytest.param("\\" * 500000 + "[[", "\\" * 500000 + "[[", id="wiki_open_even"),
+        pytest.param("\\" * 500000 + "[[", "\\" * 500001 + "[[", id="wiki_open_even"),
         pytest.param("\\" * 500001 + "[[", "\\" * 500001 + "[[", id="wiki_open_odd"),
         pytest.param("\\" * 500000 + "[[u]]", "\\" * 500001 + "[[u]]", id="wiki_even"),
         pytest.param("\\" * 500001 + "[[u]]", "\\" * 500001 + "[[u]]", id="wiki_odd"),
         pytest.param(
             ("[[" + "\\" * 5000) * 100,
-            ("[[" + "\\" * 5000) * 100,
+            ("\\[[" + "\\" * 5000) * 100,
             id="wiki_unclosed_runs",
         ),
-        pytest.param("[[" + "\\a" * 250000, "[[" + "\\a" * 250000, id="wiki_pairs"),
+        pytest.param("[[" + "\\a" * 250000, "\\[[" + "\\a" * 250000, id="wiki_pairs"),
         pytest.param("[" + "\\a" * 250000, "[" + "\\a" * 250000, id="definition_pairs"),
     ],
 )
