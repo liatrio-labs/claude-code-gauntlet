@@ -1229,3 +1229,354 @@ def test_patch_stdio(path, line, title, stdout, stderr, tmp_path):
     assert result.returncode == 0
     assert normalize(result.stdout, tmp_path) == stdout
     assert normalize(result.stderr, tmp_path) == stderr
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        pytest.param("absolute", id="gitlab-dry-run-captured-stdout"),
+        pytest.param("relative", id="relative-input-artifact-directory"),
+        pytest.param("symlink", id="symlink-spelling-abspath-artifact-directory"),
+    ],
+)
+def test_posting_artifact_stdout(
+    spelling, tmp_path, monkeypatch, capsys, forge_factory, request
+):
+    from gauntlet.delivery import post
+
+    directory = tmp_path / "caf\u00e9 inputs"
+    directory.mkdir()
+    source = directory / "findings.json"
+    source.write_text(
+        json.dumps(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "sha": FULL,
+                "review_body": "MR review",
+                "findings": [
+                    {
+                        "file": "bar.py",
+                        "line": 2,
+                        "severity": "medium",
+                        "title": "Issue X",
+                        "body": "Desc X",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    if spelling == "symlink":
+        request.getfixturevalue("symlink_or_skip")
+        alias_directory = tmp_path / "alias inputs"
+        alias_directory.mkdir()
+        alias = alias_directory / "findings.json"
+        alias.symlink_to(source)
+        input_path = str(alias)
+        expected_artifact = alias_directory / "post-review-payload.json"
+    elif spelling == "relative":
+        monkeypatch.chdir(tmp_path)
+        input_path = os.path.join("caf\u00e9 inputs", "findings.json")
+        expected_artifact = directory / "post-review-payload.json"
+    else:
+        input_path = str(source)
+        expected_artifact = directory / "post-review-payload.json"
+    fake = forge_factory.configure(
+        FakeGitLab(
+            diffs=[
+                ("--- bar.py\n+++ bar.py\n@@ -1,1 +1,2 @@\n existing\n+added\n", "", 0)
+            ],
+            refs=[
+                JsonFetch(
+                    [
+                        {
+                            "base_commit_sha": "base1",
+                            "head_commit_sha": "head1",
+                            "start_commit_sha": "start1",
+                        }
+                    ],
+                    None,
+                )
+            ],
+        )
+    )
+    monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+    assert post.CLI.invoke([input_path, "--dry-run"]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out == (
+        "MR summary note captured (dry-run).\n"
+        "  1 inline discussion(s) captured.\n"
+        "Dry run \u2014 no comments posted. Payload written to: "
+        + str(expected_artifact)
+        + "\n"
+    )
+    assert expected_artifact.exists()
+    assert json.loads(expected_artifact.read_text(encoding="utf-8"))["discussions"] == [
+        {
+            "body": "**\U0001f7e1 [MEDIUM] Issue X**\n\nDesc X\n\n\u2694\ufe0f *Code Gauntlet*",
+            "position": {
+                "position_type": "text",
+                "base_sha": "base1",
+                "head_sha": "head1",
+                "start_sha": "start1",
+                "new_path": "bar.py",
+                "new_line": 2,
+                "old_path": "bar.py",
+            },
+        }
+    ]
+    assert [call.method for call in fake.calls] == [
+        "diff",
+        "ensure_available",
+        "ensure_available",
+        "diff_refs",
+    ]
+    if spelling == "symlink":
+        assert not (directory / "post-review-payload.json").exists()
+
+
+@pytest.mark.parametrize(
+    "case,code,stdout,error_key",
+    [
+        pytest.param(
+            "partial",
+            0,
+            "MR summary note posted.\n  1 inline discussion(s) posted.\n  1 inline discussion(s) not delivered (see warnings above).\n",
+            None,
+            id="gitlab-partial-rejection-success",
+        ),
+        pytest.param(
+            "all-rejected",
+            1,
+            "MR summary note posted.\n  0 inline discussion(s) posted.\n  2 inline discussion(s) not delivered (see warnings above).\n",
+            "all-rejected",
+            id="gitlab-all-rejected-exit-one",
+        ),
+        pytest.param(
+            "all-invalid",
+            1,
+            "MR summary note posted.\n  0 inline discussion(s) posted.\n  1 finding(s) had a malformed position (see warnings above).\n",
+            "all-invalid",
+            id="gitlab-all-invalid-exit-one",
+        ),
+        pytest.param(
+            "standing",
+            1,
+            "MR summary note for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa already on the MR \u2014 skipping.\n  0 inline discussion(s) posted.\n  2 inline discussion(s) already on the MR from an earlier run \u2014 left alone.\n  1 inline discussion(s) not delivered (see warnings above).\n",
+            "standing-rejected",
+            id="gitlab-standing-old-plus-rejection-exit-one",
+        ),
+        pytest.param(
+            "standing-invalid",
+            1,
+            "MR summary note for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa already on the MR \u2014 skipping.\n  0 inline discussion(s) posted.\n  2 inline discussion(s) already on the MR from an earlier run \u2014 left alone.\n  1 finding(s) had a malformed position (see warnings above).\n",
+            "standing-invalid",
+            id="gitlab-standing-old-plus-malformed-exit-one",
+        ),
+    ],
+)
+def test_posting_live_status(
+    case, code, stdout, error_key, tmp_path, monkeypatch, capsys, forge_factory
+):
+    from gauntlet.forge import PostResult
+
+    from tests.support.posting import invoke_posting
+    from tests.test_posting import (
+        ADDED,
+        CONTEXT,
+        CONTRACT_DIFF,
+        ERRORS,
+        NEW,
+        prior,
+        review,
+    )
+
+    if case == "all-invalid":
+        findings = [{**CONTEXT, "line": 61.0}]
+        replies = None
+    elif case.startswith("standing"):
+        findings = [
+            CONTEXT,
+            ADDED,
+            {**NEW, "line": 1.0} if case == "standing-invalid" else NEW,
+        ]
+        replies = (
+            {"discussions": [PostResult(None, "denied", None)]}
+            if case == "standing"
+            else None
+        )
+    else:
+        findings = [CONTEXT, ADDED]
+        replies = {
+            "notes": [PostResult({}, None, None)],
+            "discussions": [
+                PostResult(None, "denied", None),
+                PostResult({}, None, None)
+                if case == "partial"
+                else PostResult(None, "denied", None),
+            ],
+        }
+    run = invoke_posting(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        forge_factory,
+        review("gitlab", findings),
+        diff=CONTRACT_DIFF,
+        dry_run=False,
+        submissions=replies,
+        entries=prior("f87d51ec25846a5e", "ee15b1fc2a6db296")
+        if case.startswith("standing")
+        else None,
+    )
+    assert run.code == code
+    assert run.out == stdout
+    assert run.raw is None
+    if error_key:
+        assert run.err.endswith(ERRORS[error_key])
+
+
+@pytest.mark.parametrize(
+    "surface,message,error_key",
+    [
+        pytest.param(
+            "versions",
+            "Failed to fetch MR versions (exit 3): denied\nEnsure glab is authenticated and the MR IID is correct.",
+            "versions-fetch",
+            id="posting-multiline-versions-error",
+        ),
+        pytest.param(
+            "versions",
+            "Could not parse MR versions response: bad json",
+            "versions-parse",
+            id="posting-malformed-versions-error",
+        ),
+        pytest.param(
+            "submit",
+            "API call failed (exit 1).\nCommand: glab api --method POST projects/o%2Fr/merge_requests/5/notes --input payload.json\nstderr: denied",
+            "submit-command",
+            id="posting-multiline-submit-error",
+        ),
+    ],
+)
+def test_posting_known_error_lines(
+    surface, message, error_key, tmp_path, monkeypatch, capsys, forge_factory
+):
+    from gauntlet.forge import PostResult
+
+    from tests.support.posting import invoke_posting
+    from tests.test_posting import ERRORS, review
+
+    run = invoke_posting(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        forge_factory,
+        review("gitlab"),
+        dry_run=False,
+        refs=JsonFetch(None, message) if surface == "versions" else None,
+        submissions=[PostResult(None, message, None)] if surface == "submit" else None,
+    )
+    assert run.code == 1
+    assert run.out == ""
+    assert run.err == ERRORS[error_key]
+
+
+@pytest.mark.parametrize(
+    "stream_kind,exception",
+    [
+        pytest.param("absent", None, id="posting-absent-stdout-no-receipt"),
+        pytest.param("closed", ValueError, id="posting-closed-stdout-propagates"),
+        pytest.param("broken", BrokenPipeError, id="posting-broken-pipe-propagates"),
+    ],
+)
+def test_posting_stdout_boundary(
+    stream_kind, exception, tmp_path, monkeypatch, forge_factory
+):
+    from gauntlet.delivery import post
+
+    path = tmp_path / "findings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "sha": FULL,
+                "findings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    fake = forge_factory.configure(FakeForge(diffs=[("", "", 0)]))
+    monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+    monkeypatch.setattr(
+        cli,
+        "_write_line",
+        lambda value: pytest.fail("Posting must retain its human output"),
+    )
+
+    class Broken(io.StringIO):
+        def write(self, value):
+            raise BrokenPipeError("closed pipe")
+
+    stream = (
+        None
+        if stream_kind == "absent"
+        else Broken()
+        if stream_kind == "broken"
+        else io.StringIO()
+    )
+    if stream_kind == "closed":
+        stream.close()
+    monkeypatch.setattr(sys, "stdout", stream)
+    if exception is None:
+        assert post.CLI.invoke([str(path), "--dry-run"]) == 0
+        assert (tmp_path / "post-review-payload.json").exists()
+    else:
+        with pytest.raises(exception):
+            post.CLI.invoke([str(path), "--dry-run"])
+        assert not (tmp_path / "post-review-payload.json").exists()
+    assert [call.method for call in fake.calls] == ["diff", "ensure_available"]
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param("missing", id="posting-missing-findings-input"),
+        pytest.param("json", id="posting-malformed-json-input"),
+        pytest.param("utf8", id="posting-undecodable-input-propagates"),
+    ],
+)
+def test_posting_input_errors(kind, tmp_path, monkeypatch, capsys, forge_factory):
+    from gauntlet.delivery import post
+
+    from tests.test_posting import ERRORS
+
+    path = tmp_path / "findings.json"
+    if kind == "json":
+        path.write_text("{", encoding="utf-8")
+    elif kind == "utf8":
+        path.write_bytes(b"\xff")
+    monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+    if kind == "utf8":
+        with pytest.raises(UnicodeDecodeError):
+            post.CLI.invoke([str(path)])
+        expected_error = ""
+    else:
+        assert post.CLI.invoke([str(path)]) == 1
+        expected_error = (
+            ERRORS["missing-findings"].format(path=path)
+            if kind == "missing"
+            else ERRORS["invalid-json"]
+        )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == expected_error
+    assert forge_factory.calls == []
+    assert not (tmp_path / "post-review-payload.json").exists()
