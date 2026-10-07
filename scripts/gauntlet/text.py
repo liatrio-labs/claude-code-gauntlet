@@ -55,6 +55,7 @@ _EntityName = Literal[
     "lsqb",
     "rsqb",
     "rbrack",
+    "Hat",
     "colon",
     "lpar",
     "rpar",
@@ -69,6 +70,7 @@ _NAMED_ENTITIES: dict[_EntityName, str] = {
     "lsqb": "[",
     "rsqb": "]",
     "rbrack": "]",
+    "Hat": "^",
     "colon": ":",
     "lpar": "(",
     "rpar": ")",
@@ -259,10 +261,9 @@ def _break_marker_openers(text: str) -> str:
 
 
 def _escape_visible(text: str, *, code: bool = False) -> str:
-    # GitLab reparses text after consuming escapes; fullwidth brackets survive.
-    # Original neighbours keep overlapping openers; the lookbehind anchors each run.
+    # Fullwidth brackets survive reparsing and keep footnote text visible.
     text = re.sub(
-        r"(?<=[!\[])\\*\[",
+        r"(?<=[!\[])\\*\[|\[(?=\\*\^)",
         lambda match: match.group()[:-1] + "\uff3b",
         text,
     )
@@ -280,9 +281,9 @@ def _escape_visible(text: str, *, code: bool = False) -> str:
 
 
 _DEFINITION_RE = re.compile(
-    r"(?m)^[^A-Za-z\\\[\n]*\[(?:(\^[^\]\n]*)|"
-    # The character alternative consumes continuation prefixes without rescans.
-    r"((?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$)))+))\]:"
+    r"(?m)^[^A-Za-z\\\[\n]*\[("
+    # Consume continuation prefixes in the match so they are not rescanned.
+    r"(?:\\[^\n]|[^\\\[\]\n]|\n(?![ \t>]*(?:\n|$)))+)\]:"
 )
 
 
@@ -295,17 +296,13 @@ def _escape_triggered_definition_colons(line: str, *, force: bool = False) -> st
 
 
 def _escape_definitions(text: str) -> str:
-    # Escape the colon because escaping the closing bracket can discard footnotes.
-    # Twin: workflows/src/renderReport.js::outboundDefinitions, plus LF continuation.
+    # Escape the colon so a nonempty reference definition stays literal.
     text = "\n".join(
         _escape_triggered_definition_colons(line) for line in text.split("\n")
     )
 
     def escape(match: re.Match[str]) -> str:
-        if (
-            match.group(1) is not None
-            or re.sub(r"\n[ \t>]*", "\n", match.group(2)).strip()
-        ):
+        if re.sub(r"\n[ \t>]*", "\n", match.group(1)).strip():
             return match.group()[:-1] + "\\:"
         return match.group()
 

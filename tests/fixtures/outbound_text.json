@@ -580,7 +580,7 @@
       "id": "A-footnote",
       "operation": "prose",
       "input": "x [^a]: note SENT](a b) after",
-      "expected": "x [^a]\uff1a note SENT](a b) after"
+      "expected": "x \uff3b^a]\uff1a note SENT](a b) after"
     },
     {
       "id": "A-slashes",
@@ -909,11 +909,15 @@
       "js": "n/a"
     },
     {
-      "id": "unmatched_footnote_opener_control",
+      "id": "footnote_opener_two_line",
       "operation": "prose",
-      "input": "See [^The handler W1\nmore W2] tail W3",
-      "expected": "See [^The handler W1\nmore W2] tail W3",
-      "js": "n/a"
+      "input": "See [^The handler trusts X-User W1\nwithout verifying the token W2] tail W3",
+      "expected": "See \uff3b^The handler trusts X-User W1\nwithout verifying the token W2] tail W3",
+      "js": "n/a",
+      "kind": "regression",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ]
     },
     {
       "id": "tilde_paired_span_then_outside_run",
@@ -926,6 +930,136 @@
       "operation": "prose",
       "input": "see `x` then `unpaired ~~~ here",
       "expected": "see `x` then \\`unpaired \\~\\~\\~ here"
+    },
+    {
+      "id": "footnote_opener_backslash",
+      "operation": "prose",
+      "input": "See [\\^The handler W1] tail W2",
+      "expected": "See \uff3b\\^The handler W1] tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_code_span",
+      "operation": "prose",
+      "input": "See `[^The handler W1]` tail W2",
+      "expected": "See `\uff3b^The handler W1]` tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_hat_entity",
+      "operation": "prose",
+      "input": "See [&Hat;The handler W1] tail W2",
+      "expected": "See \uff3b^The handler W1] tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_image",
+      "operation": "prose",
+      "input": "See ![^The handler W1] tail W2",
+      "expected": "See !\uff3b^The handler W1] tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_location",
+      "operation": "location",
+      "input": "src/[^handler-W1.py:3",
+      "expected": "`src/\uff3b^handler-W1.py:3`",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_nested_bracket",
+      "operation": "prose",
+      "input": "[^The handler [x] W1\nmore W2] tail W3",
+      "expected": "\uff3b^The handler [x] W1\nmore W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_broken_code_span",
+      "operation": "prose",
+      "input": "See `[^The handler W1\nmore W2]` tail W3",
+      "expected": "See \\`\uff3b^The handler W1\nmore W2]\\` tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_list",
+      "operation": "prose",
+      "input": "- See [^The handler W1\n  more W2] tail W3",
+      "expected": "- See \uff3b^The handler W1\n  more W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_quote",
+      "operation": "prose",
+      "input": "> See [^The handler W1\n> more W2] tail W3",
+      "expected": "> See \uff3b^The handler W1\n> more W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_backslash_run",
+      "operation": "prose",
+      "input": "See [\\\\\\^The handler W1\nmore W2] tail W3",
+      "expected": "See \uff3b\\\\\\^The handler W1\nmore W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_wikilink",
+      "operation": "prose",
+      "input": "See [[^The handler W1\nmore W2] tail W3",
+      "expected": "See [\uff3b^The handler W1\nmore W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_fullwidth_caret_control",
+      "operation": "prose",
+      "input": "See [\uff3eThe handler W1\nmore W2] tail W3",
+      "expected": "See [\uff3eThe handler W1\nmore W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "footnote_opener_spaced_control",
+      "operation": "prose",
+      "input": "See [ ^The handler W1] tail W2",
+      "expected": "See [ ^The handler W1] tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "control"
     }
   ]
 }

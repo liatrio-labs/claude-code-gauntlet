@@ -3207,6 +3207,7 @@ const OUTBOUND_NAMED_ENTITIES = {
   lsqb: '[',
   rsqb: ']',
   rbrack: ']',
+  Hat: '^',
   colon: ':',
   lpar: '(',
   rpar: ')',
@@ -3327,7 +3328,7 @@ function outboundBase(value) {
     .replace(/[\r\n]+/g, ' ');
 }
 function outboundVisible(text, code = false) {
-  text = text.replace(/(?<=[!\[])\\*\[/g, (match) => `${match.slice(0, -1)}\uFF3B`);
+  text = text.replace(/(?<=[!\[])\\*\[|\[(?=\\*\^)/g, (match) => `${match.slice(0, -1)}\uFF3B`);
   const escaped = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
   return escaped.replace(/@/g, (match, index) => (
     index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])
@@ -3405,8 +3406,8 @@ function outboundDefinitions(line, forceColon = false) {
   if (guardColon) {
     line = line.replace(/\](\\*):/g, (match) => `${match.slice(0, -1)}\uFF1A`);
   }
-  return line.replace(/^[^A-Za-z\\\[\n]*\[(?:(\^[^\]\n]*)|((?:\\[^\n]|[^\\\[\]\n])+))\]:/u, (match, footnote, label) => (
-    footnote !== undefined || /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
+  return line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
+    /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
   ));
 }
 function outboundContain(line, forceColon = false) {

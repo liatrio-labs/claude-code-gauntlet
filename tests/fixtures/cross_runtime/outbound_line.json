@@ -440,7 +440,7 @@
     {
       "id": "reference_footnote",
       "input": "[^n]: note",
-      "expected": "[^n]\\: note",
+      "expected": "\uff3b^n]\\: note",
       "rule_ids": [
         "prose.reference_definition"
       ],
@@ -449,7 +449,7 @@
     {
       "id": "reference_footnote_nested",
       "input": "[^1]: [critical]: u",
-      "expected": "[^1]\\: [critical]: u",
+      "expected": "\uff3b^1]\\: [critical]: u",
       "rule_ids": [
         "prose.reference_definition"
       ],
@@ -1254,7 +1254,7 @@
     {
       "id": "A-footnote",
       "input": "x [^a]: note SENT](a b) after",
-      "expected": "x [^a]\uff1a note SENT](a b) after"
+      "expected": "x \uff3b^a]\uff1a note SENT](a b) after"
     },
     {
       "id": "A-slashes",
@@ -1641,7 +1641,7 @@
     {
       "id": "footnote_slash_plain",
       "input": "[^a\\]: hidden W1 text",
-      "expected": "[^a\\]\\: hidden W1 text",
+      "expected": "\uff3b^a\\]: hidden W1 text",
       "operations": [
         "line",
         "prose"
@@ -1650,7 +1650,7 @@
     {
       "id": "footnote_bracket_plain",
       "input": "[^x[a]: hidden W1 text",
-      "expected": "[^x[a]\\: hidden W1 text",
+      "expected": "\uff3b^x[a]: hidden W1 text",
       "operations": [
         "line",
         "prose"
@@ -1659,7 +1659,7 @@
     {
       "id": "footnote_slash_list",
       "input": "- [^a\\]: hidden W1 text",
-      "expected": "- [^a\\]\\: hidden W1 text",
+      "expected": "- \uff3b^a\\]: hidden W1 text",
       "operations": [
         "line",
         "prose"
@@ -1668,7 +1668,7 @@
     {
       "id": "footnote_bracket_list",
       "input": "- [^x[a]: hidden W1 text",
-      "expected": "- [^x[a]\\: hidden W1 text",
+      "expected": "- \uff3b^x[a]: hidden W1 text",
       "operations": [
         "line",
         "prose"
@@ -1677,7 +1677,7 @@
     {
       "id": "footnote_slash_quote",
       "input": "> [^a\\]: hidden W1 text",
-      "expected": "> [^a\\]\\: hidden W1 text",
+      "expected": "> \uff3b^a\\]: hidden W1 text",
       "operations": [
         "line",
         "prose"
@@ -1686,7 +1686,7 @@
     {
       "id": "footnote_bracket_quote",
       "input": "> [^x[a]: hidden W1 text",
-      "expected": "> [^x[a]\\: hidden W1 text",
+      "expected": "> \uff3b^x[a]: hidden W1 text",
       "operations": [
         "line",
         "prose"
@@ -1695,7 +1695,7 @@
     {
       "id": "footnote_control_space",
       "input": "[^x y]:",
-      "expected": "[^x y]\\:",
+      "expected": "\uff3b^x y]\\:",
       "operations": [
         "line",
         "prose"
@@ -1704,7 +1704,7 @@
     {
       "id": "footnote_control_empty",
       "input": "[^]:",
-      "expected": "[^]\\:",
+      "expected": "\uff3b^]\\:",
       "operations": [
         "line",
         "prose"
@@ -1713,7 +1713,7 @@
     {
       "id": "footnote_control_even_slashes",
       "input": "[^x\\\\]:",
-      "expected": "[^x\\\\]\\:",
+      "expected": "\uff3b^x\\\\]\\:",
       "operations": [
         "line",
         "prose"
@@ -1722,7 +1722,7 @@
     {
       "id": "colon_tick_footnote",
       "input": "[^`]: The handler trusts `X-User` ...; see [docs](https://e.test/auth).",
-      "expected": "[^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth).",
+      "expected": "\uff3b^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth).",
       "operations": [
         "line",
         "prose"
@@ -1935,6 +1935,132 @@
       "id": "invisible_cr",
       "input": "A\rB",
       "expected": "AB"
+    },
+    {
+      "id": "footnote_opener_backslash",
+      "input": "See [\\^The handler W1] tail W2",
+      "expected": "See \uff3b\\^The handler W1] tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_basic",
+      "input": "See [^The handler trusts X-User W1] tail W2",
+      "expected": "See \uff3b^The handler trusts X-User W1] tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_code_span",
+      "input": "See `[^The handler W1]` tail W2",
+      "expected": "See `\uff3b^The handler W1]` tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_hat_entity",
+      "input": "See [&Hat;The handler W1] tail W2",
+      "expected": "See \uff3b^The handler W1] tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_image",
+      "input": "See ![^The handler W1] tail W2",
+      "expected": "See !\uff3b^The handler W1] tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_nested_bracket",
+      "input": "[^The handler [x] W1 more W2] tail W3",
+      "expected": "\uff3b^The handler [x] W1 more W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_spaced_control",
+      "input": "See [ ^The handler W1] tail W2",
+      "expected": "See [ ^The handler W1] tail W2",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "control"
+    },
+    {
+      "id": "footnote_opener_two_line",
+      "input": "See [^The handler trusts X-User W1\nwithout verifying the token W2] tail W3",
+      "expected": "See \uff3b^The handler trusts X-User W1 without verifying the token W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_broken_code_span",
+      "input": "See `[^The handler W1\nmore W2]` tail W3",
+      "expected": "See `\uff3b^The handler W1 more W2]` tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_list",
+      "input": "- See [^The handler W1\n  more W2] tail W3",
+      "expected": "- See \uff3b^The handler W1   more W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_quote",
+      "input": "> See [^The handler W1\n> more W2] tail W3",
+      "expected": "> See \uff3b^The handler W1 > more W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_backslash_run",
+      "input": "See [\\\\\\^The handler W1\nmore W2] tail W3",
+      "expected": "See \uff3b\\\\\\^The handler W1 more W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_wikilink",
+      "input": "See [[^The handler W1\nmore W2] tail W3",
+      "expected": "See [\uff3b^The handler W1 more W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "regression"
+    },
+    {
+      "id": "footnote_opener_fullwidth_caret_control",
+      "input": "See [\uff3eThe handler W1\nmore W2] tail W3",
+      "expected": "See [\uff3eThe handler W1 more W2] tail W3",
+      "rule_ids": [
+        "prose.footnote_opener"
+      ],
+      "kind": "control"
     }
   ],
   "summary_cases": [
@@ -2270,8 +2396,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth).",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth)."
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): \uff3b^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth).",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): \uff3b^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth)."
     },
     {
       "id": "colon_tick_definition_summary",
@@ -2336,36 +2462,43 @@
       "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`"
     },
     {
-      "id": "footnote_opener_title_summary",
+      "id": "footnote_opener_title_and_path_summary",
       "input": {
         "findings": [
           {
-            "id": "S",
-            "severity": "high",
-            "file": "src/a.py",
-            "line_start": 3,
-            "title": "See [^The handler W1"
-          }
-        ]
-      },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: See [^The handler W1",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: See [^The handler W1"
-    },
-    {
-      "id": "footnote_opener_path_summary",
-      "input": {
-        "findings": [
-          {
-            "id": "S",
+            "id": "footnote-opener",
             "severity": "high",
             "file": "src/[^handler.py",
             "line_start": 3,
-            "title": "Path W1"
+            "title": "See [^The handler trusts X-User W1"
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[^handler.py:3`: Path W1",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[^handler.py:3`: Path W1"
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/\uff3b^handler.py:3`: See \uff3b^The handler trusts X-User W1",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/\uff3b^handler.py:3`: See \uff3b^The handler trusts X-User W1"
+    },
+    {
+      "id": "footnote_opener_title_and_path_linked_summary",
+      "input": {
+        "findings": [
+          {
+            "id": "footnote-opener",
+            "severity": "high",
+            "file": "src/[^handler.py",
+            "line_start": 3,
+            "title": "See [^The handler trusts X-User W1"
+          }
+        ],
+        "prIdentity": {
+          "platform": "gitlab",
+          "web_origin": "http://localhost:8929",
+          "owner": "cdr-group",
+          "repo": "probe",
+          "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/\uff3b^handler.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5B%5Ehandler.py#L3): See \uff3b^The handler trusts X-User W1",
+      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/\uff3b^handler.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5B%5Ehandler.py#L3): See \uff3b^The handler trusts X-User W1"
     }
   ]
 }

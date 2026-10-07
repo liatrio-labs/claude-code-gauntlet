@@ -100,7 +100,7 @@ test('normalizer overlap semantics and seeded invariants', () => {
     assert.equal(reportRenderer.normalizeOutboundText(normalized), normalized, source);
     assert.equal(hasCompleteNonoverlappingComment(normalized), false, source);
   }
-  const alphabet = ['<!', '--', '>', '&', '#38;', '&#64;', '\u200b', 'x', '\u00a0', '&nbsp;', '&NonBreakingSpace;'];
+  const alphabet = ['<!', '--', '>', '&', '#38;', '&#64;', '\u200b', 'x', '\u00a0', '&Hat;', '&nbsp;', '&NonBreakingSpace;'];
   let state = 0x471;
   for (let sample = 0; sample < 256; sample += 1) {
     let source = '';
@@ -112,7 +112,7 @@ test('normalizer overlap semantics and seeded invariants', () => {
     assert.equal(reportRenderer.normalizeOutboundText(normalized), normalized, source);
     assert.equal(hasCompleteNonoverlappingComment(normalized), false, source);
     assert.doesNotMatch(normalized, /&#(?:[0-9]+|[xX][0-9a-fA-F]+);/);
-    assert.doesNotMatch(normalized, /&(?:commat|excl|lbrack|lsqb|rsqb|rbrack|colon|lpar|rpar|bsol|nbsp|NonBreakingSpace);/);
+    assert.doesNotMatch(normalized, /&(?:commat|excl|lbrack|lsqb|rsqb|rbrack|Hat|colon|lpar|rpar|bsol|nbsp|NonBreakingSpace);/);
     assert.doesNotMatch(normalized, /\u00a0/);
     assert.doesNotMatch(normalized, /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/);
   }
@@ -131,8 +131,8 @@ test('large_backslash_preparation', () => {
     ['image_split', `!${'\\'.repeat(500000)}[`, `!${'\\'.repeat(500000)}\uFF3B`],
     ['definition_pairs', `[${'\\a'.repeat(250000)}`, `[${'\\a'.repeat(250000)}`],
     ['definition_openers', `[${'\\a'.repeat(2500)} `.repeat(100), `[${'\\a'.repeat(2500)} `.repeat(100)],
-    ['footnote_label', `[^${'[\\a'.repeat(100000)}]: hidden text`, `[^${'[\\a'.repeat(100000)}]\\: hidden text`],
-    ['unclosed_footnote', `[^${'[\\a'.repeat(100000)}`, `[^${'[\\a'.repeat(100000)}`],
+    ['footnote_label', `[^${'[\\a'.repeat(100000)}]: hidden text`, `\uFF3B^${'[\\a'.repeat(100000)}]: hidden text`],
+    ['unclosed_footnote', `[^${'[\\a'.repeat(100000)}`, `\uFF3B^${'[\\a'.repeat(100000)}`],
   ];
   const script = `
 import { prepareLine } from './workflows/src/renderReport.js';
