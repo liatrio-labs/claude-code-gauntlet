@@ -103,9 +103,6 @@ GH_COMMENT_FINDINGS = [
         "suggestion": (
             "Add a LIMIT/OFFSET pair to the query and cap the page size server-side."
         ),
-        # No end_line: this is the missing_end_line downgrade case, deliberately
-        # oracle-independent (the gate fails on this before it ever consults
-        # valid_lines/line_texts). The prose `suggestion` above is its fallback.
         "suggested_fix_code": (
             'cursor.execute("SELECT * FROM users LIMIT %s OFFSET %s", (limit, offset))'
         ),

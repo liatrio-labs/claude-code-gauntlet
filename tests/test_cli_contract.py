@@ -17,9 +17,9 @@ from gauntlet import cli, marker, patches, prior_review, proc
 from gauntlet.forge import GitHub, JsonFetch, PostResult
 from gauntlet.paths import ENTRY_ROOT
 
-from tests import test_posting as posting_cases
 from tests.conftest import Invocation
 from tests.support import path_text
+from tests.support import posting as posting_cases
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 from tests.test_forge import HOST_CASES
 

@@ -189,7 +189,12 @@ def _deliver(
     lines: dict[tuple[str, int], int | None] | None = None,
     texts: dict[tuple[str, int], str] | None = None,
     check_position: bool = True,
-) -> tuple[dict[str, object] | list[PostRequest], list[ForgeCall]]:
+) -> tuple[
+    list[PostRequest]
+    | post_review.GitHubDryRunPayload
+    | post_review.GitLabDryRunPayload,
+    list[ForgeCall],
+]:
     if lines is None:
         lines = {("src/edited.py", 2): None}
     if texts is None:

@@ -203,8 +203,6 @@ def evaluate_fix(
         evaluated = cast(ApplyRange, apply_range)
     if "suggested_fix_code" not in finding:
         return FixVerdict(True, None, evaluated)
-    # A None apply_range marks a site where no fence can apply, such as a
-    # position-less note or a degraded body section.
     path_lookup = diff.diff_path_spelling(
         facts,
         cast(str, finding.get("file", "?")),
