@@ -44,6 +44,7 @@ _CONTAINMENT_RULES = (
     "prose.leading_slash",
     "prose.multiline_quote",
     "prose.image",
+    "prose.footnote_opener",
     "prose.reference_definition",
     "prose.wikilink",
 )
@@ -466,6 +467,7 @@ def _recorded_prose_guard_case_ids() -> list[str]:
         "tilde_",
         "colon_second_parse_",
         "footnote_label_",
+        "footnote_opener_",
     )
     for prefix in prefixes:
         assert any(case["id"].startswith(prefix) for case in CASES), (

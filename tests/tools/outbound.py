@@ -213,6 +213,7 @@ def markup_corpus() -> list[str]:
         "&rsqb;",
         "&lpar;",
         "&bsol;",
+        "&Hat;",
         "&nbsp;",
         "&NonBreakingSpace;",
         "\u00a0",

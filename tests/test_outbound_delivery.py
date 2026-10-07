@@ -1593,7 +1593,7 @@ def test_prose_active_fences_preserve_owned_patch(
     assert "before x [a]\uff1a //example.test/SENT](a b) after" in rendered
     assert ": \\~\\~\\~suggestion\n  x = SENT\n  \\~\\~\\~" in rendered
     assert "ordinary \\~\\~\\~ text" in rendered
-    assert "x [^a]\uff1a note SENT](a b) after" in rendered
+    assert "x \uff3b^a]\uff1a note SENT](a b) after" in rendered
     assert f"{patch_header}\n{patch_text}\n```" in rendered
     assert post_review.BRAND_TRAILER in rendered
 
