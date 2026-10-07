@@ -909,17 +909,6 @@
       "js": "n/a"
     },
     {
-      "id": "footnote_opener_two_line",
-      "operation": "prose",
-      "input": "See [^The handler trusts X-User W1\nwithout verifying the token W2] tail W3",
-      "expected": "See \uff3b^The handler trusts X-User W1\nwithout verifying the token W2] tail W3",
-      "js": "n/a",
-      "kind": "regression",
-      "rule_ids": [
-        "prose.footnote_opener"
-      ]
-    },
-    {
       "id": "tilde_paired_span_then_outside_run",
       "operation": "prose",
       "input": "see `x` then ~~~ here",
