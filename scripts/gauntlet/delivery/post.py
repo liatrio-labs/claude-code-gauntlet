@@ -18,7 +18,7 @@ from gauntlet.delivery.fold import (
     body_limit,
     utf8_len,
 )
-from gauntlet.delivery.gate import ApplySite, FixReason, FixVerdict, is_plain_int
+from gauntlet.delivery.gate import ApplySite, FixVerdict, is_plain_int
 from gauntlet.diff import DiffFacts
 from gauntlet.forge import (
     Forge,
@@ -128,7 +128,6 @@ class GroupPlan:
 @dataclass(frozen=True, slots=True)
 class InlinePlan:
     body: compose.InlineBody
-    marker_suffix: str
     budget_error: str | None
 
 
@@ -152,12 +151,6 @@ class DeliverySession:
         self.skipped: list[str] = []
         self.kept_fixes = 0
         self.downgraded_fixes = 0
-        self.outcomes: dict[DeliveryOutcome, int] = {
-            "posted": 0,
-            "already_present": 0,
-            "invalid": 0,
-            "failed": 0,
-        }
 
     def activate(self, member: FindingPlan) -> Mapping[str, object]:
         finding, verdict = member.finding, member.verdict
@@ -168,7 +161,7 @@ class DeliverySession:
         if verdict.keep:
             self.kept_fixes += 1
             return finding
-        reason = cast(FixReason, verdict.reason)
+        reason = verdict.downgrade_reason
         self.downgraded_fixes += 1
         self.warn_skip(gate.format_fix_warning(finding, reason, label="suggested-fix"))
         # Preserve unknown caller fields without mutating the original finding.
@@ -213,11 +206,7 @@ class DeliverySession:
     ) -> GitHubDryRunPayload | GitLabDryRunPayload:
         # GitLab captures rendered bodies; only live deliveries append finding markers.
         if platform == "github":
-            cap = (
-                self.captured[0]
-                if self.captured
-                else PostRequest("github", "", "POST", (), {})
-            )
+            cap = self.captured[0]
             return {
                 "platform": "github",
                 "endpoint": cap.endpoint,
@@ -226,7 +215,7 @@ class DeliverySession:
                 "skipped": list(self.skipped),
             }
 
-        summary = self.captured[0].payload if self.captured else {}
+        summary = self.captured[0].payload
         discussions = [cap.payload for cap in self.captured[1:]]
         return {
             "platform": "gitlab",
@@ -381,6 +370,7 @@ def plan_delivery(
     for group in compose.consolidate_delivery(findings):
         primary = group.primary
         line = primary.get("line")
+        # Ship the diff's spelling before validation or GitHub rejects the whole review.
         path = (
             diff.diff_path_spelling(facts, cast(str, primary["file"]), cast(int, line))
             if line is not None
@@ -428,7 +418,7 @@ def plan_delivery(
         primary_plan = group_plan.members[0]
         verdict = primary_plan.verdict
         if primary_plan.index in losers and verdict is not None and verdict.keep:
-            demoted = replace(verdict, keep=False, reason="overlaps_kept_fence")
+            demoted = gate.demote(verdict)
             groups[index] = replace(
                 group_plan,
                 members=(
@@ -455,12 +445,28 @@ def _activate_degraded(
     )
 
 
-def plan_inline(
+def resolve_members(group: GroupPlan, facts: DiffFacts | None) -> GroupPlan:
+    members = [group.members[0]]
+    for member in group.members[1:]:
+        finding = member.finding
+        line = finding.get("line")
+        path = member.path
+        anchor = None
+        if line is not None:
+            path = diff.diff_path_spelling(
+                facts, cast(str, finding.get("file", "?")), cast(int, line)
+            )
+            anchor = _anchor(finding, path, facts, "gitlab")
+        members.append(replace(member, path=path, anchor=anchor))
+    return replace(group, members=tuple(members))
+
+
+def render_inline(
     group: GroupPlan,
     *,
     member_index: int,
     grouped: bool,
-    positionless: bool,
+    surface: Surface,
     plan: DeliveryPlan,
     facts: DiffFacts | None,
     platform: Platform,
@@ -468,6 +474,7 @@ def plan_inline(
     marker_suffix: str = "",
 ) -> InlinePlan:
     member = group.members[member_index]
+    positionless = surface == "note"
     anchor = None if positionless else member.anchor
     if positionless or member.verdict is None:
         verdict = _site_verdict(member.finding, anchor, facts)
@@ -483,7 +490,7 @@ def plan_inline(
                 for record in plan.winning_ranges
             )
         ):
-            verdict = replace(verdict, keep=False, reason="overlaps_kept_fence")
+            verdict = gate.demote(verdict)
         member = replace(member, verdict=verdict)
     finding = session.activate(member)
     offsets = (
@@ -493,9 +500,6 @@ def plan_inline(
     )
     sections = compose.render_group_sections(
         finding, group.group.corroborators if grouped else (), fence_offsets=offsets
-    )
-    surface: Surface = (
-        "inline" if platform == "github" else "note" if positionless else "discussion"
     )
     body = compose.compose_inline_body(
         sections, platform=platform, surface=surface, marker_suffix=marker_suffix
@@ -507,7 +511,7 @@ def plan_inline(
             if platform == "github"
             else "; skipping this delivery."
         )
-    return InlinePlan(body, marker_suffix, error)
+    return InlinePlan(body, error)
 
 
 def plan_summary(
@@ -627,11 +631,11 @@ def post_github(
         if anchor is None:
             skipped_groups.append(_activate_degraded(group, session=session))
             continue
-        inline = plan_inline(
+        inline = render_inline(
             group,
             member_index=0,
             grouped=True,
-            positionless=False,
+            surface="inline",
             plan=plan,
             facts=facts,
             platform="github",
@@ -685,12 +689,14 @@ def post_github(
     return 0
 
 
-def fetch_gitlab_shas(target: ReviewTarget, *, forge: GitLab) -> tuple[str, str, str]:
+def fetch_gitlab_shas(
+    target: ReviewTarget, *, forge: GitLab
+) -> tuple[object, object, object]:
     ensure_available(forge)
     result = forge.diff_refs(target)
     if result.error is not None:
         die(result.error)
-    versions = cast(Sequence[Mapping[str, str]], result.payload)
+    versions = cast(Sequence[Mapping[str, object]], result.payload)
 
     if not versions:
         die("MR versions endpoint returned an empty list.")
@@ -737,10 +743,10 @@ def post_gitlab(
 
     ensure_available(forge)
 
-    shas = fetch_gitlab_shas(target, forge=forge)
-    base_sha, head_sha, start_sha = shas
+    base_sha, head_sha, start_sha = fetch_gitlab_shas(target, forge=forge)
 
     # Refuse unusable SHAs once, before planning diagnostics or the summary request.
+    validated_shas: list[str] = []
     for name, value in (
         ("base_sha", base_sha),
         ("head_sha", head_sha),
@@ -751,6 +757,9 @@ def post_gitlab(
                 f"MR version {name} is {value!r} — every inline position would be "
                 f"rejected. Check that the MR has a version carrying all three SHAs."
             )
+        validated_shas.append(value)
+    base_sha, head_sha, start_sha = validated_shas
+    shas = (base_sha, head_sha, start_sha)
 
     plan = plan_delivery(data, facts, platform="gitlab")
     skipped_groups = [
@@ -802,22 +811,24 @@ def post_gitlab(
         filepath, line = anchor.path, anchor.line
         finding = member.finding
         # Render before dedup for rerun counts; fold notices follow dedup and position checks.
-        inline = plan_inline(
+        marker_suffix = _delivery_marker_suffix(sha, keys)
+        inline = render_inline(
             group,
             member_index=member_index,
             grouped=grouped,
-            positionless=False,
+            surface="discussion",
             plan=plan,
             facts=facts,
             platform="gitlab",
             session=session,
-            marker_suffix=_delivery_marker_suffix(sha, keys),
+            marker_suffix=marker_suffix,
         )
         if inline.budget_error is not None:
             warn(inline.budget_error)
             return "failed"
         if keys and all(key in delivered_keys for key in keys):
             return "already_present"
+        # Never send line_code because GitLab derives it and rejects a synthesized one.
         position: GitLabPosition = {
             "position_type": "text",
             "base_sha": base_sha,
@@ -846,7 +857,7 @@ def post_gitlab(
         payload: GitLabDiscussionPayload = {
             "body": inline.body.body
             if session.dry_run
-            else inline.body.body + inline.marker_suffix,
+            else inline.body.body + marker_suffix,
             "position": position,
         }
         _response, error = session.try_post(
@@ -866,16 +877,17 @@ def post_gitlab(
     ) -> DeliveryOutcome:
         member = group.members[member_index]
         finding = member.finding
-        inline = plan_inline(
+        marker_suffix = _delivery_marker_suffix(sha, (key,))
+        inline = render_inline(
             group,
             member_index=member_index,
             grouped=False,
-            positionless=True,
+            surface="note",
             plan=plan,
             facts=facts,
             platform="gitlab",
             session=session,
-            marker_suffix=_delivery_marker_suffix(sha, (key,)),
+            marker_suffix=marker_suffix,
         )
         if inline.budget_error is not None:
             warn(inline.budget_error)
@@ -886,7 +898,7 @@ def post_gitlab(
         payload: GitLabNotePayload = {
             "body": inline.body.body
             if session.dry_run
-            else inline.body.body + inline.marker_suffix
+            else inline.body.body + marker_suffix
         }
         _response, error = session.try_post(
             gitlab_note_request(target, payload), forge=forge
@@ -906,6 +918,7 @@ def post_gitlab(
         finding = member.finding
         line = finding.get("line")
         title = finding.get("title", "?")
+        # Nothing from this group landed, so report an unanchored member instead of posting a note.
         if line is None:
             session.warn_skip(
                 f"Skipping corroborating finding '{title}' — no line number to "
@@ -913,9 +926,7 @@ def post_gitlab(
             )
             return "invalid"
         if member.anchor is None:
-            filepath = diff.diff_path_spelling(
-                facts, cast(str, finding.get("file", "?")), cast(int, line)
-            )
+            filepath = member.path
             session.warn_skip(
                 f"Skipping corroborating finding '{title}' at {filepath}:{line} "
                 f"— line not found in diff."
@@ -923,28 +934,23 @@ def post_gitlab(
             return "invalid"
         return deliver(group, member_index, (key,), grouped=False)
 
-    counters = session.outcomes
+    counters: dict[DeliveryOutcome, int] = {
+        "posted": 0,
+        "already_present": 0,
+        "invalid": 0,
+        "failed": 0,
+    }
     for group in remaining:
         primary_key = member_key(group.members[0])
         # Resolve member anchors and render keys after the summary request.
         # Unanchored members key their raw location, even within a grouped body.
-        members = [group.members[0]]
-        for member in group.members[1:]:
-            finding = member.finding
-            line = finding.get("line")
-            anchor = None
-            if line is not None:
-                filepath = diff.diff_path_spelling(
-                    facts, cast(str, finding.get("file", "?")), cast(int, line)
-                )
-                anchor = _anchor(finding, filepath, facts, "gitlab")
-            members.append(replace(member, anchor=anchor))
-        group = replace(group, members=tuple(members))
+        group = resolve_members(group, facts)
         member_keys = (
             primary_key,
             *(member_key(member) for member in group.members[1:]),
         )
         if primary_key in prior.legacy_group_keys:
+            # Older group bodies carried unkeyed corroborators, so the body is the whole delivery and no missing member is posted again.
             counters["already_present"] += len(member_keys)
             continue
         if any(key in delivered_keys for key in member_keys) and not all(
@@ -1080,16 +1086,14 @@ def _execute(args: argparse.Namespace) -> int:
             die(f"Invalid JSON in findings file: {exc.cause}")
         raise exc.cause from exc
 
-    fields = _INPUT_FIELDS
     if isinstance(loaded, list):
         data: dict[str, Any] = {}
-        fields = (*_INPUT_FIELDS[:3], *_INPUT_FIELDS[3:][::-1])
     elif isinstance(loaded, dict):
         data = loaded
     else:
         die("Findings JSON must be an object or an array.")
 
-    for name in fields:
+    for name in _INPUT_FIELDS:
         value = getattr(args, name)
         if value is not None:
             data[name] = value
@@ -1126,10 +1130,15 @@ def _execute(args: argparse.Namespace) -> int:
                 "Set 'platform' field in findings JSON to 'github' or 'gitlab'."
             )
 
-    if platform not in ("github", "gitlab"):
+    delivery_platform: Platform
+    if platform == "github":
+        delivery_platform = "github"
+    elif platform == "gitlab":
+        delivery_platform = "gitlab"
+    else:
         die(f"Unsupported platform: '{platform}'. Use 'github' or 'gitlab'.")
 
-    forge = make_forge(cast(Platform, platform))
+    forge = make_forge(delivery_platform)
     facts = fetch_diff_facts(_target(data), forge=forge)
 
     # Returned payload defects must not preempt the artifact that explains them.
@@ -1139,9 +1148,7 @@ def _execute(args: argparse.Namespace) -> int:
         status = post_github(data, facts, forge=forge, session=session)
 
     if session.dry_run:
-        out_path = session.write_dry_run_payload(
-            cast(Platform, platform), args.findings_json
-        )
+        out_path = session.write_dry_run_payload(delivery_platform, args.findings_json)
         print(f"Dry run — no comments posted. Payload written to: {out_path}")
 
     return status

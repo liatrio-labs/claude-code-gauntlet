@@ -266,28 +266,11 @@ FIX_CASE_CASES = {
         {},
         (True, None, (2, 3)),
     ),
-    "demote-passed-then-demoted": (
-        finding(end_line=3, suggested_fix_code="fixed"),
-        FACTS,
-        (2, 3),
-        {
-            "mismatch_reason": "span_exceeds_platform_cap",
-            "demote_reason": "overlaps_kept_fence",
-        },
-        (False, "overlaps_kept_fence", (2, 3)),
-    ),
-    "demote-per-fix-wins": (
-        finding(end_line=None, suggested_fix_code="fixed"),
-        FACTS,
-        (2, 3),
-        {"mismatch_reason": "anchor_mismatch", "demote_reason": "overlaps_kept_fence"},
-        (False, "missing_end_line", (2, 3)),
-    ),
     "demote-cap-rename": (
         finding(end_line=3, suggested_fix_code="fixed"),
         FACTS,
         (2, 2),
-        {"mismatch_reason": "span_exceeds_platform_cap", "demote_reason": None},
+        {"mismatch_reason": "span_exceeds_platform_cap"},
         (False, "span_exceeds_platform_cap", (2, 2)),
     ),
     "oracle-x-suffix-is-content": (
@@ -344,6 +327,26 @@ GITLAB_SITE_CASES = {
     "float-bound": (2, 3.0, 2, gate.GitLabApplySite((2, 2))),
     "boolean-anchor-and-line": (True, 3, True, gate.GitLabApplySite((True, True))),
 }
+
+
+@pytest.mark.parametrize(
+    "verdict,expected",
+    [
+        pytest.param(
+            gate.FixVerdict(True, None, (2, 3)),
+            (False, "overlaps_kept_fence", (2, 3)),
+            id="demote-passed-then-demoted",
+        ),
+        pytest.param(
+            gate.FixVerdict(False, "missing_end_line", (2, 3)),
+            (False, "missing_end_line", (2, 3)),
+            id="demote-per-fix-wins",
+        ),
+    ],
+)
+def test_overlap_demotion(verdict, expected):
+    demoted = gate.demote(verdict)
+    assert (demoted.keep, demoted.downgrade_reason, demoted.apply_range) == expected
 
 
 @pytest.mark.parametrize(

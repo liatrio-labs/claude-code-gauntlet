@@ -283,9 +283,10 @@ def check(row, posting, monkeypatch):
         == expected.counts
     )
     if expected.out_lines:
-        assert tuple(
-            line for line in run.out.splitlines() if line in expected.out_lines
-        ) == expected.out_lines
+        assert (
+            tuple(line for line in run.out.splitlines() if line in expected.out_lines)
+            == expected.out_lines
+        )
     if expected.methods is not None:
         assert tuple(call.method for call in run.fake.calls) == expected.methods
     if expected.surfaces is not None:
@@ -1218,7 +1219,12 @@ GROUP = [
         review(
             findings=[
                 grouped(
-                    {"file": "foo.py", "severity": "low", "title": "Mystery", "body": "Body A"},
+                    {
+                        "file": "foo.py",
+                        "severity": "low",
+                        "title": "Mystery",
+                        "body": "Body A",
+                    },
                     primary=True,
                 ),
                 grouped(MEMBER_B),
@@ -1571,7 +1577,9 @@ PROMOTE = [
             "gitlab",
             [
                 grouped(CONTEXT, primary=True),
-                grouped({"title": "Unanchored note", "severity": "low", "body": "x" * 1000}),
+                grouped(
+                    {"title": "Unanchored note", "severity": "low", "body": "x" * 1000}
+                ),
             ],
         ),
         Expected(
@@ -1732,12 +1740,6 @@ FAILURE = [
         (("github", "inline", 20),),
     ),
     Row(
-        "FAILURE-gh-summary-sha-before-composition-and-guard",
-        review(sha=None),
-        Expected(err=ERRORS["gh-summary"], surfaces=(), head_calls=1, code=1),
-        {"dry_run": False, "head_status": 1},
-    ),
-    Row(
         "FAILURE-gl-availability-before-versions-and-diagnostics",
         review("gitlab", [fix(line=999)]),
         Expected(
@@ -1876,15 +1878,30 @@ FAILURE = [
 
 
 @pytest.mark.parametrize("row", params(FAILURE))
-def test_delivery_failure(row, posting, monkeypatch, capsys):
-    if row.id == "FAILURE-gh-summary-sha-before-composition-and-guard":
-
-        def compose_after_sha(*args, **kwargs):
-            assert capsys.readouterr().err == UNKNOWN_WARNING
-            return compose.ComposedBody("\u754c" * 21846, 0, 0, 0, ())
-
-        monkeypatch.setattr(compose, "compose_review_body", compose_after_sha)
+def test_delivery_failure(row, posting, monkeypatch):
     check(row, posting, monkeypatch)
+
+
+def test_github_summary_sha_before_composition_and_guard(posting, monkeypatch, capsys):
+    def compose_after_sha(*args, **kwargs):
+        assert capsys.readouterr().err == (
+            "WARNING: could not resolve a commit SHA for the review marker (git returned "
+            "'unknown'); the posted review will not be detectable as a prior review. "
+            "Set the 'sha' field in the findings JSON to avoid this.\n"
+        )
+        return compose.ComposedBody("\u754c" * 21846, 0, 0, 0, ())
+
+    monkeypatch.setattr(compose, "compose_review_body", compose_after_sha)
+    run = posting(review(sha=None), dry_run=False, head_status=1)
+    assert run.code == 1
+    assert run.err == (
+        "post_review: The composed review body is 65538 bytes, over the "
+        "65536-byte GitHub body limit; nothing was posted.\n"
+    )
+    assert run.out == ""
+    assert run.head_calls == (("git", "rev-parse", "HEAD"),)
+    assert run.requests == ()
+    assert run.payload is None
 
 
 SUMMARY_ROWS = [
@@ -2446,15 +2463,6 @@ def test_capture_delivery(row, posting, monkeypatch):
             '        "body": "**\U0001f7e0 [HIGH] T**\\n\\nb\\n\\n\u2694\ufe0f *Code Gauntlet*"\n      }\n    ]\n  },\n  "skipped": []\n}'
         ).encode("utf-8")
     if row.id == "CAPTURE-bare-array-and-wrapper-bytes":
-        assert list(wrapped_inputs[0]) == [
-            "owner",
-            "repo",
-            "pr_number",
-            "sha",
-            "platform",
-            "review_body",
-            "findings",
-        ]
         assert wrapped_inputs[0] == {
             "owner": "o",
             "repo": "r",
@@ -2473,17 +2481,6 @@ def test_capture_delivery(row, posting, monkeypatch):
         assert len(body.encode("utf-8")) <= 500
         assert len(find_finding_markers(body)) == 2
         assert live.err == run.err
-
-
-def test_empty_github_session_capture_defaults_to_post_method():
-    session = post.DeliverySession(dry_run=True)
-    assert session.dry_run_payload("github") == {
-        "platform": "github",
-        "endpoint": "",
-        "method": "POST",
-        "payload": {},
-        "skipped": [],
-    }
 
 
 SESSION = [
@@ -2572,6 +2569,8 @@ def test_session_isolation(sequence, posting, tmp_path):
 
 MARKER = [
     pytest.param("supplied", id="MARKER-supplied-sha-preferred-and-trimmed"),
+    pytest.param("short", id="MARKER-supplied-short-sha-without-head-read"),
+    pytest.param("empty-head", id="MARKER-empty-successful-head-unmarkable-warning"),
     pytest.param("head", id="MARKER-absent-invalid-sha-local-head"),
     pytest.param("unknown", id="MARKER-head-failure-unmarkable-warning"),
     pytest.param(
@@ -2655,6 +2654,34 @@ def test_marker_delivery(kind, posting):
             assert run.err == ""
             body = run.payload["payload" if platform == "github" else "summary"]["body"]
             assert body == EMPTY_SUMMARY
+        elif kind == "short":
+            run = posting(review(platform, sha="abc1234"), dry_run=False)
+            assert run.code == 0
+            assert run.head_calls == ()
+            assert run.err == ""
+            assert run.requests[0].payload["body"] == (
+                "### \u2694\ufe0f Code Gauntlet\n\nSummary\n\n---\n"
+                "Generated by code-gauntlet | Reviewed up to: abc1234\n\n"
+                '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"abc1234"} -->'
+            )
+            continue
+        elif kind == "empty-head":
+            run = posting(
+                review(platform, sha=None), head="", head_status=0, dry_run=False
+            )
+            assert run.code == 0
+            assert run.head_calls == (("git", "rev-parse", "HEAD"),)
+            assert run.err == (
+                "WARNING: could not resolve a commit SHA for the review marker (git returned "
+                "''); the posted review will not be detectable as a prior review. "
+                "Set the 'sha' field in the findings JSON to avoid this.\n"
+            )
+            assert run.requests[0].payload["body"] == (
+                "### \u2694\ufe0f Code Gauntlet\n\nSummary\n\n---\n"
+                "Generated by code-gauntlet | Reviewed up to: \n\n"
+                '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":""} -->'
+            )
+            continue
         elif kind == "head":
             for invalid in (None, "not-a-real-sha!!", 12345):
                 data = review(platform, sha=invalid)

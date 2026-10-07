@@ -85,12 +85,8 @@ def test_direct_sessions_interleave_live_and_dry_delivery(capsys):
     assert dry.dry_run_payload("github")["skipped"] == [
         "suggested-fix downgraded: x.py:2 (missing_end_line)"
     ]
-    assert live.dry_run_payload("gitlab") == {
-        "platform": "gitlab",
-        "summary": {},
-        "discussions": [],
-        "skipped": [],
-    }
+    assert live.captured == []
+    assert live.skipped == []
     discussions = [
         call.request.payload
         for call in forge.calls
