@@ -79,7 +79,7 @@ Line validation:
     Parses diff to validate each finding line is in the diff. A finding whose line
     cannot be anchored inline (line not in the diff, or no line at all) is not
     dropped: it degrades into a trailing "could not be anchored inline" section on
-    the review body / summary note (see build_skipped_section), so every finding
+    the review body / summary note (see compose.build_skipped_section), so every finding
     still reaches the PR/MR unless the complete composed body exceeds its platform
     byte budget. One warning is emitted per skipped group, naming every member.
 
@@ -556,14 +556,6 @@ def _report_summary_budget(composed, platform):
         )
 
 
-# ---------------------------------------------------------------------------
-# Metadata footer
-# ---------------------------------------------------------------------------
-# ``build_footer`` is imported from gauntlet.marker and re-exported here,
-# so this module has no second definition of the
-# signal it writes.
-
-
 def get_head_sha():
     stdout, _, rc = proc.output(["git", "rev-parse", "HEAD"])
     return stdout.strip() if rc == 0 else "unknown"
@@ -626,7 +618,7 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
     losers = gate.overlap_losers(overlap_records)
 
     comments = []
-    skipped_groups = []  # one list of (filepath, line, finding) per degraded group
+    skipped_groups = []  # one list of compose.SkippedEntry per degraded group
     # One posted comment per consolidation group: findings without a stamp
     # are each their own single-member group, so this loop is unchanged for them.
     for index, group in enumerate(groups):
@@ -860,7 +852,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
     # exactly the decision the inline loop below would make; it is just made early for
     # the findings that will never reach that loop. `remaining` carries each finding's
     # resolved filepath through to the loop so it is not re-derived.
-    skipped_groups = []  # one list of (filepath, line, finding) per degraded group
+    skipped_groups = []  # one list of compose.SkippedEntry per degraded group
     remaining = []  # (filepath, group) — groups that reach the inline loop
     groups = compose.consolidate_delivery(findings)
     # One posted discussion per consolidation group: findings without a
@@ -963,7 +955,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         versa.
 
         The key render also drops ``suggested_fix_code`` UNCONDITIONALLY (see
-        :func:`_key_material_finding`), so a key is fence-independent: the apply-check
+        :func:`compose.key_material_body`), so a key is fence-independent: the apply-check
         can strip a fence here and keep it there without ever moving a delivery key.
         """
         raw_title = m.get("title")

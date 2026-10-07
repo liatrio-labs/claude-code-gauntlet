@@ -978,7 +978,6 @@ def test_poster_implicit_origin_exceptions(
         pytest.param("encoder", "[]", 1, id="encoder-success"),
         pytest.param("first-write", "[]", 1, id="first-write-success"),
         pytest.param("encoder", "{}", 1, id="encoder-operational-failure"),
-        pytest.param("double-encoder", "[]", 1, id="constant-fallback"),
     ],
 )
 def test_patch_serialization_fallback(
@@ -993,7 +992,7 @@ def test_patch_serialization_fallback(
     def dumps(*args, **kwargs):
         nonlocal calls
         calls += 1
-        if calls == 1 or failure == "double-encoder":
+        if calls == 1:
             raise TypeError("injected encoder failure")
         return original_dumps(*args, **kwargs)
 

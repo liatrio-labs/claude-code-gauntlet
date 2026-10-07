@@ -349,11 +349,6 @@ def test_main_handles_findings_file_read_errors(
 
 
 # ---------------------------------------------------------------------------
-# render_comment_body
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # build_footer
 # ---------------------------------------------------------------------------
 
@@ -4648,8 +4643,8 @@ class TestGitHubOverlapDemotion(_OverlapDemotionProofs, _FixGateRunBase):
         check BY ITSELF leaves this test green; it is currently defensive,
         not independently load-bearing. What the pair jointly prevents is
         real: ``end_line`` below is an INTEGER specifically so that removing
-        BOTH early-exits reaches ``_github_apply_range``, whose
-        ``end_line >= line`` comparison (``int >= None``) raises
+        BOTH early-exits reaches ``gate.github_apply_range``, whose
+        ``end_line > line`` comparison (``int > None``) raises
         ``TypeError`` for a lineless candidate rather than being politely
         skipped (verified by mutation, not by reading — see the PR record)."""
         a = {
@@ -4675,7 +4670,7 @@ class TestGitHubOverlapDemotion(_OverlapDemotionProofs, _FixGateRunBase):
 
     def test_an_off_diff_candidate_is_skipped_by_the_prepass(self):
         """The pre-pass's own ``is_line_valid`` guard is defensive, not
-        load-bearing: an off-diff apply_range already fails `_fence_verdict`'s
+        load-bearing: an off-diff apply_range already fails `gate.evaluate_fix`'s
         own gate (``range_not_in_diff``), so a finding whose OWN line is
         off-diff is never a CANDIDATE regardless of this guard — deleting it
         alone leaves this test green. What actually keeps the finding out of
@@ -4877,8 +4872,8 @@ class TestGitLabOverlapDemotion(_OverlapDemotionProofs, _FixGateRunBase):
         """#223 R6 / the ``kept_intervals`` guard: the interval map reactive
         corroborator sites consult carries only WINNING candidates' apply
         ranges — a LOSER's own range must never occupy anything (a
-        demoted record "occupies nothing", :func:`_overlap_losers`'s own
-        docstring). Winner A[2,4] keeps; loser P[3,5] (group k2's primary,
+        demoted record "occupies nothing" per `gate.overlap_losers`. Winner
+        A[2,4] keeps; loser P[3,5] (group k2's primary,
         already delivered so its own group never re-renders) overlaps A and
         demotes; group k2's corroborator [5,5] overlaps ONLY P's [3,5]
         range, not A's [2,4] — so it must KEEP its fence. Mutate the

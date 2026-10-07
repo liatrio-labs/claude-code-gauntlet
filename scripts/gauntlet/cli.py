@@ -35,7 +35,8 @@ def utf8_stdio() -> None:
 
 def _write_line(line: str) -> None:
     if sys.stdout is not None:
-        sys.stdout.write(line)
+        # A separate LF write can fail after the receipt has already escaped.
+        sys.stdout.write(line + "\n")
 
 
 class CliError(Exception):
@@ -113,12 +114,10 @@ class Command:
             return outcome
         receipt, code = outcome
         try:
-            # A separate LF write can fail after the receipt has already escaped.
             _write_line(
                 dumps(
                     receipt, ascii=self.ascii, compact=self.compact, indent=self.indent
                 )
-                + "\n"
             )
         except Exception as exc:  # noqa: BLE001 - receipt serialization must have a fallback
             line = self.fallback_line
@@ -127,6 +126,6 @@ class Command:
                     line = dumps(self.fallback_receipt(exc), ascii=True)
             except Exception:  # noqa: BLE001 - constant is the final receipt
                 pass
-            _write_line(line + "\n")
+            _write_line(line)
             return self.fallback_code
         return code

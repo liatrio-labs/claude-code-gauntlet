@@ -332,7 +332,7 @@ The header the script prepends, verbatim:
 
 ### Findings metadata footer
 
-`scripts/gauntlet/delivery/post.py` appends this to `review_body` — never hand-type it. `<!-- Canonical source: scripts/gauntlet/marker.py -->`. What the code writes (for reference):
+`scripts/gauntlet/delivery/compose.py::compose_review_body` composes this footer and fits the body to the platform budget. `scripts/gauntlet/delivery/post.py` posts the composed body. Never hand-type it. `<!-- Canonical source: scripts/gauntlet/marker.py -->`. What the code writes (for reference):
 
 ```html
 ---

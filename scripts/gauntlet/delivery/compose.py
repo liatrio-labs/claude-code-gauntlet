@@ -208,10 +208,7 @@ def render_comment_body(
     style: CommentStyle | None = None,
 ) -> str:
     style = style if style is not None else _default_style()
-    return (
-        render_group_sections(finding, [], fence_offsets=fence_offsets, style=style)
-        + f"\n\n{style.trailer}"
-    )
+    return render_group_body(finding, [], fence_offsets=fence_offsets, style=style)
 
 
 def key_material_body(finding: Mapping[str, object]) -> str:
@@ -268,6 +265,16 @@ def render_group_sections(
 
 def _skipped_location(filepath: object, line: object) -> str:
     return f"{filepath}:{line}" if line is not None else str(filepath or "?")
+
+
+def _omitted_entries(entries: Sequence[SkippedEntry]) -> tuple[OmittedEntry, ...]:
+    return tuple(
+        OmittedEntry(
+            _skipped_location(entry.filepath, entry.line),
+            entry.finding.get("title", "Finding"),
+        )
+        for entry in entries
+    )
 
 
 def _plural(count: int, singular: str, plural: str | None = None) -> str:
@@ -441,13 +448,7 @@ def compose_review_body(
             0,
             n,
             folded_bytes,
-            tuple(
-                OmittedEntry(
-                    _skipped_location(entry.filepath, entry.line),
-                    entry.finding.get("title", "Finding"),
-                )
-                for entry in skipped
-            ),
+            _omitted_entries(skipped),
         )
 
     remaining = allowance - (utf8_len(review_body) if review_body else 0)
@@ -470,13 +471,7 @@ def compose_review_body(
         len(shown_entries),
         len(omitted_entries),
         0,
-        tuple(
-            OmittedEntry(
-                _skipped_location(entry.filepath, entry.line),
-                entry.finding.get("title", "Finding"),
-            )
-            for entry in omitted_entries
-        ),
+        _omitted_entries(omitted_entries),
     )
 
 
@@ -513,27 +508,36 @@ def finding_key(filepath: object, line: object, title: object, body: str) -> str
 
 
 def consolidate_delivery(findings: Sequence[object]) -> list[Group]:
-    groups: list[Group] = []
+    members_by_group: list[list[Mapping[str, object]]] = []
     key_to_group: dict[object, int] = {}
     for f in findings:
+        finding = cast(Mapping[str, object], f)  # Input is unvalidated on purpose.
         key = f.get("consolidation_key") if isinstance(f, dict) else None
         if not key:
-            groups.append(Group(cast(Mapping[str, object], f), ()))
+            members_by_group.append([finding])
             continue
         index = key_to_group.get(key)
         if index is None:
-            index = len(groups)
+            index = len(members_by_group)
             key_to_group[key] = index
-            groups.append(Group(cast(Mapping[str, object], None), ()))
-        group = groups[index]
-        finding = cast(Mapping[str, object], f)
-        if finding.get("consolidation_primary") and group.primary is None:
-            groups[index] = Group(finding, group.corroborators)
+            members_by_group.append([finding])
         else:
-            # A second primary must not overwrite and drop the first.
-            groups[index] = Group(group.primary, (*group.corroborators, finding))
+            members_by_group[index].append(finding)
+
     # filterFindings.js stamps one primary; hand-built unstamped groups keep their first member.
-    for index, group in enumerate(groups):
-        if group.primary is None and group.corroborators:
-            groups[index] = Group(group.corroborators[0], group.corroborators[1:])
+    groups: list[Group] = []
+    for members in members_by_group:
+        primary_index = next(
+            (
+                index
+                for index, member in enumerate(members)
+                if isinstance(member, dict) and member.get("consolidation_primary")
+            ),
+            0,
+        )
+        primary = members[primary_index]
+        corroborators = tuple(
+            member for index, member in enumerate(members) if index != primary_index
+        )
+        groups.append(Group(primary, corroborators))
     return groups

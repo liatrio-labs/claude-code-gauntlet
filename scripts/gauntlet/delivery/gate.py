@@ -224,8 +224,7 @@ def github_apply_range(
     start = cast(int, line)
     multiline = (
         isinstance(end_line, int)
-        and end_line >= start
-        and end_line != start
+        and end_line > start
         and diff.range_is_valid(facts, filepath, start, end_line)
     )
     return ApplySite(
