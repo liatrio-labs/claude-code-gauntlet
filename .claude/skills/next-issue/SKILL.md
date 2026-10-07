@@ -13,7 +13,9 @@ Before planning, look for other open items in #101 that belong in the same sessi
 
 You are the orchestrator and planner; your agents do the work. Follow your usual pattern. Run no paired mini or other paid bench run unless the plan calls for one, and never without my approval.
 
-Every PR also pays down tech debt in and around the code it touches. Trim code comments and doc text to what a reader needs. Keep a comment that says why the code is the way it is, and cut ones that restate the code, narrate its history or repeat a docstring or AGENTS.md. Move duplicated or bespoke logic into shared functions and modules, and remove over-engineering the change exposes. Test bloat is debt too: when logic moves, rewrite and consolidate its tests with it, keeping what they prove rather than their shape. Keep behaviour unchanged unless the issue changes it, and let the suites prove that. A bigger PR is fine where the cleanup is reasonable to review with the change. Put the cleanup in the build brief and the review scope.
+Every PR also pays down tech debt in and around the code it touches. Trim code comments and doc text to what a reader needs. Keep a comment that says why the code is the way it is, and cut ones that restate the code, narrate its history or repeat a docstring or AGENTS.md. Move duplicated or bespoke logic into shared functions and modules, and remove over-engineering the change exposes. Keep behaviour unchanged unless the issue changes it, and let the suites prove that. A bigger PR is fine where the cleanup is reasonable to review with the change. Put the cleanup in the build brief and the review scope.
+
+Test bloat is debt too. When logic moves, cut its tests down to what they prove. Mapping each old test to a new one is a port, not a consolidation. Put a cut list in the plan. Judge the result by a kill matrix over arm-level mutants of the code under test: keep the smallest set of tests that still kills every mutant, plus any test that pins output a user sees. Report tests cut, not tests mapped.
 
 Triage every out-of-scope finding:
 
