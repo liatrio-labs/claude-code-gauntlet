@@ -155,6 +155,20 @@ FIX_CASE_CASES = {
         {},
         (False, "no_op_replacement", (2, 3)),
     ),
+    "oversized-no-op-order": (
+        finding(
+            line=1,
+            end_line=101,
+            suggested_fix_code="x\n" * 100 + "x",
+        ),
+        diff_facts(
+            {("foo.py", line): line for line in range(1, 102)},
+            line_texts={("foo.py", line): "x" for line in range(1, 102)},
+        ),
+        (1, 101),
+        {},
+        (False, "no_op_replacement", (1, 101)),
+    ),
     "space-to-tab": (
         finding(suggested_fix_code="\treturn 2\n\t# done"),
         FACTS,
@@ -466,7 +480,8 @@ GITLAB_SITE_CASES = {
     "missing-bound": (2, None, 2, gate.ApplySite((2, 2))),
     "string-bound": (2, "3", 2, gate.ApplySite((2, 2))),
     "float-bound": (2, 3.0, 2, gate.ApplySite((2, 2))),
-    "boolean-bound": (2, True, 2, gate.ApplySite((2, 2))),
+    "boolean-bound": (1, True, 1, gate.ApplySite((1, 1))),
+    "boolean-anchor-and-line": (True, 3, True, gate.ApplySite((True, True))),
 }
 
 
@@ -489,6 +504,7 @@ GITHUB_SITE_CASES = {
     "off-diff-end": (2, 940, gate.ApplySite((2, 2))),
     "boolean-end": (1, True, gate.ApplySite((1, 1))),
     "float-end-geometry": (2, 3.0, gate.ApplySite((2, 2))),
+    "reversed-end": (2, 1, gate.ApplySite((2, 2))),
 }
 
 

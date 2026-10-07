@@ -82,10 +82,14 @@ REPORT_CASES = {
         "# Apply-checked patches (against abc1234)\n\n0 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nDowngraded: 1 — reason tally: redacted (1)\n",
     ),
     "multi-reason": (
-        b'[{"file": "x.py", "line": 2, "end_line": 2, "title": "No-op X", "suggested_fix_code": "orig_x"}, {"file": "y.py", "line": 2, "end_line": 2, "title": "No-op Y", "suggested_fix_code": "orig_y"}, {"file": "z.py", "line": 1, "end_line": 1, "title": "Secret Z", "suggested_fix_code": "token=ghp_AAAAAAAAAAAAAAAAAAAAAAAA"}]',
+        b'[{"file": "x.py", "line": 2, "end_line": 2, "title": "No-op X", "suggested_fix_code": "orig_x"}, {"file": "y.py", "line": 1, "end_line": 1, "title": "Secret Y", "suggested_fix_code": "token=ghp_'
+        + b"A" * 24
+        + b'"}, {"file": "z.py", "line": 1, "end_line": 1, "title": "Secret Z", "suggested_fix_code": "token=ghp_'
+        + b"B" * 24
+        + b'"}]',
         b"diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,1 +1,2 @@\n line1\n+orig_x\ndiff --git a/y.py b/y.py\n--- a/y.py\n+++ b/y.py\n@@ -1,1 +1,2 @@\n line1\n+orig_y\n",
-        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 3, "kept": 0, "downgraded": 3, "reasons": {"no_op_replacement": 2, "redacted": 1}, "filtered_earlier": 0, "findings": 3, "warnings": ["report-patch downgraded: x.py:2 (no_op_replacement)", "report-patch downgraded: y.py:2 (no_op_replacement)", "report-patch downgraded: z.py:1 (redacted)"], "errors": []}\n',
-        "# Apply-checked patches (against abc1234)\n\n0 of 3 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nDowngraded: 3 — reason tally: no_op_replacement (2), redacted (1)\n",
+        '{"ok": true, "path": "<OUT>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 3, "kept": 0, "downgraded": 3, "reasons": {"no_op_replacement": 1, "redacted": 2}, "filtered_earlier": 0, "findings": 3, "warnings": ["report-patch downgraded: x.py:2 (no_op_replacement)", "report-patch downgraded: y.py:1 (redacted)", "report-patch downgraded: z.py:1 (redacted)"], "errors": []}\n',
+        "# Apply-checked patches (against abc1234)\n\n0 of 3 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\nDowngraded: 3 — reason tally: redacted (2), no_op_replacement (1)\n",
     ),
     "id-fallback": (
         b'[{"file": "a.py", "line": 2, "end_line": 2, "id": "F-42", "suggested_fix_code": "changed_a"}, {"file": "b.py", "line": 2, "end_line": 2, "suggested_fix_code": "changed_b"}]',
@@ -254,6 +258,17 @@ RENDER_CASES = {
         },
         None,
         "# Apply-checked patches (against abc1234)\n\n1 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\n## `leak.py`:1-1 — Leak\n\n```py\ntoken=[REDACTED]\n```\n",
+    ),
+    "trailing-blank-patch": (
+        {
+            "file": "blank.py",
+            "line": 2,
+            "end_line": 2,
+            "title": "Trailing blank",
+            "suggested_fix_code": "changed\n\n",
+        },
+        None,
+        "# Apply-checked patches (against abc1234)\n\n1 of 1 suggested patch(es) passed the read-only apply-check against the pinned review diff (`code-gauntlet-diff-abc1234.patch`, captured at Phase 2, not the current working tree or branch). Platform render-site constraints are not applied here, nor is delivery's set-level overlap withholding (a fence overlapping an already-kept fence in the same file, reason `overlaps_kept_fence`), so a patch kept here may still be downgraded or withheld at delivery. This covers high-confidence findings only; unverified findings carry no patch here.\n\n## `blank.py`:2-2 — Trailing blank\n\n```py\nchanged\n\n```\n",
     ),
     "shared-fence": (
         {
