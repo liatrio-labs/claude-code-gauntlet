@@ -1,4 +1,7 @@
-"""Delivery findings and skipped-group inputs."""
+"""Delivery findings, skipped groups and persisted report inputs."""
+
+import json
+from pathlib import Path
 
 from gauntlet.delivery.compose import SkippedEntry
 
@@ -36,3 +39,11 @@ def fix_finding(*, omit: tuple[str, ...] = (), **values: object) -> dict[str, ob
     return finding(
         omit=omit, **{"suggested_fix_code": "    return 2\n    # done", **values}
     )
+
+
+def patch_inputs(root: Path, findings: object, capture: bytes | None = None) -> None:
+    (root / "code-gauntlet-findings-abc1234.json").write_bytes(
+        findings if isinstance(findings, bytes) else json.dumps(findings).encode()
+    )
+    if capture is not None:
+        (root / "code-gauntlet-diff-abc1234.patch").write_bytes(capture)

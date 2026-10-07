@@ -122,3 +122,47 @@ def test_command_serialization_fallback(fallback, expected, capsys):
     )
     assert command.invoke([]) == 1
     assert capsys.readouterr().out.encode() == expected
+
+
+@pytest.mark.parametrize(
+    "case, code, output, writes",
+    [
+        pytest.param(
+            "success", 0, '{"ok": true}\n', ['{"ok": true}\n'], id="receipt-one-write"
+        ),
+        pytest.param(
+            "first-write",
+            1,
+            '{"ok": false}\n',
+            ['{"ok": true}\n', '{"ok": false}\n'],
+            id="write-fallback-one-write",
+        ),
+        pytest.param(
+            "encoder",
+            1,
+            '{"ok": false}\n',
+            ['{"ok": false}\n'],
+            id="encoding-fallback-one-write",
+        ),
+    ],
+)
+def test_command_writes_complete_lines(case, code, output, writes, monkeypatch):
+    calls = []
+
+    class LineStream(io.StringIO):
+        def write(self, text):
+            calls.append(text)
+            if text == "\n" or (case == "first-write" and len(calls) == 1):
+                raise OSError("standalone LF or transient first write")
+            return super().write(text)
+
+    stream = LineStream()
+    monkeypatch.setattr(sys, "stdout", stream)
+    command = Command(
+        parser=Parser(prog="probe"),
+        main=lambda _: ({"ok": object() if case == "encoder" else True}, 0),
+        fallback_line='{"ok": false}',
+    )
+    assert command.invoke([]) == code
+    assert stream.getvalue() == output
+    assert calls == writes

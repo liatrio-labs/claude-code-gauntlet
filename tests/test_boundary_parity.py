@@ -596,7 +596,6 @@ class TestReportPatchesBoundary(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
-        post_review.reset_run_state()
 
     def test_report_patches_consumes_pipeline_findings_without_error(self):
         sha = "abc1234"
@@ -606,7 +605,7 @@ class TestReportPatchesBoundary(unittest.TestCase):
 
         stdout_buf = io.StringIO()
         with contextlib.redirect_stdout(stdout_buf):
-            exit_code = report_patches.main(
+            exit_code = report_patches.CLI.invoke(
                 ["--output-dir", self.tmp, "--head-sha", sha]
             )
 
@@ -629,7 +628,7 @@ class TestReportPatchesBoundary(unittest.TestCase):
 
         stdout_buf = io.StringIO()
         with contextlib.redirect_stdout(stdout_buf):
-            exit_code = report_patches.main(
+            exit_code = report_patches.CLI.invoke(
                 ["--output-dir", self.tmp, "--head-sha", sha]
             )
         self.assertEqual(exit_code, 0, stdout_buf.getvalue())
