@@ -191,7 +191,7 @@ def collect_entries_file(payload: object) -> list[ReviewEntryWire]:
 
 
 # A consolidation group's body renders one of these per corroborator, verbatim from
-# gauntlet.delivery.post._render_corroboration — the only place this string is emitted.
+# gauntlet.delivery.compose._render_corroboration — the only place this string is emitted.
 _CORROBORATION_HEADER = "Corroborating finding — "
 
 

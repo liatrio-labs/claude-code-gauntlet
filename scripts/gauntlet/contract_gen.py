@@ -157,8 +157,7 @@ def _python_imported_script_paths(source, repo_root):
 
 def _python_import_closure(repo_root):
     """Return the generator and every local Python module in its import closure."""
-    # The inline sample loads post.py by path, so it is a dependency root.
-    pending = ["scripts/gauntlet/contract_gen.py", "scripts/gauntlet/delivery/post.py"]
+    pending = ["scripts/gauntlet/contract_gen.py"]
     seen = set()
     while pending:
         rel_path = pending.pop()
@@ -916,49 +915,19 @@ _INLINE_SAMPLE_FINDING = {
 
 
 def render_inline_comment_sample(identity):
-    """Render the copyable inline-comment sample through the real Python renderer.
+    # The generated registry can be missing or invalid until apply_targets supplies it.
+    from gauntlet.delivery import compose
 
-    The finding values are placeholders so the result documents the renderer's shape,
-    while the severity map and brand constants are temporarily supplied by *identity*
-    for the isolated generator tests. The marker fence surrounds this whole block in
-    the reference docs; it therefore cannot make generator control comments part of
-    the sample a reader copies.
-    """
-    post_path = os.path.join(os.path.dirname(__file__), "delivery", "post.py")
-    spec = importlib.util.spec_from_file_location(
-        f"gauntlet.delivery._contract_sample_{uuid.uuid4().hex}", post_path
+    # Explicit style keeps isolated generator inputs from changing registry globals.
+    style = compose.CommentStyle(
+        trailer=f"{identity['brand']['mark']} *{identity['brand']['name']}*",
+        severity_emoji={"severity": "{emoji}"},
+        severity_emoji_fallback="{emoji}",
+        rule_source_labels={"documented_rule": "{rule_source_label}"},
+        rule_source_label_fallback="{rule_source_fallback}",
     )
-    if spec is None or spec.loader is None:
-        raise SystemExit(f"cannot load post renderer from {post_path}")
-    post_review = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(post_review)
-
-    saved = {
-        name: getattr(post_review, name, None)
-        for name in (
-            "BRAND_MARK",
-            "BRAND_NAME",
-            "BRAND_TRAILER",
-            "SEVERITY_EMOJI",
-            "SEVERITY_EMOJI_FALLBACK",
-            "RULE_SOURCE_LABELS",
-            "RULE_SOURCE_LABEL_FALLBACK",
-        )
-    }
-    try:
-        post_review.BRAND_MARK = identity["brand"]["mark"]
-        post_review.BRAND_NAME = identity["brand"]["name"]
-        post_review.BRAND_TRAILER = (
-            f"{post_review.BRAND_MARK} *{post_review.BRAND_NAME}*"
-        )
-        post_review.SEVERITY_EMOJI = {"severity": "{emoji}"}
-        post_review.SEVERITY_EMOJI_FALLBACK = "{emoji}"
-        post_review.RULE_SOURCE_LABELS = {"documented_rule": "{rule_source_label}"}
-        post_review.RULE_SOURCE_LABEL_FALLBACK = "{rule_source_fallback}"
-        rendered = post_review.render_comment_body(_INLINE_SAMPLE_FINDING)
-    finally:
-        for name, value in saved.items():
-            setattr(post_review, name, value)
+    rendered = compose.render_comment_body(_INLINE_SAMPLE_FINDING, style=style)
+    # Keep generator control comments outside the copyable fenced sample.
     return "````markdown\n" + rendered + "\n````"
 
 

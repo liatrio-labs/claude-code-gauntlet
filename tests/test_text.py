@@ -615,3 +615,19 @@ def test_large_backslash_preparation(
 )
 def test_large_definition_preparation(source: str, expected: str) -> None:
     assert _timed_preparation(source, "prose") == expected
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        pytest.param("plain", "plain", id="plain"),
+        pytest.param(
+            "<!-- open\n<!-- another -->",
+            "&lt;!-- open\n&lt;!-- another -->",
+            id="all-literal-openers",
+        ),
+        pytest.param("&lt;!-- < !--", "&lt;!-- < !--", id="already-neutralized"),
+    ],
+)
+def test_neutralize_comment_openers(source: str, expected: str) -> None:
+    assert text.neutralize_comment_openers(source) == expected

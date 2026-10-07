@@ -20,6 +20,7 @@ import gauntlet.text as outbound_text
 import pytest
 from gauntlet import config as resolve_config
 from gauntlet import contract_gen as generate_contract_requirements
+from gauntlet.delivery import compose
 
 from bench.runner import invoke
 from tests.support.forge import FakeForge
@@ -64,7 +65,9 @@ def test_summary_and_skipped_location_bytes(filepath: str, expected: str) -> Non
     summary = result.stdout
     assert expected in summary
     assert outbound_text.prepare_prose(summary) == summary
-    skipped = post_review.build_skipped_section([(filepath, 12, finding)])
+    skipped = compose.build_skipped_section(
+        [compose.SkippedEntry(filepath, 12, finding)]
+    )
     location = next(
         line[5:] for line in skipped.splitlines() if line.startswith("#### ")
     )
@@ -166,7 +169,7 @@ class TestSummaryIndexParity(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         report, summary = json.loads(result.stdout)
-        self.assertEqual(post_review.summary_body_from_report(report), summary)
+        self.assertEqual(compose.summary_body_from_report(report), summary)
         self.assertEqual(outbound_text.prepare_prose(summary), summary)
         self.assertIn("app/\uff20modal/\uff1cSlot>.tsx", summary)
         self.assertIn("dev@example.test", summary)
@@ -230,14 +233,14 @@ class TestSummaryIndexParity(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             report, body = json.loads(result.stdout)
-            self.assertEqual(post_review.summary_body_from_report(report), body)
+            self.assertEqual(compose.summary_body_from_report(report), body)
             delivered = [findings[index] for index in delivered_indexes]
-            groups = post_review.consolidate_delivery(delivered)
+            groups = compose.consolidate_delivery(delivered)
             bullets = [line for line in body.splitlines() if line.startswith("- ")]
             self.assertEqual(len(bullets), len(groups))
             for group, bullet in zip(groups, bullets, strict=True):
-                self.assertIn(group["primary"]["title"], bullet)
-                self.assertIn(group["primary"]["file"], bullet)
+                self.assertIn(group.primary["title"], bullet)
+                self.assertIn(group.primary["file"], bullet)
             if delivered_indexes == [2, 1]:
                 self.assertEqual(len(bullets), 1)
                 self.assertIn("Higher ranked child", bullets[0])
@@ -593,7 +596,6 @@ class TestReportPatchesBoundary(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
-        post_review.reset_run_state()
 
     def test_report_patches_consumes_pipeline_findings_without_error(self):
         sha = "abc1234"
@@ -603,7 +605,7 @@ class TestReportPatchesBoundary(unittest.TestCase):
 
         stdout_buf = io.StringIO()
         with contextlib.redirect_stdout(stdout_buf):
-            exit_code = report_patches.main(
+            exit_code = report_patches.CLI.invoke(
                 ["--output-dir", self.tmp, "--head-sha", sha]
             )
 
@@ -626,7 +628,7 @@ class TestReportPatchesBoundary(unittest.TestCase):
 
         stdout_buf = io.StringIO()
         with contextlib.redirect_stdout(stdout_buf):
-            exit_code = report_patches.main(
+            exit_code = report_patches.CLI.invoke(
                 ["--output-dir", self.tmp, "--head-sha", sha]
             )
         self.assertEqual(exit_code, 0, stdout_buf.getvalue())

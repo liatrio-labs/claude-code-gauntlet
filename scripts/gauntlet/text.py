@@ -30,6 +30,11 @@ def normalize_report_severity(raw: object, labels: Mapping[str, object]) -> str:
     return normalized if normalized in labels else fallback
 
 
+def neutralize_comment_openers(text: str) -> str:
+    # An open comment can swallow later sections of an assembled document.
+    return text.replace("<!--", "&lt;!--")
+
+
 def _rendered_text(value: object) -> str | None:
     """Strip LF edges because compose supplies separators; patch blanks stay separate."""
     if value is None:

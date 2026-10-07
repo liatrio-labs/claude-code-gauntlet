@@ -1,6 +1,7 @@
 """Parent-recorded stdout bytes and exit codes for every script entry."""
 
 import importlib
+import io
 import json
 import os
 import re
@@ -12,11 +13,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from gauntlet import cli, marker, prior_review, proc
+from gauntlet import cli, marker, patches, prior_review, proc
 from gauntlet.forge import GitHub, JsonFetch
 from gauntlet.paths import ENTRY_ROOT
 
 from tests.conftest import Invocation
+from tests.support import path_text
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 from tests.test_forge import HOST_CASES
 
@@ -28,6 +30,10 @@ RECORDED = json.loads(
 )
 SHA = "abc1234"
 FULL = "a" * 40
+
+
+def _scenario_param(case, *values):
+    return pytest.param(case, *values, id=case)
 
 
 @pytest.mark.usefixtures("poster_state")
@@ -595,12 +601,7 @@ def normalize(data, tmp_path, root=ROOT):
         key=lambda item: len(item[0]),
         reverse=True,
     ):
-        for spelling in (source.replace("\\", "\\\\"), source):
-            text = re.sub(
-                re.escape(spelling) + r"(?=$|[/\\'\"\s])",
-                lambda match, value=replacement: value,
-                text,
-            )
+        text = path_text.normalize_path_text(text, source, replacement)
     for pattern, replacement in (
         (
             r'(pipeline_version=|"pipeline_version"\s*:\s*")3\.\d+\.\d+',
@@ -616,12 +617,59 @@ def normalize(data, tmp_path, root=ROOT):
     return text
 
 
+@pytest.mark.parametrize(
+    ("text", "directory", "expected", "separator"),
+    [
+        pytest.param(
+            r"failed at C:\build\tests\case\report.json",
+            r"C:\build\tests\case",
+            "failed at <OUT>/report.json",
+            "\\",
+            id="windows-plain",
+        ),
+        pytest.param(
+            r"failed at C:\\build\\tests\\case\\report.json",
+            r"C:\build\tests\case",
+            "failed at <OUT>/report.json",
+            "\\",
+            id="windows-json-escaped",
+        ),
+        pytest.param(
+            r"OSError: missing 'C:\\\\build\\\\tests\\\\case\\\\findings.json'",
+            "C:/build/tests/case",
+            "OSError: missing '<OUT>/findings.json'",
+            "\\",
+            id="windows-nested-error-path",
+        ),
+        pytest.param(
+            r"error at C:\build\tests\case",
+            r"C:\build\tests\case",
+            "error at <OUT>",
+            "\\",
+            id="windows-path-at-end",
+        ),
+        pytest.param(
+            "/tmp/pytest/case/report.json",
+            "/tmp/pytest/case",
+            "<OUT>/report.json",
+            "/",
+            id="posix-path",
+        ),
+    ],
+)
+def test_normalize_temp_path_encodings(
+    text, directory, expected, separator, monkeypatch
+):
+    monkeypatch.setattr(path_text.os, "sep", separator)
+    assert path_text.normalize_path_text(text, directory, "<OUT>") == expected
+
+
 @pytest.mark.parametrize("suffix", ("-link", " space[1]"))
 def test_normalize_path_boundaries_and_shell_quotes(tmp_path, suffix):
     root = tmp_path / f"checkout{suffix}"
     data = f"python3 '{root}/scripts/await_workflow.py' {root}x".encode()
     assert normalize(data, tmp_path, root) == (
-        f"python3 <ROOT>/scripts/await_workflow.py <TMP>{os.sep}checkout{suffix}x"
+        f"python3 <ROOT>/scripts/await_workflow.py <TMP>/checkout{suffix}x"
     )
 
 
@@ -660,7 +708,12 @@ def rows():
             yield name, "bad_input"
     yield from (
         (name, "help")
-        for name in ("diff_numstat", "stale_truncate", "write_shared_context")
+        for name in (
+            "diff_numstat",
+            "stale_truncate",
+            "write_shared_context",
+            "report_patches",
+        )
     )
     yield "await_workflow", "pending"
     yield "await_workflow", "artifacts_only"
@@ -917,3 +970,262 @@ def test_poster_implicit_origin_exceptions(
     with pytest.raises(type(failures[outcome])):
         post.main()
     assert forge_factory.calls == []
+
+
+@pytest.mark.parametrize(
+    "failure, findings, code",
+    [
+        pytest.param("encoder", "[]", 1, id="encoder-success"),
+        pytest.param("first-write", "[]", 1, id="first-write-success"),
+        pytest.param("encoder", "{}", 1, id="encoder-operational-failure"),
+    ],
+)
+def test_patch_serialization_fallback(
+    failure, findings, code, tmp_path, invoke, monkeypatch
+):
+    (tmp_path / "code-gauntlet-findings-abc1234.json").write_text(
+        findings, encoding="utf-8"
+    )
+    calls = 0
+    original_dumps = cli.dumps
+
+    def dumps(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TypeError("injected encoder failure")
+        return original_dumps(*args, **kwargs)
+
+    class FirstWrite(io.TextIOBase):
+        def write(self, text):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected first-write failure")
+            return output.write(text)
+
+    output = sys.stdout
+    if failure == "first-write":
+        monkeypatch.setattr(sys, "stdout", FirstWrite())
+    else:
+        monkeypatch.setattr(cli, "dumps", dumps)
+    result = invoke(
+        "report_patches", ["--output-dir", str(tmp_path), "--head-sha", SHA], tmp_path
+    )
+    assert result.returncode == code
+    assert result.stdout == (
+        b'{"ok": false, "path": null, "oracle": null, "candidates": 0, '
+        b'"kept": 0, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, '
+        b'"findings": 0, "warnings": [], "errors": ["receipt could not be serialized"]}\n'
+    )
+    assert result.stderr == b""
+
+
+@pytest.mark.parametrize(
+    "case, findings, sha, code, stdout, stderr",
+    [
+        _scenario_param(
+            "downgrade",
+            '[{"file":"x.py","line":1,"end_line":1,"suggested_fix_code":"changed"}]',
+            "abc1234",
+            0,
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: x.py:1 (no_diff_oracle)"], "errors": []}\n',
+            "report_patches: report-patch downgraded: x.py:1 (no_diff_oracle)\n",
+        ),
+        _scenario_param(
+            "invalid-sha",
+            "[]",
+            "bad/sha",
+            2,
+            "",
+            "report_patches: --head-sha must match '^[A-Za-z0-9._-]+$': 'bad/sha'\n",
+        ),
+        _scenario_param(
+            "usage",
+            "[]",
+            "abc1234",
+            2,
+            "",
+            "report_patches: the following arguments are required: --output-dir, --head-sha\n",
+        ),
+        pytest.param(
+            "failure",
+            "{}",
+            "abc1234",
+            1,
+            '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "unattempted", "candidates": 0, "kept": 0, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 0, "warnings": [], "errors": ["findings file <TMP>/code-gauntlet-findings-abc1234.json must be a JSON array of findings, got dict"]}\n',
+            "",
+            id="pre-oracle-failure",
+        ),
+        pytest.param(
+            "outside-receipt",
+            "[]",
+            "abc1234",
+            1,
+            '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 0, "kept": 0, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 0, "warnings": [], "errors": ["ValueError: oversized hunk"]}\n',
+            "",
+            id="outside-receipt-boundary",
+        ),
+        _scenario_param(
+            "postload-progress",
+            '[{"file":"x.py","line":1,"end_line":1,"suggested_fix_code":"changed"},{"suggested_fix_code_removed_by":"filter"},null]',
+            "abc1234",
+            1,
+            '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 0, "kept": 0, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 3, "warnings": [], "errors": ["ValueError: oversized hunk"]}\n',
+            "",
+        ),
+        pytest.param(
+            "before-receipt",
+            "[]",
+            "abc1234",
+            1,
+            '{"ok": false, "path": null, "oracle": "unattempted", "candidates": 0, "kept": 0, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 0, "warnings": [], "errors": ["unexpected RuntimeError: injected\\r\\nload"]}\n',
+            "",
+            id="preload-unexpected",
+        ),
+        _scenario_param(
+            "warning-breaks",
+            '[{"file":"x.py\\r\\nspoof","line":1,"end_line":1,"suggested_fix_code":"changed"}]',
+            "abc1234",
+            0,
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: x.py\\r\\nspoof:1 (no_diff_oracle)"], "errors": []}\n',
+            "report_patches: report-patch downgraded: x.py spoof:1 (no_diff_oracle)\n",
+        ),
+    ],
+)
+def test_patch_command_boundaries(
+    case, findings, sha, code, stdout, stderr, tmp_path, invoke, monkeypatch
+):
+    (tmp_path / "code-gauntlet-findings-abc1234.json").write_text(
+        findings, encoding="utf-8"
+    )
+    if case in ("outside-receipt", "postload-progress"):
+        (tmp_path / "code-gauntlet-diff-abc1234.patch").write_text(
+            PATCH, encoding="utf-8"
+        )
+
+        def fail(*args, **kwargs):
+            raise ValueError("oversized hunk")
+
+        monkeypatch.setattr(patches, "parse_diff", fail)
+    if case == "before-receipt":
+
+        def fail_load(*args, **kwargs):
+            raise RuntimeError("injected\r\nload")
+
+        monkeypatch.setattr(patches, "read_json", fail_load)
+    argv = [] if case == "usage" else ["--output-dir", str(tmp_path), "--head-sha", sha]
+    result = invoke("report_patches", argv, tmp_path)
+    assert result.returncode == code
+    assert normalize(result.stdout, tmp_path) == stdout
+    assert normalize(result.stderr, tmp_path) == stderr
+
+
+@pytest.mark.usefixtures("poster_state")
+@pytest.mark.parametrize(
+    "report, stderr",
+    [
+        pytest.param(
+            "## Findings\n\nOnly findings.\n",
+            b"ERROR: Report does not contain a rendered Summary section.\n",
+            id="missing-summary",
+        ),
+        pytest.param(
+            "## Summary\n\nOnly summary.\n",
+            b"ERROR: Report does not contain a following code-owned heading after Summary.\n",
+            id="missing-following-heading",
+        ),
+    ],
+)
+def test_poster_report_shape_boundary(report, stderr, tmp_path, invoke, forge_factory):
+    findings_path = tmp_path / "findings.json"
+    findings_path.write_text(json.dumps({**POST, "findings": []}), encoding="utf-8")
+    report_path = tmp_path / "report.md"
+    report_path.write_text(report, encoding="utf-8")
+    fake = forge_factory.configure(FakeForge())
+    result = invoke(
+        "post_review", [str(findings_path), "--report", str(report_path)], tmp_path
+    )
+    assert result.returncode == 1
+    assert result.stdout == b""
+    assert result.stderr == stderr
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize(
+    "path, line, title, stdout, stderr",
+    [
+        pytest.param(
+            "src/unié.py",
+            2,
+            "Non-ASCII path",
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: src/uni\\u00e9.py:2 (no_diff_oracle)"], "errors": []}\n',
+            "report_patches: report-patch downgraded: src/unié.py:2 (no_diff_oracle)\n",
+            id="foreign-encoding",
+        ),
+        pytest.param(
+            "mo\ud800d.py",
+            2,
+            None,
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: mo\\ud800d.py:2 (no_diff_oracle)"], "errors": []}\n',
+            "report_patches: report-patch downgraded: mo\\ud800d.py:2 (no_diff_oracle)\n",
+            id="surrogate-path",
+        ),
+        pytest.param(
+            "mo\ud800d.py",
+            1,
+            "Surrogate Path",
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: mo\\ud800d.py:1 (no_diff_oracle)"], "errors": []}\n',
+            "report_patches: report-patch downgraded: mo\\ud800d.py:1 (no_diff_oracle)\n",
+            id="surrogate-path-original-line",
+        ),
+        pytest.param(
+            "src/bad\ud800.py",
+            2,
+            None,
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: src/bad\\ud800.py:2 (no_diff_oracle)"], "errors": []}\n',
+            "report_patches: report-patch downgraded: src/bad\\ud800.py:2 (no_diff_oracle)\n",
+            id="surrogate-warning",
+        ),
+        pytest.param(
+            "src/bad\ud800.py",
+            1,
+            "Surrogate path",
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: src/bad\\ud800.py:1 (no_diff_oracle)"], "errors": []}\n',
+            "report_patches: report-patch downgraded: src/bad\\ud800.py:1 (no_diff_oracle)\n",
+            id="surrogate-warning-original-line",
+        ),
+    ],
+)
+def test_patch_stdio(path, line, title, stdout, stderr, tmp_path):
+    (tmp_path / "code-gauntlet-findings-abc1234.json").write_text(
+        json.dumps(
+            [
+                {
+                    "file": path,
+                    "line": line,
+                    "end_line": line,
+                    "title": title,
+                    "suggested_fix_code": "changed",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/report_patches.py"),
+            "--output-dir",
+            str(tmp_path),
+            "--head-sha",
+            "abc1234",
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONIOENCODING": "ascii"},
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert normalize(result.stdout, tmp_path) == stdout
+    assert normalize(result.stderr, tmp_path) == stderr

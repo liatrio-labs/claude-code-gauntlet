@@ -14,7 +14,7 @@ Implementation details for each delivery method in Phase 8, interactive and head
 
 ### Comment body format
 
-**You do not compose the comment body.** `scripts/gauntlet/delivery/post.py::render_comment_body` builds it
+**You do not compose the comment body.** `scripts/gauntlet/delivery/compose.py::render_comment_body` builds it
 from the fields you supply. Its output, for reference:
 
 <!-- generated-from-registry-identity:inline_sample — do not edit; run scripts/generate_contract_requirements.py -->
@@ -332,7 +332,7 @@ The header the script prepends, verbatim:
 
 ### Findings metadata footer
 
-`scripts/gauntlet/delivery/post.py` appends this to `review_body` — never hand-type it. `<!-- Canonical source: scripts/gauntlet/marker.py -->`. What the code writes (for reference):
+`scripts/gauntlet/delivery/compose.py::compose_review_body` composes this footer and fits the body to the platform budget. `scripts/gauntlet/delivery/post.py` posts the composed body. Never hand-type it. `<!-- Canonical source: scripts/gauntlet/marker.py -->`. What the code writes (for reference):
 
 ```html
 ---

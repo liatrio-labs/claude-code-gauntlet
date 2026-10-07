@@ -6,9 +6,9 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
-import gauntlet.delivery.post as post_review
 import gauntlet.text as outbound_text
 import pytest
+from gauntlet.delivery import compose
 from gauntlet.markdown import code_spans, open_fence
 
 from tests.tools.outbound import (
@@ -605,7 +605,7 @@ def test_control_fixture_rows_match_current_sanitizers():
             if case["field_class"] == "prose"
             else "claude_md_rule"
         )
-        rendered = post_review.render_comment_body(
+        rendered = compose.render_comment_body(
             {"severity": "low", "title": "Control", "body": "", field: case["input"]}
         )
         assert case["expected"] in rendered, case["id"]
@@ -642,7 +642,7 @@ process.stdout.write(JSON.stringify(JSON.parse(source).map(renderSummaryBody)));
 
 def test_comment_only_rule_falls_back_to_spec_text():
     comment_case = next(case for case in CASES if case["id"] == "comment_only_rule")
-    rendered = post_review.render_comment_body(
+    rendered = compose.render_comment_body(
         {
             "severity": "high",
             "title": "Rule fallback",
@@ -681,8 +681,10 @@ def test_rule_fixture_rows_are_contained_after_blockquote_prefix():
             "claude_md_rule": row["input"],
         }
         for rendered in (
-            post_review.render_comment_body(finding),
-            post_review.build_skipped_section([("src/file.py", 3, finding)]),
+            compose.render_comment_body(finding),
+            compose.build_skipped_section(
+                [compose.SkippedEntry("src/file.py", 3, finding)]
+            ),
         ):
             quoted = "\n".join("> " + line for line in row["expected"].split("\n"))
             assert quoted in rendered, row["id"]
@@ -698,9 +700,11 @@ def test_multiline_non_rule_fields_start_at_column_zero():
         "suggestion": "Fix first\nFix second",
     }
     for rendered in (
-        post_review.render_comment_body(finding),
-        post_review.render_group_body(finding, [finding]),
-        post_review.build_skipped_section([("src/file.py", 3, finding)]),
+        compose.render_comment_body(finding),
+        compose.render_group_body(finding, [finding]),
+        compose.build_skipped_section(
+            [compose.SkippedEntry("src/file.py", 3, finding)]
+        ),
     ):
         for line in ("Body first", "Body second", "Fix first", "Fix second"):
             assert re.search(r"(?m)^" + re.escape(line) + r"$", rendered), line
@@ -717,9 +721,11 @@ def test_string_invariant_for_fixtures_seeded_corpus_and_poisoned_sinks():
     for field in ("title", "body", "suggestion", "claude_md_rule"):
         poison[field] += "\n![a](u)\n[critical]: u"
     for sink in (
-        post_review.render_comment_body(poison),
-        post_review.render_group_body(poison, [poison]),
-        post_review.build_skipped_section([("app/@modal/<Slot>.tsx", 8, poison)]),
+        compose.render_comment_body(poison),
+        compose.render_group_body(poison, [poison]),
+        compose.build_skipped_section(
+            [compose.SkippedEntry("app/@modal/<Slot>.tsx", 8, poison)]
+        ),
     ):
         assert_outbound_string_invariant(sink)
     summary_script = """

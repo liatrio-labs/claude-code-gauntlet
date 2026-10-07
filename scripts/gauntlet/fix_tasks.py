@@ -51,7 +51,7 @@ from gauntlet.registry import (
     RULE_SOURCE_LABELS,
     SEVERITY_EMOJI,
 )
-from gauntlet.text import normalize_report_severity
+from gauntlet.text import neutralize_comment_openers, normalize_report_severity
 
 REQUIRED_FIELDS = (
     "id",
@@ -68,7 +68,6 @@ OPTIONAL_ALIASES = {"line_end": "end_line"}
 SCRIPT_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 HEADING_RE = re.compile(r"(?m)^([ ]{0,3})(#{1,6})(?= |$)")
-COMMENT_RE = re.compile(r"<!--")
 MAX_CONFIG_BYTES = 1024 * 1024
 
 
@@ -77,15 +76,13 @@ class ContentError(Exception):
 
 
 def _one_line(value):
-    """Normalize an untrusted structural value to one safe Markdown line."""
     text = str(value)
     text = CONTROL_RE.sub(" ", text)
     text = re.sub(r" +", " ", text).strip()
-    return COMMENT_RE.sub("&lt;!--", text)
+    return neutralize_comment_openers(text)
 
 
 def _safe_prose(value):
-    """Keep prose multiline while removing controls and forged structure."""
     text = str(value).replace("\r\n", "\n").replace("\r", "\n")
     text = "".join(
         character
@@ -93,7 +90,7 @@ def _safe_prose(value):
         if character == "\n"
         or not (ord(character) < 32 or 0x7F <= ord(character) <= 0x9F)
     )
-    text = COMMENT_RE.sub("&lt;!--", text)
+    text = neutralize_comment_openers(text)
     text = HEADING_RE.sub(r"\1\\\2", text)
     return re.sub(r"(?m)^([ ]{0,3})(=+|-+)[ \t]*$", r"\1\\\2", text)
 
