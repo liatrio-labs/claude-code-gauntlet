@@ -7,6 +7,7 @@ from gauntlet import patches
 from gauntlet.delivery import post
 
 from tests.support.delivery import patch_inputs
+from tests.support.path_text import normalize_path_text
 
 REPORT_CASES = {
     "mixed-idempotent": (
@@ -230,7 +231,7 @@ def test_report(case, tmp_path, invoke):
         tmp_path,
     )
     assert result.returncode == 0
-    assert result.stdout.decode().replace(str(tmp_path), "<OUT>") == receipt
+    assert normalize_path_text(result.stdout.decode(), tmp_path, "<OUT>") == receipt
     assert (
         tmp_path / "code-gauntlet-patches-abc1234.md"
     ).read_bytes() == document.encode()
@@ -389,7 +390,7 @@ def test_failure_receipt(case, tmp_path, invoke, monkeypatch):
         tmp_path,
     )
     assert result.returncode == 1
-    assert result.stdout.decode().replace(str(tmp_path), "<OUT>") == receipt
+    assert normalize_path_text(result.stdout.decode(), tmp_path, "<OUT>") == receipt
     assert not (tmp_path / "code-gauntlet-patches-abc1234.md").exists()
 
 
@@ -429,7 +430,7 @@ def test_confinement(case, tmp_path, invoke):
         "report_patches", ["--output-dir", str(root), "--head-sha", "abc1234"], tmp_path
     )
     assert result.returncode == 1
-    assert result.stdout.decode().replace(str(root), "<OUT>") == receipt
+    assert normalize_path_text(result.stdout.decode(), root, "<OUT>") == receipt
     assert outside.read_bytes() == b"PRE-EXISTING CONTENT\n"
 
 
@@ -468,7 +469,9 @@ def test_run_isolation(order, tmp_path, invoke):
             tmp_path,
         )
         assert result.returncode == 0
-        assert result.stdout.decode().replace(str(tmp_path), "<OUT>") == expected
+        assert (
+            normalize_path_text(result.stdout.decode(), tmp_path, "<OUT>") == expected
+        )
         documents.append((tmp_path / "code-gauntlet-patches-abc1234.md").read_bytes())
         assert state == (
             post._FIX_COUNTS,

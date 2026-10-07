@@ -18,6 +18,7 @@ from gauntlet.forge import GitHub, JsonFetch
 from gauntlet.paths import ENTRY_ROOT
 
 from tests.conftest import Invocation
+from tests.support import path_text
 from tests.support.forge import FakeForge, FakeGitLab, ForgeCall
 from tests.test_forge import HOST_CASES
 
@@ -600,12 +601,7 @@ def normalize(data, tmp_path, root=ROOT):
         key=lambda item: len(item[0]),
         reverse=True,
     ):
-        for spelling in (source.replace("\\", "\\\\"), source):
-            text = re.sub(
-                re.escape(spelling) + r"(?=$|[/\\'\"\s])",
-                lambda match, value=replacement: value,
-                text,
-            )
+        text = path_text.normalize_path_text(text, source, replacement)
     for pattern, replacement in (
         (
             r'(pipeline_version=|"pipeline_version"\s*:\s*")3\.\d+\.\d+',
@@ -619,6 +615,53 @@ def normalize(data, tmp_path, root=ROOT):
     ):
         text = re.sub(pattern, replacement, text)
     return text
+
+
+@pytest.mark.parametrize(
+    ("text", "directory", "expected", "separator"),
+    [
+        pytest.param(
+            r"failed at C:\build\tests\case\report.json",
+            r"C:\build\tests\case",
+            "failed at <OUT>/report.json",
+            "\\",
+            id="windows-plain",
+        ),
+        pytest.param(
+            r"failed at C:\\build\\tests\\case\\report.json",
+            r"C:\build\tests\case",
+            "failed at <OUT>/report.json",
+            "\\",
+            id="windows-json-escaped",
+        ),
+        pytest.param(
+            r"OSError: missing 'C:\\\\build\\\\tests\\\\case\\\\findings.json'",
+            "C:/build/tests/case",
+            "OSError: missing '<OUT>/findings.json'",
+            "\\",
+            id="windows-nested-error-path",
+        ),
+        pytest.param(
+            r"error at C:\build\tests\case",
+            r"C:\build\tests\case",
+            "error at <OUT>",
+            "\\",
+            id="windows-path-at-end",
+        ),
+        pytest.param(
+            "/tmp/pytest/case/report.json",
+            "/tmp/pytest/case",
+            "<OUT>/report.json",
+            "/",
+            id="posix-path",
+        ),
+    ],
+)
+def test_normalize_temp_path_encodings(
+    text, directory, expected, separator, monkeypatch
+):
+    monkeypatch.setattr(path_text.os, "sep", separator)
+    assert path_text.normalize_path_text(text, directory, "<OUT>") == expected
 
 
 @pytest.mark.parametrize("suffix", ("-link", " space[1]"))
@@ -1186,4 +1229,4 @@ def test_patch_stdio(path, line, title, stdout, stderr, tmp_path):
     )
     assert result.returncode == 0
     assert normalize(result.stdout, tmp_path) == stdout
-    assert result.stderr.decode("utf-8") == stderr
+    assert normalize(result.stderr, tmp_path) == stderr
