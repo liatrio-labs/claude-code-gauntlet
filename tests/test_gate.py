@@ -329,15 +329,20 @@ def test_fix_case(finding, facts, site, options, expected):
 
 
 GITLAB_SITE_CASES = {
-    "anchor-before": (2, 4, 1, gate.ApplySite((1, 1))),
-    "anchor-after": (2, 4, 5, gate.ApplySite((5, 5))),
-    "cap-inclusive": (2, 102, 2, gate.ApplySite((2, 102), (0, 100))),
-    "above-cap-inclusive": (2, 102, 102, gate.ApplySite((2, 102), (100, 0))),
-    "below-cap-exceeded": (2, 103, 2, gate.ApplySite((2, 2), cap_exceeded=True)),
-    "above-cap-exceeded": (2, 103, 103, gate.ApplySite((103, 103), cap_exceeded=True)),
-    "missing-bound": (2, None, 2, gate.ApplySite((2, 2))),
-    "float-bound": (2, 3.0, 2, gate.ApplySite((2, 2))),
-    "boolean-anchor-and-line": (True, 3, True, gate.ApplySite((True, True))),
+    "anchor-before": (2, 4, 1, gate.GitLabApplySite((1, 1))),
+    "anchor-after": (2, 4, 5, gate.GitLabApplySite((5, 5))),
+    "cap-inclusive": (2, 102, 2, gate.GitLabApplySite((2, 102), (0, 100))),
+    "above-cap-inclusive": (2, 102, 102, gate.GitLabApplySite((2, 102), (100, 0))),
+    "below-cap-exceeded": (2, 103, 2, gate.GitLabApplySite((2, 2), cap_exceeded=True)),
+    "above-cap-exceeded": (
+        2,
+        103,
+        103,
+        gate.GitLabApplySite((103, 103), cap_exceeded=True),
+    ),
+    "missing-bound": (2, None, 2, gate.GitLabApplySite((2, 2))),
+    "float-bound": (2, 3.0, 2, gate.GitLabApplySite((2, 2))),
+    "boolean-anchor-and-line": (True, 3, True, gate.GitLabApplySite((True, True))),
 }
 
 
@@ -354,11 +359,11 @@ def test_gitlab_site(line, end_line, anchor, expected):
 
 
 GITHUB_SITE_CASES = {
-    "multiline": (2, 3, gate.ApplySite((2, 3), multiline=True)),
-    "off-diff-end": (2, 940, gate.ApplySite((2, 2))),
-    "boolean-end": (1, True, gate.ApplySite((1, 1))),
-    "float-end-geometry": (2, 3.0, gate.ApplySite((2, 2))),
-    "reversed-end": (2, 1, gate.ApplySite((2, 2))),
+    "multiline": (2, 3, gate.GitHubApplySite((2, 3), multiline=True)),
+    "off-diff-end": (2, 940, gate.GitHubApplySite((2, 2))),
+    "boolean-end": (1, True, gate.GitHubApplySite((1, 1))),
+    "float-end-geometry": (2, 3.0, gate.GitHubApplySite((2, 2))),
+    "reversed-end": (2, 1, gate.GitHubApplySite((2, 2))),
 }
 
 
