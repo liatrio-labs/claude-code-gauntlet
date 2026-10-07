@@ -146,7 +146,7 @@ including inside inline code, quoted locations and a URL segment such as `/@name
 `<` before an ASCII letter, `/`, `!` or `?` becomes `&lt;` in prose and U+FF1C
 FULLWIDTH LESS-THAN SIGN inside a paired inline span or quoted location. Email address
 syntax stays intact. Numeric references and `&commat;`, `&excl;`, `&lbrack;`, `&lsqb;`,
-`&rsqb;`, `&rbrack;`, `&colon;`, `&lpar;`, `&rpar;`, `&bsol;`, `&nbsp;` and
+`&rsqb;`, `&rbrack;`, `&Hat;`, `&colon;`, `&lpar;`, `&rpar;`, `&bsol;`, `&nbsp;` and
 `&NonBreakingSpace;` decode as each replacement
 is consumed before the next input character. Decimal and hexadecimal accumulation saturates
 at 127; only ASCII values 32 through 126 are emitted. Other named references and query
@@ -215,6 +215,9 @@ Nested-quote shorthand such as `>>> text` displays literally.
 In prose, inline spans and quoted locations, the bracket after `!` or `[` (also
 across a run of backslashes) becomes U+FF3B FULLWIDTH LEFT SQUARE BRACKET.
 Both hosts render an image from `![`; GitLab also renders one from `[[`.
+So does every `[` before a caret, also across a run of backslashes: GitHub hides text
+between `[^` and a `]` on a later line of the paragraph. A regex such as `[^a-z]` shows
+as `［^a-z]`.
 GitLab parses text holding `](` a second time after backslashes are consumed,
 so a backslash does not hold there. On an unprotected physical line holding `](` or `]\(`,
 every `]` plus zero or more backslashes plus `:` everywhere on that triggered line changes
@@ -230,10 +233,8 @@ precede `[` on its line. A preceding backslash or another `[` prevents the match
 in the prefix when the guard runs. For `[[x]: u`, containment first turns the second bracket
 fullwidth, leaving the first bracket as the label opener, so its colon is escaped. In multiline fields,
 the old label may continue across lines, and it still applies inside code spans. This prevents
-a definition from turning code-owned text such as `[CRITICAL]` into a link. After the same
-line prefix, footnote labels start with `[^` and accept any run without `]` or newline before
-`]:`, including backslashes and opening brackets; their colon gains a backslash on lines
-without the trigger and becomes U+FF1A on triggered lines.
+a definition from turning code-owned text such as `[CRITICAL]` into a link. A footnote
+label has no rule of its own: its opener is already fullwidth.
 Footnote definitions and reference-style links in finding text therefore show as literal text. The
 new colon becomes fullwidth even when copied; the retained line-initial escape displays its
 original colon.
