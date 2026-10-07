@@ -14,7 +14,7 @@ Implementation details for each delivery method in Phase 8, interactive and head
 
 ### Comment body format
 
-**You do not compose the comment body.** `scripts/gauntlet/delivery/post.py::render_comment_body` builds it
+**You do not compose the comment body.** `scripts/gauntlet/delivery/compose.py::render_comment_body` builds it
 from the fields you supply. Its output, for reference:
 
 <!-- generated-from-registry-identity:inline_sample — do not edit; run scripts/generate_contract_requirements.py -->

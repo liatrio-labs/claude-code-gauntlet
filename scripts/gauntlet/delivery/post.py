@@ -87,20 +87,17 @@ No external Python dependencies — stdlib only.
 """
 
 import argparse
-import hashlib
 import json
 import os
 import sys
 from collections.abc import Callable
-from typing import Any, NamedTuple, cast
+from typing import Any, cast
 
 from gauntlet import diff, proc
 from gauntlet.cli import Command
-from gauntlet.delivery import gate
+from gauntlet.delivery import compose, gate
 from gauntlet.delivery.fold import (
     body_limit,
-    fold_inline_body,
-    fold_review_body,
     utf8_len,
 )
 from gauntlet.delivery.gate import ApplyRange, FenceOffsets, FixReason
@@ -119,33 +116,13 @@ from gauntlet.forge import (
     origin_remote,
 )
 from gauntlet.fs import JsonReadError, read_json
-from gauntlet.markdown import fence_run
 from gauntlet.marker import (
-    LEGACY_PRODUCT,
     SHA_RE,
     build_finding_marker,
-    build_footer,
-    build_prose_footer,
     is_sha_shaped,
 )
 from gauntlet.prior_review import PriorDelivery, gitlab_prior_delivery_state
-from gauntlet.registry import (
-    BRAND_MARK,
-    BRAND_NAME,
-    CODE_OWNED_HEADINGS,
-    RULE_SOURCE_LABEL_FALLBACK,
-    RULE_SOURCE_LABELS,
-    SEVERITY_EMOJI,
-    SEVERITY_EMOJI_FALLBACK,
-)
-from gauntlet.text import (
-    normalize_report_severity,
-    prepare_line,
-    prepare_location,
-    prepare_prose,
-    prepared_prose,
-    redact_secrets,
-)
+from gauntlet.text import prepare_line
 
 # ---------------------------------------------------------------------------
 # Dry-run capture
@@ -298,38 +275,6 @@ def validate_position(position, shas, facts: DiffFacts | None, filepath, line):
 # ---------------------------------------------------------------------------
 
 
-def _blockquote(text):
-    """Raw CR/CRLF must not end a CommonMark line outside its quote prefix."""
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    lines = text.split("\n")
-    out = []
-    for line in lines:
-        if line:
-            out.append(f"> {line}")
-        else:
-            out.append(">")
-    return "\n".join(out)
-
-
-def _suggestion_fence(payload, *, offsets=None):
-    """Return ``(open, close)`` fence lines; ``fence_run`` sets the length.
-
-    *offsets* is GitLab's ``(above, below)`` pair: it makes the header
-    ``suggestion:-m+n``, which widens what one click replaces to
-    ``[anchor - m, anchor + n]``. The parser is fence-length blind, so
-    the header composes with any length. ``None`` and ``(0, 0)`` both render
-    the plain header — ``suggestion:-0+0`` is its exact synonym, and the plain
-    spelling is the one every platform understands. This renderer is
-    platform-blind: whether offsets are expressible at all is the poster's
-    decision, made where the anchor is known.
-    """
-    fence = fence_run(payload)
-    header = "suggestion"
-    if offsets not in (None, (0, 0)):
-        header = f"suggestion:-{offsets[0]}+{offsets[1]}"
-    return f"{fence}{header}", fence
-
-
 # ---------------------------------------------------------------------------
 # suggested_fix_code — the deterministic apply-check
 # ---------------------------------------------------------------------------
@@ -428,7 +373,7 @@ def _degraded_entry(filepath, line, finding, facts: DiffFacts | None):
     ``_gated_finding`` is always called with ``None`` here regardless of
     platform.
     """
-    return filepath, line, _gated_finding(finding, None, facts)
+    return compose.SkippedEntry(filepath, line, _gated_finding(finding, None, facts))
 
 
 def _warn_group_skipped(group, facts: DiffFacts | None, filepath=None):
@@ -439,7 +384,7 @@ def _warn_group_skipped(group, facts: DiffFacts | None, filepath=None):
     the whole group, so a group of several names every member: the title alone would
     leave the corroborators untraceable.
     """
-    primary = group["primary"]
+    primary = group.primary
     title = primary.get("title", "?")
     if filepath is None:
         message = f"Finding '{title}' has no line number — skipping."
@@ -452,7 +397,7 @@ def _warn_group_skipped(group, facts: DiffFacts | None, filepath=None):
             f"Skipping finding '{title}' at {filepath}:{primary['line']} "
             f"— line not found in diff.{diag}"
         )
-    members = [primary, *group["corroborators"]]
+    members = [primary, *group.corroborators]
     if len(members) > 1:
         labels = [
             str(m["id"] if m.get("id") is not None else m.get("title", "?"))
@@ -460,31 +405,6 @@ def _warn_group_skipped(group, facts: DiffFacts | None, filepath=None):
         ]
         message += f" [group members: {', '.join(labels)}]"
     warn_skip(message)
-
-
-def _key_material_finding(finding):
-    """Return the copy whose render seeds a DELIVERY KEY.
-
-    ``suggested_fix_code`` and ``rule_source`` come off UNCONDITIONALLY — not gated —
-    so a key does not depend on either field at all: it is the same whether the finding ships
-    grouped or individually, and the same whichever way the apply-check went. This preserves
-    the fence/rule-source exclusion guarantee for keys across delivery shapes.
-    Prior-delivery dedup is retry-safe only while keys are stable
-    across runs and across delivery shapes; making the GATE deterministic would
-    not be enough, because the gate's inputs (the diff, the render site) are not.
-
-    The brand trailer is excluded the same way and for the same reason — it is not a
-    field, so it is excluded structurally by :func:`key_material_body` calling
-    :func:`_finding_sections`, never by stripping a suffix.
-    """
-    if not isinstance(finding, dict) or not any(
-        field in finding for field in ("suggested_fix_code", "rule_source")
-    ):
-        return finding
-    stripped = dict(finding)
-    stripped.pop("suggested_fix_code", None)
-    stripped.pop("rule_source", None)
-    return stripped
 
 
 def _github_overlap_records(groups, facts: DiffFacts | None):
@@ -505,14 +425,14 @@ def _github_overlap_records(groups, facts: DiffFacts | None):
     """
     records = []
     for index, group in enumerate(groups):
-        primary = group["primary"]
+        primary = group.primary
         if not isinstance(primary, dict) or "suggested_fix_code" not in primary:
             continue
         line = primary.get("line")
         if line is None:
             continue
         filepath = diff.diff_path_spelling(facts, primary.get("file", "?"), line)
-        if not diff.is_line_valid(facts, filepath, line):
+        if not diff.is_line_valid(facts, filepath, cast(int | None, line)):
             continue
         site = gate.github_apply_range(facts, filepath, line, primary.get("end_line"))
         verdict = gate.evaluate_fix(primary, apply_range=site.apply_range, facts=facts)
@@ -543,7 +463,7 @@ def _gitlab_overlap_records(remaining, facts: DiffFacts | None):
     """
     records = []
     for index, (filepath, group) in enumerate(remaining):
-        primary = group["primary"]
+        primary = group.primary
         if not isinstance(primary, dict) or "suggested_fix_code" not in primary:
             continue
         site = gate.gitlab_apply_range(primary, primary["line"])
@@ -579,295 +499,11 @@ def _print_fix_summary():
     print(f"  {downgraded} suggested fix(es) downgraded to prose.")
 
 
-# One mark per delivered SURFACE, never per element: an inline comment/discussion body
-# carries the trailer once at the end; the summary body carries the header instead, and the
-# skipped-findings entries inside it are rendered unbranded.
-BRAND_TRAILER = f"{BRAND_MARK} *{BRAND_NAME}*"
-BRAND_SUMMARY_HEADER = f"### {BRAND_MARK} {BRAND_NAME}"
-
-
-class ComposedBody(NamedTuple):
-    body: str
-    shown: int
-    omitted: int
-    folded_bytes: int
-    omitted_entries: tuple[tuple[str, str], ...]
-
-
-class InlineBody(NamedTuple):
-    body: str
-    folded_bytes: int
-
-
-def _normalize_report_severity(raw):
-    return normalize_report_severity(raw, SEVERITY_EMOJI)
-
-
-def _finding_sections(finding, *, fence_offsets=None):
-    """Key material excludes branding so identity changes cannot change delivery keys.
-
-    Fence offsets depend on the posting anchor and belong to the caller, not the finding.
-    """
-    severity = _normalize_report_severity(finding.get("severity"))
-    emoji = SEVERITY_EMOJI.get(severity, SEVERITY_EMOJI_FALLBACK)
-
-    raw_title = finding.get("title")
-    title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
-    body = prepare_prose(finding.get("body", ""))
-    suggested_fix = gate.fix_code_text(finding.get("suggested_fix_code"))
-
-    parts = [f"**{emoji} [{severity.upper()}] {title or 'Finding'}**", "", body]
-
-    suggestion_text = prepared_prose(finding.get("suggestion"))
-    if suggestion_text:
-        parts += ["", "**Suggested fix:**", suggestion_text]
-
-    # A comment-only rule must not block the fallback or select its source label.
-    clause_rule = prepared_prose(finding.get("claude_md_rule"), cap=True)
-    rule_text = clause_rule or prepared_prose(finding.get("spec_text"), cap=True)
-    rule_label = RULE_SOURCE_LABEL_FALLBACK
-    if clause_rule:
-        source = finding.get("rule_source")
-        if isinstance(source, str):
-            rule_label = RULE_SOURCE_LABELS.get(source, RULE_SOURCE_LABEL_FALLBACK)
-    if rule_text:
-        parts += ["", f"**{rule_label}:**", _blockquote(rule_text)]
-
-    # criticality, failure_scenario, evidence, confidence and dimension belong to
-    # artifacts/reports; posted comments exclude them.
-    #
-    # The gate removes ineligible patches at each render site so inline and degraded
-    # bodies can differ. Patch content stays exact except for credential redaction.
-    # Normalize once: a second pass removes another LF and changes the approved patch.
-    if suggested_fix:
-        suggested_fix = redact_secrets(suggested_fix)
-        open_f, close_f = _suggestion_fence(suggested_fix, offsets=fence_offsets)
-        parts += ["", open_f, suggested_fix, close_f]
-
-    return "\n".join(parts)
-
-
-def render_comment_body(finding, *, fence_offsets=None):
-    """Return the unfolded, marker-free rendering used by tests and delivery-key logic.
-
-    It is byte-identical to a posted body only when no fold and no live marker
-    applies; delivery composes the sections with ``compose_inline_body`` and
-    appends live markers separately.
-    """
-    return (
-        _render_group_sections(finding, [], fence_offsets=fence_offsets)
-        + f"\n\n{BRAND_TRAILER}"
-    )
-
-
-def key_material_body(finding):
-    """The bytes ``finding_key`` hashes: sections only, no trailer, ``suggested_fix_code``
-    stripped (:func:`_key_material_finding`).
-
-    Changing this rendering re-keys each affected finding on every open PR/MR.
-    Rendering normalizes severity labels, so off-enum, blank or missing labels
-    key as their normalized form. Canonical severities and case variants keep
-    their keys; posted title, body, suggestion, rule and absent-title values key
-    from their rendered forms.
-    """
-    return _finding_sections(_key_material_finding(finding))
-
-
-def consolidate_delivery(findings):
-    """Group *findings* for the posted delivery payload.
-
-    Findings stay distinct in the caller's array — this only groups them for
-    rendering. A finding carrying a truthy ``consolidation_key`` joins the group
-    for that key; ``consolidation_primary: true`` marks which member anchors the
-    group's single posted comment. A finding with no (or falsy) key becomes its
-    own single-member group — this is what keeps output byte-identical to today
-    for findings without stamps (older artifacts, degraded pipelines).
-
-    Returns a list of ``{"primary": finding, "corroborators": [finding, ...]}``
-    dicts, one per group, in the order each group's FIRST member appears in
-    *findings* — deterministic regardless of which member within a group is
-    the primary.
-    """
-    groups = []
-    key_to_group = {}
-    for f in findings:
-        key = f.get("consolidation_key") if isinstance(f, dict) else None
-        if not key:
-            groups.append({"primary": f, "corroborators": []})
-            continue
-        group = key_to_group.get(key)
-        if group is None:
-            group = {"primary": None, "corroborators": []}
-            key_to_group[key] = group
-            groups.append(group)
-        if f.get("consolidation_primary"):
-            if group["primary"] is None:
-                group["primary"] = f
-            else:
-                # A second consolidation_primary in the same group must not
-                # overwrite (and drop) the first — demote it to corroborator.
-                group["corroborators"].append(f)
-        else:
-            group["corroborators"].append(f)
-    # Reachable only for hand-assembled payloads: filterFindings.js stamps
-    # exactly one consolidation_primary per
-    # group. If a caller's data has none, don't drop the group's first-seen
-    # member — treat it as the primary rather than surface `None`.
-    for group in groups:
-        if group["primary"] is None and group["corroborators"]:
-            group["primary"] = group["corroborators"].pop(0)
-    return groups
-
-
-def _render_corroboration(finding):
-    """Render one non-primary group member as a corroborating section."""
-    agent = prepare_line(finding.get("agent", "unknown"))
-    dimension = prepare_line(finding.get("dimension", "unknown"))
-    confidence = finding.get("confidence")
-    conf_text = prepare_line(confidence) if confidence is not None else "?"
-    raw_title = finding.get("title")
-    title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
-    body = prepare_prose(finding.get("body", ""))
-    parts = [
-        f"**Corroborating finding — {agent} ({dimension}, confidence {conf_text}):**",
-        "",
-        f"**{title or 'Finding'}**",
-    ]
-    if body:
-        parts += ["", body]
-    return "\n".join(parts)
-
-
-def render_group_body(primary, corroborators, *, fence_offsets=None):
-    """Build the unfolded, marker-free markdown body for one consolidation group.
-
-    This is the marker-free rendering used by tests and delivery-key logic. It is
-    byte-identical to a posted body only when no fold and no live marker applies.
-    Delivery composes the sections with ``compose_inline_body`` and appends live
-    markers separately. The identity trailer is appended ONCE, after the
-    corroborations — one mark per delivered SURFACE, never one per element. With
-    no *corroborators* the result is byte-identical to ``render_comment_body``,
-    which keeps unstamped findings and degraded pipelines unaffected.
-    *fence_offsets* reaches the primary's fence only: a corroborator never
-    renders one (see :func:`_render_corroboration`), so a group body carries at
-    most the one header, measured from the anchor the group is posted at.
-    Each corroborator is appended as its own section; that appended text is
-    finding-controlled, so it is run through the same ``<!--`` neutralization
-    ``build_skipped_section`` applies (see its docstring). The primary's fields
-    are prepared before this group is assembled.
-    """
-    return _render_group_sections(
-        primary, corroborators, fence_offsets=fence_offsets
-    ) + (f"\n\n{BRAND_TRAILER}")
-
-
-def _render_group_sections(primary, corroborators, *, fence_offsets=None):
-    """Render one group's sections without the identity trailer."""
-    body = _finding_sections(primary, fence_offsets=fence_offsets)
-    if not corroborators:
-        return body
-    section = "\n\n".join(_render_corroboration(c) for c in corroborators)
-    section = section.replace("<!--", "&lt;!--")
-    return f"{body}\n\n---\n\n{section}"
-
-
-def _skipped_location(filepath, line):
-    return f"{filepath}:{line}" if line is not None else str(filepath or "?")
-
-
-def _plural(count, singular, plural=None):
-    return singular if count == 1 else (plural or singular + "s")
-
-
-def _skipped_frame(n, shown, inline_count):
-    """Render the fixed part of the skipped section without any entries."""
-    group_note = (
-        " A finding listed here may not have an anchoring problem of its own — a "
-        "consolidation group whose primary could not be anchored inline is listed "
-        "here in full, corroborators included."
-    )
-    if inline_count is None:
-        intro = (
-            f"The following {shown} {_plural(shown, 'finding')} "
-            f"{_plural(shown, 'references', 'reference')} lines outside this diff and "
-            f"{_plural(shown, 'is', 'are')} included here instead of as inline comments:{group_note}"
-        )
-    else:
-        intro = (
-            f"{inline_count} inline {_plural(inline_count, 'comment')} "
-            f"{_plural(inline_count, 'was', 'were')} posted; the following {shown} "
-            f"{_plural(shown, 'finding')} {_plural(shown, 'references', 'reference')} "
-            f"lines outside this diff and {_plural(shown, 'is', 'are')} included here "
-            f"instead:{group_note}"
-        )
-    return "\n".join(
-        [
-            "---",
-            "",
-            f"### ⚠️ {n} {_plural(n, 'finding')} could not be anchored inline",
-            "",
-            intro,
-        ]
-    )
-
-
-def _skipped_piece(filepath, line, finding):
-    """Render and neutralize one whole skipped entry, including its heading.
-
-    The finding fields are prepared by their renderers. The whole piece also
-    neutralizes any remaining marker opener, including one in its heading.
-    """
-    location = _skipped_location(filepath, line)
-    piece = f"\n\n#### {prepare_location(location)}\n\n{_finding_sections(finding)}"
-    return piece.replace("<!--", "&lt;!--")
-
-
-def _closing_line(m, n, platform):
-    limits = body_limit(platform)
-    return (
-        f"_{m} of these {n} {_plural(n, 'finding')} {_plural(m, 'is', 'are')} not shown: this {limits.surface} "
-        f"reached the {limits.bytes}-byte {limits.label} body limit._"
-    )
-
-
-def build_skipped_section(skipped, inline_count=None):
-    """Render the trailing section for findings that could not be anchored inline.
-
-    *skipped* is a list of ``(filepath, line, finding)`` tuples. A member is not always
-    here for its own reason: a consolidation group whose primary could not be anchored
-    degrades as a whole, so corroborators are listed here too. *inline_count*, when
-    given, is how many comments landed. GitLab passes no inline count because its
-    summary note posts before the per-finding loop, so the landed count is not yet
-    known. Entries are unbranded and use the shared frame and piece renderers. Each
-    piece neutralizes its own ``<!--`` markers before fitting; that neutralization
-    lives in ``_skipped_piece``. ``gauntlet.patches`` and
-    ``gauntlet.marker`` cite ``build_skipped_section`` as the precedent.
-    Returns ``""`` for an empty *skipped* list.
-    """
-    if not skipped:
-        return ""
-    n = len(skipped)
-    return _skipped_frame(n, n, inline_count) + "".join(
-        _skipped_piece(filepath, line, finding) for filepath, line, finding in skipped
-    )
-
-
 def _delivery_marker_suffix(sha, keys):
     """Return the live-only suffix for the findings carried by one delivery."""
     if not is_sha_shaped(sha) or not keys:
         return ""
     return "\n\n" + "\n".join(build_finding_marker(sha, key) for key in keys)
-
-
-def compose_inline_body(sections, *, platform, surface, marker_suffix=""):
-    """Compose and budget one complete inline body, reserving its live markers."""
-    limits = body_limit(platform, surface)
-    trailer = f"\n\n{BRAND_TRAILER}"
-    allowance = limits.bytes - utf8_len(trailer) - utf8_len(marker_suffix)
-    if utf8_len(sections) <= allowance:
-        return InlineBody(sections + trailer, 0)
-    folded, folded_bytes = fold_inline_body(sections, allowance, platform, surface)
-    return InlineBody(folded + trailer, folded_bytes)
 
 
 def _inline_body_over_limit(composed, marker_suffix, platform, surface):
@@ -899,122 +535,6 @@ def _report_inline_budget(composed, platform, surface, filepath, line):
     )
 
 
-def _bounded_section(n, shown_entries, inline_count, platform):
-    section = _skipped_frame(n, len(shown_entries), inline_count)
-    section += "".join(
-        _skipped_piece(filepath, line, finding)
-        for filepath, line, finding in shown_entries
-    )
-    omitted = n - len(shown_entries)
-    if omitted:
-        section += f"\n\n{_closing_line(omitted, n, platform)}"
-    return section
-
-
-def _compose_fragments(review_body, section, footer):
-    fragments = [BRAND_SUMMARY_HEADER]
-    if review_body:
-        fragments.append(review_body)
-    if section:
-        fragments.append(section)
-    return "\n\n".join(fragments) + footer
-
-
-def _standalone_footer_lines(review_body, sha):
-    if not isinstance(review_body, str):
-        return ""
-    sha_text = str(sha)
-    if not sha_text:
-        return ""
-    footer_prefix = build_prose_footer(sha).split(sha_text, 1)[0]
-    prefixes = (footer_prefix, f"Generated by {LEGACY_PRODUCT} | Reviewed up to: ")
-    return "\n".join(
-        line.lstrip(" \t")
-        for line in review_body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        if line.lstrip(" \t").startswith(prefixes)
-    )
-
-
-def _skipped_reserve(n, inline_count, platform):
-    # The widest count and both grammar forms bound every possible shown count.
-    frame = max(utf8_len(_skipped_frame(n, shown, inline_count)) for shown in (0, n))
-    closing = utf8_len(_closing_line(n, n, platform))
-    return frame + closing
-
-
-def compose_review_body(
-    review_body, skipped_groups, *, platform, findings_count, sha, inline_count=None
-):
-    """Deduplicate prose footers against standalone prepared lines with the same SHA.
-
-    The bounded path reserves the complete envelope and uses a canonical footer.
-    Skipped groups stay indivisible and their text cannot drive footer deduplication.
-    """
-    review_body = prepare_prose(review_body)
-    limits = body_limit(platform)
-    skipped = [entry for group in skipped_groups for entry in group]
-    n = len(skipped)
-    section = build_skipped_section(skipped, inline_count)
-    footer = build_footer(
-        findings_count,
-        sha,
-        body="",
-        prose_body=_standalone_footer_lines(review_body, sha),
-    )
-    body = _compose_fragments(review_body, section, footer)
-    if utf8_len(body) <= limits.bytes:
-        return ComposedBody(body, n, 0, 0, ())
-
-    footer = build_footer(findings_count, sha, body="")
-    fixed = utf8_len(BRAND_SUMMARY_HEADER) + utf8_len(footer)
-    if review_body:
-        fixed += utf8_len("\n\n")
-    if n:
-        fixed += utf8_len("\n\n\n\n") + _skipped_reserve(n, inline_count, platform)
-    allowance = limits.bytes - fixed
-
-    if review_body and utf8_len(review_body) > allowance:
-        effective_body, folded_bytes = fold_review_body(
-            review_body, allowance, platform
-        )
-        section = _bounded_section(n, [], inline_count, platform) if n else ""
-        body = _compose_fragments(effective_body, section, footer)
-        return ComposedBody(
-            body,
-            0,
-            n,
-            folded_bytes,
-            tuple(
-                (_skipped_location(filepath, line), finding.get("title", "Finding"))
-                for filepath, line, finding in skipped
-            ),
-        )
-
-    remaining = allowance - (utf8_len(review_body) if review_body else 0)
-    shown_entries = []
-    omitted_entries = []
-    for group in skipped_groups:
-        pieces = [_skipped_piece(*entry) for entry in group]
-        group_size = sum(utf8_len(piece) for piece in pieces)
-        if group_size <= remaining:
-            shown_entries.extend(group)
-            remaining -= group_size
-        else:
-            omitted_entries.extend(group)
-    section = _bounded_section(n, shown_entries, inline_count, platform) if n else ""
-    body = _compose_fragments(review_body, section, footer)
-    return ComposedBody(
-        body,
-        len(shown_entries),
-        len(omitted_entries),
-        0,
-        tuple(
-            (_skipped_location(filepath, line), finding.get("title", "Finding"))
-            for filepath, line, finding in omitted_entries
-        ),
-    )
-
-
 def _refuse_over_limit(body, platform):
     """Refuse a summary body that still exceeds its platform limit."""
     limits = body_limit(platform)
@@ -1035,9 +555,9 @@ def _report_summary_budget(composed, platform):
             f"{limits.surface} reached the {limits.bytes}-byte "
             f"{limits.label} body limit."
         )
-        for location, title in composed.omitted_entries:
+        for entry in composed.omitted_entries:
             warn(
-                f"Skipped finding '{title}' at {location} not shown: the "
+                f"Skipped finding '{entry.title}' at {entry.location} not shown: the "
                 f"{limits.surface} reached the {limits.bytes}-byte "
                 f"{limits.label} body limit."
             )
@@ -1047,45 +567,6 @@ def _report_summary_budget(composed, platform):
             f"{limits.surface} reached the {limits.bytes}-byte "
             f"{limits.label} body limit."
         )
-
-
-def summary_body_from_report(report):
-    """Return the body between the rendered Summary and next code-owned heading."""
-    marker = "## Summary\n\n"
-    start = report.find(marker)
-    if start < 0:
-        die("Report does not contain a rendered Summary section.")
-    body_start = start + len(marker)
-    cursor = body_start
-    while cursor <= len(report):
-        end = report.find("\n", cursor)
-        if end < 0:
-            line = report[cursor:]
-            next_cursor = len(report) + 1
-        else:
-            line = report[cursor:end]
-            next_cursor = end + 1
-        if line.endswith("\r"):
-            line = line[:-1]
-        if line in CODE_OWNED_HEADINGS:
-            body = report[body_start:cursor]
-            return body[:-2] if body.endswith("\n\n") else body
-        cursor = next_cursor
-    die("Report does not contain a following code-owned heading after Summary.")
-
-
-def finding_key(filepath, line, title, body):
-    """Return the 16-hex delivery key recorded in a posted inline discussion's marker.
-
-    Derived from what a reader can see on the wire — the path and line the comment is
-    anchored to, the title, and the RENDERED body — never from an upstream finding
-    ``id``: the input schema documented at the top of this file does not require one, so
-    keying on it would make dedup depend on a field a caller need not supply. Content
-    derivation also gives the right answer when it changes: an edited finding is a
-    different comment and gets posted, rather than being suppressed as "already there".
-    """
-    material = "\x00".join((str(filepath), str(line), str(title), body))
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
@@ -1139,11 +620,11 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
 
     ensure_available(forge)
 
-    # consolidate_delivery(findings) is materialized ONCE: the pre-pass
+    # compose.consolidate_delivery(findings) is materialized ONCE: the pre-pass
     # below and the render loop that follows it walk the SAME list of groups by
     # index, so a demotion decided by the pre-pass lands on the exact group the
     # render loop later renders.
-    groups = consolidate_delivery(findings)
+    groups = compose.consolidate_delivery(findings)
 
     # Pure, SILENT pre-pass: decide which kept fences would collide, on
     # GitLab's own closed-interval overlap semantic, with another kept fence in
@@ -1162,8 +643,8 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
     # One posted comment per consolidation group: findings without a stamp
     # are each their own single-member group, so this loop is unchanged for them.
     for index, group in enumerate(groups):
-        primary = group["primary"]
-        corroborators = group["corroborators"]
+        primary = group.primary
+        corroborators = group.corroborators
         line = primary.get("line")
         if line is None:
             _warn_group_skipped(group, facts)
@@ -1183,8 +664,10 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
         # finding that only the STRIPPED form validates must ship that
         # stripped path as `comment["path"]`, or GitHub 422s the whole review
         # on a path the PR does not have.
-        filepath = diff.diff_path_spelling(facts, primary["file"], line)
-        if not diff.is_line_valid(facts, filepath, line):
+        filepath = diff.diff_path_spelling(
+            facts, cast(str, primary["file"]), cast(int | None, line)
+        )
+        if not diff.is_line_valid(facts, filepath, cast(int | None, line)):
             _warn_group_skipped(group, facts, filepath)
             skipped_groups.append([_degraded_entry(filepath, line, primary, facts)])
             for c in corroborators:
@@ -1214,8 +697,8 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
             facts,
             demote_reason=("overlaps_kept_fence" if index in losers else None),
         )
-        composed = compose_inline_body(
-            _render_group_sections(gated, corroborators),
+        composed = compose.compose_inline_body(
+            compose.render_group_sections(gated, corroborators),
             platform="github",
             surface="inline",
         )
@@ -1238,7 +721,7 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
     # The bounded path uses a canonical footer; skipped text cannot suppress it.
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    composed = compose_review_body(
+    summary = compose.compose_review_body(
         review_body,
         skipped_groups,
         platform="github",
@@ -1248,12 +731,12 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
     )
 
     payload = {
-        "body": composed.body,
+        "body": summary.body,
         "event": "COMMENT",
         "comments": comments,
     }
 
-    _refuse_over_limit(composed.body, "github")
+    _refuse_over_limit(summary.body, "github")
     resp = post_json(
         github_review_request(ReviewTarget(owner, repo, pr_number), payload),
         forge=forge,
@@ -1267,9 +750,9 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
         print(f"  {len(comments)} inline comment(s) posted.")
     flat_skipped = [entry for group in skipped_groups for entry in group]
     if flat_skipped:
-        if composed.omitted:
+        if summary.omitted:
             skipped_line = (
-                f"  {composed.shown} of {len(flat_skipped)} finding(s) skipped inline "
+                f"  {summary.shown} of {len(flat_skipped)} finding(s) skipped inline "
                 "(lines not in diff) — appended to review body."
             )
         else:
@@ -1278,7 +761,7 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
                 "appended to review body."
             )
         print(skipped_line)
-    _report_summary_budget(composed, "github")
+    _report_summary_budget(summary, "github")
     _print_fix_summary()
     return 0
 
@@ -1377,7 +860,9 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
             gated, offsets = _gitlab_anchored(
                 finding, anchor, facts, demote_reason=demote_reason
             )
-            return _render_group_sections(gated, corroborators, fence_offsets=offsets)
+            return compose.render_group_sections(
+                gated, corroborators, fence_offsets=offsets
+            )
 
         return make_body
 
@@ -1390,13 +875,13 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
     # resolved filepath through to the loop so it is not re-derived.
     skipped_groups = []  # one list of (filepath, line, finding) per degraded group
     remaining = []  # (filepath, group) — groups that reach the inline loop
-    groups = consolidate_delivery(findings)
+    groups = compose.consolidate_delivery(findings)
     # One posted discussion per consolidation group: findings without a
     # stamp are each their own single-member group, so this loop is unchanged
     # for them.
     for group in groups:
-        primary = group["primary"]
-        corroborators = group["corroborators"]
+        primary = group.primary
+        corroborators = group.corroborators
         line = primary.get("line")
         if line is None:
             _warn_group_skipped(group, facts)
@@ -1412,8 +897,10 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
             continue
 
         # Same spelling resolution the loop below applies — see its comment.
-        filepath = diff.diff_path_spelling(facts, primary["file"], line)
-        if not diff.is_line_valid(facts, filepath, line):
+        filepath = diff.diff_path_spelling(
+            facts, cast(str, primary["file"]), cast(int | None, line)
+        )
+        if not diff.is_line_valid(facts, filepath, cast(int | None, line)):
             _warn_group_skipped(group, facts, filepath)
             skipped_groups.append([_degraded_entry(filepath, line, primary, facts)])
             for c in corroborators:
@@ -1446,7 +933,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
     review_body = data.get("review_body", "")
     # Only standalone prepared prose-footer lines carrying this SHA drive dedup.
     # The bounded path uses a canonical footer; skipped text cannot suppress it.
-    composed = compose_review_body(
+    composed = compose.compose_review_body(
         review_body,
         skipped_groups,
         platform="gitlab",
@@ -1494,11 +981,11 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         """
         raw_title = m.get("title")
         title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
-        return finding_key(
+        return compose.finding_key(
             filepath,
             line,
             title,
-            key_material_body(m),
+            compose.key_material_body(m),
         )
 
     def deliver(f, filepath, line, make_body, keys):
@@ -1520,7 +1007,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         # belongs after dedup because it describes a delivery that was attempted.
         sections = make_body(line)
         marker_suffix = _delivery_marker_suffix(sha, keys)
-        composed = compose_inline_body(
+        composed = compose.compose_inline_body(
             sections,
             platform="gitlab",
             surface="discussion",
@@ -1623,8 +1110,8 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         """
         gated = _gated_finding(c, None, facts)
         marker_suffix = _delivery_marker_suffix(sha, [key])
-        composed = compose_inline_body(
-            _finding_sections(gated),
+        composed = compose.compose_inline_body(
+            compose.render_finding_sections(gated),
             platform="gitlab",
             surface="note",
             marker_suffix=marker_suffix,
@@ -1655,7 +1142,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         if line is None:
             return None
         filepath = diff.diff_path_spelling(facts, c.get("file", "?"), line)
-        if not diff.is_line_valid(facts, filepath, line):
+        if not diff.is_line_valid(facts, filepath, cast(int | None, line)):
             return None
         return filepath, line
 
@@ -1691,7 +1178,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
             )
             return "invalid"
         filepath = diff.diff_path_spelling(facts, c.get("file", "?"), line)
-        if not diff.is_line_valid(facts, filepath, line):
+        if not diff.is_line_valid(facts, filepath, cast(int | None, line)):
             warn_skip(
                 f"Skipping corroborating finding '{title}' at {filepath}:{line} "
                 f"— line not found in diff."
@@ -1720,8 +1207,8 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         "failed": 0,
     }
     for index, (filepath, group) in enumerate(remaining):
-        f = group["primary"]
-        corroborators = group["corroborators"]
+        f = group.primary
+        corroborators = group.corroborators
         # Decided once by the pure pre-pass above — independent of
         # everything below (prior-delivery state, live-POST outcomes), so a
         # rerun always reaches the same verdict for this same index.
@@ -2001,9 +1488,13 @@ def main():
     if args.report and not data.get("review_body"):
         try:
             with open(args.report, encoding="utf-8") as fh:
-                data["review_body"] = summary_body_from_report(fh.read())
+                report = fh.read()
         except FileNotFoundError:
             die(f"Report file not found: {args.report}")
+        try:
+            data["review_body"] = compose.summary_body_from_report(report)
+        except compose.ReportShapeError as exc:
+            die(str(exc))
 
     for field in ("owner", "repo", "pr_number"):
         if field not in data:

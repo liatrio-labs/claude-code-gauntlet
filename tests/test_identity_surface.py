@@ -6,7 +6,8 @@ import unittest
 from typing import ClassVar
 
 from gauntlet import contract_gen as gen
-from gauntlet.delivery import post as post_review
+from gauntlet import registry
+from gauntlet.delivery import compose
 
 from tests import test_machine_parsed_strings as registry_doc
 from tests.support.js_values import js_values
@@ -187,15 +188,13 @@ class TestIdentitySurface(unittest.TestCase):
 
     def test_the_mark_is_the_pinned_codepoint_sequence(self):
         """T-GLYPH: the mark is U+2694 U+FE0F and collides with nothing else rendered."""
-        self.assertEqual(_codepoints(post_review.BRAND_MARK), _codepoints(BRAND_MARK))
-        for severity, emoji in post_review.SEVERITY_EMOJI.items():
+        self.assertEqual(_codepoints(registry.BRAND_MARK), _codepoints(BRAND_MARK))
+        for severity, emoji in registry.SEVERITY_EMOJI.items():
             with self.subTest(severity=severity):
                 self.assertNotEqual(
-                    _codepoints(emoji), _codepoints(post_review.BRAND_MARK)
+                    _codepoints(emoji), _codepoints(registry.BRAND_MARK)
                 )
-        self.assertNotEqual(
-            _codepoints(post_review.BRAND_MARK), _codepoints(WARNING_SIGN)
-        )
+        self.assertNotEqual(_codepoints(registry.BRAND_MARK), _codepoints(WARNING_SIGN))
 
     def test_the_declared_fences_are_exactly_the_fences_in_the_tree(self):
         """T-DISCOVERY: IDENTITY_FENCES equals what a whole-tree scan finds.
@@ -254,9 +253,7 @@ class TestIdentitySurface(unittest.TestCase):
         the list that already owns severity ordering repo-wide
         (`workflows/src/filterFindings.js`'s SEVERITY_ORDER).
         """
-        self.assertEqual(
-            list(post_review.SEVERITY_EMOJI), js_values()["SEVERITY_ORDER"]
-        )
+        self.assertEqual(list(registry.SEVERITY_EMOJI), js_values()["SEVERITY_ORDER"])
 
     def test_the_declaring_sources_carry_no_literal_mark_bytes(self):
         """docs/machine-parsed-strings.md lists five producers of the mark and
@@ -313,7 +310,7 @@ class TestIdentitySurface(unittest.TestCase):
         renderer-output sample test below.
         """
         self.assertEqual(
-            post_review.BRAND_SUMMARY_HEADER,
+            compose.BRAND_SUMMARY_HEADER,
             "\n".join(
                 gen.identity_body(
                     "skills/code-gauntlet/references/delivery-guide.md",
@@ -323,7 +320,7 @@ class TestIdentitySurface(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            _codepoints(post_review.BRAND_TRAILER),
+            _codepoints(compose.BRAND_TRAILER),
             _codepoints("\u2694\ufe0f *Code Gauntlet*"),
         )
 

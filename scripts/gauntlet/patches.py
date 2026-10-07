@@ -9,8 +9,6 @@ import os
 import re
 import sys
 
-# NEVER import gauntlet.verify.decide here: it runs git at import time.
-# Only the pure gate helpers come from delivery; its main() owns the dry-run payload.
 from gauntlet.cli import Command
 from gauntlet.delivery.gate import fix_code_text
 from gauntlet.delivery.post import (
@@ -23,11 +21,13 @@ from gauntlet.delivery.post import (
 from gauntlet.diff import parse_diff, patch_report_policy
 from gauntlet.fs import JsonReadError, confined, read_json, write_atomic
 from gauntlet.markdown import code_span, fence_run
-from gauntlet.text import redact_secrets
+
+# NEVER import gauntlet.verify.decide here: it runs git at import time.
+# Only the pure gate helpers come from delivery; its main() owns the dry-run payload.
+from gauntlet.text import neutralize_comment_openers, redact_secrets
 
 _HEAD_SHA_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _EXT_RE = re.compile(r"^[A-Za-z0-9_+#-]{1,12}$")
-_COMMENT_OPEN_RE = re.compile(r"<!--")
 
 _NO_PATCHES_LINE = "No finding carried a patch this step could check."
 _NO_ORACLE_LINE = (
@@ -113,22 +113,6 @@ def _one_line(value):
     return text.encode("utf-8", "replace").decode("utf-8")
 
 
-def _neutralize(text):
-    """Defuse an open HTML comment in model-/repo-derived text.
-
-    A finding's title or file path reaches this artifact raw. Left alone, a
-    stray ``<!--`` in either would open an HTML comment that swallows
-    everything rendered after it for the rest of the document — the same
-    class of defect ``gauntlet.delivery.post``'s ``build_skipped_section`` guards
-    against for the PR/MR body. Applied to every non-fence line; a kept
-    patch's fence payload bypasses it (see the fence-building loop below) —
-    the payload already passed the gate's redaction check, and rewriting
-    bytes inside a committable patch would make the artifact lie about what
-    was actually verified.
-    """
-    return _COMMENT_OPEN_RE.sub("&lt;!--", text)
-
-
 def _render(kept, candidates, filtered_earlier, oracle_state, sha):
     """Return the whole markdown document, deterministically.
 
@@ -139,7 +123,8 @@ def _render(kept, candidates, filtered_earlier, oracle_state, sha):
     parts = []
 
     def emit(text, *, raw=False):
-        parts.append(text if raw else _neutralize(text))
+        # Kept patch bytes bypass prose neutralization; they passed the gate.
+        parts.append(text if raw else neutralize_comment_openers(text))
 
     emit(f"# Apply-checked patches (against {sha})")
     emit(

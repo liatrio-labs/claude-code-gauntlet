@@ -2,7 +2,6 @@
 
 import contextlib
 import copy
-import hashlib
 import inspect
 import io
 import json
@@ -25,23 +24,18 @@ import gauntlet.prior_review as detect_prior_review
 import pytest
 from gauntlet import diff as diff_api
 from gauntlet import proc, registry
+from gauntlet.delivery import compose
+from gauntlet.delivery.compose import (
+    render_comment_body,
+    render_group_sections,
+    summary_body_from_report,
+)
 from gauntlet.delivery.post import (
-    _blockquote,
     _delivery_marker_suffix,
     _inline_body_over_limit,
-    _render_group_sections,
     _report_inline_budget,
-    _suggestion_fence,
-    build_footer,
-    build_skipped_section,
-    compose_inline_body,
-    compose_review_body,
-    consolidate_delivery,
     fetch_diff_facts,
-    render_comment_body,
-    render_group_body,
     resolve_marker_sha,
-    summary_body_from_report,
     validate_position,
 )
 from gauntlet.forge import (
@@ -53,8 +47,10 @@ from gauntlet.forge import (
     github_review_request,
 )
 from gauntlet.markdown import fence_closer
+from gauntlet.marker import build_footer
 from gauntlet.prior_review import PriorDelivery
 
+from tests.support.delivery import finding as delivery_finding
 from tests.support.diff import diff_facts
 from tests.support.forge import FakeForge, FakeForgeFactory, FakeGitLab, ForgeCall
 from tests.support.prior import prior_notes
@@ -82,7 +78,6 @@ pytestmark = pytest.mark.usefixtures(
 
 
 REPO = Path(__file__).resolve().parents[1]
-_MISSING_SEVERITY = object()
 
 
 @pytest.mark.parametrize(
@@ -353,813 +348,9 @@ def test_main_handles_findings_file_read_errors(
         assert captured.err == f"ERROR: Findings file not found: {findings_path}\n"
 
 
-def _severity_matrix():
-    """Return fixed public-seam oracles for closed, total severity rendering."""
-    low = "\U0001f4a1"
-    high = "\U0001f7e0"
-    matrix = [
-        ("oversized", "s" * 70000, "LOW", low),
-        ("int", 3, "LOW", low),
-        ("list", ["high"], "LOW", low),
-        ("dict", {"severity": "high"}, "LOW", low),
-        ("none", None, "LOW", low),
-        ("padded", " high ", "HIGH", high),
-        ("tabbed-case", "\tHiGh\r\n", "HIGH", high),
-        ("uppercase", "HIGH", "HIGH", high),
-        ("title-case", "High", "HIGH", high),
-        ("lowercase", "high", "HIGH", high),
-        ("unknown", "unknown", "LOW", low),
-        ("embedded-newline", "high\nfoo", "LOW", low),
-        ("missing", _MISSING_SEVERITY, "LOW", low),
-        ("empty", "", "LOW", low),
-        ("whitespace-only", " \t\r\n ", "LOW", low),
-        ("critical", "critical", "CRITICAL", "\U0001f534"),
-        ("medium", "medium", "MEDIUM", "\U0001f7e1"),
-        ("low", "low", "LOW", low),
-        ("bom-padded", "\ufeffhigh\ufeff", "HIGH", high),
-        ("line-separator-padded", "\u2028high\u2029", "HIGH", high),
-        ("next-line-padded", "\x85high\x85", "LOW", low),
-        ("file-separator-padded", "\x1chigh\x1c", "LOW", low),
-    ]
-    js_trim_chars = (
-        "\t",
-        "\n",
-        "\v",
-        "\f",
-        "\r",
-        " ",
-        "\u00a0",
-        "\u1680",
-        "\u2000",
-        "\u2001",
-        "\u2002",
-        "\u2003",
-        "\u2004",
-        "\u2005",
-        "\u2006",
-        "\u2007",
-        "\u2008",
-        "\u2009",
-        "\u200a",
-        "\u2028",
-        "\u2029",
-        "\u202f",
-        "\u205f",
-        "\u3000",
-        "\ufeff",
-    )
-    python_only_chars = ("\x1c", "\x1d", "\x1e", "\x1f", "\x85")
-    matrix.extend(
-        (f"trim-U+{ord(char):04X}", f"{char}high{char}", "HIGH", high)
-        for char in js_trim_chars
-    )
-    matrix.extend(
-        (f"python-only-U+{ord(char):04X}", f"{char}high{char}", "LOW", low)
-        for char in python_only_chars
-    )
-    return matrix
-
-
 # ---------------------------------------------------------------------------
 # render_comment_body
 # ---------------------------------------------------------------------------
-
-
-class TestOutboundSanitizeHelpers(unittest.TestCase):
-    def test_blockquote_prefixes_every_line_bare_gt_on_blank(self):
-        self.assertEqual(
-            _blockquote("a\n\nb"),
-            "> a\n>\n> b",
-        )
-
-    def test_blockquote_normalizes_cr_before_prefix(self):
-        # Defense in depth: even if a CR reached _blockquote, it must not
-        # become a line ending after a single '>' that escapes the quote.
-        self.assertEqual(_blockquote("a\rb"), "> a\n> b")
-        self.assertEqual(_blockquote("a\r\nb"), "> a\n> b")
-
-    def test_cited_rule_cr_cannot_escape_blockquote(self):
-        finding = {
-            "severity": "medium",
-            "title": "T",
-            "body": "b",
-            "claude_md_rule": "keep\rescape **bold**",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Cited rule:**", body)
-        # CR stripped by sanitize → single line inside the quote.
-        self.assertIn("> keepescape **bold**", body)
-        self.assertNotIn("\r", body)
-
-    def test_offsets_are_stated_in_the_header(self):
-        open_f, close_f = _suggestion_fence("return None", offsets=(0, 2))
-        self.assertEqual(open_f, "```suggestion:-0+2")
-        self.assertEqual(close_f, "```")
-
-    def test_both_offsets_are_stated_even_when_one_is_zero(self):
-        """GitLab's parser takes ``-m`` and ``+n`` independently, so either could
-        be omitted — emitting both makes the header state the whole range."""
-        open_f, _ = _suggestion_fence("x", offsets=(2, 0))
-        self.assertEqual(open_f, "```suggestion:-2+0")
-
-    def test_no_offsets_and_zero_offsets_are_the_plain_header(self):
-        """``suggestion:-0+0`` is an exact synonym for ``suggestion``, so the
-        single-line bytes every platform understands are what ships."""
-        for offsets in (None, (0, 0)):
-            with self.subTest(offsets=offsets):
-                open_f, _ = _suggestion_fence("x", offsets=offsets)
-                self.assertEqual(open_f, "```suggestion")
-
-    def test_offsets_compose_with_the_backtick_escalation(self):
-        """Fence length and header are independent — GitLab's parser is
-        fence-length blind, and its own docs show ````suggestion:-0+2."""
-        open_f, close_f = _suggestion_fence("line1\n```\nline3", offsets=(0, 2))
-        self.assertEqual(open_f, "````suggestion:-0+2")
-        self.assertEqual(close_f, "````")
-
-
-class TestRenderCommentBody(unittest.TestCase):
-    def test_critical_severity_emoji(self):
-        finding = {
-            "severity": "critical",
-            "title": "SQL Injection",
-            "body": "User input is not sanitized before being passed to the database query.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("[CRITICAL]", body)
-        self.assertIn("\U0001f534", body)  # 🔴
-
-    def test_high_severity_emoji(self):
-        finding = {
-            "severity": "high",
-            "title": "Bug",
-            "body": "Description of the bug.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("[HIGH]", body)
-        self.assertIn("\U0001f7e0", body)  # 🟠
-
-    def test_medium_severity_emoji(self):
-        finding = {
-            "severity": "medium",
-            "title": "Issue",
-            "body": "Description of the issue.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("[MEDIUM]", body)
-        self.assertIn("\U0001f7e1", body)  # 🟡
-
-    def test_low_severity_emoji(self):
-        finding = {"severity": "low", "title": "Nit", "body": "Minor issue."}
-        body = render_comment_body(finding)
-        self.assertIn("[LOW]", body)
-        self.assertIn("\U0001f4a1", body)  # 💡
-
-    def test_with_suggestion_block(self):
-        finding = {
-            "severity": "high",
-            "title": "Fix",
-            "body": "Need to fix this.",
-            "suggested_fix_code": "return None",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("```suggestion", body)
-        self.assertIn("return None", body)
-
-    def test_without_suggestion_block(self):
-        finding = {
-            "severity": "medium",
-            "title": "Issue",
-            "body": "Some description.",
-        }
-        body = render_comment_body(finding)
-        self.assertNotIn("```suggestion", body)
-
-    def test_missing_body(self):
-        finding = {"severity": "low", "title": "Nit"}
-        body = render_comment_body(finding)
-        self.assertIn("[LOW]", body)
-        self.assertIn("Nit", body)
-
-    def test_unknown_severity_falls_back_to_bulb(self):
-        finding = {"severity": "unknown", "title": "Thing", "body": "desc"}
-        body = render_comment_body(finding)
-        self.assertIn("\U0001f4a1", body)  # 💡 fallback
-        self.assertEqual(
-            body,
-            "**\U0001f4a1 [LOW] Thing**\n\ndesc\n\n" + post_review.BRAND_TRAILER,
-        )
-        self.assertNotIn("[UNKNOWN]", body)
-
-    def test_the_rendered_emoji_is_read_from_the_generated_constants(self):
-        """The delivered byte comes THROUGH SEVERITY_EMOJI, not from a local literal.
-
-        The severity tests above pin characters with hard-coded escapes, which is the
-        second oracle — but they stay green if the renderer re-inlines its own
-        `emoji_map`, and the delivered emoji then diverges silently from the generated
-        constants and from every generated legend. Substituting a sentinel the repo
-        renders nowhere is what pins the wire itself.
-        """
-        for severity, emoji in post_review.SEVERITY_EMOJI.items():
-            with self.subTest(severity=severity):
-                body = render_comment_body(
-                    {"severity": severity, "title": "t", "body": "b"}
-                )
-                self.assertIn(emoji, body)
-        sentinel = "\u26a1"  # HIGH VOLTAGE SIGN — in no legend, in no severity map
-        with patch.dict(post_review.SEVERITY_EMOJI, {"medium": sentinel}):
-            self.assertIn(
-                sentinel,
-                render_comment_body({"severity": "medium", "title": "t", "body": "b"}),
-            )
-        with patch.dict(post_review.SEVERITY_EMOJI, {"low": sentinel}):
-            self.assertEqual(
-                render_comment_body({"severity": "nope", "title": "t", "body": "b"}),
-                "**\u26a1 [LOW] t**\n\nb\n\n" + post_review.BRAND_TRAILER,
-            )
-        # A map with no `low` key is the generator's placeholder shape. The poster
-        # stays total there: the fallback glyph comes from SEVERITY_EMOJI_FALLBACK.
-        placeholder_map = patch.dict(
-            post_review.SEVERITY_EMOJI, {"severity": "{emoji}"}, clear=True
-        )
-        with (
-            placeholder_map,
-            patch.object(post_review, "SEVERITY_EMOJI_FALLBACK", sentinel),
-        ):
-            self.assertEqual(
-                render_comment_body({"severity": "nope", "title": "t", "body": "b"}),
-                "**\u26a1 [LOW] t**\n\nb\n\n" + post_review.BRAND_TRAILER,
-            )
-
-    def test_severity_labels_are_closed_and_total(self):
-        """Public rendering normalizes malformed, padded, and missing severities."""
-        for case_id, raw, label, glyph in _severity_matrix():
-            with self.subTest(case=case_id):
-                finding = {"title": "Thing", "body": "desc"}
-                if raw is not _MISSING_SEVERITY:
-                    finding["severity"] = raw
-                before = copy.deepcopy(finding)
-                expected = f"**{glyph} [{label}] Thing**\n\ndesc"
-                body = render_comment_body(finding)
-                if case_id == "oversized":
-                    self.assertLess(len(body.encode("utf-8")), 256)
-                    self.assertNotIn("s" * 1000, body)
-                self.assertEqual(body, expected + f"\n\n{post_review.BRAND_TRAILER}")
-                self.assertEqual(finding, before)
-
-    def test_severity_fallback_and_labels_match_js_twin(self):
-        """The poster matches the live report normalizer and its generated map seam."""
-        matrix = _severity_matrix()
-        node_inputs = []
-        for _case_id, raw, _label, _glyph in matrix:
-            row = {"missing": raw is _MISSING_SEVERITY}
-            if raw is not _MISSING_SEVERITY:
-                row["value"] = raw
-            node_inputs.append(row)
-        node_script = """
-import { normalizeReportSeverity } from './workflows/src/renderReport.js';
-
-let source = '';
-for await (const chunk of process.stdin) source += chunk;
-const rows = JSON.parse(source);
-const results = rows.map((row) => normalizeReportSeverity(
-  row.missing ? undefined : row.value,
-));
-process.stdout.write(JSON.stringify(results));
-"""
-        result = subprocess.run(
-            ["node", "--input-type=module", "-e", node_script],
-            cwd=REPO,
-            input=json.dumps(node_inputs, ensure_ascii=False),
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-            encoding="utf-8",
-        )
-        node_labels = json.loads(result.stdout)
-        self.assertEqual(len(node_labels), len(matrix))
-
-        for (case_id, raw, label, glyph), node_label in zip(
-            matrix, node_labels, strict=True
-        ):
-            with self.subTest(case=case_id):
-                self.assertEqual(node_label, label.lower())
-                finding = {"title": "Thing", "body": "desc"}
-                if raw is not _MISSING_SEVERITY:
-                    finding["severity"] = raw
-                before = copy.deepcopy(finding)
-                expected_label = node_label.upper()
-                expected = f"**{glyph} [{expected_label}] Thing**\n\ndesc"
-                rendered = render_comment_body(finding)
-                if case_id == "oversized":
-                    self.assertLess(len(rendered.encode("utf-8")), 256)
-                    self.assertNotIn("s" * 1000, rendered)
-                self.assertEqual(
-                    rendered, expected + f"\n\n{post_review.BRAND_TRAILER}"
-                )
-                self.assertEqual(post_review.key_material_body(finding), expected)
-                self.assertEqual(finding, before)
-
-        with patch.dict(post_review.SEVERITY_EMOJI, {"severity": "{emoji}"}):
-            self.assertEqual(
-                render_comment_body(
-                    {"severity": "severity", "title": "Thing", "body": "desc"}
-                ),
-                "**{emoji} [SEVERITY] Thing**\n\ndesc\n\n" + post_review.BRAND_TRAILER,
-            )
-
-    def test_empty_suggested_fix_code_treated_as_absent(self):
-        finding = {
-            "severity": "high",
-            "title": "Bug",
-            "body": "desc",
-            "suggested_fix_code": "",
-        }
-        body = render_comment_body(finding)
-        self.assertNotIn("```suggestion", body)
-
-    def test_suggested_fix_code_none_treated_as_absent(self):
-        finding = {
-            "severity": "high",
-            "title": "Bug",
-            "body": "desc",
-            "suggested_fix_code": None,
-        }
-        body = render_comment_body(finding)
-        self.assertNotIn("```suggestion", body)
-
-    def test_multiline_suggested_fix_code(self):
-        finding = {
-            "severity": "medium",
-            "title": "Fix",
-            "body": "desc",
-            "suggested_fix_code": "line1\nline2\nline3",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("```suggestion", body)
-        self.assertIn("line1\nline2\nline3", body)
-
-    def test_edge_blank_lines_survive_into_the_fence(self):
-        """A replacement's leading/trailing blank lines are CONTENT (#63): the
-        fence carries the stated bytes minus the one terminating newline, so
-        what the apply-check measured is what one click commits."""
-        finding = {
-            "severity": "medium",
-            "title": "Fix",
-            "body": "desc",
-            "suggested_fix_code": "\nline1\nline2\n\n",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("```suggestion\n\nline1\nline2\n\n```", body)
-
-    def test_only_one_trailing_newline_comes_off(self):
-        finding = {
-            "severity": "medium",
-            "title": "Fix",
-            "body": "desc",
-            "suggested_fix_code": "line1\n",
-        }
-        self.assertIn("```suggestion\nline1\n```", render_comment_body(finding))
-
-    # -- suggestion (issue #47) -------------------------------------------
-
-    def test_suggestion_present_renders_prose_block(self):
-        finding = {
-            "severity": "high",
-            "title": "Bug",
-            "body": "desc",
-            "suggestion": "Use parameterized queries instead.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Suggested fix:**", body)
-        self.assertIn("Use parameterized queries instead.", body)
-
-    def test_suggestion_absent_no_heading(self):
-        finding = {"severity": "high", "title": "Bug", "body": "desc"}
-        body = render_comment_body(finding)
-        self.assertNotIn("Suggested fix:", body)
-
-    def test_suggestion_empty_string_no_heading(self):
-        finding = {"severity": "high", "title": "Bug", "body": "desc", "suggestion": ""}
-        body = render_comment_body(finding)
-        self.assertNotIn("Suggested fix:", body)
-
-    def test_suggestion_none_no_heading(self):
-        finding = {
-            "severity": "high",
-            "title": "Bug",
-            "body": "desc",
-            "suggestion": None,
-        }
-        body = render_comment_body(finding)
-        self.assertNotIn("Suggested fix:", body)
-
-    def test_suggestion_whitespace_only_no_heading(self):
-        finding = {
-            "severity": "high",
-            "title": "Bug",
-            "body": "desc",
-            "suggestion": "   \n  ",
-        }
-        body = render_comment_body(finding)
-        self.assertNotIn("Suggested fix:", body)
-
-    # -- claude_md_rule / spec_text (issue #47) ---------------------------
-
-    def test_claude_md_rule_present_renders_cited_rule(self):
-        finding = {
-            "severity": "medium",
-            "title": "Convention violation",
-            "body": "desc",
-            "claude_md_rule": "Scripts must be stdlib-only Python.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Cited rule:**", body)
-        self.assertIn("> Scripts must be stdlib-only Python.", body)
-
-    def test_spec_text_present_claude_md_rule_absent_renders_as_cited_rule(self):
-        finding = {
-            "severity": "medium",
-            "title": "Intent mismatch",
-            "body": "desc",
-            "spec_text": "The spec says X must happen before Y.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Cited rule:**", body)
-        self.assertIn("> The spec says X must happen before Y.", body)
-
-    def test_both_claude_md_rule_and_spec_text_present_rule_wins(self):
-        finding = {
-            "severity": "medium",
-            "title": "Both",
-            "body": "desc",
-            "claude_md_rule": "The CLAUDE.md rule.",
-            "spec_text": "The spec text.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Cited rule:**", body)
-        self.assertIn("> The CLAUDE.md rule.", body)
-        self.assertNotIn("The spec text.", body)
-
-    def test_neither_claude_md_rule_nor_spec_text_no_heading(self):
-        finding = {"severity": "medium", "title": "Neither", "body": "desc"}
-        body = render_comment_body(finding)
-        self.assertNotIn("Cited rule:", body)
-
-    def test_claude_md_rule_empty_falls_back_to_spec_text(self):
-        finding = {
-            "severity": "medium",
-            "title": "Fallback",
-            "body": "desc",
-            "claude_md_rule": "",
-            "spec_text": "The spec text wins here.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Cited rule:**", body)
-        self.assertIn("> The spec text wins here.", body)
-
-    # -- ordering / combinations -------------------------------------------
-
-    def test_suggestion_and_suggested_fix_code_both_render_prose_before_fence(self):
-        finding = {
-            "severity": "high",
-            "title": "Fix",
-            "body": "desc",
-            "suggestion": "Explain the fix in words.",
-            "suggested_fix_code": "return None",
-        }
-        # The SECTIONS, not the wire body: the identity trailer follows them (T-TRAIL
-        # owns that), and this test's claim is about where the fence sits among the
-        # sections.
-        body = post_review._finding_sections(finding)
-        self.assertIn("**Suggested fix:**", body)
-        self.assertIn("Explain the fix in words.", body)
-        self.assertIn("```suggestion", body)
-        self.assertIn("return None", body)
-        prose_idx = body.index("**Suggested fix:**")
-        fence_idx = body.index("```suggestion")
-        self.assertLess(
-            prose_idx,
-            fence_idx,
-            "the prose suggestion block must come before the fence",
-        )
-        # The fence is still the last of the sections.
-        self.assertTrue(body.rstrip("\n").endswith("```"))
-
-    def test_multiline_suggestion_renders_without_corrupting_markdown(self):
-        finding = {
-            "severity": "medium",
-            "title": "Fix",
-            "body": "desc",
-            "suggestion": "First do this.\nThen do that.\nFinally this.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Suggested fix:**", body)
-        self.assertIn("First do this.\nThen do that.\nFinally this.", body)
-
-    def test_non_string_suggestion_and_rule_do_not_crash(self):
-        finding = {
-            "severity": "medium",
-            "title": "Weird types",
-            "body": "desc",
-            "suggestion": 42,
-            "claude_md_rule": 7,
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Suggested fix:**", body)
-        self.assertIn("42", body)
-        self.assertIn("**Cited rule:**", body)
-        self.assertIn("> 7", body)
-
-    def test_no_new_fields_produces_byte_identical_output(self):
-        """Regression pin: a finding with none of the new fields must produce
-        exactly the same output as before this change, so the addition cannot
-        silently reflow an ordinary comment.
-
-        Pinned on the SECTIONS: the identity trailer is appended after them and is
-        pinned separately (T-TRAIL), so this literal stays the pre-#122 bytes.
-        """
-        finding = {
-            "severity": "high",
-            "title": "SQL Injection",
-            "body": "User input is not sanitized before being passed to the database query.",
-        }
-        body = post_review._finding_sections(finding)
-        self.assertEqual(
-            body,
-            "**\U0001f7e0 [HIGH] SQL Injection**\n\n"
-            "User input is not sanitized before being passed to the database query.",
-        )
-
-    def test_whitespace_only_claude_md_rule_falls_back_to_spec_text(self):
-        # Symmetry with the empty-string fallback above: blank-but-present must be
-        # indistinguishable from absent on BOTH halves of the cited-rule lookup, or an
-        # agent that emits "  " suppresses the spec_text it should have deferred to.
-        finding = {
-            "severity": "low",
-            "title": "Intent drift",
-            "body": "desc",
-            "claude_md_rule": "   ",
-            "spec_text": "The endpoint MUST return 422 on a schema violation.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Cited rule:**", body)
-        self.assertIn("> The endpoint MUST return 422 on a schema violation.", body)
-
-    def test_non_string_spec_text_does_not_crash(self):
-        finding = {"severity": "low", "title": "T", "body": "b", "spec_text": 9}
-        body = render_comment_body(finding)
-        self.assertIn("**Cited rule:**", body)
-        self.assertIn("> 9", body)
-
-    def test_leading_newlines_are_stripped_from_rendered_values(self):
-        # The sections are joined with their own blank lines, so a value padded at the FRONT
-        # (a model that opens its suggestion with a newline) put a second blank line under the
-        # heading. Only newlines are stripped — leading spaces belong to the value.
-        finding = {
-            "severity": "medium",
-            "title": "T",
-            "body": "b",
-            "suggestion": "\n\n  indented advice",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Suggested fix:**\n  indented advice", body)
-
-    def test_trailing_newlines_are_stripped_from_rendered_values(self):
-        # _rendered_text promises this; without it a multi-line suggestion pushes a blank
-        # line into whatever section follows (and, at the end, trails the comment).
-        finding = {
-            "severity": "medium",
-            "title": "T",
-            "body": "b",
-            "suggestion": "Line one\nLine two\n\n",
-            "claude_md_rule": "Rule text\n",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Suggested fix:**\nLine one\nLine two", body)
-        self.assertIn("**Cited rule:**", body)
-        self.assertIn("> Rule text", body)
-        self.assertFalse(body.endswith("\n"))
-
-    def test_non_string_suggested_fix_code_does_not_crash(self):
-        # Pre-#47 this reached .rstrip() and raised AttributeError. The field now goes
-        # through the same normalizer as the prose fields.
-        finding = {
-            "severity": "low",
-            "title": "T",
-            "body": "b",
-            "suggested_fix_code": 123,
-        }
-        self.assertIn("```suggestion\n123\n```", render_comment_body(finding))
-
-    def test_whitespace_only_suggested_fix_code_renders_no_fence(self):
-        # A whitespace-only replacement would render a one-click-apply block that BLANKS
-        # the cited lines — treat it as absent, like every other optional field.
-        finding = {
-            "severity": "low",
-            "title": "T",
-            "body": "b",
-            "suggested_fix_code": "   \n  ",
-        }
-        self.assertNotIn("```suggestion", render_comment_body(finding))
-
-    def test_artifact_only_fields_never_reach_the_comment_body(self):
-        # A deliberate scoping decision from issue #47, pinned so it is a decision and not
-        # a comment: these fields are carried end-to-end to the artifact and the report, but
-        # the posted comment stays short. Changing that should require changing this test.
-        finding = {
-            "severity": "high",
-            "title": "Missing rollback test",
-            "body": "The rollback path is untested.",
-            "suggestion": "Add a test that raises PaymentGatewayError.",
-            "criticality": 9,
-            "failure_scenario": "SENTINEL_FAILURE_SCENARIO",
-            "evidence": "SENTINEL_EVIDENCE",
-            "confidence": 90,
-            "dimension": "test_coverage",
-            "origin": "new",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Suggested fix:**", body)
-        for sentinel in (
-            "SENTINEL_FAILURE_SCENARIO",
-            "SENTINEL_EVIDENCE",
-            "criticality",
-            "test_coverage",
-            "90",
-        ):
-            self.assertNotIn(
-                sentinel, body, f"{sentinel!r} leaked into the comment body"
-            )
-
-    def test_render_comment_body_ends_with_exactly_one_brand_trailer(self):
-        """The identity trailer is the LAST line of a delivered comment body, and it
-        is there exactly once — one mark per delivered SURFACE, never per element.
-
-        Pinned by codepoint (U+2694 U+FE0F), never by a pasted glyph. The header line
-        must stay byte-unchanged: ``bench/runner/score.py``'s ``_SEVERITY_RE`` reads
-        ``[SEVERITY]`` out of it, so a trailer that reflowed the header would move a
-        machine-parsed string.
-        """
-        trailer = "\u2694\ufe0f *Code Gauntlet*"
-        finding = {
-            "severity": "high",
-            "title": "SQL Injection",
-            "body": "User input is not sanitized.",
-        }
-        body = render_comment_body(finding)
-        self.assertEqual(body.count(trailer), 1)
-        self.assertEqual(body.splitlines()[-1], trailer)
-        self.assertTrue(body.endswith(f"\n\n{trailer}"))
-        self.assertEqual(
-            body.splitlines()[0],
-            "**\U0001f7e0 [HIGH] SQL Injection**",
-            "the severity header line is machine-parsed — it must not move",
-        )
-
-
-class TestOutboundRenderBounding(unittest.TestCase):
-    """Issue #122 — render_comment_body composed behaviors."""
-
-    def test_rule_source_labels_are_keyed_on_claude_md_rule(self):
-        labels = {
-            "documented_rule": "Cited rule",
-            "code_comment": "Cited comment",
-            "repo_precedent": "Repo precedent",
-            "self_inconsistency": "Inconsistency",
-        }
-        for source, label in labels.items():
-            with self.subTest(source=source):
-                body = render_comment_body(
-                    {
-                        "severity": "medium",
-                        "title": "T",
-                        "body": "b",
-                        "claude_md_rule": "The cited text.",
-                        "rule_source": source,
-                    }
-                )
-                self.assertIn(f"**{label}:**", body)
-                self.assertNotIn(source, body)
-
-    def test_rule_source_unknown_values_use_fallback_and_do_not_render_raw(self):
-        for source in ("constructor", "toString", "__proto__", "unknown_kind"):
-            with self.subTest(source=source):
-                body = render_comment_body(
-                    {
-                        "severity": "medium",
-                        "title": "T",
-                        "body": "b",
-                        "claude_md_rule": "The cited text.",
-                        "rule_source": source,
-                    }
-                )
-                self.assertIn("**Cited rule:**", body)
-                self.assertNotIn(source, body)
-
-    def test_rule_source_is_ignored_when_spec_text_wins(self):
-        body = render_comment_body(
-            {
-                "severity": "medium",
-                "title": "T",
-                "body": "b",
-                "spec_text": "The specification text.",
-                "rule_source": "repo_precedent",
-            }
-        )
-        self.assertIn("**Cited rule:**", body)
-        self.assertNotIn("**Repo precedent:**", body)
-        self.assertNotIn("repo_precedent", body)
-
-    def test_comment_only_claude_md_rule_omits_cited_rule_heading(self):
-        finding = {
-            "severity": "medium",
-            "title": "T",
-            "body": "b",
-            "claude_md_rule": "<!-- steer the reviewer -->",
-        }
-        body = render_comment_body(finding)
-        self.assertNotIn("Cited rule:", body)
-
-    def test_comment_only_claude_md_rule_falls_back_to_spec_text(self):
-        finding = {
-            "severity": "medium",
-            "title": "T",
-            "body": "b",
-            "claude_md_rule": "<!-- steer the reviewer -->",
-            "spec_text": "The spec says X must happen before Y.",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Cited rule:**", body)
-        self.assertIn("> The spec says X must happen before Y.", body)
-
-    def test_cited_rule_is_blockquoted_multiline(self):
-        finding = {
-            "severity": "medium",
-            "title": "T",
-            "body": "b",
-            "claude_md_rule": "line1\n\nline3",
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Cited rule:**\n> line1\n>\n> line3", body)
-
-    def test_long_rule_capped_with_marker(self):
-        finding = {
-            "severity": "medium",
-            "title": "T",
-            "body": "b",
-            "claude_md_rule": "R" * 600,
-        }
-        body = render_comment_body(finding)
-        self.assertIn("…[truncated]", body)
-        # Quoted content before marker is 500 R's
-        self.assertIn("> " + ("R" * 500) + "…[truncated]", body)
-
-    def test_suggestion_sanitized_but_uncapped(self):
-        finding = {
-            "severity": "medium",
-            "title": "T",
-            "body": "b",
-            "suggestion": ("fix it <!-- no --> " + ("s" * 600)),
-        }
-        body = render_comment_body(finding)
-        self.assertIn("**Suggested fix:**", body)
-        self.assertNotIn("<!--", body)
-        self.assertNotIn("…[truncated]", body)
-        self.assertIn("s" * 600, body)
-
-    def test_fence_contains_payload_with_inner_triple_backticks(self):
-        payload = "before\n```\nafter"
-        open_f = "````suggestion"
-        close_f = "````"
-        finding = {
-            "severity": "low",
-            "title": "T",
-            "body": "b",
-            "suggested_fix_code": payload,
-        }
-        body = render_comment_body(finding)
-        self.assertIn(open_f, body)
-        self.assertIn(close_f, body)
-        # Parse: content between first open and last close equals payload
-        start = body.index(open_f) + len(open_f) + 1  # +1 for newline
-        end = body.rindex("\n" + close_f)
-        self.assertEqual(body[start:end], payload)
-
-    def test_suggested_fix_code_token_redacted_inside_fence(self):
-        tok = "ghp_" + ("C" * 36)
-        payload = f"token = '{tok}'"
-        finding = {
-            "severity": "low",
-            "title": "T",
-            "body": "b",
-            "suggested_fix_code": payload,
-        }
-        body = render_comment_body(finding)
-        self.assertNotIn(tok, body)
-        self.assertIn("[REDACTED]", body)
-        self.assertIn("```suggestion", body)  # no backticks in redacted form → 3-fence
 
 
 # ---------------------------------------------------------------------------
@@ -1865,11 +1056,11 @@ def _member_key(member):
     with a broken implementation by construction.
     """
     material = {k: v for k, v in member.items() if k != "suggested_fix_code"}
-    return post_review.finding_key(
+    return compose.finding_key(
         member["file"],
         member["line"],
         member["title"],
-        post_review._finding_sections(material),
+        compose.render_finding_sections(material),
     )
 
 
@@ -2117,17 +1308,17 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
     SHA = "a" * 40
 
     def _fit_finding(self, platform, limit, finding, seed):
-        trailer_bytes = len(("\n\n" + post_review.BRAND_TRAILER).encode("utf-8"))
+        trailer_bytes = len(("\n\n" + compose.BRAND_TRAILER).encode("utf-8"))
         marker_bytes = 0
         if platform == "gitlab":
             key = finding_key_for_test(finding)
             marker_bytes = len(_delivery_marker_suffix(self.SHA, [key]).encode("utf-8"))
         target = limit - trailer_bytes - marker_bytes
         finding["body"] = seed
-        fixed = len(_render_group_sections(finding, []).encode("utf-8"))
+        fixed = len(render_group_sections(finding, []).encode("utf-8"))
         finding["body"] += "x" * (target - fixed)
         self.assertEqual(
-            len(_render_group_sections(finding, []).encode("utf-8")), target
+            len(render_group_sections(finding, []).encode("utf-8")), target
         )
 
     def _run_boundary(self, platform, limit, delta, seed):
@@ -2191,7 +1382,7 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 self.assertEqual([c["line"] for c in comments], [1, 2])
                 body = comments[0]["body"]
                 self.assertIn("Boundary finding", body)
-                self.assertEqual(body.count(post_review.BRAND_TRAILER), 1)
+                self.assertEqual(body.count(compose.BRAND_TRAILER), 1)
                 if not delta:
                     self.assertEqual(body, render_comment_body(finding))
                 else:
@@ -2251,7 +1442,7 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 else:
                     self.assertIn("Boundary finding", body)
                     self.assertIn("_[folded:", body)
-                self.assertEqual(body.count(post_review.BRAND_TRAILER), 1)
+                self.assertEqual(body.count(compose.BRAND_TRAILER), 1)
                 self.assertEqual(
                     discussions[1]["body"],
                     render_comment_body(
@@ -2285,7 +1476,7 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 key = finding_key_for_test(finding)
                 suffix = _delivery_marker_suffix(self.SHA, [key])
                 self.assertEqual(len(suffix.encode("utf-8")), 113)
-                self.assertEqual(body.count(post_review.BRAND_TRAILER), 1)
+                self.assertEqual(body.count(compose.BRAND_TRAILER), 1)
                 self.assertLessEqual(len((body + suffix).encode("utf-8")), 1000000)
                 if not delta:
                     self.assertEqual(len((body + suffix).encode("utf-8")), 1000000)
@@ -2357,7 +1548,7 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
                 else:
                     self.assertIn("Corroborator Note", body)
                     self.assertIn("_[folded:", body)
-                self.assertEqual(body.count(post_review.BRAND_TRAILER), 1)
+                self.assertEqual(body.count(compose.BRAND_TRAILER), 1)
                 self.assertEqual(
                     sibling[0]["body"], render_comment_body(GL_CONTRACT_FINDINGS[1])
                 )
@@ -2370,11 +1561,11 @@ class TestInlinePosterBoundaries(_DryRunTestBase):
 
 def finding_key_for_test(finding):
     """Compute the mirror's singleton key without depending on a captured marker."""
-    return post_review.finding_key(
+    return compose.finding_key(
         finding["file"],
         finding["line"],
         finding["title"],
-        post_review.key_material_body(finding),
+        compose.key_material_body(finding),
     )
 
 
@@ -2504,345 +1695,6 @@ class TestSummaryBodyBrandHeader(_DryRunTestBase):
                 self.assertEqual(marker["sha"], self.SHA)
                 self.assertEqual(marker["findings_count"], len(findings))
                 self._reset_between_platforms()
-
-
-class TestConsolidateDelivery(unittest.TestCase):
-    """Pure grouping helper for the delivery payload (#22 D2). Findings stay
-    distinct in the array; this only groups them for rendering."""
-
-    def test_findings_without_stamps_each_become_a_singleton_group(self):
-        a = {"file": "foo.py", "line": 2, "title": "A"}
-        b = {"file": "foo.py", "line": 3, "title": "B"}
-        groups = consolidate_delivery([a, b])
-        self.assertEqual(
-            groups,
-            [
-                {"primary": a, "corroborators": []},
-                {"primary": b, "corroborators": []},
-            ],
-        )
-
-    def test_shared_consolidation_key_groups_primary_and_corroborators(self):
-        primary = {
-            "file": "foo.py",
-            "line": 2,
-            "title": "A",
-            "consolidation_key": "foo.py:0",
-            "consolidation_primary": True,
-        }
-        corroborator = {
-            "file": "foo.py",
-            "line": 3,
-            "title": "B",
-            "consolidation_key": "foo.py:0",
-            "consolidation_primary": False,
-        }
-        groups = consolidate_delivery([primary, corroborator])
-        self.assertEqual(
-            groups, [{"primary": primary, "corroborators": [corroborator]}]
-        )
-
-    def test_group_position_is_the_primarys_first_occurrence(self):
-        """A group occupies the array position of its FIRST member, whichever
-        that is — order stays deterministic even when the primary is not the
-        first element carrying the key."""
-        corroborator = {
-            "title": "B",
-            "consolidation_key": "k",
-            "consolidation_primary": False,
-        }
-        other = {"title": "C"}
-        primary = {
-            "title": "A",
-            "consolidation_key": "k",
-            "consolidation_primary": True,
-        }
-        groups = consolidate_delivery([corroborator, other, primary])
-        self.assertEqual(
-            groups,
-            [
-                {"primary": primary, "corroborators": [corroborator]},
-                {"primary": other, "corroborators": []},
-            ],
-        )
-
-    def test_multiple_corroborators_preserve_relative_order(self):
-        primary = {
-            "title": "A",
-            "consolidation_key": "k",
-            "consolidation_primary": True,
-        }
-        c1 = {"title": "B", "consolidation_key": "k", "consolidation_primary": False}
-        c2 = {"title": "C", "consolidation_key": "k", "consolidation_primary": False}
-        groups = consolidate_delivery([primary, c1, c2])
-        self.assertEqual(groups[0]["corroborators"], [c1, c2])
-
-    def test_distinct_keys_produce_distinct_groups(self):
-        a = {"title": "A", "consolidation_key": "k1", "consolidation_primary": True}
-        b = {"title": "B", "consolidation_key": "k2", "consolidation_primary": True}
-        groups = consolidate_delivery([a, b])
-        self.assertEqual(len(groups), 2)
-
-    def test_second_primary_in_a_group_is_demoted_not_dropped(self):
-        p1 = {"title": "A", "consolidation_key": "k", "consolidation_primary": True}
-        c1 = {"title": "B", "consolidation_key": "k", "consolidation_primary": False}
-        p2 = {"title": "C", "consolidation_key": "k", "consolidation_primary": True}
-        groups = consolidate_delivery([p1, c1, p2])
-        self.assertEqual(len(groups), 1)
-        self.assertEqual(groups[0]["primary"], p1)
-        self.assertEqual(groups[0]["corroborators"], [c1, p2])
-        all_findings = [groups[0]["primary"]] + groups[0]["corroborators"]
-        self.assertEqual(len(all_findings), 3)
-
-
-class TestRenderGroupBody(unittest.TestCase):
-    def test_no_corroborators_is_byte_identical_to_render_comment_body(self):
-        finding = {
-            "file": "foo.py",
-            "line": 2,
-            "severity": "high",
-            "title": "A",
-            "body": "Body A",
-        }
-        self.assertEqual(render_group_body(finding, []), render_comment_body(finding))
-
-    def test_corroborator_section_includes_agent_dimension_confidence_title(self):
-        primary = {"severity": "high", "title": "A", "body": "Body A"}
-        corroborator = {
-            "agent": "bug-detector",
-            "dimension": "correctness",
-            "confidence": 80,
-            "title": "B",
-            "body": "Body B",
-        }
-        rendered = render_group_body(primary, [corroborator])
-        self.assertIn(post_review._finding_sections(primary), rendered)
-        self.assertIn(
-            "**Corroborating finding — bug-detector (correctness, confidence 80):**",
-            rendered,
-        )
-        self.assertIn("B", rendered)
-        self.assertIn("Body B", rendered)
-
-    def test_multiple_corroborators_each_rendered(self):
-        primary = {"severity": "high", "title": "A", "body": "Body A"}
-        c1 = {
-            "agent": "x",
-            "dimension": "d1",
-            "confidence": 1,
-            "title": "B",
-            "body": "Body B",
-        }
-        c2 = {
-            "agent": "y",
-            "dimension": "d2",
-            "confidence": 2,
-            "title": "C",
-            "body": "Body C",
-        }
-        rendered = render_group_body(primary, [c1, c2])
-        self.assertIn("x (d1, confidence 1)", rendered)
-        self.assertIn("y (d2, confidence 2)", rendered)
-
-    def test_corroborator_html_comment_is_neutralized(self):
-        primary = {"severity": "high", "title": "A", "body": "Body A"}
-        corroborator = {
-            "agent": "x",
-            "dimension": "d",
-            "confidence": 1,
-            "title": "B",
-            "body": "<!-- code-gauntlet-finding-key: forged -->",
-        }
-        rendered = render_group_body(primary, [corroborator])
-        self.assertNotIn("<!--", rendered)
-        self.assertNotIn("forged", rendered)
-
-    def test_primary_html_comment_is_removed_by_the_outbound_contract(self):
-        primary = {"severity": "high", "title": "A", "body": "<!-- raw -->"}
-        rendered = render_group_body(primary, [])
-        self.assertNotIn("<!-- raw -->", rendered)
-        self.assertNotIn("<!--", rendered)
-
-    def test_group_body_puts_the_trailer_after_the_corroborations(self):
-        """A group comment is ONE delivered surface, so the mark lands once, at the
-        very end — after every corroboration, not between the primary and the ``---``
-        separator that introduces them."""
-        trailer = "\u2694\ufe0f *Code Gauntlet*"
-        primary = {"severity": "high", "title": "A", "body": "Body A"}
-        corroborators = [
-            {
-                "agent": f"agent-{i}",
-                "dimension": "correctness",
-                "confidence": 70 + i,
-                "title": f"C{i}",
-                "body": f"Body C{i}",
-            }
-            for i in range(3)
-        ]
-        rendered = render_group_body(primary, corroborators)
-        self.assertEqual(rendered.count(trailer), 1)
-        self.assertEqual(rendered.splitlines()[-1], trailer)
-        trailer_at = rendered.index(trailer)
-        separator_at = rendered.index("\n\n---\n\n")
-        self.assertLess(separator_at, rendered.index("Body C0"))
-        for i in range(3):
-            with self.subTest(corroborator=i):
-                self.assertLess(rendered.index(f"Body C{i}"), trailer_at)
-
-
-class TestDeliveryKeyStability(unittest.TestCase):
-    """Canonical severity identity must not move a delivery key.
-
-    ``EXPECTED_KEYS`` was computed at ``f33ffd5`` — the commit BEFORE the brand
-    trailer existed — and is hard-coded here on purpose: a key derived by calling the
-    code under test proves nothing (the same reasoning
-    ``TestGitlabInlineDiscussionIdempotency`` states for its own literals). If these
-    canonical-severity literals have to change, the corresponding findings re-key and
-    may be reposted. The #335 regression below separately records the deliberate
-    normalization re-key for padded severity labels.
-    """
-
-    KEY_FINDINGS: ClassVar[list[dict]] = [
-        {
-            "file": "src/alpha.py",
-            "line": 10,
-            "title": "Unchecked index",
-            "body": "The loop reads one past the end.",
-            "severity": "high",
-        },
-        {
-            "file": "src/beta.py",
-            "line": 22,
-            "title": "Rule violation",
-            "body": "This bypasses the documented gate.",
-            "severity": "medium",
-            "suggestion": "Call the gate instead of inlining the check.",
-            "claude_md_rule": "Always route through the gate.",
-        },
-        {
-            "file": "src/gamma.py",
-            "line": 3,
-            "title": "Off-by-one",
-            "body": "Range end is exclusive.",
-            "severity": "low",
-            "suggested_fix_code": "-for i in range(n + 1):\n+for i in range(n):\n",
-        },
-    ]
-    EXPECTED_KEYS: ClassVar[list[str]] = [
-        "c6dbc10300a69daf",
-        "0c5f42fa8a664b7f",
-        "0cf7f5fb032bd562",
-    ]
-
-    def test_delivery_keys_are_unchanged_by_the_identity_trailer(self):
-        keys = [
-            post_review.finding_key(
-                f["file"], f["line"], f["title"], post_review.key_material_body(f)
-            )
-            for f in self.KEY_FINDINGS
-        ]
-        self.assertEqual(keys, self.EXPECTED_KEYS)
-        self.assertEqual(len(set(keys)), 3, "the three findings must not collide")
-
-    def test_key_material_carries_no_identity_bytes(self):
-        """Structural, not suffix-stripping: the key material is the SECTIONS, so no
-        part of the mark can reach it however the trailer is later composed."""
-        for f in self.KEY_FINDINGS:
-            with self.subTest(title=f["title"]):
-                self.assertNotIn("\u2694", post_review.key_material_body(f))
-                self.assertNotIn("Code Gauntlet", post_review.key_material_body(f))
-
-    def test_key_material_uses_the_unbranded_sections_seam(self):
-        """Branding must stay structurally outside the bytes that keys hash."""
-        finding = {
-            "file": "src/example.py",
-            "line": 8,
-            "title": "Example",
-            "body": "Body",
-            "suggested_fix_code": "patch",
-        }
-        expected_material = dict(finding)
-        del expected_material["suggested_fix_code"]
-        with (
-            patch.object(
-                post_review, "_finding_sections", return_value="SECTIONS"
-            ) as sections,
-            patch.object(
-                post_review, "render_comment_body", return_value="BRANDED"
-            ) as branded,
-        ):
-            self.assertEqual(post_review.key_material_body(finding), "SECTIONS")
-        sections.assert_called_once_with(expected_material)
-        branded.assert_not_called()
-
-    def test_rule_source_does_not_change_key_material(self):
-        finding = {
-            "file": "src/example.py",
-            "line": 8,
-            "title": "Example",
-            "body": "Body",
-            "claude_md_rule": "The cited rule.",
-        }
-        grounded = {**finding, "rule_source": "repo_precedent"}
-        self.assertEqual(
-            post_review.key_material_body(finding),
-            post_review.key_material_body(grounded),
-        )
-        self.assertIn("**Cited rule:**", post_review.key_material_body(grounded))
-
-    def test_key_material_severity_labels_are_closed_and_total(self):
-        """Key material uses the same fixed normalized sections as the public body."""
-        for case_id, raw, label, glyph in _severity_matrix():
-            with self.subTest(case=case_id):
-                finding = {
-                    "title": "Thing",
-                    "body": "desc",
-                    "suggested_fix_code": "patch",
-                    "rule_source": "repo_precedent",
-                }
-                if raw is not _MISSING_SEVERITY:
-                    finding["severity"] = raw
-                before = copy.deepcopy(finding)
-                expected = f"**{glyph} [{label}] Thing**\n\ndesc"
-                material = post_review.key_material_body(finding)
-                if case_id == "oversized":
-                    self.assertLess(len(material.encode("utf-8")), 256)
-                    self.assertNotIn("s" * 1000, material)
-                self.assertEqual(material, expected)
-                self.assertEqual(finding, before)
-
-    def test_case_stays_stable_and_padded_severity_intentionally_rekeys(self):
-        """Canonical case variants keep their pins while #335 re-keys padded labels."""
-        expected_body = (
-            "**\U0001f7e0 [HIGH] Unchecked index**\n\nThe loop reads one past the end."
-        )
-        OLD_LITERAL = (
-            "**\U0001f4a1 [ HIGH ] Unchecked index**\n\n"
-            "The loop reads one past the end."
-        )
-        old_padded_key = hashlib.sha256(
-            "\x00".join(
-                (
-                    "src/alpha.py",
-                    "10",
-                    "Unchecked index",
-                    OLD_LITERAL,
-                )
-            ).encode("utf-8")
-        ).hexdigest()[:16]
-        for severity in ("high", "HIGH", "High", " high "):
-            with self.subTest(severity=severity):
-                finding = dict(self.KEY_FINDINGS[0], severity=severity)
-                self.assertEqual(post_review.key_material_body(finding), expected_body)
-                key = post_review.finding_key(
-                    finding["file"],
-                    finding["line"],
-                    finding["title"],
-                    post_review.key_material_body(finding),
-                )
-                self.assertEqual(key, self.EXPECTED_KEYS[0])
-                if severity == " high ":
-                    self.assertNotEqual(key, old_padded_key)
 
 
 class TestDryRunStdout(_DryRunTestBase):
@@ -3577,9 +2429,9 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         )
         note = next(body for body in note_bodies if "Corroborator A" in body)
         marker = post_review.build_finding_marker("a" * 40, _member_key(unanchored))
-        self.assertEqual(note.count(post_review.BRAND_TRAILER), 1)
+        self.assertEqual(note.count(compose.BRAND_TRAILER), 1)
         self.assertTrue(
-            note[: note.index(marker)].rstrip().endswith(post_review.BRAND_TRAILER),
+            note[: note.index(marker)].rstrip().endswith(compose.BRAND_TRAILER),
             "the position-less note must end with the identity trailer before its marker",
         )
         self.assertIn("  1 inline discussion(s) already on the MR", run.out)
@@ -3595,7 +2447,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                 target = 1000000 - 24 - 113
                 fixed_finding = dict(unanchored, body="")
                 fixed = len(
-                    post_review._finding_sections(fixed_finding).encode("utf-8")
+                    compose.render_finding_sections(fixed_finding).encode("utf-8")
                 )
                 unanchored["body"] = "x" * (target - fixed + delta)
                 payloads = []
@@ -3620,7 +2472,7 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                     self.assertEqual(len(note.encode("utf-8")), 1000000)
                 else:
                     self.assertIn("_[folded:", note)
-                self.assertEqual(note.count(post_review.BRAND_TRAILER), 1)
+                self.assertEqual(note.count(compose.BRAND_TRAILER), 1)
                 if delta:
                     self.assertIn("Inline body folded by", run.err)
                 else:
@@ -3944,7 +2796,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
     that DID land — issue #132, the half issue #127 D4 left open for the summary.
 
     The expected keys below are LITERAL constants, computed once and hardcoded.
-    Deriving them in the assertions by calling ``post_review.finding_key`` would make
+    Deriving them in the assertions by calling ``compose.finding_key`` would make
     every test here agree with the implementation by construction — including a
     broken implementation that keys every finding identically.
     """
@@ -3965,8 +2817,8 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         """The tautology guard itself: the derivation must reproduce hardcoded
         values, and the three findings must not collide onto one key."""
         keys = [
-            post_review.finding_key(
-                f["file"], f["line"], f["title"], post_review.key_material_body(f)
+            compose.finding_key(
+                f["file"], f["line"], f["title"], compose.key_material_body(f)
             )
             for f in GL_CONTRACT_FINDINGS
         ]
@@ -4160,7 +3012,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         limit = 500
 
         def pad_finding(finding, target):
-            fixed = len(post_review._finding_sections(finding).encode("utf-8"))
+            fixed = len(compose.render_finding_sections(finding).encode("utf-8"))
             finding["body"] += "x" * (target - fixed)
 
         singleton = dict(GL_CONTRACT_FINDINGS[0], body="界 seed")
@@ -4169,7 +3021,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         primary = _gl_primary()
         corroborator = _gl_corroborator("A", 61)
         group_fixed = len(
-            _render_group_sections(primary, [corroborator]).encode("utf-8")
+            render_group_sections(primary, [corroborator]).encode("utf-8")
         )
         primary["body"] += "x" * (limit - 24 - 225 + 1 - group_fixed)
 
@@ -4282,260 +3134,6 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
 # Issue #192 — skipped findings degrade into the review body, they are never
 # silently dropped.
 # ---------------------------------------------------------------------------
-
-
-class TestBuildSkippedSection(unittest.TestCase):
-    def test_empty_list_returns_empty_string(self):
-        self.assertEqual(build_skipped_section([], 0), "")
-
-    def test_renders_location_title_and_both_counts(self):
-        finding = {
-            "file": "src/app.py",
-            "line": 216,
-            "severity": "high",
-            "title": "SQL injection risk",
-            "body": "Untrusted input reaches the query.",
-        }
-        section = build_skipped_section([("src/app.py", 216, finding)], 4)
-        self.assertIn("### ⚠️ 1 finding could not be anchored inline", section)
-        self.assertIn("4 inline comments were posted", section)
-        self.assertIn("following 1 finding", section)
-        self.assertIn("`src/app.py:216`", section)
-        self.assertIn("SQL injection risk", section)
-        self.assertIn(post_review._finding_sections(finding), section)
-
-    def test_no_line_finding_renders_bare_path(self):
-        finding = {"file": "src/app.py", "title": "No line", "body": "b"}
-        section = build_skipped_section([("src/app.py", None, finding)], 0)
-        self.assertIn("`src/app.py`", section)
-        self.assertNotIn("src/app.py:None", section)
-
-    def test_reuses_render_comment_body_for_redaction(self):
-        """The section must go through the SAME sanitize/redact path as an inline
-        comment — a second rendering path is exactly the drift this guards against."""
-        finding = {
-            "file": "src/app.py",
-            "line": 5,
-            "title": "Leaked token",
-            "body": "b",
-            "suggestion": "Rotate the token: ghp_" + "a" * 36,
-        }
-        section = build_skipped_section([("src/app.py", 5, finding)], 0)
-        self.assertIn("[REDACTED]", section)
-        self.assertNotIn("ghp_" + "a" * 36, section)
-
-    def test_skipped_section_entries_carry_no_trailer(self):
-        """The section rides INSIDE the summary comment, whose body already carries
-        the brand header. One mark per delivered surface means zero here — four
-        entries must contribute zero trailers, not four."""
-        trailer = "\u2694\ufe0f *Code Gauntlet*"
-        entries = [
-            (
-                "src/app.py",
-                10 + i,
-                {"severity": "high", "title": f"T{i}", "body": f"B{i}"},
-            )
-            for i in range(4)
-        ]
-        section = build_skipped_section(entries, 4)
-        for i in range(4):
-            self.assertIn(f"T{i}", section)
-        self.assertEqual(section.count(trailer), 0)
-
-    def test_composition_separates_prose_from_skipped_section(self):
-        # Mutation: restore the skipped section's leading newline or the old direct
-        # interpolation; this exact fragment boundary turns red with a setext heading.
-        finding = {"file": "src/app.py", "line": 9, "title": "Skipped", "body": "b"}
-        body = compose_review_body(
-            "prose",
-            [[("src/app.py", 9, finding)]],
-            platform="github",
-            findings_count=1,
-            sha="abc1234",
-            inline_count=0,
-        ).body
-        self.assertIn(
-            "prose\n\n---\n\n### ⚠️ 1 finding could not be anchored inline", body
-        )
-        self.assertNotIn("prose\n\n\n---", body)
-
-    def test_bounded_composition_keeps_the_frame_separated(self):
-        # Mutation: join the bounded frame with one newline; the exact prose/frame
-        # boundary turns red even when the fast path test still passes.
-        finding = {
-            "file": "src/app.py",
-            "line": 9,
-            "title": "Oversized skipped",
-            "body": "x" * 65536,
-        }
-        body = compose_review_body(
-            "prose",
-            [[("src/app.py", 9, finding)]],
-            platform="github",
-            findings_count=1,
-            sha="abc1234",
-            inline_count=0,
-        ).body
-        self.assertIn("prose\n\n---\n\n### ", body)
-        self.assertNotIn("prose\n\n\n---", body)
-
-
-class TestInlineBodyBudget(unittest.TestCase):
-    SHA = "a" * 40
-    KEY_A = "b" * 16
-    KEY_B = "c" * 16
-
-    def test_marker_suffix_has_literal_wire_sizes_and_unmarkable_sha_is_empty(self):
-        singleton = _delivery_marker_suffix(self.SHA, [self.KEY_A])
-        pair = _delivery_marker_suffix(self.SHA, [self.KEY_A, self.KEY_B])
-        self.assertEqual(len(singleton.encode("utf-8")), 113)
-        self.assertEqual(len(pair.encode("utf-8")), 225)
-        self.assertEqual(
-            singleton,
-            "\n\n" + post_review.build_finding_marker(self.SHA, self.KEY_A),
-        )
-        self.assertEqual(_delivery_marker_suffix("unknown", [self.KEY_A]), "")
-        self.assertEqual(_delivery_marker_suffix(self.SHA, []), "")
-
-    def test_dry_capture_is_live_body_without_singleton_pair_or_note_markers(self):
-        cases = [
-            ("**finding**\n\nbody", [self.KEY_A], "discussion"),
-            ("**finding**\n\nbody", [self.KEY_A, self.KEY_B], "discussion"),
-            (
-                post_review._finding_sections(
-                    {"file": "?", "title": "note", "body": "body"}
-                ),
-                [self.KEY_A],
-                "note",
-            ),
-        ]
-        for sections, keys, surface in cases:
-            with self.subTest(keys=keys):
-                suffix = _delivery_marker_suffix(self.SHA, keys)
-                captured = compose_inline_body(
-                    sections,
-                    platform="gitlab",
-                    surface=surface,
-                    marker_suffix=suffix,
-                ).body
-                live = captured + suffix
-                self.assertEqual(live[len(captured) :], suffix)
-                self.assertEqual(live[: len(captured)], captured)
-        unmarkable_suffix = _delivery_marker_suffix("unknown", [self.KEY_A])
-        self.assertEqual(unmarkable_suffix, "")
-        unmarkable = compose_inline_body(
-            "**finding**\n\nbody",
-            platform="gitlab",
-            surface="discussion",
-            marker_suffix=unmarkable_suffix,
-        ).body
-        self.assertEqual(unmarkable + unmarkable_suffix, unmarkable)
-
-    def test_fast_path_reserves_marker_bytes_in_both_modes(self):
-        # Mutation: reserve zero marker bytes; the over case would incorrectly take
-        # the fast path while the under case remains byte-identical.
-        suffix = _delivery_marker_suffix(self.SHA, [self.KEY_A])
-        with patch.dict(
-            fold.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
-            {"bytes": 350},
-        ):
-            over = compose_inline_body(
-                "x" * 214,
-                platform="github",
-                surface="inline",
-                marker_suffix=suffix,
-            )
-            under = compose_inline_body(
-                "x" * 212,
-                platform="github",
-                surface="inline",
-                marker_suffix=suffix,
-            )
-        self.assertGreater(over.folded_bytes, 0)
-        self.assertLessEqual(len((over.body + suffix).encode("utf-8")), 350)
-        self.assertEqual(under.folded_bytes, 0)
-        self.assertEqual(len((under.body + suffix).encode("utf-8")), 349)
-
-    def test_multibyte_fast_path_uses_utf8_bytes(self):
-        # Mutation: count Unicode characters instead of UTF-8 bytes; this exact
-        # envelope would admit one character too many or miss the boundary.
-        sections = "a" * 133 + "😀"
-        with patch.dict(
-            fold.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
-            {"bytes": 160},
-        ):
-            composed = compose_inline_body(
-                sections, platform="github", surface="inline"
-            )
-        self.assertGreater(composed.folded_bytes, 0)
-        self.assertLessEqual(len(composed.body.encode("utf-8")), 160)
-
-    def test_inline_fold_cuts_comments_and_overlong_lines_at_safe_boundaries(self):
-        with patch.dict(
-            fold.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
-            {"bytes": 220},
-        ):
-            folded, dropped = fold.fold_inline_body(
-                "a" * 10 + "😀" + "b" * 200,
-                140,
-                "github",
-                "inline",
-            )
-        self.assertGreater(dropped, 0)
-        self.assertTrue(folded.startswith("a" * 10 + "😀"))
-        self.assertLessEqual(len(folded.encode("utf-8")), 140)
-
-    def test_legacy_finding_with_oversized_severity_is_bounded(self):
-        """Severity normalization bounds the legacy body before inline budgeting."""
-        finding = {
-            "severity": "s" * 70000,
-            "title": "Legacy finding",
-            "body": "body",
-        }
-        composed = compose_inline_body(
-            _render_group_sections(finding, []),
-            platform="github",
-            surface="inline",
-        )
-        self.assertEqual(composed.folded_bytes, 0)
-        self.assertIn("**\U0001f4a1 [LOW] Legacy finding**", composed.body)
-        self.assertTrue(
-            composed.body.endswith("\n\nbody\n\n" + post_review.BRAND_TRAILER)
-        )
-        self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
-
-    def test_inline_disclosure_uses_stderr_and_raw_unanchored_location(self):
-        composed = post_review.InlineBody("body", 7)
-        post_review._SKIP_WARNINGS.clear()
-        stdout = io.StringIO()
-        stderr = io.StringIO()
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            _report_inline_budget(composed, "gitlab", "note", None, None)
-        self.assertEqual(stdout.getvalue(), "")
-        self.assertEqual(post_review._SKIP_WARNINGS, [])
-        self.assertEqual(
-            stderr.getvalue(),
-            "WARNING: Inline body folded by 7 bytes at ?:None: this corroborator "
-            "note reached the 1000000-byte GitLab body limit.\n",
-        )
-
-    def test_impossible_inline_envelope_is_platform_specific(self):
-        with patch.dict(
-            fold.PLATFORM_BODY_LIMITS["github"]["surfaces"]["inline"],
-            {"bytes": 20},
-        ):
-            composed = compose_inline_body("x", platform="github", surface="inline")
-            with self.assertRaises(SystemExit):
-                _inline_body_over_limit(composed, "", "github", "inline")
-
-        with patch.dict(
-            fold.PLATFORM_BODY_LIMITS["gitlab"]["surfaces"]["note"],
-            {"bytes": 20},
-        ):
-            composed = compose_inline_body("x", platform="gitlab", surface="note")
-            with patch("gauntlet.delivery.post.warn") as mock_warn:
-                self.assertTrue(_inline_body_over_limit(composed, "", "gitlab", "note"))
-            mock_warn.assert_called_once()
 
 
 class TestSummaryBodyBudget(_DryRunTestBase):
@@ -4714,57 +3312,6 @@ class TestSummaryBodyBudget(_DryRunTestBase):
                     body,
                 )
 
-    def test_first_fit_keeps_later_groups_after_a_misfit(self):
-        # Mutation: stop at the first misfit, use smallest-first, use largest-first,
-        # use best-fit, or reverse the group order; each policy below must turn this
-        # first-fit oracle red.
-        groups = [
-            [("g1.py", 1, {"title": "G1", "body": "a" * 1960, "severity": "high"})],
-            [("g2.py", 2, {"title": "G2", "body": "b" * 62960, "severity": "high"})],
-            [
-                (
-                    "g3.py",
-                    3,
-                    {"title": "G3", "body": "c" * 33960, "severity": "high"},
-                )
-            ],
-            [
-                (
-                    "g4.py",
-                    4,
-                    {"title": "G4", "body": "d" * 29960, "severity": "high"},
-                )
-            ],
-        ]
-        # Hand arithmetic: 24 + 2 + 367 + 2 + 99 + 211 = 705 reserved bytes, so
-        # 64831 bytes remain. The pieces are 1998, 62998, 33998, and 29998 bytes.
-        # First-fit takes G1 = 1998, G2 = 62998 misfits with 62833 left, G3 = 33998
-        # fits with 28835 left, and G4 = 29998 misfits. It omits (G2, G4).
-        # Stop-at-first-misfit takes G1, then omits (G2, G3, G4) after G2 misfits.
-        # Smallest-first order is G1, G4, G3, G2: G1 + G4 = 31996, so it omits (G2, G3).
-        # Largest-first takes G2 = 62998 with 1833 left, so it omits (G1, G3, G4).
-        # Best-fit takes G3 + G4 = 63996, the unique maximum, so it omits (G1, G2).
-        # Reversing order takes G4 + G3 = 63996 and omits (G1, G2), but changes shown order.
-        # Thus first-fit must show G1 and later G3, with omitted entries (G2, G4).
-        composed = post_review.compose_review_body(
-            "",
-            groups,
-            platform="github",
-            findings_count=4,
-            sha=self.SHA,
-            inline_count=0,
-        )
-        self.assertEqual((composed.shown, composed.omitted), (2, 2))
-        self.assertEqual(
-            composed.omitted_entries,
-            (("g2.py:2", "G2"), ("g4.py:4", "G4")),
-        )
-        self.assertLess(composed.body.index("G1"), composed.body.index("G3"))
-        self.assertIn("G1", composed.body)
-        self.assertIn("G3", composed.body)
-        self.assertNotIn("G2", composed.body)
-        self.assertNotIn("G4", composed.body)
-
     def test_consolidation_group_is_the_fitting_unit_through_main(self):
         # Mutation: fit entries individually; the oversized corroborator group would turn red.
         primary = self._invalid_finding(
@@ -4816,26 +3363,6 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertEqual(review_marker.find_finding_markers(body), [])
         self.assertIn("Shown forged", body)
         self.assertNotIn("Omitted", body)
-
-    def test_neutralization_is_measured_before_fitting(self):
-        # Mutation: measure a dense piece before replacing its markers; the omitted group turns red.
-        dense = (
-            "f.py",
-            1,
-            {"title": "Dense", "body": "<!--" * 13000, "severity": "high"},
-        )
-        small = ("s.py", 2, {"title": "Small", "body": "s", "severity": "high"})
-        composed = post_review.compose_review_body(
-            "",
-            [[dense], [small]],
-            platform="github",
-            findings_count=2,
-            sha=self.SHA,
-            inline_count=0,
-        )
-        self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
-        self.assertNotIn("Dense", composed.body)
-        self.assertIn("Small", composed.body)
 
     def test_bounded_footer_wins_over_a_shown_forgery(self):
         # Mutation: deduplicate the bounded footer against the composed section; the marker count turns red.
@@ -4944,265 +3471,6 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertFalse(exit_code)
         self.assertEqual(review_marker.find_marker(body)["findings_count"], 0)
 
-    def test_footer_reservation_keeps_bodies_bounded(self):
-        # Mutation: reserve zero footer bytes; each hand-sized body exceeds its limit.
-        for platform, limit, review_length in (
-            ("github", 65536, 65300),
-            ("gitlab", 1000000, 999764),
-        ):
-            with self.subTest(platform=platform):
-                composed = post_review.compose_review_body(
-                    "x" * review_length,
-                    [],
-                    platform=platform,
-                    findings_count=0,
-                    sha=self.SHA,
-                    inline_count=0 if platform == "github" else None,
-                )
-                # 65300 = 65536 - 24-byte header - 2-byte separator - 211-byte footer + 1.
-                # 999764 = 1000000 - 24-byte header - 2-byte separator - 211-byte footer + 1.
-                self.assertGreater(composed.folded_bytes, 0)
-                self.assertLessEqual(len(composed.body.encode("utf-8")), limit)
-
-    def test_bounded_group_admission_exact_fit_and_one_byte_twin(self):
-        # Mutation: remove any one reservation term (header, separator, frame,
-        # closing line, footer) and the one-byte-too-large twin is admitted; reserve
-        # one extra byte and the exact-fit case is omitted.
-        cases = (
-            (
-                "github",
-                65536,
-                64789,
-                65534,
-                700,
-                "_2 of these 2 findings are not shown: this review body reached the "
-                "65536-byte GitHub body limit._",
-            ),
-            (
-                "gitlab",
-                1000000,
-                999259,
-                999998,
-                694,
-                "_2 of these 2 findings are not shown: this summary note reached the "
-                "1000000-byte GitLab body limit._",
-            ),
-        )
-        for (
-            platform,
-            limit,
-            admitted_length,
-            exact_bytes,
-            twin_bytes,
-            closing_line,
-        ) in cases:
-            with self.subTest(platform=platform):
-                inline_count = 0 if platform == "github" else None
-                admitted = self._invalid_finding(
-                    "Admitted", "a" * admitted_length, file="admit.py", line=1
-                )
-                oversized = self._invalid_finding(
-                    "Omitted", "b" * limit, file="oversized.py", line=2
-                )
-                groups = [
-                    [("admit.py", 1, admitted)],
-                    [("oversized.py", 2, oversized)],
-                ]
-                # GitHub: 64789 + 47 = 64836, which is
-                # 65536 - (24 + 2 + 1 + 2 + 361 + 2 + 97 + 211).
-                # GitLab: 999259 + 47 = 999306, which is
-                # 1000000 - (24 + 2 + 1 + 2 + 352 + 2 + 100 + 211).
-                composed = post_review.compose_review_body(
-                    "x",
-                    groups,
-                    platform=platform,
-                    findings_count=2,
-                    sha=self.SHA,
-                    inline_count=inline_count,
-                )
-                self.assertEqual((composed.shown, composed.omitted), (1, 1))
-                # The singular shown/omitted forms use two fewer bytes than the plural reservation.
-                self.assertEqual(len(composed.body.encode("utf-8")), exact_bytes)
-                self.assertLessEqual(len(composed.body.encode("utf-8")), limit)
-                self.assertIn("Admitted", composed.body)
-                self.assertNotIn("Omitted", composed.body)
-
-                twin = dict(admitted, body="a" * (admitted_length + 1))
-                twin_composed = post_review.compose_review_body(
-                    "x",
-                    [[("admit.py", 1, twin)], groups[1]],
-                    platform=platform,
-                    findings_count=2,
-                    sha=self.SHA,
-                    inline_count=inline_count,
-                )
-                self.assertEqual((twin_composed.shown, twin_composed.omitted), (0, 2))
-                self.assertEqual(len(twin_composed.body.encode("utf-8")), twin_bytes)
-                self.assertLessEqual(len(twin_composed.body.encode("utf-8")), limit)
-                self.assertNotIn("Admitted", twin_composed.body)
-                self.assertIn(closing_line, twin_composed.body)
-
-    def test_closing_line_reservation_keeps_later_groups_bounded(self):
-        # Mutation: reserve no closing-line bytes; the large group fits and the final body exceeds the limit.
-        large = self._invalid_finding("Large", "x" * 64887)
-        small = self._invalid_finding("Small", "s")
-        composed = post_review.compose_review_body(
-            "",
-            [[("foo.py", 99, large)], [("foo.py", 99, small)]],
-            platform="github",
-            findings_count=2,
-            sha=self.SHA,
-            inline_count=0,
-        )
-        # 64887 + 43-byte large piece = 64930; the reserved allowance is
-        # 64839 = 65536 - (24 + 211 + 2 + 361 + 2 + 97), while dropping the
-        # 97-byte closing line would make it fit.
-        self.assertEqual((composed.shown, composed.omitted), (1, 1))
-        self.assertNotIn("Large", composed.body)
-        self.assertIn("Small", composed.body)
-        self.assertIn("_1 of these 2 findings is not shown:", composed.body)
-        self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
-
-    def test_bounded_frame_uses_n_k_and_closing_order(self):
-        # Mutation: render k as n, intro as n, or move the closing line before pieces; order turns red.
-        groups = [
-            [("f.py", i, {"title": f"T{i}", "body": "x" * 65000, "severity": "high"})]
-            if i == 0
-            else [("f.py", i, {"title": f"T{i}", "body": "x", "severity": "high"})]
-            for i in range(3)
-        ]
-        composed = post_review.compose_review_body(
-            "",
-            groups,
-            platform="github",
-            findings_count=3,
-            sha=self.SHA,
-            inline_count=120,
-        )
-        body = composed.body
-        self.assertLessEqual(len(body.encode("utf-8")), 65536)
-        self.assertIn("### ⚠️ 3 findings could not be anchored inline", body)
-        self.assertIn("120 inline comments were posted; the following 2", body)
-        self.assertLess(body.index("T1"), body.index("is not shown"))
-        self.assertLess(
-            body.index("is not shown"), body.index("Generated by code-gauntlet")
-        )
-        self.assertNotIn("[folded:", body)
-
-    def test_bounded_frame_reserves_a_three_digit_inline_count(self):
-        # Mutation: reserve the bounded frame with n instead of inline_count; this
-        # under-two-byte-slack case becomes over the limit.
-        groups = [
-            [("one.py", 1, {"title": "One", "body": "a" * 39960, "severity": "high"})],
-            [("two.py", 2, {"title": "Two", "body": "b" * 24798, "severity": "high"})],
-            [
-                (
-                    "three.py",
-                    3,
-                    {"title": "Three", "body": "c" * 24793, "severity": "high"},
-                )
-            ],
-        ]
-        composed = post_review.compose_review_body(
-            "",
-            groups,
-            platform="github",
-            findings_count=3,
-            sha=self.SHA,
-            inline_count=120,
-        )
-        body_bytes = len(composed.body.encode("utf-8"))
-        self.assertEqual((composed.shown, composed.omitted), (2, 1))
-        self.assertEqual(composed.omitted_entries, (("two.py:2", "Two"),))
-        self.assertLess(composed.body.index("One"), composed.body.index("Three"))
-        self.assertLessEqual(body_bytes, 65536)
-        self.assertEqual(65536 - body_bytes, 1)
-        self.assertIn("### ⚠️ 3 findings could not be anchored inline", composed.body)
-        self.assertIn(
-            "120 inline comments were posted; the following 2 findings reference "
-            "lines outside this diff and are included here instead: A finding listed "
-            "here may not have an anchoring problem of its own — a consolidation "
-            "group whose primary could not be anchored inline is listed here in full, "
-            "corroborators included.",
-            composed.body,
-        )
-        self.assertIn(
-            "_1 of these 3 findings is not shown: this review body reached the "
-            "65536-byte GitHub body limit._",
-            composed.body,
-        )
-
-    def test_bounded_frame_reserves_two_digit_skipped_counts(self):
-        # Mutations: clamp the heading n, intro k, closing m, or closing n to one
-        # digit; each single-term mutation admits First and must turn this red.
-        # Hand arithmetic: the first piece is 64791 + 44 = 64835 bytes, while its
-        # full two-digit reservation is 65536 - (24 + 212 + 2 + 363 + 2 + 99) = 64834.
-        # The all-omitted body is 24 + 2 + 362 + 2 + 99 + 212 = 701 bytes.
-        first = {
-            "file": "shown.py",
-            "line": 1,
-            "severity": "high",
-            "title": "First",
-            "body": "a" * 64791,
-        }
-        groups = [[("shown.py", 1, first)]]
-        groups.extend(
-            [
-                [
-                    (
-                        f"omitted{i}.py",
-                        i,
-                        {
-                            "severity": "high",
-                            "title": f"Omitted {i}",
-                            "body": "z" * 65000,
-                        },
-                    )
-                ]
-                for i in range(2, 11)
-            ]
-        )
-        composed = post_review.compose_review_body(
-            "",
-            groups,
-            platform="github",
-            findings_count=10,
-            sha=self.SHA,
-            inline_count=0,
-        )
-        self.assertEqual((composed.shown, composed.omitted), (0, 10))
-        self.assertEqual(len(composed.body.encode("utf-8")), 701)
-        self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
-        self.assertIn("### ⚠️ 10 findings could not be anchored inline", composed.body)
-        self.assertIn(
-            "0 inline comments were posted; the following 0 findings reference "
-            "lines outside this diff and are included here instead: A finding listed "
-            "here may not have an anchoring problem of its own — a consolidation "
-            "group whose primary could not be anchored inline is listed here in full, "
-            "corroborators included.",
-            composed.body,
-        )
-        self.assertIn(
-            "_10 of these 10 findings are not shown: this review body reached the "
-            "65536-byte GitHub body limit._",
-            composed.body,
-        )
-
-    def test_zero_shown_has_zero_intro_and_a_closing_count(self):
-        # Mutation: render the intro with n as shown; the zero-shown text turns red.
-        finding = self._invalid_finding("Only", "x" * 65000)
-        composed = post_review.compose_review_body(
-            "",
-            [[(finding["file"], finding["line"], finding)]],
-            platform="github",
-            findings_count=1,
-            sha=self.SHA,
-            inline_count=0,
-        )
-        self.assertLessEqual(len(composed.body.encode("utf-8")), 65536)
-        self.assertIn("0 inline comments were posted; the following 0", composed.body)
-        self.assertIn("_1 of these 1 finding is not shown:", composed.body)
-
     def test_budget_reporting_uses_stdout_and_stderr_without_capture_mutation(self):
         # Mutation: delete budget reporting or print it outside the GitLab note branch; these streams turn red.
         payload, out, err, exit_code = self._run_poster(
@@ -5258,62 +3526,6 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertEqual(prior_payload["summary"], {})
         self.assertIn("already on the MR", prior_out)
         self.assertNotIn("body limit", prior_out)
-
-    def test_refusal_is_exact_at_both_platform_boundaries(self):
-        # Mutation: delete _refuse_over_limit or move the guard after post_json; exact exits turn red.
-        for platform, limit, surface, label in (
-            ("github", 65536, "review body", "GitHub"),
-            ("gitlab", 1000000, "summary note", "GitLab"),
-        ):
-            with self.subTest(platform=platform):
-                post_review._refuse_over_limit("x" * limit, platform)
-                with (
-                    self.assertRaises(SystemExit) as exc,
-                    contextlib.redirect_stderr(io.StringIO()) as stderr,
-                ):
-                    post_review._refuse_over_limit("x" * (limit + 1), platform)
-                self.assertEqual(exc.exception.code, 1)
-                self.assertIn(
-                    f"The composed {surface} is {limit + 1} bytes, over the {limit}-byte {label} body limit; nothing was posted.",
-                    stderr.getvalue(),
-                )
-
-    def test_refusal_measures_multibyte_text_as_utf8_bytes(self):
-        # Mutation: measure code points instead of UTF-8 bytes; this 65538-byte body
-        # is 21846 code points, so no refusal fires and this test turns red.
-        body = "界" * 21846
-        self.assertEqual(len(body), 21846)
-        self.assertEqual(len(body.encode("utf-8")), 65538)
-        with (
-            self.assertRaises(SystemExit) as exc,
-            contextlib.redirect_stderr(io.StringIO()) as stderr,
-        ):
-            post_review._refuse_over_limit(body, "github")
-        self.assertEqual(exc.exception.code, 1)
-        self.assertEqual(
-            stderr.getvalue(),
-            "ERROR: The composed review body is 65538 bytes, over the 65536-byte "
-            "GitHub body limit; nothing was posted.\n",
-        )
-
-    def test_fast_path_identity_keeps_all_footer_dedup_variants(self):
-        # Mutation: always append the full footer; each prose-footer body turns red.
-        prose = "Generated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        marker = '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->'
-        cases = (
-            prose,
-            prose + "\n\n" + marker,
-        )
-        for review_body in cases:
-            with self.subTest(review_body=review_body):
-                composed = post_review.compose_review_body(
-                    review_body, [], platform="github", findings_count=0, sha=self.SHA
-                )
-                self.assertEqual(
-                    review_marker.find_marker(composed.body)["sha"], self.SHA
-                )
-                self.assertEqual(composed.body.count("<!-- code-gauntlet-findings:"), 1)
-                self.assertEqual(composed.body.count("Reviewed up to:"), 1)
 
     def test_footer_dedup_uses_only_standalone_summary_lines_on_both_platforms(self):
         footer = f"Generated by code-gauntlet | Reviewed up to: {self.SHA}"
@@ -5432,180 +3644,6 @@ class TestSummaryBodyBudget(_DryRunTestBase):
         self.assertLessEqual(len(body.encode("utf-8")), 65536)
 
 
-class TestSummaryPluralContract(unittest.TestCase):
-    def test_plural_sites_at_zero_one_many(self):
-        for n, noun, ref, be, past in [
-            (0, "findings", "reference", "are", "were"),
-            (1, "finding", "references", "is", "was"),
-            (2, "findings", "reference", "are", "were"),
-        ]:
-            self.assertEqual(post_review._plural(n, "finding"), noun)
-            for inline_count in (None, n):
-                frame = post_review._skipped_frame(n, n, inline_count)
-                self.assertIn(f"{n} {noun} could not be anchored inline", frame)
-                self.assertIn(
-                    f"following {n} {noun} {ref} lines outside this diff and {be} included here",
-                    frame,
-                )
-                if inline_count is not None:
-                    comment = "comment" if n == 1 else "comments"
-                    self.assertIn(f"{n} inline {comment} {past} posted", frame)
-                self.assertNotIn("(s)", frame)
-            self.assertIn(
-                f"_{n} of these {n} {noun} {be} not shown:",
-                post_review._closing_line(n, n, "github"),
-            )
-        self.assertIn(
-            "_1 of these 2 findings is not shown:",
-            post_review._closing_line(1, 2, "github"),
-        )
-
-    def test_plural_sites_at_eleven_and_twenty_one_have_exact_posted_wording(self):
-        cases = (
-            (
-                11,
-                4,
-                7,
-                9,
-                "---\n\n### ⚠️ 11 findings could not be anchored inline\n\n"
-                "9 inline comments were posted; the following 4 findings reference lines "
-                "outside this diff and are included here instead: A finding listed here may "
-                "not have an anchoring problem of its own — a consolidation group whose "
-                "primary could not be anchored inline is listed here in full, corroborators included.",
-                "_7 of these 11 findings are not shown: this review body reached the "
-                "65536-byte GitHub body limit._",
-            ),
-            (
-                21,
-                13,
-                8,
-                17,
-                "---\n\n### ⚠️ 21 findings could not be anchored inline\n\n"
-                "17 inline comments were posted; the following 13 findings reference lines "
-                "outside this diff and are included here instead: A finding listed here may "
-                "not have an anchoring problem of its own — a consolidation group whose "
-                "primary could not be anchored inline is listed here in full, corroborators included.",
-                "_8 of these 21 findings are not shown: this review body reached the "
-                "65536-byte GitHub body limit._",
-            ),
-        )
-        for (
-            total,
-            shown,
-            omitted,
-            inline_count,
-            expected_frame,
-            expected_closing,
-        ) in cases:
-            with self.subTest(total=total):
-                frame = post_review._skipped_frame(total, shown, inline_count)
-                closing = post_review._closing_line(omitted, total, "github")
-                self.assertEqual(frame, expected_frame)
-                self.assertEqual(closing, expected_closing)
-                groups = [
-                    [
-                        (
-                            "foo.py",
-                            index + 1,
-                            {"title": "small" if index < shown else "large"},
-                        )
-                    ]
-                    for index in range(total)
-                ]
-
-                def piece(_filepath, _line, finding):
-                    return (
-                        "\n\n#### item small"
-                        if finding["title"] == "small"
-                        else "x" * 70000
-                    )
-
-                with patch("gauntlet.delivery.post._skipped_piece", side_effect=piece):
-                    composed = post_review.compose_review_body(
-                        "Summary",
-                        groups,
-                        platform="github",
-                        findings_count=total,
-                        sha="a" * 40,
-                        inline_count=inline_count,
-                    )
-                expected_body = (
-                    "### ⚔️ Code Gauntlet\n\nSummary\n\n"
-                    + expected_frame
-                    + "\n\n#### item small" * shown
-                    + "\n\n"
-                    + expected_closing
-                    + TestSummaryBodyBudget.CANONICAL_FOOTER.format(
-                        findings_count=total
-                    )
-                )
-                self.assertEqual(composed.shown, shown)
-                self.assertEqual(composed.omitted, omitted)
-                self.assertEqual(composed.body, expected_body)
-
-    def test_singular_to_zero_frame_reservation_is_bounded(self):
-        for platform in ("github", "gitlab"):
-            for inline_count in (None, 1):
-                finding = {"title": "Oversized", "body": "x" * 2000000}
-                groups = [[("a.js", 1, finding)]]
-                # Fill precisely the old singular reservation; a zero-shown frame
-                # grows by one byte, so restoring that whole mechanism overflows.
-                old_fixed = (
-                    post_review.BRAND_SUMMARY_HEADER
-                    + post_review.build_footer(1, "a" * 40, body="")
-                    + "\n\n" * 3
-                    + post_review._skipped_frame(1, 1, inline_count)
-                    + post_review._closing_line(1, 1, platform)
-                )
-                old_allowance = fold.body_limit(platform).bytes - len(
-                    old_fixed.encode("utf-8")
-                )
-                exact_old = compose_review_body(
-                    "x" * old_allowance,
-                    groups,
-                    platform=platform,
-                    findings_count=1,
-                    sha="a" * 40,
-                    inline_count=inline_count,
-                )
-                self.assertLessEqual(
-                    len(exact_old.body.encode("utf-8")),
-                    fold.body_limit(platform).bytes,
-                )
-                self.assertEqual(exact_old.omitted, 1)
-                for size in (2000000, 64000):
-                    composed = compose_review_body(
-                        "x" * size,
-                        groups,
-                        platform=platform,
-                        findings_count=1,
-                        sha="a" * 40,
-                        inline_count=inline_count,
-                    )
-                    self.assertLessEqual(
-                        len(composed.body.encode("utf-8")),
-                        fold.body_limit(platform).bytes,
-                    )
-                    self.assertEqual(composed.omitted, 1)
-                    self.assertIn("following 0 findings reference", composed.body)
-                    self.assertIn("_1 of these 1 finding is not shown:", composed.body)
-                for n in (1, 2, 9, 10, 100):
-                    reserve = post_review._skipped_reserve(n, inline_count, platform)
-                    for shown in range(n):
-                        actual = post_review._skipped_frame(
-                            n, shown, inline_count
-                        ) + post_review._closing_line(n - shown, n, platform)
-                        self.assertLessEqual(len(actual.encode("utf-8")), reserve)
-
-    def test_summary_parser_stops_at_change_context(self):
-        self.assertEqual(
-            summary_body_from_report(
-                "## Summary\n\n0 findings after the gauntlet.\n\n## Change Context\n\nThe PR claims to change things.\n\n## Review Dimensions Summary\n"
-            ),
-            "0 findings after the gauntlet.",
-        )
-
-
 # A five-line hunk so a multi-line comment's end_line can land either inside or
 # outside the same hunk as its (already-valid) start line.
 GH_DIFF_MULTILINE = (
@@ -5692,14 +3730,6 @@ class TestGitlabSkippedFindingsDegrade(_GitlabLiveRunBase):
         self.assertNotIn(render_comment_body(no_line), discussion_bodies)
         self.assertEqual(len(discussion_bodies), 3)
         self.assertIn("  2 finding(s) skipped.", run.out)
-
-
-class TestBuildSkippedSectionNoFileNoLine(unittest.TestCase):
-    def test_no_file_and_no_line_renders_placeholder_without_raising(self):
-        finding = {"title": "Mystery finding", "body": "b"}
-        section = build_skipped_section([(None, None, finding)])
-        self.assertIn("`?`", section)
-        self.assertIn("Mystery finding", section)
 
 
 # ---------------------------------------------------------------------------
@@ -5847,163 +3877,6 @@ GL_DIFF_OVERLAP = (
 )
 
 _FENCE = "```suggestion"
-
-
-class TestGatedFindingDemoteReason(unittest.TestCase):
-    """``_gated_finding``'s ``demote_reason`` keyword (#223).
-
-    A set-level caller (a poster's overlap pre-pass) forces a fence that PASSED
-    the per-finding gate to downgrade anyway, through the SAME tally/warn/strip
-    tail an ordinary gate failure uses — never a second, parallel strip path.
-    """
-
-    def _finding(self, **over):
-        finding = {
-            "file": "foo.py",
-            "line": 2,
-            "end_line": 3,
-            "suggested_fix_code": "fixed",
-        }
-        finding.update(over)
-        return finding
-
-    def test_demote_reason_none_is_a_no_op_when_the_gate_passes(self):
-        """The default keeps every pre-#223 caller byte-identical."""
-        finding = self._finding()
-        with patch("gauntlet.delivery.gate._check_fix", return_value=None):
-            result = post_review._gated_finding(
-                finding, (2, 3), diff_facts({}, line_texts={})
-            )
-        self.assertIs(result, finding)
-        self.assertEqual(post_review._FIX_COUNTS["kept"], 1)
-        self.assertEqual(post_review._FIX_COUNTS["downgraded"], 0)
-
-    def test_a_set_demote_reason_downgrades_a_gate_pass(self):
-        finding = self._finding()
-        with (
-            patch("gauntlet.delivery.gate._check_fix", return_value=None),
-            patch("gauntlet.delivery.post.warn_skip") as mock_warn,
-        ):
-            result = post_review._gated_finding(
-                finding,
-                (2, 3),
-                diff_facts({}, line_texts={}),
-                demote_reason="overlaps_kept_fence",
-            )
-        self.assertIsNot(result, finding)
-        self.assertNotIn("suggested_fix_code", result)
-        self.assertEqual(post_review._FIX_COUNTS["kept"], 0)
-        self.assertEqual(post_review._FIX_COUNTS["downgraded"], 1)
-        self.assertEqual(post_review._FIX_REASON_COUNTS.get("overlaps_kept_fence"), 1)
-        mock_warn.assert_called_once_with(
-            "suggested-fix downgraded: foo.py:2 (overlaps_kept_fence)"
-        )
-
-    def test_a_gate_failure_keeps_its_own_reason_over_demote_reason(self):
-        """Per-fence reasons win: a demote_reason is consulted only on an ``ok``
-        gate outcome, so a genuine gate failure is never masked by it. Mutate
-        this by deleting the ``if ok:`` guard around the demote_reason branch —
-        the failing finding's ``missing_end_line`` becomes ``overlaps_kept_fence``
-        and this test goes red.
-        """
-        finding = self._finding()
-        with (
-            patch(
-                "gauntlet.delivery.gate._check_fix",
-                return_value="missing_end_line",
-            ),
-            patch("gauntlet.delivery.post.warn_skip") as mock_warn,
-        ):
-            post_review._gated_finding(
-                finding,
-                (2, 3),
-                diff_facts({}, line_texts={}),
-                demote_reason="overlaps_kept_fence",
-            )
-        self.assertEqual(post_review._FIX_REASON_COUNTS.get("missing_end_line"), 1)
-        self.assertIsNone(post_review._FIX_REASON_COUNTS.get("overlaps_kept_fence"))
-        mock_warn.assert_called_once_with(
-            "suggested-fix downgraded: foo.py:2 (missing_end_line)"
-        )
-
-    def tearDown(self):
-        post_review.reset_run_state()
-
-
-class TestGitLabAnchoredDecision(unittest.TestCase):
-    """``_gitlab_anchored`` — the whole GitLab render-site decision, once.
-
-    Both the poster and the benchmark's payload mirror call it, so the mirror
-    cannot drift into fiction that stays green.
-    """
-
-    def setUp(self):
-        parsed = _parse_fixture(GL_DIFF_INDENTED, platform="gitlab")
-        parsed_facts = parsed
-        self.facts = parsed_facts
-        self.valid_lines = parsed_facts.valid_lines
-        self.line_texts = parsed_facts.line_texts
-
-    def _finding(self, **over):
-        finding = {
-            "file": "foo.py",
-            "line": 2,
-            "end_line": 3,
-            "title": "T",
-            "body": "b",
-            "suggested_fix_code": "    return 2\n    # done",
-        }
-        finding.update(over)
-        return finding
-
-    def _anchored(self, finding, anchor=2):
-        return post_review._gitlab_anchored(
-            finding, anchor, diff_facts(self.valid_lines, line_texts=self.line_texts)
-        )
-
-    def test_a_kept_fence_comes_with_the_offsets_that_realize_its_range(self):
-        gated, offsets = self._anchored(self._finding())
-        self.assertIn("suggested_fix_code", gated)
-        self.assertEqual(offsets, (0, 1))
-
-    def test_it_never_mutates_the_finding_it_is_given(self):
-        """Offsets travel out of band. A key written onto the finding would move
-        every delivery key it seeds — `_key_material_finding` renders the
-        ORIGINAL dict, not this copy."""
-        finding = self._finding()
-        before = dict(finding)
-        self._anchored(finding)
-        self.assertEqual(finding, before)
-
-    def test_a_downgrade_leaves_the_input_untouched(self):
-        """The strip happens on a copy — the caller's dict still carries the
-        field, and the render-time offsets are moot once the fence is gone."""
-        finding = self._finding(suggested_fix_code="    return 1\n    # tail")
-        gated, offsets = self._anchored(finding)
-        self.assertNotIn("suggested_fix_code", gated)
-        self.assertIn("suggested_fix_code", finding)
-        self.assertEqual(offsets, (0, 1))
-
-    def test_an_unrealizable_span_falls_back_to_the_single_anchored_line(self):
-        """The anchor is outside the stated range (unreachable from the poster,
-        which anchors every finding at its own line), so no header expresses it:
-        the gate judges the one line the position really carries."""
-        gated, offsets = self._anchored(self._finding(), anchor=1)
-        self.assertNotIn("suggested_fix_code", gated)
-        self.assertIsNone(offsets)
-
-    def test_demote_reason_passes_through_to_a_kept_fence(self):
-        """#223: a caller with a set-level overlap decision states it here,
-        exactly as it would at a GitHub render site."""
-        gated, offsets = post_review._gitlab_anchored(
-            self._finding(),
-            2,
-            diff_facts(self.valid_lines, line_texts=self.line_texts),
-            demote_reason="overlaps_kept_fence",
-        )
-        self.assertNotIn("suggested_fix_code", gated)
-        self.assertEqual(offsets, (0, 1))
-        post_review.reset_run_state()
 
 
 class TestPosterOraclesAreRequiredArguments(unittest.TestCase):
@@ -6945,9 +4818,7 @@ class TestGitLabOverlapDemotion(_OverlapDemotionProofs, _FixGateRunBase):
         self.assertIn(_FENCE, discussion_bodies[0])
         self.assertNotIn(_FENCE, discussion_bodies[1])
         fallback = discussion_bodies[1]
-        self.assertIn(
-            f"**{post_review.SEVERITY_EMOJI['high']} [HIGH] Second**", fallback
-        )
+        self.assertIn(f"**{registry.SEVERITY_EMOJI['high']} [HIGH] Second**", fallback)
         self.assertNotIn("Corroborator", fallback)
         self.assertNotIn("\n\n---\n\n", fallback)
         # The prose suggestion still ships — only the one-click fence is
@@ -7300,120 +5171,6 @@ class TestDeliveryKeysAreFenceIndependent(_GitlabLiveRunBase):
         self.assertIn(
             post_review.build_finding_marker("a" * 40, individual[0]), group_body
         )
-
-
-def test_suggestion_fence_uses_shared_fence_run(monkeypatch):
-    monkeypatch.setattr(post_review, "fence_run", lambda _payload: "````")
-    assert post_review._suggestion_fence("plain") == ("````suggestion", "````")
-
-
-class TestGatedFindingWarnLabel(unittest.TestCase):
-    """``_gated_finding``'s ``warn_label`` keyword (issue #226): the default
-    keeps delivery's warning bytes unchanged; a caller (the report-side gate)
-    can substitute its own label so the two records stay distinguishable."""
-
-    def setUp(self):
-        post_review.reset_run_state()
-        self.addCleanup(post_review.reset_run_state)
-
-    def _finding(self):
-        return {
-            "file": "f.py",
-            "line": 3,
-            "suggested_fix_code": "",  # empty after normalization -> "empty"
-        }
-
-    def test_default_label_matches_delivery_bytes_exactly(self):
-        with patch("gauntlet.delivery.post.warn_skip") as mock_warn:
-            post_review._gated_finding(
-                self._finding(), (3, 3), diff_facts({}, line_texts={})
-            )
-        mock_warn.assert_called_once_with("suggested-fix downgraded: f.py:3 (empty)")
-
-    def test_custom_label_replaces_only_the_leading_word(self):
-        with patch("gauntlet.delivery.post.warn_skip") as mock_warn:
-            post_review._gated_finding(
-                self._finding(),
-                (3, 3),
-                diff_facts({}, line_texts={}),
-                warn_label="report-patch",
-            )
-        mock_warn.assert_called_once_with("report-patch downgraded: f.py:3 (empty)")
-
-    def test_custom_label_never_leaks_into_the_default_caller(self):
-        """warn_label is per-call, not a module-level toggle: a caller that
-        passes it must not change what a caller relying on the default sees."""
-        post_review._gated_finding(
-            self._finding(),
-            (3, 3),
-            diff_facts({}, line_texts={}),
-            warn_label="report-patch",
-        )
-        self.assertIn(
-            "report-patch downgraded: f.py:3 (empty)", post_review._SKIP_WARNINGS
-        )
-        post_review._gated_finding(
-            self._finding(), (3, 3), diff_facts({}, line_texts={})
-        )
-        self.assertIn(
-            "suggested-fix downgraded: f.py:3 (empty)", post_review._SKIP_WARNINGS
-        )
-
-
-class TestFixReasonCounts(unittest.TestCase):
-    """``_FIX_REASON_COUNTS`` — the per-reason tally the report-side gate
-    (scripts/report_patches.py) reads to render a downgrade breakdown."""
-
-    def setUp(self):
-        post_review.reset_run_state()
-        self.addCleanup(post_review.reset_run_state)
-
-    def test_starts_empty(self):
-        self.assertEqual(post_review._FIX_REASON_COUNTS, {})
-
-    def test_tallies_by_reason_across_multiple_downgrades(self):
-        empty = {"file": "a.py", "line": 1, "suggested_fix_code": ""}
-        also_empty = {"file": "b.py", "line": 2, "suggested_fix_code": "   "}
-        no_end_line = {
-            "file": "c.py",
-            "line": 1,
-            "suggested_fix_code": "x",
-        }  # no end_line -> missing_end_line
-
-        post_review._gated_finding(empty, (1, 1), diff_facts({}, line_texts={}))
-        post_review._gated_finding(also_empty, (2, 2), diff_facts({}, line_texts={}))
-        post_review._gated_finding(no_end_line, None, diff_facts({}, line_texts={}))
-
-        self.assertEqual(
-            post_review._FIX_REASON_COUNTS,
-            {"empty": 2, "missing_end_line": 1},
-        )
-
-    def test_a_kept_finding_does_not_tally(self):
-        parsed_facts = _parse_fixture(GH_DIFF_INDENTED, platform="github")
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
-        finding = {
-            "file": "foo.py",
-            "line": 2,
-            "end_line": 3,
-            "suggested_fix_code": "    return 2\n    # done",
-        }
-        result = post_review._gated_finding(
-            finding, (2, 3), diff_facts(valid_lines, line_texts=line_texts)
-        )
-        self.assertIn("suggested_fix_code", result)
-        self.assertEqual(post_review._FIX_REASON_COUNTS, {})
-
-    def test_reset_run_state_clears_the_tally(self):
-        post_review._gated_finding(
-            {"file": "a.py", "line": 1, "suggested_fix_code": ""},
-            (1, 1),
-            diff_facts({}, line_texts={}),
-        )
-        self.assertTrue(post_review._FIX_REASON_COUNTS)
-        post_review.reset_run_state()
-        self.assertEqual(post_review._FIX_REASON_COUNTS, {})
 
 
 def _read_payload(directory):
@@ -8024,9 +5781,9 @@ def test_summary_body_budget_guard(
     # utf8_len return len; this multi-byte body then passes and turns red.
     # GitHub: 21846 code points are 65538 UTF-8 bytes, over 65536.
     # GitLab: 333334 code points are 1000002 UTF-8 bytes, over 1000000.
-    oversized = post_review.ComposedBody("\u754c" * code_points, 0, 0, 0, ())
+    oversized = compose.ComposedBody("\u754c" * code_points, 0, 0, 0, ())
     monkeypatch.setattr(
-        post_review, "compose_review_body", lambda *args, **kwargs: oversized
+        compose, "compose_review_body", lambda *args, **kwargs: oversized
     )
     fake = (
         FakeForge()
@@ -8184,7 +5941,7 @@ def test_summary_body_delivery__report_summary_fold_closes_four_backtick_fence_b
     assert closer in body
     assert body.index(closer) < body.index(fold)
     assert body.index(fold) < body.index(marker)
-    assert body.endswith(post_review.build_footer(0, "a" * 40, body=""))
+    assert body.endswith(build_footer(0, "a" * 40, body=""))
 
 
 @patch(
@@ -8596,3 +6353,252 @@ def test_reset_run_state__main_still_resets_stale_state_from_a_prior_call(
     assert "poison warning from a prior run" not in post_review._SKIP_WARNINGS
     assert post_review._FIX_COUNTS == {"kept": 0, "downgraded": 0}
     assert post_review._FIX_REASON_COUNTS == {}
+
+
+@pytest.mark.parametrize(
+    "calls,expected,counts,reasons,messages",
+    [
+        pytest.param(
+            [("direct", {}, {})],
+            [(True, "    return 2\n    # done", None)],
+            {"kept": 1, "downgraded": 0},
+            {},
+            [],
+            id="kept-identity",
+        ),
+        pytest.param(
+            [("direct", {}, {"demote_reason": "overlaps_kept_fence"})],
+            [(False, None, None)],
+            {"kept": 0, "downgraded": 1},
+            {"overlaps_kept_fence": 1},
+            ["suggested-fix downgraded: foo.py:2 (overlaps_kept_fence)"],
+            id="demoted-copy",
+        ),
+        pytest.param(
+            [("direct", {"end_line": None}, {"demote_reason": "overlaps_kept_fence"})],
+            [(False, None, None)],
+            {"kept": 0, "downgraded": 1},
+            {"missing_end_line": 1},
+            ["suggested-fix downgraded: foo.py:2 (missing_end_line)"],
+            id="per-fix-wins",
+        ),
+        pytest.param(
+            [("gitlab", {}, {})],
+            [(True, "    return 2\n    # done", (0, 1))],
+            {"kept": 1, "downgraded": 0},
+            {},
+            [],
+            id="anchored-offsets-out-of-band",
+        ),
+        pytest.param(
+            [("gitlab", {"suggested_fix_code": "    return 1\n    # tail"}, {})],
+            [(False, None, (0, 1))],
+            {"kept": 0, "downgraded": 1},
+            {"no_op_replacement": 1},
+            ["suggested-fix downgraded: foo.py:2 (no_op_replacement)"],
+            id="anchored-strip",
+        ),
+        pytest.param(
+            [("gitlab-outside", {}, {})],
+            [(False, None, None)],
+            {"kept": 0, "downgraded": 1},
+            {"anchor_mismatch": 1},
+            ["suggested-fix downgraded: foo.py:2 (anchor_mismatch)"],
+            id="unrealizable-anchor",
+        ),
+        pytest.param(
+            [("gitlab", {}, {"demote_reason": "overlaps_kept_fence"})],
+            [(False, None, (0, 1))],
+            {"kept": 0, "downgraded": 1},
+            {"overlaps_kept_fence": 1},
+            ["suggested-fix downgraded: foo.py:2 (overlaps_kept_fence)"],
+            id="anchored-demotion",
+        ),
+        pytest.param(
+            [
+                ("direct", {"suggested_fix_code": ""}, {"warn_label": "report-patch"}),
+                ("direct", {"suggested_fix_code": ""}, {}),
+            ],
+            [(False, None, None), (False, None, None)],
+            {"kept": 0, "downgraded": 2},
+            {"empty": 2},
+            [
+                "report-patch downgraded: foo.py:2 (empty)",
+                "suggested-fix downgraded: foo.py:2 (empty)",
+            ],
+            id="per-call-label",
+        ),
+        pytest.param(
+            [
+                ("direct", {"suggested_fix_code": ""}, {}),
+                ("direct", {"suggested_fix_code": "   "}, {}),
+                ("direct", {"end_line": None}, {}),
+                ("direct", {}, {}),
+            ],
+            [
+                (False, None, None),
+                (False, None, None),
+                (False, None, None),
+                (True, "    return 2\n    # done", None),
+            ],
+            {"kept": 1, "downgraded": 3},
+            {"empty": 2, "missing_end_line": 1},
+            [
+                "suggested-fix downgraded: foo.py:2 (empty)",
+                "suggested-fix downgraded: foo.py:2 (empty)",
+                "suggested-fix downgraded: foo.py:2 (missing_end_line)",
+            ],
+            id="local-tally",
+        ),
+        pytest.param([], [], {"kept": 0, "downgraded": 0}, {}, [], id="empty-run"),
+    ],
+)
+def test_delivery_verdict_accounting(
+    calls, expected, counts, reasons, messages, capsys
+):
+    facts = _parse_fixture(GH_DIFF_INDENTED, platform="github")
+    results = []
+    for adapter, values, options in calls:
+        original = (
+            delivery_finding(
+                suggested_fix_code="    return 2\n    # done",
+                future={"kept": [1]},
+                **values,
+            )
+            if "suggested_fix_code" not in values
+            else delivery_finding(future={"kept": [1]}, **values)
+        )
+        before = copy.deepcopy(original)
+        if adapter.startswith("gitlab"):
+            result, offsets = post_review._gitlab_anchored(
+                original, 1 if adapter == "gitlab-outside" else 2, facts, **options
+            )
+        else:
+            result = post_review._gated_finding(original, (2, 3), facts, **options)
+            offsets = None
+        results.append((result is original, result.get("suggested_fix_code"), offsets))
+        assert original == before
+        assert result["future"] == {"kept": [1]}
+    assert results == expected
+    assert counts == post_review._FIX_COUNTS
+    assert reasons == post_review._FIX_REASON_COUNTS
+    assert messages == post_review._SKIP_WARNINGS
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.splitlines() == ["WARNING: " + message for message in messages]
+
+
+@pytest.mark.parametrize(
+    "keys,sha,expected,expected_bytes",
+    [
+        pytest.param(
+            ["bbbbbbbbbbbbbbbb"],
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            '\n\n<!-- code-gauntlet-finding-key: {"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","key":"bbbbbbbbbbbbbbbb"} -->',
+            113,
+            id="singleton",
+        ),
+        pytest.param(
+            ["bbbbbbbbbbbbbbbb", "cccccccccccccccc"],
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            '\n\n<!-- code-gauntlet-finding-key: {"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","key":"bbbbbbbbbbbbbbbb"} -->\n<!-- code-gauntlet-finding-key: {"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","key":"cccccccccccccccc"} -->',
+            225,
+            id="pair",
+        ),
+        pytest.param(["bbbbbbbbbbbbbbbb"], "unknown", "", 0, id="unmarkable"),
+        pytest.param(
+            [], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", 0, id="no-keys"
+        ),
+    ],
+)
+def test_delivery_marker_envelope(keys, sha, expected, expected_bytes):
+    assert _delivery_marker_suffix(sha, keys) == expected
+    assert len(expected.encode("utf-8")) == expected_bytes
+
+
+@pytest.mark.parametrize(
+    "platform,surface,limit,folded,over,expected_err",
+    [
+        pytest.param(
+            "gitlab",
+            "note",
+            1000000,
+            7,
+            False,
+            "WARNING: Inline body folded by 7 bytes at ?:None: this corroborator note reached the 1000000-byte GitLab body limit.\n",
+            id="disclosure",
+        ),
+        pytest.param(
+            "github",
+            "inline",
+            20,
+            0,
+            True,
+            "ERROR: The composed inline review comment is 26 bytes, over the 20-byte GitHub body limit; nothing was posted.\n",
+            id="github-refusal",
+        ),
+        pytest.param(
+            "gitlab",
+            "note",
+            20,
+            0,
+            True,
+            "WARNING: The composed corroborator note is 26 bytes, over the 20-byte GitLab body limit; skipping this delivery.\n",
+            id="gitlab-skip",
+        ),
+    ],
+)
+def test_inline_envelope_reporting(
+    platform, surface, limit, folded, over, expected_err, capsys
+):
+    composed = compose.InlineBody("x" * 26 if over else "body", folded)
+    with patch.dict(
+        fold.PLATFORM_BODY_LIMITS[platform]["surfaces"][surface], {"bytes": limit}
+    ):
+        if platform == "github" and over:
+            with pytest.raises(SystemExit) as exc:
+                _inline_body_over_limit(composed, "", platform, surface)
+            assert exc.value.code == 1
+        elif over:
+            assert _inline_body_over_limit(composed, "", platform, surface) is True
+        else:
+            _report_inline_budget(composed, platform, surface, None, None)
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == ("", expected_err)
+    assert post_review._SKIP_WARNINGS == []
+
+
+@pytest.mark.parametrize(
+    "platform,text,expected_err",
+    [
+        pytest.param(
+            "github",
+            "x" * 65537,
+            "ERROR: The composed review body is 65537 bytes, over the 65536-byte GitHub body limit; nothing was posted.\n",
+            id="github-plus-one",
+        ),
+        pytest.param(
+            "gitlab",
+            "x" * 1000001,
+            "ERROR: The composed summary note is 1000001 bytes, over the 1000000-byte GitLab body limit; nothing was posted.\n",
+            id="gitlab-plus-one",
+        ),
+        pytest.param(
+            "github",
+            "\u754c" * 21846,
+            "ERROR: The composed review body is 65538 bytes, over the 65536-byte GitHub body limit; nothing was posted.\n",
+            id="utf8-refusal",
+        ),
+        pytest.param("github", "x" * 65536, "", id="github-exact"),
+        pytest.param("gitlab", "x" * 1000000, "", id="gitlab-exact"),
+    ],
+)
+def test_summary_budget_reporting(platform, text, expected_err, capsys):
+    if expected_err:
+        with pytest.raises(SystemExit) as exc:
+            post_review._refuse_over_limit(text, platform)
+        assert exc.value.code == 1
+    else:
+        post_review._refuse_over_limit(text, platform)
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == ("", expected_err)

@@ -1449,7 +1449,8 @@ class TestContractFenceHook(unittest.TestCase):
         declared_inputs = contract_gen.declared_inputs(str(REPO))
         self.assertTrue(
             {
-                "scripts/gauntlet/delivery/post.py",
+                "scripts/gauntlet/delivery/compose.py",
+                "scripts/gauntlet/delivery/gate.py",
                 "scripts/gauntlet/config.py",
                 "scripts/gauntlet/marker.py",
             }.issubset(declared_inputs),

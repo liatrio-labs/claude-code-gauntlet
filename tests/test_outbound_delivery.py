@@ -12,13 +12,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import gauntlet.delivery.fold as outbound_fold
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
 import gauntlet.text as outbound_text
 import pytest
+from gauntlet.delivery import compose
 from gauntlet.forge import JsonFetch, Platform, PostRequest, PostResult, ReviewTarget
-from gauntlet.markdown import code_spans, open_fence
+from gauntlet.markdown import code_spans
 from gauntlet.prior_review import PriorDelivery
 
 from tests.support.diff import diff_facts
@@ -81,7 +81,7 @@ def test_corroborator_cross_field_wikilink(
         "title": "Corroboration",
         "body": "Corroborating body",
     }
-    body = post_review.render_group_body(primary, [corroborator])
+    body = compose.render_group_body(primary, [corroborator])
     _assert_outbound_string_invariant(body)
     assert expected_identity in body
 
@@ -361,246 +361,6 @@ def _assert_poison_containment(test, body, property_names, expected_markers=()):
 
 @pytest.mark.usefixtures("forge_factory", "poster_state")
 class TestOutboundComposerContracts(unittest.TestCase):
-    def test_poisoned_field_does_not_reach_code_owned_backticks_in_its_paragraph(self):
-        title = "Title @title <b>"
-        body = "`backtick-breakout @body <b>"
-        finding = {"severity": "high", "title": title, "body": body}
-        for rendered in (
-            post_review.render_comment_body(finding),
-            post_review.render_group_body(finding, [finding]),
-            post_review.build_skipped_section([("src/file.py", 3, finding)]),
-        ):
-            with self.subTest(rendered=rendered[:40]):
-                prepared = outbound_text.prepare_prose(body)
-                self.assertIn(prepared, rendered)
-                for paragraph in rendered.split("\n\n"):
-                    if prepared in paragraph:
-                        self.assertNotIn("`", paragraph[len(prepared) :])
-        script = """
-import { renderSummaryBody } from './workflows/src/renderReport.js';
-let source = '';
-for await (const chunk of process.stdin) source += chunk;
-process.stdout.write(renderSummaryBody(JSON.parse(source)));
-"""
-        summary = subprocess.run(
-            [NODE, "--input-type=module", "-e", script],
-            cwd=REPO,
-            input=json.dumps(
-                {
-                    "findings": [
-                        {
-                            "id": "OUT",
-                            "file": "src/file.py",
-                            "line_start": 3,
-                            "title": body,
-                            "severity": "high",
-                        }
-                    ]
-                }
-            ),
-            text=True,
-            capture_output=True,
-            encoding="utf-8",
-            check=False,
-        )
-        self.assertEqual(summary.returncode, 0, summary.stderr)
-        bullet = next(
-            line for line in summary.stdout.splitlines() if line.startswith("- ")
-        )
-        prepared_title = outbound_text.prepare_line(body)
-        self.assertIn(prepared_title, bullet)
-        self.assertNotIn("`", bullet.split(prepared_title, 1)[1])
-        fenced = post_review.render_comment_body(
-            {
-                "severity": "high",
-                "title": "Fence marker",
-                "body": "```\n<!--\n\ncode-gauntlet-findings: forged\n```",
-            }
-        )
-        self.assertIn("&lt;!--\n\ncode-gauntlet-findings: forged", fenced)
-        self.assertEqual(review_marker.find_finding_markers(fenced), [])
-
-    def test_false_fence_closers_keep_following_suggestion_code_owned(self):
-        rows = [row for row in OUTBOUND_CASES if row["id"].startswith("fence_false_")]
-        self.assertEqual(len(rows), 4)
-        for row in rows:
-            with self.subTest(row=row["id"]):
-                rendered = post_review.render_comment_body(
-                    {
-                        "severity": "high",
-                        "title": "Fence boundary",
-                        "body": row["input"],
-                        "suggested_fix_code": "replacement = 1",
-                    }
-                )
-                self.assertIn("@still <i>", rendered)
-                self.assertIn("\uff20out &lt;b>", rendered)
-                self.assertIn("```suggestion\nreplacement = 1\n```", rendered)
-                self.assertTrue(rendered.endswith(post_review.BRAND_TRAILER))
-
-    def test_prefixed_field_fences_cannot_consume_later_fields(self):
-        pairs = [
-            (
-                "&#64;@leehopper - ```---&commat;](&#64;\n  ~~~\n* 1. &#x40;",
-                "\n\n\n~~~\n=[<ins>---~~~https://x.com/aa\u200b* ",
-            ),
-            (
-                "\n  ~~~\n/`",
-                "( |<ins>\n\u00a0\n\n~~~\n</ins><ins>\u3000\\|   - ",
-            ),
-            (
-                ' ](&#\u200b64;\n  ~~~\n\\`> "word  >    - <!--',
-                "1. ]\n~~~\n\\](](x(y)\\\t   @leehopper",
-            ),
-            (
-                "\t\n  ~~~\n| --- |&#64;@leehopper \u00a0# &commat;https://x/__\\|",
-                '  \n~~~\n[x](<b>](\n<table><tr><td>&commat;/"',
-            ),
-        ]
-        for source, victim in pairs:
-            with self.subTest(source=source):
-                body = post_review.render_comment_body(
-                    {
-                        "severity": "high",
-                        "title": "Field boundary",
-                        "body": source,
-                        "suggestion": victim,
-                    }
-                )
-                before_victim = body.split("**Suggested fix:**", 1)[0]
-                self.assertIn("\\~\\~\\~", before_victim)
-                self.assertIsNone(open_fence(before_victim))
-                self.assertIn("**Suggested fix:**", body)
-                self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
-
-    def test_untrusted_fence_cannot_swallow_footer_or_suggestion(self):
-        body = post_review.render_comment_body(
-            {
-                "severity": "high",
-                "title": "Field boundary",
-                "body": "Intro\n\n  ~~~\nnote",
-                "suggested_fix_code": "~~~\n@leehopper <ins>x</ins>\n",
-            }
-        )
-        self.assertIn("  \\~\\~\\~\n", body)
-        self.assertIn("\n```suggestion\n~~~\n@leehopper <ins>x</ins>\n```\n", body)
-        self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
-
-    def test_rule_fences_are_escaped_under_blockquote_prefix(self):
-        body = post_review.render_comment_body(
-            {
-                "severity": "high",
-                "title": "Rule",
-                "body": "After rule",
-                "claude_md_rule": "~~~\n@user <b>",
-            }
-        )
-        self.assertIn("> \\~\\~\\~", body)
-        self.assertIn("> \uff20user &lt;b>", body)
-        self.assertTrue(body.endswith(post_review.BRAND_TRAILER))
-
-    def test_skipped_and_corroborator_fields_keep_fence_boundaries(self):
-        primary = {
-            "severity": "high",
-            "title": "Primary",
-            "body": "Start\n  ~~~\n@leehopper <ins>x</ins>",
-        }
-        corroborator = {
-            "severity": "low",
-            "title": "Corroborator",
-            "body": "  ~~~\n@leehopper <ins>x</ins>",
-            "agent": "Reviewer",
-        }
-        for rendered in (
-            post_review.build_skipped_section([("src/file.py", 3, primary)]),
-            post_review.render_group_body(primary, [corroborator]),
-        ):
-            with self.subTest(rendered=rendered[:40]):
-                self.assertIn("  \\~\\~\\~", rendered)
-                self.assertIn("\uff20leehopper &lt;ins>x&lt;/ins>", rendered)
-                self.assertIsNone(open_fence(rendered))
-
-    def test_primary_title_and_body_are_contained_before_the_footer(self):
-        rendered = post_review.render_comment_body(_hostile_finding())
-        _assert_no_hostile_prose(self, rendered)
-        self.assertIn("\uff20zz363sentinel", rendered)
-        self.assertIn(post_review.BRAND_TRAILER, rendered)
-        self.assertTrue(rendered.endswith(post_review.BRAND_TRAILER))
-
-    def test_suggestion_and_cited_rule_are_prepared_as_prose(self):
-        rendered = post_review.render_comment_body(_hostile_finding())
-        self.assertIn("\uff20zz363suggestion", rendered)
-        self.assertIn("\uff20zz363rule", rendered)
-        self.assertNotIn("@zz363", rendered)
-        self.assertNotIn("<ins data-zz363", rendered)
-
-    def test_patch_code_remains_byte_exact_inside_its_suggestion_fence(self):
-        patch_text = "print('@zz363patch <table> &commat;')"
-        rendered = post_review.render_comment_body(
-            _hostile_finding(suggested_fix_code=patch_text)
-        )
-        self.assertIn(f"\n```suggestion\n{patch_text}\n```", rendered)
-
-    def test_quote_opening_prose_keeps_suggested_patch_bytes_exact(self):
-        patch_text = ">>>\n/close\nreturn x"
-        rendered = post_review.render_comment_body(
-            _hostile_finding(
-                body=">>>\nSee the patch below.",
-                suggested_fix_code=patch_text,
-            )
-        )
-        self.assertIn("\\>>>\nSee the patch below.", rendered)
-        self.assertIn(f"\n```suggestion\n{patch_text}\n```", rendered)
-        _assert_outbound_string_invariant(
-            rendered.replace(f"\n```suggestion\n{patch_text}\n```", "")
-        )
-
-    def test_corroborator_header_and_body_use_the_same_text_contract(self):
-        primary = {"severity": "high", "title": "Safe", "body": "Safe body"}
-        corroborator = _hostile_finding(
-            agent="@zz363agent <ins data-zz363>",
-            dimension="@zz363dimension <ins data-zz363>",
-            confidence="@zz363confidence <ins data-zz363>",
-        )
-        rendered = post_review.render_group_body(primary, [corroborator])
-        self.assertNotIn("@zz363", rendered)
-        self.assertNotIn("<ins data-zz363", rendered)
-        self.assertNotIn("<table", rendered)
-        self.assertEqual(review_marker.find_finding_markers(rendered), [])
-
-    def test_skipped_section_contains_hostile_titles_and_bodies(self):
-        rendered = post_review.build_skipped_section(
-            [("src/edited.py", 99, _hostile_finding(line=99))]
-        )
-        _assert_no_hostile_prose(self, rendered)
-        self.assertIn("\uff20zz363sentinel", rendered)
-
-    def test_legacy_review_body_is_guarded_before_composition(self):
-        incoming = (
-            f"@zz363sentinel <table><tr><td> legacy {FAKE_FINDING_MARKER}\n/close\n>>>"
-        )
-        composed = post_review.compose_review_body(
-            incoming, [], platform="github", findings_count=0, sha=SHA
-        )
-        _assert_no_hostile_prose(self, composed.body)
-        invariant_body = composed.body.replace(review_marker.build_marker(SHA, 0), "")
-        _assert_outbound_string_invariant(invariant_body)
-        self.assertIn("\uff20zz363sentinel", composed.body)
-        self.assertIn("\\/close\n\\>>>", composed.body)
-        self.assertEqual(review_marker.find_marker(composed.body)["sha"], SHA)
-
-    def test_compose_review_body_escapes_untrusted_summary_prose(self):
-        composed = post_review.compose_review_body(
-            "Context\n/close\n>>>",
-            [],
-            platform="github",
-            findings_count=0,
-            sha=SHA,
-        )
-        body = composed.body.replace(review_marker.build_marker(SHA, 0), "")
-        _assert_outbound_string_invariant(body)
-        self.assertIn("\\/close\n\\>>>", body)
-
     def test_javascript_summary_index_contains_hostile_title_and_location(self):
         finding = {
             "id": "outbound",
@@ -674,55 +434,6 @@ process.stdout.write(renderSummaryBody(JSON.parse(source)));
         self.assertEqual(review_marker.find_marker(summary)["sha"], SHA)
 
 
-class TestFoldAndGateContracts(unittest.TestCase):
-    def test_forced_composer_folds_keep_escaped_quote_prefixes(self):
-        for platform in ("github", "gitlab"):
-            with self.subTest(platform=platform):
-                review_limit = outbound_fold.body_limit(platform, "summary").bytes
-                surface = "inline" if platform == "github" else "discussion"
-                inline_limit = outbound_fold.body_limit(platform, surface).bytes
-                source = ">>>" + "x" * (max(review_limit, inline_limit) + 128)
-                prepared = outbound_text.prepare_prose(source)
-                review = post_review.compose_review_body(
-                    source,
-                    [],
-                    platform=platform,
-                    findings_count=0,
-                    sha=SHA,
-                )
-                inline = post_review.compose_inline_body(
-                    prepared, platform=platform, surface=surface
-                )
-                self.assertGreater(review.folded_bytes, 0)
-                self.assertGreater(inline.folded_bytes, 0)
-                for name, body in (("review", review.body), ("inline", inline.body)):
-                    with self.subTest(composer=name):
-                        self.assertTrue(
-                            any(line.startswith("\\>>>") for line in body.splitlines()),
-                            body[:100],
-                        )
-                        if name == "review":
-                            body = body.replace(review_marker.build_marker(SHA, 0), "")
-                        _assert_outbound_string_invariant(body)
-
-    def test_forced_inline_composer_folds_keep_escaped_slash_lines(self):
-        for platform, surface in (("github", "inline"), ("gitlab", "discussion")):
-            with self.subTest(platform=platform):
-                limit = outbound_fold.body_limit(platform, surface).bytes
-                source = "context\n/close\n" + "tail " * (limit // 5 + 1000)
-                prepared = outbound_text.prepare_prose(source)
-                composed = post_review.compose_inline_body(
-                    prepared, platform=platform, surface=surface
-                )
-                self.assertGreater(composed.folded_bytes, 0)
-                kept_lines = composed.body.split("\n\n_[folded:", 1)[0].splitlines()
-                self.assertTrue(
-                    any(line == "\\/close" for line in kept_lines),
-                    "prepared slash line was not kept",
-                )
-                _assert_outbound_string_invariant(composed.body)
-
-
 class TestDeliveryTitleKeys(unittest.TestCase):
     @staticmethod
     def _live_key(finding):
@@ -781,18 +492,6 @@ class TestDeliveryTitleKeys(unittest.TestCase):
         }
         self.assertEqual(self._live_key(finding), "07961d7c0f9dd168")
 
-    def test_nonstring_title_is_absent_for_rendering_and_keying(self):
-        finding = {
-            "file": "src/edited.py",
-            "line": 61,
-            "severity": "high",
-            "title": 7,
-            "body": "Body one",
-        }
-        self.assertEqual(self._live_key(finding), "07961d7c0f9dd168")
-        self.assertIn("[HIGH] Finding", post_review.key_material_body(finding))
-        self.assertNotIn("[HIGH] 7", post_review.key_material_body(finding))
-
     def test_empty_title_key_is_pinned(self):
         finding = {
             "file": "src/edited.py",
@@ -812,22 +511,6 @@ class TestDeliveryTitleKeys(unittest.TestCase):
             "body": "Body one",
         }
         self.assertEqual(self._live_key(finding), "07961d7c0f9dd168")
-
-    def test_safe_finding_key_keeps_its_existing_pin(self):
-        finding = {
-            "file": "src/edited.py",
-            "line": 61,
-            "severity": "high",
-            "title": "Context-line finding",
-            "body": "Body one",
-        }
-        key = post_review.finding_key(
-            finding["file"],
-            finding["line"],
-            finding["title"],
-            post_review.key_material_body(finding),
-        )
-        self.assertEqual(key, "f87d51ec25846a5e")
 
 
 class TestPoisonedOutboundSinks(unittest.TestCase):
@@ -856,11 +539,11 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
             property_names, reads, primary=True
         )
         discovery_corroborator = _poisoned_outbound_sinks_finding(property_names, reads)
-        post_review.render_comment_body(discovery_primary)
-        post_review.render_group_body(discovery_primary, [discovery_corroborator])
-        post_review.build_skipped_section(
+        compose.render_comment_body(discovery_primary)
+        compose.render_group_body(discovery_primary, [discovery_corroborator])
+        compose.build_skipped_section(
             [
-                (
+                compose.SkippedEntry(
                     discovery_primary.get("file"),
                     discovery_primary.get("line"),
                     discovery_primary,
@@ -869,7 +552,7 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
         )
         discovery_fallback = _poisoned_outbound_sinks_finding(property_names, reads)
         discovery_fallback["claude_md_rule"] = FAKE_FINDING_MARKER
-        post_review.render_comment_body(discovery_fallback)
+        compose.render_comment_body(discovery_fallback)
         for platform in ("github", "gitlab"):
             for route in ("anchored", "off_diff", "grouped"):
                 members = [
@@ -895,16 +578,20 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
             if key != "suggested_fix_code"
         }
         direct_bodies = [
-            post_review.render_comment_body(direct_primary),
-            post_review.render_group_body(direct_primary, [direct_corroborator]),
-            post_review.build_skipped_section(
-                [(primary.get("file"), primary.get("line"), direct_primary)]
+            compose.render_comment_body(direct_primary),
+            compose.render_group_body(direct_primary, [direct_corroborator]),
+            compose.build_skipped_section(
+                [
+                    compose.SkippedEntry(
+                        primary.get("file"), primary.get("line"), direct_primary
+                    )
+                ]
             ),
         ]
         fallback = _poisoned_outbound_sinks_finding(property_names, reads)
         fallback["claude_md_rule"] = FAKE_FINDING_MARKER
         fallback.pop("suggested_fix_code", None)
-        direct_bodies.append(post_review.render_comment_body(fallback))
+        direct_bodies.append(compose.render_comment_body(fallback))
 
         for platform in ("github", "gitlab"):
             for route in ("anchored", "off_diff", "grouped"):
@@ -961,7 +648,7 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
         self._capture("gitlab", [primary, corroborator], anchored=True)
         fallback = _poisoned_outbound_sinks_finding(property_names, reads)
         fallback["claude_md_rule"] = FAKE_FINDING_MARKER
-        post_review.render_comment_body(fallback)
+        compose.render_comment_body(fallback)
         required_reads = {
             "title",
             "body",
@@ -1287,9 +974,9 @@ def test_markup_rekeys_once(
     }
     old_material = "src/edited.py\0" + "2\0" + title + "\0" + old_sections
     assert hashlib.sha256(old_material.encode("utf-8")).hexdigest()[:16] == old_key
-    assert post_review.key_material_body(finding) == sections
+    assert compose.key_material_body(finding) == sections
     assert (
-        post_review.finding_key(
+        compose.finding_key(
             finding["file"],
             finding["line"],
             outbound_text.prepare_line(title),
@@ -1331,10 +1018,10 @@ def test_image_fields_preserve_patch_and_footer(field: str) -> None:
         field: "![a](u)",
         "suggested_fix_code": patch_text,
     }
-    rendered = post_review.render_comment_body(finding)
+    rendered = compose.render_comment_body(finding)
     assert "!\uff3ba](u)" in rendered
     assert "```suggestion\n" + patch_text + "\n```" in rendered
-    assert rendered.endswith(post_review.BRAND_TRAILER)
+    assert rendered.endswith(compose.BRAND_TRAILER)
     assert "[CRITICAL]" in rendered
 
 
@@ -1350,10 +1037,10 @@ def test_reference_fields_preserve_patch_and_footer(field: str) -> None:
         field: "[critical]: u",
         "suggested_fix_code": patch_text,
     }
-    rendered = post_review.render_comment_body(finding)
+    rendered = compose.render_comment_body(finding)
     assert "[critical]\\: u" in rendered
     assert "```suggestion\n" + patch_text + "\n```" in rendered
-    assert rendered.endswith(post_review.BRAND_TRAILER)
+    assert rendered.endswith(compose.BRAND_TRAILER)
     assert "[CRITICAL]" in rendered
 
 
@@ -1366,7 +1053,7 @@ def test_reference_fields_preserve_patch_and_footer(field: str) -> None:
 def test_reference_multiline_fields_keep_severity_label(
     field: str, source: str
 ) -> None:
-    rendered = post_review.render_comment_body(
+    rendered = compose.render_comment_body(
         {
             "severity": "critical",
             "title": "Title",
@@ -1376,7 +1063,7 @@ def test_reference_multiline_fields_keep_severity_label(
     )
     assert "]\\: u" in rendered
     assert "[CRITICAL]" in rendered
-    assert rendered.endswith(post_review.BRAND_TRAILER)
+    assert rendered.endswith(compose.BRAND_TRAILER)
 
 
 @pytest.mark.parametrize(
@@ -1391,11 +1078,11 @@ def test_gitlab_live_fallback_contracts__partial_prior_delivery_posts_only_the_m
         consolidation_key="src/edited.py:2", consolidation_primary=True
     )
     title = outbound_text.prepare_line(primary["title"])
-    prior_key = post_review.finding_key(
+    prior_key = compose.finding_key(
         primary["file"],
         primary["line"],
         title,
-        post_review.key_material_body(primary),
+        compose.key_material_body(primary),
     )
     corroborator = _hostile_finding(
         line=line,
@@ -1479,7 +1166,7 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
     corroborator["consolidation_key"] = "poison-group"
     corroborator["line"] = None
     with patch(
-        "gauntlet.delivery.post.finding_key",
+        "gauntlet.delivery.compose.finding_key",
         side_effect=lambda _file, member_line, _title, _body: (
             "1" * 16 if member_line is not None else "2" * 16
         ),
@@ -1565,7 +1252,7 @@ def test_prose_active_fences_preserve_owned_patch(
     assert "ordinary \\~\\~\\~ text" in rendered
     assert "x \uff3b^a]\uff1a note SENT](a b) after" in rendered
     assert f"{patch_header}\n{patch_text}\n```" in rendered
-    assert post_review.BRAND_TRAILER in rendered
+    assert compose.BRAND_TRAILER in rendered
 
     corroborator = {
         "severity": "low",
@@ -1573,13 +1260,13 @@ def test_prose_active_fences_preserve_owned_patch(
         "body": "term\n~ ~~~mermaid\n  x = SENT\n  ~~~\n\ntail",
         "agent": "Corroborator",
     }
-    grouped = post_review.render_group_body(finding, [corroborator])
+    grouped = compose.render_group_body(finding, [corroborator])
     assert "corroborator [a]\uff1a //e/SENT](a b)" in grouped
     assert "~ \\~\\~\\~mermaid" in grouped
 
-    skipped = post_review.build_skipped_section(
+    skipped = compose.build_skipped_section(
         [
-            (
+            compose.SkippedEntry(
                 "src/a.py",
                 3,
                 {"severity": "high", "title": "Skipped", "body": finding["body"]},
@@ -1587,3 +1274,62 @@ def test_prose_active_fences_preserve_owned_patch(
         ]
     )
     assert ": \\~\\~\\~suggestion" in skipped
+
+
+def test_javascript_backtick_title_boundary():
+    script = """
+import {renderSummaryBody} from './workflows/src/renderReport.js';
+let source = '';
+for await (const chunk of process.stdin) source += chunk;
+process.stdout.write(renderSummaryBody(JSON.parse(source)));
+"""
+    result = subprocess.run(
+        [NODE, "--input-type=module", "-e", script],
+        cwd=REPO,
+        input=json.dumps(
+            {
+                "findings": [
+                    {
+                        "id": "OUT",
+                        "file": "src/file.py",
+                        "line_start": 3,
+                        "title": "`backtick-breakout @body <b>",
+                        "severity": "high",
+                    }
+                ]
+            }
+        ),
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+    )
+    bullet = next(line for line in result.stdout.splitlines() if line.startswith("- "))
+    assert "\\`backtick-breakout \uff20body &lt;b>" in bullet
+    assert "`" not in bullet.split("\\`backtick-breakout \uff20body &lt;b>", 1)[1]
+
+
+@pytest.mark.parametrize(
+    "title,expected_key",
+    [
+        pytest.param(7, "07961d7c0f9dd168", id="non-string-title"),
+    ],
+)
+def test_title_key_wiring(title, expected_key):
+    member = {
+        "file": "src/edited.py",
+        "line": 61,
+        "severity": "high",
+        "title": title,
+        "body": "Body one",
+    }
+    payloads, _ = _deliver(
+        "gitlab",
+        [member],
+        live=True,
+        lines={("src/edited.py", 61): 50},
+        texts={("src/edited.py", 61): "context"},
+    )
+    body = next(p.payload["body"] for p in payloads if "position" in p.payload)
+    assert review_marker.find_finding_marker(body)["key"] == expected_key
+    assert "**\U0001f7e0 [HIGH] Finding**\n\nBody one" in body

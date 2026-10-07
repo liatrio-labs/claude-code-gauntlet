@@ -39,7 +39,7 @@ import gauntlet.delivery.post as post_review
 import pytest
 from gauntlet import diff as diff_api
 from gauntlet import proc
-from gauntlet.delivery import gate
+from gauntlet.delivery import compose, gate
 from gauntlet.forge import (
     JsonFetch,
     ReviewTarget,
@@ -254,8 +254,8 @@ def _github_comment(
         facts,
         demote_reason=demote_reason,
     )
-    composed = post_review.compose_inline_body(
-        post_review._render_group_sections(gated, []),
+    composed = compose.compose_inline_body(
+        compose.render_group_sections(gated, []),
         platform="github",
         surface="inline",
     )
@@ -298,7 +298,7 @@ def _github_overlap_losers(findings, facts):
     """Use the poster's candidate predicate and group index basis.
 
     This mirror has no consolidation: singleton groups retain finding order."""
-    groups = [{"primary": f, "corroborators": []} for f in findings]
+    groups = [compose.Group(f, ()) for f in findings]
     records = post_review._github_overlap_records(groups, facts)
     return gate.overlap_losers(records)
 
@@ -334,7 +334,7 @@ def build_reference_github_payload(
             )
         )
     total = len(findings) + len(skip_warnings)
-    body = post_review.compose_review_body(
+    body = compose.compose_review_body(
         review_body,
         skipped_groups,
         platform="github",
@@ -390,15 +390,15 @@ def _gitlab_discussion(
     # it exactly as the real poster omits it, via the same is_new_file call.
     if not diff_api.is_new_file(facts, filepath):
         position["old_path"] = filepath
-    key = post_review.finding_key(
+    key = compose.finding_key(
         filepath,
         line,
         f.get("title", ""),
-        post_review.key_material_body(f),
+        compose.key_material_body(f),
     )
     marker_suffix = post_review._delivery_marker_suffix(sha, [key])
-    composed = post_review.compose_inline_body(
-        post_review._render_group_sections(gated, [], fence_offsets=offsets),
+    composed = compose.compose_inline_body(
+        compose.render_group_sections(gated, [], fence_offsets=offsets),
         platform="gitlab",
         surface="discussion",
         marker_suffix=marker_suffix,
@@ -416,7 +416,7 @@ def _gitlab_overlap_losers(remaining, facts):
     pairs = [
         (
             diff_api.diff_path_spelling(facts, f.get("file", "?"), f["line"]),
-            {"primary": f, "corroborators": []},
+            compose.Group(f, ()),
         )
         for f in remaining
     ]
@@ -449,7 +449,7 @@ def build_reference_gitlab_payload(
         remaining.append(f)
 
     total = len(findings)
-    body = post_review.compose_review_body(
+    body = compose.compose_review_body(
         review_body,
         skipped_groups,
         platform="gitlab",

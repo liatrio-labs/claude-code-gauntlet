@@ -225,7 +225,7 @@ class TestMachineParsedStrings(unittest.TestCase):
             row["parsers"],
             [
                 "workflows/src/renderReport.js",
-                "scripts/gauntlet/delivery/post.py",
+                "scripts/gauntlet/delivery/compose.py",
                 "bench/runner/citations.py",
             ],
         )

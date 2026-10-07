@@ -7,6 +7,14 @@ from typing import Literal
 from unittest.mock import patch
 
 import pytest
+from gauntlet.delivery import compose
+from gauntlet.delivery.compose import (
+    BRAND_TRAILER,
+    build_skipped_section,
+    compose_inline_body,
+    compose_review_body,
+    render_comment_body,
+)
 from gauntlet.delivery.fold import (
     PLATFORM_BODY_LIMITS,
     Platform,
@@ -14,13 +22,6 @@ from gauntlet.delivery.fold import (
     fold_inline_body,
     fold_review_body,
     utf8_len,
-)
-from gauntlet.delivery.post import (
-    BRAND_TRAILER,
-    build_skipped_section,
-    compose_inline_body,
-    compose_review_body,
-    render_comment_body,
 )
 from gauntlet.markdown import code_spans, fence_closer, open_fence
 from gauntlet.marker import (
@@ -218,7 +219,9 @@ def test_prepared_and_composed_sections_contain_comment_openers() -> None:
         composed = (
             sections,
             render_comment_body(finding),
-            build_skipped_section([("src/portable.py", 1, finding)]),
+            build_skipped_section(
+                [compose.SkippedEntry("src/portable.py", 1, finding)]
+            ),
             compose_inline_body(sections, platform="github", surface="inline").body,
             compose_review_body(
                 source, [], platform="github", findings_count=0, sha=sha

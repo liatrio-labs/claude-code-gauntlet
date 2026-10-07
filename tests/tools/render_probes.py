@@ -35,7 +35,7 @@ import secrets
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from html.parser import HTMLParser
@@ -725,7 +725,8 @@ def input_sha256(text: str) -> str:
 def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     """Compose deterministic complete GitLab bodies through delivery composers."""
     import gauntlet.delivery.post as post_review
-    from gauntlet.delivery import gate
+    from gauntlet.delivery import compose, gate
+    from gauntlet.delivery.fold import Surface
 
     from tests.support.diff import diff_facts
 
@@ -745,20 +746,20 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
         }
 
     def inline_body(
-        body_finding: dict[str, Any],
+        body_finding: Mapping[str, object],
         *,
-        surface: str = "discussion",
+        surface: Surface = "discussion",
         marker: str = discussion_marker,
-        corroborators: list[dict[str, Any]] | None = None,
+        corroborators: Sequence[Mapping[str, object]] | None = None,
         fence_offsets: tuple[int, int] | None = None,
     ) -> str:
-        sections = post_review._render_group_sections(
+        sections = compose.render_group_sections(
             body_finding, corroborators or [], fence_offsets=fence_offsets
         )
-        composed = post_review.compose_inline_body(
+        composed = compose.compose_inline_body(
             sections, platform="gitlab", surface=surface, marker_suffix=marker
         )
-        return cast(str, composed.body + marker)
+        return composed.body + marker
 
     cases: list[dict[str, Any]] = []
 
@@ -800,7 +801,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     cases.append(
         {
             "id": "slash_display_math",
-            "text": post_review.compose_review_body(
+            "text": compose.compose_review_body(
                 "$$\n/close\n$$",
                 [],
                 platform="gitlab",
@@ -830,7 +831,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     cases.append(
         {
             "id": "mbq_alert_breakout_summary",
-            "text": post_review.compose_review_body(
+            "text": compose.compose_review_body(
                 alert_breakout,
                 [],
                 platform="gitlab",
@@ -881,14 +882,14 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
         confidence="high",
         consolidation_key="probe",
     )
-    group = post_review.consolidate_delivery([primary, corroborator])[0]
+    group = compose.consolidate_delivery([primary, corroborator])[0]
     group_marker = post_review._delivery_marker_suffix(sha, list(keys))
     cases.append(
         {
             "id": "grouped_corroborator",
             "text": inline_body(
-                group["primary"],
-                corroborators=group["corroborators"],
+                group.primary,
+                corroborators=group.corroborators,
                 marker=group_marker,
             ),
             "route": "discussion",
