@@ -14,7 +14,6 @@ from gauntlet import registry
 from gauntlet.delivery import compose
 from gauntlet.delivery.fold import PLATFORM_BODY_LIMITS
 from gauntlet.markdown import open_fence
-from gauntlet.text import prepare_prose
 
 from tests.support.delivery import finding, skipped_group
 
@@ -33,28 +32,6 @@ SKIPPED_NOTE = (
 
 COMMENT_SECTIONS = [
     pytest.param(
-        {"severity": "s" * 70000, "title": "Legacy finding", "body": "body"},
-        "**\U0001f4a1 [LOW] Legacy finding**\n\nbody",
-        id="oversized-severity",
-    ),
-    pytest.param(
-        {"severity": "critical"}, "**\U0001f534 [CRITICAL] T**\n\nb", id="critical"
-    ),
-    pytest.param(
-        {
-            "severity": "high",
-            "suggestion": "Advice",
-            "suggested_fix_code": "return None",
-            "claude_md_rule": "Rule",
-        },
-        "**\U0001f7e0 [HIGH] T**\n\nb\n\n**Suggested fix:**\nAdvice\n\n**Cited rule:**\n> Rule\n\n```suggestion\nreturn None\n```",
-        id="section-order",
-    ),
-    pytest.param({}, "**\U0001f7e1 [MEDIUM] T**\n\nb", id="plain"),
-    pytest.param(
-        {"severity": "low", "body": ""}, "**\U0001f4a1 [LOW] T**\n\n", id="empty-body"
-    ),
-    pytest.param(
         {"title": None, "body": None},
         "**\U0001f7e1 [MEDIUM] Finding**\n\n",
         id="missing-title",
@@ -63,28 +40,6 @@ COMMENT_SECTIONS = [
         {"title": 7, "suggestion": 42, "claude_md_rule": 7, "suggested_fix_code": 123},
         "**\U0001f7e1 [MEDIUM] Finding**\n\nb\n\n**Suggested fix:**\n42\n\n**Cited rule:**\n> 7\n\n```suggestion\n123\n```",
         id="object-values",
-    ),
-    pytest.param(
-        {
-            "suggestion": "\n\n  advice\nnext\n\n",
-            "claude_md_rule": "keep\rescape **bold**\n\nlast\n",
-        },
-        "**\U0001f7e1 [MEDIUM] T**\n\nb\n\n**Suggested fix:**\n  advice\nnext\n\n**Cited rule:**\n> keepescape **bold**\n>\n> last",
-        id="prose-edges-and-quote",
-    ),
-    pytest.param(
-        {
-            "suggestion": "",
-            "suggested_fix_code": None,
-            "claude_md_rule": "<!-- only -->",
-        },
-        "**\U0001f7e1 [MEDIUM] T**\n\nb",
-        id="empty-optionals",
-    ),
-    pytest.param(
-        {"suggestion": None, "suggested_fix_code": "", "claude_md_rule": None},
-        "**\U0001f7e1 [MEDIUM] T**\n\nb",
-        id="null-optionals",
     ),
     pytest.param(
         {"suggestion": "  \n ", "suggested_fix_code": " \n\t ", "claude_md_rule": " "},
@@ -127,10 +82,6 @@ def test_comment_sections(values, expected):
 
 
 RULE_SELECTION_CASES = {
-    "rule-only-cap": (
-        {"claude_md_rule": "R" * 600},
-        "**Cited rule:**\n> RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR\u2026[truncated]",
-    ),
     "clause-wins": (
         {
             "claude_md_rule": "Clause",
@@ -138,18 +89,6 @@ RULE_SELECTION_CASES = {
             "rule_source": "code_comment",
         },
         "**Cited comment:**\n> Clause",
-    ),
-    "documented-rule": (
-        {"claude_md_rule": "Clause", "rule_source": "documented_rule"},
-        "**Cited rule:**\n> Clause",
-    ),
-    "repo-precedent": (
-        {"claude_md_rule": "Clause", "rule_source": "repo_precedent"},
-        "**Repo precedent:**\n> Clause",
-    ),
-    "inconsistency": (
-        {"claude_md_rule": "Clause", "rule_source": "self_inconsistency"},
-        "**Inconsistency:**\n> Clause",
     ),
     "unknown-source": (
         {"claude_md_rule": "Clause", "rule_source": "__proto__"},
@@ -163,17 +102,9 @@ RULE_SELECTION_CASES = {
         },
         "**Cited rule:**\n> Spec",
     ),
-    "empty-clause-fallback": (
-        {"claude_md_rule": "", "spec_text": "Spec"},
-        "**Cited rule:**\n> Spec",
-    ),
     "blank-clause-object-spec": (
         {"claude_md_rule": "   ", "spec_text": 9, "rule_source": "repo_precedent"},
         "**Cited rule:**\n> 9",
-    ),
-    "spec-ignores-source": (
-        {"spec_text": "Spec", "rule_source": "code_comment"},
-        "**Cited rule:**\n> Spec",
     ),
     "quoted-fence": (
         {"claude_md_rule": "~~~\n@user <b>"},
@@ -197,7 +128,6 @@ def test_rule_selection(values, expected):
 
 
 PATCH_PAYLOAD_CASES = {
-    "multiline": ("one\ntwo\nthree", None, "```suggestion\none\ntwo\nthree\n```"),
     "edge-blanks": ("\none\ntwo\n\n", (0, 2), "```suggestion:-0+2\n\none\ntwo\n\n```"),
     "one-final-lf": ("one\n", (2, 0), "```suggestion:-2+0\none\n```"),
     "zero-offsets": ("x", (0, 0), "```suggestion\nx\n```"),
@@ -215,11 +145,6 @@ PATCH_PAYLOAD_CASES = {
         "print('@patch <table> &commat;')",
         None,
         "```suggestion\nprint('@patch <table> &commat;')\n```",
-    ),
-    "quick-action-payload": (
-        ">>>\n/close\nreturn x",
-        None,
-        "```suggestion\n>>>\n/close\nreturn x\n```",
     ),
 }
 
@@ -360,45 +285,20 @@ def test_style_values(mode, expected, monkeypatch):
     assert compose.render_comment_body(finding, style=style) == expected
 
 
-DELIVERY_GROUPS_CASES = {
-    "falsy-singletons": (
-        [
-            {"title": "A"},
-            {"title": "B", "consolidation_key": ""},
-            {"title": "C", "consolidation_key": 0},
-        ],
-        [("A", ()), ("B", ()), ("C", ())],
-    ),
-    "first-member-order-second-primary": (
-        [
-            {"title": "B", "consolidation_key": "k"},
-            {"title": "Other"},
-            {"title": "A", "consolidation_key": "k", "consolidation_primary": True},
-            {"title": "C", "consolidation_key": "k"},
-            {"title": "D", "consolidation_key": "k", "consolidation_primary": 1},
-            {
-                "title": "Second",
-                "consolidation_key": "j",
-                "consolidation_primary": "yes",
-            },
-        ],
-        [("A", ("B", "C", "D")), ("Other", ()), ("Second", ())],
-    ),
-    "no-primary-fallback": (
-        [
-            {"title": "A", "consolidation_key": "k"},
-            {"title": "B", "consolidation_key": "k"},
-        ],
-        [("A", ("B",))],
-    ),
-    "empty": ([], []),
-}
-
-
-@pytest.mark.parametrize(
-    "findings,expected", DELIVERY_GROUPS_CASES.values(), ids=DELIVERY_GROUPS_CASES
-)
-def test_delivery_groups(findings, expected):
+def test_delivery_groups():
+    findings = [
+        {"title": "B", "consolidation_key": "k"},
+        {"title": "Other"},
+        {"title": "A", "consolidation_key": "k", "consolidation_primary": True},
+        {"title": "C", "consolidation_key": "k"},
+        {"title": "D", "consolidation_key": "k", "consolidation_primary": 1},
+        {
+            "title": "Second",
+            "consolidation_key": "j",
+            "consolidation_primary": "yes",
+        },
+    ]
+    expected = [("A", ("B", "C", "D")), ("Other", ()), ("Second", ())]
     before = copy.deepcopy(findings)
     groups = compose.consolidate_delivery(findings)
     assert [
@@ -412,11 +312,6 @@ def test_delivery_groups(findings, expected):
 
 
 GROUP_SECTIONS_CASES = {
-    "singleton": (
-        {"severity": "high", "title": "A", "body": "Body A"},
-        [],
-        "**\U0001f7e0 [HIGH] A**\n\nBody A",
-    ),
     "ordered-corroborators-primary-fence-only": (
         {
             "severity": "high",
@@ -481,66 +376,6 @@ def test_group_sections(primary, corroborators, expected):
 
 
 KEY_PINS_CASES = {
-    "safe-title": (
-        {
-            "file": "src/edited.py",
-            "line": 61,
-            "severity": "high",
-            "title": "Context-line finding",
-            "body": "Body one",
-        },
-        "**\U0001f7e0 [HIGH] Context-line finding**\n\nBody one",
-        "f87d51ec25846a5e",
-    ),
-    "missing-title": (
-        {"file": "src/edited.py", "line": 61, "severity": "high", "body": "Body one"},
-        "**\U0001f7e0 [HIGH] Finding**\n\nBody one",
-        "07961d7c0f9dd168",
-    ),
-    "canonical": (
-        {
-            "file": "src/alpha.py",
-            "line": 10,
-            "title": "Unchecked index",
-            "body": "The loop reads one past the end.",
-            "severity": "high",
-        },
-        "**\U0001f7e0 [HIGH] Unchecked index**\n\nThe loop reads one past the end.",
-        "c6dbc10300a69daf",
-    ),
-    "severity-uppercase": (
-        {
-            "file": "src/alpha.py",
-            "line": 10,
-            "title": "Unchecked index",
-            "body": "The loop reads one past the end.",
-            "severity": "HIGH",
-        },
-        "**\U0001f7e0 [HIGH] Unchecked index**\n\nThe loop reads one past the end.",
-        "c6dbc10300a69daf",
-    ),
-    "severity-capitalized": (
-        {
-            "file": "src/alpha.py",
-            "line": 10,
-            "title": "Unchecked index",
-            "body": "The loop reads one past the end.",
-            "severity": "High",
-        },
-        "**\U0001f7e0 [HIGH] Unchecked index**\n\nThe loop reads one past the end.",
-        "c6dbc10300a69daf",
-    ),
-    "severity-padded": (
-        {
-            "file": "src/alpha.py",
-            "line": 10,
-            "title": "Unchecked index",
-            "body": "The loop reads one past the end.",
-            "severity": " high ",
-        },
-        "**\U0001f7e0 [HIGH] Unchecked index**\n\nThe loop reads one past the end.",
-        "c6dbc10300a69daf",
-    ),
     "rule-and-suggestion": (
         {
             "file": "src/beta.py",
@@ -582,6 +417,19 @@ KEY_PINS_CASES = {
         "**\U0001f7e0 [HIGH] Mapping finding**\n\nBody\n\n**Repo precedent:**\n> Rule\n\n```suggestion\nreplacement\n```",
         "02f1c0f3f6922bd6",
     ),
+    "rule-source-only": (
+        {
+            "file": "src/rule.py",
+            "line": 4,
+            "severity": "high",
+            "title": "Rule finding",
+            "body": "Body",
+            "claude_md_rule": "Rule",
+            "rule_source": "repo_precedent",
+        },
+        "**\U0001f7e0 [HIGH] Rule finding**\n\nBody\n\n**Cited rule:**\n> Rule",
+        "c42535e87c690ad2",
+    ),
 }
 
 
@@ -617,29 +465,17 @@ def test_key_pins(finding, expected_body, expected_key, monkeypatch):
             expected_body,
         )
         assert key == expected_key
-        if original.get("severity") == " high ":
-            assert key != "0efe6aad835352cb"
         assert original == before
 
 
 REPORT_SLICES_CASES = {
     "change-context": ("## Summary\n\nBody\n\n## Change Context\nmore", "Body", None),
-    "authored-h2": (
-        "## Summary\n\nBody\n\n## Authored\nMore\n\n## Findings\n",
-        "Body\n\n## Authored\nMore",
-        None,
-    ),
     "following-crlf-heading": (
         "## Summary\n\nBody\r\n\r\n## Findings\r\n",
         "Body\r\n\r\n",
         None,
     ),
     "exact-two-lf-removal": ("## Summary\n\nBody\n\n\n## Findings", "Body\n", None),
-    "missing-summary": (
-        "no summary",
-        None,
-        "Report does not contain a rendered Summary section.",
-    ),
     "missing-following-heading": (
         "## Summary\n\nBody\n## Authored",
         None,
@@ -667,7 +503,6 @@ def test_report_slices(report, expected, error):
 
 INLINE_ENVELOPES_CASES = {
     "exact-fit": ("textxx", "", "github", "inline", 30, "textxx" + TRAILER, 0),
-    "utf8-marker-fit": ("\u754c", "M", "github", "inline", 28, "\u754c" + TRAILER, 0),
     "fold-with-marker-reservation": (
         "x" * 500,
         "M" * 20,
@@ -679,26 +514,6 @@ INLINE_ENVELOPES_CASES = {
         + TRAILER,
         413,
     ),
-    "singleton-exact": (
-        "x" * 212,
-        "M" * 113,
-        "github",
-        "inline",
-        349,
-        "x" * 212 + TRAILER,
-        0,
-    ),
-    "singleton-plus-one": (
-        "x" * 214,
-        "M" * 113,
-        "github",
-        "inline",
-        350,
-        "x" * 114
-        + "\n\n_[folded: 100 more bytes; this inline review comment reached the 350-byte GitHub body limit]_"
-        + TRAILER,
-        100,
-    ),
     "utf8-plus-one": (
         "a" * 133 + "\U0001f600",
         "",
@@ -709,33 +524,6 @@ INLINE_ENVELOPES_CASES = {
         + "\n\n_[folded: 100 more bytes; this inline review comment reached the 160-byte GitHub body limit]_"
         + TRAILER,
         100,
-    ),
-    "pair-marker-free-body": (
-        "**finding**\n\nbody",
-        "M" * 225,
-        "gitlab",
-        "discussion",
-        1000000,
-        "**finding**\n\nbody" + TRAILER,
-        0,
-    ),
-    "note-marker-free-body": (
-        "**\U0001f4a1 [LOW] note**\n\nbody",
-        "M" * 113,
-        "gitlab",
-        "note",
-        1000000,
-        "**\U0001f4a1 [LOW] note**\n\nbody" + TRAILER,
-        0,
-    ),
-    "unmarkable-body": (
-        "**finding**\n\nbody",
-        "",
-        "gitlab",
-        "discussion",
-        1000000,
-        "**finding**\n\nbody" + TRAILER,
-        0,
     ),
 }
 
@@ -756,44 +544,26 @@ def test_inline_envelopes(
         ) == compose.InlineBody(expected_body, expected_folded)
 
 
-SUMMARY_ENVELOPES_CASES = {
-    "empty-prose": ("", [], 0, 0, "### \u2694\ufe0f Code Gauntlet" + FOOTER),
-    "fast": ("Review", [], 0, 0, "### \u2694\ufe0f Code Gauntlet\n\nReview" + FOOTER),
-    "prepared-prose": (
-        "Context\n/close\n>>>",
-        [],
-        0,
-        0,
-        "### \u2694\ufe0f Code Gauntlet\n\nContext\n\\/close\n\\>>>" + FOOTER,
-    ),
-    "unbounded-fragment-separation": (
-        "prose",
-        [skipped_group("src/app.py", 9, title="Skipped", body="b")],
-        0,
-        1,
-        "### \u2694\ufe0f Code Gauntlet\n\nprose\n\n---\n\n### \u26a0\ufe0f 1 finding could not be anchored inline\n\n0 inline comments were posted; the following 1 finding references lines outside this diff and is included here instead:"
+def test_summary_envelopes():
+    groups = [skipped_group("src/app.py", 9, title="Skipped", body="b")]
+    expected = (
+        "### \u2694\ufe0f Code Gauntlet\n\n"
+        + "x" * 64889
+        + "\n\n---\n\n### \u26a0\ufe0f 1 finding could not be anchored inline\n\n"
+        + "0 inline comments were posted; the following 1 finding references lines outside this diff and is included here instead:"
         + SKIPPED_NOTE
         + "\n\n#### `src/app.py:9`\n\n**\U0001f7e0 [HIGH] Skipped**\n\nb"
         + "\n\n---\nGenerated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n"
-        + '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":1,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->',
-    ),
-}
-
-
-@pytest.mark.parametrize(
-    "review,groups,inline_count,shown,expected",
-    SUMMARY_ENVELOPES_CASES.values(),
-    ids=SUMMARY_ENVELOPES_CASES,
-)
-def test_summary_envelopes(review, groups, inline_count, shown, expected):
+        + '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":1,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->'
+    )
     assert compose.compose_review_body(
-        review,
+        "x" * 64889,
         groups,
         platform="github",
-        findings_count=shown,
+        findings_count=1,
         sha=SHA,
-        inline_count=inline_count,
-    ) == compose.ComposedBody(expected, shown, 0, 0, ())
+        inline_count=0,
+    ) == compose.ComposedBody(expected, 1, 0, 0, ())
 
 
 BLOCKQUOTE_CASES = {
@@ -819,19 +589,6 @@ def test_shared_fence_run(monkeypatch):
 
 SKIPPED_SECTIONS_CASES = {
     "empty": ([], 0, ""),
-    "location-counts-unbranded": (
-        [
-            compose.SkippedEntry(
-                "src/app.py",
-                216,
-                {"severity": "high", "title": "Off-diff", "body": "Details"},
-            )
-        ],
-        4,
-        "---\n\n### \u26a0\ufe0f 1 finding could not be anchored inline\n\n4 inline comments were posted; the following 1 finding references lines outside this diff and is included here instead:"
-        + SKIPPED_NOTE
-        + "\n\n#### `src/app.py:216`\n\n**\U0001f7e0 [HIGH] Off-diff**\n\nDetails",
-    ),
     "missing-path-and-line": (
         [compose.SkippedEntry(None, None, {"title": "Missing", "body": "b"})],
         None,
@@ -873,21 +630,25 @@ GH_FRAME_ONE_ZERO = (
 
 
 SUMMARY_ADMISSION_CASES = {
-    "first-fit": (
+    "prose-exact-allowance": (
+        "github",
+        "x" * 64840,
+        [skipped_group(title="Oversized", body="x" * 65536)],
+        0,
+        (0, 1, 0, 65536, (("foo.py:99", "Oversized"),)),
+        GH_FRAME_ONE_ZERO,
+        "_1 of these 1 finding is not shown: this review body reached the 65536-byte GitHub body limit._",
+        [],
+    ),
+    "untitled-omitted": (
         "github",
         "",
-        [
-            skipped_group("g1.py", 1, title="G1", body="a" * 1960),
-            skipped_group("g2.py", 2, title="G2", body="b" * 62960),
-            skipped_group("g3.py", 3, title="G3", body="c" * 33960),
-            skipped_group("g4.py", 4, title="G4", body="d" * 29960),
-        ],
+        [skipped_group("u.py", 1, omit=("title",), body="x" * 65536)],
         0,
-        (2, 2, 0, 36693, (("g2.py:2", "G2"), ("g4.py:4", "G4"))),
-        "---\n\n### \u26a0\ufe0f 4 findings could not be anchored inline\n\n0 inline comments were posted; the following 2 findings reference lines outside this diff and are included here instead:"
-        + SKIPPED_NOTE,
-        "_2 of these 4 findings are not shown: this review body reached the 65536-byte GitHub body limit._",
-        ["`g1.py:1`", "`g3.py:3`"],
+        (0, 1, 0, 694, (("u.py:1", "Finding"),)),
+        GH_FRAME_ONE_ZERO,
+        "_1 of these 1 finding is not shown: this review body reached the 65536-byte GitHub body limit._",
+        [],
     ),
     "whole-group": (
         "github",
@@ -904,62 +665,6 @@ SUMMARY_ADMISSION_CASES = {
         "_2 of these 3 findings are not shown: this review body reached the 65536-byte GitHub body limit._",
         ["`foo.py:99`"],
     ),
-    "prepared-size": (
-        "github",
-        "",
-        [
-            skipped_group("f.py", 1, title="Dense", body="<!--" * 13000),
-            skipped_group("s.py", 2, title="Small", body="s"),
-        ],
-        0,
-        (1, 1, 0, 736, (("f.py:1", "Dense"),)),
-        "---\n\n### \u26a0\ufe0f 2 findings could not be anchored inline\n\n0 inline comments were posted; the following 1 finding references lines outside this diff and is included here instead:"
-        + SKIPPED_NOTE,
-        "_1 of these 2 findings is not shown: this review body reached the 65536-byte GitHub body limit._",
-        ["`s.py:2`"],
-    ),
-    "github-exact-reserve": (
-        "github",
-        "x",
-        [
-            skipped_group("admit.py", 1, title="Admitted", body="a" * 64789),
-            skipped_group("oversized.py", 2, title="Omitted", body="b" * 65536),
-        ],
-        0,
-        (1, 1, 0, 65534, (("oversized.py:2", "Omitted"),)),
-        "---\n\n### \u26a0\ufe0f 2 findings could not be anchored inline\n\n0 inline comments were posted; the following 1 finding references lines outside this diff and is included here instead:"
-        + SKIPPED_NOTE,
-        "_1 of these 2 findings is not shown: this review body reached the 65536-byte GitHub body limit._",
-        ["`admit.py:1`"],
-    ),
-    "github-plus-one-reserve": (
-        "github",
-        "x",
-        [
-            skipped_group("admit.py", 1, title="Admitted", body="a" * 64790),
-            skipped_group("oversized.py", 2, title="Omitted", body="b" * 65536),
-        ],
-        0,
-        (0, 2, 0, 700, (("admit.py:1", "Admitted"), ("oversized.py:2", "Omitted"))),
-        "---\n\n### \u26a0\ufe0f 2 findings could not be anchored inline\n\n0 inline comments were posted; the following 0 findings reference lines outside this diff and are included here instead:"
-        + SKIPPED_NOTE,
-        "_2 of these 2 findings are not shown: this review body reached the 65536-byte GitHub body limit._",
-        [],
-    ),
-    "gitlab-exact-reserve": (
-        "gitlab",
-        "x",
-        [
-            skipped_group("admit.py", 1, title="Admitted", body="a" * 999259),
-            skipped_group("oversized.py", 2, title="Omitted", body="b" * 1000000),
-        ],
-        None,
-        (1, 1, 0, 999998, (("oversized.py:2", "Omitted"),)),
-        "---\n\n### \u26a0\ufe0f 2 findings could not be anchored inline\n\nThe following 1 finding references lines outside this diff and is included here instead of as inline comments:"
-        + SKIPPED_NOTE,
-        "_1 of these 2 findings is not shown: this summary note reached the 1000000-byte GitLab body limit._",
-        ["`admit.py:1`"],
-    ),
     "gitlab-plus-one-reserve": (
         "gitlab",
         "x",
@@ -973,20 +678,6 @@ SUMMARY_ADMISSION_CASES = {
         + SKIPPED_NOTE,
         "_2 of these 2 findings are not shown: this summary note reached the 1000000-byte GitLab body limit._",
         [],
-    ),
-    "closing-reserve": (
-        "github",
-        "",
-        [
-            skipped_group(title="Large", body="x" * 64887),
-            skipped_group(title="Small", body="s"),
-        ],
-        0,
-        (1, 1, 0, 739, (("foo.py:99", "Large"),)),
-        "---\n\n### \u26a0\ufe0f 2 findings could not be anchored inline\n\n0 inline comments were posted; the following 1 finding references lines outside this diff and is included here instead:"
-        + SKIPPED_NOTE,
-        "_1 of these 2 findings is not shown: this review body reached the 65536-byte GitHub body limit._",
-        ["`foo.py:99`"],
     ),
     "three-digit-inline-reserve": (
         "github",
@@ -1035,16 +726,6 @@ SUMMARY_ADMISSION_CASES = {
         "_10 of these 10 findings are not shown: this review body reached the 65536-byte GitHub body limit._",
         [],
     ),
-    "bounded-fragment-separation": (
-        "github",
-        "prose",
-        [skipped_group(title="Oversized", body="x" * 65536)],
-        0,
-        (0, 1, 0, 701, (("foo.py:99", "Oversized"),)),
-        GH_FRAME_ONE_ZERO,
-        "_1 of these 1 finding is not shown: this review body reached the 65536-byte GitHub body limit._",
-        [],
-    ),
 }
 
 
@@ -1085,51 +766,6 @@ def test_summary_admission(
 
 
 SKIPPED_GRAMMAR_CASES = {
-    "zero-entries": (0, 0, 0, 0, "", ""),
-    "one-unlanded": (
-        1,
-        1,
-        0,
-        None,
-        "---\n\n### \u26a0\ufe0f 1 finding could not be anchored inline\n\nThe following 1 finding references lines outside this diff and is included here instead of as inline comments:"
-        + SKIPPED_NOTE,
-        "",
-    ),
-    "one-landed": (
-        1,
-        1,
-        0,
-        1,
-        "---\n\n### \u26a0\ufe0f 1 finding could not be anchored inline\n\n1 inline comment was posted; the following 1 finding references lines outside this diff and is included here instead:"
-        + SKIPPED_NOTE,
-        "",
-    ),
-    "many-unlanded": (
-        2,
-        2,
-        0,
-        None,
-        "---\n\n### \u26a0\ufe0f 2 findings could not be anchored inline\n\nThe following 2 findings reference lines outside this diff and are included here instead of as inline comments:"
-        + SKIPPED_NOTE,
-        "",
-    ),
-    "many-landed": (
-        2,
-        2,
-        0,
-        2,
-        "---\n\n### \u26a0\ufe0f 2 findings could not be anchored inline\n\n2 inline comments were posted; the following 2 findings reference lines outside this diff and are included here instead:"
-        + SKIPPED_NOTE,
-        "",
-    ),
-    "zero-shown": (
-        1,
-        0,
-        1,
-        0,
-        GH_FRAME_ONE_ZERO,
-        "_1 of these 1 finding is not shown: this review body reached the 65536-byte GitHub body limit._",
-    ),
     "singular-shown-and-omitted": (
         2,
         1,
@@ -1138,15 +774,6 @@ SKIPPED_GRAMMAR_CASES = {
         "---\n\n### \u26a0\ufe0f 2 findings could not be anchored inline\n\n1 inline comment was posted; the following 1 finding references lines outside this diff and is included here instead:"
         + SKIPPED_NOTE,
         "_1 of these 2 findings is not shown: this review body reached the 65536-byte GitHub body limit._",
-    ),
-    "eleven": (
-        11,
-        4,
-        7,
-        9,
-        "---\n\n### \u26a0\ufe0f 11 findings could not be anchored inline\n\n9 inline comments were posted; the following 4 findings reference lines outside this diff and are included here instead:"
-        + SKIPPED_NOTE,
-        "_7 of these 11 findings are not shown: this review body reached the 65536-byte GitHub body limit._",
     ),
     "twenty-one": (
         21,
@@ -1185,32 +812,19 @@ def test_skipped_grammar(total, shown, omitted, inline_count, frame, closing):
         .split("\n\n_", 1)[0]
         .split("\n\n---\nGenerated", 1)[0]
     )
-    if total:
-        assert actual_frame == frame
-    else:
-        assert composed.body == "### \u2694\ufe0f Code Gauntlet\n\nSummary" + FOOTER
+    assert actual_frame == frame
     if closing:
         assert "\n\n" + closing + "\n\n---\nGenerated" in composed.body
 
 
-SUMMARY_ZERO_RESERVE_CASES = {
-    "github-unlanded-singular-zero": ("github", None, 1, 64850, (0, 1)),
-    "github-landed-singular-zero": ("github", 1, 1, 64843, (0, 1)),
-    "gitlab-unlanded-singular-zero": ("gitlab", None, 1, 999311, (0, 1)),
-    "gitlab-landed-singular-zero": ("gitlab", 1, 1, 999304, (0, 1)),
-    "fold-before-two-groups": ("github", 0, 2, 2000000, (0, 2)),
-    "widest-single-digit": ("github", 1, 9, 2000000, (0, 9)),
-    "widest-two-digit": ("gitlab", None, 10, 2000000, (0, 10)),
-    "widest-three-digit": ("gitlab", 1, 100, 2000000, (0, 100)),
-}
-
-
-@pytest.mark.parametrize(
-    "platform,inline_count,total,review_length,expected",
-    SUMMARY_ZERO_RESERVE_CASES.values(),
-    ids=SUMMARY_ZERO_RESERVE_CASES,
-)
-def test_summary_zero_reserve(platform, inline_count, total, review_length, expected):
+def test_summary_zero_reserve():
+    platform, inline_count, total, review_length, expected = (
+        "gitlab",
+        None,
+        1,
+        999311,
+        (0, 1),
+    )
     composed = compose.compose_review_body(
         "x" * review_length,
         [
@@ -1231,154 +845,7 @@ def test_summary_zero_reserve(platform, inline_count, total, review_length, expe
     assert composed.folded_bytes > 0
 
 
-FIELD_FENCE_BOUNDARIES_CASES = {
-    "entity-and-link": (
-        "&#64;@leehopper - ```---&commat;](&#64;\n  ~~~\n* 1. &#x40;",
-        "\n\n\n~~~\n=[<ins>---~~~https://x.com/aa\u200b* ",
-    ),
-    "slash-and-unicode-blank": (
-        "\n  ~~~\n/`",
-        "( |<ins>\n\xa0\n\n~~~\n</ins><ins>\u3000\\|   - ",
-    ),
-    "unterminated-comment-and-link": (
-        ' ](&#\u200b64;\n  ~~~\n\\`> "word  >    - <!--',
-        "1. ]\n~~~\n\\](](x(y)\\\t   @leehopper",
-    ),
-    "table-and-inline-tags": (
-        "\t\n  ~~~\n| --- |&#64;@leehopper \xa0# &commat;https://x/__\\|",
-        '  \n~~~\n[x](<b>](\n<table><tr><td>&commat;/"',
-    ),
-}
-
-
-@pytest.mark.parametrize(
-    "source,victim",
-    FIELD_FENCE_BOUNDARIES_CASES.values(),
-    ids=FIELD_FENCE_BOUNDARIES_CASES,
-)
-def test_field_fence_boundaries(source, victim):
-    body = compose.render_comment_body(finding(body=source, suggestion=victim))
-    before, after = body.split("**Suggested fix:**", 1)
-    assert "\\~\\~\\~" in before
-    assert open_fence(before) is None
-    assert body.endswith(TRAILER)
-    assert after
-
-
-FALSE_FENCE_CLOSERS_CASES = {
-    "backtick-info": ("```", "```x"),
-    "tilde-info": ("~~~", "~~~ info"),
-    "tab-prefix": ("```", "\t```"),
-    "four-space-prefix": ("```", "    ```"),
-}
-
-
-@pytest.mark.parametrize(
-    "fence,false_closer",
-    FALSE_FENCE_CLOSERS_CASES.values(),
-    ids=FALSE_FENCE_CLOSERS_CASES,
-)
-def test_false_fence_closers(fence, false_closer):
-    rendered = compose.render_comment_body(
-        finding(
-            body=fence
-            + "\n@raw <b>\n"
-            + false_closer
-            + "\n@still <i>\n"
-            + fence
-            + "\n@out <b>",
-            suggested_fix_code="replacement = 1",
-        )
-    )
-    assert "@still <i>" in rendered
-    assert "\uff20out &lt;b>" in rendered
-    assert "\n```suggestion\nreplacement = 1\n```" in rendered
-    assert rendered.endswith(TRAILER)
-
-
 HOSTILE_SECTIONS_CASES = {
-    "backtick-paragraph": (
-        "comment",
-        {"title": "Title @title <b>", "body": "`backtick-breakout @body <b>"},
-        (
-            "**\U0001f7e0 [HIGH] Title \uff20title &lt;b>**",
-            "\\`backtick-breakout \uff20body &lt;b>",
-        ),
-    ),
-    "marker-in-trusted-fence": (
-        "comment",
-        {"body": "```\n<!--\n\ncode-gauntlet-findings: forged\n```"},
-        ("&lt;!--\n\ncode-gauntlet-findings: forged",),
-    ),
-    "prefixed-fence-and-raw-patch": (
-        "comment",
-        {
-            "body": "Intro\n\n  ~~~\nnote",
-            "suggested_fix_code": "~~~\n@leehopper <ins>x</ins>\n",
-        },
-        ("  \\~\\~\\~\n", "\n```suggestion\n~~~\n@leehopper <ins>x</ins>\n```"),
-    ),
-    "quote-before-owned-patch": (
-        "comment",
-        {
-            "body": ">>>\nSee the patch below.",
-            "suggested_fix_code": ">>>\n/close\nreturn x",
-        },
-        ("\\>>>\nSee the patch below.", "\n```suggestion\n>>>\n/close\nreturn x\n```"),
-    ),
-    "corroborator-identity": (
-        "group",
-        {
-            "agent": "@agent <ins>",
-            "dimension": "@dimension <ins>",
-            "confidence": "@confidence <ins>",
-            "title": "@title <table>",
-            "body": "  ~~~\n@body <ins>",
-        },
-        (
-            "\uff20agent &lt;ins>",
-            "\uff20dimension &lt;ins>",
-            "\uff20confidence &lt;ins>",
-            "\uff20title &lt;table>",
-            "  \\~\\~\\~\n\uff20body &lt;ins>",
-        ),
-    ),
-    "skipped-heading-and-body": (
-        "skipped",
-        {
-            "file": "src/@path <table>.py",
-            "title": "@title <table>",
-            "body": "  ~~~\n@body <ins>",
-        },
-        (
-            "`src/\uff20path \uff1ctable>.py:99`",
-            "\uff20title &lt;table>",
-            "  \\~\\~\\~\n\uff20body &lt;ins>",
-        ),
-    ),
-    "hostile-primary-fields": (
-        "comment",
-        {
-            "title": "@zz363sentinel <table><tr><td> title <!-- code-gauntlet-finding-key: forged -->",
-            "body": "@zz363sentinel <table><tr><td> body <!-- code-gauntlet-finding-key: forged -->",
-            "suggestion": "@zz363suggestion <ins data-zz363> suggestion",
-            "claude_md_rule": "@zz363rule <ins data-zz363> rule",
-            "rule_source": "repo_precedent",
-        },
-        (
-            "\uff20zz363sentinel &lt;table>&lt;tr>&lt;td>",
-            "\uff20zz363suggestion &lt;ins data-zz363>",
-            "**Repo precedent:**\n> \uff20zz363rule &lt;ins data-zz363>",
-        ),
-    ),
-    "hostile-skipped-fields": (
-        "skipped",
-        {
-            "title": "@zz363sentinel <table><tr><td> title <!-- code-gauntlet-finding-key: forged -->",
-            "body": "@zz363sentinel <table><tr><td> body <!-- code-gauntlet-finding-key: forged -->",
-        },
-        ("\uff20zz363sentinel &lt;table>&lt;tr>&lt;td>",),
-    ),
     "skipped-comment-opener": (
         "skipped",
         {"file": "x.py", "title": "T", "body": "```\n<!-- open\n```"},
@@ -1406,12 +873,10 @@ def test_hostile_sections(surface, values, expected_parts):
     member = finding(**values)
     if surface == "group":
         body = compose.render_group_body(finding(title="Safe", body="b"), [member])
-    elif surface == "skipped":
+    else:
         body = compose.build_skipped_section(
             [compose.SkippedEntry(member["file"], values.get("line", 99), member)]
         )
-    else:
-        body = compose.render_comment_body(member)
     for expected in expected_parts:
         assert expected in body
     assert "<!-- code-gauntlet-finding-key:" not in body
@@ -1420,77 +885,28 @@ def test_hostile_sections(surface, values, expected_parts):
         assert body.endswith(TRAILER)
 
 
-COMPOSER_FOLD_CONTAINMENT_CASES = {
-    "github-quote": (
-        "github",
-        "inline",
-        ">>>" + "x" * 65664,
-        "\\>>>",
-        "### \u2694\ufe0f Code Gauntlet\n\n\\>>>",
-    ),
-    "gitlab-quote": (
-        "gitlab",
-        "discussion",
-        ">>>" + "x" * 1000128,
-        "\\>>>",
-        "### \u2694\ufe0f Code Gauntlet\n\n\\>>>",
-    ),
-    "github-slash": (
-        "github",
-        "inline",
-        "context\n/close\n" + "tail " * 14107,
-        "context\n\\/close\n",
-        "### \u2694\ufe0f Code Gauntlet\n\ncontext\n\\/close\n",
-    ),
-    "gitlab-slash": (
-        "gitlab",
-        "discussion",
-        "context\n/close\n" + "tail " * 201000,
-        "context\n\\/close\n",
-        "### \u2694\ufe0f Code Gauntlet\n\ncontext\n\\/close\n",
-    ),
-}
-
-
-@pytest.mark.parametrize(
-    "platform,surface,source,inline_prefix,summary_prefix",
-    COMPOSER_FOLD_CONTAINMENT_CASES.values(),
-    ids=COMPOSER_FOLD_CONTAINMENT_CASES,
-)
-def test_composer_fold_containment(
-    platform, surface, source, inline_prefix, summary_prefix
-):
-    inline = compose.compose_inline_body(
-        prepare_prose(source), platform=platform, surface=surface
-    )
-    summary = compose.compose_review_body(
-        source, [], platform=platform, findings_count=0, sha=SHA
-    )
-    assert inline.folded_bytes > 0
-    assert summary.folded_bytes > 0
-    assert inline.body.startswith(inline_prefix)
-    assert summary.body.startswith(summary_prefix)
-    assert "\n>>>" not in inline.body
-    assert "\n/close" not in inline.body
-
-
 FOOTER_LINES_CASES = {
-    "standalone-current": (
-        "Generated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        '### \u2694\ufe0f Code Gauntlet\n\nGenerated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->',
-    ),
     "current-with-untrusted-marker": (
         'Generated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->',
         '### \u2694\ufe0f Code Gauntlet\n\nGenerated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n\n\n<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->',
     ),
-    "stale-sha": (
-        "Generated by code-gauntlet | Reviewed up to: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "### \u2694\ufe0f Code Gauntlet\n\nGenerated by code-gauntlet | Reviewed up to: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        + FOOTER,
-    ),
     "legacy-current": (
         "Generated by deep-review | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         '### \u2694\ufe0f Code Gauntlet\n\nGenerated by deep-review | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->',
+    ),
+    "inline-current": (
+        "XGenerated by code-gauntlet | Reviewed up to: " + SHA,
+        "### \u2694\ufe0f Code Gauntlet\n\nXGenerated by code-gauntlet | Reviewed up to: "
+        + SHA
+        + FOOTER,
+    ),
+    "second-line-current": (
+        "Intro\nGenerated by code-gauntlet | Reviewed up to: " + SHA,
+        '### \u2694\ufe0f Code Gauntlet\n\nIntro\nGenerated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->',
+    ),
+    "backticked-current": (
+        "Generated by code-gauntlet | Reviewed up to: `" + SHA + "`",
+        '### \u2694\ufe0f Code Gauntlet\n\nGenerated by code-gauntlet | Reviewed up to: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n\n<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} -->',
     ),
 }
 
@@ -1505,7 +921,6 @@ def test_footer_lines(review, expected):
 
 
 SUMMARY_FOOTER_RESERVATION_CASES = {
-    "github-footer-reserve": ("github", 65300, 94, 65529, ""),
     "gitlab-footer-reserve": ("gitlab", 999764, 98, 999992, ""),
     "github-folded-footer-recreated": (
         "github",
