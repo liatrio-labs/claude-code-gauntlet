@@ -74,6 +74,7 @@ module = [
   "gauntlet.markdown",
   "gauntlet.text",
   "gauntlet.delivery.fold",
+  "gauntlet.delivery.gate",
   "gauntlet.numstat",
   "gauntlet.stale",
   "gauntlet.shared_context",

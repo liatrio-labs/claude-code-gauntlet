@@ -725,6 +725,7 @@ def input_sha256(text: str) -> str:
 def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     """Compose deterministic complete GitLab bodies through delivery composers."""
     import gauntlet.delivery.post as post_review
+    from gauntlet.delivery import gate
 
     from tests.support.diff import diff_facts
 
@@ -781,16 +782,16 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     valid_lines = {("src/probe.py", line): None for line in range(1, 4)}
     line_texts = {("src/probe.py", line): f"old line {line}" for line in range(1, 4)}
     facts = diff_facts(valid_lines, line_texts=line_texts)
-    patch_range, patch_offsets, cap_exceeded = post_review._gitlab_apply_range(
-        patch_finding, 1
+    patch_site = gate.gitlab_apply_range(patch_finding, 1)
+    patch_verdict = gate.evaluate_fix(
+        patch_finding, apply_range=patch_site.apply_range, facts=facts
     )
-    patch_ok, _reason = post_review._fence_verdict(patch_finding, patch_range, facts)
-    if cap_exceeded or not patch_ok:
+    if patch_site.cap_exceeded or not patch_verdict.keep:
         raise ValueError("deterministic quick-action patch case failed the GitLab gate")
     cases.append(
         {
             "id": "suggested_patch",
-            "text": inline_body(patch_finding, fence_offsets=patch_offsets),
+            "text": inline_body(patch_finding, fence_offsets=patch_site.offsets),
             "route": "discussion",
         }
     )
@@ -844,18 +845,18 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
         suggested_fix_code=">>>\n/label ~zz377nolabel\nreturn x\n",
         end_line=3,
     )
-    alert_patch_range, alert_patch_offsets, alert_cap_exceeded = (
-        post_review._gitlab_apply_range(alert_patch_finding, 1)
+    alert_patch_site = gate.gitlab_apply_range(alert_patch_finding, 1)
+    alert_patch_verdict = gate.evaluate_fix(
+        alert_patch_finding, apply_range=alert_patch_site.apply_range, facts=facts
     )
-    alert_patch_ok, _alert_patch_reason = post_review._fence_verdict(
-        alert_patch_finding, alert_patch_range, facts
-    )
-    if alert_cap_exceeded or not alert_patch_ok:
+    if alert_patch_site.cap_exceeded or not alert_patch_verdict.keep:
         raise ValueError("deterministic alert patch case failed the GitLab gate")
     cases.append(
         {
             "id": "suggestion_alert_payload",
-            "text": inline_body(alert_patch_finding, fence_offsets=alert_patch_offsets),
+            "text": inline_body(
+                alert_patch_finding, fence_offsets=alert_patch_site.offsets
+            ),
             "route": "discussion",
         }
     )

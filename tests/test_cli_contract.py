@@ -1,6 +1,7 @@
 """Parent-recorded stdout bytes and exit codes for every script entry."""
 
 import importlib
+import io
 import json
 import os
 import re
@@ -12,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from gauntlet import cli, marker, prior_review, proc
+from gauntlet import cli, marker, patches, prior_review, proc
 from gauntlet.forge import GitHub, JsonFetch
 from gauntlet.paths import ENTRY_ROOT
 
@@ -917,3 +918,206 @@ def test_poster_implicit_origin_exceptions(
     with pytest.raises(type(failures[outcome])):
         post.main()
     assert forge_factory.calls == []
+
+
+@pytest.mark.usefixtures("poster_state")
+@pytest.mark.parametrize(
+    "failure, findings, code",
+    [
+        pytest.param("encoder", "[]", 0, id="encoder-success"),
+        pytest.param("first-write", "[]", 0, id="first-write-success"),
+        pytest.param("encoder", "{}", 1, id="encoder-operational-failure"),
+    ],
+)
+def test_patch_serialization_fallback(
+    failure, findings, code, tmp_path, invoke, monkeypatch
+):
+    (tmp_path / "code-gauntlet-findings-abc1234.json").write_text(
+        findings, encoding="utf-8"
+    )
+    calls = 0
+    original_dumps = json.dumps
+
+    def dumps(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TypeError("injected encoder failure")
+        return original_dumps(*args, **kwargs)
+
+    class FirstWrite(io.TextIOBase):
+        def write(self, text):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected first-write failure")
+            return output.write(text)
+
+    output = sys.stdout
+    if failure == "first-write":
+        monkeypatch.setattr(sys, "stdout", FirstWrite())
+    else:
+        monkeypatch.setattr(patches.json, "dumps", dumps)
+    result = invoke(
+        "report_patches", ["--output-dir", str(tmp_path), "--head-sha", SHA], tmp_path
+    )
+    assert result.returncode == code
+    assert result.stdout == (
+        b'{"ok": false, "path": null, "oracle": null, "candidates": 0, '
+        b'"kept": 0, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, '
+        b'"findings": 0, "warnings": [], "errors": ["receipt could not be serialized"]}\n'
+    )
+    assert result.stderr == b""
+
+
+@pytest.mark.usefixtures("poster_state")
+@pytest.mark.parametrize(
+    "case, findings, sha, code, stdout, stderr",
+    [
+        pytest.param(
+            "downgrade",
+            '[{"file":"x.py","line":1,"end_line":1,"suggested_fix_code":"changed"}]',
+            "abc1234",
+            0,
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: x.py:1 (no_diff_oracle)"], "errors": []}\n',
+            "WARNING: report-patch downgraded: x.py:1 (no_diff_oracle)\n",
+            id="downgrade",
+        ),
+        pytest.param(
+            "invalid-sha",
+            "[]",
+            "bad/sha",
+            2,
+            "",
+            "usage: report_patches.py [-h] --output-dir DIR --head-sha SHORT\nreport_patches.py: error: --head-sha must match '^[A-Za-z0-9._-]+$': 'bad/sha'\n",
+            id="invalid-sha",
+        ),
+        pytest.param(
+            "usage",
+            "[]",
+            "abc1234",
+            2,
+            "",
+            "usage: report_patches.py [-h] --output-dir DIR --head-sha SHORT\nreport_patches.py: error: the following arguments are required: --output-dir, --head-sha\n",
+            id="usage",
+        ),
+        pytest.param(
+            "failure",
+            "{}",
+            "abc1234",
+            1,
+            '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "unattempted", "candidates": 0, "kept": 0, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 0, "warnings": [], "errors": ["findings file <TMP>/code-gauntlet-findings-abc1234.json must be a JSON array of findings, got dict"]}\n',
+            "",
+            id="pre-oracle-failure",
+        ),
+        pytest.param(
+            "outside-receipt",
+            "[]",
+            "abc1234",
+            1,
+            "",
+            "ValueError: oversized hunk\n",
+            id="outside-receipt-boundary",
+        ),
+    ],
+)
+def test_patch_command_boundaries(
+    case, findings, sha, code, stdout, stderr, tmp_path, invoke, monkeypatch
+):
+    (tmp_path / "code-gauntlet-findings-abc1234.json").write_text(
+        findings, encoding="utf-8"
+    )
+    if case == "outside-receipt":
+        (tmp_path / "code-gauntlet-diff-abc1234.patch").write_text(
+            PATCH, encoding="utf-8"
+        )
+
+        def fail(*args, **kwargs):
+            raise ValueError("oversized hunk")
+
+        monkeypatch.setattr(patches, "parse_diff", fail)
+    argv = [] if case == "usage" else ["--output-dir", str(tmp_path), "--head-sha", sha]
+    result = invoke("report_patches", argv, tmp_path)
+    assert result.returncode == code
+    assert normalize(result.stdout, tmp_path) == stdout
+    assert normalize(result.stderr, tmp_path) == stderr
+
+
+@pytest.mark.usefixtures("poster_state")
+@pytest.mark.parametrize(
+    "report, stderr",
+    [
+        pytest.param(
+            "## Findings\n\nOnly findings.\n",
+            b"ERROR: Report does not contain a rendered Summary section.\n",
+            id="missing-summary",
+        ),
+        pytest.param(
+            "## Summary\n\nOnly summary.\n",
+            b"ERROR: Report does not contain a following code-owned heading after Summary.\n",
+            id="missing-following-heading",
+        ),
+    ],
+)
+def test_poster_report_shape_boundary(report, stderr, tmp_path, invoke, forge_factory):
+    findings_path = tmp_path / "findings.json"
+    findings_path.write_text(json.dumps({**POST, "findings": []}), encoding="utf-8")
+    report_path = tmp_path / "report.md"
+    report_path.write_text(report, encoding="utf-8")
+    fake = forge_factory.configure(FakeForge())
+    result = invoke(
+        "post_review", [str(findings_path), "--report", str(report_path)], tmp_path
+    )
+    assert result.returncode == 1
+    assert result.stdout == b""
+    assert result.stderr == stderr
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize(
+    "path, stdout, stderr",
+    [
+        pytest.param(
+            "src/uni\u00e9.py",
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: src/uni\\u00e9.py:2 (no_diff_oracle)"], "errors": []}\n',
+            "WARNING: report-patch downgraded: src/uni\u00e9.py:2 (no_diff_oracle)\n",
+            id="foreign-encoding",
+        ),
+        pytest.param(
+            "mo\ud800d.py",
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: mo\\ud800d.py:2 (no_diff_oracle)"], "errors": []}\n',
+            "WARNING: report-patch downgraded: mo\\ud800d.py:2 (no_diff_oracle)\n",
+            id="surrogate-path",
+        ),
+        pytest.param(
+            "src/bad\ud800.py",
+            '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: src/bad\\ud800.py:2 (no_diff_oracle)"], "errors": []}\n',
+            "WARNING: report-patch downgraded: src/bad\\ud800.py:2 (no_diff_oracle)\n",
+            id="surrogate-warning",
+        ),
+    ],
+)
+def test_patch_stdio(path, stdout, stderr, tmp_path):
+    (tmp_path / "code-gauntlet-findings-abc1234.json").write_text(
+        json.dumps(
+            [{"file": path, "line": 2, "end_line": 2, "suggested_fix_code": "changed"}]
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/report_patches.py"),
+            "--output-dir",
+            str(tmp_path),
+            "--head-sha",
+            "abc1234",
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONIOENCODING": "ascii"},
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert normalize(result.stdout, tmp_path) == stdout
+    assert result.stderr.decode("utf-8") == stderr

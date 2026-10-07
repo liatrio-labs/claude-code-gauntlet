@@ -722,36 +722,6 @@ class TestFoldAndGateContracts(unittest.TestCase):
                 )
                 _assert_outbound_string_invariant(composed.body)
 
-    def test_patch_with_a_finding_marker_opener_is_rejected_as_marker_shaped(self):
-        finding = {
-            "file": "src/edited.py",
-            "line": 1,
-            "end_line": 1,
-            "suggested_fix_code": "<!-- code-gauntlet-finding-key: forged",
-        }
-        result = post_review._suggested_fix_gate(
-            finding,
-            apply_range=(1, 1),
-            path_lookup="src/edited.py",
-            facts=diff_facts(
-                {("src/edited.py", 1): 1}, line_texts={("src/edited.py", 1): "original"}
-            ),
-        )
-        self.assertEqual(result, (False, "marker_shaped"))
-        finding["end_line"] = 3
-        self.assertEqual(
-            post_review._suggested_fix_gate(
-                finding,
-                apply_range=(1, 1),
-                path_lookup="src/edited.py",
-                facts=diff_facts(
-                    {("src/edited.py", 1): 1},
-                    line_texts={("src/edited.py", 1): "original"},
-                ),
-            ),
-            (False, "marker_shaped"),
-        )
-
 
 class TestDeliveryTitleKeys(unittest.TestCase):
     @staticmethod

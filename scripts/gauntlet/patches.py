@@ -12,11 +12,11 @@ import sys
 # NEVER import gauntlet.verify.decide here: it runs git at import time.
 # Only the pure gate helpers come from delivery; its main() owns the dry-run payload.
 from gauntlet.cli import Command
+from gauntlet.delivery.gate import fix_code_text
 from gauntlet.delivery.post import (
     _FIX_COUNTS,
     _FIX_REASON_COUNTS,
     _SKIP_WARNINGS,
-    _fix_code_text,
     _gated_finding,
     reset_run_state,
 )
@@ -181,7 +181,7 @@ def _render(kept, candidates, filtered_earlier, oracle_state, sha):
         )
         emit(f"## {code_span(file_)}:{line}-{end_line} — {title}")
 
-        text = _fix_code_text(finding.get("suggested_fix_code"))
+        text = fix_code_text(finding.get("suggested_fix_code"))
         text = redact_secrets(
             text
         )  # defense in depth: the gate already proved this is a no-op

@@ -11,19 +11,20 @@ import re
 import subprocess
 import sys
 import unittest
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar, Literal, cast
 from unittest.mock import patch
 
 import gauntlet.delivery.fold as fold
+import gauntlet.delivery.gate as gate
 import gauntlet.delivery.post as post_review
 import gauntlet.marker as review_marker
 import gauntlet.prior_review as detect_prior_review
 import pytest
 from gauntlet import diff as diff_api
-from gauntlet import proc
+from gauntlet import proc, registry
 from gauntlet.delivery.post import (
     _blockquote,
     _delivery_marker_suffix,
@@ -138,71 +139,6 @@ def test_diff_fetch_empty_success(
     )
     assert fake.calls == [ForgeCall("diff", target)]
     assert capsys.readouterr().err == ""
-
-
-@pytest.mark.parametrize(
-    "finding, expected",
-    [
-        pytest.param({}, (True, None), id="absent-fix"),
-        pytest.param(
-            {"suggested_fix_code": 42}, (False, "non_string"), id="non-string"
-        ),
-        pytest.param({"suggested_fix_code": ""}, (False, "empty"), id="empty"),
-        pytest.param(
-            {"suggested_fix_code": "replacement", "line": 1},
-            (False, "missing_end_line"),
-            id="missing-end",
-        ),
-        pytest.param(
-            {"suggested_fix_code": "replacement", "line": True, "end_line": 1},
-            (False, "invalid_range"),
-            id="invalid-range",
-        ),
-        pytest.param(
-            {
-                "suggested_fix_code": "replacement",
-                "file": "x",
-                "line": 1,
-                "end_line": 1,
-            },
-            (False, "no_diff_oracle"),
-            id="absent-oracle",
-        ),
-    ],
-)
-def test_fix_failure_order_without_diff(
-    finding: dict[str, object], expected: tuple[bool, str | None]
-) -> None:
-    assert post_review._fence_verdict(finding, (1, 1), None) == expected
-
-
-@pytest.mark.parametrize(
-    "facts, apply_range, expected",
-    [
-        pytest.param(None, None, (False, "no_diff_oracle"), id="absent-no-anchor"),
-        pytest.param(
-            None, (1, 2), (False, "no_diff_oracle"), id="absent-mismatched-anchor"
-        ),
-        pytest.param(
-            diff_facts({("b/x", 2): 2, ("x", 2): 2}),
-            (1, 1),
-            (False, "no_diff_oracle"),
-            id="ambiguous-off-diff",
-        ),
-    ],
-)
-def test_fix_oracle_order(
-    facts: diff_api.DiffFacts | None,
-    apply_range: tuple[int, int] | None,
-    expected: tuple[bool, str],
-) -> None:
-    finding = {
-        "suggested_fix_code": "replacement",
-        "file": "b/x",
-        "line": 1,
-        "end_line": 1,
-    }
-    assert post_review._fence_verdict(finding, apply_range, facts) == expected
 
 
 @pytest.mark.parametrize(
@@ -5808,7 +5744,7 @@ GH_DIFF_INDENTED_CRLF_BODY = (
 # offset cap: every line 1..(cap + 3) is an added, addressable line, so
 # `range_not_in_diff` — which precedes the anchor check — cannot be what a
 # cap-exceeded span reports.
-_GL_LONG_LINE_COUNT = post_review._GITLAB_SUGGESTION_OFFSET_CAP + 3
+_GL_LONG_LINE_COUNT = gate.GITLAB_SUGGESTION_OFFSET_CAP + 3
 GL_DIFF_LONG = (
     f"--- foo.py\n+++ foo.py\n@@ -0,0 +1,{_GL_LONG_LINE_COUNT} @@\n"
     + "".join(f"+    line{n}\n" for n in range(1, _GL_LONG_LINE_COUNT + 1))
@@ -5913,560 +5849,6 @@ GL_DIFF_OVERLAP = (
 _FENCE = "```suggestion"
 
 
-class TestSuggestedFixGate(unittest.TestCase):
-    """The pure gate helper: one case per reason in the closed vocabulary.
-
-    Ground truth comes from the REAL parser (``_parse_fixture``), not a
-    hand-written mapping — a gate checked against the answer the test wanted
-    would agree with a broken parser.
-    """
-
-    def setUp(self):
-        parsed = _parse_fixture(GH_DIFF_INDENTED, platform="github")
-        parsed_facts = parsed
-        self.facts = parsed_facts
-        self.valid_lines = parsed_facts.valid_lines
-        self.line_texts = parsed_facts.line_texts
-
-    def _finding(self, **over):
-        finding = {
-            "file": "foo.py",
-            "line": 2,
-            "end_line": 3,
-            "suggested_fix_code": "    return 2\n    # done",
-        }
-        finding.update(over)
-        return finding
-
-    def _gate(self, finding, apply_range=(2, 3), **over):
-        kwargs = {
-            "apply_range": apply_range,
-            "facts": self.facts,
-            "path_lookup": "foo.py",
-        }
-        kwargs.update(over)
-        return post_review._suggested_fix_gate(finding, **kwargs)
-
-    def _reason(self, finding, **over):
-        ok, reason = self._gate(finding, **over)
-        self.assertFalse(ok, f"expected a downgrade, got ok with reason {reason!r}")
-        self.assertIn(
-            reason,
-            post_review._FIX_REASONS,
-            "every downgrade must name a member of the closed vocabulary",
-        )
-        return reason
-
-    # -- the passing cases -------------------------------------------------
-
-    def test_absent_field_is_not_a_downgrade(self):
-        finding = self._finding()
-        del finding["suggested_fix_code"]
-        self.assertEqual(self._gate(finding), (True, None))
-
-    def test_sound_multi_line_fix_passes(self):
-        self.assertEqual(self._gate(self._finding()), (True, None))
-
-    def test_sound_single_line_fix_passes(self):
-        finding = self._finding(line=2, end_line=2, suggested_fix_code="    return 2")
-        self.assertEqual(self._gate(finding, apply_range=(2, 2)), (True, None))
-
-    def test_legitimate_reindentation_passes(self):
-        """The indentation check is deliberately weak: only a tab/space charset
-        conflict is caught, so re-indenting a span is not a downgrade."""
-        finding = self._finding(suggested_fix_code="        return 2\n        # done")
-        self.assertEqual(self._gate(finding), (True, None))
-
-    def test_a_partial_content_oracle_reads_as_no_oracle(self):
-        """A span the texts cannot fully answer is NO oracle, never "no
-        difference" — the latter would silently skip the content checks and
-        pass the fence through unchecked. The range oracle alone is not
-        enough: a patch is downgraded, not rendered, when the content oracle
-        cannot answer for every line of the stated span.
-        """
-        finding = self._finding(suggested_fix_code="    return 1\n    # tail")
-        self.assertEqual(
-            self._gate(
-                finding,
-                facts=replace(self.facts, line_texts={("foo.py", 2): "    return 1"}),
-            ),
-            (False, "no_diff_oracle"),
-        )
-
-    # -- 1. non_string -----------------------------------------------------
-
-    def test_non_string_fix(self):
-        self.assertEqual(
-            self._reason(self._finding(suggested_fix_code=42)), "non_string"
-        )
-
-    def test_null_fix_is_non_string(self):
-        """The contracts say OMIT, never null — a null that arrives anyway is
-        not a string and is downgraded, not rendered."""
-        self.assertEqual(
-            self._reason(self._finding(suggested_fix_code=None)), "non_string"
-        )
-
-    # -- 2. empty ----------------------------------------------------------
-
-    def test_whitespace_only_fix_is_empty(self):
-        self.assertEqual(
-            self._reason(self._finding(suggested_fix_code="  \n  ")), "empty"
-        )
-
-    # -- 3. carriage_return --------------------------------------------------
-
-    def test_an_interior_lone_cr_downgrades(self):
-        """CommonMark treats a lone ``\\r`` as a line ending — ``"foo\\rbar"`` is
-        ONE line to this gate's ``split("\\n")`` but TWO lines in the rendered
-        fence and the applied patch. That gap is evadable (it dodges the no-op,
-        indentation, and line-count checks entirely), so any interior ``\\r``
-        fails closed before those measurements run."""
-        finding = self._finding(suggested_fix_code="foo\rbar\rbaz")
-        self.assertEqual(self._reason(finding), "carriage_return")
-
-    def test_a_crlf_terminated_replacement_downgrades(self):
-        """A replacement whose lines end ``\\r\\n`` is exactly the ambiguous
-        CRLF-file case a one-click apply must not ship — the prose suggestion
-        still carries the fix."""
-        finding = self._finding(suggested_fix_code="    return 2\r\n    # done\r\n")
-        self.assertEqual(self._reason(finding), "carriage_return")
-
-    # -- 4. redacted -------------------------------------------------------
-
-    def test_a_fix_the_redactor_rewrites_is_never_shipped(self):
-        """One click would commit the literal ``[REDACTED]`` into the file."""
-        secret = "ghp_" + "A" * 24
-        finding = self._finding(suggested_fix_code=f"    token = {secret!r}")
-        self.assertEqual(self._reason(finding), "redacted")
-
-    # -- 5. missing_end_line -----------------------------------------------
-
-    def test_absent_end_line(self):
-        finding = self._finding()
-        del finding["end_line"]
-        self.assertEqual(self._reason(finding, apply_range=(2, 2)), "missing_end_line")
-
-    def test_null_end_line_is_absent(self):
-        """#205 DELETES ``line_end`` when a span exceeds ``maxLineSpan``; a null
-        left behind by anything else must read the same way."""
-        self.assertEqual(
-            self._reason(self._finding(end_line=None), apply_range=(2, 2)),
-            "missing_end_line",
-        )
-
-    # -- 6. invalid_range --------------------------------------------------
-
-    def test_end_line_before_line(self):
-        self.assertEqual(
-            self._reason(self._finding(line=3, end_line=2), apply_range=(3, 2)),
-            "invalid_range",
-        )
-
-    def test_non_integer_line(self):
-        self.assertEqual(
-            self._reason(self._finding(line=2.0), apply_range=(2.0, 3)),
-            "invalid_range",
-        )
-
-    def test_boolean_line_is_not_an_integer(self):
-        """``True`` is an ``int`` to ``isinstance`` and hashes equal to ``1`` —
-        the same trap ``validate_position`` documents."""
-        self.assertEqual(
-            self._reason(
-                self._finding(line=True, end_line=True), apply_range=(True, True)
-            ),
-            "invalid_range",
-        )
-
-    def test_line_below_one(self):
-        self.assertEqual(
-            self._reason(self._finding(line=0, end_line=1), apply_range=(0, 1)),
-            "invalid_range",
-        )
-
-    # -- 7. no_diff_oracle -------------------------------------------------
-
-    def test_a_missing_diff_fails_closed(self):
-        """A failed diff fetch leaves NO oracle, so the range and content checks
-        cannot run at all. The ANCHOR fails open there — a wrong anchor costs a
-        misplaced comment. A patch cannot: a wrong patch corrupts the file, and
-        the prose suggestion carries the same content at no risk.
-        """
-        self.assertEqual(
-            self._reason(self._finding(), facts=None),
-            "no_diff_oracle",
-        )
-
-    # -- 8. range_not_in_diff ----------------------------------------------
-
-    def test_end_line_outside_the_diff(self):
-        self.assertEqual(
-            self._reason(self._finding(end_line=940), apply_range=(2, 940)),
-            "range_not_in_diff",
-        )
-
-    def test_unknown_path(self):
-        self.assertEqual(
-            self._reason(self._finding(), path_lookup="other.py"),
-            "range_not_in_diff",
-        )
-
-    # -- 9. anchor_mismatch ------------------------------------------------
-
-    def test_apply_range_narrower_than_the_stated_range(self):
-        """The site's one click really replaces less than the patch states, so
-        applying it would overwrite one line and leave the other. Reached with a
-        wrong anchor, and wherever no wider apply range can be expressed at all —
-        a GitLab span past the platform offset cap renames THIS outcome
-        (``span_exceeds_platform_cap``) rather than adding a check."""
-        self.assertEqual(
-            self._reason(self._finding(), apply_range=(2, 2)), "anchor_mismatch"
-        )
-
-    def test_no_apply_range_at_all(self):
-        """A position-less note and the degraded body section carry no anchor —
-        a fence there can never be applied."""
-        self.assertEqual(
-            self._reason(self._finding(), apply_range=None), "anchor_mismatch"
-        )
-
-    # -- 10. no_op_replacement ----------------------------------------------
-
-    def test_replacement_equal_to_the_span(self):
-        finding = self._finding(suggested_fix_code="    return 1\n    # tail")
-        self.assertEqual(self._reason(finding), "no_op_replacement")
-
-    def test_no_op_ignores_a_transport_carriage_return(self):
-        """A CRLF diff leaves a trailing ``\\r`` on every parsed line's SPAN
-        text. That is transport, not content, so it must not make a no-op
-        look like a change. Parsed by the REAL parser (``_parse_fixture``),
-        not a hand-built dict — G1 now downgrades any REPLACEMENT carrying a
-        ``\\r`` before this check even runs, so a replacement-side ``\\r`` can
-        no longer pin this tolerance; only the span side can, which G1 leaves
-        untouched.
-        """
-        parsed_facts = _parse_fixture(GH_DIFF_INDENTED_CRLF_BODY, platform="github")
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
-        self.assertEqual(line_texts[("foo.py", 2)], "    return 1\r")
-        self.assertEqual(line_texts[("foo.py", 3)], "    # tail\r")
-        finding = self._finding(suggested_fix_code="    return 1\n    # tail")
-        ok, reason = self._gate(
-            finding,
-            facts=replace(self.facts, valid_lines=valid_lines, line_texts=line_texts),
-        )
-        self.assertFalse(ok)
-        self.assertEqual(reason, "no_op_replacement")
-
-    # -- 11. indentation_mismatch ------------------------------------------
-
-    def test_tabs_into_a_space_indented_span(self):
-        finding = self._finding(suggested_fix_code="\treturn 2\n\t# done")
-        self.assertEqual(self._reason(finding), "indentation_mismatch")
-
-    def test_spaces_into_a_tab_indented_span(self):
-        """The symmetric case, against a tab-indented span."""
-        tabbed = (
-            "diff --git a/t.py b/t.py\n"
-            "--- a/t.py\n"
-            "+++ b/t.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " def f():\n"
-            "+\treturn 1\n"
-        )
-        parsed_facts = _parse_fixture(tabbed, platform="github")
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
-        finding = {
-            "file": "t.py",
-            "line": 2,
-            "end_line": 2,
-            "suggested_fix_code": "    return 2",
-        }
-        ok, reason = post_review._suggested_fix_gate(
-            finding,
-            apply_range=(2, 2),
-            path_lookup="t.py",
-            facts=diff_facts(valid_lines, line_texts=line_texts),
-        )
-        self.assertFalse(ok)
-        self.assertEqual(reason, "indentation_mismatch")
-
-    def test_an_unindented_span_conflicts_with_nothing(self):
-        """Lines without leading whitespace say nothing about the file's
-        indentation style, so they contribute nothing to the charset."""
-        parsed_facts = _parse_fixture(GH_DIFF_MULTILINE, platform="github")
-        valid_lines = parsed_facts.valid_lines
-        line_texts = parsed_facts.line_texts
-        finding = {
-            "file": "foo.py",
-            "line": 2,
-            "end_line": 3,
-            "suggested_fix_code": "\tfixed2\n\tfixed3",
-        }
-        self.assertEqual(
-            post_review._suggested_fix_gate(
-                finding,
-                apply_range=(2, 3),
-                path_lookup="foo.py",
-                facts=diff_facts(valid_lines, line_texts=line_texts),
-            ),
-            (True, None),
-        )
-
-    # -- edge blank lines are content --------------------------------------
-
-    def test_a_leading_blank_line_is_content_not_padding(self):
-        """The fence normalizer takes the terminator off and NOTHING else, so a
-        stated leading blank line survives — which makes this a real change
-        against the same two lines, not a no-op."""
-        finding = self._finding(suggested_fix_code="\n    return 1\n    # tail")
-        self.assertEqual(self._gate(finding), (True, None))
-
-    def test_a_second_trailing_newline_is_content(self):
-        finding = self._finding(suggested_fix_code="    return 1\n    # tail\n\n")
-        self.assertEqual(self._gate(finding), (True, None))
-
-    def test_exactly_one_trailing_newline_is_the_terminator(self):
-        finding = self._finding(suggested_fix_code="    return 1\n    # tail\n")
-        self.assertEqual(self._reason(finding), "no_op_replacement")
-
-    # -- 12. replacement_too_large ----------------------------------------
-
-    def test_too_many_lines(self):
-        body = "\n".join(f"    line{n}" for n in range(post_review._FIX_MAX_LINES + 1))
-        self.assertEqual(
-            self._reason(self._finding(suggested_fix_code=body)),
-            "replacement_too_large",
-        )
-
-    def test_too_many_characters(self):
-        body = "    " + "x" * post_review._FIX_MAX_CHARS
-        self.assertEqual(
-            self._reason(self._finding(suggested_fix_code=body)),
-            "replacement_too_large",
-        )
-
-    def test_exactly_at_the_bounds_passes(self):
-        body = "\n".join(f"    line{n}" for n in range(post_review._FIX_MAX_LINES))
-        self.assertLessEqual(len(body), post_review._FIX_MAX_CHARS)
-        self.assertEqual(
-            self._gate(self._finding(suggested_fix_code=body)), (True, None)
-        )
-
-    def test_the_terminator_does_not_count_as_a_line(self):
-        """ONE definition of lines and chars everywhere (#63): both are measured
-        on the NORMALIZED text — ``split("\\n")`` elements, and ``len()`` in code
-        points. The terminating newline is not a 101st line."""
-        body = "\n".join(f"    line{n}" for n in range(post_review._FIX_MAX_LINES))
-        self.assertEqual(
-            self._gate(self._finding(suggested_fix_code=body + "\n")), (True, None)
-        )
-
-    def test_a_blank_line_past_the_terminator_does_count(self):
-        body = "\n".join(f"    line{n}" for n in range(post_review._FIX_MAX_LINES))
-        self.assertEqual(
-            self._reason(self._finding(suggested_fix_code=body + "\n\n")),
-            "replacement_too_large",
-        )
-
-    def test_the_terminator_does_not_count_toward_the_char_bound(self):
-        body = "    " + "x" * (post_review._FIX_MAX_CHARS - 4)
-        self.assertEqual(len(body), post_review._FIX_MAX_CHARS)
-        self.assertEqual(
-            self._gate(self._finding(suggested_fix_code=body + "\n")), (True, None)
-        )
-
-    # -- fence-path ambiguity (issue #229) ----------------------------------
-
-    def test_exact_hit_collision_fails_closed(self):
-        """The finding's raw spelling directly matches a real diff key — but
-        its stripped form ALSO names a real, DIFFERENT diff key in the same
-        diff, so the fence cannot tell which file a patch targets even though
-        it validates cleanly against its own. Today's verified one-click-
-        corruption case (#229): the fence used to validate against
-        ``b/x.py``'s own text while the patch may have meant ``x.py``.
-
-        Mutation: gut ``path_is_ambiguous`` to ``return False``
-        unconditionally — RED (``(True, None)`` instead of the downgrade).
-        """
-        valid_lines = {("b/x.py", 10): 10, ("x.py", 10): 10}
-        line_texts = {("b/x.py", 10): "subline", ("x.py", 10): "topline"}
-        finding = {
-            "file": "b/x.py",
-            "line": 10,
-            "end_line": 10,
-            "suggested_fix_code": "changed",
-        }
-        self.assertEqual(
-            post_review._suggested_fix_gate(
-                finding,
-                apply_range=(10, 10),
-                path_lookup="b/x.py",
-                facts=diff_facts(valid_lines, line_texts=line_texts),
-            ),
-            (False, "no_diff_oracle"),
-        )
-
-    def test_exact_miss_collision_fails_closed(self):
-        """The finding's raw spelling is ABSENT from the diff at its stated
-        line; only the stripped form validates there — the silent cross-file
-        case. Still ambiguous at the PATH level (both spellings name real,
-        distinct files somewhere in this diff), so the fence still fails
-        closed even though :func:`diff_path_spelling` would resolve the
-        anchor to the sibling without complaint.
-        """
-        valid_lines = {("b/x.py", 9): 9, ("x.py", 10): 10}
-        line_texts = {("b/x.py", 9): "subline", ("x.py", 10): "topline"}
-        finding = {
-            "file": "b/x.py",
-            "line": 10,
-            "end_line": 10,
-            "suggested_fix_code": "changed",
-        }
-        self.assertEqual(
-            post_review._suggested_fix_gate(
-                finding,
-                apply_range=(10, 10),
-                path_lookup="x.py",
-                facts=diff_facts(valid_lines, line_texts=line_texts),
-            ),
-            (False, "no_diff_oracle"),
-        )
-
-    def test_off_diff_sibling_residual_still_validates_the_fence(self):
-        """RATIFIED (issue #229): the diff has no real ``b/x.py`` at all —
-        only its stripped sibling ``x.py`` — so the finding's raw spelling is
-        not itself a diff path and the ambiguity check does not fire. The
-        fence still cross-resolves and validates against ``x.py``'s own text,
-        exactly as before #229; a change here must be deliberate, not
-        incidental.
-        """
-        valid_lines = {("x.py", 10): 10}
-        line_texts = {("x.py", 10): "topline"}
-        finding = {
-            "file": "b/x.py",
-            "line": 10,
-            "end_line": 10,
-            "suggested_fix_code": "changed",
-        }
-        self.assertEqual(
-            post_review._suggested_fix_gate(
-                finding,
-                apply_range=(10, 10),
-                path_lookup="x.py",
-                facts=diff_facts(valid_lines, line_texts=line_texts),
-            ),
-            (True, None),
-        )
-
-    def test_missing_file_field_is_never_ambiguous(self):
-        """A finding missing its ``file`` key entirely still reaches this
-        gate (``report_patches.py`` admits such findings — see its L470-472
-        candidate filter, which only requires ``suggested_fix_code``), so this
-        goes through the REAL call site (``_suggested_fix_gate``, which reads
-        ``finding.get("file", "?")``) rather than asserting on
-        ``path_is_ambiguous`` in isolation. ``"?"`` has no ``a/``/``b/``
-        prefix, so the predicate never fires for it and the gate falls
-        through to the ordinary range check instead of raising ``KeyError``.
-        """
-        finding = {
-            "line": 2,
-            "end_line": 3,
-            "suggested_fix_code": "    return 2\n    # done",
-        }
-        self.assertEqual(
-            self._gate(finding, path_lookup="?"),
-            (False, "range_not_in_diff"),
-        )
-
-    # -- the vocabulary is closed -----------------------------------------
-
-    def test_every_reason_constant_is_in_the_closed_set(self):
-        self.assertEqual(
-            post_review._FIX_REASONS,
-            frozenset(
-                {
-                    "non_string",
-                    "empty",
-                    "carriage_return",
-                    "redacted",
-                    "marker_shaped",
-                    "missing_end_line",
-                    "invalid_range",
-                    "no_diff_oracle",
-                    "range_not_in_diff",
-                    "anchor_mismatch",
-                    "span_exceeds_platform_cap",
-                    "no_op_replacement",
-                    "indentation_mismatch",
-                    "replacement_too_large",
-                    "overlaps_kept_fence",
-                }
-            ),
-        )
-
-    def test_the_closed_vocabulary_has_fifteen_members(self):
-        """Adding a reason is a deliberate act — this is the tripwire that says
-        so out loud."""
-        self.assertEqual(len(post_review._FIX_REASONS), 15)
-
-
-class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
-    """``_gated_finding`` consults ``_FIX_REASONS`` at every downgrade.
-
-    A typo'd reason string in a future edit to ``_suggested_fix_gate`` must
-    fail loudly at the FIRST downgrade it produces, not get silently recorded
-    into the stable warning line. This is what makes ``_FIX_REASONS`` more
-    than a comment other tests happen to pin.
-    """
-
-    def test_a_reason_outside_the_closed_vocabulary_raises(self):
-        finding = {"file": "foo.py", "line": 2, "suggested_fix_code": "x"}
-        with (
-            patch(
-                "gauntlet.delivery.post._suggested_fix_gate",
-                return_value=(False, "bogus"),
-            ),
-            self.assertRaises(ValueError) as ctx,
-        ):
-            post_review._gated_finding(finding, (2, 2), diff_facts({}, line_texts={}))
-        self.assertIn("bogus", str(ctx.exception))
-
-    def test_a_renamed_anchor_failure_is_checked_against_the_same_set(self):
-        """``mismatch_reason`` renames one gate outcome; it cannot widen the
-        vocabulary the warning line's readers rely on."""
-        finding = {"file": "foo.py", "line": 2, "suggested_fix_code": "x"}
-        with (
-            patch(
-                "gauntlet.delivery.post._suggested_fix_gate",
-                return_value=(False, "anchor_mismatch"),
-            ),
-            self.assertRaises(ValueError) as ctx,
-        ):
-            post_review._gated_finding(
-                finding, (2, 2), diff_facts({}, line_texts={}), mismatch_reason="bogus"
-            )
-        self.assertIn("bogus", str(ctx.exception))
-
-    def test_a_typo_d_demote_reason_is_checked_against_the_same_set(self):
-        """``demote_reason`` (#223) is consulted only when the gate PASSES — it
-        cannot widen the vocabulary either, exactly like ``mismatch_reason``."""
-        finding = {"file": "foo.py", "line": 2, "suggested_fix_code": "x"}
-        with (
-            patch(
-                "gauntlet.delivery.post._suggested_fix_gate",
-                return_value=(True, None),
-            ),
-            self.assertRaises(ValueError) as ctx,
-        ):
-            post_review._gated_finding(
-                finding, (2, 2), diff_facts({}, line_texts={}), demote_reason="bogus"
-            )
-        self.assertIn("bogus", str(ctx.exception))
-
-
 class TestGatedFindingDemoteReason(unittest.TestCase):
     """``_gated_finding``'s ``demote_reason`` keyword (#223).
 
@@ -6488,7 +5870,7 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
     def test_demote_reason_none_is_a_no_op_when_the_gate_passes(self):
         """The default keeps every pre-#223 caller byte-identical."""
         finding = self._finding()
-        with patch("gauntlet.delivery.post._fence_verdict", return_value=(True, None)):
+        with patch("gauntlet.delivery.gate._check_fix", return_value=None):
             result = post_review._gated_finding(
                 finding, (2, 3), diff_facts({}, line_texts={})
             )
@@ -6499,14 +5881,14 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
     def test_a_set_demote_reason_downgrades_a_gate_pass(self):
         finding = self._finding()
         with (
-            patch("gauntlet.delivery.post._fence_verdict", return_value=(True, None)),
+            patch("gauntlet.delivery.gate._check_fix", return_value=None),
             patch("gauntlet.delivery.post.warn_skip") as mock_warn,
         ):
             result = post_review._gated_finding(
                 finding,
                 (2, 3),
                 diff_facts({}, line_texts={}),
-                demote_reason=post_review._FIX_OVERLAPS_KEPT_FENCE,
+                demote_reason="overlaps_kept_fence",
             )
         self.assertIsNot(result, finding)
         self.assertNotIn("suggested_fix_code", result)
@@ -6527,8 +5909,8 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
         finding = self._finding()
         with (
             patch(
-                "gauntlet.delivery.post._fence_verdict",
-                return_value=(False, "missing_end_line"),
+                "gauntlet.delivery.gate._check_fix",
+                return_value="missing_end_line",
             ),
             patch("gauntlet.delivery.post.warn_skip") as mock_warn,
         ):
@@ -6536,7 +5918,7 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
                 finding,
                 (2, 3),
                 diff_facts({}, line_texts={}),
-                demote_reason=post_review._FIX_OVERLAPS_KEPT_FENCE,
+                demote_reason="overlaps_kept_fence",
             )
         self.assertEqual(post_review._FIX_REASON_COUNTS.get("missing_end_line"), 1)
         self.assertIsNone(post_review._FIX_REASON_COUNTS.get("overlaps_kept_fence"))
@@ -6546,62 +5928,6 @@ class TestGatedFindingDemoteReason(unittest.TestCase):
 
     def tearDown(self):
         post_review.reset_run_state()
-
-
-class TestGitLabFenceOffsets(unittest.TestCase):
-    """``_gitlab_fence_offsets``: the one producer of GitLab's ``-m+n`` pair.
-
-    GitLab resolves the header against ``position.new_line``, so the pair is a
-    function of the ANCHOR and the stated range — never of the finding alone.
-    """
-
-    def test_a_single_line_range_needs_no_offsets(self):
-        self.assertEqual(post_review._gitlab_fence_offsets(2, 2, 2), ((0, 0), False))
-
-    def test_a_span_below_the_anchor(self):
-        self.assertEqual(post_review._gitlab_fence_offsets(2, 2, 4), ((0, 2), False))
-
-    def test_a_span_above_the_anchor(self):
-        """Unit-only: every delivery path anchors a finding at its own ``line``,
-        so ``m`` is 0 everywhere it is reachable today. The helper still answers
-        for an anchor inside the range, because the anchor is its input."""
-        self.assertEqual(post_review._gitlab_fence_offsets(4, 2, 4), ((2, 0), False))
-
-    def test_an_anchor_before_the_range_is_unrealizable(self):
-        self.assertEqual(post_review._gitlab_fence_offsets(1, 2, 4), (None, False))
-
-    def test_an_anchor_after_the_range_is_unrealizable(self):
-        self.assertEqual(post_review._gitlab_fence_offsets(5, 2, 4), (None, False))
-
-    def test_the_cap_is_inclusive(self):
-        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
-        self.assertEqual(
-            post_review._gitlab_fence_offsets(2, 2, 2 + cap), ((0, cap), False)
-        )
-
-    def test_one_line_past_the_cap_is_cap_exceeded_not_unrealizable(self):
-        """GitLab CLAMPS an offset above the cap instead of rejecting it, so a
-        header carrying one would apply a range it does not state. The second
-        return is what lets that failure be named."""
-        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
-        self.assertEqual(post_review._gitlab_fence_offsets(2, 2, 3 + cap), (None, True))
-
-    def test_an_above_offset_past_the_cap_is_cap_exceeded(self):
-        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
-        anchor = 2 + cap + 1
-        self.assertEqual(
-            post_review._gitlab_fence_offsets(anchor, 2, anchor), (None, True)
-        )
-
-    def test_a_non_integer_bound_is_not_a_cap_failure(self):
-        """A missing or non-integer bound is the gate's business
-        (``missing_end_line`` / ``invalid_range``); the helper only declines to
-        answer, which leaves the single anchored line as the apply range."""
-        for end_line in (None, "3", 3.0, True):
-            with self.subTest(end_line=end_line):
-                self.assertEqual(
-                    post_review._gitlab_fence_offsets(2, 2, end_line), (None, False)
-                )
 
 
 class TestGitLabAnchoredDecision(unittest.TestCase):
@@ -6673,140 +5999,11 @@ class TestGitLabAnchoredDecision(unittest.TestCase):
             self._finding(),
             2,
             diff_facts(self.valid_lines, line_texts=self.line_texts),
-            demote_reason=post_review._FIX_OVERLAPS_KEPT_FENCE,
+            demote_reason="overlaps_kept_fence",
         )
         self.assertNotIn("suggested_fix_code", gated)
         self.assertEqual(offsets, (0, 1))
         post_review.reset_run_state()
-
-
-class TestGithubApplyRange(unittest.TestCase):
-    """``_github_apply_range`` — GitHub's multi-line/apply_range decision, once
-    (#223/#224). Extracted verbatim from ``post_github``'s render loop; the
-    render loop, the overlap pre-pass, and the benchmark's payload mirror all
-    call it rather than each computing their own copy.
-    """
-
-    def setUp(self):
-        parsed = _parse_fixture(GH_DIFF_INDENTED, platform="github")
-        self.valid_lines = parsed.valid_lines
-
-    def test_a_valid_multi_line_span_is_multiline(self):
-        self.assertEqual(
-            post_review._github_apply_range(
-                diff_facts(self.valid_lines), "foo.py", 2, 3
-            ),
-            (True, (2, 3)),
-        )
-
-    def test_no_end_line_is_single_line(self):
-        self.assertEqual(
-            post_review._github_apply_range(
-                diff_facts(self.valid_lines), "foo.py", 2, None
-            ),
-            (False, (2, 2)),
-        )
-
-    def test_end_line_equal_to_line_is_single_line(self):
-        self.assertEqual(
-            post_review._github_apply_range(
-                diff_facts(self.valid_lines), "foo.py", 2, 2
-            ),
-            (False, (2, 2)),
-        )
-
-    def test_an_end_line_outside_the_diff_falls_back_to_single_line(self):
-        self.assertEqual(
-            post_review._github_apply_range(
-                diff_facts(self.valid_lines), "foo.py", 2, 940
-            ),
-            (False, (2, 2)),
-        )
-
-
-class TestOverlapLosers(unittest.TestCase):
-    """``_overlap_losers`` — the pure, first-wins overlap resolver (#223).
-
-    Records are ``(index, path_lookup, apply_range)``, already known to be
-    candidates (a real, gate-passing apply range) — the resolver itself never
-    consults ``suggested_fix_code`` or the gate; that filtering is each
-    poster's/the mirror's candidate predicate, tested separately (see the
-    poster-level overlap tests).
-    """
-
-    def test_first_wins_when_two_records_overlap(self):
-        losers = post_review._overlap_losers(
-            [(0, "foo.py", (2, 4)), (1, "foo.py", (3, 5))]
-        )
-        self.assertEqual(losers, {1})
-
-    def test_same_line_single_line_pair_collides(self):
-        """Matches GitLab's own ``Range#overlaps?``: two single-line fences on
-        the identical line collide."""
-        losers = post_review._overlap_losers(
-            [(0, "foo.py", (5, 5)), (1, "foo.py", (5, 5))]
-        )
-        self.assertEqual(losers, {1})
-
-    def test_touching_disjoint_ranges_both_keep_their_fences(self):
-        """``[1, 3]`` and ``[4, 6]`` share no line index — GitLab's own
-        ``Range#overlaps?`` does not conflict them, and neither does this."""
-        losers = post_review._overlap_losers(
-            [(0, "foo.py", (1, 3)), (1, "foo.py", (4, 6))]
-        )
-        self.assertEqual(losers, set())
-
-    def test_a_loser_occupies_nothing_so_it_cannot_block_a_later_record(self):
-        """A[1,5] B[4,8] C[7,10] in that order: B collides with A (4<=5) and is
-        demoted, but a demoted record never claims its interval — C is judged
-        only against the KEPT set {A}, and C does NOT overlap A (7 > 5), so C
-        survives even though it overlaps B, which never got to keep [4,8].
-        Keeps A and C; only B is a loser (memo R4's worked example).
-        """
-        losers = post_review._overlap_losers(
-            [
-                (0, "foo.py", (1, 5)),
-                (1, "foo.py", (4, 8)),
-                (2, "foo.py", (7, 10)),
-            ]
-        )
-        self.assertEqual(losers, {1})
-
-    def test_records_on_different_paths_never_collide(self):
-        losers = post_review._overlap_losers(
-            [(0, "foo.py", (2, 4)), (1, "bar.py", (2, 4))]
-        )
-        self.assertEqual(losers, set())
-
-    def test_cross_spelling_collision_via_path_lookup(self):
-        """The resolver keys strictly on the ``path_lookup`` VALUE it is given —
-        the same key the gate itself uses (``diff_path_spelling``) — so two
-        records built from differently-spelled raw findings that a poster
-        already resolved to the same diff path collide correctly."""
-        losers = post_review._overlap_losers(
-            [(0, "src/edited.py", (2, 4)), (1, "src/edited.py", (3, 5))]
-        )
-        self.assertEqual(losers, {1})
-
-    def test_no_records_demotes_nobody(self):
-        self.assertEqual(post_review._overlap_losers([]), set())
-
-
-class TestRangesOverlap(unittest.TestCase):
-    """``_ranges_overlap`` — the closed-interval intersection both
-    ``_overlap_losers`` and the GitLab corroborator query (#223 R6) share."""
-
-    def test_identical_single_line_ranges_overlap(self):
-        self.assertTrue(post_review._ranges_overlap((5, 5), (5, 5)))
-
-    def test_touching_disjoint_ranges_do_not_overlap(self):
-        self.assertFalse(post_review._ranges_overlap((1, 3), (4, 6)))
-
-    def test_partial_overlap(self):
-        self.assertTrue(post_review._ranges_overlap((1, 5), (4, 8)))
-
-    def test_one_range_containing_the_other_overlaps(self):
-        self.assertTrue(post_review._ranges_overlap((1, 10), (4, 6)))
 
 
 class TestPosterOraclesAreRequiredArguments(unittest.TestCase):
@@ -6989,13 +6186,13 @@ class TestGitHubSuggestedFixGate(_SuggestedFixSharedProofs, _FixGateRunBase):
         red, even though the pre-pass calls alone would otherwise mask it.
         """
         seen = []
-        real = post_review._suggested_fix_gate
+        real = gate.evaluate_fix
 
         def spy(finding, **kwargs):
             seen.append(kwargs["apply_range"])
             return real(finding, **kwargs)
 
-        with patch("gauntlet.delivery.post._suggested_fix_gate", side_effect=spy):
+        with patch("gauntlet.delivery.gate.evaluate_fix", side_effect=spy):
             run = self._run([self._finding(), self._finding(end_line=940)])
         anchors = [
             (c.get("start_line", c["line"]), c["line"])
@@ -7072,7 +6269,7 @@ class TestGitHubSuggestedFixGate(_SuggestedFixSharedProofs, _FixGateRunBase):
                 "replacement_too_large",
                 self._finding(
                     suggested_fix_code="\n".join(
-                        f"    line{n}" for n in range(post_review._FIX_MAX_LINES + 1)
+                        f"    line{n}" for n in range(registry.FIX_MAX_LINES + 1)
                     )
                 ),
             ),
@@ -7211,7 +6408,7 @@ class TestGitLabSuggestedFixGate(_SuggestedFixSharedProofs, _FixGateRunBase):
         (default 100) drops a span this wide upstream, so only caller-supplied
         JSON reaches here. GitLab CLAMPS an offset above its cap rather than
         rejecting it, so the header would apply a range it does not state."""
-        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
+        cap = gate.GITLAB_SUGGESTION_OFFSET_CAP
         finding = self._finding(
             end_line=2 + cap + 1, suggested_fix_code="    patched\n    also patched"
         )
@@ -7223,7 +6420,7 @@ class TestGitLabSuggestedFixGate(_SuggestedFixSharedProofs, _FixGateRunBase):
         """The render-level invariant the cap exists for, over a whole payload:
         the span one line inside the cap ships, the one line outside it does
         not, and nothing in between leaks a clamped offset."""
-        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
+        cap = gate.GITLAB_SUGGESTION_OFFSET_CAP
         run = self._run(
             [
                 self._finding(end_line=2 + cap, suggested_fix_code="    patched"),
@@ -7240,7 +6437,7 @@ class TestGitLabSuggestedFixGate(_SuggestedFixSharedProofs, _FixGateRunBase):
         """Check order is unchanged: the STATED range is judged against the diff
         before the anchor, so a span that is both out-of-diff and past the cap
         reports what it always reported."""
-        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
+        cap = gate.GITLAB_SUGGESTION_OFFSET_CAP
         run = self._run([self._finding(end_line=2 + cap + 1)])
         self._assert_downgraded(run, "range_not_in_diff")
 

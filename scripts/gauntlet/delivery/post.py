@@ -91,16 +91,19 @@ import hashlib
 import json
 import os
 import sys
-from typing import Any, NamedTuple
+from collections.abc import Callable
+from typing import Any, NamedTuple, cast
 
 from gauntlet import diff, proc
 from gauntlet.cli import Command
+from gauntlet.delivery import gate
 from gauntlet.delivery.fold import (
     body_limit,
     fold_inline_body,
     fold_review_body,
     utf8_len,
 )
+from gauntlet.delivery.gate import ApplyRange, FenceOffsets, FixReason
 from gauntlet.diff import DiffFacts
 from gauntlet.forge import (
     Forge,
@@ -135,19 +138,7 @@ from gauntlet.registry import (
     SEVERITY_EMOJI,
     SEVERITY_EMOJI_FALLBACK,
 )
-
-# Delivery bound on fence content: `suggestion` prose is uncapped because a human reads it,
-# but a fence is committed by one click. Both runtimes measure the normalized text
-# (`_fix_code_text` removes one final newline): lines are its `split("\n")` elements and
-# chars its length in code points, so a 100-line patch never counts 101.
-from gauntlet.registry import (
-    FIX_MAX_CHARS as _FIX_MAX_CHARS,
-)
-from gauntlet.registry import (
-    FIX_MAX_LINES as _FIX_MAX_LINES,
-)
 from gauntlet.text import (
-    has_marker_opener,
     normalize_report_severity,
     prepare_line,
     prepare_location,
@@ -307,30 +298,6 @@ def validate_position(position, shas, facts: DiffFacts | None, filepath, line):
 # ---------------------------------------------------------------------------
 
 
-def _fix_code_text(value):
-    """Normalize ``suggested_fix_code`` — the ONE normalizer for the patch.
-
-    The gate measures this text and the fence carries this text, so stated ==
-    checked == applied. Exactly ONE trailing ``"\\n"`` comes off — that is the
-    file's line terminator, which the fence supplies itself — and nothing else
-    does: a replacement stating a leading or a trailing BLANK line means it, and
-    a fence that silently dropped one would commit different bytes than the gate
-    approved.
-
-    Whitespace-only input is still absent (``None``), a patch
-    made of nothing but blanks is not representable and is not shipped. A
-    non-string value is coerced via ``str()`` so the renderer cannot crash on a
-    hand-assembled payload — the gate rejects it as ``non_string`` first.
-    """
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        value = str(value)
-    if not value.strip():
-        return None
-    return value[:-1] if value.endswith("\n") else value
-
-
 def _blockquote(text):
     """Raw CR/CRLF must not end a CommonMark line outside its quote prefix."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -373,63 +340,6 @@ def _suggestion_fence(payload, *, offsets=None):
 # `suggestion`, which a human reads before acting on — no finding is lost, only
 # its one-click affordance.
 
-_FIX_NON_STRING = "non_string"
-_FIX_EMPTY = "empty"
-_FIX_REDACTED = "redacted"
-_FIX_MARKER_SHAPED = "marker_shaped"
-_FIX_MISSING_END_LINE = "missing_end_line"
-_FIX_INVALID_RANGE = "invalid_range"
-_FIX_NO_ORACLE = "no_diff_oracle"
-_FIX_RANGE_NOT_IN_DIFF = "range_not_in_diff"
-_FIX_ANCHOR_MISMATCH = "anchor_mismatch"
-_FIX_SPAN_EXCEEDS_CAP = "span_exceeds_platform_cap"
-_FIX_NO_OP = "no_op_replacement"
-_FIX_INDENTATION = "indentation_mismatch"
-_FIX_TOO_LARGE = "replacement_too_large"
-_FIX_CARRIAGE_RETURN = "carriage_return"
-_FIX_OVERLAPS_KEPT_FENCE = "overlaps_kept_fence"
-
-# The vocabulary is CLOSED: every downgrade names exactly one of these, in the
-# stable warning `{warn_label} downgraded: {file}:{line} ({reason})` — the label
-# is the caller's (`suggested-fix` for delivery, `report-patch` for the report
-# path's read-only gate in gauntlet.patches); everything after it never
-# changes shape. Adding a reason is a deliberate act — a free-text reason would
-# make the record unreadable in aggregate.
-#
-# `overlaps_kept_fence` is the one member that is not a
-# `_suggested_fix_gate` outcome: it names a SET-LEVEL decision (this finding's
-# fence would collide, on the platform's own overlap semantic, with another
-# kept fence in the same file) rather than a property of the finding alone —
-# see `_overlap_losers` and `_gated_finding`'s `demote_reason` parameter.
-_FIX_REASONS = frozenset(
-    {
-        _FIX_NON_STRING,
-        _FIX_EMPTY,
-        _FIX_REDACTED,
-        _FIX_MARKER_SHAPED,
-        _FIX_MISSING_END_LINE,
-        _FIX_INVALID_RANGE,
-        _FIX_NO_ORACLE,
-        _FIX_RANGE_NOT_IN_DIFF,
-        _FIX_ANCHOR_MISMATCH,
-        _FIX_SPAN_EXCEEDS_CAP,
-        _FIX_NO_OP,
-        _FIX_INDENTATION,
-        _FIX_TOO_LARGE,
-        _FIX_CARRIAGE_RETURN,
-        _FIX_OVERLAPS_KEPT_FENCE,
-    }
-)
-
-# GitLab's own platform limit on a ```suggestion:-m+n offset
-# (`Suggestible::MAX_LINES_CONTEXT`). An offset above it is silently CLAMPED
-# server-side, not rejected — the header would show Apply and then replace a
-# range it does not state — so an emitted header must never carry one. Unrelated
-# to `_FIX_MAX_LINES`, which bounds the fence's PAYLOAD, and to the pipeline's
-# tunable maxLineSpan intake bound (default 100), which is what keeps a span
-# this wide from reaching delivery at all unless a caller raises it.
-_GITLAB_SUGGESTION_OFFSET_CAP = 100
-
 # Per-run patch-acceptance counters, reset by reset_run_state() alongside
 # _CAPTURED and _SKIP_WARNINGS. n/(n+m) over these two is the acceptance rate,
 # deterministic and readable from any run's stdout at no cost.
@@ -438,7 +348,7 @@ _FIX_COUNTS = {"kept": 0, "downgraded": 0}
 # stdout readout (_print_fix_summary) does not consult this — it exists for a
 # second gate caller (gauntlet.patches, the report-side apply-check)
 # that renders a reason breakdown from it.
-_FIX_REASON_COUNTS: dict[str, int] = {}
+_FIX_REASON_COUNTS: dict[FixReason, int] = {}
 
 
 def reset_run_state():
@@ -456,270 +366,59 @@ def reset_run_state():
     _FIX_REASON_COUNTS.clear()
 
 
-def _leading_whitespace_charset(lines):
-    """Return the characters used in the LEADING whitespace of *lines*.
-
-    A line with no leading whitespace contributes nothing: it says nothing about
-    how the surrounding code indents.
-    """
-    charset = set()
-    for line in lines:
-        charset.update(line[: len(line) - len(line.lstrip(" \t"))])
-    return charset
-
-
-def _suggested_fix_gate(finding, *, apply_range, facts: DiffFacts | None, path_lookup):
-    """Check a fence at the render site's actual apply range.
-
-    Keep this pure (no I/O) so dry-run, live delivery and the patch report agree.
-    apply_range=None means a site where a fence cannot apply, such as a
-    position-less note or degraded body section. A failure reason is always
-    a member of _FIX_REASONS.
-
-    First failure wins. Unknown diffs permit anchors, but a one-click patch
-    fails closed because a misplaced fence corrupts the file. The prose
-    suggestion still carries the fix. Raw path collisions fail closed before
-    span validation for the same reason, even when an anchor can resolve.
-    The resolved path must match the keys used to validate the anchor."""
-    if "suggested_fix_code" not in finding:
-        return True, None
-
-    raw = finding["suggested_fix_code"]
-    if not isinstance(raw, str):
-        return False, _FIX_NON_STRING
-    text = _fix_code_text(raw)
-    if text is None:
-        return False, _FIX_EMPTY
-    # CommonMark renders "foo\rbar\rbaz" as three lines, but split("\n") sees
-    # one. Reject CR before no-op, indentation and size checks so their
-    # measurements describe the document a one-click apply would commit.
-    if "\r" in text:
-        return False, _FIX_CARRIAGE_RETURN
-    # Gate on the ORIGINAL bytes: a fence carrying a literal `[REDACTED]` would be
-    # committed by one click. Passing here means the render-time redaction is a
-    # guaranteed no-op, so the posted fence is byte-identical to what was checked.
-    if redact_secrets(text) != text:
-        return False, _FIX_REDACTED
-    if has_marker_opener(text):
-        return False, _FIX_MARKER_SHAPED
-
-    line = finding.get("line")
-    end_line = finding.get("end_line")
-    if end_line is None:
-        # A patch's stated range must be explicit. An absent end_line — including
-        # one deleted for exceeding maxLineSpan — is exactly how a multi-line
-        # replacement lands on a single-line anchor and corrupts the file.
-        return False, _FIX_MISSING_END_LINE
-    if (
-        not _is_plain_int(line)
-        or not _is_plain_int(end_line)
-        or line < 1
-        or end_line < line
-    ):
-        return False, _FIX_INVALID_RANGE
-    if facts is None:
-        return False, _FIX_NO_ORACLE
-    if diff.path_is_ambiguous(facts, finding.get("file", "?")):
-        return False, _FIX_NO_ORACLE
-    if not diff.range_is_valid(facts, path_lookup, line, end_line):
-        return False, _FIX_RANGE_NOT_IN_DIFF
-    if apply_range != (line, end_line):
-        return False, _FIX_ANCHOR_MISMATCH
-
-    replacement = text.split("\n")
-    span = diff.span_texts(facts, path_lookup, line, end_line)
-    if span is None:
-        # Partial text is unavailable, never permission to skip content checks.
-        # A span needs one exact spelling even when membership resolves per line.
-        return False, _FIX_NO_ORACLE
-    # A trailing CR is transport (a CRLF diff carries one on every line), not
-    # content, and `_fix_code_text` already took the replacement's terminating
-    # newline off — so neither side's line terminators decide this. An EDGE
-    # BLANK LINE survives that normalization and is compared as content: a
-    # patch that only adds one is a change, not a no-op.
-    if [ln.rstrip("\r") for ln in replacement] == [ln.rstrip("\r") for ln in span]:
-        return False, _FIX_NO_OP
-    span_indent = _leading_whitespace_charset(span)
-    fix_indent = _leading_whitespace_charset(replacement)
-    # Deliberately weak, and language-agnostic: a legitimate re-indentation
-    # passes, and only a tab/space charset conflict — the one that silently
-    # corrupts a file whichever language it is written in — is caught.
-    if (span_indent == {" "} and "\t" in fix_indent) or (
-        span_indent == {"\t"} and " " in fix_indent
-    ):
-        return False, _FIX_INDENTATION
-    if len(replacement) > _FIX_MAX_LINES or len(text) > _FIX_MAX_CHARS:
-        return False, _FIX_TOO_LARGE
-    return True, None
-
-
-def _fence_verdict(finding, apply_range, facts: DiffFacts | None):
-    """Resolve at the finding's line, never the render site's anchor.
-
-    Overlap candidates and rendered fences must use the same decision."""
-    return _suggested_fix_gate(
+def _gated_finding(
+    finding: Any,
+    apply_range: tuple[object, object] | None,
+    facts: DiffFacts | None,
+    *,
+    mismatch_reason: FixReason = "anchor_mismatch",
+    warn_label: str = "suggested-fix",
+    demote_reason: FixReason | None = None,
+) -> Any:
+    # Corroborations carry no fence and must not count as render-site verdicts.
+    if not isinstance(finding, dict) or "suggested_fix_code" not in finding:
+        return finding
+    verdict = gate.evaluate_fix(
         finding,
         apply_range=apply_range,
         facts=facts,
-        path_lookup=diff.diff_path_spelling(
-            facts, finding.get("file", "?"), finding.get("line")
-        ),
+        mismatch_reason=mismatch_reason,
+        demote_reason=demote_reason,
     )
-
-
-def _gated_finding(
-    finding,
-    apply_range,
-    facts: DiffFacts | None,
-    *,
-    mismatch_reason=_FIX_ANCHOR_MISMATCH,
-    warn_label="suggested-fix",
-    demote_reason=None,
-):
-    """Return the finding to RENDER at one site, gating its ``suggested_fix_code``.
-
-    A failure strips the field from a SHALLOW COPY — the copy is what gets
-    rendered, so ``render_comment_body`` itself is untouched. Benchmark mirrors
-    call ``compose_inline_body`` over ``_render_group_sections(...)`` to construct
-    the body they score, and the prose ``suggestion`` carries the fix instead.
-    Each downgrade is recorded through ``warn_skip``, which both prints
-    and lands in the dry-run payload's existing ``skipped`` list, and counted for
-    the run's patch-acceptance readout (``_FIX_COUNTS``) and per-reason tally
-    (``_FIX_REASON_COUNTS``).
-
-    Called at every site where a fence can actually render. A corroborator inside
-    a group body is not such a site — ``_render_corroboration`` renders no fence
-    (nor the prose suggestion) at all — so it is neither gated nor counted here.
-
-    *mismatch_reason* renames the anchor-equality failure for a caller that knows
-    WHY no anchor could cover the stated range: GitLab's cap on ``-m+n`` offsets
-    is the one such caller. It renames one outcome, it does not add a
-    check, and it cannot widen the vocabulary — an unknown name raises below
-    exactly like a typo'd gate reason.
-
-    *demote_reason* forces a fence that PASSED the per-finding gate
-    to downgrade anyway, through this same funnel — tallied, warned, stripped
-    exactly like an ordinary gate failure. It is consulted ONLY when the gate
-    says ``ok``: a gate FAILURE keeps its own reason regardless of
-    *demote_reason* (per-fence reasons always win — a set-level demotion is
-    chosen only among findings the gate already approved, so the two paths can
-    never disagree about the same finding). ``None`` (the default) is a no-op —
-    every existing caller is unaffected. The ``elif`` below that applies
-    *mismatch_reason* is reached only on that gate-FAILURE branch — a
-    set-level *demote_reason* is never renamed by *mismatch_reason*, because
-    the ``ok`` branch above already returned or reassigned ``reason`` before
-    this ``elif`` is ever evaluated.
-
-    *warn_label* names the CALLER in the downgrade warning line (default
-    ``"suggested-fix"``, delivery's own spelling — unchanged bytes for every
-    existing reader). ``gauntlet.patches``, the report-side read-only
-    apply-check, passes ``"report-patch"`` so its downgrades stay distinguishable
-    from delivery's in a run's combined stderr.
-    """
-    if not isinstance(finding, dict) or "suggested_fix_code" not in finding:
+    if verdict.keep:
+        _FIX_COUNTS["kept"] += 1
         return finding
-    ok, reason = _fence_verdict(finding, apply_range, facts)
-    if ok:
-        if demote_reason is None:
-            _FIX_COUNTS["kept"] += 1
-            return finding
-        reason = demote_reason
-    elif reason == _FIX_ANCHOR_MISMATCH:
-        reason = mismatch_reason
-    if reason not in _FIX_REASONS:
-        # A typo'd reason string in a future gate edit — or a typo'd
-        # demote_reason from a future overlap-demotion caller — must fail
-        # loudly at the first downgrade, not silently record garbage in the
-        # stable warning line (whose readers rely on the vocabulary being
-        # closed).
-        raise ValueError(
-            f"unknown downgrade reason: {reason!r} (from the gate, a "
-            f"mismatch_reason rename, or a caller's demote_reason)"
-        )
+    reason = cast(FixReason, verdict.reason)
     _FIX_COUNTS["downgraded"] += 1
     _FIX_REASON_COUNTS[reason] = _FIX_REASON_COUNTS.get(reason, 0) + 1
-    warn_skip(
-        f"{warn_label} downgraded: {finding.get('file', '?')}:"
-        f"{finding.get('line')} ({reason})"
-    )
+    warn_skip(gate.format_fix_warning(finding, reason, label=warn_label))
+    # Strip only on a shallow copy, preserving unknown caller fields.
     stripped = dict(finding)
     del stripped["suggested_fix_code"]
     return stripped
 
 
-def _gitlab_fence_offsets(anchor, line, end_line):
-    """Return ``(offsets, cap_exceeded)`` for a GitLab fence posted at *anchor*.
-
-    *offsets* is the ``(above, below)`` pair a ```suggestion:-m+n header must
-    state for one click to replace ``[line, end_line]``, or ``None`` when no
-    header expresses that range from this anchor. GitLab resolves the header
-    against ``position.new_line``, so the pair is a function of the ANCHOR and
-    the stated range — never of the finding alone.
-
-    Pure and total, so both the poster and the benchmark's payload mirror can
-    consume it: a non-integer or absent bound answers ``None`` and leaves the
-    gate's own ``missing_end_line`` / ``invalid_range`` rules to name what is
-    wrong. *cap_exceeded* is True only when the range was otherwise realizable
-    and the platform cap alone forbade the header — which is what separates
-    ``span_exceeds_platform_cap`` from ``anchor_mismatch``.
-    """
-    if not all(_is_plain_int(v) for v in (anchor, line, end_line)):
-        return None, False
-    above, below = anchor - line, end_line - anchor
-    if above < 0 or below < 0:
-        # The anchor lies outside the stated range: offsets extend outward from
-        # it in both directions, so no pair can reach a range it is not inside.
-        return None, False
-    if above > _GITLAB_SUGGESTION_OFFSET_CAP or below > _GITLAB_SUGGESTION_OFFSET_CAP:
-        return None, True
-    return (above, below), False
-
-
-def _gitlab_apply_range(finding, anchor):
-    """Return ``(apply_range, offsets, cap_exceeded)`` for *finding* anchored at *anchor*.
-
-    The render site and overlap pre-pass share the same decision.
-    """
-    offsets, cap_exceeded = _gitlab_fence_offsets(
-        anchor, finding.get("line"), finding.get("end_line")
-    )
-    apply_range = (
-        (anchor, anchor)
-        if offsets is None
-        else (anchor - offsets[0], anchor + offsets[1])
-    )
-    return apply_range, offsets, cap_exceeded
-
-
-def _gitlab_anchored(finding, anchor, facts: DiffFacts | None, *, demote_reason=None):
-    """Return ``(finding_to_render, fence_offsets)`` for ONE GitLab inline body.
-
-    A GitLab position is always single-line, but the fence header widens what one
-    click replaces to ``[anchor - m, anchor + n]`` — so the apply range
-    the gate judges is the one those offsets realize, and a span no header can
-    express is judged against the single anchored line instead. The gate's
-    equality check then makes a kept fence's offsets provably realize the range
-    the finding states.
-
-    The offsets are returned OUT OF BAND and never written onto the finding: the
-    findings JSON is caller-supplied and flows in unfiltered, so an in-band key
-    would be a key that widens an apply range the gate approved as narrower. This
-    is the whole GitLab render-site decision, in one place, so the benchmark's
-    payload mirror can make it by calling rather than by copying.
-
-    *demote_reason* passes straight through to :func:`_gated_finding` —
-    a caller with a set-level overlap decision for this anchor states it here,
-    exactly as it would at a GitHub render site.
-    """
-    apply_range, offsets, cap_exceeded = _gitlab_apply_range(finding, anchor)
+def _gitlab_anchored(
+    finding: Any,
+    anchor: Any,
+    facts: DiffFacts | None,
+    *,
+    demote_reason: FixReason | None = None,
+) -> tuple[Any, FenceOffsets | None]:
+    # The position is single-line; offsets widen one click from this actual anchor.
+    # The gate judges that realized range, falling back to the anchor alone.
+    # Offsets stay out of band: a caller field cannot widen the approved range.
+    site = gate.gitlab_apply_range(finding, anchor)
     gated = _gated_finding(
         finding,
-        apply_range,
+        site.apply_range,
         facts,
-        mismatch_reason=_FIX_SPAN_EXCEEDS_CAP if cap_exceeded else _FIX_ANCHOR_MISMATCH,
+        mismatch_reason="span_exceeds_platform_cap"
+        if site.cap_exceeded
+        else "anchor_mismatch",
         demote_reason=demote_reason,
     )
-    return gated, offsets
+    return gated, site.offsets
 
 
 def _degraded_entry(filepath, line, finding, facts: DiffFacts | None):
@@ -788,39 +487,6 @@ def _key_material_finding(finding):
     return stripped
 
 
-def _github_apply_range(facts: DiffFacts | None, filepath, line, end_line):
-    """Return ``(multiline, apply_range)`` for a GitHub comment anchored at *line*.
-
-    Shared with ``post_github``'s render loop
-    so the loop, a pre-render overlap pass, and the benchmark's payload mirror
-    all make this ONE decision by calling it — never by duplicating the
-    formula. A group comment anchors only on the primary's range (a
-    corroborator never contributes a fence), so this is the apply range of
-    every fence the comment can carry.
-    """
-    multiline = (
-        isinstance(end_line, int)
-        and end_line >= line
-        and end_line != line
-        and diff.range_is_valid(facts, filepath, line, end_line)
-    )
-    apply_range = (line, end_line) if multiline else (line, line)
-    return multiline, apply_range
-
-
-def _ranges_overlap(a, b):
-    """True when closed intervals *a* and *b* (each an ``(start, end)`` pair)
-    share at least one integer.
-
-    ``max(l1, l2) <= min(e1, e2)`` — GitLab's own ``Range#overlaps?`` exactly
-    (``lib/gitlab/suggestions/file_suggestion.rb``): two identical single-line
-    ranges collide (same line, same value both sides of the comparison);
-    touching disjoint ranges like ``[1, 3]``/``[4, 6]`` do not (3 <= 4 is the
-    ``<=`` that would need to run the other way to fire).
-    """
-    return max(a[0], b[0]) <= min(a[1], b[1])
-
-
 def _github_overlap_records(groups, facts: DiffFacts | None):
     """Return the CANDIDATE ``(index, path_lookup, apply_range)`` records for
     post_github's overlap pre-pass.
@@ -848,12 +514,14 @@ def _github_overlap_records(groups, facts: DiffFacts | None):
         filepath = diff.diff_path_spelling(facts, primary.get("file", "?"), line)
         if not diff.is_line_valid(facts, filepath, line):
             continue
-        _, apply_range = _github_apply_range(
-            facts, filepath, line, primary.get("end_line")
-        )
-        ok, _ = _fence_verdict(primary, apply_range, facts)
-        if ok:
-            records.append((index, filepath, apply_range))
+        site = gate.github_apply_range(facts, filepath, line, primary.get("end_line"))
+        verdict = gate.evaluate_fix(primary, apply_range=site.apply_range, facts=facts)
+        if verdict.keep:
+            records.append(
+                gate.OverlapCandidate(
+                    index, filepath, cast(ApplyRange, site.apply_range)
+                )
+            )
     return records
 
 
@@ -878,52 +546,15 @@ def _gitlab_overlap_records(remaining, facts: DiffFacts | None):
         primary = group["primary"]
         if not isinstance(primary, dict) or "suggested_fix_code" not in primary:
             continue
-        apply_range, _offsets, _cap_exceeded = _gitlab_apply_range(
-            primary, primary["line"]
-        )
-        ok, _ = _fence_verdict(primary, apply_range, facts)
-        if ok:
-            records.append((index, filepath, apply_range))
+        site = gate.gitlab_apply_range(primary, primary["line"])
+        verdict = gate.evaluate_fix(primary, apply_range=site.apply_range, facts=facts)
+        if verdict.keep:
+            records.append(
+                gate.OverlapCandidate(
+                    index, filepath, cast(ApplyRange, site.apply_range)
+                )
+            )
     return records
-
-
-def _overlap_losers(records):
-    """Return the set of *record* indexes to DEMOTE.
-
-    *records* is an iterable of ``(index, path_lookup, apply_range)`` —
-    candidates only: every record's ``apply_range`` is a real ``(start, end)``
-    interval, already known to pass the per-finding gate at that range (a
-    fence-less or gate-failing finding is never a record at all — see each
-    poster's candidate predicate — so it can never claim an interval and can
-    never block anyone).
-
-    Pure, total, and mirror-callable. Scans *records* in the given order (each
-    poster's own delivery order) and keeps a running per-path list of claimed
-    intervals: a record whose interval intersects (closed, :func:`_ranges_overlap`)
-    ANY already-kept interval on the SAME ``path_lookup`` is demoted; a demoted
-    record claims nothing, so it can never block a later record either — "loser
-    occupies nothing".
-
-    First-wins is greedy, not maximum-cardinality: given ``A=[1,10]``,
-    ``B=[5,6]``, ``C=[8,20]`` in that order, only ``A`` survives (``B`` and
-    ``C`` both collide with it) even though keeping ``B`` and ``C`` instead
-    would keep two fences rather than one. Priority (delivery order) beats
-    count, deliberately — record order is the poster's GROUP order (each
-    group positioned at its first member's array index, per
-    ``consolidate_delivery``), so a group's fence inherits its best-ranked
-    member's priority, not necessarily its primary's own rank, and demoting
-    the first group to keep more lower-priority fences would still be the
-    wrong trade.
-    """
-    losers = set()
-    kept_by_path = {}
-    for index, path_lookup, apply_range in records:
-        kept = kept_by_path.setdefault(path_lookup, [])
-        if any(_ranges_overlap(apply_range, k) for k in kept):
-            losers.add(index)
-        else:
-            kept.append(apply_range)
-    return losers
 
 
 def _print_fix_summary():
@@ -983,7 +614,7 @@ def _finding_sections(finding, *, fence_offsets=None):
     raw_title = finding.get("title")
     title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
     body = prepare_prose(finding.get("body", ""))
-    suggested_fix = _fix_code_text(finding.get("suggested_fix_code"))
+    suggested_fix = gate.fix_code_text(finding.get("suggested_fix_code"))
 
     parts = [f"**{emoji} [{severity.upper()}] {title or 'Finding'}**", "", body]
 
@@ -1524,7 +1155,7 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
     # own docstring — this poster and the benchmark mirror both call it rather
     # than each keeping their own copy.
     overlap_records = _github_overlap_records(groups, facts)
-    losers = _overlap_losers(overlap_records)
+    losers = gate.overlap_losers(overlap_records)
 
     comments = []
     skipped_groups = []  # one list of (filepath, line, finding) per degraded group
@@ -1575,12 +1206,13 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
         # finding, not just this one) with a 422 "Line could not be resolved" if
         # end_line falls outside every hunk, even though `line` alone was valid.
         end_line = primary.get("end_line")
-        multiline, apply_range = _github_apply_range(facts, filepath, line, end_line)
+        site = gate.github_apply_range(facts, filepath, line, end_line)
+        multiline, apply_range = site.multiline, site.apply_range
         gated = _gated_finding(
             primary,
             apply_range,
             facts,
-            demote_reason=(_FIX_OVERLAPS_KEPT_FENCE if index in losers else None),
+            demote_reason=("overlaps_kept_fence" if index in losers else None),
         )
         composed = compose_inline_body(
             _render_group_sections(gated, corroborators),
@@ -1722,7 +1354,12 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
                 f"rejected. Check that the MR has a version carrying all three SHAs."
             )
 
-    def body_factory(finding, corroborators=(), *, demote_reason=None):
+    def body_factory(
+        finding: Any,
+        corroborators: Any = (),
+        *,
+        demote_reason: FixReason | None = None,
+    ) -> Callable[[Any], Any]:
         """Return the body renderer ``deliver`` calls with the anchor it posts at.
 
         A GitLab position is always single-line; the ```suggestion:-m+n header is
@@ -1736,7 +1373,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         the pre-pass below and threaded here rather than recomputed per anchor.
         """
 
-        def make_body(anchor):
+        def make_body(anchor: Any) -> Any:
             gated, offsets = _gitlab_anchored(
                 finding, anchor, facts, demote_reason=demote_reason
             )
@@ -1799,11 +1436,11 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
     # range per path, never a loser's (the `if index not in losers:` guard
     # below is load-bearing: a loser's own range must never occupy anything).
     overlap_records = _gitlab_overlap_records(remaining, facts)
-    losers = _overlap_losers(overlap_records)
+    losers = gate.overlap_losers(overlap_records)
     kept_intervals: dict[Any, list[Any]] = {}
-    for index, filepath, apply_range in overlap_records:
-        if index not in losers:
-            kept_intervals.setdefault(filepath, []).append(apply_range)
+    for record in overlap_records:
+        if record.index not in losers:
+            kept_intervals.setdefault(record.path_lookup, []).append(record.apply_range)
 
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
@@ -2022,7 +1659,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
             return None
         return filepath, line
 
-    def deliver_corroborator(c):
+    def deliver_corroborator(c: Any) -> Any:
         """Fall back to a corroborator's OWN individual discussion.
 
         Reached when the group's discussion is lost late (malformed primary
@@ -2060,14 +1697,14 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
                 f"— line not found in diff."
             )
             return "invalid"
-        demote_reason = None
+        demote_reason: FixReason | None = None
         if "suggested_fix_code" in c:
-            apply_range, _offsets, _cap_exceeded = _gitlab_apply_range(c, line)
+            site = gate.gitlab_apply_range(c, line)
             if any(
-                _ranges_overlap(apply_range, kept)
+                gate.ranges_overlap(cast(ApplyRange, site.apply_range), kept)
                 for kept in kept_intervals.get(filepath, ())
             ):
-                demote_reason = _FIX_OVERLAPS_KEPT_FENCE
+                demote_reason = "overlaps_kept_fence"
         return deliver(
             c,
             filepath,
@@ -2088,7 +1725,9 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         # Decided once by the pure pre-pass above — independent of
         # everything below (prior-delivery state, live-POST outcomes), so a
         # rerun always reaches the same verdict for this same index.
-        demote_reason = _FIX_OVERLAPS_KEPT_FENCE if index in losers else None
+        demote_reason: FixReason | None = (
+            "overlaps_kept_fence" if index in losers else None
+        )
         primary_key = member_key(f, filepath, f["line"])
         # Every member gets a key — even one with no anchor of its own, which can
         # only ever be delivered by its group's body (see member_key_for). Without

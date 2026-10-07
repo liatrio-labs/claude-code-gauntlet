@@ -39,6 +39,7 @@ import gauntlet.delivery.post as post_review
 import pytest
 from gauntlet import diff as diff_api
 from gauntlet import proc
+from gauntlet.delivery import gate
 from gauntlet.forge import (
     JsonFetch,
     ReviewTarget,
@@ -245,9 +246,8 @@ def _github_comment(
     line = f["line"]
     filepath = diff_api.diff_path_spelling(facts, f["file"], line)
     end_line = f.get("end_line")
-    multiline, apply_range = post_review._github_apply_range(
-        facts, filepath, line, end_line
-    )
+    site = gate.github_apply_range(facts, filepath, line, end_line)
+    multiline, apply_range = site.multiline, site.apply_range
     gated = post_review._gated_finding(
         f,
         apply_range,
@@ -300,7 +300,7 @@ def _github_overlap_losers(findings, facts):
     This mirror has no consolidation: singleton groups retain finding order."""
     groups = [{"primary": f, "corroborators": []} for f in findings]
     records = post_review._github_overlap_records(groups, facts)
-    return post_review._overlap_losers(records)
+    return gate.overlap_losers(records)
 
 
 def build_reference_github_payload(
@@ -330,9 +330,7 @@ def build_reference_github_payload(
             _github_comment(
                 f,
                 facts,
-                demote_reason=(
-                    post_review._FIX_OVERLAPS_KEPT_FENCE if index in losers else None
-                ),
+                demote_reason=("overlaps_kept_fence" if index in losers else None),
             )
         )
     total = len(findings) + len(skip_warnings)
@@ -423,7 +421,7 @@ def _gitlab_overlap_losers(remaining, facts):
         for f in remaining
     ]
     records = post_review._gitlab_overlap_records(pairs, facts)
-    return post_review._overlap_losers(records)
+    return gate.overlap_losers(records)
 
 
 def build_reference_gitlab_payload(
@@ -471,11 +469,7 @@ def build_reference_gitlab_payload(
                     f,
                     facts=facts,
                     sha=sha,
-                    demote_reason=(
-                        post_review._FIX_OVERLAPS_KEPT_FENCE
-                        if index in losers
-                        else None
-                    ),
+                    demote_reason=("overlaps_kept_fence" if index in losers else None),
                 ),
             ),
             forge=FakeGitLab(),
