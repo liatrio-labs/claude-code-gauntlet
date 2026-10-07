@@ -669,7 +669,7 @@ def test_normalize_path_boundaries_and_shell_quotes(tmp_path, suffix):
     root = tmp_path / f"checkout{suffix}"
     data = f"python3 '{root}/scripts/await_workflow.py' {root}x".encode()
     assert normalize(data, tmp_path, root) == (
-        f"python3 <ROOT>/scripts/await_workflow.py <TMP>{os.sep}checkout{suffix}x"
+        f"python3 <ROOT>/scripts/await_workflow.py <TMP>/checkout{suffix}x"
     )
 
 
