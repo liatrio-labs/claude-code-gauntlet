@@ -51,7 +51,8 @@ __all__ = [
     "summary_body_from_report",
 ]
 
-# Brand each delivered surface once, after all of its elements.
+# One mark per delivered surface: inline bodies end with the trailer, the
+# summary opens with the header, and skipped entries inside it are unbranded.
 BRAND_TRAILER = f"{registry.BRAND_MARK} *{registry.BRAND_NAME}*"
 BRAND_SUMMARY_HEADER = f"### {registry.BRAND_MARK} {registry.BRAND_NAME}"
 

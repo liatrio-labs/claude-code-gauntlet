@@ -6416,20 +6416,6 @@ def test_reset_run_state__main_still_resets_stale_state_from_a_prior_call(
         ),
         pytest.param(
             [
-                ("direct", {"suggested_fix_code": ""}, {"warn_label": "report-patch"}),
-                ("direct", {"suggested_fix_code": ""}, {}),
-            ],
-            [(False, None, None), (False, None, None)],
-            {"kept": 0, "downgraded": 2},
-            {"empty": 2},
-            [
-                "report-patch downgraded: foo.py:2 (empty)",
-                "suggested-fix downgraded: foo.py:2 (empty)",
-            ],
-            id="per-call-label",
-        ),
-        pytest.param(
-            [
                 ("direct", {"suggested_fix_code": ""}, {}),
                 ("direct", {"suggested_fix_code": "   "}, {}),
                 ("direct", {"end_line": None}, {}),

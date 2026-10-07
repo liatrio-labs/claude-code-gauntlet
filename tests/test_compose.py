@@ -498,6 +498,39 @@ KEY_PINS_CASES = {
         "**\U0001f7e0 [HIGH] Unchecked index**\n\nThe loop reads one past the end.",
         "c6dbc10300a69daf",
     ),
+    "severity-uppercase": (
+        {
+            "file": "src/alpha.py",
+            "line": 10,
+            "title": "Unchecked index",
+            "body": "The loop reads one past the end.",
+            "severity": "HIGH",
+        },
+        "**\U0001f7e0 [HIGH] Unchecked index**\n\nThe loop reads one past the end.",
+        "c6dbc10300a69daf",
+    ),
+    "severity-capitalized": (
+        {
+            "file": "src/alpha.py",
+            "line": 10,
+            "title": "Unchecked index",
+            "body": "The loop reads one past the end.",
+            "severity": "High",
+        },
+        "**\U0001f7e0 [HIGH] Unchecked index**\n\nThe loop reads one past the end.",
+        "c6dbc10300a69daf",
+    ),
+    "severity-padded": (
+        {
+            "file": "src/alpha.py",
+            "line": 10,
+            "title": "Unchecked index",
+            "body": "The loop reads one past the end.",
+            "severity": " high ",
+        },
+        "**\U0001f7e0 [HIGH] Unchecked index**\n\nThe loop reads one past the end.",
+        "c6dbc10300a69daf",
+    ),
     "rule-and-suggestion": (
         {
             "file": "src/beta.py",
@@ -543,15 +576,15 @@ def test_key_pins(finding, expected_body, expected_key, monkeypatch):
         original = {**finding, **values}
         before = copy.deepcopy(original)
         assert compose.key_material_body(original) == expected_body
-        assert (
-            compose.finding_key(
-                original["file"],
-                original["line"],
-                original.get("title", ""),
-                expected_body,
-            )
-            == expected_key
+        key = compose.finding_key(
+            original["file"],
+            original["line"],
+            original.get("title", ""),
+            expected_body,
         )
+        assert key == expected_key
+        if original.get("severity") == " high ":
+            assert key != "0efe6aad835352cb"
         assert original == before
 
 

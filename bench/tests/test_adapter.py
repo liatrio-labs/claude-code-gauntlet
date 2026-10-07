@@ -101,7 +101,7 @@ _GL_START = "57a27000000000000000000000000000000057a2"
 # Four findings become inline comments; the second is multi-line (end_line set)
 # so the emitted comment carries start_line and its ``line`` is the *end* line.
 # The fourth carries suggested_fix_code but NO end_line at all — the apply-check
-# (`_suggested_fix_gate`) fails this closed on `missing_end_line` before it ever
+# (`gate.evaluate_fix`) fails this closed on `missing_end_line` before it ever
 # reaches the diff oracle, so `_gated_finding` strips the field and the rendered
 # comment falls back to the finding's prose `suggestion`. This is the mutation
 # target for the `_gated_finding` routing in `_github_comment` below: revert

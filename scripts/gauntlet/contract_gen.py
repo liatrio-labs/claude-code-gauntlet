@@ -157,10 +157,7 @@ def _python_imported_script_paths(source, repo_root):
 
 def _python_import_closure(repo_root):
     """Return the generator and every local Python module in its import closure."""
-    pending = [
-        "scripts/gauntlet/contract_gen.py",
-        "scripts/gauntlet/delivery/compose.py",
-    ]
+    pending = ["scripts/gauntlet/contract_gen.py"]
     seen = set()
     while pending:
         rel_path = pending.pop()

@@ -34,7 +34,7 @@ Input JSON schema:
                 "suggested_fix_code": "..."  # optional — the ```suggestion fence: a COMMITTABLE patch
                                              #            replacing exactly lines [line, end_line]. Rendered
                                              #            only when the deterministic apply-check passes
-                                             #            (see _suggested_fix_gate); a failing patch is
+                                             #            (see gate.evaluate_fix); a failing patch is
                                              #            downgraded to the prose `suggestion` and the
                                              #            reason recorded. Secret-redacted; outer fence
                                              #            lengthened; payload otherwise byte-exact
@@ -100,7 +100,7 @@ from gauntlet.delivery.fold import (
     body_limit,
     utf8_len,
 )
-from gauntlet.delivery.gate import ApplyRange, FenceOffsets, FixReason
+from gauntlet.delivery.gate import ApplyRange, FenceOffsets, FixReason, is_plain_int
 from gauntlet.diff import DiffFacts
 from gauntlet.forge import (
     Forge,
@@ -196,13 +196,6 @@ def fetch_diff_facts(target: ReviewTarget, *, forge: Forge) -> DiffFacts | None:
     return diff.parse_diff(stdout, policy=diff.posting_policy(forge.platform))
 
 
-def _is_plain_int(value):
-    """True only for a real ``int`` — ``True`` and ``2.0`` both hash equal to the
-    integer key, so they survive every dict lookup and equality check; type is the
-    only thing that separates them from the integer they impersonate."""
-    return isinstance(value, int) and not isinstance(value, bool)
-
-
 def validate_position(position, shas, facts: DiffFacts | None, filepath, line):
     """Return the reasons *position* is malformed for GitLab; empty when it is sound.
 
@@ -256,7 +249,7 @@ def validate_position(position, shas, facts: DiffFacts | None, filepath, line):
     # A bool or a float line number passes line validation AND the equality check
     # below, reaching the wire in its own spelling.
     new_line = position.get("new_line")
-    if "new_line" in position and not _is_plain_int(new_line):
+    if "new_line" in position and not is_plain_int(new_line):
         problems.append(f"new_line must be an integer, got {new_line!r}")
 
     for key in sorted(set(expected) - set(position)):
@@ -289,21 +282,16 @@ def validate_position(position, shas, facts: DiffFacts | None, filepath, line):
 # _CAPTURED and _SKIP_WARNINGS. n/(n+m) over these two is the acceptance rate,
 # deterministic and readable from any run's stdout at no cost.
 _FIX_COUNTS = {"kept": 0, "downgraded": 0}
-# Per-reason downgrade tally, reset alongside _FIX_COUNTS. Delivery's own
-# stdout readout (_print_fix_summary) does not consult this — it exists for a
-# second gate caller (gauntlet.patches, the report-side apply-check)
-# that renders a reason breakdown from it.
+# Per-reason downgrade tally, reset alongside _FIX_COUNTS. Delivery is the only
+# caller of _gated_finding.
 _FIX_REASON_COUNTS: dict[FixReason, int] = {}
 
 
 def reset_run_state():
     """Clear every module-level counter/log a run accumulates.
 
-    One entry point for both gate callers: main() (delivery) calls this in
-    place of its old inline three-statement reset, and gauntlet.patches
-    (the report-side apply-check, which never calls main()) calls it too —
-    so a second caller of _gated_finding cannot start from state a prior
-    caller in the same process left behind.
+    Delivery is the only caller of _gated_finding, and main() calls this before
+    each run so prior delivery state cannot leak into it.
     """
     _CAPTURED.clear()
     _SKIP_WARNINGS.clear()
@@ -317,7 +305,6 @@ def _gated_finding(
     facts: DiffFacts | None,
     *,
     mismatch_reason: FixReason = "anchor_mismatch",
-    warn_label: str = "suggested-fix",
     demote_reason: FixReason | None = None,
 ) -> Any:
     # Corroborations carry no fence and must not count as render-site verdicts.
@@ -336,7 +323,7 @@ def _gated_finding(
     reason = cast(FixReason, verdict.reason)
     _FIX_COUNTS["downgraded"] += 1
     _FIX_REASON_COUNTS[reason] = _FIX_REASON_COUNTS.get(reason, 0) + 1
-    warn_skip(gate.format_fix_warning(finding, reason, label=warn_label))
+    warn_skip(gate.format_fix_warning(finding, reason, label="suggested-fix"))
     # Strip only on a shallow copy, preserving unknown caller fields.
     stripped = dict(finding)
     del stripped["suggested_fix_code"]
@@ -417,8 +404,8 @@ def _github_overlap_records(groups, facts: DiffFacts | None):
     the same index post_github's render loop later checks with
     ``index in losers``. A candidate is a group whose primary carries
     ``suggested_fix_code``, anchors on a line the diff has, and whose fence
-    passes the SAME pure gate (:func:`_fence_verdict`) at the SAME apply
-    range (:func:`_github_apply_range`) the render loop itself will apply —
+    passes the SAME pure gate (:func:`gate.evaluate_fix`) at the SAME apply
+    range (:func:`gate.github_apply_range`) the render loop itself will apply —
     "candidate" and "would render a kept fence" are one computation, not two
     that could disagree. Called by post_github's pre-pass and by the
     benchmark's payload mirror — never duplicated.
@@ -680,7 +667,7 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
         # the assembly below consumes these same locals — the decision moved, it is
         # not duplicated. The apply-check has to see the range the comment will
         # REALLY apply at, and that range is only known once this has run.
-        # `_github_apply_range` is the one function that makes it, so
+        # `gate.github_apply_range` is the one function that makes it, so
         # this loop, the overlap pre-pass above, and the benchmark's payload
         # mirror all call it rather than each computing their own copy.
         #

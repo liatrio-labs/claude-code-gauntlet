@@ -101,6 +101,12 @@ def test_shared_context_unexpected_failure_emits_receipt(monkeypatch, capsys, tm
     assert capsys.readouterr().out == '{"error": "unexpected RuntimeError: probe"}\n'
 
 
+def test_command_receipt_succeeds_when_stdout_is_none(monkeypatch):
+    monkeypatch.setattr(sys, "stdout", None)
+    command = Command(parser=Parser(prog="silent"), main=lambda _: ({"ok": True}, 37))
+    assert command.invoke([]) == 37
+
+
 @pytest.mark.parametrize(
     ("fallback", "expected"),
     [

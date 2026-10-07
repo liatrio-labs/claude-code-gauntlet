@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, cast
+from typing import Final, Literal, TypeGuard, cast
 
 from gauntlet import diff, registry
 from gauntlet.diff import DiffFacts
@@ -21,6 +21,7 @@ __all__ = [
     "format_fix_warning",
     "github_apply_range",
     "gitlab_apply_range",
+    "is_plain_int",
     "overlap_losers",
     "ranges_overlap",
 ]
@@ -48,6 +49,13 @@ FixReason = Literal[
 # GitLab silently clamps larger offsets, so emitting one would apply another range.
 # Suggestible::MAX_LINES_CONTEXT is independent of the fence payload bounds.
 GITLAB_SUGGESTION_OFFSET_CAP: Final[int] = 100
+
+
+def is_plain_int(value: object) -> TypeGuard[int]:
+    """True only for a real ``int`` — ``True`` and ``2.0`` both hash equal to the
+    integer key, so they survive every dict lookup and equality check; type is the
+    only thing that separates them from the integer they impersonate."""
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,10 +136,8 @@ def _check_fix(
         # replacement lands on a single-line anchor and corrupts the file.
         return "missing_end_line"
     if (
-        not isinstance(line, int)
-        or isinstance(line, bool)
-        or not isinstance(end_line, int)
-        or isinstance(end_line, bool)
+        not is_plain_int(line)
+        or not is_plain_int(end_line)
         or line < 1
         or end_line < line
     ):
@@ -152,7 +158,7 @@ def _check_fix(
         # A span needs one exact spelling even when membership resolves per line.
         return "no_diff_oracle"
     # A trailing CR is transport (a CRLF diff carries one on every line), not
-    # content, and `_fix_code_text` already took the replacement's terminating
+    # content, and `fix_code_text` already took the replacement's terminating
     # newline off — so neither side's line terminators decide this. An EDGE
     # BLANK LINE survives that normalization and is compared as content: a
     # patch that only adds one is a change, not a no-op.
@@ -183,12 +189,14 @@ def evaluate_fix(
     demote_reason: FixReason | None = None,
 ) -> FixVerdict:
     evaluated = None
-    if apply_range is not None and all(
-        isinstance(v, int) and not isinstance(v, bool) for v in apply_range
-    ):
+    if apply_range is not None and all(is_plain_int(v) for v in apply_range):
         evaluated = cast(ApplyRange, apply_range)
     if "suggested_fix_code" not in finding:
         return FixVerdict(True, None, evaluated)
+    # Resolve at the finding's own line, never the render site's anchor, so the
+    # overlap pre-pass and render site reach the same decision.
+    # A None apply_range marks a site where no fence can apply, such as a
+    # position-less note or a degraded body section.
     path_lookup = diff.diff_path_spelling(
         facts,
         cast(str, finding.get("file", "?")),
@@ -227,14 +235,7 @@ def github_apply_range(
 
 def gitlab_apply_range(finding: Mapping[str, object], anchor: object) -> ApplySite:
     line, end_line = finding.get("line"), finding.get("end_line")
-    if (
-        not isinstance(anchor, int)
-        or isinstance(anchor, bool)
-        or not isinstance(line, int)
-        or isinstance(line, bool)
-        or not isinstance(end_line, int)
-        or isinstance(end_line, bool)
-    ):
+    if not is_plain_int(anchor) or not is_plain_int(line) or not is_plain_int(end_line):
         return ApplySite((anchor, anchor))
     above, below = anchor - line, end_line - anchor
     # Offsets extend outward from the anchor, so an outside anchor cannot realize a range.

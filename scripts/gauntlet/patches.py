@@ -109,11 +109,8 @@ def _render(
     oracle_state: OracleState,
     sha: str,
     *,
-    kept_count: int,
-    downgraded: int,
     reasons: Mapping[FixReason, int],
 ) -> str:
-    # Verdict counters, rather than rendered sections, own the disclosed totals.
     parts: list[str] = []
 
     def emit(text: str, *, raw: bool = False) -> None:
@@ -122,7 +119,7 @@ def _render(
 
     emit(f"# Apply-checked patches (against {sha})")
     emit(
-        f"{kept_count} of {candidates} suggested patch(es) passed the read-only "
+        f"{len(kept)} of {candidates} suggested patch(es) passed the read-only "
         f"apply-check against the pinned review diff "
         f"(`code-gauntlet-diff-{sha}.patch`, captured at Phase 2, not the current "
         "working tree or branch). Platform render-site constraints are not applied "
@@ -131,6 +128,7 @@ def _render(
         "patch kept here may still be downgraded or withheld at delivery. This covers "
         "high-confidence findings only; unverified findings carry no patch here."
     )
+    downgraded = sum(reasons.values())
     if downgraded > 0:
         tally = sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))
         tally_str = ", ".join(f"{reason} ({n})" for reason, n in tally)
@@ -266,8 +264,6 @@ def _execute(args: argparse.Namespace) -> tuple[PatchReceipt, int]:
             receipt["filtered_earlier"],
             oracle_state,
             args.head_sha,
-            kept_count=receipt["kept"],
-            downgraded=receipt["downgraded"],
             reasons=receipt["reasons"],
         )
         write_atomic(out_path, content)

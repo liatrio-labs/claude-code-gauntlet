@@ -285,12 +285,7 @@ def test_render(case, monkeypatch):
     finding, seam, document = RENDER_CASES[case]
     if seam is not None:
         monkeypatch.setattr(patches, "fence_run", lambda _: seam)
-    assert (
-        patches._render(
-            [finding], 1, 0, "ok", "abc1234", kept_count=1, downgraded=0, reasons={}
-        )
-        == document
-    )
+    assert patches._render([finding], 1, 0, "ok", "abc1234", reasons={}) == document
 
 
 FAILURE_CASES = {

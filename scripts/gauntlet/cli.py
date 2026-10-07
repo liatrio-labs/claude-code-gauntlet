@@ -33,6 +33,11 @@ def utf8_stdio() -> None:
         sys.stdin.reconfigure(encoding="utf-8", errors="surrogateescape")
 
 
+def _write_line(line: str) -> None:
+    if sys.stdout is not None:
+        sys.stdout.write(line)
+
+
 class CliError(Exception):
     def __init__(self, message: str, code: int = 1) -> None:
         super().__init__(" ".join(message.splitlines()))
@@ -109,7 +114,7 @@ class Command:
         receipt, code = outcome
         try:
             # A separate LF write can fail after the receipt has already escaped.
-            sys.stdout.write(
+            _write_line(
                 dumps(
                     receipt, ascii=self.ascii, compact=self.compact, indent=self.indent
                 )
@@ -122,6 +127,6 @@ class Command:
                     line = dumps(self.fallback_receipt(exc), ascii=True)
             except Exception:  # noqa: BLE001 - constant is the final receipt
                 pass
-            sys.stdout.write(line + "\n")
+            _write_line(line + "\n")
             return self.fallback_code
         return code

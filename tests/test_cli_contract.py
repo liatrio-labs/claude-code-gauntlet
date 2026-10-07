@@ -31,6 +31,10 @@ SHA = "abc1234"
 FULL = "a" * 40
 
 
+def _scenario_param(case, *values):
+    return pytest.param(case, *values, id=case)
+
+
 @pytest.mark.usefixtures("poster_state")
 @pytest.mark.parametrize(
     "mode, flag, dry_run",
@@ -978,32 +982,29 @@ def test_patch_serialization_fallback(
 @pytest.mark.parametrize(
     "case, findings, sha, code, stdout, stderr",
     [
-        pytest.param(
+        _scenario_param(
             "downgrade",
             '[{"file":"x.py","line":1,"end_line":1,"suggested_fix_code":"changed"}]',
             "abc1234",
             0,
             '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: x.py:1 (no_diff_oracle)"], "errors": []}\n',
             "report_patches: report-patch downgraded: x.py:1 (no_diff_oracle)\n",
-            id="downgrade",
         ),
-        pytest.param(
+        _scenario_param(
             "invalid-sha",
             "[]",
             "bad/sha",
             2,
             "",
             "report_patches: --head-sha must match '^[A-Za-z0-9._-]+$': 'bad/sha'\n",
-            id="invalid-sha",
         ),
-        pytest.param(
+        _scenario_param(
             "usage",
             "[]",
             "abc1234",
             2,
             "",
             "report_patches: the following arguments are required: --output-dir, --head-sha\n",
-            id="usage",
         ),
         pytest.param(
             "failure",
@@ -1023,14 +1024,13 @@ def test_patch_serialization_fallback(
             "",
             id="outside-receipt-boundary",
         ),
-        pytest.param(
+        _scenario_param(
             "postload-progress",
             '[{"file":"x.py","line":1,"end_line":1,"suggested_fix_code":"changed"},{"suggested_fix_code_removed_by":"filter"},null]',
             "abc1234",
             1,
             '{"ok": false, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "ok", "candidates": 0, "kept": 0, "downgraded": 0, "reasons": {}, "filtered_earlier": 0, "findings": 3, "warnings": [], "errors": ["ValueError: oversized hunk"]}\n',
             "",
-            id="postload-progress",
         ),
         pytest.param(
             "before-receipt",
@@ -1041,14 +1041,13 @@ def test_patch_serialization_fallback(
             "",
             id="preload-unexpected",
         ),
-        pytest.param(
+        _scenario_param(
             "warning-breaks",
             '[{"file":"x.py\\r\\nspoof","line":1,"end_line":1,"suggested_fix_code":"changed"}]',
             "abc1234",
             0,
             '{"ok": true, "path": "<TMP>/code-gauntlet-patches-abc1234.md", "oracle": "missing", "candidates": 1, "kept": 0, "downgraded": 1, "reasons": {"no_diff_oracle": 1}, "filtered_earlier": 0, "findings": 1, "warnings": ["report-patch downgraded: x.py\\r\\nspoof:1 (no_diff_oracle)"], "errors": []}\n',
             "report_patches: report-patch downgraded: x.py spoof:1 (no_diff_oracle)\n",
-            id="warning-breaks",
         ),
     ],
 )
