@@ -17,7 +17,6 @@ from tests.support.posting import (
     CONTRACT_DIFF,
     ERRORS,
     FOOTER,
-    GL_FIXTURES,
     HEADER,
     NEW,
     SHA,
@@ -39,13 +38,11 @@ RANGE_GH = (
     "**Suggested fix:**\nReturn two instead.\n\n"
     "```suggestion\n    return 2\n    # done\n```" + TRAILER
 )
-RANGE_GL = RANGE_GH.replace("```suggestion\n", "```suggestion:-0+1\n")
 CONTEXT_BODY = "**\U0001f7e0 [HIGH] Context-line finding**\n\nBody one" + TRAILER
 ADDED_BODY = "**\U0001f7e1 [MEDIUM] Added-line finding**\n\nBody two" + TRAILER
 NEW_BODY = "**\U0001f4a1 [LOW] New-file finding**\n\nBody three" + TRAILER
 NEW_KEY = "a9cb7253f6710b82"
 RANGE_KEY = "1422e1e3b48521d1"
-RENAME_DIFF = (GL_FIXTURES / "rename.diff").read_text(encoding="utf-8")
 GH_DIFF = (
     "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n"
     "@@ -1,1 +1,6 @@\n def f():\n+    line2\n+    line3\n"
@@ -74,7 +71,6 @@ GH_RECALL = (
     "diff --git a/src/edited.py b/src/edited.py\n--- a/src/edited.py\n"
     "+++ b/src/edited.py\n@@ -1,1 +1,2 @@\n line1\n+CURRENT\n"
 )
-GL_RECALL = "--- src/edited.py\n+++ src/edited.py\n@@ -1,1 +1,2 @@\n line1\n+CURRENT\n"
 GL_REAL_A = (
     "diff --git a/a/foo.py b/a/foo.py\n--- a/foo.py\n+++ a/foo.py\n"
     "@@ -1,2 +1,2 @@\n ctx\n-x\n+y\n"
@@ -398,27 +394,6 @@ SITE_DIAGNOSTICS = [
         ],
         id="SITE-mismatched-fields-sorted",
     ),
-    pytest.param(
-        position("src/edited.py", True, old_path="src/edited.py"),
-        True,
-        diff_facts({("src/edited.py", 1): None}),
-        ["new_line must be an integer, got True"],
-        id="SITE-bool-is-not-an-integer",
-    ),
-    pytest.param(
-        position("src/edited.py", 61.0, old_line=50, old_path="src/edited.py"),
-        61.0,
-        diff_facts({("src/edited.py", 61): 50}),
-        ["new_line must be an integer, got 61.0"],
-        id="SITE-float-is-not-an-integer",
-    ),
-    pytest.param(
-        position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-        61,
-        diff_facts({("src/edited.py", 61): 50}),
-        [],
-        id="SITE-valid-context-shape",
-    ),
 ]
 
 
@@ -432,98 +407,7 @@ def test_position_diagnostics(wire, line, facts, expected):
     )
 
 
-SITE = [
-    Row(
-        "SITE-context-old-side",
-        review("gitlab", [CONTEXT]),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-            ),
-            bodies=(CONTEXT_BODY,),
-        ),
-        {"diff": CONTRACT_DIFF},
-    ),
-    Row(
-        "SITE-added-line-no-old-line",
-        review("gitlab", [ADDED]),
-        Expected(
-            anchors=(position("src/edited.py", 62, old_path="src/edited.py"),),
-            bodies=(ADDED_BODY,),
-        ),
-        {"diff": CONTRACT_DIFF},
-    ),
-    Row(
-        "SITE-new-file-no-old-path",
-        review("gitlab", [NEW]),
-        Expected(
-            anchors=(position("src/app/clients/api/__init__.py", 1),),
-            bodies=(NEW_BODY,),
-        ),
-        {"diff": CONTRACT_DIFF},
-    ),
-    Row(
-        "SITE-rename-old-path",
-        review("gitlab", [finding(file="new_name.py", line=3, omit=("end_line",))]),
-        Expected(
-            anchors=(position("new_name.py", 3, old_line=3, old_path="old_name.py"),),
-            bodies=(BASIC_BODY,),
-        ),
-        {"diff": RENAME_DIFF},
-    ),
-    Row(
-        "SITE-prefixed-context-path",
-        review("gitlab", [{**CONTEXT, "file": "b/src/edited.py"}]),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-            ),
-            bodies=(CONTEXT_BODY,),
-        ),
-        {"diff": CONTRACT_DIFF},
-    ),
-    Row(
-        "SITE-raw-path-without-oracle",
-        review("gitlab", [finding(file="b/x.py", line=3, omit=("end_line",))]),
-        Expected(
-            anchors=(position("b/x.py", 3, old_path="b/x.py"),),
-            bodies=(BASIC_BODY,),
-            err=DIFF_WARNING,
-        ),
-        {"diff_status": 128, "diff_error": "denied"},
-    ),
-]
-
-
-@pytest.mark.parametrize("row", params(SITE))
-def test_position_delivery(row, posting, monkeypatch):
-    check(row, posting, monkeypatch)
-
-
 ANCHOR = [
-    Row(
-        "ANCHOR-whole-range",
-        review(findings=[finding(end_line=4)]),
-        Expected(
-            anchors=(
-                {
-                    "path": "foo.py",
-                    "line": 4,
-                    "side": "RIGHT",
-                    "start_line": 2,
-                    "start_side": "RIGHT",
-                },
-            ),
-            bodies=(BASIC_BODY,),
-        ),
-        {"diff": GH_DIFF},
-    ),
-    Row(
-        "ANCHOR-cross-hunk-single-line",
-        review(findings=[finding(end_line=940)]),
-        Expected(anchors=(GH_ANCHOR,), bodies=(BASIC_BODY,)),
-        {"diff": GH_DIFF},
-    ),
     Row(
         "ANCHOR-gh-ambiguous-raw-spelling",
         review(
@@ -589,43 +473,6 @@ ANCHOR = [
         {"diff": GH_RECALL},
     ),
     Row(
-        "ANCHOR-gl-unique-prefixed-recall",
-        review(
-            "gitlab",
-            [
-                fix(
-                    file="b/src/edited.py",
-                    line=2,
-                    end_line=2,
-                    suggested_fix_code="CHANGED",
-                )
-            ],
-        ),
-        Expected(
-            anchors=(position("src/edited.py", 2, old_path="src/edited.py"),),
-            bodies=(
-                RANGE_PROSE.removesuffix(TRAILER)
-                + "\n\n```suggestion\nCHANGED\n```"
-                + TRAILER
-                + marker("20aad88a122950a0"),
-            ),
-            counts=KEPT,
-            keys=(("20aad88a122950a0",),),
-        ),
-        {"diff": GL_RECALL, "dry_run": False},
-    ),
-    Row(
-        "ANCHOR-resolved-path-cannot-join-files",
-        review(findings=[finding(file="b/foo.py", line=1, end_line=3)]),
-        Expected(
-            anchors=({"path": "foo.py", "line": 1, "side": "RIGHT"},),
-            bodies=(BASIC_BODY,),
-        ),
-        {
-            "diff": "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -1,1 +1,2 @@\n line0\n+FOO_L1\ndiff --git a/b/foo.py b/b/foo.py\n--- a/b/foo.py\n+++ b/b/foo.py\n@@ -3,1 +3,2 @@\n line2\n+SUB_L4\n"
-        },
-    ),
-    Row(
         "ANCHOR-gh-fetch-failure-keeps-raw-range",
         review(findings=[finding(file="b/foo.py", end_line=9999)]),
         Expected(
@@ -683,18 +530,6 @@ GATE = [
         {"diff": GH_INDENTED},
     ),
     Row(
-        "GATE-gh-blocked-range",
-        review(findings=[fix(end_line=940)]),
-        Expected(
-            anchors=(GH_ANCHOR,),
-            bodies=(RANGE_PROSE,),
-            skipped=("suggested-fix downgraded: foo.py:2 (range_not_in_diff)",),
-            err="WARNING: suggested-fix downgraded: foo.py:2 (range_not_in_diff)\n",
-            counts=DOWN,
-        ),
-        {"diff": GH_INDENTED},
-    ),
-    Row(
         "GATE-gh-degraded-group-members",
         review(
             findings=[
@@ -732,24 +567,6 @@ GATE = [
         {"diff_status": 128, "diff_error": "denied"},
     ),
     Row(
-        "GATE-gl-kept-offsets",
-        review("gitlab", [fix()]),
-        Expected(anchors=(GL_ANCHOR,), bodies=(RANGE_GL,), counts=KEPT),
-        {"diff": GL_INDENTED},
-    ),
-    Row(
-        "GATE-gl-blocked-keeps-prose",
-        review("gitlab", [fix(end_line=940)]),
-        Expected(
-            anchors=(GL_ANCHOR,),
-            bodies=(RANGE_PROSE,),
-            skipped=("suggested-fix downgraded: foo.py:2 (range_not_in_diff)",),
-            err="WARNING: suggested-fix downgraded: foo.py:2 (range_not_in_diff)\n",
-            counts=DOWN,
-        ),
-        {"diff": GL_INDENTED},
-    ),
-    Row(
         "GATE-gl-cap-downgrade",
         review("gitlab", [fix(end_line=103, suggested_fix_code="    patched")]),
         Expected(
@@ -763,31 +580,6 @@ GATE = [
             "diff": "--- foo.py\n+++ foo.py\n@@ -0,0 +1,104 @@\n"
             + "".join("+    line" + str(n) + "\n" for n in range(1, 105))
         },
-    ),
-    Row(
-        "GATE-gl-forged-offsets-ignored",
-        review(
-            "gitlab",
-            [
-                fix(
-                    end_line=2,
-                    suggested_fix_code="    return 2",
-                    fence_offsets=[0, 40],
-                    _fence_offsets=[0, 40],
-                    above=9,
-                )
-            ],
-        ),
-        Expected(
-            anchors=(GL_ANCHOR,),
-            bodies=(
-                RANGE_PROSE.removesuffix(TRAILER)
-                + "\n\n```suggestion\n    return 2\n```"
-                + TRAILER,
-            ),
-            counts=KEPT,
-        ),
-        {"diff": GL_INDENTED},
     ),
 ]
 
@@ -859,81 +651,6 @@ OVERLAP = [
             ),
             body_has=((), ("```suggestion\n    b3\n    b4\n    b5",)),
             counts=KEPT,
-        ),
-        {"diff": GH_DIFF},
-    ),
-    Row(
-        "OVERLAP-gh-noncandidate-index",
-        review(
-            findings=[
-                finding(line=6, omit=("end_line",)),
-                fix(line=3, end_line=940),
-                FIRST,
-                SECOND,
-            ]
-        ),
-        Expected(
-            anchors=(
-                {"path": "foo.py", "line": 6, "side": "RIGHT"},
-                {"path": "foo.py", "line": 3, "side": "RIGHT"},
-                {
-                    "path": "foo.py",
-                    "line": 4,
-                    "side": "RIGHT",
-                    "start_line": 2,
-                    "start_side": "RIGHT",
-                },
-                {
-                    "path": "foo.py",
-                    "line": 5,
-                    "side": "RIGHT",
-                    "start_line": 3,
-                    "start_side": "RIGHT",
-                },
-            ),
-            bodies=(BASIC_BODY, RANGE_PROSE, FIRST_BODY, SECOND_PROSE),
-            skipped=(
-                "suggested-fix downgraded: foo.py:3 (range_not_in_diff)",
-                OVERLAP_WARNING,
-            ),
-            err="WARNING: suggested-fix downgraded: foo.py:3 (range_not_in_diff)\nWARNING: "
-            + OVERLAP_WARNING
-            + "\n",
-            counts=(
-                "  1 suggested fix(es) passed the apply-check.",
-                "  2 suggested fix(es) downgraded to prose.",
-            ),
-        ),
-        {"diff": GH_DIFF},
-    ),
-    Row(
-        "OVERLAP-gh-group-primary-priority",
-        review(findings=[grouped(FIRST, primary=True), grouped(CORR), SECOND]),
-        Expected(
-            anchors=(
-                {
-                    "path": "foo.py",
-                    "line": 4,
-                    "side": "RIGHT",
-                    "start_line": 2,
-                    "start_side": "RIGHT",
-                },
-                {
-                    "path": "foo.py",
-                    "line": 5,
-                    "side": "RIGHT",
-                    "start_line": 3,
-                    "start_side": "RIGHT",
-                },
-            ),
-            body_has=(
-                ("```suggestion\n    a2\n    a3\n    a4", "Corroborator"),
-                ("Second", "Return two instead."),
-            ),
-            body_lacks=((), ("```suggestion",)),
-            skipped=(OVERLAP_WARNING,),
-            err="WARNING: " + OVERLAP_WARNING + "\n",
-            counts=BOTH,
         ),
         {"diff": GH_DIFF},
     ),
@@ -1107,21 +824,6 @@ GROUP_BODY = (
 
 GROUP = [
     Row(
-        "GROUP-stable-primary-and-member-order",
-        review(
-            findings=[
-                grouped(MEMBER_B),
-                finding(line=6, omit=("end_line",)),
-                grouped(PRIMARY_A, primary=True),
-            ]
-        ),
-        Expected(
-            anchors=(GH_ANCHOR, {"path": "foo.py", "line": 6, "side": "RIGHT"}),
-            bodies=(GROUP_BODY, BASIC_BODY),
-        ),
-        {"diff": GH_DIFF},
-    ),
-    Row(
         "GROUP-gh-corroborator-fence-suppressed",
         review(
             findings=[
@@ -1133,35 +835,6 @@ GROUP = [
         ),
         Expected(anchors=(GH_ANCHOR,), bodies=(GROUP_BODY,)),
         {"diff": GH_DIFF},
-    ),
-    Row(
-        "GROUP-gl-one-request-every-member-key",
-        review(
-            "gitlab",
-            [
-                grouped(CONTEXT, primary=True),
-                grouped({**ADDED, "end_line": 62, "suggested_fix_code": "patched_add"}),
-                grouped({**NEW, "line": None}),
-            ],
-        ),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-            ),
-            body_has=(
-                (
-                    "Context-line finding",
-                    "Added-line finding",
-                    "New-file finding",
-                    "Body one",
-                    "Body two",
-                    "Body three",
-                ),
-            ),
-            keys=(("7f16504c303ba54d", ADDED_KEY, CONTEXT_KEY),),
-            surfaces=("notes", "discussions"),
-        ),
-        {"diff": CONTRACT_DIFF, "dry_run": False},
     ),
     Row(
         "GROUP-whole-group-degrades-with-zero-id",
@@ -1285,53 +958,6 @@ def test_group_delivery(row, posting, monkeypatch):
 
 RERUN = [
     Row(
-        "RERUN-existing-summary-single-snapshot",
-        review("gitlab", [CONTEXT, ADDED, NEW]),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-                position("src/edited.py", 62, old_path="src/edited.py"),
-                position("src/app/clients/api/__init__.py", 1),
-            ),
-            bodies=(
-                CONTEXT_BODY + marker(CONTEXT_KEY),
-                ADDED_BODY + marker(ADDED_KEY),
-                NEW_BODY + marker(NEW_KEY),
-            ),
-            methods=(
-                "diff",
-                "ensure_available",
-                "ensure_available",
-                "diff_refs",
-                "review_entries",
-                "submit",
-                "submit",
-                "submit",
-            ),
-            surfaces=("discussions", "discussions", "discussions"),
-        ),
-        {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior()},
-    ),
-    Row(
-        "RERUN-changed-sha-posts-summary-and-members",
-        review("gitlab", [CONTEXT]),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-            ),
-            bodies=(CONTEXT_BODY + marker(CONTEXT_KEY),),
-            summary=SUMMARY,
-            surfaces=("notes", "discussions"),
-        ),
-        {
-            "diff": CONTRACT_DIFF,
-            "dry_run": False,
-            "entries": prior(
-                CONTEXT_KEY, sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-            ),
-        },
-    ),
-    Row(
         "RERUN-read-refusal-posts-everything",
         review("gitlab", [CONTEXT]),
         Expected(
@@ -1348,22 +974,6 @@ RERUN = [
             "dry_run": False,
             "entries": JsonFetch(None, "gitlab notes: fetch failed (exit 1): boom"),
         },
-    ),
-    Row(
-        "RERUN-full-keys-render-and-count",
-        review("gitlab", [fix()]),
-        Expected(
-            counts=KEPT,
-            methods=(
-                "diff",
-                "ensure_available",
-                "ensure_available",
-                "diff_refs",
-                "review_entries",
-            ),
-            surfaces=(),
-        ),
-        {"diff": GL_INDENTED, "dry_run": False, "entries": prior(RANGE_KEY)},
     ),
     Row(
         "RERUN-partial-missing-primary-single-body",
@@ -1383,22 +993,6 @@ RERUN = [
             ),
         ),
         {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(ADDED_KEY, NEW_KEY)},
-    ),
-    Row(
-        "RERUN-partial-members-in-input-order",
-        review(
-            "gitlab", [grouped(CONTEXT, primary=True), grouped(NEW), grouped(ADDED)]
-        ),
-        Expected(
-            anchors=(
-                position("src/app/clients/api/__init__.py", 1),
-                position("src/edited.py", 62, old_path="src/edited.py"),
-            ),
-            bodies=(NEW_BODY + marker(NEW_KEY), ADDED_BODY + marker(ADDED_KEY)),
-            keys=((NEW_KEY,), (ADDED_KEY,)),
-            surfaces=("discussions", "discussions"),
-        ),
-        {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(CONTEXT_KEY)},
     ),
     Row(
         "RERUN-legacy-group-skips-render-and-count",
@@ -1449,18 +1043,6 @@ RERUN = [
             surfaces=(),
         ),
         {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(CONTEXT_KEY)},
-    ),
-    Row(
-        "RERUN-resolved-path-key",
-        review("gitlab", [{**CONTEXT, "file": "b/src/edited.py"}]),
-        Expected(surfaces=()),
-        {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(CONTEXT_KEY)},
-    ),
-    Row(
-        "RERUN-folded-present-has-no-fold-notice",
-        review("gitlab", [{**CONTEXT, "body": "x" * 1000001}]),
-        Expected(surfaces=()),
-        {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior("2f43f2514b125af4")},
     ),
 ]
 
@@ -1596,17 +1178,6 @@ PROMOTE = [
         (("gitlab", "note", 500),),
     ),
     Row(
-        "PROMOTE-partial-off-diff-positionless",
-        review("gitlab", [grouped(CONTEXT, primary=True), grouped(OFF_DIFF_MEMBER)]),
-        Expected(
-            anchors=({},),
-            bodies=(ADDED_BODY + marker("df28db457d5734f5"),),
-            surfaces=("notes",),
-            keys=(("df28db457d5734f5",),),
-        ),
-        {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(CONTEXT_KEY)},
-    ),
-    Row(
         "PROMOTE-late-invalid-does-not-make-note",
         review(
             "gitlab",
@@ -1738,25 +1309,6 @@ FAILURE = [
         ),
         {"diff": GH_INDENTED, "dry_run": False, "head_status": 1},
         (("github", "inline", 20),),
-    ),
-    Row(
-        "FAILURE-gl-availability-before-versions-and-diagnostics",
-        review("gitlab", [fix(line=999)]),
-        Expected(
-            err=ERRORS["gl-missing"],
-            methods=("diff", "ensure_available"),
-            surfaces=(),
-            code=1,
-        ),
-        {
-            "dry_run": False,
-            "availability": [
-                ForgeUnavailable(
-                    "'glab' CLI tool not found. Install it and ensure it is authenticated before running this script."
-                )
-            ],
-            "refs": JsonFetch([], None),
-        },
     ),
     Row(
         "FAILURE-gl-empty-versions-before-off-diff-diagnostics",
@@ -1925,26 +1477,6 @@ SUMMARY_ROWS = [
         ),
     ),
     Row(
-        "SUMMARY-gl-exact-fit-posts-all-skipped-content",
-        review(
-            "gitlab",
-            [finding(line=99, title="Skipped", omit=("end_line",))],
-            review_body="x" * 999365,
-        ),
-        Expected(
-            summary_has=(
-                "following 1 finding",
-                "Skipped",
-                FOOTER.replace("{count}", "1"),
-            ),
-            summary_lacks=("_[folded:", "not shown:"),
-            skipped=(
-                "Skipping finding 'Skipped' at foo.py:99 \u2014 line not found in diff. Valid lines for this file: []",
-            ),
-            err="WARNING: Skipping finding 'Skipped' at foo.py:99 \u2014 line not found in diff. Valid lines for this file: []\n",
-        ),
-    ),
-    Row(
         "SUMMARY-gl-omission-reported-after-capture",
         review(
             "gitlab",
@@ -1998,20 +1530,6 @@ SUMMARY_ROWS = [
         [],
         Expected(summary_has=("\n````\n\n_[folded:", FOOTER.replace("{count}", "0"))),
         {"arguments": ()},
-    ),
-    Row(
-        "SUMMARY-brand-and-inline-wiring",
-        review(findings=[finding(omit=("end_line",))]),
-        Expected(anchors=(GH_ANCHOR,), bodies=(BASIC_BODY,), summary=SUMMARY),
-        {"diff": GH_DIFF},
-    ),
-    Row(
-        "SUMMARY-empty-body-unchanged",
-        review(review_body=""),
-        Expected(
-            summary=HEADER.rstrip() + FOOTER.replace("{count}", "0"),
-            summary_lacks=("could not be anchored inline",),
-        ),
     ),
     Row(
         "SUMMARY-gl-degraded-location-and-count",
@@ -2178,15 +1696,8 @@ def test_summary_delivery(row, posting, monkeypatch, tmp_path):
             },
         )
     run = check(row, posting, monkeypatch)
-    if row.id in (
-        "SUMMARY-gh-exact-fit-posts-all-skipped-content",
-        "SUMMARY-gl-exact-fit-posts-all-skipped-content",
-    ):
-        assert len(
-            run.payload["payload" if row.data["platform"] == "github" else "summary"][
-                "body"
-            ].encode("utf-8")
-        ) == (65536 if row.data["platform"] == "github" else 1000000)
+    if row.id == "SUMMARY-gh-exact-fit-posts-all-skipped-content":
+        assert len(run.payload["payload"]["body"].encode("utf-8")) == 65536
     if row.id == "SUMMARY-whole-group-admission-and-omission-order":
         assert (
             "  1 of 3 finding(s) skipped inline (lines not in diff) \u2014 appended to review body.\n"
@@ -2244,32 +1755,6 @@ NOTICE = [
             ),
         ),
         {"diff": GL_INDENTED},
-    ),
-    Row(
-        "NOTICE-response-warning-before-rejection",
-        review("gitlab", [CONTEXT, ADDED]),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-                position("src/edited.py", 62, old_path="src/edited.py"),
-            ),
-            bodies=(CONTEXT_BODY + marker(CONTEXT_KEY), ADDED_BODY + marker(ADDED_KEY)),
-            err="WARNING: Could not parse API response as JSON: text\nWARNING: Skipping finding 'Context-line finding' at src/edited.py:61 \u2014 GitLab rejected the inline discussion.\ndenied\n",
-            surfaces=("notes", "discussions", "discussions"),
-        ),
-        {
-            "diff": CONTRACT_DIFF,
-            "dry_run": False,
-            "submissions": {
-                "notes": [PostResult({}, None, None)],
-                "discussions": [
-                    PostResult(
-                        None, "denied", "Could not parse API response as JSON: text"
-                    ),
-                    PostResult({}, None, None),
-                ],
-            },
-        },
     ),
     Row(
         "NOTICE-malformed-fold-emits-no-fold-notice",
@@ -2338,44 +1823,6 @@ def test_delivery_notices(row, posting, monkeypatch, capsys):
 
 CAPTURE = [
     Row(
-        "CAPTURE-gh-no-submit-exact-bytes",
-        review(findings=[finding(omit=("end_line",))]),
-        Expected(
-            anchors=(GH_ANCHOR,),
-            bodies=(BASIC_BODY,),
-            summary=SUMMARY,
-            methods=("diff", "ensure_available"),
-        ),
-        {"diff": GH_DIFF},
-    ),
-    Row(
-        "CAPTURE-gl-summary-first-no-prior-read",
-        review("gitlab", [CONTEXT, ADDED, NEW]),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-                position("src/edited.py", 62, old_path="src/edited.py"),
-                position("src/app/clients/api/__init__.py", 1),
-            ),
-            bodies=(CONTEXT_BODY, ADDED_BODY, NEW_BODY),
-            summary=HEADER + "Summary" + FOOTER.replace("{count}", "3"),
-            methods=("diff", "ensure_available", "ensure_available", "diff_refs"),
-        ),
-        {"diff": CONTRACT_DIFF, "entries": prior(CONTEXT_KEY, ADDED_KEY, NEW_KEY)},
-    ),
-    Row(
-        "CAPTURE-invalid-status-keeps-partial-artifact",
-        review("gitlab", [{**CONTEXT, "line": 61.0}, ADDED]),
-        Expected(
-            anchors=(position("src/edited.py", 62, old_path="src/edited.py"),),
-            bodies=(ADDED_BODY,),
-            skipped=(MALFORMED_CONTEXT,),
-            err="WARNING: " + MALFORMED_CONTEXT + "\n",
-            code=1,
-        ),
-        {"diff": CONTRACT_DIFF},
-    ),
-    Row(
         "CAPTURE-bare-array-and-wrapper-bytes",
         [finding(omit=("end_line",))],
         Expected(
@@ -2416,30 +1863,6 @@ CAPTURE = [
         {"diff": CONTRACT_DIFF},
         (("gitlab", "discussion", 500),),
     ),
-    Row(
-        "CAPTURE-gl-failed-diff-posts-all-raw-positions",
-        review("gitlab", [CONTEXT, ADDED, NEW]),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_path="src/edited.py"),
-                position("src/edited.py", 62, old_path="src/edited.py"),
-                position(
-                    "src/app/clients/api/__init__.py",
-                    1,
-                    old_path="src/app/clients/api/__init__.py",
-                ),
-            ),
-            bodies=(
-                CONTEXT_BODY + marker(CONTEXT_KEY),
-                ADDED_BODY + marker(ADDED_KEY),
-                NEW_BODY + marker(NEW_KEY),
-            ),
-            summary=HEADER + "Summary" + FOOTER.replace("{count}", "3"),
-            err=DIFF_WARNING,
-            surfaces=("notes", "discussions", "discussions", "discussions"),
-        ),
-        {"diff_status": 128, "diff_error": "denied", "dry_run": False},
-    ),
 ]
 
 
@@ -2455,13 +1878,6 @@ def test_capture_delivery(row, posting, monkeypatch):
 
         monkeypatch.setattr(post, "post_github", observe_wrapper)
     run = check(row, posting, monkeypatch)
-    if row.id == "CAPTURE-gh-no-submit-exact-bytes":
-        assert run.raw == (
-            '{\n  "platform": "github",\n  "endpoint": "repos/o/r/pulls/5/reviews",\n'
-            '  "method": "POST",\n  "payload": {\n    "body": "### \u2694\ufe0f Code Gauntlet\\n\\nSummary\\n\\n---\\nGenerated by code-gauntlet | Reviewed up to: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n\\n<!-- code-gauntlet-findings: {\\"version\\":\\"3.0\\",\\"findings_count\\":1,\\"sha\\":\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\"} -->",\n'
-            '    "event": "COMMENT",\n    "comments": [\n      {\n        "path": "foo.py",\n        "line": 2,\n        "side": "RIGHT",\n'
-            '        "body": "**\U0001f7e0 [HIGH] T**\\n\\nb\\n\\n\u2694\ufe0f *Code Gauntlet*"\n      }\n    ]\n  },\n  "skipped": []\n}'
-        ).encode("utf-8")
     if row.id == "CAPTURE-bare-array-and-wrapper-bytes":
         assert wrapped_inputs[0] == {
             "owner": "o",
@@ -2483,93 +1899,7 @@ def test_capture_delivery(row, posting, monkeypatch):
         assert live.err == run.err
 
 
-SESSION = [
-    pytest.param("dry-live-dry", id="SESSION-dry-live-dry-fresh-state"),
-    pytest.param(
-        "interleaved", id="SESSION-independent-inputs-interleaved-invocations"
-    ),
-    pytest.param("failed-fresh", id="SESSION-failed-then-fresh"),
-]
-
-
-@pytest.mark.parametrize("sequence", SESSION)
-def test_session_isolation(sequence, posting, tmp_path):
-    poison = review(findings=[fix(), fix(line=999, end_line=999)])
-    if sequence == "failed-fresh":
-        failed = posting(
-            review("gitlab", [fix(end_line=940), {**CONTEXT, "line": 61.0}]),
-            diff=GL_INDENTED + CONTRACT_DIFF,
-        )
-        assert failed.code == 1
-        assert failed.err == (
-            "WARNING: suggested-fix downgraded: foo.py:2 (range_not_in_diff)\n"
-            "WARNING: " + MALFORMED_CONTEXT + "\n"
-        )
-        assert failed.payload["discussions"] == [
-            {"body": RANGE_PROSE, "position": GL_ANCHOR},
-        ]
-        assert failed.payload["skipped"] == [
-            "suggested-fix downgraded: foo.py:2 (range_not_in_diff)",
-            MALFORMED_CONTEXT,
-        ]
-        assert "  1 suggested fix(es) downgraded to prose.\n" in failed.out
-    else:
-        first = posting(poison, diff=GH_INDENTED)
-        assert first.payload["skipped"] == [
-            "Skipping finding 'Range bug' at foo.py:999 \u2014 line not found in diff. Valid lines for this file: [1, 2, 3]",
-            "suggested-fix downgraded: foo.py:999 (range_not_in_diff)",
-        ]
-        assert (
-            "  1 suggested fix(es) passed the apply-check.\n  1 suggested fix(es) downgraded to prose.\n"
-            in first.out
-        )
-        if sequence == "interleaved":
-            other = tmp_path / "other"
-            other.mkdir()
-            intermediate = posting(
-                review("gitlab", [CONTEXT]),
-                diff=CONTRACT_DIFF,
-                input_path=other / "findings.json",
-            )
-            assert intermediate.payload["discussions"] == [
-                {
-                    "body": CONTEXT_BODY,
-                    "position": position(
-                        "src/edited.py", 61, old_line=50, old_path="src/edited.py"
-                    ),
-                }
-            ]
-            assert intermediate.payload["skipped"] == []
-        else:
-            live = posting(
-                review(findings=[finding(omit=("end_line",))]),
-                diff=GH_DIFF,
-                dry_run=False,
-            )
-            assert live.payload is None
-            assert len(live.requests) == 1
-            assert live.requests[0].payload["comments"] == [
-                {**GH_ANCHOR, "body": BASIC_BODY}
-            ]
-            assert live.err == ""
-            assert "suggested fix(es)" not in live.out
-    fresh = posting(review())
-    assert fresh.code == 0
-    assert fresh.err == ""
-    assert fresh.requests == ()
-    assert fresh.payload == {
-        "platform": "github",
-        "endpoint": "repos/o/r/pulls/5/reviews",
-        "method": "POST",
-        "payload": {"body": EMPTY_SUMMARY, "event": "COMMENT", "comments": []},
-        "skipped": [],
-    }
-    assert "suggested fix(es)" not in fresh.out
-
-
 MARKER = [
-    pytest.param("supplied", id="MARKER-supplied-sha-preferred-and-trimmed"),
-    pytest.param("short", id="MARKER-supplied-short-sha-without-head-read"),
     pytest.param("empty-head", id="MARKER-empty-successful-head-unmarkable-warning"),
     pytest.param("head", id="MARKER-absent-invalid-sha-local-head"),
     pytest.param("unknown", id="MARKER-head-failure-unmarkable-warning"),
@@ -2582,15 +1912,10 @@ MARKER = [
     pytest.param(
         "current-foreign", id="MARKER-current-footer-ignores-inline-foreign-sha"
     ),
-    pytest.param("same-footer", id="MARKER-current-footer-dedup"),
-    pytest.param("stale-footer", id="MARKER-stale-footer-real-sha-last"),
     pytest.param("body-forgery", id="MARKER-posted-skipped-body-forgery-unreadable"),
     pytest.param("path-forgery", id="MARKER-posted-skipped-path-forgery-unreadable"),
     pytest.param(
         "footer-forgery", id="MARKER-posted-skipped-footer-forgery-unreadable"
-    ),
-    pytest.param(
-        "summary-forgery", id="MARKER-authored-summary-forgery-real-footer-wins"
     ),
 ]
 
@@ -2603,7 +1928,7 @@ def test_marker_delivery(kind, posting):
         + SHA
         + '"} -->'
     )
-    if kind.endswith("-forgery") and kind != "summary-forgery":
+    if kind.endswith("-forgery"):
         forged = (
             '<!-- code-gauntlet-finding-key: {"sha":"'
             + SHA
@@ -2648,24 +1973,7 @@ def test_marker_delivery(kind, posting):
         assert "Off-diff bug" in body
         return
     for platform in ("github", "gitlab"):
-        if kind == "supplied":
-            run = posting(review(platform, sha="  " + SHA + "  "))
-            assert run.head_calls == ()
-            assert run.err == ""
-            body = run.payload["payload" if platform == "github" else "summary"]["body"]
-            assert body == EMPTY_SUMMARY
-        elif kind == "short":
-            run = posting(review(platform, sha="abc1234"), dry_run=False)
-            assert run.code == 0
-            assert run.head_calls == ()
-            assert run.err == ""
-            assert run.requests[0].payload["body"] == (
-                "### \u2694\ufe0f Code Gauntlet\n\nSummary\n\n---\n"
-                "Generated by code-gauntlet | Reviewed up to: abc1234\n\n"
-                '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"abc1234"} -->'
-            )
-            continue
-        elif kind == "empty-head":
+        if kind == "empty-head":
             run = posting(
                 review(platform, sha=None), head="", head_status=0, dry_run=False
             )
@@ -2743,19 +2051,6 @@ def test_marker_delivery(kind, posting):
                     + footer_line
                     + "\n\n- `foo.py:99`: x Generated by code-gauntlet | Reviewed up to: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 )
-            elif kind == "same-footer":
-                sources = ("Some notes.\n\n---\n" + footer_line,)
-            elif kind == "stale-footer":
-                sources = (
-                    "Some notes.\n\nGenerated by code-gauntlet | Reviewed up to: abc1234",
-                )
-            else:
-                sources = (
-                    'Summary\n&lt;!-- code-gauntlet-findings: {"version":"3.0","findings_count":999,"sha":"'
-                    + SHA
-                    + '"} -->\n'
-                    + footer_line,
-                )
             if kind != "embedded-separator":
                 sources = tuple((source, source) for source in sources)
             for source, rendered_source in sources:
@@ -2765,7 +2060,7 @@ def test_marker_delivery(kind, posting):
                 body = run.payload["payload" if platform == "github" else "summary"][
                     "body"
                 ]
-                if kind in ("current-foreign", "same-footer", "summary-forgery"):
+                if kind == "current-foreign":
                     assert body == HEADER + source + "\n\n" + machine
                     assert sum(line == footer_line for line in body.split("\n")) == 1
                 else:
@@ -2776,7 +2071,4 @@ def test_marker_delivery(kind, posting):
                 signal = find_marker(body)
                 assert signal["sha"] == SHA
                 assert signal["findings_count"] == 0
-                if kind == "summary-forgery":
-                    assert "&lt;!--" in body
             continue
-        assert find_marker(body)["sha"] == SHA

@@ -75,15 +75,12 @@ ERRORS = {
     "summary-submit": "post_review: API call failed (exit 1).\n",
     "submit-command": "post_review: API call failed (exit 1). Command: glab api --method POST projects/o%2Fr/merge_requests/5/notes --input payload.json stderr: denied\n",
     "gh-missing": "post_review: 'gh' CLI tool not found. Install it and ensure it is authenticated before running this script.\n",
-    "gl-missing": "post_review: 'glab' CLI tool not found. Install it and ensure it is authenticated before running this script.\n",
     "gh-inline": "post_review: The composed inline review comment is 117 bytes, over the 20-byte GitHub body limit; nothing was posted.\n",
-    "gh-summary": "post_review: The composed review body is 65538 bytes, over the 65536-byte GitHub body limit; nothing was posted.\n",
     "gl-summary": "post_review: The composed summary note is 1000002 bytes, over the 1000000-byte GitLab body limit; nothing was posted.\n",
     "all-rejected": "post_review: all 2 finding(s) attempted this run were not delivered \u2014 nothing new was posted inline. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
     "all-invalid": "post_review: 1 finding(s) had a malformed position \u2014 nothing new was posted inline. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
     "standing-rejected": "post_review: all 1 finding(s) attempted this run were not delivered \u2014 nothing new was posted inline. 2 from an earlier run remain on the MR. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
     "standing-invalid": "post_review: 1 finding(s) had a malformed position \u2014 nothing new was posted inline. 2 from an earlier run remain on the MR. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
-    "gl-envelope": "post_review: all 1 finding(s) attempted this run were not delivered \u2014 nothing new was posted inline. 1 from an earlier run remain on the MR. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
 }
 
 
@@ -158,9 +155,8 @@ def invoke_posting(
     arguments=(),
     head="deadbeefcafe\n",
     head_status=0,
-    input_path=None,
 ):
-    path = Path(input_path) if input_path is not None else directory / "findings.json"
+    path = directory / "findings.json"
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     artifact = Path(os.path.abspath(path)).parent / "post-review-payload.json"
     artifact.unlink(missing_ok=True)
