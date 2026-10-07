@@ -162,7 +162,7 @@ def _check_fix(
     # newline off — so neither side's line terminators decide this. An EDGE
     # BLANK LINE survives that normalization and is compared as content: a
     # patch that only adds one is a change, not a no-op.
-    if [ln.rstrip("\r") for ln in replacement] == [ln.rstrip("\r") for ln in span]:
+    if replacement == [ln.rstrip("\r") for ln in span]:
         return "no_op_replacement"
     span_indent = _leading_whitespace_charset(span)
     fix_indent = _leading_whitespace_charset(replacement)
