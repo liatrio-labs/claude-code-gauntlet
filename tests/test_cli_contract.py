@@ -1354,7 +1354,13 @@ def test_posting_live_status(case, tmp_path, monkeypatch, capsys, forge_factory)
     assert run.code == (0 if case == "partial-rejection" else 1)
     assert run.out == POSTING_STATUS_STDOUT[case]
     assert run.raw is None
-    if case != "partial-rejection":
+    if case == "all-rejected":
+        assert run.err == (
+            "WARNING: Skipping finding 'Context-line finding' at src/edited.py:61 \u2014 GitLab rejected the inline discussion.\ndenied\n"
+            "WARNING: Skipping finding 'Added-line finding' at src/edited.py:62 \u2014 GitLab rejected the inline discussion.\ndenied\n"
+            + pc.ERRORS[case]
+        )
+    elif case != "partial-rejection":
         assert run.err.endswith(pc.ERRORS[case])
 
 

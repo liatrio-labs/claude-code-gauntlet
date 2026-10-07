@@ -11,6 +11,12 @@ from gauntlet.forge import JsonFetch, PostRequest
 
 from tests.support.forge import FakeForge, FakeGitLab
 
+UNKNOWN_WARNING = (
+    "WARNING: could not resolve a commit SHA for the review marker (git returned "
+    "'unknown'); the posted review will not be detectable as a prior review. "
+    "Set the 'sha' field in the findings JSON to avoid this.\n"
+)
+
 SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 

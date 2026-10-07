@@ -837,7 +837,7 @@ def post_gitlab(
             "new_path": filepath,
             "new_line": line,
         }
-        # Context needs both sides; added lines omit the old side. GitLab derives line_code.
+        # Context needs both sides; added lines omit the old side.
         old_line = diff.old_line_for(facts, filepath, cast(int | None, line))
         if old_line is not None:
             position["old_line"] = old_line

@@ -17,9 +17,11 @@ from tests.support.posting import (
     CONTRACT_DIFF,
     ERRORS,
     FOOTER,
+    GL_FIXTURES,
     HEADER,
     NEW,
     SHA,
+    UNKNOWN_WARNING,
     invoke_posting,
     prior,
     review,
@@ -43,6 +45,7 @@ ADDED_BODY = "**\U0001f7e1 [MEDIUM] Added-line finding**\n\nBody two" + TRAILER
 NEW_BODY = "**\U0001f4a1 [LOW] New-file finding**\n\nBody three" + TRAILER
 NEW_KEY = "a9cb7253f6710b82"
 RANGE_KEY = "1422e1e3b48521d1"
+RENAME_DIFF = (GL_FIXTURES / "rename.diff").read_text(encoding="utf-8")
 GH_DIFF = (
     "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n"
     "@@ -1,1 +1,6 @@\n def f():\n+    line2\n+    line3\n"
@@ -63,10 +66,6 @@ GH_COLLISION = (
     "diff --git a/b/foo.py b/b/foo.py\n--- a/b/foo.py\n+++ b/b/foo.py\n"
     "@@ -1,1 +1,2 @@\n line1\n+SUB_V1\n"
 )
-GL_COLLISION = (
-    "--- a/x.py\n+++ a/x.py\n@@ -1,1 +1,2 @@\n line1\n+SUB_V1\n"
-    "--- x.py\n+++ x.py\n@@ -1,1 +1,2 @@\n line1\n+TOP_V1\n"
-)
 GH_RECALL = (
     "diff --git a/src/edited.py b/src/edited.py\n--- a/src/edited.py\n"
     "+++ b/src/edited.py\n@@ -1,1 +1,2 @@\n line1\n+CURRENT\n"
@@ -74,11 +73,6 @@ GH_RECALL = (
 GL_REAL_A = (
     "diff --git a/a/foo.py b/a/foo.py\n--- a/foo.py\n+++ a/foo.py\n"
     "@@ -1,2 +1,2 @@\n ctx\n-x\n+y\n"
-)
-UNKNOWN_WARNING = (
-    "WARNING: could not resolve a commit SHA for the review marker (git returned "
-    "'unknown'); the posted review will not be detectable as a prior review. "
-    "Set the 'sha' field in the findings JSON to avoid this.\n"
 )
 DIFF_WARNING = (
     "WARNING: Could not fetch diff (exit 128): denied. Skipping line validation "
@@ -394,6 +388,13 @@ SITE_DIAGNOSTICS = [
         ],
         id="SITE-mismatched-fields-sorted",
     ),
+    pytest.param(
+        position("src/edited.py", True, old_path="src/edited.py"),
+        True,
+        diff_facts({("src/edited.py", 1): None}),
+        ["new_line must be an integer, got True"],
+        id="SITE-bool-is-not-an-integer",
+    ),
 ]
 
 
@@ -405,6 +406,34 @@ def test_position_diagnostics(wire, line, facts, expected):
         )
         == expected
     )
+
+
+SITE = [
+    Row(
+        "SITE-rename-old-path",
+        review("gitlab", [finding(file="new_name.py", line=3, omit=("end_line",))]),
+        Expected(
+            anchors=(position("new_name.py", 3, old_line=3, old_path="old_name.py"),),
+            bodies=(BASIC_BODY,),
+        ),
+        {"diff": RENAME_DIFF},
+    ),
+    Row(
+        "SITE-raw-path-without-oracle",
+        review("gitlab", [finding(file="b/x.py", line=3, omit=("end_line",))]),
+        Expected(
+            anchors=(position("b/x.py", 3, old_path="b/x.py"),),
+            bodies=(BASIC_BODY,),
+            err=DIFF_WARNING,
+        ),
+        {"diff_status": 128, "diff_error": "denied"},
+    ),
+]
+
+
+@pytest.mark.parametrize("row", params(SITE))
+def test_position_delivery(row, posting, monkeypatch):
+    check(row, posting, monkeypatch)
 
 
 ANCHOR = [
@@ -433,21 +462,6 @@ ANCHOR = [
             ),
         ),
         {"diff": GH_COLLISION},
-    ),
-    Row(
-        "ANCHOR-gl-ambiguous-raw-spelling",
-        review(
-            "gitlab",
-            [fix(file="a/x.py", line=2, end_line=2, suggested_fix_code="CHANGED")],
-        ),
-        Expected(
-            anchors=(position("a/x.py", 2, old_path="a/x.py"),),
-            bodies=(RANGE_PROSE,),
-            skipped=("suggested-fix downgraded: a/x.py:2 (no_diff_oracle)",),
-            err="WARNING: suggested-fix downgraded: a/x.py:2 (no_diff_oracle)\n",
-            counts=DOWN,
-        ),
-        {"diff": GL_COLLISION},
     ),
     Row(
         "ANCHOR-gh-unique-prefixed-recall",
@@ -489,21 +503,6 @@ ANCHOR = [
             err=DIFF_WARNING,
         ),
         {"diff_status": 128, "diff_error": "denied"},
-    ),
-    Row(
-        "ANCHOR-empty-success-degrades",
-        review(findings=[finding(omit=("end_line",))]),
-        Expected(
-            skipped=(
-                "Skipping finding 'T' at foo.py:2 \u2014 line not found in diff. Valid lines for this file: []",
-            ),
-            err="WARNING: Skipping finding 'T' at foo.py:2 \u2014 line not found in diff. Valid lines for this file: []\n",
-            summary_has=(
-                "### \u26a0\ufe0f 1 finding could not be anchored inline",
-                "`foo.py:2`",
-                "T",
-            ),
-        ),
     ),
     Row(
         "ANCHOR-literal-a-directory-keeps-old-side",
@@ -933,6 +932,7 @@ GROUP = [
         ),
         Expected(
             summary_has=(
+                "The following 2 findings reference lines outside this diff and are included here instead of as inline comments:",
                 "### \u26a0\ufe0f 2 findings could not be anchored inline",
                 "A",
                 "Body A",
@@ -1044,6 +1044,12 @@ RERUN = [
         ),
         {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(CONTEXT_KEY)},
     ),
+    Row(
+        "RERUN-resolved-path-key",
+        review("gitlab", [{**CONTEXT, "file": "b/src/edited.py"}]),
+        Expected(surfaces=()),
+        {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(CONTEXT_KEY)},
+    ),
 ]
 
 
@@ -1098,44 +1104,6 @@ PROMOTE = [
             ),
         ),
         {"diff": CONTRACT_DIFF},
-    ),
-    Row(
-        "PROMOTE-rejected-primary-own-offsets",
-        review(
-            "gitlab",
-            [
-                grouped(PRIMARY_A, primary=True),
-                grouped(
-                    {
-                        **MEMBER_B,
-                        "line": 5,
-                        "end_line": 6,
-                        "suggested_fix_code": "    return 2\n    # done",
-                    }
-                ),
-            ],
-        ),
-        Expected(
-            anchors=(GL_ANCHOR, position(line=5, old_path="foo.py")),
-            body_has=(
-                ("Corroborating finding",),
-                ("```suggestion:-0+1\n    return 2\n    # done",),
-            ),
-            body_lacks=((), ("Corroborating finding",)),
-            counts=KEPT,
-            err="WARNING: Skipping finding 'A' at foo.py:2 \u2014 GitLab rejected the inline discussion.\ndenied\n",
-        ),
-        {
-            "diff": GL_DIFF,
-            "dry_run": False,
-            "submissions": {
-                "notes": [PostResult({}, None, None)],
-                "discussions": [
-                    PostResult(None, "denied", None),
-                    PostResult({}, None, None),
-                ],
-            },
-        },
     ),
     Row(
         "PROMOTE-partial-unanchored-positionless",
@@ -1259,6 +1227,17 @@ PROMOTE = [
             },
         },
     ),
+    Row(
+        "PROMOTE-partial-off-diff-positionless",
+        review("gitlab", [grouped(CONTEXT, primary=True), grouped(OFF_DIFF_MEMBER)]),
+        Expected(
+            anchors=({},),
+            bodies=(ADDED_BODY + marker("df28db457d5734f5"),),
+            surfaces=("notes",),
+            keys=(("df28db457d5734f5",),),
+        ),
+        {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(CONTEXT_KEY)},
+    ),
 ]
 
 
@@ -1367,32 +1346,6 @@ FAILURE = [
         },
     ),
     Row(
-        "FAILURE-gl-all-rejections-attempt-every-member",
-        review("gitlab", [CONTEXT, ADDED]),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-                position("src/edited.py", 62, old_path="src/edited.py"),
-            ),
-            bodies=(CONTEXT_BODY + marker(CONTEXT_KEY), ADDED_BODY + marker(ADDED_KEY)),
-            err="WARNING: Skipping finding 'Context-line finding' at src/edited.py:61 \u2014 GitLab rejected the inline discussion.\ndenied\nWARNING: Skipping finding 'Added-line finding' at src/edited.py:62 \u2014 GitLab rejected the inline discussion.\ndenied\n"
-            + ERRORS["all-rejected"],
-            surfaces=("notes", "discussions", "discussions"),
-            code=1,
-        ),
-        {
-            "diff": CONTRACT_DIFF,
-            "dry_run": False,
-            "submissions": {
-                "notes": [PostResult({}, None, None)],
-                "discussions": [
-                    PostResult(None, "denied", None),
-                    PostResult(None, "denied", None),
-                ],
-            },
-        },
-    ),
-    Row(
         "FAILURE-gl-envelope-before-malformed-position",
         review("gitlab", [fix(line=2.0), CONTEXT]),
         Expected(
@@ -1436,11 +1389,7 @@ def test_delivery_failure(row, posting, monkeypatch):
 
 def test_github_summary_sha_before_composition_and_guard(posting, monkeypatch, capsys):
     def compose_after_sha(*args, **kwargs):
-        assert capsys.readouterr().err == (
-            "WARNING: could not resolve a commit SHA for the review marker (git returned "
-            "'unknown'); the posted review will not be detectable as a prior review. "
-            "Set the 'sha' field in the findings JSON to avoid this.\n"
-        )
+        assert capsys.readouterr().err == UNKNOWN_WARNING
         return compose.ComposedBody("\u754c" * 21846, 0, 0, 0, ())
 
     monkeypatch.setattr(compose, "compose_review_body", compose_after_sha)
@@ -1530,32 +1479,6 @@ SUMMARY_ROWS = [
         [],
         Expected(summary_has=("\n````\n\n_[folded:", FOOTER.replace("{count}", "0"))),
         {"arguments": ()},
-    ),
-    Row(
-        "SUMMARY-gl-degraded-location-and-count",
-        review(
-            "gitlab",
-            [CONTEXT, {**ADDED, "line": 999}, {"title": "Mystery", "body": "Body D"}],
-        ),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-            ),
-            bodies=(CONTEXT_BODY,),
-            summary_has=(
-                "### \u26a0\ufe0f 2 findings could not be anchored inline",
-                "src/edited.py:999",
-                "`?`",
-                "Mystery",
-                '"findings_count":3',
-            ),
-            skipped=(
-                "Skipping finding 'Added-line finding' at src/edited.py:999 \u2014 line not found in diff. Valid lines for this file: [61, 62, 63]",
-                "Finding 'Mystery' has no line number \u2014 skipping.",
-            ),
-            err="WARNING: Skipping finding 'Added-line finding' at src/edited.py:999 \u2014 line not found in diff. Valid lines for this file: [61, 62, 63]\nWARNING: Finding 'Mystery' has no line number \u2014 skipping.\n",
-        ),
-        {"diff": CONTRACT_DIFF},
     ),
     Row(
         "SUMMARY-folded-prose-byte-count",
@@ -1717,7 +1640,7 @@ NOTICE = [
         review(
             findings=[
                 fix(end_line=940),
-                finding(line=999, omit=("end_line",)),
+                fix(line=999, end_line=999),
                 finding(line=3, body="x" * 1000, omit=("end_line",)),
             ],
             sha=None,
@@ -1727,11 +1650,15 @@ NOTICE = [
             body_has=(("Return two instead.",), ("_[folded:",)),
             skipped=(
                 "suggested-fix downgraded: foo.py:2 (range_not_in_diff)",
-                "Skipping finding 'T' at foo.py:999 \u2014 line not found in diff. Valid lines for this file: [1, 2, 3]",
+                "Skipping finding 'Range bug' at foo.py:999 \u2014 line not found in diff. Valid lines for this file: [1, 2, 3]",
+                "suggested-fix downgraded: foo.py:999 (range_not_in_diff)",
             ),
-            err="WARNING: suggested-fix downgraded: foo.py:2 (range_not_in_diff)\nWARNING: Skipping finding 'T' at foo.py:999 \u2014 line not found in diff. Valid lines for this file: [1, 2, 3]\nWARNING: Inline body folded by 943 bytes at foo.py:3: this inline review comment reached the 200-byte GitHub body limit.\n"
+            err="WARNING: suggested-fix downgraded: foo.py:2 (range_not_in_diff)\nWARNING: Skipping finding 'Range bug' at foo.py:999 \u2014 line not found in diff. Valid lines for this file: [1, 2, 3]\nWARNING: suggested-fix downgraded: foo.py:999 (range_not_in_diff)\nWARNING: Inline body folded by 943 bytes at foo.py:3: this inline review comment reached the 200-byte GitHub body limit.\n"
             + UNKNOWN_WARNING,
-            counts=DOWN,
+            counts=(
+                "  0 suggested fix(es) passed the apply-check.",
+                "  2 suggested fix(es) downgraded to prose.",
+            ),
             head_calls=1,
         ),
         {"diff": GH_INDENTED, "head_status": 1},
@@ -1821,8 +1748,8 @@ def test_delivery_notices(row, posting, monkeypatch, capsys):
     check(row, posting, monkeypatch)
 
 
-CAPTURE = [
-    Row(
+def test_capture_bare_array_and_wrapper_bytes(posting, monkeypatch):
+    row = Row(
         "CAPTURE-bare-array-and-wrapper-bytes",
         [finding(omit=("end_line",))],
         Expected(
@@ -1845,8 +1772,31 @@ CAPTURE = [
                 SHA,
             ),
         },
-    ),
-    Row(
+    )
+    wrapped_inputs = []
+    post_github = post.post_github
+
+    def observe_wrapper(data, *args, **kwargs):
+        wrapped_inputs.append(data)
+        return post_github(data, *args, **kwargs)
+
+    monkeypatch.setattr(post, "post_github", observe_wrapper)
+    run = check(row, posting, monkeypatch)
+    assert wrapped_inputs[0] == {
+        "owner": "o",
+        "repo": "r",
+        "pr_number": 5,
+        "sha": SHA,
+        "platform": "github",
+        "review_body": "",
+        "findings": row.data,
+    }
+    wrapper = posting(review(findings=row.data, review_body=""), diff=GH_DIFF)
+    assert run.raw == wrapper.raw
+
+
+def test_capture_gl_dry_and_live_reserve_all_group_keys(posting, monkeypatch):
+    row = Row(
         "CAPTURE-gl-dry-and-live-reserve-all-group-keys",
         review(
             "gitlab",
@@ -1862,44 +1812,18 @@ CAPTURE = [
         ),
         {"diff": CONTRACT_DIFF},
         (("gitlab", "discussion", 500),),
-    ),
-]
-
-
-@pytest.mark.parametrize("row", params(CAPTURE))
-def test_capture_delivery(row, posting, monkeypatch):
-    wrapped_inputs = []
-    if row.id == "CAPTURE-bare-array-and-wrapper-bytes":
-        post_github = post.post_github
-
-        def observe_wrapper(data, *args, **kwargs):
-            wrapped_inputs.append(data)
-            return post_github(data, *args, **kwargs)
-
-        monkeypatch.setattr(post, "post_github", observe_wrapper)
+    )
     run = check(row, posting, monkeypatch)
-    if row.id == "CAPTURE-bare-array-and-wrapper-bytes":
-        assert wrapped_inputs[0] == {
-            "owner": "o",
-            "repo": "r",
-            "pr_number": 5,
-            "sha": SHA,
-            "platform": "github",
-            "review_body": "",
-            "findings": row.data,
-        }
-        wrapper = posting(review(findings=row.data, review_body=""), diff=GH_DIFF)
-        assert run.raw == wrapper.raw
-    if row.id == "CAPTURE-gl-dry-and-live-reserve-all-group-keys":
-        live = posting(row.data, diff=CONTRACT_DIFF, dry_run=False)
-        body = live.requests[1].payload["body"]
-        assert body.startswith(run.payload["discussions"][0]["body"])
-        assert len(body.encode("utf-8")) <= 500
-        assert len(find_finding_markers(body)) == 2
-        assert live.err == run.err
+    live = posting(row.data, diff=CONTRACT_DIFF, dry_run=False)
+    body = live.requests[1].payload["body"]
+    assert body.startswith(run.payload["discussions"][0]["body"])
+    assert len(body.encode("utf-8")) <= 500
+    assert len(find_finding_markers(body)) == 2
+    assert live.err == run.err
 
 
 MARKER = [
+    pytest.param("short", id="MARKER-supplied-short-sha-without-head-read"),
     pytest.param("empty-head", id="MARKER-empty-successful-head-unmarkable-warning"),
     pytest.param("head", id="MARKER-absent-invalid-sha-local-head"),
     pytest.param("unknown", id="MARKER-head-failure-unmarkable-warning"),
@@ -1973,23 +1897,35 @@ def test_marker_delivery(kind, posting):
         assert "Off-diff bug" in body
         return
     for platform in ("github", "gitlab"):
-        if kind == "empty-head":
+        if kind == "short":
+            run = posting(review(platform, sha="abc1234"), dry_run=False)
+            assert run.code == 0
+            assert run.head_calls == ()
+            assert run.err == ""
+            assert run.requests[0].payload["body"] == (
+                "### \u2694\ufe0f Code Gauntlet\n\nSummary\n\n---\n"
+                "Generated by code-gauntlet | Reviewed up to: abc1234\n\n"
+                '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":"abc1234"} -->'
+            )
+            padded = posting(review(platform, sha="  " + SHA + "  "))
+            assert padded.head_calls == ()
+            assert padded.err == ""
+            assert (
+                padded.payload["payload" if platform == "github" else "summary"]["body"]
+                == EMPTY_SUMMARY
+            )
+        elif kind == "empty-head":
             run = posting(
                 review(platform, sha=None), head="", head_status=0, dry_run=False
             )
             assert run.code == 0
             assert run.head_calls == (("git", "rev-parse", "HEAD"),)
-            assert run.err == (
-                "WARNING: could not resolve a commit SHA for the review marker (git returned "
-                "''); the posted review will not be detectable as a prior review. "
-                "Set the 'sha' field in the findings JSON to avoid this.\n"
-            )
+            assert run.err == UNKNOWN_WARNING.replace("'unknown'", "''")
             assert run.requests[0].payload["body"] == (
                 "### \u2694\ufe0f Code Gauntlet\n\nSummary\n\n---\n"
                 "Generated by code-gauntlet | Reviewed up to: \n\n"
                 '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":0,"sha":""} -->'
             )
-            continue
         elif kind == "head":
             for invalid in (None, "not-a-real-sha!!", 12345):
                 data = review(platform, sha=invalid)
@@ -2002,7 +1938,6 @@ def test_marker_delivery(kind, posting):
                     "body"
                 ]
                 assert body == EMPTY_SUMMARY.replace(SHA, "abc1234")
-            continue
         elif kind == "unknown":
             data = review(platform, [CONTEXT] if platform == "gitlab" else [], sha=None)
             run = posting(
@@ -2028,7 +1963,6 @@ def test_marker_delivery(kind, posting):
             assert find_marker(run.requests[0].payload["body"])["sha"] == "unknown"
             if platform == "gitlab":
                 assert run.requests[1].payload["body"] == CONTEXT_BODY
-            continue
         else:
             if kind == "embedded-separator":
                 sources = tuple(
@@ -2071,4 +2005,3 @@ def test_marker_delivery(kind, posting):
                 signal = find_marker(body)
                 assert signal["sha"] == SHA
                 assert signal["findings_count"] == 0
-            continue

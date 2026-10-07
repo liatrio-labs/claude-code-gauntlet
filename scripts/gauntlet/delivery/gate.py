@@ -227,7 +227,7 @@ def evaluate_fix(
         finding, apply_range=apply_range, facts=facts, path_lookup=path_lookup
     )
     keep = reason is None
-    # Per-finding failures outrank set-level demotion; only anchor failure is renamed.
+    # Only anchor failure is renamed.
     if not keep and reason == "anchor_mismatch":
         reason = mismatch_reason
     return FixVerdict(keep, reason, evaluated)
