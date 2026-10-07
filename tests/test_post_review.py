@@ -66,10 +66,15 @@ GH_COLLISION = (
     "diff --git a/b/foo.py b/b/foo.py\n--- a/b/foo.py\n+++ b/b/foo.py\n"
     "@@ -1,1 +1,2 @@\n line1\n+SUB_V1\n"
 )
+GL_COLLISION = (
+    "--- a/x.py\n+++ a/x.py\n@@ -1,1 +1,2 @@\n line1\n+SUB_V1\n"
+    "--- x.py\n+++ x.py\n@@ -1,1 +1,2 @@\n line1\n+TOP_V1\n"
+)
 GH_RECALL = (
     "diff --git a/src/edited.py b/src/edited.py\n--- a/src/edited.py\n"
     "+++ b/src/edited.py\n@@ -1,1 +1,2 @@\n line1\n+CURRENT\n"
 )
+GL_RECALL = "--- src/edited.py\n+++ src/edited.py\n@@ -1,1 +1,2 @@\n line1\n+CURRENT\n"
 GL_REAL_A = (
     "diff --git a/a/foo.py b/a/foo.py\n--- a/foo.py\n+++ a/foo.py\n"
     "@@ -1,2 +1,2 @@\n ctx\n-x\n+y\n"
@@ -438,6 +443,75 @@ def test_position_delivery(row, posting, monkeypatch):
 
 ANCHOR = [
     Row(
+        "ANCHOR-gl-unique-prefixed-recall",
+        review(
+            "gitlab",
+            [
+                fix(
+                    file="b/src/edited.py",
+                    line=2,
+                    end_line=2,
+                    suggested_fix_code="CHANGED",
+                )
+            ],
+        ),
+        Expected(
+            anchors=(position("src/edited.py", 2, old_path="src/edited.py"),),
+            bodies=(
+                RANGE_PROSE.removesuffix(TRAILER)
+                + "\n\n```suggestion\nCHANGED\n```"
+                + TRAILER
+                + marker("20aad88a122950a0"),
+            ),
+            counts=KEPT,
+            keys=(("20aad88a122950a0",),),
+        ),
+        {"diff": GL_RECALL, "dry_run": False},
+    ),
+    Row(
+        "ANCHOR-gl-ambiguous-raw-spelling",
+        review(
+            "gitlab",
+            [fix(file="a/x.py", line=2, end_line=2, suggested_fix_code="CHANGED")],
+        ),
+        Expected(
+            anchors=(position("a/x.py", 2, old_path="a/x.py"),),
+            bodies=(RANGE_PROSE + marker("e9a9d3f40fddd4fe"),),
+            skipped=("suggested-fix downgraded: a/x.py:2 (no_diff_oracle)",),
+            err="WARNING: suggested-fix downgraded: a/x.py:2 (no_diff_oracle)\n",
+            counts=DOWN,
+            keys=(("e9a9d3f40fddd4fe",),),
+        ),
+        {"diff": GL_COLLISION, "dry_run": False},
+    ),
+    Row(
+        "ANCHOR-gl-live-without-oracle-posts-all",
+        review("gitlab", [CONTEXT, ADDED, NEW], review_body="MR review"),
+        Expected(
+            anchors=(
+                position("src/edited.py", 61, old_path="src/edited.py"),
+                position("src/edited.py", 62, old_path="src/edited.py"),
+                position(
+                    "src/app/clients/api/__init__.py",
+                    1,
+                    old_path="src/app/clients/api/__init__.py",
+                ),
+            ),
+            bodies=(
+                CONTEXT_BODY + marker(CONTEXT_KEY),
+                ADDED_BODY + marker(ADDED_KEY),
+                NEW_BODY + marker(NEW_KEY),
+            ),
+            summary=HEADER + "MR review" + FOOTER.replace("{count}", "3"),
+            summary_lacks=("could not be anchored inline",),
+            err=DIFF_WARNING,
+            surfaces=("notes", "discussions", "discussions", "discussions"),
+            keys=((CONTEXT_KEY,), (ADDED_KEY,), (NEW_KEY,)),
+            out_lines=("  3 inline discussion(s) posted.",),
+        ),
+        {"diff_status": 128, "diff_error": "denied", "dry_run": False},
+    ),
+    Row(
         "ANCHOR-gh-ambiguous-raw-spelling",
         review(
             findings=[
@@ -540,6 +614,18 @@ GATE = [
         {"diff": GH_INDENTED},
     ),
     Row(
+        "GATE-gh-blocked-range",
+        review(findings=[fix(end_line=940)]),
+        Expected(
+            anchors=(GH_ANCHOR,),
+            bodies=(RANGE_PROSE,),
+            skipped=("suggested-fix downgraded: foo.py:2 (range_not_in_diff)",),
+            err="WARNING: suggested-fix downgraded: foo.py:2 (range_not_in_diff)\n",
+            counts=DOWN,
+        ),
+        {"diff": GH_INDENTED},
+    ),
+    Row(
         "GATE-gh-degraded-group-members",
         review(
             findings=[
@@ -607,6 +693,12 @@ def test_fix_delivery(row, posting, monkeypatch):
     monkeypatch.setattr(post, "read_json", observe_input)
     check(row, posting, monkeypatch)
     assert loaded == [row.data]
+    if row.id in ("GATE-gh-kept-multiline", "GATE-gh-blocked-range"):
+        check(
+            Row(row.id, row.data, row.expected, {**row.options, "dry_run": False}),
+            posting,
+            monkeypatch,
+        )
 
 
 FIRST = fix(
@@ -635,6 +727,53 @@ FIRST_BODY = RANGE_GH.replace("Range bug", "First").replace(
 SECOND_PROSE = RANGE_PROSE.replace("Range bug", "Second")
 
 OVERLAP = [
+    Row(
+        "OVERLAP-gh-lineless-end-line-keeps-sibling-fence",
+        review(
+            findings=[
+                {
+                    "file": "foo.py",
+                    "severity": "low",
+                    "title": "No line",
+                    "body": "No line number at all.",
+                    "suggested_fix_code": "x",
+                    "end_line": 5,
+                },
+                fix(
+                    title="Fenced",
+                    line=3,
+                    end_line=5,
+                    suggested_fix_code="    b3\n    b4\n    b5",
+                ),
+            ]
+        ),
+        Expected(
+            anchors=(
+                {
+                    "path": "foo.py",
+                    "line": 5,
+                    "side": "RIGHT",
+                    "start_line": 3,
+                    "start_side": "RIGHT",
+                },
+            ),
+            bodies=(
+                RANGE_GH.replace("Range bug", "Fenced").replace(
+                    "    return 2\n    # done", "    b3\n    b4\n    b5"
+                ),
+            ),
+            summary_has=("No line", "could not be anchored inline"),
+            summary_lacks=("```suggestion",),
+            skipped=(
+                "Finding 'No line' has no line number \u2014 skipping.",
+                "suggested-fix downgraded: foo.py:None (invalid_range)",
+            ),
+            err="WARNING: Finding 'No line' has no line number \u2014 skipping.\n"
+            "WARNING: suggested-fix downgraded: foo.py:None (invalid_range)\n",
+            counts=BOTH,
+        ),
+        {"diff": GH_DIFF},
+    ),
     Row(
         "OVERLAP-gh-fenceless-finding-does-not-block-fence",
         review(
@@ -1832,6 +1971,86 @@ def test_capture_gl_dry_and_live_reserve_all_group_keys(posting, monkeypatch):
     assert len(body.encode("utf-8")) <= 500
     assert len(find_finding_markers(body)) == 2
     assert live.err == run.err
+
+
+@pytest.mark.parametrize(
+    "delta,key",
+    [
+        pytest.param(0, "d8544a43f683184d", id="CAPTURE-gl-multibyte-exact-fit"),
+        pytest.param(1, "346f1085827a835e", id="CAPTURE-gl-multibyte-one-byte-over"),
+    ],
+)
+def test_capture_gl_multibyte_boundary(delta, key, posting):
+    data = review(
+        "gitlab",
+        [
+            finding(
+                file="bar.py",
+                line=1,
+                title="Boundary finding",
+                body="\u754c seed" + "x" * (999821 + delta),
+                omit=("end_line",),
+            ),
+            finding(
+                file="bar.py",
+                line=2,
+                severity="low",
+                title="Healthy sibling",
+                body="short body",
+                omit=("end_line",),
+            ),
+        ],
+    )
+    dry = posting(data, diff=GL_DIFF.replace("foo.py", "bar.py"))
+    live = posting(data, diff=GL_DIFF.replace("foo.py", "bar.py"), dry_run=False)
+    assert dry.code == live.code == 0
+    assert dry.requests == ()
+    assert live.payload is None
+    assert tuple(request.endpoint.rsplit("/", 1)[-1] for request in live.requests) == (
+        "notes",
+        "discussions",
+        "discussions",
+    )
+    assert list(dry.payload) == ["platform", "summary", "discussions", "skipped"]
+    assert dry.payload["platform"] == "gitlab"
+    assert dry.payload["skipped"] == []
+    discussions = dry.payload["discussions"]
+    assert len(discussions) == 2
+    assert tuple(d["position"] for d in discussions) == (
+        position("bar.py", 1, old_line=1, old_path="bar.py"),
+        position("bar.py", 2, old_path="bar.py"),
+    )
+    assert all(list(discussion) == ["body", "position"] for discussion in discussions)
+    assert tuple(request.payload["position"] for request in live.requests[1:]) == (
+        position("bar.py", 1, old_line=1, old_path="bar.py"),
+        position("bar.py", 2, old_path="bar.py"),
+    )
+    body = discussions[0]["body"]
+    suffix = marker(key)
+    assert len(suffix.encode("utf-8")) == 113
+    assert live.requests[1].payload["body"] == body + suffix
+    assert len((body + suffix).encode("utf-8")) <= 1000000
+    assert body.count(TRAILER) == 1
+    if delta == 0:
+        assert body == (
+            "**\U0001f7e0 [HIGH] Boundary finding**\n\n\u754c seed"
+            + "x" * 999821
+            + TRAILER
+        )
+        assert len(live.requests[1].payload["body"].encode("utf-8")) == 1000000
+        assert dry.err == live.err == ""
+    else:
+        assert "Boundary finding" in body
+        assert "_[folded:" in body
+        assert dry.err == live.err
+        assert dry.err.startswith("WARNING: Inline body folded by ")
+        assert dry.err.endswith(
+            " bytes at bar.py:1: this inline discussion reached the "
+            "1000000-byte GitLab body limit.\n"
+        )
+    sibling = "**\U0001f4a1 [LOW] Healthy sibling**\n\nshort body" + TRAILER
+    assert discussions[1]["body"] == sibling
+    assert live.requests[2].payload["body"] == sibling + marker("efbc557bd52b5423")
 
 
 MARKER = [
