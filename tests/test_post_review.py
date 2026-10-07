@@ -150,6 +150,8 @@ class Expected:
     keys: tuple[tuple[str, ...], ...] | None = None
     head_calls: int = 0
     code: int = 0
+    out_lines: tuple[str, ...] = ()
+    summary_ordered: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +263,9 @@ def check(row, posting, monkeypatch):
         assert tuple(comment["body"] for comment in comments) == expected.bodies
     if expected.summary is not None:
         assert summary == expected.summary
+    summary_position = 0
+    for value in expected.summary_ordered:
+        summary_position = summary.index(value, summary_position) + len(value)
     for value in expected.summary_has:
         assert value in summary
     for value in expected.summary_lacks:
@@ -277,6 +282,10 @@ def check(row, posting, monkeypatch):
         tuple(line for line in run.out.splitlines() if "suggested fix(es)" in line)
         == expected.counts
     )
+    if expected.out_lines:
+        assert tuple(
+            line for line in run.out.splitlines() if line in expected.out_lines
+        ) == expected.out_lines
     if expected.methods is not None:
         assert tuple(call.method for call in run.fake.calls) == expected.methods
     if expected.surfaces is not None:
@@ -824,6 +833,35 @@ SECOND_PROSE = RANGE_PROSE.replace("Range bug", "Second")
 
 OVERLAP = [
     Row(
+        "OVERLAP-gh-fenceless-finding-does-not-block-fence",
+        review(
+            findings=[
+                finding(title="No fence", body="No suggested fix", line=3),
+                fix(
+                    title="Fenced",
+                    line=3,
+                    end_line=5,
+                    suggested_fix_code="    b3\n    b4\n    b5",
+                ),
+            ]
+        ),
+        Expected(
+            anchors=(
+                {"path": "foo.py", "line": 3, "side": "RIGHT"},
+                {
+                    "path": "foo.py",
+                    "line": 5,
+                    "side": "RIGHT",
+                    "start_line": 3,
+                    "start_side": "RIGHT",
+                },
+            ),
+            body_has=((), ("```suggestion\n    b3\n    b4\n    b5",)),
+            counts=KEPT,
+        ),
+        {"diff": GH_DIFF},
+    ),
+    Row(
         "OVERLAP-gh-noncandidate-index",
         review(
             findings=[
@@ -1158,11 +1196,76 @@ GROUP = [
             ],
         ),
         Expected(
-            summary_has=("`?`", "Mystery", "B", "Body D", "Body B"),
+            summary_has=(
+                "### \u26a0\ufe0f 2 findings could not be anchored inline",
+                "`?`",
+                "Mystery",
+                "B",
+                "Body D",
+                "Body B",
+            ),
+            summary_ordered=("Mystery", "Body D", "B", "Body B"),
             skipped=(
                 "Finding 'Mystery' has no line number \u2014 skipping. [group members: Mystery, finding-2]",
             ),
             err="WARNING: Finding 'Mystery' has no line number \u2014 skipping. [group members: Mystery, finding-2]\n",
+            out_lines=("  2 finding(s) skipped.",),
+        ),
+        {"diff": GL_DIFF},
+    ),
+    Row(
+        "GROUP-gh-no-line-primary-preserves-member-order",
+        review(
+            findings=[
+                grouped(
+                    {"file": "foo.py", "severity": "low", "title": "Mystery", "body": "Body A"},
+                    primary=True,
+                ),
+                grouped(MEMBER_B),
+            ]
+        ),
+        Expected(
+            summary_has=(
+                "### \u26a0\ufe0f 2 findings could not be anchored inline",
+                "Mystery",
+                "Body A",
+                "B",
+                "Body B",
+            ),
+            summary_ordered=("Mystery", "Body A", "B", "Body B"),
+            skipped=(
+                "Finding 'Mystery' has no line number \u2014 skipping. [group members: Mystery, B]",
+            ),
+            err="WARNING: Finding 'Mystery' has no line number \u2014 skipping. [group members: Mystery, B]\n",
+            out_lines=(
+                "  2 finding(s) skipped inline (lines not in diff) \u2014 appended to review body.",
+            ),
+        ),
+        {"diff": GH_DIFF},
+    ),
+    Row(
+        "GROUP-gl-off-diff-primary-preserves-member-order",
+        review(
+            "gitlab",
+            [
+                grouped({**PRIMARY_A, "line": 999}, primary=True),
+                grouped(MEMBER_B),
+            ],
+        ),
+        Expected(
+            summary_has=(
+                "### \u26a0\ufe0f 2 findings could not be anchored inline",
+                "A",
+                "Body A",
+                "B",
+                "Body B",
+            ),
+            summary_ordered=("A", "Body A", "B", "Body B"),
+            skipped=(
+                "Skipping finding 'A' at foo.py:999 \u2014 line not found in diff. Valid lines for this file: [1, 2, 3, 4, 5, 6] [group members: A, B]",
+            ),
+            err="WARNING: Skipping finding 'A' at foo.py:999 \u2014 line not found in diff. Valid lines for this file: [1, 2, 3, 4, 5, 6] [group members: A, B]\n",
+            out_lines=("  2 finding(s) skipped.",),
         ),
         {"diff": GL_DIFF},
     ),
@@ -1268,6 +1371,10 @@ RERUN = [
             bodies=(CONTEXT_BODY + marker(CONTEXT_KEY),),
             keys=((CONTEXT_KEY,),),
             surfaces=("discussions",),
+            out_lines=(
+                "  1 inline discussion(s) posted.",
+                "  2 inline discussion(s) already on the MR from an earlier run — left alone.",
+            ),
         ),
         {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(ADDED_KEY, NEW_KEY)},
     ),
@@ -1304,6 +1411,10 @@ RERUN = [
                 "ensure_available",
                 "diff_refs",
                 "review_entries",
+            ),
+            out_lines=(
+                "  0 inline discussion(s) posted.",
+                "  2 inline discussion(s) already on the MR from an earlier run — left alone.",
             ),
         ),
         {
@@ -1393,6 +1504,10 @@ PROMOTE = [
             skipped=(MALFORMED_CONTEXT,),
             err="WARNING: " + MALFORMED_CONTEXT + "\n",
             code=1,
+            out_lines=(
+                "  2 inline discussion(s) captured.",
+                "  1 finding(s) had a malformed position (see warnings above).",
+            ),
         ),
         {"diff": CONTRACT_DIFF},
     ),
@@ -1442,8 +1557,35 @@ PROMOTE = [
             bodies=(ADDED_BODY + marker("8a2d596a9cd73766"),),
             surfaces=("notes",),
             keys=(("8a2d596a9cd73766",),),
+            out_lines=(
+                "  1 inline discussion(s) posted.",
+                "  1 inline discussion(s) already on the MR from an earlier run — left alone.",
+            ),
         ),
         {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(CONTEXT_KEY)},
+        (("gitlab", "note", 183),),
+    ),
+    Row(
+        "PROMOTE-folded-positionless-note-reserves-marker",
+        review(
+            "gitlab",
+            [
+                grouped(CONTEXT, primary=True),
+                grouped({"title": "Unanchored note", "severity": "low", "body": "x" * 1000}),
+            ],
+        ),
+        Expected(
+            anchors=({},),
+            body_has=(("_[folded:",),),
+            surfaces=("notes",),
+            err="WARNING: Inline body folded by 765 bytes at ?:None: this corroborator note reached the 500-byte GitLab body limit.\n",
+            out_lines=(
+                "  1 inline discussion(s) posted.",
+                "  1 inline discussion(s) already on the MR from an earlier run — left alone.",
+            ),
+        ),
+        {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior(CONTEXT_KEY)},
+        (("gitlab", "note", 500),),
     ),
     Row(
         "PROMOTE-partial-off-diff-positionless",
@@ -1543,7 +1685,11 @@ PROMOTE = [
 
 @pytest.mark.parametrize("row", params(PROMOTE))
 def test_promoted_delivery(row, posting, monkeypatch):
-    check(row, posting, monkeypatch)
+    run = check(row, posting, monkeypatch)
+    if row.id == "PROMOTE-partial-unanchored-positionless":
+        assert len(run.requests[0].payload["body"].encode("utf-8")) == 183
+    if row.id == "PROMOTE-folded-positionless-note-reserves-marker":
+        assert len(run.requests[0].payload["body"].encode("utf-8")) == 495
 
 
 FAILURE = [
@@ -1782,6 +1928,27 @@ SUMMARY_ROWS = [
         ),
     ),
     Row(
+        "SUMMARY-gl-omission-reported-after-capture",
+        review(
+            "gitlab",
+            [finding(line=999, title="GitLab budget", omit=("end_line",))],
+            review_body="x" * 1000000,
+        ),
+        Expected(
+            summary_has=("_[folded:",),
+            summary_lacks=("GitLab budget",),
+            skipped=(
+                "Skipping finding 'GitLab budget' at foo.py:999 \u2014 line not found in diff. Valid lines for this file: []",
+            ),
+            err="WARNING: Skipping finding 'GitLab budget' at foo.py:999 \u2014 line not found in diff. Valid lines for this file: []\n"
+            "WARNING: Skipped finding 'GitLab budget' at foo.py:999 not shown: the summary note reached the 1000000-byte GitLab body limit.\n",
+            out_lines=(
+                "MR summary note captured (dry-run).",
+                "  1 skipped finding(s) not shown: the summary note reached the 1000000-byte GitLab body limit.",
+            ),
+        ),
+    ),
+    Row(
         "SUMMARY-gh-no-line-and-placeholder-keep-sibling",
         review(
             findings=[
@@ -1862,7 +2029,10 @@ SUMMARY_ROWS = [
             summary=HEADER
             + "X" * 65206
             + "\n\n_[folded: 4794 more bytes; this review body reached the 65536-byte GitHub body limit]_"
-            + FOOTER.replace("{count}", "0")
+            + FOOTER.replace("{count}", "0"),
+            out_lines=(
+                "  review_body folded by 4794 bytes: the review body reached the 65536-byte GitHub body limit.",
+            ),
         ),
     ),
     Row(
@@ -2303,6 +2473,17 @@ def test_capture_delivery(row, posting, monkeypatch):
         assert len(body.encode("utf-8")) <= 500
         assert len(find_finding_markers(body)) == 2
         assert live.err == run.err
+
+
+def test_empty_github_session_capture_defaults_to_post_method():
+    session = post.DeliverySession(dry_run=True)
+    assert session.dry_run_payload("github") == {
+        "platform": "github",
+        "endpoint": "",
+        "method": "POST",
+        "payload": {},
+        "skipped": [],
+    }
 
 
 SESSION = [
