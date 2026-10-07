@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.42.24 (2026-10-07)
+
+### Bug Fixes
+
+- Keep finding text visible after a footnote opener closed on a later line
+  ([#478](https://github.com/liatrio-labs/claude-code-gauntlet/pull/478),
+  [`b5eddbe`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b5eddbe287a3b4b930dccc8bbcb800a0a8784185))
+
+### Chores
+
+- Slim agent instructions to AGENTS.md only
+  ([#477](https://github.com/liatrio-labs/claude-code-gauntlet/pull/477),
+  [`0c6a8b0`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6a8b0dae03d714bc86848058aa9327ad716983))
+
+
 ## v3.42.23 (2026-10-06)
 
 ### Bug Fixes
