@@ -460,7 +460,9 @@ class TestPostReviewBoundary(unittest.TestCase):
             ),
             _boundary_run(self.forge_factory, diff),
         ):
-            post_review.main()  # must not raise: every field it reads is present
+            post_review.CLI.invoke(
+                sys.argv[1:]
+            )  # must not raise: every field it reads is present
 
         payload_path = os.path.join(self.tmp, "post-review-payload.json")
         self.assertTrue(
@@ -485,7 +487,7 @@ class TestPostReviewBoundary(unittest.TestCase):
             ),
             _boundary_run(self.forge_factory, diff),
         ):
-            post_review.main()
+            post_review.CLI.invoke(sys.argv[1:])
 
         with open(
             os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"
@@ -528,7 +530,7 @@ class TestPostReviewBoundary(unittest.TestCase):
             ),
             _boundary_run(self.forge_factory, diff),
         ):
-            post_review.main()
+            post_review.CLI.invoke(sys.argv[1:])
 
         with open(
             os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"
@@ -555,7 +557,7 @@ class TestPostReviewBoundary(unittest.TestCase):
             _boundary_run(self.forge_factory, build_gh_diff(PERSISTED_FINDINGS)),
             self.assertRaises(KeyError),
         ):
-            post_review.main()
+            post_review.CLI.invoke(sys.argv[1:])
 
     def test_missing_line_alias_degrades_gracefully_not_a_crash(self):
         # Issue #192: a finding with no `line` alias at all must NOT crash the whole
@@ -574,7 +576,7 @@ class TestPostReviewBoundary(unittest.TestCase):
             ),
             _boundary_run(self.forge_factory, build_gh_diff(PERSISTED_FINDINGS)),
         ):
-            post_review.main()  # must not raise
+            post_review.CLI.invoke(sys.argv[1:])  # must not raise
 
         with open(
             os.path.join(self.tmp, "post-review-payload.json"), encoding="utf-8"

@@ -146,15 +146,11 @@ def _assert_no_raw_slash_in_candidate_paragraphs(
 
 
 def test_composed_builder_is_deterministic_and_covers_delivery_shapes() -> None:
-    fix_counts = dict(post_review._FIX_COUNTS)
-    fix_reasons = dict(post_review._FIX_REASON_COUNTS)
     first = build_composed_quick_action_cases()
     second = build_composed_quick_action_cases()
     by_id = {case["id"]: case["text"] for case in first}
 
     assert first == second
-    assert fix_counts == post_review._FIX_COUNTS
-    assert fix_reasons == post_review._FIX_REASON_COUNTS
     assert len(by_id) == len(first)
     assert set(by_id) == _REQUIRED_COMPOSED_CASE_IDS
     assert ">>>\n/close\nreturn x" in by_id["suggested_patch"]

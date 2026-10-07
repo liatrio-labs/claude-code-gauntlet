@@ -90,11 +90,11 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Callable
-from typing import Any, cast
+from collections.abc import Callable, Mapping
+from typing import Any, Literal, cast
 
 from gauntlet import diff, proc
-from gauntlet.cli import Command
+from gauntlet.cli import CliError, Command, Parser
 from gauntlet.delivery import compose, gate
 from gauntlet.delivery.fold import (
     body_limit,
@@ -127,9 +127,6 @@ from gauntlet.text import prepare_line
 # ---------------------------------------------------------------------------
 # Dry-run capture
 # ---------------------------------------------------------------------------
-DRY_RUN = False
-_CAPTURED: list[PostRequest] = []
-_SKIP_WARNINGS: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -137,19 +134,118 @@ _SKIP_WARNINGS: list[str] = []
 # ---------------------------------------------------------------------------
 
 
+DeliveryOutcome = Literal["posted", "already_present", "invalid", "failed"]
+
+
+class DeliverySession:
+    def __init__(self, *, dry_run: bool) -> None:
+        self.dry_run = dry_run
+        self.captured: list[PostRequest] = []
+        self.skipped: list[str] = []
+        self.kept_fixes = 0
+        self.downgraded_fixes = 0
+        self.outcomes: dict[DeliveryOutcome, int] = {
+            "posted": 0,
+            "already_present": 0,
+            "invalid": 0,
+            "failed": 0,
+        }
+
+    def warn_skip(self, msg: str) -> None:
+        """Emit a skip warning and record it for dry-run payload capture."""
+        self.skipped.append(msg)
+        warn(msg)
+
+    def try_post(
+        self, request: PostRequest, *, forge: Forge
+    ) -> tuple[Mapping[str, object] | None, str | None]:
+        """Return response/error without stranding siblings after a rejected position."""
+        if self.dry_run:
+            self.captured.append(request)
+            return {}, None
+        result = forge.submit(request)
+        if result.warning is not None:
+            warn(result.warning)
+        return result.response, result.error
+
+    def post(
+        self, request: PostRequest, *, forge: Forge
+    ) -> Mapping[str, object] | None:
+        """Fail the whole delivery when the single review or first summary is rejected."""
+        response, error = self.try_post(request, forge=forge)
+        if error is not None:
+            die(error)
+        return response
+
+    def print_fix_summary(self) -> None:
+        """Print the run's patch-acceptance readout, or nothing.
+
+        These two lines are the APPLY-CHECK's verdicts at this run's render sites,
+        and nothing else — they carry no delivery verb, and read identically live
+        and under --dry-run. Delivery is the per-platform count lines' business: a
+        GitLab rerun whose discussions are all already on the MR renders (and so
+        gates, and so counts) every fence while posting nothing, and "N fences
+        posted" was a false claim there. A run that renders nothing counts nothing
+        and prints nothing.
+
+        Both halves print together whenever ANY finding carried the field, so
+        n/(n+m) is readable from any run's stdout.
+        """
+        kept = self.kept_fixes
+        downgraded = self.downgraded_fixes
+        if not (kept or downgraded):
+            return
+        print(f"  {kept} suggested fix(es) passed the apply-check.")
+        print(f"  {downgraded} suggested fix(es) downgraded to prose.")
+
+    def dry_run_payload(self, platform):
+        """Transform the captured API calls + skip warnings into the payload shape.
+
+        GitHub posts a single review, so the payload exposes ``endpoint`` / ``method``
+        / ``payload`` for that one call. GitLab posts a summary note followed by one
+        discussion per finding, so the first capture becomes ``summary`` and the rest
+        become ``discussions``. A ``discussions`` body is the rendered comment alone —
+        the per-finding delivery marker is appended on the live wire only.
+        """
+        if platform == "github":
+            cap = (
+                self.captured[0]
+                if self.captured
+                else PostRequest("github", "", "POST", (), {})
+            )
+            return {
+                "platform": "github",
+                "endpoint": cap.endpoint,
+                "method": cap.method,
+                "payload": cap.payload,
+                "skipped": list(self.skipped),
+            }
+
+        summary = self.captured[0].payload if self.captured else {}
+        discussions = [cap.payload for cap in self.captured[1:]]
+        return {
+            "platform": "gitlab",
+            "summary": summary,
+            "discussions": discussions,
+            "skipped": list(self.skipped),
+        }
+
+    def write_dry_run_payload(self, platform, findings_path: str) -> str:
+        """Write the dry-run payload JSON next to *findings_path*. Returns its path."""
+        payload = self.dry_run_payload(platform)
+        out_dir = os.path.dirname(os.path.abspath(findings_path))
+        out_path = os.path.join(out_dir, "post-review-payload.json")
+        with open(out_path, "w", encoding="utf-8", newline="") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        return out_path
+
+
 def die(msg):
-    print(f"ERROR: {msg}", file=sys.stderr)
-    sys.exit(1)
+    raise CliError(msg)
 
 
 def warn(msg):
     print(f"WARNING: {msg}", file=sys.stderr)
-
-
-def warn_skip(msg):
-    """Emit a skip warning and record it for dry-run payload capture."""
-    _SKIP_WARNINGS.append(msg)
-    warn(msg)
 
 
 def ensure_available(forge: Forge) -> None:
@@ -157,25 +253,6 @@ def ensure_available(forge: Forge) -> None:
         forge.ensure_available()
     except ForgeUnavailable as exc:
         die(str(exc))
-
-
-def try_post_json(request: PostRequest, *, forge: Forge):
-    """Return response/error without stranding siblings after a rejected position."""
-    if DRY_RUN:
-        _CAPTURED.append(request)
-        return {}, None
-    result = forge.submit(request)
-    if result.warning is not None:
-        warn(result.warning)
-    return result.response, result.error
-
-
-def post_json(request: PostRequest, *, forge: Forge):
-    """Fail the whole delivery when the single review or first summary is rejected."""
-    response, error = try_post_json(request, forge=forge)
-    if error is not None:
-        die(error)
-    return response
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +277,7 @@ def validate_position(position, shas, facts: DiffFacts | None, filepath, line):
     """Return the reasons *position* is malformed for GitLab; empty when it is sound.
 
     This is what makes a capture mean something. ``try_post_json`` short-circuits into
-    ``_CAPTURED`` before a payload reaches the network, so a pre-flight that only counts
+    ``session.captured`` before a payload reaches the network, so a pre-flight that only counts
     captures reports twelve discussions "captured" immediately before the live run
     answers 400 on all twelve. Its caller runs this UNCONDITIONALLY — one gate for both
     modes by construction, because a check that runs only under --dry-run cannot be the
@@ -278,32 +355,13 @@ def validate_position(position, shas, facts: DiffFacts | None, filepath, line):
 # `suggestion`, which a human reads before acting on — no finding is lost, only
 # its one-click affordance.
 
-# Per-run patch-acceptance counters, reset by reset_run_state() alongside
-# _CAPTURED and _SKIP_WARNINGS. n/(n+m) over these two is the acceptance rate,
-# deterministic and readable from any run's stdout at no cost.
-_FIX_COUNTS = {"kept": 0, "downgraded": 0}
-# Per-reason downgrade tally, reset alongside _FIX_COUNTS. Delivery is the only
-# caller of _gated_finding.
-_FIX_REASON_COUNTS: dict[FixReason, int] = {}
-
-
-def reset_run_state():
-    """Clear every module-level counter/log a run accumulates.
-
-    Delivery is the only caller of _gated_finding, and main() calls this before
-    each run so prior delivery state cannot leak into it.
-    """
-    _CAPTURED.clear()
-    _SKIP_WARNINGS.clear()
-    _FIX_COUNTS.update(kept=0, downgraded=0)
-    _FIX_REASON_COUNTS.clear()
-
 
 def _gated_finding(
     finding: Any,
     apply_range: tuple[object, object] | None,
     facts: DiffFacts | None,
     *,
+    session: DeliverySession,
     mismatch_reason: FixReason = "anchor_mismatch",
     demote_reason: FixReason | None = None,
 ) -> Any:
@@ -318,12 +376,11 @@ def _gated_finding(
         demote_reason=demote_reason,
     )
     if verdict.keep:
-        _FIX_COUNTS["kept"] += 1
+        session.kept_fixes += 1
         return finding
     reason = cast(FixReason, verdict.reason)
-    _FIX_COUNTS["downgraded"] += 1
-    _FIX_REASON_COUNTS[reason] = _FIX_REASON_COUNTS.get(reason, 0) + 1
-    warn_skip(gate.format_fix_warning(finding, reason, label="suggested-fix"))
+    session.downgraded_fixes += 1
+    session.warn_skip(gate.format_fix_warning(finding, reason, label="suggested-fix"))
     # Strip only on a shallow copy, preserving unknown caller fields.
     stripped = dict(finding)
     del stripped["suggested_fix_code"]
@@ -335,6 +392,7 @@ def _gitlab_anchored(
     anchor: Any,
     facts: DiffFacts | None,
     *,
+    session: DeliverySession,
     demote_reason: FixReason | None = None,
 ) -> tuple[Any, FenceOffsets | None]:
     # The position is single-line; offsets widen one click from this actual anchor.
@@ -349,21 +407,28 @@ def _gitlab_anchored(
         if site.cap_exceeded
         else "anchor_mismatch",
         demote_reason=demote_reason,
+        session=session,
     )
     return gated, site.offsets
 
 
-def _degraded_entry(filepath, line, finding, facts: DiffFacts | None):
+def _degraded_entry(
+    filepath, line, finding, facts: DiffFacts | None, *, session: DeliverySession
+):
     """One entry for the body section, which has no anchor to apply against.
 
     Shared by both posters: a body-section entry never has an apply range, so
     ``_gated_finding`` is always called with ``None`` here regardless of
     platform.
     """
-    return compose.SkippedEntry(filepath, line, _gated_finding(finding, None, facts))
+    return compose.SkippedEntry(
+        filepath, line, _gated_finding(finding, None, facts, session=session)
+    )
 
 
-def _warn_group_skipped(group, facts: DiffFacts | None, filepath=None):
+def _warn_group_skipped(
+    group, facts: DiffFacts | None, filepath=None, *, session: DeliverySession
+):
     """Record the one skip warning a group that cannot anchor inline gets.
 
     *filepath* is the primary's resolved diff spelling when its line is missing from
@@ -391,7 +456,7 @@ def _warn_group_skipped(group, facts: DiffFacts | None, filepath=None):
             for m in members
         ]
         message += f" [group members: {', '.join(labels)}]"
-    warn_skip(message)
+    session.warn_skip(message)
 
 
 def _github_overlap_records(groups, facts: DiffFacts | None):
@@ -462,28 +527,6 @@ def _gitlab_overlap_records(remaining, facts: DiffFacts | None):
                 )
             )
     return records
-
-
-def _print_fix_summary():
-    """Print the run's patch-acceptance readout, or nothing.
-
-    These two lines are the APPLY-CHECK's verdicts at this run's render sites,
-    and nothing else — they carry no delivery verb, and read identically live
-    and under --dry-run. Delivery is the per-platform count lines' business: a
-    GitLab rerun whose discussions are all already on the MR renders (and so
-    gates, and so counts) every fence while posting nothing, and "N fences
-    posted" was a false claim there. A run that renders nothing counts nothing
-    and prints nothing.
-
-    Both halves print together whenever ANY finding carried the field, so
-    n/(n+m) is readable from any run's stdout.
-    """
-    kept = _FIX_COUNTS["kept"]
-    downgraded = _FIX_COUNTS["downgraded"]
-    if not (kept or downgraded):
-        return
-    print(f"  {kept} suggested fix(es) passed the apply-check.")
-    print(f"  {downgraded} suggested fix(es) downgraded to prose.")
 
 
 def _delivery_marker_suffix(sha, keys):
@@ -591,7 +634,9 @@ def resolve_marker_sha(data):
 # ---------------------------------------------------------------------------
 
 
-def post_github(data, facts: DiffFacts | None, *, forge: Forge):
+def post_github(
+    data, facts: DiffFacts | None, *, forge: Forge, session: DeliverySession
+) -> int:
     owner = data["owner"]
     repo = data["repo"]
     pr_number = data["pr_number"]
@@ -626,16 +671,22 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
         corroborators = group.corroborators
         line = primary.get("line")
         if line is None:
-            _warn_group_skipped(group, facts)
+            _warn_group_skipped(group, facts, session=session)
             skipped_groups.append(
-                [_degraded_entry(primary.get("file", "?"), None, primary, facts)]
+                [
+                    _degraded_entry(
+                        primary.get("file", "?"), None, primary, facts, session=session
+                    )
+                ]
             )
             # The primary can't anchor, so the whole group degrades into the
             # skipped section as individual entries — the corroborators never
             # merged into a comment that itself never gets posted.
             for c in corroborators:
                 skipped_groups[-1].append(
-                    _degraded_entry(c.get("file", "?"), c.get("line"), c, facts)
+                    _degraded_entry(
+                        c.get("file", "?"), c.get("line"), c, facts, session=session
+                    )
                 )
             continue
 
@@ -647,11 +698,15 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
             facts, cast(str, primary["file"]), cast(int | None, line)
         )
         if not diff.is_line_valid(facts, filepath, cast(int | None, line)):
-            _warn_group_skipped(group, facts, filepath)
-            skipped_groups.append([_degraded_entry(filepath, line, primary, facts)])
+            _warn_group_skipped(group, facts, filepath, session=session)
+            skipped_groups.append(
+                [_degraded_entry(filepath, line, primary, facts, session=session)]
+            )
             for c in corroborators:
                 skipped_groups[-1].append(
-                    _degraded_entry(c.get("file", "?"), c.get("line"), c, facts)
+                    _degraded_entry(
+                        c.get("file", "?"), c.get("line"), c, facts, session=session
+                    )
                 )
             continue
 
@@ -675,6 +730,7 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
             apply_range,
             facts,
             demote_reason=("overlaps_kept_fence" if index in losers else None),
+            session=session,
         )
         composed = compose.compose_inline_body(
             compose.render_group_sections(gated, corroborators),
@@ -716,11 +772,11 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
     }
 
     _refuse_over_limit(summary.body, "github")
-    resp = post_json(
+    resp = session.post(
         github_review_request(ReviewTarget(owner, repo, pr_number), payload),
         forge=forge,
     )
-    if DRY_RUN:
+    if session.dry_run:
         print("Review captured (dry-run).")
         print(f"  {len(comments)} inline comment(s) captured.")
     else:
@@ -741,7 +797,7 @@ def post_github(data, facts: DiffFacts | None, *, forge: Forge):
             )
         print(skipped_line)
     _report_summary_budget(summary, "github")
-    _print_fix_summary()
+    session.print_fix_summary()
     return 0
 
 
@@ -770,7 +826,13 @@ def fetch_gitlab_shas(target: ReviewTarget, *, forge: GitLab):
 
 
 def gitlab_prior_delivery(
-    owner: str, repo: str, mr_iid: int | str, sha: object, *, forge: Forge
+    owner: str,
+    repo: str,
+    mr_iid: int | str,
+    sha: object,
+    *,
+    forge: Forge,
+    session: DeliverySession,
 ) -> PriorDelivery:
     """Read this SHA's summary, finding keys, and legacy group keys from one snapshot.
 
@@ -778,7 +840,7 @@ def gitlab_prior_delivery(
     An invalid SHA cannot key deduplication. Fetch failure warns and delivers everything
     because a possible duplicate beats a silently dropped review.
     """
-    if DRY_RUN or not is_sha_shaped(sha):
+    if session.dry_run or not is_sha_shaped(sha):
         return PriorDelivery(False, frozenset(), frozenset(), None)
     state = gitlab_prior_delivery_state(owner, repo, mr_iid, sha, forge=forge)
     if state.error:
@@ -789,7 +851,9 @@ def gitlab_prior_delivery(
     return state
 
 
-def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
+def post_gitlab(
+    data, facts: DiffFacts | None, *, forge: GitLab, session: DeliverySession
+) -> int:
     owner = data["owner"]
     repo = data["repo"]
     mr_iid = data["pr_number"]
@@ -837,7 +901,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
 
         def make_body(anchor: Any) -> Any:
             gated, offsets = _gitlab_anchored(
-                finding, anchor, facts, demote_reason=demote_reason
+                finding, anchor, facts, demote_reason=demote_reason, session=session
             )
             return compose.render_group_sections(
                 gated, corroborators, fence_offsets=offsets
@@ -863,15 +927,21 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         corroborators = group.corroborators
         line = primary.get("line")
         if line is None:
-            _warn_group_skipped(group, facts)
+            _warn_group_skipped(group, facts, session=session)
             skipped_groups.append(
-                [_degraded_entry(primary.get("file", "?"), None, primary, facts)]
+                [
+                    _degraded_entry(
+                        primary.get("file", "?"), None, primary, facts, session=session
+                    )
+                ]
             )
             # The primary can't anchor, so the whole group degrades into the
             # skipped section as individual entries.
             for c in corroborators:
                 skipped_groups[-1].append(
-                    _degraded_entry(c.get("file", "?"), c.get("line"), c, facts)
+                    _degraded_entry(
+                        c.get("file", "?"), c.get("line"), c, facts, session=session
+                    )
                 )
             continue
 
@@ -880,11 +950,15 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
             facts, cast(str, primary["file"]), cast(int | None, line)
         )
         if not diff.is_line_valid(facts, filepath, cast(int | None, line)):
-            _warn_group_skipped(group, facts, filepath)
-            skipped_groups.append([_degraded_entry(filepath, line, primary, facts)])
+            _warn_group_skipped(group, facts, filepath, session=session)
+            skipped_groups.append(
+                [_degraded_entry(filepath, line, primary, facts, session=session)]
+            )
             for c in corroborators:
                 skipped_groups[-1].append(
-                    _degraded_entry(c.get("file", "?"), c.get("line"), c, facts)
+                    _degraded_entry(
+                        c.get("file", "?"), c.get("line"), c, facts, session=session
+                    )
                 )
             continue
 
@@ -921,7 +995,9 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
     )
 
     summary_payload = {"body": composed.body}
-    prior = gitlab_prior_delivery(owner, repo, mr_iid, sha, forge=forge)
+    prior = gitlab_prior_delivery(
+        owner, repo, mr_iid, sha, forge=forge, session=session
+    )
     delivered_keys = prior.finding_keys
     legacy_group_keys = prior.legacy_group_keys
     # Same predicate that makes gitlab_prior_delivery skip the fetch: a marker built
@@ -932,10 +1008,10 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         print(f"MR summary note for {sha} already on the MR — skipping.")
     else:
         _refuse_over_limit(composed.body, "gitlab")
-        post_json(gitlab_note_request(target, summary_payload), forge=forge)
+        session.post(gitlab_note_request(target, summary_payload), forge=forge)
         print(
             "MR summary note captured (dry-run)."
-            if DRY_RUN
+            if session.dry_run
             else "MR summary note posted."
         )
         _report_summary_budget(composed, "gitlab")
@@ -1030,7 +1106,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
 
         problems = validate_position(position, shas, facts, filepath, line)
         if problems:
-            warn_skip(
+            session.warn_skip(
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
                 f"— malformed GitLab position: {'; '.join(problems)}."
             )
@@ -1038,18 +1114,18 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         _report_inline_budget(composed, "gitlab", "discussion", filepath, line)
 
         payload = {
-            "body": composed.body if DRY_RUN else composed.body + marker_suffix,
+            "body": composed.body if session.dry_run else composed.body + marker_suffix,
             "position": position,
         }
 
-        _response, error = try_post_json(
+        _response, error = session.try_post(
             gitlab_discussion_request(target, payload), forge=forge
         )
         if error is not None:
             # One rejected position must not strand the findings behind it: the summary
             # note is already on the MR, so exiting here leaves partial, non-retryable
             # state.
-            warn_skip(
+            session.warn_skip(
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
                 f"— GitLab rejected the inline discussion.\n{error}"
             )
@@ -1087,7 +1163,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         A position-less note has no anchor at all, so no fence it carried could
         ever be applied — the gate below strips one unconditionally here.
         """
-        gated = _gated_finding(c, None, facts)
+        gated = _gated_finding(c, None, facts, session=session)
         marker_suffix = _delivery_marker_suffix(sha, [key])
         composed = compose.compose_inline_body(
             compose.render_finding_sections(gated),
@@ -1098,12 +1174,14 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         if _inline_body_over_limit(composed, marker_suffix, "gitlab", "note"):
             return "failed"
         _report_inline_budget(composed, "gitlab", "note", c.get("file"), c.get("line"))
-        payload = {"body": composed.body if DRY_RUN else composed.body + marker_suffix}
-        _response, error = try_post_json(
+        payload = {
+            "body": composed.body if session.dry_run else composed.body + marker_suffix
+        }
+        _response, error = session.try_post(
             gitlab_note_request(target, payload), forge=forge
         )
         if error is not None:
-            warn_skip(
+            session.warn_skip(
                 f"Skipping corroborating finding '{c.get('title', '?')}' — GitLab "
                 f"rejected the position-less note.\n{error}"
             )
@@ -1151,14 +1229,14 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         line = c.get("line")
         title = c.get("title", "?")
         if line is None:
-            warn_skip(
+            session.warn_skip(
                 f"Skipping corroborating finding '{title}' — no line number to "
                 f"anchor its own discussion on."
             )
             return "invalid"
         filepath = diff.diff_path_spelling(facts, c.get("file", "?"), line)
         if not diff.is_line_valid(facts, filepath, cast(int | None, line)):
-            warn_skip(
+            session.warn_skip(
                 f"Skipping corroborating finding '{title}' at {filepath}:{line} "
                 f"— line not found in diff."
             )
@@ -1179,12 +1257,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
             [member_key(c, filepath, line)],
         )
 
-    counters = {
-        "posted": 0,
-        "already_present": 0,
-        "invalid": 0,
-        "failed": 0,
-    }
+    counters = session.outcomes
     for index, (filepath, group) in enumerate(remaining):
         f = group.primary
         corroborators = group.corroborators
@@ -1278,7 +1351,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
     invalid = counters["invalid"]
     failed = counters["failed"]
 
-    if DRY_RUN:
+    if session.dry_run:
         print(f"  {posted} inline discussion(s) captured.")
     else:
         print(f"  {posted} inline discussion(s) posted.")
@@ -1292,7 +1365,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
         )
     if invalid:
         print(f"  {invalid} finding(s) had a malformed position (see warnings above).")
-    _print_fix_summary()
+    session.print_fix_summary()
 
     # Both "nothing new landed" exits below report the same outcome for two different
     # losses, so both owe the operator the same true statement about what is already
@@ -1324,7 +1397,7 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
     # before the live post is the whole point of the pre-flight: ANY of them fails the
     # dry run, however many other findings captured cleanly. Returned rather than exited
     # on, so main() still writes the dry-run payload that shows what was wrong.
-    if DRY_RUN:
+    if session.dry_run:
         return 1 if invalid else 0
 
     # Live, the rule the rejection branch above already follows applies whichever way a
@@ -1345,55 +1418,14 @@ def post_gitlab(data, facts: DiffFacts | None, *, forge: GitLab):
 # ---------------------------------------------------------------------------
 
 
-def build_dry_run_payload(platform):
-    """Transform the captured API calls + skip warnings into the payload shape.
-
-    GitHub posts a single review, so the payload exposes ``endpoint`` / ``method``
-    / ``payload`` for that one call. GitLab posts a summary note followed by one
-    discussion per finding, so the first capture becomes ``summary`` and the rest
-    become ``discussions``. A ``discussions`` body is the rendered comment alone —
-    the per-finding delivery marker is appended on the live wire only.
-    """
-    if platform == "github":
-        cap = _CAPTURED[0] if _CAPTURED else PostRequest("github", "", "POST", (), {})
-        return {
-            "platform": "github",
-            "endpoint": cap.endpoint,
-            "method": cap.method,
-            "payload": cap.payload,
-            "skipped": list(_SKIP_WARNINGS),
-        }
-
-    summary = _CAPTURED[0].payload if _CAPTURED else {}
-    discussions = [cap.payload for cap in _CAPTURED[1:]]
-    return {
-        "platform": "gitlab",
-        "summary": summary,
-        "discussions": discussions,
-        "skipped": list(_SKIP_WARNINGS),
-    }
-
-
-def write_dry_run_payload(platform, findings_path):
-    """Write the dry-run payload JSON next to *findings_path*. Returns its path."""
-    payload = build_dry_run_payload(platform)
-    out_dir = os.path.dirname(os.path.abspath(findings_path))
-    out_path = os.path.join(out_dir, "post-review-payload.json")
-    with open(out_path, "w", encoding="utf-8", newline="") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-    return out_path
-
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 
-def main():
-    global DRY_RUN
-
-    parser = argparse.ArgumentParser(
-        description="Post code-gauntlet findings as PR/MR comments."
+def _parser() -> Parser:
+    parser = Parser(
+        prog="post_review", description="Post code-gauntlet findings as PR/MR comments."
     )
     parser.add_argument(
         "findings_json",
@@ -1419,13 +1451,20 @@ def main():
     )
     parser.add_argument("--platform", help="Override the wrapper platform field.")
     parser.add_argument("--sha", help="Override the wrapper reviewed commit SHA.")
-    args = parser.parse_args()
+    return parser
+
+
+_INPUT_FIELDS = ("owner", "repo", "pr_number", "platform", "sha")
+
+
+def _execute(args: argparse.Namespace) -> int:
 
     # Defense-in-depth: CODE_GAUNTLET_POST_MODE=dry-run self-enforces dry-run so a
     # headless Phase 8 invocation that omits --dry-run cannot live-post. The flag wins
     # when present; env "live" or unset changes nothing without the flag.
-    DRY_RUN = args.dry_run or os.environ.get("CODE_GAUNTLET_POST_MODE") == "dry-run"
-    reset_run_state()
+    session = DeliverySession(
+        dry_run=args.dry_run or os.environ.get("CODE_GAUNTLET_POST_MODE") == "dry-run"
+    )
 
     try:
         loaded = read_json(args.findings_json)
@@ -1438,13 +1477,8 @@ def main():
 
     if isinstance(loaded, list):
         data = {}
-        for name, value in (
-            ("owner", args.owner),
-            ("repo", args.repo),
-            ("pr_number", args.pr_number),
-            ("sha", args.sha),
-            ("platform", args.platform),
-        ):
+        for name in (*_INPUT_FIELDS[:3], *_INPUT_FIELDS[3:][::-1]):
+            value = getattr(args, name)
             if value is not None:
                 data[name] = value
         data["review_body"] = ""
@@ -1454,13 +1488,8 @@ def main():
     else:
         die("Findings JSON must be an object or an array.")
 
-    for name, value in (
-        ("owner", args.owner),
-        ("repo", args.repo),
-        ("pr_number", args.pr_number),
-        ("platform", args.platform),
-        ("sha", args.sha),
-    ):
+    for name in _INPUT_FIELDS:
+        value = getattr(args, name)
         if value is not None:
             data[name] = value
 
@@ -1504,16 +1533,15 @@ def main():
     # it found cannot pre-empt the dry-run payload write below — that file is the artifact
     # an operator reads to see what the run would have sent.
     if isinstance(forge, GitLab):
-        status = post_gitlab(data, facts, forge=forge)
+        status = post_gitlab(data, facts, forge=forge, session=session)
     else:
-        status = post_github(data, facts, forge=forge)
+        status = post_github(data, facts, forge=forge, session=session)
 
-    if DRY_RUN:
-        out_path = write_dry_run_payload(platform, args.findings_json)
+    if session.dry_run:
+        out_path = session.write_dry_run_payload(platform, args.findings_json)
         print(f"Dry run — no comments posted. Payload written to: {out_path}")
 
-    if status:
-        sys.exit(status)
+    return status
 
 
-CLI = Command.legacy(main, prog="post_review.py")
+CLI = Command(parser=_parser(), main=_execute)
