@@ -489,8 +489,9 @@ SUCCESS = {
         f"--output-dir {{dir}} --head-sha {SHA} --unconditional",
     ),
     "verify_findings": (
-        {"findings.json": '{"findings": []}', "diff.patch": PATCH},
-        "{dir}/findings.json --diff-file {dir}/diff.patch",
+        {"diff.patch": PATCH},
+        '--input {dir}/slice.json --input-inline {{"findings":[],"base_branch":"main"}} '
+        "--diff-file {dir}/diff.patch --head-sha abcd --nonce cli",
     ),
     "write_shared_context": (
         {

@@ -49,6 +49,32 @@ def invoke(monkeypatch, capsys):
     return call
 
 
+@pytest.fixture
+def verify_git(monkeypatch):
+    from gauntlet import proc
+
+    calls = []
+    replies = {
+        "log": ("abcdef0123456789\n", "", 0),
+        "blame": ("abcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code", "", 0),
+        "grep": ("source\n", "", 0),
+        "diff": ("", "", 0),
+        "rev-parse": ("abcd\n", "", 0),
+    }
+
+    def output(argv, **kwargs):
+        calls.append((list(argv), kwargs))
+        reply = replies[argv[1]]
+        if callable(reply):
+            return reply(argv)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(proc, "output", output)
+    return calls, replies
+
+
 def probe_symlinks(tmp_path_factory):
     probe = tmp_path_factory.mktemp("symlink-probe")
     source = probe / "file"

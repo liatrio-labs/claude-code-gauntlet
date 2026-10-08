@@ -1283,7 +1283,7 @@ async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, slic
 // each slice's join is independent — so this is deliberately a per-slice check.
 //
 // Ids are matched EXACTLY, everywhere: here, in trustSlice's coverage check, and in the
-// join. Only the USABILITY test trims, mirroring verify_findings.py's `id.strip()` guard —
+// join. Only the USABILITY test trims, mirroring gauntlet.verify.wire's `id.strip()` guard —
 // an id that is nothing but whitespace is one the script would skip. Matching on the
 // trimmed form was tried and removed: it bought no tolerance the checksum did not
 // immediately take back (the proof compares the id text the script wrote, so an echo that
@@ -1312,7 +1312,7 @@ const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 
 // joinVerifyDeltas(slice, deltas) -> the slice's verified findings, enriched.
 // Exported for the dual-runtime golden fixtures: the parity case records
-// verify_findings.py's own delta and its own verified findings, and asserts THIS function
+// gauntlet.verify.wire's own delta and its own verified findings, and asserts THIS function
 // reconstructs the latter from the former — which is the whole equivalence claim #25
 // requirement 1 makes ("the enriched set after the join must be equivalent to today's
 // trusted-path output for every field downstream stages consume").
@@ -1362,7 +1362,7 @@ export function joinVerifyDeltas(slice, deltas) {
 
 // Numeric finding fields that verify_findings.py does arithmetic on (line_start - 1,
 // line comparisons). Pin them to real numbers before inline encoding AND again on the
-// join path, mirroring verify_findings._coerce_numeric_fields:
+// join path, mirroring gauntlet.verify.wire.coerce_numeric_fields:
 //
 //   1. A clean integer string ("153") becomes a number — a quoted value would make
 //      receipt-path arithmetic raise `unsupported operand type(s) for -: 'str' and
@@ -1424,7 +1424,7 @@ export function projectVerifySliceFinding(finding) {
 }
 
 // sliceInputChecksum(content) -> the VALUE proof over the dispatched slice document.
-// The ONE site that spells this canonical form; verify_findings.py's `_input_checksum` is
+// The ONE site that spells this canonical form; gauntlet.jsjson.checksum_or_none is
 // its Python twin. Deliberately unsorted: the document is built in VERIFY_SLICE_FIELDS
 // order by projectVerifySliceFinding, the script reads it back in that order, and a
 // document that comes back in a different shape is a regenerated token rather than a
@@ -1458,7 +1458,7 @@ export function sliceTokenChecksum(payload) {
 // Rebuilt from the DISPATCHED id order, one object per id, keys in DELTA_KEYS order,
 // absent values omitted — so the echo's own array order, key order, and any field it
 // invented cannot move the checksum. Only the VALUES the script decided can.
-// verify_findings.py's build_deltas() emits exactly this shape in exactly this order.
+// gauntlet.verify.wire.build_deltas() emits exactly this shape in exactly this order.
 //
 // The rebuild therefore also makes the proof BLIND to any key outside DELTA_KEYS. That is
 // deliberate and not a hole: joinVerifyDeltas copies only DELTA_VALUE_KEYS, so a key the

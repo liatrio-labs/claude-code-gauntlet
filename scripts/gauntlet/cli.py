@@ -13,6 +13,10 @@ from typing import NoReturn
 from gauntlet.jsjson import dumps
 
 
+def warn(message: str) -> None:
+    print(f"WARNING: {message}", file=sys.stderr)
+
+
 def require_head_sha(value: str) -> None:
     """Reject values outside the lowercase abbreviated/full Git SHA shape."""
     if re.fullmatch(r"[0-9a-f]{4,40}", value) is None:

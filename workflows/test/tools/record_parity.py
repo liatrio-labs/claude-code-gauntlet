@@ -14,14 +14,14 @@ FIXTURES = REPO / "tests" / "fixtures" / "parity"
 
 
 def _verify_deltas(inp):
-    from gauntlet.verify.decide import build_deltas, deltas_checksum
+    from gauntlet.verify.wire import build_deltas, checksum_or_none
 
     verified_by_id = {f["id"]: f for f in inp["result"]["verified"]}
     post_by_id = dict(verified_by_id)
     post_by_id.update({f["id"]: f for f in inp["result"]["eliminated"]})
     ordered = [post_by_id[f["id"]] for f in inp["dispatched"]]
     deltas = build_deltas(ordered, inp["result"]["verified"])
-    checksum = deltas_checksum(deltas)
+    checksum = checksum_or_none(deltas)
     joined = [
         _project_verify_delta(post_by_id[f["id"]])
         for f in inp["dispatched"]
@@ -42,14 +42,14 @@ def _project_verify_delta(finding):
 
 
 def _slice_input_proof(inp):
-    from gauntlet.verify.decide import _input_checksum
+    from gauntlet.verify.wire import checksum_or_none
 
-    return {"checksum": _input_checksum(inp["doc"])}
+    return {"checksum": checksum_or_none(inp["doc"])}
 
 
 def _slice_inline(inp):
     from gauntlet.jsjson import fnv1a32
-    from gauntlet.verify.decide import _input_checksum
+    from gauntlet.verify.wire import checksum_or_none
 
     source = (
         "import { encodeSliceInline } from './workflows/src/stages.js'; "
@@ -67,7 +67,7 @@ def _slice_inline(inp):
     ).stdout
     return {
         "encoded": encoded,
-        "checksum": _input_checksum(inp["doc"]),
+        "checksum": checksum_or_none(inp["doc"]),
         "token_checksum": fnv1a32(encoded),
     }
 

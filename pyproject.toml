@@ -79,6 +79,8 @@ module = [
   "gauntlet.delivery.post",
   "gauntlet.delivery.input",
   "gauntlet.patches",
+  "gauntlet.verify.wire",
+  "gauntlet.verify.decide",
   "tests.support.delivery",
   "gauntlet.numstat",
   "gauntlet.stale",
