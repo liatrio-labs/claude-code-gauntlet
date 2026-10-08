@@ -531,9 +531,8 @@ def test_await_encoding_fallback_keeps_outcome(outcome, monkeypatch, capsys):
     monkeypatch.setattr(awaiting, "await_terminal", lambda *_: ({"bad": {1}}, outcome))
     assert awaiting.CLI.invoke(["bare-id", "--timeout-seconds", "0"]) == outcome
     receipt = json.loads(capsys.readouterr().out)
-    assert receipt.pop("message").startswith(
-        "result would not serialize: Object of type set"
-    )
+    message = receipt.pop("message")
+    assert message.startswith("result would not serialize: Object of type set")
     assert receipt == {"await": "error", "gap": "workflow-timeout"}
 
 
@@ -567,6 +566,36 @@ def test_output_failure(error, monkeypatch):
     monkeypatch.setattr(os, "open", fail)
     monkeypatch.setattr(stream, "flush", fail)
     assert awaiting.CLI.invoke(["missing", "--timeout-seconds", "0"]) == 4
+
+
+def test_broken_pipe_redirect_prevents_shutdown_failure(tmp_path):
+    target = tmp_path / "task.output"
+    # A buffered marker survives a failed flush and is retried at interpreter shutdown.
+    target.write_text('{"ok":true,"stats":{}}', encoding="utf-8")
+    read_fd, write_fd = os.pipe()
+    # Close the reader before launch so delivery fails independently of scheduling.
+    os.close(read_fd)
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts" / "await_workflow.py"),
+                "--timeout-seconds",
+                "0",
+                "--",
+                str(target),
+            ],
+            stdout=write_fd,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+    finally:
+        os.close(write_fd)
+    assert result.returncode == 4, result.stderr
+    assert result.stderr.strip() == ""
 
 
 @pytest.mark.parametrize(

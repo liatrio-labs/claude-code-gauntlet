@@ -26,6 +26,12 @@ class SourceSelection:
     scanned: int
 
 
+@dataclass(frozen=True, slots=True)
+class MaterializePlan:
+    entries: list[PlanEntry]
+    plan_path: str
+
+
 class MaterializeReceipt(TypedDict):
     ok: bool
     channel: str
@@ -75,42 +81,42 @@ def select_source(
 # Validate the whole payload before writing anything; malformed later entries cannot be ignored.
 def plan_entries(
     payload: Mapping[str, object], output_root: str, errors: list[str]
-) -> tuple[list[PlanEntry] | None, str | None]:
+) -> MaterializePlan | None:
     entries = payload.get("entries")
     if not isinstance(entries, list) or not entries:
         errors.append("persistReturn carries no entries to write")
-        return None, None
+        return None
     checked = []
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             errors.append(f"entry {index} is not an object")
-            return None, None
+            return None
         path = entry.get("path")
         text = entry.get("text")
         if not isinstance(path, str) or not path:
             errors.append(f"entry {index} has no usable string path")
-            return None, None
+            return None
         if not isinstance(text, str):
             errors.append(f"entry {index} ({path}) carries no string text")
-            return None, None
+            return None
         if not confined(path, output_root):
             errors.append(
                 f"entry {index} writes outside the output directory: {path} is not "
                 f"inside {output_root}"
             )
-            return None, None
+            return None
         checked.append(PlanEntry(path, text))
     plan_path = payload.get("planPath")
     if not isinstance(plan_path, str) or not plan_path:
         errors.append("persistReturn names no persist plan to derive from")
-        return None, None
+        return None
     if plan_path not in [entry.path for entry in checked]:
         errors.append(
             f"the named persist plan {plan_path} is not among the entries this "
             "payload carries"
         )
-        return None, None
-    return checked, plan_path
+        return None
+    return MaterializePlan(checked, plan_path)
 
 
 def write_entries(
@@ -118,7 +124,7 @@ def write_entries(
 ) -> bool:
     ok = True
     for entry in entries:
-        path, text = cast(str, entry.path), entry.text
+        path, text = entry.path, entry.text
         try:
             write_atomic(path, text)
         except Exception as exc:  # noqa: BLE001 - reported, never raised
@@ -214,16 +220,17 @@ def _materialize(
         )
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
 
-    entries, plan_path = plan_entries(payload, output_root, errors)
-    if entries is None:
+    plan = plan_entries(payload, output_root, errors)
+    if plan is None:
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
+    entries, plan_path = plan.entries, plan.plan_path
 
     # Skip derivation after a partial write: its source could belong to an earlier run.
     if not write_entries(entries, materialized, errors):
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
 
     # plan_entries proved that plan_path is a string present among the validated entries.
-    receipt = assemble(cast(str, plan_path))
+    receipt = assemble(plan_path)
     plan_text = {entry.path: entry.text for entry in entries}.get(plan_path, "")
     gaps.extend(proof_gaps(receipt, plan_text))
     if not receipt.get("ok"):
@@ -245,27 +252,19 @@ def materialize(
 
 
 def _unexpected_failure_receipt(exc: Exception) -> MaterializeReceipt:
-    return _receipt(
-        False,
-        None,
-        0,
-        [],
-        None,
-        [],
-        [f"materializer failed unexpectedly: {type(exc).__name__}: {exc}"],
+    return _failure_receipt(
+        f"materializer failed unexpectedly: {type(exc).__name__}: {exc}"
     )
 
 
 def _fallback_receipt(exc: Exception) -> MaterializeReceipt:
-    return _receipt(
-        False,
-        None,
-        0,
-        [],
-        None,
-        [],
-        [f"receipt could not be serialized: {type(exc).__name__}: {exc}"],
+    return _failure_receipt(
+        f"receipt could not be serialized: {type(exc).__name__}: {exc}"
     )
+
+
+def _failure_receipt(message: str) -> MaterializeReceipt:
+    return _receipt(False, None, 0, [], None, [], [message])
 
 
 def build_parser() -> Parser:

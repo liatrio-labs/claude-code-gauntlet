@@ -1,10 +1,9 @@
-"""Make the pytest process hermetic to an ambient TMPDIR and to git's own
-repository-local environment variables.
+"""Make pytest hermetic to ambient temp, git, and task-directory discovery.
 
-Two things outside a checkout can make its suites lie about what they cover:
+Three things outside a checkout can make its suites lie about what they cover:
 
 * A hostile ambient temp directory. The temp root may sit inside a work tree
-  — for example a session scratch directory — and if ``TMPDIR`` (or the
+  (for example a session scratch directory) and if ``TMPDIR`` (or the
   platform's ``TEMP``/``TMP``) already points there, anything this process
   writes under ``tempfile.gettempdir()`` lands inside that other repository
   instead of a scratch area, and a git command run from there discovers and
@@ -15,17 +14,24 @@ Two things outside a checkout can make its suites lie about what they cover:
   A pytest run started that way inherits them, so a git subprocess a
   test issues resolves against the enclosing repository instead of the one
   the test built, unless those variables are cleared first.
+* Host task-directory discovery. Default roots include task files from other
+  sessions, so a test may read files it did not create or match another run.
 
-This module fixes both for the lifetime of the pytest process: it points the
-temp environment at a private, single-use directory and pops every
-git-local variable, restoring everything at teardown.
+This module isolates all three for the lifetime of the pytest process: it
+points the temp environment at a private, single-use directory and pops
+every git-local variable. It clears both task variables, points task roots
+at a private directory, and uses an autouse guard to fail any test that reaches
+default discovery, restoring the environment at teardown.
 
 Covers: git repository discovery and git environment leakage into
-subprocesses spawned during the run, and the shape of temp-root names it
-manufactures. Does not cover: a test that runs git with its own scrubbed
-environment (nothing here re-injects variables a test itself removed), or a
-run started outside pytest (e.g. ``python -m unittest`` never loads this
-file). Only pytest's own DEFAULT basetemp (the ``pytest-of-<user>`` area)
+subprocesses spawned during the run, the shape of temp-root names it
+manufactures, task-root isolation for children that inherit the task-roots
+variable, and the guard against in-process default discovery. Does not
+cover: a test that runs git with its own scrubbed environment (nothing here
+re-injects variables a test itself removed), a child launched with a
+hand-built environment that omits the task-roots variable, or a run started
+outside pytest (e.g. ``python -m unittest`` never loads this file). Only
+pytest's own DEFAULT basetemp (the ``pytest-of-<user>`` area)
 lands under the private root created here and is removed at teardown; an
 explicit ``--basetemp`` is used exactly as given, outside this mechanism,
 which is the way to keep one.

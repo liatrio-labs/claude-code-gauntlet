@@ -21,7 +21,7 @@ ProofState = Literal["match", "mismatch"]
 
 @dataclass(frozen=True, slots=True)
 class PlanEntry:
-    path: object
+    path: str
     text: str
 
 
@@ -264,7 +264,7 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
             document["findings"] = projected
         text = _serialize(document, "post-review", errors)
         if text is not None:
-            pending.append(PlanEntry(post.get("path"), text))
+            pending.append(PlanEntry(cast(str, post.get("path")), text))
 
     cp = cast(Mapping[str, object], plan.get("checkpoint") or {})
     cp_source = cp.get("source")
@@ -284,12 +284,9 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
             "challenge"
         )
         # Mirror JS persistPlan: only replace an existing array, never fabricate findings.
-        has_findings_array = isinstance(challenge, dict) and isinstance(
-            challenge.get("findings"), list
-        )
-        if has_findings_array:
+        if isinstance(challenge, dict) and isinstance(challenge.get("findings"), list):
             # Assignment retains the existing key position for byte parity.
-            cast(dict[str, object], challenge)["findings"] = cp_projected
+            challenge["findings"] = cp_projected
         elif cp_ids:
             errors.append(
                 "checkpoint skeleton has no phases.challenge.findings array to receive "
@@ -297,7 +294,7 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
             )
         text = _serialize(skeleton, "checkpoint", errors)
         if text is not None:
-            pending.append(PlanEntry(cp.get("path"), text))
+            pending.append(PlanEntry(cast(str, cp.get("path")), text))
 
     if errors:
         return _receipt(False, plan_version, actual, verified, [], errors)
@@ -307,7 +304,7 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
     for planned in pending:
         path, text = planned.path, planned.text
         try:
-            write_atomic(cast("str | os.PathLike[str]", path), text)
+            write_atomic(path, text)
         except Exception as exc:  # noqa: BLE001 - converted to a structural error
             errors.append(f"could not write {path} ({type(exc).__name__}: {exc})")
             continue

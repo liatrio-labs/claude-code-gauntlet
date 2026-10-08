@@ -52,6 +52,14 @@ EMPTY_ASSEMBLE = {
             None,
             id="SOURCE-explicit-missing-counts",
         ),
+        pytest.param(
+            "cli-path-nonce",
+            "missing.output",
+            "run",
+            2,
+            "named",
+            id="SOURCE-cli-missing-path-nonce-sweeps-roots",
+        ),
         pytest.param("channel", "task", None, 1, None, id="SOURCE-foreign-channel"),
         pytest.param(
             "named-sweep",
@@ -104,6 +112,15 @@ def test_source_selection(
         monkeypatch.setenv("CODE_GAUNTLET_TASK_ROOTS", str(tmp_path / "empty-root"))
         assert (
             materialize.CLI.invoke(["--output-dir", str(output), "--nonce", nonce]) == 0
+        )
+        receipt = json.loads(capsys.readouterr().out)
+    elif mode == "cli-path-nonce":
+        monkeypatch.setenv("CODE_GAUNTLET_TASK_ROOTS", str(root))
+        assert (
+            materialize.CLI.invoke(
+                ["--output-dir", str(output), "--task", task, "--nonce", nonce]
+            )
+            == 0
         )
         receipt = json.loads(capsys.readouterr().out)
     else:

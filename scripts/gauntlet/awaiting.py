@@ -268,6 +268,11 @@ def await_terminal(
     artifacts_complete_at = None
     saw_bare_ok = False
 
+    def marker_for(kind: AwaitOutcome) -> AwaitMarker:
+        return build_marker(
+            kind, args, observation, artifacts, since_epoch, started_at, saw_bare_ok
+        )
+
     while True:
         observation = tasks.observe(args.target, roots)
         saw_bare_ok = saw_bare_ok or observation.saw_bare_ok
@@ -287,15 +292,7 @@ def await_terminal(
             if (grace_elapsed and observation.resolved_path is None) or (
                 args.attempt >= args.max_attempts and now >= deadline
             ):
-                marker = build_marker(
-                    "artifacts_only",
-                    args,
-                    observation,
-                    artifacts,
-                    since_epoch,
-                    started_at,
-                    saw_bare_ok,
-                )
+                marker = marker_for("artifacts_only")
                 marker["gap"] = "workflow-timeout"
                 marker["detail"] = (
                     "every persisted artifact is present and fresh, but the "
@@ -314,23 +311,13 @@ def await_terminal(
         time.sleep(max(0, min(args.poll_interval, deadline - now)))
 
     if args.attempt < args.max_attempts:
-        marker = build_marker(
-            "pending",
-            args,
-            observation,
-            artifacts,
-            since_epoch,
-            started_at,
-            saw_bare_ok,
-        )
+        marker = marker_for("pending")
         marker["next_command"] = build_next_command(
             args, observation.resolved_path, since_epoch
         )
         return marker, 3
 
-    marker = build_marker(
-        "timeout", args, observation, artifacts, since_epoch, started_at, saw_bare_ok
-    )
+    marker = marker_for("timeout")
     marker["gap"] = "workflow-timeout"
     marker["detail"] = (
         f"no terminal workflow result after {args.max_attempts} attempts; declare "
