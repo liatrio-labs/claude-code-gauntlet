@@ -230,13 +230,30 @@ def _plant_task_output(test, prefix, name):
 def run_main(argv, environ=None):
     """Call main() with captured streams. Returns ``(code, stdout, stderr)``."""
     out, err = io.StringIO(), io.StringIO()
+    isolated_environ = {
+        "CODE_GAUNTLET_TASK_ROOTS": os.environ["CODE_GAUNTLET_TASK_ROOTS"]
+    }
+    if environ is not None:
+        isolated_environ.update(environ)
     with (
         patch("sys.stdout", new=out),
         patch("sys.stderr", new=err),
-        patch.dict(os.environ, environ or {}),
+        patch.dict(os.environ, isolated_environ, clear=True),
     ):
         code = CLI.invoke(argv)
     return code, out.getvalue(), err.getvalue()
+
+
+def test_run_main_ignores_ambient_command_environment(tmp_path, monkeypatch):
+    (tmp_path / "bare-id.output").write_text('{"ok":true,"stats":{}}', encoding="utf-8")
+    monkeypatch.setenv("CODE_GAUNTLET_TASKS_DIR", str(tmp_path))
+    monkeypatch.setenv("BASH_MAX_TIMEOUT_MS", "200000")
+    with patch("gauntlet.awaiting.time.time", side_effect=[0, 600, 600]):
+        code, out, _ = run_main(["bare-id", "--since-epoch", "0"])
+    marker = json.loads(out.strip())
+    assert code == 3
+    assert marker["resolved_path"] is None
+    assert "--timeout-seconds 540 " in marker["next_command"]
 
 
 def sole_json_line(stdout):

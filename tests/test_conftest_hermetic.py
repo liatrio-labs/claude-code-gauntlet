@@ -26,7 +26,10 @@ def test_temp_root_name_carries_a_glob_guard():
 
 
 @pytest.mark.parametrize("prior_roots", [None, "/sentinel/prior/task-roots"])
-def test_configure_then_unconfigure_restores_exact_prior_state(prior_roots):
+@pytest.mark.parametrize("prior_tasks_dir", [None, "/sentinel/prior/tasks-dir"])
+def test_configure_then_unconfigure_restores_exact_prior_state(
+    prior_roots, prior_tasks_dir
+):
     saved_environ = dict(os.environ)
     saved_tempdir = tempfile.tempdir
     saved_state = copy.deepcopy(root_conftest._STATE.__dict__)
@@ -39,6 +42,10 @@ def test_configure_then_unconfigure_restores_exact_prior_state(prior_roots):
             os.environ.pop("CODE_GAUNTLET_TASK_ROOTS", None)
         else:
             os.environ["CODE_GAUNTLET_TASK_ROOTS"] = prior_roots
+        if prior_tasks_dir is None:
+            os.environ.pop("CODE_GAUNTLET_TASKS_DIR", None)
+        else:
+            os.environ["CODE_GAUNTLET_TASKS_DIR"] = prior_tasks_dir
         # mkdtemp needs a real prior directory even though TMPDIR is a literal sentinel.
         tempfile.tempdir = prior_tempdir
         root_conftest._STATE.__dict__.clear()
@@ -53,12 +60,15 @@ def test_configure_then_unconfigure_restores_exact_prior_state(prior_roots):
             created_root, "task-roots"
         )
         assert os.path.isdir(os.environ["CODE_GAUNTLET_TASK_ROOTS"])
+        assert "CODE_GAUNTLET_TASKS_DIR" not in os.environ
+        os.environ["CODE_GAUNTLET_TASKS_DIR"] = "/sentinel/session/tasks-dir"
 
         root_conftest.pytest_unconfigure(None)
         assert os.environ["TMPDIR"] == "/sentinel/prior/tmpdir"
         assert os.environ["GIT_DIR"] == "/sentinel/prior/git-dir"
         assert "GIT_CEILING_DIRECTORIES" not in os.environ
         assert os.environ.get("CODE_GAUNTLET_TASK_ROOTS") == prior_roots
+        assert os.environ.get("CODE_GAUNTLET_TASKS_DIR") == prior_tasks_dir
         assert tempfile.tempdir == prior_tempdir
         assert not os.path.exists(created_root)
     finally:

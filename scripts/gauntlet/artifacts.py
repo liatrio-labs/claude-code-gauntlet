@@ -74,6 +74,7 @@ def _receipt(
 
 
 # The plan selects delivered ids. Prove its entire instruction set, dropping only its proof key.
+# Explicit id lists preserve the workflow's ranked, capped selection without re-deriving ranking here.
 def plan_checksum(plan: Mapping[str, object]) -> str:
     body = dict((k, v) for (k, v) in plan.items() if k != PLAN_CHECKSUM_KEY)
     return fnv1a32(js_stringify_pretty(body))

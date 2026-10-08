@@ -16,6 +16,7 @@ from gauntlet.fs import glob_under
 TASKS_DIR_ENV = "CODE_GAUNTLET_TASKS_DIR"
 TASK_ROOTS_ENV = "CODE_GAUNTLET_TASK_ROOTS"
 TASK_OUTPUT_DIR_GLOB = os.path.join("*", "*", "tasks")
+# Output files accumulate per session directory, so the cap bounds reads.
 MAX_SCANNED_FILES = 200
 
 # Bound attempted decodes as well as successes, so malformed input cannot hang a wait.
@@ -26,6 +27,7 @@ SCAN_MAX_CHARS = 8_000_000
 SCAN_MAX_DEEP_CANDIDATES = 8
 
 # Receipts also carry ok; only pipeline fields corroborate a terminal return.
+# error is deliberately excluded as too generic to corroborate a return.
 COMPACT_RETURN_KEYS = (
     "phaseReached",
     "stats",
@@ -79,6 +81,7 @@ def _deduplicate(directories: Sequence[str]) -> tuple[str, ...]:
     return tuple(roots)
 
 
+# /tmp can resolve to /private/tmp on macOS, so both spellings are searched and realpath-deduplicated.
 def _default_roots(tmpdir: str | None) -> tuple[str, ...]:
     getuid = getattr(os, "getuid", None)
     uid = getuid() if callable(getuid) else None
@@ -93,11 +96,10 @@ def _default_roots(tmpdir: str | None) -> tuple[str, ...]:
 
 
 def roots_from_environment(environ: Mapping[str, str]) -> TaskRoots:
-    raw = environ.get(TASK_ROOTS_ENV)
+    raw = environ.get(TASK_ROOTS_ENV, "")
+    items = tuple(item for item in raw.split(os.pathsep) if item)
     directories = (
-        _deduplicate(tuple(item for item in raw.split(os.pathsep) if item))
-        if raw
-        else _default_roots(environ.get("TMPDIR"))
+        _deduplicate(items) if items else _default_roots(environ.get("TMPDIR"))
     )
     return TaskRoots(directories, environ.get(TASKS_DIR_ENV))
 
@@ -112,7 +114,14 @@ def looks_like_path(target: str) -> bool:
     )
 
 
+def roots_for_request(target: str | None, nonce: str | None = None) -> TaskRoots:
+    if target and looks_like_path(target) and not nonce:
+        return TaskRoots((), None)
+    return roots_from_environment(os.environ)
+
+
 # An mtime floor could reject a fast failure written before the first await call.
+# Short ids can collide across sessions, so newest favours the current run over another session's finished file; lexicographic order would not.
 def _newest(paths: Sequence[str]) -> str | None:
     best, best_mtime = None, None
     for path in paths:

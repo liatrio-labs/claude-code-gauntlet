@@ -152,8 +152,6 @@ def artifacts_state(
     return state
 
 
-# Carry the original floor and resolved path. Quote tokens for a literal Bash retry.
-# Target last behind -- preserves ids or relative paths beginning with a dash.
 def _artifact_paths(artifacts_dir: str, head_sha: str) -> dict[str, str]:
     return {
         key: os.path.join(artifacts_dir, template.format(sha=head_sha))
@@ -161,6 +159,7 @@ def _artifact_paths(artifacts_dir: str, head_sha: str) -> dict[str, str]:
     }
 
 
+# Carry the original floor and resolved path; quote a literal Bash retry with target last behind -- to preserve leading dashes.
 def build_next_command(
     args: argparse.Namespace, resolved_path: str | None, since_epoch: float
 ) -> str:
@@ -204,21 +203,15 @@ def _wait_error_payload(args: argparse.Namespace, message: str) -> AwaitError:
 def _emit(payload: Mapping[str, object]) -> None:
     try:
         line = json.dumps(payload, separators=(",", ":"))
-    except Exception as exc:  # noqa: BLE001 - every encoder failure needs a receipt
-        try:
-            line = json.dumps(
-                {
-                    "await": "error",
-                    "gap": "workflow-timeout",
-                    "message": f"result would not serialize: {exc}",
-                },
-                separators=(",", ":"),
-            )
-        except Exception:  # noqa: BLE001 - even rendering the exception may fail
-            line = (
-                '{"await":"error","gap":"workflow-timeout",'
-                '"message":"result would not serialize"}'
-            )
+    except (TypeError, ValueError) as exc:
+        line = json.dumps(
+            {
+                "await": "error",
+                "gap": "workflow-timeout",
+                "message": f"result would not serialize: {exc}",
+            },
+            separators=(",", ":"),
+        )
     try:
         print(line)
         sys.stdout.flush()
@@ -290,7 +283,7 @@ def await_terminal(
             if artifacts_complete_at is None:
                 artifacts_complete_at = now
             grace_elapsed = now - artifacts_complete_at >= args.artifacts_grace_seconds
-            # Unresolved targets may use grace; resolved targets wait through the final deadline.
+            # Fresh artifacts are the only fallback for an unresolved target; a resolved file may still receive its terminal return, so it waits to the deadline.
             if (grace_elapsed and observation.resolved_path is None) or (
                 args.attempt >= args.max_attempts and now >= deadline
             ):
@@ -433,14 +426,7 @@ def main(args: argparse.Namespace) -> int:
     if args.timeout_seconds is None:
         args.timeout_seconds = default_timeout_seconds()
     try:
-        # Paths ignore roots. A delimiter-only list is empty without default discovery,
-        # so the shared factory cannot introduce realpath probes for an explicit target.
-        environ = (
-            {tasks.TASK_ROOTS_ENV: os.pathsep}
-            if tasks.looks_like_path(args.target)
-            else os.environ
-        )
-        roots = tasks.roots_from_environment(environ)
+        roots = tasks.roots_for_request(args.target)
         payload, code = await_terminal(args, roots)
     except KeyboardInterrupt:
         payload, code = _wait_error_payload(args, "interrupted"), 4

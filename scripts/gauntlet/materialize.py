@@ -241,15 +241,19 @@ def materialize(
     try:
         return _materialize(task, nonce, output_dir, roots)
     except Exception as exc:  # noqa: BLE001 - the one-line-receipt contract
-        return _receipt(
-            False,
-            None,
-            0,
-            [],
-            None,
-            [],
-            [f"materializer failed unexpectedly: {type(exc).__name__}: {exc}"],
-        )
+        return _unexpected_failure_receipt(exc)
+
+
+def _unexpected_failure_receipt(exc: Exception) -> MaterializeReceipt:
+    return _receipt(
+        False,
+        None,
+        0,
+        [],
+        None,
+        [],
+        [f"materializer failed unexpectedly: {type(exc).__name__}: {exc}"],
+    )
 
 
 def _fallback_receipt(exc: Exception) -> MaterializeReceipt:
@@ -296,8 +300,11 @@ def main(args: argparse.Namespace) -> tuple[MaterializeReceipt, int]:
         raise UsageError(
             "give --task, --nonce, or both \u2014 there is nothing to resolve", 2
         )
-    roots = tasks.roots_from_environment(os.environ)
-    receipt = materialize(args.task, args.nonce, args.output_dir, roots)
+    try:
+        roots = tasks.roots_for_request(args.task, args.nonce)
+        receipt = materialize(args.task, args.nonce, args.output_dir, roots)
+    except Exception as exc:  # noqa: BLE001 - discovery must also produce a receipt
+        receipt = _unexpected_failure_receipt(exc)
     return receipt, 0 if receipt["ok"] else 1
 
 

@@ -56,6 +56,7 @@ _STATE = _SessionState()
 
 _TEMP_VARS = ("TMPDIR", "TEMP", "TMP")
 _TASK_ROOTS_VAR = "CODE_GAUNTLET_TASK_ROOTS"
+_TASKS_DIR_VAR = "CODE_GAUNTLET_TASKS_DIR"
 
 
 def _git_local_env_vars() -> list[str]:
@@ -78,6 +79,7 @@ def pytest_configure(config: Any) -> None:
     names_to_clear = (
         *_TEMP_VARS,
         _TASK_ROOTS_VAR,
+        _TASKS_DIR_VAR,
         "GIT_CEILING_DIRECTORIES",
         *_git_local_env_vars(),
     )

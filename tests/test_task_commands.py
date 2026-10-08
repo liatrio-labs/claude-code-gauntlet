@@ -5,7 +5,7 @@ import os
 from unittest.mock import patch
 
 import pytest
-from gauntlet import artifacts, awaiting, cli, materialize
+from gauntlet import artifacts, awaiting, cli, materialize, tasks
 
 
 @pytest.mark.parametrize(
@@ -92,16 +92,22 @@ def test_await_encoding_fallback_keeps_outcome(outcome, monkeypatch, capsys):
     )
 
 
-def test_await_final_constant_handles_both_encoder_failures(monkeypatch, capsys):
+@pytest.mark.parametrize(
+    "failures",
+    [(RuntimeError,), (RecursionError,), (TypeError, ValueError)],
+    ids=["runtime-error", "recursion-error", "fallback-error"],
+)
+def test_await_encoder_exceptions_keep_original_scope(failures, monkeypatch, capsys):
+    pending = iter(failures)
+
     def fail(*args, **kwargs):
-        raise RuntimeError("encoding failed")
+        raise next(pending)("encoding failed")
 
     monkeypatch.setattr(awaiting, "await_terminal", lambda *_: ({"ok": True}, 5))
     monkeypatch.setattr(json, "dumps", fail)
-    assert awaiting.CLI.invoke(["bare-id", "--timeout-seconds", "0"]) == 5
-    assert capsys.readouterr().out.strip() == (
-        '{"await":"error","gap":"workflow-timeout","message":"result would not serialize"}'
-    )
+    with pytest.raises(failures[-1], match=r"^encoding failed$"):
+        awaiting.CLI.invoke(["bare-id", "--timeout-seconds", "0"])
+    assert capsys.readouterr().out.strip() == ""
 
 
 def test_await_preserves_compact_ascii_nan_spelling(monkeypatch, capsys):
@@ -155,3 +161,121 @@ def test_explicit_await_path_never_probes_discovery_roots(
     )
     assert awaiting.CLI.invoke([str(target), "--timeout-seconds", "0"]) == 0
     assert capsys.readouterr().out.strip() == '{"ok":true,"stats":{}}'
+
+
+@pytest.mark.parametrize(
+    "command,argv,expected_code,expected",
+    [
+        (
+            materialize.CLI,
+            ["--output-dir", ".", "--task", "missing.output"],
+            1,
+            {
+                "ok": False,
+                "channel": "return",
+                "source": None,
+                "scanned": 1,
+                "materialized": [],
+                "assemble": None,
+                "gaps": [],
+                "errors": [
+                    "no task output file carrying this run's returned artifacts was found "
+                    "(looked at 1 candidate file(s) for target 'missing.output' / nonce None)"
+                ],
+            },
+        ),
+        (
+            materialize.CLI,
+            ["--output-dir", ".", "--task", "missing"],
+            1,
+            {
+                "ok": False,
+                "channel": "return",
+                "source": None,
+                "scanned": 0,
+                "materialized": [],
+                "assemble": None,
+                "gaps": [],
+                "errors": [
+                    "materializer failed unexpectedly: OSError: discovery failed"
+                ],
+            },
+        ),
+        (
+            materialize.CLI,
+            ["--output-dir", ".", "--nonce", "run"],
+            1,
+            {
+                "ok": False,
+                "channel": "return",
+                "source": None,
+                "scanned": 0,
+                "materialized": [],
+                "assemble": None,
+                "gaps": [],
+                "errors": [
+                    "materializer failed unexpectedly: OSError: discovery failed"
+                ],
+            },
+        ),
+        (
+            materialize.CLI,
+            ["--output-dir", ".", "--task", "missing.output", "--nonce", "run"],
+            1,
+            {
+                "ok": False,
+                "channel": "return",
+                "source": None,
+                "scanned": 0,
+                "materialized": [],
+                "assemble": None,
+                "gaps": [],
+                "errors": [
+                    "materializer failed unexpectedly: OSError: discovery failed"
+                ],
+            },
+        ),
+        (
+            awaiting.CLI,
+            ["missing", "--timeout-seconds", "0"],
+            4,
+            {
+                "await": "error",
+                "gap": "workflow-timeout",
+                "message": "OSError: discovery failed",
+                "target": "missing",
+                "attempt": 1,
+                "max_attempts": 4,
+            },
+        ),
+        (
+            awaiting.CLI,
+            ["missing.output", "--timeout-seconds", "0"],
+            0,
+            {"ok": True, "stats": {}},
+        ),
+    ],
+    ids=[
+        "materialize-path",
+        "materialize-id",
+        "materialize-nonce",
+        "materialize-path-with-nonce",
+        "await-id",
+        "await-path",
+    ],
+)
+def test_discovery_failure_stays_inside_command_receipts(
+    command, argv, expected_code, expected, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    if command is awaiting.CLI:
+        (tmp_path / "missing.output").write_text(
+            '{"ok":true,"stats":{}}', encoding="utf-8"
+        )
+
+    def fail(environ):
+        raise OSError("discovery failed")
+
+    monkeypatch.setattr(tasks, "roots_from_environment", fail)
+    assert command.invoke(argv) == expected_code
+    assert json.loads(capsys.readouterr().out.strip()) == expected

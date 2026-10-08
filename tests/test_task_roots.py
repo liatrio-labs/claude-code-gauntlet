@@ -8,25 +8,64 @@ from pathlib import Path
 import pytest
 from gauntlet import tasks
 
+_REAL_DEFAULT_ROOTS = tasks._default_roots
+
 
 @pytest.mark.parametrize(
     "tmpdir,uid,system_temp,expected",
     [
-        (None, 42, None, ("base-a/claude-42", "base-b/claude-42")),
         (
-            "extra///",
+            None,
             42,
             None,
-            ("base-a/claude-42", "base-b/claude-42", "extra/claude-42"),
+            (os.path.join("base-a", "claude-42"), os.path.join("base-b", "claude-42")),
         ),
-        ("/", 42, None, ("base-a/claude-42", "base-b/claude-42", "/claude-42")),
-        ("", 42, "unused", ("base-a/claude-42", "base-b/claude-42")),
-        (None, None, "system", ("base-a/claude", "base-b/claude", "system/claude")),
+        (
+            "extra" + os.sep * 3,
+            42,
+            None,
+            (
+                os.path.join("base-a", "claude-42"),
+                os.path.join("base-b", "claude-42"),
+                os.path.join("extra", "claude-42"),
+            ),
+        ),
+        (
+            os.sep,
+            42,
+            None,
+            (
+                os.path.join("base-a", "claude-42"),
+                os.path.join("base-b", "claude-42"),
+                os.path.join(os.sep, "claude-42"),
+            ),
+        ),
+        (
+            "",
+            42,
+            "unused",
+            (os.path.join("base-a", "claude-42"), os.path.join("base-b", "claude-42")),
+        ),
+        (
+            None,
+            None,
+            "system",
+            (
+                os.path.join("base-a", "claude"),
+                os.path.join("base-b", "claude"),
+                os.path.join("system", "claude"),
+            ),
+        ),
         (
             "extra",
             None,
             "system",
-            ("base-a/claude", "base-b/claude", "extra/claude", "system/claude"),
+            (
+                os.path.join("base-a", "claude"),
+                os.path.join("base-b", "claude"),
+                os.path.join("extra", "claude"),
+                os.path.join("system", "claude"),
+            ),
         ),
     ],
 )
@@ -41,10 +80,91 @@ def test_default_root_candidate_policy_is_pure(
     )
     result = tasks._root_candidates(("base-a", "base-b"), tmpdir, uid, system_temp)
     # Native separators keep this a policy test on Windows too.
-    assert result == tuple(path.replace("/", os.sep) for path in expected)
+    assert result == expected
 
 
-@pytest.mark.parametrize("raw", [None, ""])
+@pytest.mark.parametrize(
+    "uid,tmpdir,expected,realpath_inputs",
+    [
+        (
+            42,
+            None,
+            (
+                os.path.join("/tmp", "claude-42"),
+                os.path.join("/private/tmp", "claude-42"),
+            ),
+            (
+                os.path.join("/tmp", "claude-42"),
+                os.path.join("/private/tmp", "claude-42"),
+            ),
+        ),
+        (
+            None,
+            None,
+            (
+                os.path.join("/tmp", "claude"),
+                os.path.join("/private/tmp", "claude"),
+                os.path.join("fixture-system", "claude"),
+            ),
+            (
+                os.path.join("/tmp", "claude"),
+                os.path.join("/private/tmp", "claude"),
+                os.path.join("fixture-system", "claude"),
+            ),
+        ),
+        (
+            None,
+            "fixture-extra" + os.sep * 3,
+            (
+                os.path.join("/tmp", "claude"),
+                os.path.join("/private/tmp", "claude"),
+                os.path.join("fixture-extra", "claude"),
+            ),
+            (
+                os.path.join("/tmp", "claude"),
+                os.path.join("/private/tmp", "claude"),
+                os.path.join("fixture-extra", "claude"),
+                os.path.join("fixture-system", "claude"),
+            ),
+        ),
+    ],
+    ids=["uid-present", "no-getuid-system-temp", "TMPDIR-set"],
+)
+def test_real_default_discovery_preserves_order_and_deduplicates(
+    uid, tmpdir, expected, realpath_inputs, monkeypatch
+):
+    resolved = []
+    temp_calls = []
+
+    def realpath(path):
+        resolved.append(path)
+        if tmpdir and path == os.path.join("fixture-system", "claude"):
+            return os.path.join("fixture-extra", "claude")
+        return path
+
+    def system_temp():
+        temp_calls.append(True)
+        return "fixture-system"
+
+    if uid is None:
+        monkeypatch.delattr(os, "getuid", raising=False)
+    else:
+        monkeypatch.setattr(os, "getuid", lambda: uid, raising=False)
+    monkeypatch.setattr(tasks.tempfile, "gettempdir", system_temp)
+    monkeypatch.setattr(os.path, "realpath", realpath)
+    monkeypatch.setattr(
+        os.path, "isdir", lambda *_: pytest.fail("default discovery probed a host path")
+    )
+    monkeypatch.setattr(tasks, "_default_roots", _REAL_DEFAULT_ROOTS)
+    environ = {} if tmpdir is None else {"TMPDIR": tmpdir}
+    assert tasks.roots_from_environment(environ) == tasks.TaskRoots(expected, None)
+    assert tuple(resolved) == realpath_inputs
+    assert temp_calls == ([] if uid is not None else [True])
+
+
+@pytest.mark.parametrize(
+    "raw", [None, "", os.pathsep * 2], ids=["absent", "empty", "separators-only"]
+)
 def test_absent_or_empty_roots_select_default_branch(raw, monkeypatch):
     calls = []
 
@@ -66,7 +186,6 @@ def test_absent_or_empty_roots_select_default_branch(raw, monkeypatch):
     "parts,expected",
     [
         (("first", "", "second", "first"), ("first", "second")),
-        (("", "", ""), ()),
         (("[g]", "relative", "missing"), ("[g]", "relative", "missing")),
     ],
 )
