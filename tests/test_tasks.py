@@ -209,6 +209,7 @@ def test_path_targets_bypass_roots(target, monkeypatch):
         pytest.param("miss", "a-new", id="RESOLVE-override-miss"),
         pytest.param("tie", "a-old", id="RESOLVE-stable-tie"),
         pytest.param("all-vanished", "a-old", id="RESOLVE-all-stat-fail"),
+        pytest.param("first-vanished", "a-new", id="RESOLVE-first-stat-fails"),
     ],
 )
 def test_resolution_priority(mode, winner, tmp_path, monkeypatch):
@@ -229,7 +230,7 @@ def test_resolution_priority(mode, winner, tmp_path, monkeypatch):
     getmtime = os.path.getmtime
 
     def mtime(path):
-        if mode == "all-vanished":
+        if mode == "all-vanished" or (mode == "first-vanished" and path == str(old)):
             raise FileNotFoundError("gone")
         return 10 if mode == "tie" else getmtime(path)
 
@@ -346,6 +347,7 @@ def test_fifo_observation_does_not_open(tmp_path, monkeypatch):
             id="TERMINAL-gaps",
         ),
         pytest.param('{"ok":1,"stats":{}}', None, False, id="TERMINAL-nonboolean"),
+        pytest.param('{"ok":"yes","stats":{}}', None, False, id="TERMINAL-string-ok"),
         pytest.param(
             '{"ok":false,"error":"boom","planVersion":2,"verified":[],"written":[]}',
             None,
@@ -403,6 +405,12 @@ def test_terminal_shapes(text, expected, bare):
             None,
             False,
             id="DOCUMENT-torn-pretty",
+        ),
+        pytest.param(
+            '{\n\t"progress": [\n\t\t{"ok":true,"stats":{}}',
+            None,
+            False,
+            id="DOCUMENT-torn-pretty-tab",
         ),
         pytest.param(
             '{"a":[\n{"ok":true,"stats":{}}\nBROKEN',
@@ -485,7 +493,8 @@ def test_scan_limits(kind, count, terminal, expected, reason):
     else:
         line = {
             "candidates": "{}",
-            "probes": '{"x":',
+            # Each invalid token stops decoding before the next line can nest.
+            "probes": "{!",
             "deep": '{"a":' + "[" * 60000 + "1" + "]" * 60000 + "}",
         }[kind]
         text = (line + "\n") * count + (returned if terminal else "")
@@ -521,19 +530,17 @@ def test_sweep_uses_literal_task_root(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "mode",
-    [
-        pytest.param("order", id="SWEEP-global-newest-stable-tie"),
-    ],
+    "mtimes",
+    [pytest.param((1, 3, 3), id="SWEEP-global-newest-stable-tie")],
 )
-def test_sweep_policy(mode, tmp_path, monkeypatch):
+def test_sweep_policy(mtimes, tmp_path):
     root = tmp_path / "root[g]"
-    old = task_file(root, "old", mtime=1)
-    new = task_file(root, "new", mtime=3)
+    old = task_file(root, "old", mtime=mtimes[0])
+    new = task_file(root, "new", mtime=mtimes[1])
     direct = tmp_path / "direct[g]"
     direct.mkdir()
     override = direct / "override.output"
     override.write_text("", encoding="utf-8")
-    os.utime(override, (3, 3))
+    os.utime(override, (mtimes[2], mtimes[2]))
     roots = tasks.TaskRoots((str(root),), str(direct))
     assert tasks.sweep_paths(roots) == (str(override), str(new), str(old))

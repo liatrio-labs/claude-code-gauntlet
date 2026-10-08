@@ -45,6 +45,11 @@ CHECKPOINT = """{
             id="STRUCTURE-expected-read",
         ),
         pytest.param(
+            "expected-json",
+            ["expected artifact is not valid JSON: expected.json (Extra data"],
+            id="STRUCTURE-expected-json",
+        ),
+        pytest.param(
             "source-read",
             ["source not found or unreadable: findings.json (denied)"],
             id="STRUCTURE-cached-source-read",
@@ -63,6 +68,11 @@ CHECKPOINT = """{
             "source-id",
             ["source entry 0 has no usable string id: findings.json"],
             id="STRUCTURE-source-id",
+        ),
+        pytest.param(
+            "source-missing-id",
+            ["source entry 0 has no usable string id: findings.json"],
+            id="STRUCTURE-source-missing-id",
         ),
         pytest.param(
             "duplicate",
@@ -101,6 +111,7 @@ def test_structural_failure(defect, errors, tmp_path, monkeypatch):
         "source-array": "{}",
         "source-entry": "[7]",
         "source-id": '[{"id":""}]',
+        "source-missing-id": '[{"title":"x"}]',
         "duplicate": '[{"id":"A"},{"id":"A"}]',
     }.get(defect, SOURCE)
     (tmp_path / "findings.json").write_text(source, encoding="utf-8")
@@ -111,6 +122,9 @@ def test_structural_failure(defect, errors, tmp_path, monkeypatch):
         plan["expect"] = [
             {"path": "report.md", "chars": 1, "checksum": "fnv1a32:0xfd0c5087"}
         ]
+    elif defect == "expected-json":
+        (tmp_path / "expected.json").write_text("[] trailing", encoding="utf-8")
+        plan["expect"] = [{"path": "expected.json"}]
     elif defect == "post-id":
         plan["postReview"]["ids"] = ["GHOST"]
     elif defect == "challenge-id":
@@ -139,7 +153,12 @@ def test_structural_failure(defect, errors, tmp_path, monkeypatch):
     (tmp_path / "post.json").write_text("old", encoding="utf-8")
     receipt = artifacts.assemble("plan.json")
     assert receipt["ok"] is False
-    assert receipt["errors"] == errors
+    if defect == "expected-json":
+        assert len(receipt["errors"]) == 1
+        assert receipt["errors"][0].startswith(errors[0])
+        assert receipt["errors"][0].endswith(")")
+    else:
+        assert receipt["errors"] == errors
     assert receipt["written"] == []
     assert (tmp_path / "post.json").read_text(encoding="utf-8") == "old"
     assert not (tmp_path / "checkpoint.json").exists()
@@ -198,17 +217,43 @@ def test_recursion_errors_during_json_parsing_are_structural(
 
 
 @pytest.mark.parametrize(
-    "site",
-    [pytest.param("source", id="STRUCTURE-source-invalid-utf8")],
+    "site,path,error_prefix",
+    [
+        pytest.param(
+            "source",
+            "findings.json",
+            "source not found or unreadable: findings.json ('utf-8' codec can't decode byte",
+            id="STRUCTURE-source-invalid-utf8",
+        ),
+        pytest.param(
+            "plan",
+            "plan.json",
+            "plan not found or unreadable: plan.json ('utf-8' codec can't decode byte",
+            id="STRUCTURE-plan-invalid-utf8",
+        ),
+        pytest.param(
+            "expected",
+            "report.md",
+            "expected artifact not found or unreadable: report.md ('utf-8' codec can't decode byte",
+            id="STRUCTURE-expected-invalid-utf8",
+        ),
+    ],
 )
-def test_strict_utf8(site, tmp_path, monkeypatch):
+def test_strict_utf8(site, path, error_prefix, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "findings.json").write_bytes(b"\xff")
-    seal_plan(tmp_path / "plan.json", artifact_plan())
+    (tmp_path / "findings.json").write_text(SOURCE, encoding="utf-8")
+    plan = artifact_plan()
+    if site == "expected":
+        plan["expect"] = [
+            {"path": "report.md", "chars": 1, "checksum": "fnv1a32:0xfd0c5087"}
+        ]
+    seal_plan(tmp_path / "plan.json", plan)
+    (tmp_path / path).write_bytes(b"\xff")
     receipt = artifacts.assemble("plan.json")
-    assert receipt["errors"] == [
-        "source not found or unreadable: findings.json ('utf-8' codec can't decode byte 0xff in position 0: invalid start byte)"
-    ]
+    assert receipt["ok"] is False
+    assert len(receipt["errors"]) == 1
+    assert receipt["errors"][0].startswith(error_prefix)
+    assert receipt["errors"][0].endswith(")")
     assert receipt["written"] == []
 
 
@@ -256,12 +301,23 @@ def test_primary_mismatch_is_nonfatal(
     plan = artifact_plan()
     entry = {"path": "report.md", "chars": 1, "checksum": "fnv1a32:0xfd0c5087"}
     entry[field] = value
-    plan["expect"] = [entry]
+    plan["expect"] = [
+        {"path": "findings.json", "chars": 32, "checksum": "fnv1a32:0x71b72159"},
+        entry,
+    ]
     seal_plan(tmp_path / "plan.json", plan)
     receipt = artifacts.assemble("plan.json")
     assert receipt["ok"] is True
     assert receipt["errors"] == []
     assert receipt["verified"] == [
+        {
+            "path": "findings.json",
+            "chars": 32,
+            "expected_chars": 32,
+            "checksum": "fnv1a32:0x71b72159",
+            "expected_checksum": "fnv1a32:0x71b72159",
+            "content_proof": "match",
+        },
         {
             "path": "report.md",
             "chars": 1,
@@ -269,7 +325,7 @@ def test_primary_mismatch_is_nonfatal(
             "checksum": "fnv1a32:0xfd0c5087",
             "expected_checksum": expected_checksum,
             "content_proof": "mismatch",
-        }
+        },
     ]
     assert (
         capsys.readouterr().err
@@ -329,11 +385,13 @@ def test_projection_receipt_and_bytes(tmp_path, monkeypatch, capsys):
     "mode",
     [
         "wrapper",
+        "wrapper-append",
         "missing-slot",
         "nonarray-slot",
     ],
     ids=[
         "ORDER-wrapper-existing-findings-key",
+        "ORDER-wrapper-append-findings-key",
         "ORDER-no-fabricated-slot",
         "ORDER-preserved-nonarray",
     ],
@@ -344,10 +402,12 @@ def test_projection_order(mode, tmp_path, monkeypatch):
         '[{"id":"A","line":4,"body":"b"},{"id":"B","line":5,"body":"c"}]',
         encoding="utf-8",
     )
-    ids = [] if mode in ("empty", "missing-slot", "nonarray-slot") else ["B", "A", "B"]
+    ids = [] if mode in ("missing-slot", "nonarray-slot") else ["B", "A", "B"]
     plan = artifact_plan(ids=ids)
     if mode == "wrapper":
         plan["postReview"]["wrapper"] = {"owner": "o", "findings": ["old"], "tail": 7}
+    elif mode == "wrapper-append":
+        plan["postReview"]["wrapper"] = {"owner": "o", "tail": 7}
     if mode == "missing-slot":
         plan["checkpoint"]["skeleton"] = {"phases": {"challenge": {"stats": {}}}}
     if mode == "nonarray-slot":
@@ -359,10 +419,14 @@ def test_projection_order(mode, tmp_path, monkeypatch):
     assert receipt["ok"] is True
     post = json.loads((tmp_path / "post.json").read_text(encoding="utf-8"))
     checkpoint = json.loads((tmp_path / "checkpoint.json").read_text(encoding="utf-8"))
-    projected = post["findings"] if mode == "wrapper" else post
+    projected = post["findings"] if mode in ("wrapper", "wrapper-append") else post
     assert [item["id"] for item in projected] == ids
-    if mode == "wrapper":
-        assert list(post) == ["owner", "findings", "tail"]
+    if mode in ("wrapper", "wrapper-append"):
+        assert list(post) == (
+            ["owner", "findings", "tail"]
+            if mode == "wrapper"
+            else ["owner", "tail", "findings"]
+        )
         assert post["owner"] == "o"
         assert post["tail"] == 7
     challenge = checkpoint["phases"]["challenge"]
@@ -656,21 +720,34 @@ def test_library_unexpected_failure(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "token,rendered",
+    "token",
     [
-        ("NaN", "nan"),
+        "NaN",
     ],
     ids=[
         "FAULT-nan-receipt",
     ],
 )
-def test_strict_receipt_encoder(token, rendered, tmp_path, capsys):
+def test_strict_receipt_encoder(token, tmp_path, capsys):
     plan = tmp_path / "plan.json"
     plan.write_text('{"planVersion":' + token + "}", encoding="utf-8")
     assert artifacts.CLI.invoke(["--plan", str(plan)]) == 1
-    assert capsys.readouterr().out.strip() == (
-        '{"ok": false, "planVersion": null, "planChecksum": null, "verified": [], "written": [], "errors": ["receipt could not be serialized: ValueError: Out of range float values are not JSON compliant: NUMBER"]}'
-    ).replace("NUMBER", rendered)
+    captured = capsys.readouterr()
+    receipt = json.loads(captured.out)
+    errors = receipt.pop("errors")
+    assert len(errors) == 1
+    assert errors[0].startswith(
+        "receipt could not be serialized: ValueError: Out of range float values are not JSON compliant"
+    )
+    assert receipt == {
+        "ok": False,
+        "planVersion": None,
+        "planChecksum": None,
+        "verified": [],
+        "written": [],
+    }
+    assert len(captured.out.splitlines()) == 1
+    assert captured.err == ""
 
 
 @pytest.mark.parametrize(
@@ -721,7 +798,11 @@ def test_reordered_delivery_ids_change_the_plan_proof(tmp_path, monkeypatch, cap
     sealed = seal_plan(tmp_path / "plan.json", plan)
     sealed["postReview"]["ids"] = ["B", "A"]
     (tmp_path / "plan.json").write_text(json.dumps(sealed), encoding="utf-8")
-    receipt = artifacts.assemble("plan.json")
+    assert artifacts.CLI.invoke(["--plan", "plan.json"]) == 1
+    captured = capsys.readouterr()
+    receipt = json.loads(captured.out)
+    assert receipt["ok"] is False
+    assert receipt["planVersion"] == 2
     assert receipt["planChecksum"] == "fnv1a32:0x993be0ea"
     assert receipt["errors"] == [
         "plan checksum mismatch: declared fnv1a32:0x82e5bbf8, recomputed fnv1a32:0x993be0ea \u2014 "
@@ -729,7 +810,7 @@ def test_reordered_delivery_ids_change_the_plan_proof(tmp_path, monkeypatch, cap
         "the post-review artifact, so it is NOT executed"
     ]
     assert (
-        capsys.readouterr().err
+        captured.err
         == "plan checksum mismatch: declared fnv1a32:0x82e5bbf8, recomputed fnv1a32:0x993be0ea\n"
     )
     assert receipt["written"] == []

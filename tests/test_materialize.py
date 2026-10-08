@@ -264,16 +264,11 @@ def test_verbatim_writes_utf16_and_idempotence(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "mode",
-    [
-        "missing-parent",
-    ],
-    ids=[
-        "WRITE-no-parent-creation",
-    ],
+    "parent",
+    [pytest.param("missing", id="WRITE-no-parent-creation")],
 )
-def test_partial_primary_writes_skip_derivation(mode, tmp_path, monkeypatch):
-    primary = tmp_path / "missing" / "primary"
+def test_partial_primary_writes_skip_derivation(parent, tmp_path, monkeypatch):
+    primary = tmp_path / parent / "primary"
     plan = tmp_path / "plan.json"
     task = returned_task(
         tmp_path / "task.output",
@@ -496,10 +491,8 @@ def test_real_node_return_channel(tmp_path):
 @pytest.mark.parametrize(
     "boundary",
     [
-        "cli",
-    ],
-    ids=[
-        "FAULT-command",
+        pytest.param("cli", id="FAULT-command"),
+        pytest.param("library", id="FAULT-library"),
     ],
 )
 def test_unexpected_failure(boundary, tmp_path, monkeypatch, capsys):
@@ -507,6 +500,20 @@ def test_unexpected_failure(boundary, tmp_path, monkeypatch, capsys):
         raise RuntimeError("injected")
 
     monkeypatch.setattr(materialize, "select_source", fail)
+    if boundary == "library":
+        assert materialize.materialize(
+            "missing.output", None, str(tmp_path), tasks.TaskRoots((), None)
+        ) == {
+            "ok": False,
+            "channel": "return",
+            "source": None,
+            "scanned": 0,
+            "materialized": [],
+            "assemble": None,
+            "gaps": [],
+            "errors": ["materializer failed unexpectedly: RuntimeError: injected"],
+        }
+        return
     assert (
         materialize.CLI.invoke(
             ["--output-dir", str(tmp_path), "--task", "missing.output"]

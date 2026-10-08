@@ -137,7 +137,7 @@ def test_wait_loop(mode, expected_code, expected_sleeps, tmp_path, monkeypatch):
         ),
         pytest.param(
             "timeout",
-            4,
+            5,
             ',"gap":"workflow-timeout","detail":"no terminal workflow result after 4 attempts; declare the gap and deliver whatever partial artifacts exist"}',
             id="MARKER-timeout-detail",
         ),
@@ -173,16 +173,16 @@ def test_marker_bytes(kind, attempt, expected_tail, tmp_path, monkeypatch, capsy
         .replace("ATTEMPT", str(attempt))
         .replace("PATTERN", json.dumps(pattern))
     )
-    expected += expected_tail.replace(
-        "ENTRY", shlex.quote(str(REPO / "scripts/await_workflow.py"))
-    )
+    quoted_entry = shlex.quote(str(REPO / "scripts" / "await_workflow.py"))
+    expected += expected_tail.replace("ENTRY", json.dumps(quoted_entry)[1:-1])
     assert captured.out.strip() == expected
     assert captured.err == ""
 
 
 def test_scan_reason_marker(tmp_path, monkeypatch, capsys):
     target = tmp_path / "task.output"
-    target.write_text('{"x":\n' * 2001, encoding="utf-8")
+    # Invalid tokens fail locally rather than nesting into later document starts.
+    target.write_text("{!\n" * 2001, encoding="utf-8")
     monkeypatch.setattr(awaiting.time, "time", lambda: 0)
     assert awaiting.CLI.invoke([str(target), "--timeout-seconds", "0"]) == 3
     marker = json.loads(capsys.readouterr().out)
@@ -229,6 +229,7 @@ def test_elision(channel, tmp_path, capsys):
     [
         pytest.param("resolved", 3, "pending", id="GRACE-resolved-nonfinal"),
         pytest.param("final", 5, "artifacts_only", id="GRACE-resolved-final"),
+        pytest.param("terminal", 0, None, id="GRACE-terminal-beats-artifacts"),
     ],
 )
 def test_artifact_fallback(mode, expected_code, kind, tmp_path, monkeypatch, capsys):
@@ -237,7 +238,9 @@ def test_artifact_fallback(mode, expected_code, kind, tmp_path, monkeypatch, cap
         path.write_text("x", encoding="utf-8")
         os.utime(path, (7, 7))
     path = tmp_path / "task.output"
-    path.write_text("", encoding="utf-8")
+    path.write_text(
+        '{"ok":true,"stats":{}}' if mode == "terminal" else "", encoding="utf-8"
+    )
     target = str(path)
     monkeypatch.setattr(awaiting.time, "time", lambda: 10)
     code = awaiting.CLI.invoke(
@@ -254,11 +257,16 @@ def test_artifact_fallback(mode, expected_code, kind, tmp_path, monkeypatch, cap
             "--artifacts-grace-seconds",
             "0",
             "--attempt",
-            "4" if mode == "final" else "1",
+            "1" if mode == "resolved" else "4",
         ]
     )
     assert code == expected_code
-    receipt = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    if mode == "terminal":
+        assert captured.out.strip() == '{"ok":true,"stats":{}}'
+        assert captured.err == ""
+        return
+    receipt = json.loads(captured.out)
     assert receipt["await"] == kind
     if code == 5:
         assert receipt["artifactPaths"] == {
@@ -284,6 +292,8 @@ def test_artifact_fallback(mode, expected_code, kind, tmp_path, monkeypatch, cap
     "defect",
     [
         pytest.param("empty", id="GRACE-empty-file"),
+        pytest.param("directory", id="GRACE-directory"),
+        pytest.param("stale", id="GRACE-stale-default-floor"),
     ],
 )
 def test_incomplete_artifacts(defect, tmp_path, monkeypatch, capsys):
@@ -291,7 +301,13 @@ def test_incomplete_artifacts(defect, tmp_path, monkeypatch, capsys):
         (tmp_path / name).write_text("x", encoding="utf-8")
         os.utime(tmp_path / name, (7, 7))
     bad = tmp_path / ARTIFACT_NAMES[0]
-    bad.write_text("", encoding="utf-8")
+    if defect == "empty":
+        bad.write_text("", encoding="utf-8")
+    elif defect == "directory":
+        bad.unlink()
+        bad.mkdir()
+        (bad / "child").write_text("x", encoding="utf-8")
+        os.utime(bad, (7, 7))
     monkeypatch.setattr(awaiting.time, "time", lambda: 10)
     assert (
         awaiting.CLI.invoke(
@@ -301,8 +317,7 @@ def test_incomplete_artifacts(defect, tmp_path, monkeypatch, capsys):
                 "0",
                 "--attempt",
                 "4",
-                "--since-epoch",
-                "7",
+                *([] if defect == "stale" else ["--since-epoch", "7"]),
                 "--artifacts-dir",
                 str(tmp_path),
                 "--head-sha",
@@ -312,11 +327,12 @@ def test_incomplete_artifacts(defect, tmp_path, monkeypatch, capsys):
         == 4
     )
     marker = json.loads(capsys.readouterr().out)
+    assert marker["since_epoch"] == (10 if defect == "stale" else 7)
     assert marker["artifacts"] == {
         "checked": True,
         "complete": False,
-        "present": list(ARTIFACT_NAMES[1:]),
-        "missing": [ARTIFACT_NAMES[0]],
+        "present": [] if defect == "stale" else list(ARTIFACT_NAMES[1:]),
+        "missing": list(ARTIFACT_NAMES) if defect == "stale" else [ARTIFACT_NAMES[0]],
     }
 
 
@@ -371,9 +387,8 @@ def test_grace_resets_after_completeness_loss(tmp_path, monkeypatch):
 def test_retry_command(resolved, tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(awaiting.time, "time", lambda: 10)
-    monkeypatch.setattr(
-        awaiting, "entry", lambda _: "plugin path's/scripts/await_workflow.py"
-    )
+    plugin_entry = os.path.join("plugin path's", "scripts", "await_workflow.py")
+    monkeypatch.setattr(awaiting, "entry", lambda _: plugin_entry)
     target = "-space '[$].output"
     if resolved:
         root = tmp_path / "root"
@@ -404,7 +419,7 @@ def test_retry_command(resolved, tmp_path, monkeypatch, capsys):
         == 3
     )
     expected = (
-        "python3 'plugin path'\"'\"'s/scripts/await_workflow.py' --attempt 3 --max-attempts 5 "
+        f"python3 {shlex.quote(plugin_entry)} --attempt 3 --max-attempts 5 "
         "--timeout-seconds 0.0 --poll-interval 2 --since-epoch 7.5 "
         "--artifacts-dir 'out space'\"'\"'s' --head-sha abc --artifacts-grace-seconds 11.0 -- "
     )
@@ -515,10 +530,11 @@ def test_wait_fault_receipt(error, message, monkeypatch, capsys):
 def test_await_encoding_fallback_keeps_outcome(outcome, monkeypatch, capsys):
     monkeypatch.setattr(awaiting, "await_terminal", lambda *_: ({"bad": {1}}, outcome))
     assert awaiting.CLI.invoke(["bare-id", "--timeout-seconds", "0"]) == outcome
-    assert capsys.readouterr().out.strip() == (
-        '{"await":"error","gap":"workflow-timeout",'
-        '"message":"result would not serialize: Object of type set is not JSON serializable"}'
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt.pop("message").startswith(
+        "result would not serialize: Object of type set"
     )
+    assert receipt == {"await": "error", "gap": "workflow-timeout"}
 
 
 def test_await_preserves_compact_ascii_nan_spelling(monkeypatch, capsys):
@@ -535,17 +551,14 @@ def test_await_preserves_compact_ascii_nan_spelling(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize(
-    "site",
+    "error",
     [
-        "flush",
-    ],
-    ids=[
-        "FAULT-flush",
+        pytest.param(BrokenPipeError("closed"), id="FAULT-flush"),
     ],
 )
-def test_output_failure(site, monkeypatch):
+def test_output_failure(error, monkeypatch):
     def fail(*args, **kwargs):
-        raise BrokenPipeError("closed")
+        raise error
 
     stream = io.StringIO()
     monkeypatch.setattr(sys, "stdout", stream)
@@ -559,10 +572,8 @@ def test_output_failure(site, monkeypatch):
 @pytest.mark.parametrize(
     "flags",
     [
-        ["--head-sha", "abc"],
-    ],
-    ids=[
-        "USAGE-sha-only",
+        pytest.param(["--head-sha", "abc"], id="USAGE-sha-only"),
+        pytest.param(["--artifacts-dir", "out"], id="USAGE-dir-only"),
     ],
 )
 def test_paired_flags(flags, capsys):
