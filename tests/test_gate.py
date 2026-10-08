@@ -266,7 +266,7 @@ FIX_CASE_CASES = {
         {},
         (True, None, (2, 3)),
     ),
-    "demote-cap-rename": (
+    "anchor-mismatch-renamed-to-platform-cap-reason": (
         finding(end_line=3, suggested_fix_code="fixed"),
         FACTS,
         (2, 2),

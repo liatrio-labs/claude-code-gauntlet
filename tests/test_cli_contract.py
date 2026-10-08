@@ -1206,7 +1206,14 @@ def test_poster_report_shape_boundary(
     data = {
         **POST,
         "findings": [],
-        "platform": "github" if case.startswith("missing") else "gitlab",
+        "platform": {
+            "missing-summary": "github",
+            "missing-following-heading": "github",
+            "malformed-json": "gitlab",
+            "versions-fetch": "gitlab",
+            "versions-parse": "gitlab",
+            "submit": "gitlab",
+        }[case],
     }
     path.write_text(
         content if case == "malformed-json" else json.dumps(data), encoding="utf-8"
@@ -1215,13 +1222,14 @@ def test_poster_report_shape_boundary(
         report_path = tmp_path / "report.md"
         report_path.write_text(content, encoding="utf-8")
         argv += ["--report", str(report_path)]
-    fake = (
-        _gitlab_fake(refs=[JsonFetch(None, content)])
-        if case.startswith("versions")
-        else _gitlab_fake(submissions=[PostResult(None, content, None)])
-        if case == "submit"
-        else FakeForge()
-    )
+    fake = {
+        "missing-summary": FakeForge(),
+        "missing-following-heading": FakeForge(),
+        "malformed-json": FakeForge(),
+        "versions-fetch": _gitlab_fake(refs=[JsonFetch(None, content)]),
+        "versions-parse": _gitlab_fake(refs=[JsonFetch(None, content)]),
+        "submit": _gitlab_fake(submissions=[PostResult(None, content, None)]),
+    }[case]
     forge_factory.configure(fake)
     result = invoke("post_review", argv, tmp_path)
     assert result.returncode == 1
@@ -1391,13 +1399,11 @@ def test_posting_stdout_boundary(
         def write(self, value):
             raise BrokenPipeError("closed pipe")
 
-    stream = (
-        None
-        if stream_kind == "absent"
-        else Broken()
-        if stream_kind == "broken"
-        else io.StringIO()
-    )
+    stream = {
+        "absent": None,
+        "closed": io.StringIO(),
+        "broken": Broken(),
+    }[stream_kind]
     if stream_kind == "closed":
         stream.close()
     monkeypatch.setattr(sys, "stdout", stream)

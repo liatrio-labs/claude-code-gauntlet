@@ -1087,7 +1087,7 @@ def _execute(args: argparse.Namespace) -> int:
         raise exc.cause from exc
 
     if isinstance(loaded, list):
-        data: dict[str, Any] = {}
+        data: dict[str, Any] = {"review_body": "", "findings": loaded}
     elif isinstance(loaded, dict):
         data = loaded
     else:
@@ -1097,10 +1097,6 @@ def _execute(args: argparse.Namespace) -> int:
         value = getattr(args, name)
         if value is not None:
             data[name] = value
-    if isinstance(loaded, list):
-        data["review_body"] = ""
-        data["findings"] = loaded
-
     if args.report and not data.get("review_body"):
         try:
             with open(args.report, encoding="utf-8") as fh:

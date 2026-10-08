@@ -867,19 +867,23 @@ def test_merge(case, expected, total, tmp_path):
         }
     }
     second = {
-        GOLDEN_A if case == "same-url" else GOLDEN_B: {
+        {
+            "paths": GOLDEN_B,
+            "dicts": GOLDEN_B,
+            "same-url": GOLDEN_A,
+            "empty": GOLDEN_B,
+        }[case]: {
             "deep-review": [
                 {"text": "second", "path": "src/b", "line": 27, "source": "extracted"}
             ]
         }
     }
-    sources = (
-        []
-        if case == "empty"
-        else [first, second, first]
-        if case == "same-url"
-        else [first, second]
-    )
+    sources = {
+        "paths": [first, second],
+        "dicts": [first, second],
+        "same-url": [first, second, first],
+        "empty": [],
+    }[case]
     if case == "paths":
         sources = [tmp_path / "first.json", tmp_path / "second.json"]
         for path, data in zip(sources, [first, second], strict=True):

@@ -1,4 +1,4 @@
-"""Patch artifact bytes, receipt progress and isolation from delivery state."""
+"""Patch artifact bytes, receipt progress, and repeat-run isolation."""
 
 import pytest
 from gauntlet import patches
@@ -298,8 +298,7 @@ def test_confinement(case, tmp_path, invoke):
     assert outside.read_bytes() == b"PRE-EXISTING CONTENT\n"
 
 
-@pytest.mark.usefixtures("poster_state")
-def test_run_isolation(tmp_path, invoke):
+def test_repeat_runs_identical_output_and_leave_findings_untouched(tmp_path, invoke):
     primary = tmp_path / "code-gauntlet-findings-abc1234.json"
     documents = []
     for _ in range(2):
