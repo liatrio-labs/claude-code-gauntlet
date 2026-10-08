@@ -324,8 +324,6 @@ GITLAB_SITE_CASES = {
         gate.GitLabApplySite((103, 103), cap_exceeded=True),
     ),
     "missing-bound": (2, None, 2, gate.GitLabApplySite((2, 2))),
-    "float-bound": (2, 3.0, 2, gate.GitLabApplySite((2, 2))),
-    "boolean-anchor-and-line": (True, 3, True, gate.GitLabApplySite((True, True))),
 }
 
 
@@ -355,17 +353,12 @@ def test_overlap_demotion(verdict, expected):
     ids=GITLAB_SITE_CASES,
 )
 def test_gitlab_site(line, end_line, anchor, expected):
-    assert (
-        gate.gitlab_apply_range({"line": line, "end_line": end_line}, anchor)
-        == expected
-    )
+    assert gate.gitlab_apply_range(line, end_line, anchor) == expected
 
 
 GITHUB_SITE_CASES = {
     "multiline": (2, 3, gate.GitHubApplySite((2, 3), multiline=True)),
     "off-diff-end": (2, 940, gate.GitHubApplySite((2, 2))),
-    "boolean-end": (1, True, gate.GitHubApplySite((1, 1))),
-    "float-end-geometry": (2, 3.0, gate.GitHubApplySite((2, 2))),
     "reversed-end": (2, 1, gate.GitHubApplySite((2, 2))),
 }
 

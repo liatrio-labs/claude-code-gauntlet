@@ -1,14 +1,19 @@
-"""Posting tables over the command boundary and independent position diagnostics."""
+"""Posting tables over the command boundary."""
 
 from dataclasses import dataclass, field
 
 import pytest
 from gauntlet.delivery import compose, fold, post
-from gauntlet.forge import ForgeUnavailable, JsonFetch, PostResult, ReviewTarget
+from gauntlet.forge import (
+    ForgeUnavailable,
+    JsonFetch,
+    PostResult,
+    ReviewTarget,
+    parse_remote,
+)
 from gauntlet.marker import find_finding_marker, find_finding_markers, find_marker
 
 from tests.support.delivery import finding
-from tests.support.diff import diff_facts
 from tests.support.posting import (
     ADDED,
     ADDED_KEY,
@@ -326,91 +331,6 @@ BOTH = (
 
 def params(rows):
     return [pytest.param(row, id=row.id) for row in rows]
-
-
-SITE_DIAGNOSTICS = [
-    pytest.param(
-        {},
-        61,
-        diff_facts(
-            {("src/edited.py", 61): 50}, old_paths={"src/edited.py": "src/edited.py"}
-        ),
-        [
-            "base_sha is missing, expected 'base1'",
-            "head_sha is missing, expected 'head1'",
-            "new_line is missing, expected 61",
-            "new_path is missing, expected 'src/edited.py'",
-            "old_line is missing, expected 50",
-            "old_path is missing, expected 'src/edited.py'",
-            "position_type is missing, expected 'text'",
-            "start_sha is missing, expected 'start1'",
-        ],
-        id="SITE-missing-fields-sorted",
-    ),
-    pytest.param(
-        position(
-            "src/edited.py",
-            62,
-            old_line=51,
-            old_path="src/edited.py",
-            line_code="abc",
-            line_range={},
-        ),
-        62,
-        diff_facts({("src/edited.py", 62): None}, new_files={"src/edited.py"}),
-        [
-            "line_code must not be sent for this position",
-            "line_range must not be sent for this position",
-            "old_line must not be sent for this position",
-            "old_path must not be sent for this position",
-        ],
-        id="SITE-extra-fields-sorted",
-    ),
-    pytest.param(
-        {
-            "position_type": "txet",
-            "base_sha": "b",
-            "head_sha": "h",
-            "start_sha": "s",
-            "new_path": "b/src/edited.py",
-            "new_line": 62,
-            "old_path": "new.py",
-            "old_line": 49,
-        },
-        61,
-        diff_facts(
-            {("src/edited.py", 61): 50}, old_paths={"src/edited.py": "src/edited.py"}
-        ),
-        [
-            "base_sha is 'b', expected 'base1'",
-            "head_sha is 'h', expected 'head1'",
-            "new_line is 62, expected 61",
-            "new_path is 'b/src/edited.py', expected 'src/edited.py'",
-            "old_line is 49, expected 50",
-            "old_path is 'new.py', expected 'src/edited.py'",
-            "position_type is 'txet', expected 'text'",
-            "start_sha is 's', expected 'start1'",
-        ],
-        id="SITE-mismatched-fields-sorted",
-    ),
-    pytest.param(
-        position("src/edited.py", True, old_path="src/edited.py"),
-        True,
-        diff_facts({("src/edited.py", 1): None}),
-        ["new_line must be an integer, got True"],
-        id="SITE-bool-is-not-an-integer",
-    ),
-]
-
-
-@pytest.mark.parametrize("wire,line,facts,expected", SITE_DIAGNOSTICS)
-def test_position_diagnostics(wire, line, facts, expected):
-    assert (
-        post.validate_position(
-            wire, ("base1", "head1", "start1"), facts, "src/edited.py", line
-        )
-        == expected
-    )
 
 
 SITE = [
@@ -1223,38 +1143,10 @@ def test_rerun_delivery(row, posting, monkeypatch):
         )
 
 
-MALFORMED_CONTEXT = "Skipping finding 'Context-line finding' at src/edited.py:61.0 \u2014 malformed GitLab position: new_line must be an integer, got 61.0."
-MALFORMED_NEW = "Skipping finding 'New-file finding' at src/app/clients/api/__init__.py:1.0 \u2014 malformed GitLab position: new_line must be an integer, got 1.0."
 UNANCHORED = {**ADDED, "line": None}
 OFF_DIFF_MEMBER = {**ADDED, "line": 999}
 
 PROMOTE = [
-    Row(
-        "PROMOTE-invalid-primary-valid-members",
-        review(
-            "gitlab",
-            [
-                grouped({**CONTEXT, "line": 61.0}, primary=True),
-                grouped(ADDED),
-                grouped(NEW),
-            ],
-        ),
-        Expected(
-            anchors=(
-                position("src/edited.py", 62, old_path="src/edited.py"),
-                position("src/app/clients/api/__init__.py", 1),
-            ),
-            bodies=(ADDED_BODY, NEW_BODY),
-            skipped=(MALFORMED_CONTEXT,),
-            err="WARNING: " + MALFORMED_CONTEXT + "\n",
-            code=1,
-            out_lines=(
-                "  2 inline discussion(s) captured.",
-                "  1 finding(s) had a malformed position (see warnings above).",
-            ),
-        ),
-        {"diff": CONTRACT_DIFF},
-    ),
     Row(
         "PROMOTE-partial-unanchored-positionless",
         review("gitlab", [grouped(CONTEXT, primary=True), grouped(UNANCHORED)]),
@@ -1300,21 +1192,35 @@ PROMOTE = [
         review(
             "gitlab",
             [
-                grouped({**CONTEXT, "line": 61.0}, primary=True),
+                grouped(CONTEXT, primary=True),
                 grouped(UNANCHORED),
                 grouped(OFF_DIFF_MEMBER),
                 NEW,
             ],
         ),
         Expected(
-            anchors=(position("src/app/clients/api/__init__.py", 1),),
-            bodies=(NEW_BODY + marker(NEW_KEY),),
-            err="WARNING: "
-            + MALFORMED_CONTEXT
-            + "\nWARNING: Skipping corroborating finding 'Added-line finding' \u2014 no line number to anchor its own discussion on.\nWARNING: Skipping corroborating finding 'Added-line finding' at src/edited.py:999 \u2014 line not found in diff.\n",
-            surfaces=("notes", "discussions"),
+            anchors=(
+                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
+                position("src/app/clients/api/__init__.py", 1),
+            ),
+            body_has=(
+                ("Context-line finding", "Added-line finding"),
+                ("New-file finding",),
+            ),
+            err="WARNING: Skipping finding 'Context-line finding' at src/edited.py:61 \u2014 GitLab rejected the inline discussion.\ndenied\nWARNING: Skipping corroborating finding 'Added-line finding' \u2014 no line number to anchor its own discussion on.\nWARNING: Skipping corroborating finding 'Added-line finding' at src/edited.py:999 \u2014 line not found in diff.\n",
+            surfaces=("notes", "discussions", "discussions"),
         ),
-        {"diff": CONTRACT_DIFF, "dry_run": False},
+        {
+            "diff": CONTRACT_DIFF,
+            "dry_run": False,
+            "submissions": {
+                "notes": [PostResult({}, None, None)],
+                "discussions": [
+                    PostResult(None, "denied", None),
+                    PostResult({}, None, None),
+                ],
+            },
+        },
     ),
     Row(
         "PROMOTE-positionless-fence-gated",
@@ -1496,18 +1402,32 @@ FAILURE = [
         },
     ),
     Row(
-        "FAILURE-gl-envelope-before-malformed-position",
-        review("gitlab", [fix(line=2.0), CONTEXT]),
-        Expected(
-            anchors=(
-                position("src/edited.py", 61, old_line=50, old_path="src/edited.py"),
-            ),
-            bodies=(CONTEXT_BODY + marker(CONTEXT_KEY),),
-            err="WARNING: suggested-fix downgraded: foo.py:2.0 (invalid_range)\nWARNING: The composed inline discussion is 227 bytes, over the 200-byte GitLab body limit; skipping this delivery.\n",
-            counts=DOWN,
-            surfaces=("discussions",),
+        "FAILURE-gl-dry-budget-unanchored-members-keeps-sibling-status",
+        review(
+            "gitlab",
+            [
+                grouped(CONTEXT, primary=True),
+                grouped(UNANCHORED),
+                grouped(OFF_DIFF_MEMBER),
+                NEW,
+            ],
         ),
-        {"diff": GL_INDENTED + CONTRACT_DIFF, "dry_run": False, "entries": prior()},
+        Expected(
+            anchors=(position("src/app/clients/api/__init__.py", 1),),
+            bodies=(NEW_BODY,),
+            code=1,
+            err="WARNING: The composed inline discussion is 452 bytes, over the 200-byte GitLab body limit; skipping this delivery.\nWARNING: Skipping corroborating finding 'Added-line finding' \u2014 no line number to anchor its own discussion on.\nWARNING: Skipping corroborating finding 'Added-line finding' at src/edited.py:999 \u2014 line not found in diff.\n",
+            out_lines=(
+                "  1 inline discussion(s) captured.",
+                "  2 finding(s) had a malformed position (see warnings above).",
+                "  1 inline discussion(s) not delivered (see warnings above).",
+            ),
+            skipped=(
+                "Skipping corroborating finding 'Added-line finding' \u2014 no line number to anchor its own discussion on.",
+                "Skipping corroborating finding 'Added-line finding' at src/edited.py:999 \u2014 line not found in diff.",
+            ),
+        ),
+        {"diff": CONTRACT_DIFF},
         (("gitlab", "discussion", 200),),
     ),
     Row(
@@ -1834,18 +1754,10 @@ NOTICE = [
         {"diff": GL_INDENTED},
     ),
     Row(
-        "NOTICE-malformed-fold-emits-no-fold-notice",
-        review("gitlab", [{**NEW, "line": 1.0, "body": "x" * 1000001}]),
-        Expected(
-            skipped=(MALFORMED_NEW,), err="WARNING: " + MALFORMED_NEW + "\n", code=1
-        ),
-        {"diff": CONTRACT_DIFF},
-    ),
-    Row(
-        "NOTICE-dedup-before-malformed-position",
-        review("gitlab", [{**NEW, "line": 1.0, "body": "x" * 1000001}]),
+        "NOTICE-dedup-before-fold-notice",
+        review("gitlab", [{**NEW, "body": "x" * 1000001}]),
         Expected(surfaces=()),
-        {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior("5610e90b88947fd9")},
+        {"diff": CONTRACT_DIFF, "dry_run": False, "entries": prior("6471baa1c45bb13a")},
     ),
     Row(
         "NOTICE-gl-gate-fold-before-submit",
@@ -2241,3 +2153,652 @@ def test_marker_delivery(kind, posting):
                 signal = find_marker(body)
                 assert signal["sha"] == SHA
                 assert signal["findings_count"] == 0
+
+
+@pytest.fixture
+def refuse_review_input(tmp_path, monkeypatch, capsys, forge_factory):
+    import json
+
+    from gauntlet import proc
+
+    from tests.support.forge import FakeForge, FakeGitLab
+
+    def refuse(data, expected, *, arguments=(), regression=False):
+        path = tmp_path / "findings.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        artifact = tmp_path / "post-review-payload.json"
+        modes = ("live", "flag", "env") if regression else ("live", "flag")
+        for mode in modes:
+            forge_factory.calls.clear()
+            github = forge_factory.configure(FakeForge(diffs=[(GH_DIFF, "", 0)]))
+            gitlab = forge_factory.configure(
+                FakeGitLab(
+                    diffs=[(GL_DIFF, "", 0)],
+                    refs=[
+                        JsonFetch(
+                            [
+                                {
+                                    "base_commit_sha": "base1",
+                                    "head_commit_sha": "head1",
+                                    "start_commit_sha": "start1",
+                                }
+                            ],
+                            None,
+                        )
+                    ],
+                )
+            )
+            git_calls = []
+
+            def run(command, *, calls=git_calls, **kwargs):
+                calls.append(command)
+                return proc.CompletedProcess(
+                    command,
+                    0,
+                    "git@github.com:o/r\n" if "remote" in command else SHA + "\n",
+                    "",
+                )
+
+            monkeypatch.setattr(proc, "run", run)
+            monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+            if mode == "env":
+                monkeypatch.setenv("CODE_GAUNTLET_POST_MODE", "dry-run")
+            if regression:
+                artifact.write_bytes(b"sentinel artifact\n")
+            capsys.readouterr()
+            code = post.CLI.invoke(
+                [str(path), *arguments, *(["--dry-run"] if mode == "flag" else [])]
+            )
+            captured = capsys.readouterr()
+            assert (code, captured.out, captured.err) == (1, "", expected)
+            assert forge_factory.calls == []
+            assert github.calls == []
+            assert gitlab.calls == []
+            assert git_calls == []
+            if regression:
+                assert artifact.read_bytes() == b"sentinel artifact\n"
+            else:
+                assert not artifact.exists()
+
+    return refuse
+
+
+INPUT_FINDING = {"file": "foo.py", "line": 2, "title": "A", "body": "Body A"}
+
+
+@pytest.mark.parametrize(
+    "cases",
+    [
+        pytest.param(
+            [
+                (review(owner=value), "post_review: owner must be a string\n")
+                for value in (7, False, None, list[object](), dict[str, object]())
+            ],
+            id="W-owner",
+        ),
+        pytest.param(
+            [
+                (review(repo=value), "post_review: repo must be a string\n")
+                for value in (7, False, None, list[object](), dict[str, object]())
+            ],
+            id="W-repo",
+        ),
+        pytest.param(
+            [
+                (
+                    review(pr_number=value),
+                    "post_review: pr_number must be an integer or a string\n",
+                )
+                for value in (
+                    True,
+                    False,
+                    5.0,
+                    None,
+                    list[object](),
+                    dict[str, object](),
+                )
+            ],
+            id="W-pr-number",
+        ),
+        pytest.param(
+            [
+                (
+                    review(platform=value),
+                    "post_review: platform must be a string or null\n",
+                )
+                for value in (
+                    7,
+                    False,
+                    0,
+                    list[object](),
+                    dict[str, object](),
+                    ["github"],
+                )
+            ],
+            id="W-platform",
+        ),
+        pytest.param(
+            [
+                (
+                    {**review(), "findings": value},
+                    "post_review: findings must be an array\n",
+                )
+                for value in (dict[str, object](), None, "findings", 0, False)
+            ],
+            id="W-findings",
+        ),
+        pytest.param(
+            [
+                (
+                    review(findings=[value]),
+                    "post_review: findings[0] must be an object\n",
+                )
+                for value in (7, None, list[object](), False)
+            ],
+            id="F-first-element",
+        ),
+        pytest.param(
+            [
+                (
+                    review(findings=[INPUT_FINDING, None], platform=None),
+                    "post_review: findings[1] must be an object\n",
+                )
+            ],
+            id="F-last-element",
+        ),
+        pytest.param(
+            [
+                (
+                    review(
+                        "gitlab",
+                        [
+                            {
+                                **INPUT_FINDING,
+                                "consolidation_key": "k",
+                                "consolidation_primary": True,
+                            },
+                            {
+                                **INPUT_FINDING,
+                                "consolidation_key": "k",
+                                "file": 7,
+                                "line": 3,
+                            },
+                        ],
+                    ),
+                    "post_review: findings[1].file must be a string\n",
+                )
+            ],
+            id="REG-gl-corroborator-file",
+        ),
+        pytest.param(
+            [
+                (
+                    review(findings=[{**INPUT_FINDING, "line": value}]),
+                    "post_review: findings[0].line must be an integer or null\n",
+                )
+                for value in ([2], dict[str, object](), True, False, 2.0, "2")
+            ],
+            id="REG-gh-line-list",
+        ),
+        pytest.param(
+            [
+                (
+                    review(findings=[{**INPUT_FINDING, "file": value, "line": line}]),
+                    "post_review: findings[0].file must be a string\n",
+                )
+                for value in (None, list[object](), dict[str, object](), 0, False)
+                for line in (2, None)
+            ],
+            id="F-file",
+        ),
+        pytest.param(
+            [
+                (
+                    review(findings=[{**INPUT_FINDING, "end_line": value}]),
+                    "post_review: findings[0].end_line must be an integer or null\n",
+                )
+                for value in ([3], dict[str, object](), True, False, 3.0, "3")
+            ]
+            + [
+                (
+                    review(
+                        findings=[
+                            INPUT_FINDING,
+                            {
+                                **INPUT_FINDING,
+                                "line": 999,
+                                "end_line": [3],
+                                "consolidation_key": "k",
+                            },
+                        ]
+                    ),
+                    "post_review: findings[1].end_line must be an integer or null\n",
+                )
+            ],
+            id="F-end-line",
+        ),
+        pytest.param(
+            [
+                (
+                    review(findings=[{**INPUT_FINDING, "consolidation_key": value}]),
+                    "post_review: findings[0].consolidation_key must be a string or null\n",
+                )
+                for value in (["k"], dict[str, object](), 7, 0, False)
+            ],
+            id="F-key",
+        ),
+    ],
+)
+def test_invalid_review_input(cases, refuse_review_input, request):
+    for data, expected in cases:
+        refuse_review_input(
+            data, expected, regression=request.node.callspec.id.startswith("REG-")
+        )
+
+
+@pytest.mark.parametrize(
+    "cases",
+    [
+        pytest.param(
+            [
+                (
+                    {"repo": "r", "review_body": [], "findings": [{"line": []}]},
+                    ["--report", "missing-report.md"],
+                    "post_review: Report file not found: missing-report.md\n",
+                )
+            ],
+            id="ORDER-report",
+        ),
+        pytest.param(
+            [
+                (
+                    {"repo": 7, "findings": [7]},
+                    [],
+                    "post_review: Missing required field in findings JSON: 'owner'\n",
+                ),
+                (
+                    {"owner": 7, "findings": [7]},
+                    [],
+                    "post_review: Missing required field in findings JSON: 'repo'\n",
+                ),
+                (
+                    {"owner": 7, "repo": 7, "findings": [7]},
+                    [],
+                    "post_review: Missing required field in findings JSON: 'pr_number'\n",
+                ),
+            ],
+            id="ORDER-required",
+        ),
+        pytest.param(
+            [
+                (
+                    review(platform="BitBucket", findings=[{"line": [2]}]),
+                    [],
+                    "post_review: Unsupported platform: 'bitbucket'. Use 'github' or 'gitlab'.\n",
+                )
+            ],
+            id="ORDER-platform",
+        ),
+        pytest.param(
+            [
+                (
+                    review(findings=[{"file": 7, "line": True}, {"file": 7}]),
+                    [],
+                    "post_review: findings[0].file must be a string\n",
+                ),
+                (
+                    review(findings=[{"line": [2]}]),
+                    [],
+                    "post_review: findings[0].line must be an integer or null\n",
+                ),
+                (
+                    review(
+                        findings=[
+                            {"line": True, "end_line": True, "consolidation_key": 7}
+                        ]
+                    ),
+                    [],
+                    "post_review: findings[0].line must be an integer or null\n",
+                ),
+                (
+                    review(findings=[{"end_line": True, "consolidation_key": 7}]),
+                    [],
+                    "post_review: findings[0].end_line must be an integer or null\n",
+                ),
+                (
+                    review(owner=7, repo=7, pr_number=True, platform="bitbucket"),
+                    [],
+                    "post_review: owner must be a string\n",
+                ),
+                (
+                    review(repo=7, pr_number=True, platform="bitbucket"),
+                    [],
+                    "post_review: repo must be a string\n",
+                ),
+                (
+                    review(pr_number=True, platform="bitbucket"),
+                    [],
+                    "post_review: pr_number must be an integer or a string\n",
+                ),
+            ],
+            id="ORDER-first-field",
+        ),
+        pytest.param(
+            [
+                (
+                    value,
+                    [],
+                    "post_review: Findings JSON must be an object or an array.\n",
+                )
+                for value in (7, "root", None, True)
+            ],
+            id="ORDER-scalar-root",
+        ),
+    ],
+)
+def test_review_input_error_precedence(
+    cases, refuse_review_input, monkeypatch, tmp_path
+):
+    monkeypatch.chdir(tmp_path)
+    for data, arguments, expected in cases:
+        refuse_review_input(data, expected, arguments=arguments)
+
+
+def test_review_input_defaults_and_unknown_fields(posting, monkeypatch):
+    for platform in ("github", "gitlab"):
+        data = review(platform)
+        del data["findings"]
+        run = posting(data)
+        assert run.code == 0
+        assert run.err == ""
+        assert (
+            run.payload["payload" if platform == "github" else "summary"]["body"]
+            == EMPTY_SUMMARY
+        )
+
+    loaded = []
+    observed = []
+    findings_seen = []
+    read = post.read_json
+    plan = post.plan_delivery
+
+    def observe_read(path):
+        data = read(path)
+        loaded.append(data)
+        findings_seen.append(data["findings"][0])
+        return data
+
+    def observe_plan(data, facts, *, platform):
+        observed.append(data)
+        result = plan(data, facts, platform=platform)
+        assert result.groups[0].group.primary is findings_seen[0]
+        return result
+
+    monkeypatch.setattr(post, "read_json", observe_read)
+    monkeypatch.setattr(post, "plan_delivery", observe_plan)
+    data = review(
+        findings=[
+            {
+                **INPUT_FINDING,
+                "future": {"nested": [1, {"x": True}]},
+                "line_start": "canonical",
+                "consolidation_key": "k",
+                "consolidation_primary": "yes",
+            }
+        ],
+        future_wrapper={"version": 7},
+    )
+    run = posting(data, diff=GH_DIFF)
+    assert run.code == 0
+    assert run.err == ""
+    assert observed[0] is loaded[0]
+    assert observed[0] == data
+    assert list(observed[0]) == [
+        "platform",
+        "owner",
+        "repo",
+        "pr_number",
+        "sha",
+        "review_body",
+        "findings",
+        "future_wrapper",
+    ]
+    assert list(observed[0]["findings"][0]) == [
+        "file",
+        "line",
+        "title",
+        "body",
+        "future",
+        "line_start",
+        "consolidation_key",
+        "consolidation_primary",
+    ]
+    assert run.payload["payload"]["comments"] == [
+        {
+            "path": "foo.py",
+            "line": 2,
+            "side": "RIGHT",
+            "body": "**\U0001f4a1 [LOW] A**\n\nBody A" + TRAILER,
+        }
+    ]
+
+
+def test_review_input_overrides_and_report(posting, tmp_path):
+    report = tmp_path / "report.md"
+    report.write_text(
+        "# Review\n\n## Summary\n\nFrom report\n\n## Findings\n", encoding="utf-8"
+    )
+    arguments = (
+        "--owner",
+        "o",
+        "--repo",
+        "r",
+        "--pr-number",
+        "5",
+        "--platform",
+        "github",
+        "--sha",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--report",
+        str(report),
+    )
+    for data in (
+        [],
+        review(
+            owner=[],
+            repo={},
+            pr_number=True,
+            platform=["github"],
+            sha=7,
+            review_body=[],
+        ),
+    ):
+        run = posting(data, arguments=arguments)
+        assert run.code == 0
+        assert run.err == ""
+        assert run.head_calls == ()
+        assert run.payload["endpoint"] == "repos/o/r/pulls/5/reviews"
+        assert run.payload["payload"][
+            "body"
+        ] == HEADER + "From report" + FOOTER.replace("{count}", "0")
+    run = posting(review(), arguments=("--report", "missing-report.md"))
+    assert run.code == 0
+    assert run.err == ""
+    assert run.payload["payload"]["body"] == EMPTY_SUMMARY
+
+
+def test_review_input_accepted_scalar_values(posting):
+    for number, endpoint in (
+        ("5", "repos/o/r/pulls/5/reviews"),
+        ("", "repos/o/r/pulls//reviews"),
+        ("legacy-number", "repos/o/r/pulls/legacy-number/reviews"),
+        (0, "repos/o/r/pulls/0/reviews"),
+        (-1, "repos/o/r/pulls/-1/reviews"),
+    ):
+        run = posting(review(pr_number=number))
+        assert run.code == 0
+        assert run.err == ""
+        assert run.payload["endpoint"] == endpoint
+    run = posting(review(owner="", repo=""))
+    assert run.code == 0
+    assert run.err == ""
+    assert run.payload["endpoint"] == "repos///pulls/5/reviews"
+    for line, warning, location in (
+        (
+            0,
+            "WARNING: Skipping finding 'A' at foo.py:0 \u2014 line not found in diff. Valid lines for this file: []\n",
+            "foo.py:0",
+        ),
+        (
+            -1,
+            "WARNING: Skipping finding 'A' at foo.py:-1 \u2014 line not found in diff. Valid lines for this file: []\n",
+            "foo.py:-1",
+        ),
+    ):
+        run = posting(review(findings=[{**INPUT_FINDING, "line": line}]))
+        assert run.code == 0
+        assert run.err == warning
+        assert location in run.payload["payload"]["body"]
+    for end in (0, -1, None):
+        run = posting(
+            review(findings=[{**INPUT_FINDING, "end_line": end}]), diff=GH_DIFF
+        )
+        assert run.code == 0
+        assert run.err == ""
+        assert run.payload["payload"]["comments"] == [
+            {
+                "path": "foo.py",
+                "line": 2,
+                "side": "RIGHT",
+                "body": "**\U0001f4a1 [LOW] A**\n\nBody A" + TRAILER,
+            }
+        ]
+    for key in ("", None):
+        run = posting(
+            review(findings=[{**INPUT_FINDING, "consolidation_key": key}]), diff=GH_DIFF
+        )
+        assert run.code == 0
+        assert run.err == ""
+        assert run.payload["payload"]["comments"][0]["line"] == 2
+    run = posting(review(findings=[{**INPUT_FINDING, "file": ""}]))
+    assert run.code == 0
+    assert (
+        run.err
+        == "WARNING: Skipping finding 'A' at :2 \u2014 line not found in diff. Valid lines for this file: []\n"
+    )
+    run = posting(
+        review(findings=[{**INPUT_FINDING, "suggested_fix_code": ""}]), diff=GH_DIFF
+    )
+    assert run.code == 0
+    assert run.err == "WARNING: suggested-fix downgraded: foo.py:2 (empty)\n"
+
+    for platform in ("github", "gitlab"):
+        run = posting(review(platform, [{"line": 2, "title": "A", "body": "Body A"}]))
+        assert run.code == 0
+        assert (
+            run.err
+            == "WARNING: Skipping finding 'A' at ?:2 \u2014 line not found in diff. Valid lines for this file: []\n"
+        )
+        assert (
+            "?:2"
+            in run.payload["payload" if platform == "github" else "summary"]["body"]
+        )
+
+    for confidence, label in (
+        (0, "confidence 0"),
+        (90.5, "confidence 90.5"),
+        ("90", "confidence 90"),
+        (None, "confidence ?"),
+    ):
+        run = posting(
+            review(
+                findings=[
+                    {
+                        **INPUT_FINDING,
+                        "consolidation_key": "k",
+                        "consolidation_primary": True,
+                    },
+                    {
+                        **INPUT_FINDING,
+                        "title": "B",
+                        "consolidation_key": "k",
+                        "confidence": confidence,
+                        "id": 0,
+                    },
+                ]
+            ),
+            diff=GH_DIFF,
+        )
+        assert run.code == 0
+        assert run.err == ""
+        assert label in run.payload["payload"]["comments"][0]["body"]
+    for primary, title in (
+        (True, "B"),
+        (False, "A"),
+        (None, "A"),
+        (1, "B"),
+        ("yes", "B"),
+    ):
+        run = posting(
+            review(
+                findings=[
+                    {**INPUT_FINDING, "consolidation_key": "k"},
+                    {
+                        **INPUT_FINDING,
+                        "title": "B",
+                        "consolidation_key": "k",
+                        "consolidation_primary": primary,
+                    },
+                ]
+            ),
+            diff=GH_DIFF,
+        )
+        assert run.code == 0
+        assert run.err == ""
+        assert run.payload["payload"]["comments"][0]["body"].startswith(
+            "**\U0001f4a1 [LOW] " + title + "**\n\nBody A"
+        )
+
+
+def test_review_input_null_and_absent_fields(posting, monkeypatch):
+    for platform in ("github", "gitlab"):
+        for fields in ({}, {"line": None, "end_line": None, "consolidation_key": None}):
+            run = posting(
+                review(platform, [{"title": "A", "body": "Body A", **fields}])
+            )
+            assert run.code == 0
+            assert (
+                run.err == "WARNING: Finding 'A' has no line number \u2014 skipping.\n"
+            )
+            assert (
+                "#### `?`\n\n**\U0001f4a1 [LOW] A**"
+                in run.payload["payload" if platform == "github" else "summary"]["body"]
+            )
+    monkeypatch.setattr(
+        post, "origin_remote", lambda: parse_remote("git@github.com:o/r")
+    )
+    for fields in ({}, {"platform": None}, {"platform": ""}):
+        data = review()
+        del data["platform"]
+        run = posting({**data, **fields})
+        assert run.code == 0
+        assert run.err == ""
+    run = posting(review(sha=None), head="abc1234\n")
+    assert run.code == 0
+    assert run.err == ""
+    assert run.head_calls == (("git", "rev-parse", "HEAD"),)
+    assert run.payload["payload"]["body"] == EMPTY_SUMMARY.replace(SHA, "abc1234")
+    for body, rendered in ((["Summary"], "['Summary']"), (7, "7")):
+        run = posting(review(review_body=body))
+        assert run.code == 0
+        assert run.err == ""
+        assert run.payload["payload"]["body"] == HEADER + rendered + FOOTER.replace(
+            "{count}", "0"
+        )
+    for fix in (None, 7, [], {}):
+        run = posting(
+            review(findings=[{**INPUT_FINDING, "suggested_fix_code": fix}]),
+            diff=GH_DIFF,
+        )
+        assert run.code == 0
+        assert run.err == "WARNING: suggested-fix downgraded: foo.py:2 (non_string)\n"
