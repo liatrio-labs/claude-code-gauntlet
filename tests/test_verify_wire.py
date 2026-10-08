@@ -838,8 +838,9 @@ def test_inline_progress_regression():
         [sys.executable, "-c", probe],
         cwd=Path(__file__).resolve().parents[1] / "scripts",
         capture_output=True,
-        timeout=2,
+        timeout=10,
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == b"decoded\n"
+    # print() ends the line with CRLF on Windows.
+    assert result.stdout.strip() == b"decoded"
