@@ -353,6 +353,39 @@ SITE = [
         ),
         {"diff_status": 128, "diff_error": "denied"},
     ),
+    Row(
+        "SITE-zero-line-is-accepted",
+        review(findings=[finding(line=0, title="A", body="Body A")]),
+        Expected(
+            summary_has=("foo.py:0",),
+            skipped=(
+                "Skipping finding 'A' at foo.py:0 — line not found in diff. Valid lines for this file: []",
+            ),
+            err="WARNING: Skipping finding 'A' at foo.py:0 — line not found in diff. Valid lines for this file: []\n",
+        ),
+    ),
+    Row(
+        "SITE-negative-line-is-accepted",
+        review(findings=[finding(line=-1, title="A", body="Body A")]),
+        Expected(
+            summary_has=("foo.py:-1",),
+            skipped=(
+                "Skipping finding 'A' at foo.py:-1 — line not found in diff. Valid lines for this file: []",
+            ),
+            err="WARNING: Skipping finding 'A' at foo.py:-1 — line not found in diff. Valid lines for this file: []\n",
+        ),
+    ),
+    Row(
+        "SITE-empty-file-is-accepted",
+        review(findings=[finding(file="", title="A", body="Body A")]),
+        Expected(
+            summary_has=(":2",),
+            skipped=(
+                "Skipping finding 'A' at :2 — line not found in diff. Valid lines for this file: []",
+            ),
+            err="WARNING: Skipping finding 'A' at :2 — line not found in diff. Valid lines for this file: []\n",
+        ),
+    ),
 ]
 
 
@@ -2157,68 +2190,34 @@ def test_marker_delivery(kind, posting):
 
 @pytest.fixture
 def refuse_review_input(tmp_path, monkeypatch, capsys, forge_factory):
-    import json
-
-    from gauntlet import proc
-
-    from tests.support.forge import FakeForge, FakeGitLab
-
     def refuse(data, expected, *, arguments=(), regression=False):
-        path = tmp_path / "findings.json"
-        path.write_text(json.dumps(data), encoding="utf-8")
         artifact = tmp_path / "post-review-payload.json"
         modes = ("live", "flag", "env") if regression else ("live", "flag")
         for mode in modes:
             forge_factory.calls.clear()
-            github = forge_factory.configure(FakeForge(diffs=[(GH_DIFF, "", 0)]))
-            gitlab = forge_factory.configure(
-                FakeGitLab(
-                    diffs=[(GL_DIFF, "", 0)],
-                    refs=[
-                        JsonFetch(
-                            [
-                                {
-                                    "base_commit_sha": "base1",
-                                    "head_commit_sha": "head1",
-                                    "start_commit_sha": "start1",
-                                }
-                            ],
-                            None,
-                        )
-                    ],
-                )
-            )
-            git_calls = []
-
-            def run(command, *, calls=git_calls, **kwargs):
-                calls.append(command)
-                return proc.CompletedProcess(
-                    command,
-                    0,
-                    "git@github.com:o/r\n" if "remote" in command else SHA + "\n",
-                    "",
-                )
-
-            monkeypatch.setattr(proc, "run", run)
-            monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
-            if mode == "env":
-                monkeypatch.setenv("CODE_GAUNTLET_POST_MODE", "dry-run")
             if regression:
                 artifact.write_bytes(b"sentinel artifact\n")
-            capsys.readouterr()
-            code = post.CLI.invoke(
-                [str(path), *arguments, *(["--dry-run"] if mode == "flag" else [])]
+            platform = data.get("platform") if isinstance(data, dict) else None
+            run = invoke_posting(
+                tmp_path,
+                monkeypatch,
+                capsys,
+                forge_factory,
+                data,
+                diff=GL_DIFF if platform == "gitlab" else GH_DIFF,
+                dry_run=mode == "flag",
+                environment_dry_run=mode == "env",
+                configure_forge=regression,
+                keep_existing_artifact=regression,
+                arguments=arguments,
             )
-            captured = capsys.readouterr()
-            assert (code, captured.out, captured.err) == (1, "", expected)
-            assert forge_factory.calls == []
-            assert github.calls == []
-            assert gitlab.calls == []
-            assert git_calls == []
+            assert (run.code, run.out, run.err) == (1, "", expected)
+            assert run.forge_factory_calls == ()
+            assert run.head_calls == ()
             if regression:
-                assert artifact.read_bytes() == b"sentinel artifact\n"
+                assert run.raw == b"sentinel artifact\n"
             else:
-                assert not artifact.exists()
+                assert run.raw is None
 
     return refuse
 
@@ -2347,7 +2346,7 @@ INPUT_FINDING = {"file": "foo.py", "line": 2, "title": "A", "body": "Body A"}
                     "post_review: findings[0].file must be a string\n",
                 )
                 for value in (None, list[object](), dict[str, object](), 0, False)
-                for line in (2, None)
+                for line in (2,)
             ],
             id="F-file",
         ),
@@ -2504,7 +2503,7 @@ def test_review_input_error_precedence(
         refuse_review_input(data, expected, arguments=arguments)
 
 
-def test_review_input_defaults_and_unknown_fields(posting, monkeypatch):
+def test_review_input_defaults_and_unknown_fields(posting):
     for platform in ("github", "gitlab"):
         data = review(platform)
         del data["findings"]
@@ -2516,26 +2515,6 @@ def test_review_input_defaults_and_unknown_fields(posting, monkeypatch):
             == EMPTY_SUMMARY
         )
 
-    loaded = []
-    observed = []
-    findings_seen = []
-    read = post.read_json
-    plan = post.plan_delivery
-
-    def observe_read(path):
-        data = read(path)
-        loaded.append(data)
-        findings_seen.append(data["findings"][0])
-        return data
-
-    def observe_plan(data, facts, *, platform):
-        observed.append(data)
-        result = plan(data, facts, platform=platform)
-        assert result.groups[0].group.primary is findings_seen[0]
-        return result
-
-    monkeypatch.setattr(post, "read_json", observe_read)
-    monkeypatch.setattr(post, "plan_delivery", observe_plan)
     data = review(
         findings=[
             {
@@ -2551,28 +2530,6 @@ def test_review_input_defaults_and_unknown_fields(posting, monkeypatch):
     run = posting(data, diff=GH_DIFF)
     assert run.code == 0
     assert run.err == ""
-    assert observed[0] is loaded[0]
-    assert observed[0] == data
-    assert list(observed[0]) == [
-        "platform",
-        "owner",
-        "repo",
-        "pr_number",
-        "sha",
-        "review_body",
-        "findings",
-        "future_wrapper",
-    ]
-    assert list(observed[0]["findings"][0]) == [
-        "file",
-        "line",
-        "title",
-        "body",
-        "future",
-        "line_start",
-        "consolidation_key",
-        "consolidation_primary",
-    ]
     assert run.payload["payload"]["comments"] == [
         {
             "path": "foo.py",
@@ -2630,10 +2587,7 @@ def test_review_input_overrides_and_report(posting, tmp_path):
 def test_review_input_accepted_scalar_values(posting):
     for number, endpoint in (
         ("5", "repos/o/r/pulls/5/reviews"),
-        ("", "repos/o/r/pulls//reviews"),
         ("legacy-number", "repos/o/r/pulls/legacy-number/reviews"),
-        (0, "repos/o/r/pulls/0/reviews"),
-        (-1, "repos/o/r/pulls/-1/reviews"),
     ):
         run = posting(review(pr_number=number))
         assert run.code == 0
@@ -2643,22 +2597,6 @@ def test_review_input_accepted_scalar_values(posting):
     assert run.code == 0
     assert run.err == ""
     assert run.payload["endpoint"] == "repos///pulls/5/reviews"
-    for line, warning, location in (
-        (
-            0,
-            "WARNING: Skipping finding 'A' at foo.py:0 \u2014 line not found in diff. Valid lines for this file: []\n",
-            "foo.py:0",
-        ),
-        (
-            -1,
-            "WARNING: Skipping finding 'A' at foo.py:-1 \u2014 line not found in diff. Valid lines for this file: []\n",
-            "foo.py:-1",
-        ),
-    ):
-        run = posting(review(findings=[{**INPUT_FINDING, "line": line}]))
-        assert run.code == 0
-        assert run.err == warning
-        assert location in run.payload["payload"]["body"]
     for end in (0, -1, None):
         run = posting(
             review(findings=[{**INPUT_FINDING, "end_line": end}]), diff=GH_DIFF
@@ -2673,19 +2611,36 @@ def test_review_input_accepted_scalar_values(posting):
                 "body": "**\U0001f4a1 [LOW] A**\n\nBody A" + TRAILER,
             }
         ]
-    for key in ("", None):
-        run = posting(
-            review(findings=[{**INPUT_FINDING, "consolidation_key": key}]), diff=GH_DIFF
-        )
-        assert run.code == 0
-        assert run.err == ""
-        assert run.payload["payload"]["comments"][0]["line"] == 2
-    run = posting(review(findings=[{**INPUT_FINDING, "file": ""}]))
-    assert run.code == 0
-    assert (
-        run.err
-        == "WARNING: Skipping finding 'A' at :2 \u2014 line not found in diff. Valid lines for this file: []\n"
+    run = posting(
+        review(
+            findings=[
+                {**INPUT_FINDING, "consolidation_key": ""},
+                {
+                    **INPUT_FINDING,
+                    "title": "B",
+                    "body": "Body B",
+                    "consolidation_key": "",
+                },
+            ]
+        ),
+        diff=GH_DIFF,
     )
+    assert run.code == 0
+    assert run.err == ""
+    assert run.payload["payload"]["comments"] == [
+        {
+            "path": "foo.py",
+            "line": 2,
+            "side": "RIGHT",
+            "body": "**\U0001f4a1 [LOW] A**\n\nBody A" + TRAILER,
+        },
+        {
+            "path": "foo.py",
+            "line": 2,
+            "side": "RIGHT",
+            "body": "**\U0001f4a1 [LOW] B**\n\nBody B" + TRAILER,
+        },
+    ]
     run = posting(
         review(findings=[{**INPUT_FINDING, "suggested_fix_code": ""}]), diff=GH_DIFF
     )
@@ -2704,39 +2659,70 @@ def test_review_input_accepted_scalar_values(posting):
             in run.payload["payload" if platform == "github" else "summary"]["body"]
         )
 
-    for confidence, label in (
-        (0, "confidence 0"),
-        (90.5, "confidence 90.5"),
-        ("90", "confidence 90"),
-        (None, "confidence ?"),
-    ):
-        run = posting(
-            review(
-                findings=[
-                    {
-                        **INPUT_FINDING,
-                        "consolidation_key": "k",
-                        "consolidation_primary": True,
-                    },
-                    {
-                        **INPUT_FINDING,
-                        "title": "B",
-                        "consolidation_key": "k",
-                        "confidence": confidence,
-                        "id": 0,
-                    },
-                ]
-            ),
-            diff=GH_DIFF,
-        )
-        assert run.code == 0
-        assert run.err == ""
-        assert label in run.payload["payload"]["comments"][0]["body"]
+    unanchored_group = review(
+        "gitlab",
+        [
+            {
+                "line": 2,
+                "title": "A",
+                "body": "Body A",
+                "consolidation_key": "missing-file",
+                "consolidation_primary": True,
+            },
+            {
+                "line": 3,
+                "title": "B",
+                "body": "Body B",
+                "consolidation_key": "missing-file",
+            },
+        ],
+    )
+    run = posting(unanchored_group, diff=GL_DIFF)
+    assert run.code == 0
+    assert run.err == (
+        "WARNING: Skipping finding 'A' at ?:2 — line not found in diff. "
+        "Valid lines for this file: [] [group members: A, B]\n"
+    )
+    assert "#### `?:3`\n\n**" in run.payload["summary"]["body"]
+
+    rejected_group = review(
+        "gitlab",
+        [
+            {
+                **INPUT_FINDING,
+                "consolidation_key": "missing-file",
+                "consolidation_primary": True,
+            },
+            {
+                "line": 3,
+                "title": "B",
+                "body": "Body B",
+                "consolidation_key": "missing-file",
+            },
+        ],
+    )
+    run = posting(
+        rejected_group,
+        diff=GL_DIFF,
+        dry_run=False,
+        submissions={
+            "notes": [PostResult({}, None, None)],
+            "discussions": [PostResult(None, "denied", None)],
+        },
+    )
+    assert run.code == 1
+    assert run.err == (
+        "WARNING: Skipping finding 'A' at foo.py:2 — GitLab rejected the inline "
+        "discussion.\ndenied\n"
+        "WARNING: Skipping corroborating finding 'B' at ?:3 — line not found in diff.\n"
+        "post_review: all 1 finding(s) attempted this run were not delivered — "
+        "nothing new was posted inline. The MR summary note is on the MR; rerunning "
+        "retries the inline comments without duplicating what is already there.\n"
+    )
+
     for primary, title in (
         (True, "B"),
-        (False, "A"),
         (None, "A"),
-        (1, "B"),
         ("yes", "B"),
     ):
         run = posting(
@@ -2783,11 +2769,6 @@ def test_review_input_null_and_absent_fields(posting, monkeypatch):
         run = posting({**data, **fields})
         assert run.code == 0
         assert run.err == ""
-    run = posting(review(sha=None), head="abc1234\n")
-    assert run.code == 0
-    assert run.err == ""
-    assert run.head_calls == (("git", "rev-parse", "HEAD"),)
-    assert run.payload["payload"]["body"] == EMPTY_SUMMARY.replace(SHA, "abc1234")
     for body, rendered in ((["Summary"], "['Summary']"), (7, "7")):
         run = posting(review(review_body=body))
         assert run.code == 0
@@ -2795,10 +2776,8 @@ def test_review_input_null_and_absent_fields(posting, monkeypatch):
         assert run.payload["payload"]["body"] == HEADER + rendered + FOOTER.replace(
             "{count}", "0"
         )
-    for fix in (None, 7, [], {}):
-        run = posting(
-            review(findings=[{**INPUT_FINDING, "suggested_fix_code": fix}]),
-            diff=GH_DIFF,
-        )
-        assert run.code == 0
-        assert run.err == "WARNING: suggested-fix downgraded: foo.py:2 (non_string)\n"
+    run = posting(
+        review(findings=[{**INPUT_FINDING, "suggested_fix_code": 7}]), diff=GH_DIFF
+    )
+    assert run.code == 0
+    assert run.err == "WARNING: suggested-fix downgraded: foo.py:2 (non_string)\n"

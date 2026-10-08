@@ -73,7 +73,7 @@ def validate_review_input(data: dict[str, object]) -> ReviewInput:
             raise CliError(
                 f"findings[{index}].consolidation_key must be a string or null"
             )
-    # Keep identities and unknown keys for the artifact and rendering consumers.
     if "findings" not in data:
         data["findings"] = findings
+    # Returning the caller's mapping preserves identities and unknown keys.
     return cast(ReviewInput, data)

@@ -917,7 +917,7 @@ def post_gitlab(
                     counters[deliver_unanchored(group, member_index, key)] += 1
             continue
         outcome = deliver(group, 0, member_keys, grouped=True)
-        if outcome in ("invalid", "failed"):
+        if outcome == "failed":
             counters[outcome] += 1
             for member_index, key in enumerate(member_keys[1:], 1):
                 counters[deliver_corroborator(group, member_index, key)] += 1
