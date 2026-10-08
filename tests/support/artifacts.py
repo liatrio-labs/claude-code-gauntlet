@@ -217,3 +217,53 @@ def record_task_output(tmp, nonce=NONCE):
     if proc.returncode != 0:
         raise RuntimeError(f"recorder failed: {proc.stderr}")
     return task_path, out_dir
+
+
+def task_file(root, name="task", text="", mtime=10):
+    """Place input at the nested layout task discovery searches."""
+    path = Path(root) / "slug" / "session" / "tasks" / f"{name}.output"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def returned_task(path, payload):
+    """Write a return-channel input without going through the subject."""
+    Path(path).write_text(
+        json.dumps({"result": {"ok": True, "stats": {}, "persistReturn": payload}}),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def artifact_plan(source="findings.json", ids=None):
+    """A small relative-path instruction set, suitable for literal wire proofs."""
+    ids = ["A"] if ids is None else ids
+    return {
+        "planVersion": 2,
+        "expect": [],
+        "postReview": {
+            "path": "post.json",
+            "source": source,
+            "ids": ids,
+            "wrapper": None,
+        },
+        "checkpoint": {
+            "path": "checkpoint.json",
+            "source": source,
+            "challengeFindingIds": ids,
+            "stripAliasFields": ["line", "body"],
+            "skeleton": {
+                "phases": {"challenge": {"before": 1, "findings": [], "after": 2}}
+            },
+        },
+    }
+
+
+def seal_plan(path, plan):
+    """Produce a valid input proof; tests supply their own expected receipt values."""
+    sealed = dict(plan)
+    sealed["planChecksum"] = plan_checksum(plan)
+    Path(path).write_text(json.dumps(sealed), encoding="utf-8")
+    return sealed
