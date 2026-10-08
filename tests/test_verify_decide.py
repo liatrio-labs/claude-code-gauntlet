@@ -17,6 +17,10 @@ from gauntlet.verify import wire
 from tests.test_verify_wire import receipt
 
 DASH = "\u2014"
+OLD_THEN_NEW = (
+    "1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old\n"
+    "abcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code"
+)
 DIFF = "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n"
 
 
@@ -97,8 +101,7 @@ DIFF = "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n"
             {},
             None,
             [
-                "1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old\n"
-                "abcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code",
+                OLD_THEN_NEW,
                 "",
                 0,
             ],
@@ -147,8 +150,7 @@ DIFF = "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n"
             {},
             ["\n", "", 0],
             [
-                "^1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old\n"
-                "abcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code",
+                "^" + OLD_THEN_NEW,
                 "",
                 0,
             ],

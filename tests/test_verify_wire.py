@@ -301,8 +301,8 @@ def test_coerce(before, after):
     finding = copy.deepcopy(before)
     assert verify.coerce_numeric_fields(finding) is finding
     assert finding == after
-    verify.coerce_numeric_fields(finding)
-    assert finding == after
+    # A second pass over already-coerced values changes nothing.
+    assert verify.coerce_numeric_fields(finding) == after
     if (
         isinstance(after, dict)
         and after.get("confidence") == 80
