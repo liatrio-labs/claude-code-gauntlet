@@ -463,7 +463,7 @@ test('string-typed numerics on a dispatched finding are pinned by the join', asy
 
 // Line fields are not in the delta (the script does not re-decide them). Without half-up
 // rounding in pinNumericFields, the join would keep a fractional dispatched line_start
-// while verification ran against the value _coerce_numeric_fields rounded at the Python
+// while verification ran against the value gauntlet.verify.wire.coerce_numeric_fields rounded at the Python
 // input boundary — the silent divergence Bugbot flagged on this PR.
 test('fractional line fields on a dispatched finding are half-up rounded by the join', async () => {
   const findings = makeFindings(1);

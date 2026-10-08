@@ -15,46 +15,15 @@ from gauntlet.fs import write_atomic
 from gauntlet.jsjson import (
     JS_MAX_SAFE_INTEGER,
     JsSerializationError,
-    checksum_or_none,
     fnv1a32,
     js_stringify_pretty,
 )
-from gauntlet.registry import DELTA_VALUE_FIELDS, Delta, VerifySliceFinding
+from gauntlet.jsjson import (
+    checksum_or_none as checksum_or_none,
+)
+from gauntlet.registry import DELTA_VALUE_FIELDS, Delta
 from gauntlet.verify import decide
-from gauntlet.verify.decide import Origin
-
-
-class BlameMetadata(TypedDict):
-    classification: Origin
-    author: str | None
-    date: str | None
-    original_severity: object
-
-
-class _FactualRequired(TypedDict):
-    verified: bool
-    reason: str
-    code_at_lines: str | None
-
-
-class FactualVerification(_FactualRequired, total=False):
-    original_confidence: object
-    symbols_checked: int
-    symbols_missing: int
-
-
-class DiffValidation(TypedDict):
-    in_diff: bool | None
-    reason: str
-
-
-class FindingWire(VerifySliceFinding, total=False):
-    line: object
-    end_line: object
-    blame_metadata: BlameMetadata
-    factual_verification: FactualVerification
-    diff_validation: DiffValidation
-    elimination_reason: object
+from gauntlet.verify.decide import FindingWire, VerificationResult
 
 
 class _SliceRequired(TypedDict):
@@ -63,19 +32,6 @@ class _SliceRequired(TypedDict):
 
 class SliceInput(_SliceRequired, total=False):
     base_branch: object
-
-
-class Stats(TypedDict):
-    total: int
-    new: int
-    surfaced: int
-    eliminated: int
-
-
-class VerificationResult(TypedDict):
-    verified: list[FindingWire]
-    eliminated: list[FindingWire]
-    stats: Stats
 
 
 class _ReceiptRequired(TypedDict):
@@ -107,14 +63,14 @@ class FailedEnvelope(TypedDict):
 
 
 Envelope = SuccessEnvelope | FailedEnvelope
+# A quoted number would raise TypeError and degrade the whole slice.
+# Half-up rounding mirrors the JS side's pinNumericFields.
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
 _INLINE_SAFE = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-"
 )
 _INLINE_STRING_RE = re.compile(r"(?:[A-Za-z0-9 .,:/_-]|%[0-9A-F]{2}|%u[0-9A-F]{4})*")
-input_checksum = checksum_or_none
-deltas_checksum = checksum_or_none
 
 
 def _half_up_int(value: float) -> int | None:
@@ -140,7 +96,7 @@ def coerce_numeric_fields(finding: object) -> object:
             continue
         rounded = _half_up_int(value)
         if rounded is None:
-            continue  # NaN/inf: leave it for the guards below to reject as before
+            continue  # NaN/inf: decide's range guards handle uncoerced values.
         finding[key] = rounded
     return finding
 
@@ -157,15 +113,11 @@ def _inline_reject(message: str) -> NoReturn:
     raise ValueError(f"inline slice-input rejected: {message}")
 
 
-def _inline_bad_char(char: str, path: str) -> NoReturn:
-    _inline_reject(f"raw U+{ord(char):04X} at {path}")
-
-
 def _decode_inline_string(value: str, path: str) -> str:
     if not _INLINE_STRING_RE.fullmatch(value):
         for char in value:
             if char not in _INLINE_SAFE and char != "%":
-                _inline_bad_char(char, path)
+                _inline_reject(f"raw U+{ord(char):04X} at {path}")
         _inline_reject(f"invalid percent escape at {path}")
 
     out = []
@@ -184,7 +136,6 @@ def _decode_inline_string(value: str, path: str) -> str:
                 )
             if (
                 0xD800 <= unit <= 0xDBFF
-                and i + 12 <= len(value)
                 and value[i + 6 : i + 8] == "%u"
                 and 0xDC00 <= int(value[i + 8 : i + 12], 16) <= 0xDFFF
             ):
@@ -238,17 +189,16 @@ def _decode_inline_node(node: object, path: str = "$") -> object:
     return node
 
 
+def _reject_non_finite_constant(value: str) -> NoReturn:
+    raise ValueError(f"non-finite JSON constant {value}")
+
+
 def decode_inline_slice(text: str) -> dict[str, object]:
     """Strictly decode the percent-encoded JSON document carried by the executor."""
-    if not isinstance(text, str):
-        _inline_reject("payload is not text at $")
     if "\\" in text:
         _inline_reject(
             "JSON escape sequences are not canonical at $ (offending U+005C)"
         )
-
-    def _reject_non_finite_constant(value: str) -> NoReturn:
-        raise ValueError(f"non-finite JSON constant {value}")
 
     try:
         parsed = json.loads(
@@ -263,9 +213,7 @@ def decode_inline_slice(text: str) -> dict[str, object]:
     return cast(dict[str, object], _decode_inline_node(parsed))
 
 
-def validate_input_shape(data: object) -> SliceInput:
-    if not isinstance(data, dict):
-        _inline_reject("root must be an object with a 'findings' key at $")
+def validate_input_shape(data: dict[str, object]) -> SliceInput:
     if "findings" not in data:
         _inline_reject("missing required 'findings' array at $")
     if not isinstance(data["findings"], list):
@@ -274,6 +222,7 @@ def validate_input_shape(data: object) -> SliceInput:
 
 
 def write_output(envelope: Envelope, output_path: str | None) -> None:
+    # ensure_ascii keeps lone surrogates accepted by the inline decoder writable.
     text = json.dumps(envelope, indent=2, ensure_ascii=True)
     if output_path:
         with Path(output_path).open("w", encoding="utf-8", newline="") as stream:
@@ -329,7 +278,7 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
         # value proof covers the dispatched document before numeric values are rewritten.
         inline_checksum = fnv1a32(args.input_inline)
         data = validate_input_shape(decode_inline_slice(args.input_inline))
-        proof = input_checksum(data)
+        proof = checksum_or_none(data)
         try:
             input_text = js_stringify_pretty(data)
         except JsSerializationError:
@@ -347,7 +296,7 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
             "sha": sha,
             "n_in": len(findings),
             "nonce": args.nonce,
-            "deltas_checksum": deltas_checksum(deltas),
+            "deltas_checksum": checksum_or_none(deltas),
             "inline_checksum": inline_checksum,
         }
         # Omit unavailable input proof rather than null: the executor schema only accepts

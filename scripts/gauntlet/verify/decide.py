@@ -6,17 +6,63 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Any, Literal, TypedDict, cast
 
 from gauntlet import proc
 from gauntlet.cli import warn
 from gauntlet.diff import DiffFacts, is_line_valid, parse_diff
 from gauntlet.paths import entry
-
-if TYPE_CHECKING:
-    from gauntlet.verify.wire import FindingWire, Stats, VerificationResult
+from gauntlet.registry import VerifySliceFinding
 
 Origin = Literal["new", "surfaced"]
+
+
+class BlameMetadata(TypedDict):
+    classification: Origin
+    author: str | None
+    date: str | None
+    original_severity: object
+
+
+class _FactualRequired(TypedDict):
+    verified: bool
+    reason: str
+    code_at_lines: str | None
+
+
+class FactualVerification(_FactualRequired, total=False):
+    original_confidence: object
+    symbols_checked: int
+    symbols_missing: int
+
+
+class DiffValidation(TypedDict):
+    in_diff: bool | None
+    reason: str
+
+
+class FindingWire(VerifySliceFinding, total=False):
+    line: object
+    end_line: object
+    blame_metadata: BlameMetadata
+    factual_verification: FactualVerification
+    diff_validation: DiffValidation
+    elimination_reason: object
+
+
+class Stats(TypedDict):
+    total: int
+    new: int
+    surfaced: int
+    eliminated: int
+
+
+class VerificationResult(TypedDict):
+    verified: list[FindingWire]
+    eliminated: list[FindingWire]
+    stats: Stats
+
+
 _SEVERITY_DOWNGRADE = {
     "critical": "high",
     "high": "medium",
@@ -64,7 +110,9 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
             return None
 
     # Three-dot diff (merge-base): git diff {base}...HEAD
-    stdout, stderr, rc = proc.output(["git", "diff", f"{base_branch}...HEAD"])
+    stdout, stderr, rc = proc.output(
+        ["git", "diff", "--end-of-options", f"{base_branch}...HEAD"]
+    )
     if rc == 0:
         print(
             f"Diff source: git diff {base_branch}...HEAD (three-dot), {len(stdout)} bytes",
@@ -78,7 +126,9 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
     )
 
     # Two-dot diff: git diff {base} HEAD
-    stdout, stderr, rc = proc.output(["git", "diff", cast(str, base_branch), "HEAD"])
+    stdout, stderr, rc = proc.output(
+        ["git", "diff", "--end-of-options", cast(str, base_branch), "HEAD"]
+    )
     if rc == 0:
         print(
             f"Diff source: git diff {base_branch} HEAD (two-dot fallback), {len(stdout)} bytes",
@@ -90,49 +140,52 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
         f"git diff {base_branch} HEAD also failed (exit {rc}): {stderr.strip()}. "
         "Diff validation will be skipped."
     )
+    # With no diff, skip validation rather than tag every finding as surfaced.
     return None
+
+
+def _stamp_blame(
+    finding: FindingWire,
+    classification: Origin,
+    original_severity: object,
+    author: str | None = None,
+    date: str | None = None,
+) -> Origin:
+    finding["blame_metadata"] = {
+        "classification": classification,
+        "author": author,
+        "date": date,
+        "original_severity": original_severity,
+    }
+    return classification
 
 
 def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
     """Classify blame and downgrade surfaced severity in place."""
     base_branch = context.base_branch
 
-    filepath = cast(str, finding.get("file", ""))
+    filepath = finding.get("file", "")
     line_start = finding.get("line_start", 1)
     line_end = finding.get("line_end") or line_start
-    original_severity = cast(str, finding.get("severity", ""))
+    original_severity = finding.get("severity", "")
     cross_file_refs = finding.get("cross_file_refs") or []
 
-    # Cross-file impact findings (about code outside the diff) → always "surfaced"
     if cross_file_refs:
         classification: Origin = "surfaced"
-        finding["blame_metadata"] = {
-            "classification": classification,
-            "author": None,
-            "date": None,
-            "original_severity": original_severity,
-        }
         if original_severity in _SEVERITY_DOWNGRADE:
             finding["severity"] = _SEVERITY_DOWNGRADE[original_severity]
-        return classification
+        return _stamp_blame(finding, classification, original_severity)
 
     # File not found on disk → skip (return "new" to keep finding, conservative)
     if not os.path.exists(filepath):
         warn(
             f"classify_blame: file not found '{filepath}' — classifying as 'new' (conservative)."
         )
-        finding["blame_metadata"] = {
-            "classification": "new",
-            "author": None,
-            "date": None,
-            "original_severity": original_severity,
-        }
-        return "new"
+        return _stamp_blame(finding, "new", original_severity)
 
-    # Obtain the set of commits reachable from HEAD but not base_branch (i.e. PR commits)
     if context.pr_commits is None and context.commit_error is None:
         pr_stdout, pr_stderr, pr_rc = proc.output(
-            ["git", "log", "--format=%H", f"{base_branch}..HEAD"]
+            ["git", "log", "--format=%H", "--end-of-options", f"{base_branch}..HEAD"]
         )
         if pr_rc != 0:
             context.commit_error = pr_stderr.strip()
@@ -143,23 +196,16 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
             f"classify_blame: git log failed for base '{base_branch}': {context.commit_error}"
             " — classifying as 'new' (conservative)."
         )
-        finding["blame_metadata"] = {
-            "classification": "new",
-            "author": None,
-            "date": None,
-            "original_severity": original_severity,
-        }
-        return "new"
+        return _stamp_blame(finding, "new", original_severity)
 
-    pr_commits = context.pr_commits or frozenset()
+    pr_commits = context.pr_commits
+    assert pr_commits is not None
 
-    # Run git blame on the finding's line range
     blame_cmd = ["git", "blame", f"-L{line_start},{line_end}", "--", filepath]
     blame_stdout, blame_stderr, blame_rc = proc.output(blame_cmd)
 
     if blame_rc != 0:
         err_lower = blame_stderr.lower()
-        # Binary files produce a specific error from git blame
         if "binary" in err_lower:
             warn(
                 f"classify_blame: binary file '{filepath}' — classifying as 'new' (conservative)."
@@ -169,15 +215,8 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
                 f"classify_blame: git blame failed for '{filepath}': {blame_stderr.strip()}"
                 " — classifying as 'new' (conservative)."
             )
-        finding["blame_metadata"] = {
-            "classification": "new",
-            "author": None,
-            "date": None,
-            "original_severity": original_severity,
-        }
-        return "new"
+        return _stamp_blame(finding, "new", original_severity)
 
-    # Parse blame output lines.
     # Standard porcelain format (short): "^SHA (Author Date HH:MM:SS +TZ LINE) code"
     # Short format: "SHA (Author YYYY-MM-DD HH:MM:SS +TZ LINE) code"
     blame_sha_re = re.compile(r"^\^?([0-9a-f]{7,40})\s+\((.+?)\s+(\d{4}-\d{2}-\d{2})")
@@ -204,13 +243,7 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
             f"classify_blame: could not parse blame output for '{filepath}' lines "
             f"{line_start}-{line_end} — classifying as 'new' (conservative)."
         )
-        finding["blame_metadata"] = {
-            "classification": "new",
-            "author": None,
-            "date": None,
-            "original_severity": original_severity,
-        }
-        return "new"
+        return _stamp_blame(finding, "new", original_severity)
 
     # A blamed SHA may be a short prefix; check if any blamed commit is a PR commit.
     # PR commits are full SHAs; blamed SHAs may be short (7+ chars).
@@ -218,21 +251,14 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         full_sha.startswith(s) for s in blamed_shas for full_sha in pr_commits
     )
 
-    # "new" if any blamed commit is in the PR branch; otherwise "surfaced"
     classification = "new" if has_pr_commit else "surfaced"
 
-    finding["blame_metadata"] = {
-        "classification": classification,
-        "author": first_author,
-        "date": first_date,
-        "original_severity": original_severity,
-    }
-
-    # Downgrade severity for surfaced findings
     if classification == "surfaced" and original_severity in _SEVERITY_DOWNGRADE:
         finding["severity"] = _SEVERITY_DOWNGRADE[original_severity]
 
-    return classification
+    return _stamp_blame(
+        finding, classification, original_severity, first_author, first_date
+    )
 
 
 def _extract_symbols(description: str, evidence: str) -> set[str]:
@@ -311,11 +337,11 @@ def _extract_symbols(description: str, evidence: str) -> set[str]:
 
 def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
     """Check file ranges and symbols, degrading plausible findings conservatively."""
-    filepath = cast(str, finding.get("file", ""))
-    line_start = cast(int, finding.get("line_start"))
-    line_end = cast(int, finding.get("line_end") or line_start)
-    description = cast(str, finding.get("description", "") or "")
-    evidence = cast(str, finding.get("evidence", "") or "")
+    filepath = finding.get("file", "")
+    line_start = finding.get("line_start")
+    line_end: Any = finding.get("line_end") or line_start
+    description = finding.get("description", "") or ""
+    evidence = finding.get("evidence", "") or ""
 
     # No line reference → skip verification, keep as-is
     if not line_start:
@@ -404,7 +430,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
         # Run git grep to find the symbol anywhere in tracked files
         try:
             stdout, grep_stderr, rc = proc.output(
-                ["git", "grep", "-l", symbol], timeout=3, cwd=context.repo_root
+                ["git", "grep", "-l", "-e", symbol], timeout=3, cwd=context.repo_root
             )
         except proc.TimeoutExpired:
             stdout, grep_stderr, rc = "", "", -1
@@ -427,7 +453,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
             missing_symbols.append(symbol)
 
     if missing_symbols:
-        original_confidence = cast(int, finding.get("confidence", 100))
+        original_confidence = finding.get("confidence", 100)
         miss_ratio = len(missing_symbols) / total_symbols
         # Proportional penalty: scale reduction by fraction of symbols missing
         # e.g., 1 of 4 found → miss_ratio=0.75 → reduction of ~52
@@ -466,9 +492,9 @@ def validate_diff_lines(finding: FindingWire, facts: DiffFacts | None) -> bool:
         }
         return True
 
-    filepath = cast(str, finding.get("file", ""))
-    line_start = cast(int, finding.get("line_start") or 0)
-    line_end = cast(int, finding.get("line_end") or line_start)
+    filepath = finding.get("file", "")
+    line_start = finding.get("line_start") or 0
+    line_end = finding.get("line_end") or line_start
 
     if not line_start:
         finding["diff_validation"] = {
@@ -497,7 +523,7 @@ def validate_diff_lines(finding: FindingWire, facts: DiffFacts | None) -> bool:
     blame_meta = finding.get("blame_metadata")
     # Blame downgrades when it tags surfaced; a second downgrade would drop two levels.
     if not blame_meta or blame_meta.get("classification") != "surfaced":
-        original_severity = cast(str, finding.get("severity", ""))
+        original_severity = finding.get("severity", "")
         if original_severity in _SEVERITY_DOWNGRADE:
             finding["severity"] = _SEVERITY_DOWNGRADE[original_severity]
 

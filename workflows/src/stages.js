@@ -1362,7 +1362,7 @@ export function joinVerifyDeltas(slice, deltas) {
 
 // Numeric finding fields that verify_findings.py does arithmetic on (line_start - 1,
 // line comparisons). Pin them to real numbers before inline encoding AND again on the
-// join path, mirroring verify_findings._coerce_numeric_fields:
+// join path, mirroring gauntlet.verify.wire.coerce_numeric_fields:
 //
 //   1. A clean integer string ("153") becomes a number — a quoted value would make
 //      receipt-path arithmetic raise `unsupported operand type(s) for -: 'str' and

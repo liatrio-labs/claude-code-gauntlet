@@ -14,7 +14,7 @@ from gauntlet.jsjson import (
     utf16_len,
     write_result,
 )
-from gauntlet.verify.wire import deltas_checksum, input_checksum
+from gauntlet.verify import wire
 
 
 @pytest.mark.parametrize(
@@ -37,7 +37,7 @@ def test_proof_omits_value_the_encoder_cannot_nest(monkeypatch):
 
     monkeypatch.setattr(jsjson.json, "dumps", too_deep)
     assert checksum_or_none([0]) is None
-    assert input_checksum is deltas_checksum is checksum_or_none
+    assert wire.checksum_or_none is checksum_or_none
 
 
 @pytest.mark.parametrize(

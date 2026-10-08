@@ -56,7 +56,7 @@ for (const c of loadCases('slice_inline')) {
   test(`slice_inline parity: ${c.name}`, () => {
     assert.equal(encodeSliceInline(c.input.doc), c.expected.encoded);
     assert.equal(fnv1a32(JSON.stringify(c.input.doc, null, 2)), c.expected.checksum);
-    // The token proof, over the same bytes Python hashes in _run_receipt.
+    // The token proof, over the same bytes Python hashes in gauntlet.verify.wire.run_receipt.
     assert.equal(sliceTokenChecksum(c.expected.encoded), c.expected.token_checksum);
   });
 }

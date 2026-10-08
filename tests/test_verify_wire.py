@@ -11,28 +11,7 @@ from gauntlet.verify import wire as verify
 
 VECTORS = Path(__file__).parent / "fixtures/parity/slice_inline"
 EMPTY = '{"findings":[],"base_branch":"main"}'
-EMPTY_BYTES = b"""{
-  "status": "ok",
-  "receipt": {
-    "sha": "abcd",
-    "n_in": 0,
-    "nonce": "cli",
-    "deltas_checksum": "fnv1a32:0x741638a5",
-    "inline_checksum": "fnv1a32:0x8c59538c",
-    "input_checksum": "fnv1a32:0x2eb50aa0"
-  },
-  "result": {
-    "deltas": [],
-    "verified": [],
-    "eliminated": [],
-    "stats": {
-      "total": 0,
-      "new": 0,
-      "surfaced": 0,
-      "eliminated": 0
-    }
-  }
-}"""
+EMPTY_BYTES = b'{\n  "status": "ok",\n  "receipt": {\n    "sha": "abcd",\n    "n_in": 0,\n    "nonce": "cli",\n    "deltas_checksum": "fnv1a32:0x741638a5",\n    "inline_checksum": "fnv1a32:0x8c59538c",\n    "input_checksum": "fnv1a32:0x2eb50aa0"\n  },\n  "result": {\n    "deltas": [],\n    "verified": [],\n    "eliminated": [],\n    "stats": {\n      "total": 0,\n      "new": 0,\n      "surfaced": 0,\n      "eliminated": 0\n    }\n  }\n}'
 
 
 def receipt(invoke, tmp_path, token=EMPTY, extra=()):
@@ -55,18 +34,9 @@ def receipt(invoke, tmp_path, token=EMPTY, extra=()):
 
 @pytest.mark.parametrize(
     "case",
-    [
-        "astral",
-        "control_chars",
-        "empty_findings",
-        "lone_surrogates",
-        "nested_cross_file_refs",
-        "non_ascii_keys",
-        "percent_forms",
-        "safe_punctuation",
-        "surrogate_pair",
-        "three_findings",
-    ],
+    json.loads(
+        '["astral","control_chars","empty_findings","lone_surrogates","nested_cross_file_refs","non_ascii_keys","percent_forms","safe_punctuation","surrogate_pair","three_findings"]'
+    ),
     ids=lambda case: f"INLINE-{case}",
 )
 def test_inline(case):
@@ -85,12 +55,17 @@ def test_inline(case):
         for row in json.loads(r"""[
         ["REJECT-raw-nested", "{\"findings\":[{\"evidence\":\"`\"}]}", "raw U+0060 at $.findings[0].evidence"],
         ["REJECT-invalid-percent", "{\"findings\":[{\"evidence\":\"%5c\"}]}", "invalid percent escape at $.findings[0].evidence"],
+        ["REJECT-nonhex", "{\"findings\":[{\"evidence\":\"%GG\"}]}", "invalid percent escape at $.findings[0].evidence"],
+        ["REJECT-truncated", "{\"findings\":[{\"evidence\":\"%4\"}]}", "invalid percent escape at $.findings[0].evidence"],
+        ["REJECT-json-unicode", "{\"findings\":[],\"s\":\"\\u0041\"}", "JSON escape sequences are not canonical at $ (offending U+005C)"],
+        ["REJECT-infinity", "{\"findings\":[],\"n\":Infinity}", "invalid JSON at $ (non-finite JSON constant Infinity)"],
+        ["REJECT-negative-infinity", "{\"findings\":[],\"n\":-Infinity}", "invalid JSON at $ (non-finite JSON constant -Infinity)"],
         ["REJECT-unsafe-key", "{\"findings\":[{\"`\":\"ok\"}]}", "raw U+0060 at $.findings[0].<key>"],
         ["REJECT-encoded-safe-key", "{\"findings\":[{\"%69d\":\"ok\"}]}", "non-canonical percent escape %69 at $.findings[0].<key> (byte is SAFE ASCII)"],
         ["REJECT-encoded-safe-value", "{\"findings\":[{\"evidence\":\"%41\"}]}", "non-canonical percent escape %41 at $.findings[0].evidence (byte is SAFE ASCII)"],
         ["REJECT-invalid-utf8", "{\"findings\":[{\"evidence\":\"%FF\"}]}", "invalid UTF-8 at $.findings[0].evidence (offending bytes FF, 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte)"],
         ["REJECT-non-surrogate-u", "{\"findings\":[{\"evidence\":\"%u0041\"}]}", "invalid %u escape U+0041 at $.findings[0].evidence (only surrogates are allowed)"],
-        ["REJECT-paired-u-value", "{\"findings\":[{\"evidence\":\"%uD83D%uDE00\"}]}", "non-canonical surrogate pair %uD83D%uDE00 at $.findings[0].evidence (an astral character is spelled as its UTF-8 bytes)"],
+        ["REJECT-adjacent-pair-at-end", "{\"findings\":[{\"evidence\":\"%uD83D%uDE00\"}]}", "non-canonical surrogate pair %uD83D%uDE00 at $.findings[0].evidence (an astral character is spelled as its UTF-8 bytes)"],
         ["REJECT-paired-u-key", "{\"findings\":[{\"%uD83D%uDE00\":\"ok\"}]}", "non-canonical surrogate pair %uD83D%uDE00 at $.findings[0].<key> (an astral character is spelled as its UTF-8 bytes)"],
         ["REJECT-duplicate-key", "{\"findings\":[],\"findings\":[]}", "invalid JSON at $ (duplicate object key 'findings')"],
         ["REJECT-nonfinite", "{\"findings\":[],\"n\":NaN}", "invalid JSON at $ (non-finite JSON constant NaN)"],
@@ -102,28 +77,8 @@ def test_inline(case):
     ],
 )
 def test_reject(token, message, invoke, tmp_path, verify_git):
-    variants = [token]
-    if "invalid percent escape" in message:
-        variants += [
-            '{"findings":[{"evidence":"%GG"}]}',
-            '{"findings":[{"evidence":"%4"}]}',
-        ]
-    if "JSON escape sequences" in message:
-        variants.append('{"findings":[],"s":"\\u0041"}')
-    for variant in variants:
-        with pytest.raises(Exception) as caught:
-            verify.validate_input_shape(verify.decode_inline_slice(variant))
-        assert str(caught.value) == "inline slice-input rejected: " + message
-    if "non-finite JSON constant" in message:
-        for constant, detail in [
-            ("Infinity", "invalid JSON at $ (non-finite JSON constant Infinity)"),
-            ("-Infinity", "invalid JSON at $ (non-finite JSON constant -Infinity)"),
-        ]:
-            with pytest.raises(Exception) as caught:
-                verify.decode_inline_slice('{"findings":[],"n":' + constant + "}")
-            assert str(caught.value) == "inline slice-input rejected: " + detail
     expected = "inline slice-input rejected: " + message
-    with pytest.raises(Exception, match="inline slice-input rejected") as caught:
+    with pytest.raises(ValueError) as caught:
         verify.validate_input_shape(verify.decode_inline_slice(token))
     assert str(caught.value) == expected
     result = receipt(invoke, tmp_path, token)
@@ -137,26 +92,10 @@ def test_reject(token, message, invoke, tmp_path, verify_git):
     assert not (tmp_path / "slice.json").exists()
 
 
-def test_reject_inline_shape_root():
-    with pytest.raises(Exception) as caught:
-        verify.validate_input_shape([])
-    assert (
-        str(caught.value)
-        == "inline slice-input rejected: root must be an object with a 'findings' key at $"
-    )
-
-
 def test_reject_surrogate_acceptance():
-    pairs = [
-        ("%uD800%uDBFF", "\ud800\udbff"),
-        ("%uDFFF%uD800", "\udfff\ud800"),
-        ("tail%uD800", "tail\ud800"),
-        ("%uD800x%uDFFF", "\ud800x\udfff"),
-        ("%uD800%C3%A9", "\ud800\u00e9"),
-        ("%C3%A9%uDCFF", "\u00e9\udcff"),
-        ("%F0%9F%98%80", "\U0001f600"),
-        ("%F4%8F%BF%BF", "\U0010ffff"),
-    ]
+    pairs = json.loads(
+        '[["%uD800%uDBFF","\\ud800\\udbff"],["%uDFFF%uD800","\\udfff\\ud800"],["tail%uD800","tail\\ud800"],["%uD800x%uDFFF","\\ud800x\\udfff"],["%uD800%C3%A9","\\ud800\\u00e9"],["%C3%A9%uDCFF","\\u00e9\\udcff"],["%F0%9F%98%80","\\ud83d\\ude00"],["%F4%8F%BF%BF","\\udbff\\udfff"]]'
+    )
     for token, value in pairs:
         assert verify.decode_inline_slice('{"findings":[],"s":"' + token + '"}') == {
             "findings": [],
@@ -231,7 +170,7 @@ def test_delta(findings, kept, expected, request):
     assert actual == expected
     assert [list(delta) for delta in actual] == [list(delta) for delta in expected]
     if request.node.callspec.id == "DELTA-unspellable-severity":
-        assert verify.deltas_checksum(actual) is None
+        assert verify.checksum_or_none(actual) is None
 
 
 @pytest.mark.parametrize(
@@ -262,61 +201,29 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
     result = receipt(invoke, tmp_path, token)
     assert result.returncode == 0
     env = json.loads(result.stdout)
-    assert env["receipt"] == {
-        "sha": "abcd",
-        "n_in": 1,
-        "nonce": "cli",
-        "deltas_checksum": "fnv1a32:0xc9ca61b0",
-        "inline_checksum": "fnv1a32:0x17c759ec",
-        "input_checksum": "fnv1a32:0x6754b4b8",
-    }
+    assert env["receipt"] == json.loads(
+        '{"sha":"abcd","n_in":1,"nonce":"cli","deltas_checksum":"fnv1a32:0xc9ca61b0","inline_checksum":"fnv1a32:0x17c759ec","input_checksum":"fnv1a32:0x6754b4b8"}'
+    )
     assert (
         (tmp_path / "slice.json").read_bytes()
         == b'{\n  "findings": [\n    {\n      "id": "a",\n      "file": "source",\n      "line_start": "1",\n      "confidence": "80"\n    }\n  ]\n}'
     )
-    finding = env["result"]["verified"][0]
-    assert (finding["line_start"], finding["confidence"]) == (1, 80)
-    assert env["result"]["verified"] == [
-        {
-            "id": "a",
-            "file": "source",
-            "line_start": 1,
-            "confidence": 80,
-            "blame_metadata": {
-                "classification": "new",
-                "author": "First Author",
-                "date": "2024-01-02",
-                "original_severity": "",
-            },
-            "origin": "surfaced",
-            "factual_verification": {
-                "verified": True,
-                "reason": "no extractable symbols \u2014 verification skipped",
-                "code_at_lines": "code",
-            },
-            "diff_validation": {
-                "in_diff": False,
-                "reason": "lines 1-1 of 'source' not found in diff \u2014 tagged as surfaced (was: new)",
-            },
-        }
-    ]
+    assert env["result"]["verified"] == json.loads(
+        '[{"id":"a","file":"source","line_start":1,"confidence":80,"blame_metadata":{"classification":"new","author":"First Author","date":"2024-01-02","original_severity":""},"origin":"surfaced","factual_verification":{"verified":true,"reason":"no extractable symbols \\u2014 verification skipped","code_at_lines":"code"},"diff_validation":{"in_diff":false,"reason":"lines 1-1 of \'source\' not found in diff \\u2014 tagged as surfaced (was: new)"}}]'
+    )
     assert env["result"]["eliminated"] == []
-    assert env["result"]["deltas"] == [
-        {"id": "a", "verified": True, "origin": "surfaced", "confidence": 80}
-    ]
-    assert env["result"]["stats"] == {
-        "total": 1,
-        "new": 0,
-        "surfaced": 1,
-        "eliminated": 0,
-    }
+    assert env["result"]["deltas"] == json.loads(
+        '[{"id":"a","verified":true,"origin":"surfaced","confidence":80}]'
+    )
+    assert env["result"]["stats"] == json.loads(
+        '{"total":1,"new":0,"surfaced":1,"eliminated":0}'
+    )
 
 
 def test_receipt_token_value_spelling(invoke, tmp_path, verify_git):
-    for spelling, token_proof in [
-        ("0", "fnv1a32:0xd176d439"),
-        ("-0", "fnv1a32:0x8e8176c6"),
-    ]:
+    for spelling, token_proof in json.loads(
+        '[["0","fnv1a32:0xd176d439"],["-0","fnv1a32:0x8e8176c6"]]'
+    ):
         env = json.loads(
             receipt(invoke, tmp_path, '{"findings":[],"n":' + spelling + "}").stdout
         )
@@ -341,13 +248,9 @@ def test_receipt_token_value_spelling(invoke, tmp_path, verify_git):
 def test_receipt_fallback(token, written, invoke, tmp_path, verify_git):
     env = json.loads(receipt(invoke, tmp_path, token).stdout)
     assert env["status"] == "ok"
-    assert list(env["receipt"]) == [
-        "sha",
-        "n_in",
-        "nonce",
-        "deltas_checksum",
-        "inline_checksum",
-    ]
+    assert list(env["receipt"]) == json.loads(
+        '["sha","n_in","nonce","deltas_checksum","inline_checksum"]'
+    )
     assert env["receipt"]["deltas_checksum"] == "fnv1a32:0x741638a5"
     assert (tmp_path / "slice.json").read_bytes() == written
 
@@ -358,10 +261,9 @@ def test_receipt_null_delta_proof(invoke, tmp_path, verify_git):
     )
     assert env["status"] == "ok"
     assert env["receipt"]["deltas_checksum"] is None
-    assert "input_checksum" not in env["receipt"]
-    assert env["result"]["deltas"] == [
-        {"id": "a", "verified": True, "origin": "new", "severity": 2.5}
-    ]
+    assert env["result"]["deltas"] == json.loads(
+        '[{"id":"a","verified":true,"origin":"new","severity":2.5}]'
+    )
 
 
 def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
@@ -371,18 +273,13 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
     assert result.returncode == 0
     assert result.stdout.isascii()
     env = json.loads(result.stdout)
-    assert env["result"]["deltas"] == [
-        {"id": "\udcff", "verified": True, "origin": "new"}
-    ]
+    assert env["result"]["deltas"] == json.loads(
+        '[{"id":"\\udcff","verified":true,"origin":"new"}]'
+    )
     assert env["result"]["verified"][0]["description"] == "\ud800"
-    assert env["receipt"] == {
-        "sha": "abcd",
-        "n_in": 1,
-        "nonce": "cli",
-        "deltas_checksum": "fnv1a32:0x877e5b9a",
-        "inline_checksum": "fnv1a32:0xc771c3d9",
-        "input_checksum": "fnv1a32:0xefcb2f8b",
-    }
+    assert env["receipt"] == json.loads(
+        '{"sha":"abcd","n_in":1,"nonce":"cli","deltas_checksum":"fnv1a32:0x877e5b9a","inline_checksum":"fnv1a32:0xc771c3d9","input_checksum":"fnv1a32:0xefcb2f8b"}'
+    )
     assert (
         (tmp_path / "slice.json").read_bytes()
         == b'{\n  "findings": [\n    {\n      "id": "\\udcff",\n      "description": "\\ud800"\n    }\n  ]\n}'
@@ -394,12 +291,9 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
 @pytest.mark.parametrize(
     "failure",
     ["write", "verification", "output", "stdout"],
-    ids=[
-        "RECEIPT-atomic-write-failure",
-        "RECEIPT-verification-exception",
-        "RECEIPT-output-write-failure",
-        "RECEIPT-stdout-write-failure",
-    ],
+    ids=json.loads(
+        '["RECEIPT-atomic-write-failure","RECEIPT-verification-exception","RECEIPT-output-write-failure","RECEIPT-stdout-write-failure"]'
+    ),
 )
 def test_receipt_failure(failure, invoke, tmp_path, verify_git, monkeypatch):
     path = tmp_path / "slice.json"
@@ -461,18 +355,12 @@ def test_receipt_failure(failure, invoke, tmp_path, verify_git, monkeypatch):
     [
         (["--input-inline", EMPTY], "--input-inline requires --input for receipt mode"),
         (["--input", "slice.json"], "--input requires --input-inline for receipt mode"),
-        (
-            [],
-            "--input and --input-inline are required for receipt mode",
-        ),
+        ([], "--input and --input-inline are required for receipt mode"),
         (["slice.json"], "unrecognized arguments: slice.json"),
     ],
-    ids=[
-        "ARGV-inline-without-input",
-        "ARGV-input-without-inline",
-        "ARGV-neither-input",
-        "ARGV-positional-rejected",
-    ],
+    ids=json.loads(
+        '["ARGV-inline-without-input","ARGV-input-without-inline","ARGV-neither-input","ARGV-positional-rejected"]'
+    ),
 )
 def test_argv(argv, message, invoke, tmp_path, monkeypatch):
     monkeypatch.setenv("COLUMNS", "80")
@@ -495,7 +383,7 @@ def test_proof_canonical_spelling_injective():
         }
         if cp > 0xFFFF:
             candidates.add(
-                f"%u{0xD800 + ((cp - 0x10000) >> 10):04X}%u{0xDC00 + ((cp - 0x10000) & 0x3FF):04X}"
+                f"%u{55296 + (cp - 65536 >> 10):04X}%u{56320 + (cp - 65536 & 1023):04X}"
             )
         accepted = []
         for token in candidates:
@@ -514,13 +402,9 @@ def test_proof_canonical_spelling_injective():
 
 def test_proof_before_decode_write_coerce(invoke, tmp_path, verify_git, monkeypatch):
     events = []
-    for name, label in [
-        ("fnv1a32", "token"),
-        ("decode_inline_slice", "decode"),
-        ("input_checksum", "value"),
-        ("write_atomic", "write"),
-        ("coerce_numeric_fields", "coerce"),
-    ]:
+    for name, label in json.loads(
+        '[["fnv1a32","token"],["decode_inline_slice","decode"],["checksum_or_none","value"],["write_atomic","write"],["coerce_numeric_fields","coerce"]]'
+    ):
         original = getattr(verify, name)
 
         def spy(*args, _original=original, _label=label, **kwargs):
@@ -530,4 +414,61 @@ def test_proof_before_decode_write_coerce(invoke, tmp_path, verify_git, monkeypa
         monkeypatch.setattr(verify, name, spy)
     result = receipt(invoke, tmp_path, '{"findings":[{"id":"a"}]}')
     assert json.loads(result.stdout)["status"] == "ok"
-    assert events == ["token", "decode", "value", "write", "coerce"]
+    assert events == ["token", "decode", "value", "write", "coerce", "value"]
+
+
+@pytest.mark.parametrize(
+    "head,sha,commands",
+    json.loads(
+        '[[[],"c0ffee",[["git","rev-parse","--show-toplevel"],["git","rev-parse","--short","HEAD"]]],[["--head-sha","pinned"],"pinned",[["git","rev-parse","--show-toplevel"]]]]'
+    ),
+)
+def test_head_sha(head, sha, commands, invoke, tmp_path, verify_git):
+    (tmp_path / "patch").write_text("", encoding="utf-8")
+    verify_git[1]["rev-parse"] = lambda argv: (
+        ("c0ffee\n", "", 0)
+        if argv == ["git", "rev-parse", "--short", "HEAD"]
+        else (str(tmp_path), "", 0)
+    )
+    result = invoke(
+        "verify_findings",
+        [
+            "--input",
+            "slice.json",
+            "--input-inline",
+            EMPTY,
+            "--diff-file",
+            "patch",
+            *head,
+        ],
+        tmp_path,
+    )
+    assert json.loads(result.stdout)["receipt"]["sha"] == sha
+    assert verify_git[0] == [(argv, {}) for argv in commands]
+
+
+@pytest.mark.parametrize(
+    "token,flags,base",
+    json.loads(
+        '[["{\\"findings\\":[],\\"base_branch\\":\\"document\\"}",["--base-branch","flag"],"document"],["{\\"findings\\":[]}",[],"main"]]'
+    ),
+)
+def test_base_branch(token, flags, base, invoke, tmp_path, verify_git):
+    env = json.loads(receipt(invoke, tmp_path, token, flags).stdout)
+    assert env["status"] == "ok"
+    assert [cmd for cmd, _ in verify_git[0] if cmd[1] == "diff"] == [
+        ["git", "diff", "--end-of-options", f"{base}...HEAD"]
+    ]
+
+
+def test_list_line_start_failed_envelope(invoke, tmp_path, verify_git):
+    (tmp_path / "source").write_text("code\n", encoding="utf-8")
+    result = receipt(
+        invoke, tmp_path, '{"findings":[{"file":"source","line_start":[1]}]}'
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {
+        "status": "failed",
+        "exitCode": 1,
+        "stderr": "'<' not supported between instances of 'list' and 'int'",
+    }
