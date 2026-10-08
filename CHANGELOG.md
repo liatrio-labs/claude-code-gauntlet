@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.42.25 (2026-10-08)
+
+### Bug Fixes
+
+- Refuse malformed post_review input before anything is posted
+  ([#482](https://github.com/liatrio-labs/claude-code-gauntlet/pull/482),
+  [`afcc439`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/afcc439f89b14f71661aa066ee88c686e46bd606))
+
+### Refactoring
+
+- Posting state in a DeliverySession, one delivery plan for both forges, post_review as a Command
+  ([#481](https://github.com/liatrio-labs/claude-code-gauntlet/pull/481),
+  [`e4b0392`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e4b039296c78134fced2816096dc9cbdba3b90c0))
+
+- Pure suggested-fix gate, one compose module, report_patches as a Command
+  ([#479](https://github.com/liatrio-labs/claude-code-gauntlet/pull/479),
+  [`9a38ad1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a38ad19fc82a1920bc7868be5573bfc8ecd426e))
+
+
 ## v3.42.24 (2026-10-07)
 
 ### Bug Fixes
