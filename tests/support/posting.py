@@ -84,9 +84,7 @@ ERRORS = {
     "gh-inline": "post_review: The composed inline review comment is 117 bytes, over the 20-byte GitHub body limit; nothing was posted.\n",
     "gl-summary": "post_review: The composed summary note is 1000002 bytes, over the 1000000-byte GitLab body limit; nothing was posted.\n",
     "all-rejected": "post_review: all 2 finding(s) attempted this run were not delivered \u2014 nothing new was posted inline. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
-    "all-invalid": "post_review: 1 finding(s) had a malformed position \u2014 nothing new was posted inline. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
     "standing-rejected": "post_review: all 1 finding(s) attempted this run were not delivered \u2014 nothing new was posted inline. 2 from an earlier run remain on the MR. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
-    "standing-invalid": "post_review: 1 finding(s) had a malformed position \u2014 nothing new was posted inline. 2 from an earlier run remain on the MR. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
 }
 
 

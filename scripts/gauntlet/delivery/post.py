@@ -330,12 +330,10 @@ def plan_delivery(
     for group in compose.consolidate_delivery(findings):
         primary = group.primary
         line = primary.get("line")
-        # Ship the diff's spelling before validation or GitHub rejects the whole review.
-        path = (
-            diff.diff_path_spelling(facts, primary.get("file", "?"), line)
-            if line is not None
-            else primary.get("file", "?")
-        )
+        path = primary.get("file", "?")
+        if line is not None:
+            # Ship the diff's spelling before validation or GitHub rejects the whole review.
+            path = diff.diff_path_spelling(facts, path, line)
         anchor = _anchor(primary, path, facts, platform)
         members = tuple(
             FindingPlan(
