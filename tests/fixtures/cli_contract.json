@@ -70,7 +70,7 @@
   "stale_truncate/usage": [2, ""],
   "verify_findings/bad_input": [2, ""],
   "verify_findings/failure": [2, ""],
-  "verify_findings/success": [0, "{\n  \"verified\": [],\n  \"eliminated\": [],\n  \"batches\": [],\n  \"stats\": {\n    \"total\": 0,\n    \"new\": 0,\n    \"surfaced\": 0,\n    \"eliminated\": 0\n  }\n}\n"],
+  "verify_findings/success": [0, "{\n  \"status\": \"ok\",\n  \"receipt\": {\n    \"sha\": \"abcd\",\n    \"n_in\": 0,\n    \"nonce\": \"cli\",\n    \"deltas_checksum\": \"<CHECKSUM>\",\n    \"inline_checksum\": \"<CHECKSUM>\",\n    \"input_checksum\": \"<CHECKSUM>\"\n  },\n  \"result\": {\n    \"deltas\": [],\n    \"verified\": [],\n    \"eliminated\": [],\n    \"stats\": {\n      \"total\": 0,\n      \"new\": 0,\n      \"surfaced\": 0,\n      \"eliminated\": 0\n    }\n  }\n}\n"],
   "verify_findings/usage": [2, ""],
   "write_shared_context/bad_input": [2, ""],
   "write_shared_context/failure": [2, ""],

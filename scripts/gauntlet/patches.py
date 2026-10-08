@@ -15,7 +15,6 @@ from gauntlet.fs import JsonReadError, confined, read_json, write_atomic
 from gauntlet.markdown import code_span, fence_run
 from gauntlet.text import neutralize_comment_openers, redact_secrets
 
-# The pure gate avoids verify.decide's import-time git and delivery's dry-run state.
 __all__ = ["CLI", "OracleState", "PatchReceipt"]
 
 OracleState = Literal["unattempted", "missing", "ok"]

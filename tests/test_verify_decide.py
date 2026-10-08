@@ -3,7 +3,7 @@
 import ast
 import builtins
 import copy
-import importlib.util
+import importlib
 import json
 import os
 from pathlib import Path
@@ -14,6 +14,7 @@ from gauntlet.diff import parse_diff
 from gauntlet.paths import entry
 from gauntlet.registry import VERIFY_SLICE_FIELDS
 from gauntlet.verify import decide as verify
+from gauntlet.verify import wire
 
 DASH = "\u2014"
 BLAMED = "abcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code"
@@ -71,7 +72,10 @@ def test_blame(
         replies["log"] = log
     if blame is not None:
         replies["blame"] = blame
-    assert verify.classify_blame(finding, "base") == origin
+    assert (
+        verify.classify_blame(finding, verify.VerifyContext(str(tmp_path), "base"))
+        == origin
+    )
     assert finding["severity"] == severity
     assert finding["blame_metadata"] == {
         "classification": origin,
@@ -86,7 +90,7 @@ def test_blame(
     )
     if expected_commands and (log is None or log[2] == 0):
         expected_commands.append(["git", "blame", "-L1,2", "--", "source"])
-    assert calls == [(cmd, {"timeout": None, "cwd": None}) for cmd in expected_commands]
+    assert calls == [(cmd, {}) for cmd in expected_commands]
     assert capsys.readouterr().err == (f"WARNING: {warning}\n" if warning else "")
 
 
@@ -159,11 +163,14 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         "evidence": evidence,
         "confidence": 80,
     }
-    assert verify.verify_factual(finding) is True
+    assert (
+        verify.verify_factual(finding, verify.VerifyContext(str(tmp_path), "base"))
+        is True
+    )
     assert finding["confidence"] == 80
     assert [cmd[3] for cmd, _ in verify_git[0]] == symbols
     assert verify_git[0] == [
-        (["git", "grep", "-l", symbol], {"timeout": 3, "cwd": verify.REPO_ROOT})
+        (["git", "grep", "-l", symbol], {"timeout": 3, "cwd": str(tmp_path)})
         for symbol in symbols
     ]
     assert finding["factual_verification"] == {
@@ -244,11 +251,14 @@ def test_fact(
         replies["grep"] = proc.TimeoutExpired(["git", "grep"], 3)
     elif mode == "fatal":
         replies["grep"] = ("", "fatal", 128)
-    assert verify.verify_factual(finding) is keep
+    assert (
+        verify.verify_factual(finding, verify.VerifyContext(str(tmp_path), "base"))
+        is keep
+    )
     assert finding["confidence"] == confidence
     assert finding["factual_verification"] == metadata
     assert calls == [
-        (["git", "grep", "-l", symbol], {"timeout": 3, "cwd": verify.REPO_ROOT})
+        (["git", "grep", "-l", symbol], {"timeout": 3, "cwd": str(tmp_path)})
         for symbol in attempted
     ]
     assert capsys.readouterr().err == warnings
@@ -314,8 +324,10 @@ def test_source(
         else ("patch", "", 0)
     )
     path = "patch" if mode == "file" else "missing" if mode == "missing" else None
-    assert verify.get_diff("base", path) == expected
-    assert calls == [(cmd, {"timeout": None, "cwd": None}) for cmd in commands]
+    assert (
+        verify.get_diff(verify.VerifyContext(str(tmp_path), "base"), path) == expected
+    )
+    assert calls == [(cmd, {}) for cmd in commands]
     assert capsys.readouterr().err == stderr
 
 
@@ -420,9 +432,8 @@ def test_pipe(mode, tmp_path, monkeypatch, verify_git):
     for inputs in runs:
         result = verify.run_verification(
             inputs,
-            "base",
+            verify.VerifyContext(str(tmp_path), "base"),
             None if mode in ("absent", "empty") else "patch",
-            verbose=False,
         )
         if mode == "projection":
             assert result["stats"] == {
@@ -431,7 +442,7 @@ def test_pipe(mode, tmp_path, monkeypatch, verify_git):
                 "surfaced": 3,
                 "eliminated": 2,
             }
-            assert verify.build_deltas(inputs, result["verified"]) == [
+            assert wire.build_deltas(inputs, result["verified"]) == [
                 {
                     "id": "cross",
                     "verified": True,
@@ -497,7 +508,7 @@ def test_pipe(mode, tmp_path, monkeypatch, verify_git):
                     inputs[1]["elimination_reason"]
                     == "evidence does not match file content"
                 )
-                assert verify.build_deltas(inputs, result["verified"]) == [
+                assert wire.build_deltas(inputs, result["verified"]) == [
                     {
                         "id": "a",
                         "verified": True,
@@ -517,57 +528,65 @@ def test_pipe(mode, tmp_path, monkeypatch, verify_git):
         assert list(result["stats"]) == ["total", "new", "surfaced", "eliminated"]
 
 
-def cold_verify():
-    spec = importlib.util.spec_from_file_location(
-        "gauntlet.verify.probe", verify.__file__
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 @pytest.mark.parametrize(
     "root",
-    ["reviewed", "fallback"],
-    ids=["CTX-reviewed-repo-cwd", "CTX-fallback-scripts-root"],
+    ["reviewed", "fallback", "empty"],
+    ids=[
+        "CTX-reviewed-repo-cwd",
+        "CTX-fallback-scripts-root",
+        "CTX-empty-root-fallback",
+    ],
 )
-def test_context_root(root, tmp_path, monkeypatch):
+def test_context_root(root, invoke, tmp_path, monkeypatch, verify_git):
     monkeypatch.chdir(tmp_path)
-    calls = []
-
-    def run(argv, **kwargs):
-        calls.append((argv, kwargs, os.getcwd()))
-        return proc.CompletedProcess(
-            argv,
-            0 if root == "reviewed" else 1,
-            str(tmp_path) + "\n" if root == "reviewed" else "",
-            "",
-        )
-
-    monkeypatch.setattr(proc, "run", run)
-    module = cold_verify()
-    expected_root = (
+    (tmp_path / "patch").write_text("", encoding="utf-8")
+    calls, replies = verify_git
+    replies["rev-parse"] = (
+        (str(tmp_path) + "\n", "", 0)
+        if root == "reviewed"
+        else ("", "", 1 if root == "fallback" else 0)
+    )
+    for module in (verify, wire):
+        importlib.reload(module)
+    assert calls == []
+    result = invoke(
+        "verify_findings",
+        [
+            "--input",
+            "slice.json",
+            "--input-inline",
+            '{"findings":[]}',
+            "--head-sha",
+            "abcd",
+            "--diff-file",
+            "patch",
+        ],
+        tmp_path,
+    )
+    assert json.loads(result.stdout)["status"] == "ok"
+    assert calls == [(["git", "rev-parse", "--show-toplevel"], {})]
+    calls.clear()
+    assert verify.resolve_repo_root() == (
         str(tmp_path)
         if root == "reviewed"
         else str(Path(entry("verify_findings")).parent)
     )
-    assert expected_root == module.REPO_ROOT
-    assert calls == [(["git", "rev-parse", "--show-toplevel"], {}, str(tmp_path))]
+    assert calls == [(["git", "rev-parse", "--show-toplevel"], {})]
 
 
 def test_context_grep_root_blame_cwd(tmp_path, monkeypatch, verify_git):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "source").write_text("code\n", encoding="utf-8")
     finding = {"file": "source", "line_start": 1, "description": "`remote_symbol`"}
-    assert verify.classify_blame(finding, "base") == "new"
-    assert verify.verify_factual(finding) is True
+    context = verify.VerifyContext(str(tmp_path / "reviewed-root"), "base")
+    assert verify.classify_blame(finding, context) == "new"
+    assert verify.verify_factual(finding, context) is True
     assert verify_git[0] == [
-        (["git", "log", "--format=%H", "base..HEAD"], {"timeout": None, "cwd": None}),
-        (["git", "blame", "-L1,1", "--", "source"], {"timeout": None, "cwd": None}),
+        (["git", "log", "--format=%H", "base..HEAD"], {}),
+        (["git", "blame", "-L1,1", "--", "source"], {}),
         (
             ["git", "grep", "-l", "remote_symbol"],
-            {"timeout": 3, "cwd": verify.REPO_ROOT},
+            {"timeout": 3, "cwd": str(tmp_path / "reviewed-root")},
         ),
     ]
     assert os.getcwd() == str(tmp_path)
@@ -578,43 +597,75 @@ def test_context_grep_root_blame_cwd(tmp_path, monkeypatch, verify_git):
     [True, False],
     ids=["CTX-failed-log-per-blame", "CTX-successive-runs-fresh"],
 )
-def test_context_log_queries(failed, tmp_path, monkeypatch, verify_git, capsys):
-    monkeypatch.chdir(tmp_path)
+def test_context_log_queries(failed, invoke, tmp_path, verify_git):
     (tmp_path / "source").write_text("code\n", encoding="utf-8")
     (tmp_path / "patch").write_text(DIFF, encoding="utf-8")
     calls, replies = verify_git
-    if failed:
-        replies["log"] = ("", "bad", 1)
-    for _ in range(2):
-        result = verify.run_verification(
-            [{"file": "source"}, {"file": "source"}], "base", "patch", verbose=False
+    token = '{"findings":[{"file":"source","line_start":1,"description":"%60remote_symbol%60"},{"file":"source","line_start":1}]}'
+    warnings = f"WARNING: classify_blame: git log failed for base 'base': bad {DASH} classifying as 'new' (conservative).\n"
+    for iteration, root in enumerate(["repo-one", "repo-two"]):
+        replies["rev-parse"] = (str(tmp_path / root), "", 0)
+        replies["log"] = (
+            ("", "bad", 1)
+            if failed
+            else (("abcdef0123456789\n", "", 0) if iteration == 0 else ("", "", 0))
         )
-        assert result["stats"] == {"total": 2, "new": 2, "surfaced": 0, "eliminated": 0}
+        result = invoke(
+            "verify_findings",
+            [
+                "--input",
+                "slice.json",
+                "--input-inline",
+                token,
+                "--head-sha",
+                "abcd",
+                "--base-branch",
+                "base",
+                "--diff-file",
+                "patch",
+            ],
+            tmp_path,
+        )
+        env = json.loads(result.stdout)
+        assert env["status"] == "ok"
+        assert env["result"]["stats"] == (
+            {"total": 2, "new": 2, "surfaced": 0, "eliminated": 0}
+            if failed or iteration == 0
+            else {"total": 2, "new": 0, "surfaced": 2, "eliminated": 0}
+        )
+        assert (
+            result.stderr.decode()
+            == (warnings * 2 if failed else "")
+            + "Diff source: --diff-file (patch), 55 bytes\n"
+        )
     assert [cmd for cmd, _ in calls if cmd[1] == "log"] == [
         ["git", "log", "--format=%H", "base..HEAD"]
-    ] * 4
-    warning = f"WARNING: classify_blame: git log failed for base 'base': bad {DASH} classifying as 'new' (conservative).\n"
-    assert (
-        capsys.readouterr().err
-        == (warning * 2 if failed else "")
-        + "Diff source: --diff-file (patch), 55 bytes\n"
-        + (warning * 2 if failed else "")
-        + "Diff source: --diff-file (patch), 55 bytes\n"
-    )
+    ] * 2
+    assert [cmd for cmd, _ in calls if cmd[1] == "rev-parse"] == [
+        ["git", "rev-parse", "--show-toplevel"]
+    ] * 2
+    assert [kwargs for cmd, kwargs in calls if cmd[1] == "grep"] == [
+        {"timeout": 3, "cwd": str(tmp_path / "repo-one")},
+        {"timeout": 3, "cwd": str(tmp_path / "repo-two")},
+    ]
 
 
 def test_context_import_help_git(monkeypatch, capsys):
     calls = []
 
-    def run(argv, **kwargs):
+    def output(argv, **kwargs):
         calls.append(argv)
-        return proc.CompletedProcess(argv, 1, "", "")
+        raise AssertionError("import/help must not run git")
 
-    monkeypatch.setattr(proc, "run", run)
-    module = cold_verify()
-    assert calls == [["git", "rev-parse", "--show-toplevel"]]
-    calls.clear()
-    assert module.CLI.invoke(["--help"]) == 0
+    monkeypatch.setattr(proc, "output", output)
+    monkeypatch.setattr(proc, "run", output)
+    package = importlib.import_module("gauntlet.verify")
+    for module in (package, verify, wire):
+        importlib.reload(module)
+    assert calls == []
+    with pytest.raises(SystemExit) as caught:
+        wire.CLI.invoke(["--help"])
+    assert caught.value.code == 0
     assert calls == []
     assert capsys.readouterr().err == ""
 
@@ -664,20 +715,8 @@ def foreign_reads(source):
         "classification",
     }
     document_sites = {
-        "_validate_input_shape": {"findings"},
-        "_run_receipt": {"findings", "base_branch", "verified"},
-        "load_input": {"findings"},
-        "_run_legacy": {
-            "findings",
-            "base_branch",
-            "trailing_bytes",
-            "stats",
-            "new",
-            "surfaced",
-            "eliminated",
-            "verified",
-            "batches",
-        },
+        "validate_input_shape": {"findings"},
+        "run_receipt": {"findings", "base_branch", "verified"},
     }
     bad = []
     sites = {
@@ -690,6 +729,8 @@ def foreign_reads(source):
         site = sites.get(id(node), "<module>")
         key = None
         if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+            if isinstance(node.value, ast.Name) and node.value.id == "Literal":
+                continue
             key = node.slice
         elif (
             isinstance(node, ast.Call)
@@ -701,9 +742,6 @@ def foreign_reads(source):
         if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
             continue
         if key.value in allowed or key.value in document_sites.get(site, set()):
-            continue
-        # The batch fallback is removed together with positional input.
-        if site == "batch_findings" and key.value == "finding_id":
             continue
         bad.append((site, key.value))
     for node in tree.body:

@@ -24,7 +24,6 @@ MIGRATING_PYTHON = {
     "materialize.py",
     "fix_tasks.py",
     "config.py",
-    "verify/decide.py",
 }
 MIGRATING_JS = {
     "args.js",

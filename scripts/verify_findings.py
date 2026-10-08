@@ -6,6 +6,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from gauntlet.verify.decide import CLI
+from gauntlet.verify.wire import CLI
 
 CLI.run()

@@ -39,7 +39,7 @@ import sys
 from contextlib import suppress
 
 from gauntlet import proc
-from gauntlet.cli import Command
+from gauntlet.cli import Command, warn
 from gauntlet.fs import JsonReadError, confined, read_json
 from gauntlet.jsjson import write_result
 from gauntlet.markdown import code_span, fence_run
@@ -540,7 +540,7 @@ def main(argv=None):
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     for note in notes:
-        print(f"WARNING: {note}", file=sys.stderr)
+        warn(note)
     task_label = "task" if len(tasks) == 1 else "tasks"
     path_label = "path" if rejected_count == 1 else "paths"
     print(

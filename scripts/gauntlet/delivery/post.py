@@ -4,13 +4,12 @@
 import argparse
 import json
 import os
-import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal, NoReturn, TypedDict, cast
 
 from gauntlet import diff, proc
-from gauntlet.cli import CliError, Command, Parser
+from gauntlet.cli import CliError, Command, Parser, warn
 from gauntlet.delivery import compose, gate
 from gauntlet.delivery.fold import (
     Platform,
@@ -238,10 +237,6 @@ class DeliverySession:
 
 def die(msg: str) -> NoReturn:
     raise CliError(msg)
-
-
-def warn(msg: str) -> None:
-    print(f"WARNING: {msg}", file=sys.stderr)
 
 
 def ensure_available(forge: Forge) -> None:

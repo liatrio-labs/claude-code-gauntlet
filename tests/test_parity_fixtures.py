@@ -24,7 +24,7 @@ def _case_dirs(family):
     "case_dir", _case_dirs("verify_deltas"), ids=lambda path: path.name
 )
 def test_verify_deltas_parity(case_dir):
-    from gauntlet.verify.decide import build_deltas, deltas_checksum
+    from gauntlet.verify.wire import build_deltas, deltas_checksum
 
     verify_delta_drop = {
         "blame_metadata",
@@ -51,11 +51,11 @@ def test_verify_deltas_parity(case_dir):
 )
 def test_slice_input_proof_parity(case_dir):
     from gauntlet.jsjson import fnv1a32, js_stringify_pretty
-    from gauntlet.verify.decide import _input_checksum
+    from gauntlet.verify.wire import input_checksum
 
     inp, expected = _load(case_dir)
     assert fnv1a32(js_stringify_pretty(inp["doc"])) == expected["checksum"]
-    assert _input_checksum(inp["doc"]) == expected["checksum"]
+    assert input_checksum(inp["doc"]) == expected["checksum"]
 
 
 @pytest.mark.parametrize("mode", [[], ["--check"]], ids=["record", "check"])

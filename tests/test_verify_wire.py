@@ -2,11 +2,12 @@
 
 import copy
 import json
+import sys
 from pathlib import Path
 
 import pytest
 from gauntlet import fs, jsjson
-from gauntlet.verify import decide as verify
+from gauntlet.verify import wire as verify
 
 VECTORS = Path(__file__).parent / "fixtures/parity/slice_inline"
 EMPTY = '{"findings":[],"base_branch":"main"}'
@@ -24,7 +25,6 @@ EMPTY_BYTES = b"""{
     "deltas": [],
     "verified": [],
     "eliminated": [],
-    "batches": [],
     "stats": {
       "total": 0,
       "new": 0,
@@ -112,9 +112,7 @@ def test_reject(token, message, invoke, tmp_path, verify_git):
         variants.append('{"findings":[],"s":"\\u0041"}')
     for variant in variants:
         with pytest.raises(Exception) as caught:
-            verify._validate_input_shape(
-                verify.decode_inline_slice(variant), inline=True
-            )
+            verify.validate_input_shape(verify.decode_inline_slice(variant))
         assert str(caught.value) == "inline slice-input rejected: " + message
     if "non-finite JSON constant" in message:
         for constant, detail in [
@@ -126,7 +124,7 @@ def test_reject(token, message, invoke, tmp_path, verify_git):
             assert str(caught.value) == "inline slice-input rejected: " + detail
     expected = "inline slice-input rejected: " + message
     with pytest.raises(Exception, match="inline slice-input rejected") as caught:
-        verify._validate_input_shape(verify.decode_inline_slice(token), inline=True)
+        verify.validate_input_shape(verify.decode_inline_slice(token))
     assert str(caught.value) == expected
     result = receipt(invoke, tmp_path, token)
     assert result.returncode == 0
@@ -141,7 +139,7 @@ def test_reject(token, message, invoke, tmp_path, verify_git):
 
 def test_reject_inline_shape_root():
     with pytest.raises(Exception) as caught:
-        verify._validate_input_shape([], inline=True)
+        verify.validate_input_shape([])
     assert (
         str(caught.value)
         == "inline slice-input rejected: root must be an object with a 'findings' key at $"
@@ -186,9 +184,9 @@ def test_reject_surrogate_acceptance():
 )
 def test_coerce(before, after):
     finding = copy.deepcopy(before)
-    assert verify._coerce_numeric_fields(finding) is finding
+    assert verify.coerce_numeric_fields(finding) is finding
     assert finding == after
-    verify._coerce_numeric_fields(finding)
+    verify.coerce_numeric_fields(finding)
     assert finding == after
     if (
         isinstance(after, dict)
@@ -201,7 +199,7 @@ def test_coerce(before, after):
 def test_coerce_nan():
     value = float("nan")
     finding = {"confidence": value}
-    assert verify._coerce_numeric_fields(finding) is finding
+    assert verify.coerce_numeric_fields(finding) is finding
     assert finding["confidence"] is value
 
 
@@ -395,8 +393,13 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
 
 @pytest.mark.parametrize(
     "failure",
-    ["write", "verification"],
-    ids=["RECEIPT-atomic-write-failure", "RECEIPT-verification-exception"],
+    ["write", "verification", "output", "stdout"],
+    ids=[
+        "RECEIPT-atomic-write-failure",
+        "RECEIPT-verification-exception",
+        "RECEIPT-output-write-failure",
+        "RECEIPT-stdout-write-failure",
+    ],
 )
 def test_receipt_failure(failure, invoke, tmp_path, verify_git, monkeypatch):
     path = tmp_path / "slice.json"
@@ -406,6 +409,36 @@ def test_receipt_failure(failure, invoke, tmp_path, verify_git, monkeypatch):
             fs.os, "replace", lambda *_: (_ for _ in ()).throw(OSError("write denied"))
         )
         message = "write denied"
+    elif failure in ("output", "stdout"):
+        original = Path.open
+        attempts = []
+
+        def open_output(path, *args, **kwargs):
+            if path.name == "out.json":
+                attempts.append("file")
+                raise OSError("output denied")
+            return original(path, *args, **kwargs)
+
+        def write_stdout(text):
+            attempts.append(text)
+            raise OSError("output denied")
+
+        if failure == "output":
+            monkeypatch.setattr(Path, "open", open_output)
+            extra = ["--output", str(tmp_path / "out.json")]
+        else:
+            monkeypatch.setattr(sys.stdout, "write", write_stdout)
+            extra = []
+        result = receipt(invoke, tmp_path, extra=extra)
+        assert result.returncode == 1
+        assert attempts == (["file"] if failure == "output" else [EMPTY_BYTES.decode()])
+        assert result.stdout == b""
+        assert (
+            result.stderr
+            == b"Diff source: git diff main...HEAD (three-dot), 0 bytes\nOSError: output denied\n"
+        )
+        assert path.read_bytes() == b'{\n  "findings": [],\n  "base_branch": "main"\n}'
+        return
     else:
         verify_git[1]["diff"] = RuntimeError("verification failed")
         message = "verification failed"
@@ -430,13 +463,15 @@ def test_receipt_failure(failure, invoke, tmp_path, verify_git, monkeypatch):
         (["--input", "slice.json"], "--input requires --input-inline for receipt mode"),
         (
             [],
-            "a findings JSON path is required (positional), or use --input for receipt mode",
+            "--input and --input-inline are required for receipt mode",
         ),
+        (["slice.json"], "unrecognized arguments: slice.json"),
     ],
     ids=[
         "ARGV-inline-without-input",
         "ARGV-input-without-inline",
         "ARGV-neither-input",
+        "ARGV-positional-rejected",
     ],
 )
 def test_argv(argv, message, invoke, tmp_path, monkeypatch):
@@ -444,16 +479,7 @@ def test_argv(argv, message, invoke, tmp_path, monkeypatch):
     result = invoke("verify_findings", argv, tmp_path)
     assert result.returncode == 2
     assert result.stdout == b""
-    assert (
-        result.stderr
-        == (
-            "usage: verify_findings.py [-h] [--base-branch BRANCH] [--diff-file PATH]\n"
-            "                          [--output PATH] [--input PATH] [--input-inline TEXT]\n"
-            "                          [--nonce STR] [--head-sha SHA]\n"
-            "                          [findings_json]\n"
-            f"verify_findings.py: error: {message}\n"
-        ).encode()
-    )
+    assert result.stderr == f"verify_findings: {message}\n".encode()
 
 
 def test_proof_canonical_spelling_injective():
@@ -491,9 +517,9 @@ def test_proof_before_decode_write_coerce(invoke, tmp_path, verify_git, monkeypa
     for name, label in [
         ("fnv1a32", "token"),
         ("decode_inline_slice", "decode"),
-        ("_input_checksum", "value"),
+        ("input_checksum", "value"),
         ("write_atomic", "write"),
-        ("_coerce_numeric_fields", "coerce"),
+        ("coerce_numeric_fields", "coerce"),
     ]:
         original = getattr(verify, name)
 

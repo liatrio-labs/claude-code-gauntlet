@@ -40,7 +40,7 @@ summarize, fix, or re-run.
      `inline_checksum`, and `input_checksum` when present — never invent an absent one),
      copied exactly;
      and every entry of `result.deltas`, copied exactly. Do NOT return `result.verified`, `result.eliminated`,
-     `result.batches`, or `result.stats` — the workflow already holds every finding you
+     or `result.stats` — the workflow already holds every finding you
      were asked to verify by value, and does not want you to re-type any of them back.
      Copy the fields you do return character for character: the deltas carry a checksum
      computed over exactly what the script wrote, and a single altered value — one

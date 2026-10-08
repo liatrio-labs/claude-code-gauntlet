@@ -387,50 +387,85 @@ class TestSchemaCarriesBoundaryFields(unittest.TestCase):
             )
 
 
-class TestVerifyFindingsBoundary(unittest.TestCase):
-    """verify_findings.py (positional path) consumes the persisted schema cleanly."""
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def test_verify_consumes_pipeline_findings_without_error(self):
-        findings_path = os.path.join(self.tmp, "findings.json")
-        out_path = os.path.join(self.tmp, "out.json")
-        diff_path = os.path.join(self.tmp, "diff.patch")
-        with open(findings_path, "w", encoding="utf-8") as fh:
-            json.dump({"findings": PERSISTED_FINDINGS, "base_branch": "main"}, fh)
-        with open(diff_path, "w", encoding="utf-8") as fh:
-            fh.write(build_gh_diff(PERSISTED_FINDINGS))
-
-        proc = subprocess.run(
-            [
-                sys.executable,
-                str(REPO / "scripts" / "verify_findings.py"),
-                findings_path,
-                "--diff-file",
-                diff_path,
-                "--output",
-                out_path,
-            ],
-            cwd=str(REPO),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            encoding="utf-8",
-        )
-        self.assertEqual(
-            proc.returncode,
-            0,
-            f"verify_findings.py errored on the persisted schema: {proc.stderr}",
-        )
-
-        with open(out_path, encoding="utf-8") as fh:
-            envelope = json.load(fh)
-        for key in ("verified", "eliminated", "batches", "stats"):
-            self.assertIn(key, envelope, f"verify envelope missing '{key}'")
+def test_verify_consumes_pipeline_findings_without_error(tmp_path):
+    """Receipt verification consumes the wired pipeline's persisted findings."""
+    findings_path = tmp_path / "findings.json"
+    out_path = tmp_path / "out.json"
+    diff_path = tmp_path / "diff.patch"
+    diff_path.write_text(build_gh_diff(PERSISTED_FINDINGS), encoding="utf-8")
+    source = (
+        "import { encodeSliceInline } from './workflows/src/stages.js';"
+        "let source = ''; for await (const chunk of process.stdin) source += chunk;"
+        "process.stdout.write(encodeSliceInline(JSON.parse(source)));"
+    )
+    token = subprocess.run(
+        ["node", "--input-type=module", "-e", source],
+        input=json.dumps({"findings": PERSISTED_FINDINGS, "base_branch": "main"}),
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        timeout=60,
+    ).stdout
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts/verify_findings.py"),
+            "--input",
+            str(findings_path),
+            "--input-inline",
+            token,
+            "--head-sha",
+            "abcd",
+            "--nonce",
+            "boundary",
+            "--diff-file",
+            str(diff_path),
+            "--output",
+            str(out_path),
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    envelope = json.loads(out_path.read_text(encoding="utf-8"))
+    assert list(envelope) == ["status", "receipt", "result"]
+    assert envelope["status"] == "ok"
+    assert list(envelope["receipt"]) == [
+        "sha",
+        "n_in",
+        "nonce",
+        "deltas_checksum",
+        "inline_checksum",
+        "input_checksum",
+    ]
+    assert envelope["receipt"]["sha"] == "abcd"
+    assert envelope["receipt"]["n_in"] == 2
+    assert envelope["receipt"]["nonce"] == "boundary"
+    assert list(envelope["result"]) == ["deltas", "verified", "eliminated", "stats"]
+    assert [
+        (delta["id"], delta["verified"]) for delta in envelope["result"]["deltas"]
+    ] == [("F1", False), ("F2", False)]
+    assert envelope["result"]["verified"] == []
+    assert [finding["id"] for finding in envelope["result"]["eliminated"]] == [
+        "F1",
+        "F2",
+    ]
+    assert envelope["result"]["stats"] == {
+        "total": 2,
+        "new": 0,
+        "surfaced": 0,
+        "eliminated": 2,
+    }
+    assert json.loads(findings_path.read_text(encoding="utf-8")) == {
+        "findings": PERSISTED_FINDINGS,
+        "base_branch": "main",
+    }
 
 
 @pytest.mark.usefixtures("forge_factory", "poster_state", "poster_workspace")
