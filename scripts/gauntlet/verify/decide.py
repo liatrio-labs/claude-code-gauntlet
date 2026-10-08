@@ -109,7 +109,6 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
             warn(f"Could not read diff file '{diff_file}': {e}")
             return None
 
-    # Three-dot diff (merge-base): git diff {base}...HEAD
     stdout, stderr, rc = proc.output(
         ["git", "diff", "--end-of-options", f"{base_branch}...HEAD"]
     )
@@ -125,7 +124,6 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
         f"Falling back to git diff {base_branch} HEAD (two-dot)."
     )
 
-    # Two-dot diff: git diff {base} HEAD
     stdout, stderr, rc = proc.output(
         ["git", "diff", "--end-of-options", cast(str, base_branch), "HEAD"]
     )
@@ -343,7 +341,6 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
     description = finding.get("description", "") or ""
     evidence = finding.get("evidence", "") or ""
 
-    # No line reference → skip verification, keep as-is
     if not line_start:
         finding["factual_verification"] = {
             "verified": True,
@@ -352,7 +349,6 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
         }
         return True
 
-    # File does not exist → eliminate
     if not filepath or not os.path.exists(filepath):
         finding["confidence"] = 0
         finding["factual_verification"] = {
@@ -362,7 +358,6 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
         }
         return False
 
-    # Read file content, handling binary files gracefully
     try:
         with open(filepath, encoding="utf-8", errors="strict") as fh:
             all_lines = fh.readlines()
@@ -386,7 +381,6 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
 
     total_lines = len(all_lines)
 
-    # line_start/line_end out of range → eliminate
     # Lines are 1-indexed in findings; list is 0-indexed
     if line_start < 1 or line_start > total_lines:
         finding["confidence"] = 0
@@ -399,16 +393,13 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
         }
         return False
 
-    # Clamp line_end to actual file length
     effective_end = min(line_end, total_lines)
 
-    # Extract relevant lines (convert to 0-indexed slice)
     relevant_lines = all_lines[line_start - 1 : effective_end]
     code_at_lines = "".join(relevant_lines).rstrip("\n")
 
     symbols_to_check = _extract_symbols(description, evidence)
 
-    # No extractable symbols → skip symbol verification entirely
     if not symbols_to_check:
         finding["factual_verification"] = {
             "verified": True,
@@ -417,17 +408,14 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
         }
         return True
 
-    # Grep for each extracted symbol in the repository root.
     # We only grep for symbols not already visible in the relevant lines themselves —
     # if the symbol appears in the code at the reported lines, it's trivially confirmed.
     total_symbols = len(symbols_to_check)
     missing_symbols = []
     for symbol in sorted(symbols_to_check):
-        # Fast path: symbol already present in the lines we read
         if symbol in code_at_lines:
             continue
 
-        # Run git grep to find the symbol anywhere in tracked files
         try:
             stdout, grep_stderr, rc = proc.output(
                 ["git", "grep", "-l", "-e", symbol], timeout=3, cwd=context.repo_root

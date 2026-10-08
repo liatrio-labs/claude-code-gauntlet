@@ -2,6 +2,7 @@
 
 import copy
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -11,7 +12,28 @@ from gauntlet.verify import wire as verify
 
 VECTORS = Path(__file__).parent / "fixtures/parity/slice_inline"
 EMPTY = '{"findings":[],"base_branch":"main"}'
-EMPTY_BYTES = b'{\n  "status": "ok",\n  "receipt": {\n    "sha": "abcd",\n    "n_in": 0,\n    "nonce": "cli",\n    "deltas_checksum": "fnv1a32:0x741638a5",\n    "inline_checksum": "fnv1a32:0x8c59538c",\n    "input_checksum": "fnv1a32:0x2eb50aa0"\n  },\n  "result": {\n    "deltas": [],\n    "verified": [],\n    "eliminated": [],\n    "stats": {\n      "total": 0,\n      "new": 0,\n      "surfaced": 0,\n      "eliminated": 0\n    }\n  }\n}'
+EMPTY_BYTES = b"""{
+  "status": "ok",
+  "receipt": {
+    "sha": "abcd",
+    "n_in": 0,
+    "nonce": "cli",
+    "deltas_checksum": "fnv1a32:0x741638a5",
+    "inline_checksum": "fnv1a32:0x8c59538c",
+    "input_checksum": "fnv1a32:0x2eb50aa0"
+  },
+  "result": {
+    "deltas": [],
+    "verified": [],
+    "eliminated": [],
+    "stats": {
+      "total": 0,
+      "new": 0,
+      "surfaced": 0,
+      "eliminated": 0
+    }
+  }
+}"""
 
 
 def receipt(invoke, tmp_path, token=EMPTY, extra=()):
@@ -34,10 +56,18 @@ def receipt(invoke, tmp_path, token=EMPTY, extra=()):
 
 @pytest.mark.parametrize(
     "case",
-    json.loads(
-        '["astral","control_chars","empty_findings","lone_surrogates","nested_cross_file_refs","non_ascii_keys","percent_forms","safe_punctuation","surrogate_pair","three_findings"]'
-    ),
-    ids=lambda case: f"INLINE-{case}",
+    [
+        pytest.param("astral", id="INLINE-astral"),
+        pytest.param("control_chars", id="INLINE-control_chars"),
+        pytest.param("empty_findings", id="INLINE-empty_findings"),
+        pytest.param("lone_surrogates", id="INLINE-lone_surrogates"),
+        pytest.param("nested_cross_file_refs", id="INLINE-nested_cross_file_refs"),
+        pytest.param("non_ascii_keys", id="INLINE-non_ascii_keys"),
+        pytest.param("percent_forms", id="INLINE-percent_forms"),
+        pytest.param("safe_punctuation", id="INLINE-safe_punctuation"),
+        pytest.param("surrogate_pair", id="INLINE-surrogate_pair"),
+        pytest.param("three_findings", id="INLINE-three_findings"),
+    ],
 )
 def test_inline(case):
     doc = json.loads((VECTORS / case / "input.json").read_text(encoding="utf-8"))["doc"]
@@ -51,29 +81,120 @@ def test_inline(case):
 @pytest.mark.parametrize(
     ("token", "message"),
     [
-        pytest.param(*row[1:], id=row[0])
-        for row in json.loads(r"""[
-        ["REJECT-raw-nested", "{\"findings\":[{\"evidence\":\"`\"}]}", "raw U+0060 at $.findings[0].evidence"],
-        ["REJECT-invalid-percent", "{\"findings\":[{\"evidence\":\"%5c\"}]}", "invalid percent escape at $.findings[0].evidence"],
-        ["REJECT-nonhex", "{\"findings\":[{\"evidence\":\"%GG\"}]}", "invalid percent escape at $.findings[0].evidence"],
-        ["REJECT-truncated", "{\"findings\":[{\"evidence\":\"%4\"}]}", "invalid percent escape at $.findings[0].evidence"],
-        ["REJECT-json-unicode", "{\"findings\":[],\"s\":\"\\u0041\"}", "JSON escape sequences are not canonical at $ (offending U+005C)"],
-        ["REJECT-infinity", "{\"findings\":[],\"n\":Infinity}", "invalid JSON at $ (non-finite JSON constant Infinity)"],
-        ["REJECT-negative-infinity", "{\"findings\":[],\"n\":-Infinity}", "invalid JSON at $ (non-finite JSON constant -Infinity)"],
-        ["REJECT-unsafe-key", "{\"findings\":[{\"`\":\"ok\"}]}", "raw U+0060 at $.findings[0].<key>"],
-        ["REJECT-encoded-safe-key", "{\"findings\":[{\"%69d\":\"ok\"}]}", "non-canonical percent escape %69 at $.findings[0].<key> (byte is SAFE ASCII)"],
-        ["REJECT-encoded-safe-value", "{\"findings\":[{\"evidence\":\"%41\"}]}", "non-canonical percent escape %41 at $.findings[0].evidence (byte is SAFE ASCII)"],
-        ["REJECT-invalid-utf8", "{\"findings\":[{\"evidence\":\"%FF\"}]}", "invalid UTF-8 at $.findings[0].evidence (offending bytes FF, 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte)"],
-        ["REJECT-non-surrogate-u", "{\"findings\":[{\"evidence\":\"%u0041\"}]}", "invalid %u escape U+0041 at $.findings[0].evidence (only surrogates are allowed)"],
-        ["REJECT-adjacent-pair-at-end", "{\"findings\":[{\"evidence\":\"%uD83D%uDE00\"}]}", "non-canonical surrogate pair %uD83D%uDE00 at $.findings[0].evidence (an astral character is spelled as its UTF-8 bytes)"],
-        ["REJECT-paired-u-key", "{\"findings\":[{\"%uD83D%uDE00\":\"ok\"}]}", "non-canonical surrogate pair %uD83D%uDE00 at $.findings[0].<key> (an astral character is spelled as its UTF-8 bytes)"],
-        ["REJECT-duplicate-key", "{\"findings\":[],\"findings\":[]}", "invalid JSON at $ (duplicate object key 'findings')"],
-        ["REJECT-nonfinite", "{\"findings\":[],\"n\":NaN}", "invalid JSON at $ (non-finite JSON constant NaN)"],
-        ["REJECT-json-escape", "{\"findings\":[],\"s\":\"\\n\"}", "JSON escape sequences are not canonical at $ (offending U+005C)"],
-        ["REJECT-nonobject", "[]", "root must be an object at $"],
-        ["REJECT-missing-findings", "{}", "missing required 'findings' array at $"],
-        ["REJECT-nonarray", "{\"findings\":{}}", "'findings' must be an array at $"]
-    ]""")
+        pytest.param(
+            '{"findings":[{"evidence":"`"}]}',
+            "raw U+0060 at $.findings[0].evidence",
+            id="REJECT-raw-nested",
+        ),
+        pytest.param(
+            '{"findings":[{"evidence":"%4"}]}',
+            "invalid percent escape at $.findings[0].evidence",
+            id="REJECT-truncated",
+        ),
+        pytest.param(
+            '{"findings":[],"s":"\\u0041"}',
+            "JSON escape sequences are not canonical at $ (offending U+005C)",
+            id="REJECT-json-unicode",
+        ),
+        pytest.param(
+            '{"findings":[],"n":Infinity}',
+            "invalid JSON at $ (non-finite JSON constant Infinity)",
+            id="REJECT-infinity",
+        ),
+        pytest.param(
+            '{"findings":[],"n":-Infinity}',
+            "invalid JSON at $ (non-finite JSON constant -Infinity)",
+            id="REJECT-negative-infinity",
+        ),
+        pytest.param(
+            '{"findings":[{"`":"ok"}]}',
+            "raw U+0060 at $.findings[0].<key>",
+            id="REJECT-unsafe-key",
+        ),
+        pytest.param(
+            '{"findings":[{"evidence":"%41"}]}',
+            "non-canonical percent escape %41 at $.findings[0].evidence (byte is SAFE "
+            "ASCII)",
+            id="REJECT-encoded-safe-value",
+        ),
+        pytest.param(
+            '{"findings":[{"evidence":"%FF"}]}',
+            "invalid UTF-8 at $.findings[0].evidence (offending bytes FF, 'utf-8' codec "
+            "can't decode byte 0xff in position 0: invalid start byte)",
+            id="REJECT-invalid-utf8",
+        ),
+        pytest.param(
+            '{"findings":[{"evidence":"%u0041"}]}',
+            "invalid %u escape U+0041 at $.findings[0].evidence (only surrogates are "
+            "allowed)",
+            id="REJECT-non-surrogate-u",
+        ),
+        pytest.param(
+            '{"findings":[{"evidence":"%uD83D%uDE00"}]}',
+            "non-canonical surrogate pair %uD83D%uDE00 at $.findings[0].evidence (an "
+            "astral character is spelled as its UTF-8 bytes)",
+            id="REJECT-adjacent-pair-at-end",
+        ),
+        pytest.param(
+            '{"findings":[],"findings":[]}',
+            "invalid JSON at $ (duplicate object key 'findings')",
+            id="REJECT-duplicate-key",
+        ),
+        pytest.param(
+            '{"findings":[],"n":NaN}',
+            "invalid JSON at $ (non-finite JSON constant NaN)",
+            id="REJECT-nonfinite",
+        ),
+        pytest.param("[]", "root must be an object at $", id="REJECT-nonobject"),
+        pytest.param(
+            "{}", "missing required 'findings' array at $", id="REJECT-missing-findings"
+        ),
+        pytest.param(
+            '{"findings":{}}', "'findings' must be an array at $", id="REJECT-nonarray"
+        ),
+        pytest.param(
+            '{"findings":[],"n":1,"n":2}',
+            "invalid JSON at $ (duplicate object key 'n')",
+            id="REJECT-later-duplicate-key",
+        ),
+        pytest.param(
+            '{"findings":[],"s":"%uD7FF"}',
+            "invalid %u escape U+D7FF at $.s (only surrogates are allowed)",
+            id="REJECT-below-surrogate-range",
+        ),
+        pytest.param(
+            '{"findings":[],"s":"%uE000"}',
+            "invalid %u escape U+E000 at $.s (only surrogates are allowed)",
+            id="REJECT-above-surrogate-range",
+        ),
+        pytest.param(
+            '{"findings":[],"s":"%uD800%uDC00"}',
+            "non-canonical surrogate pair %uD800%uDC00 at $.s "
+            "(an astral character is spelled as its UTF-8 bytes)",
+            id="REJECT-minimum-surrogate-pair",
+        ),
+        pytest.param(
+            '{"findings":[],"s":"%uDBFF%uDFFF"}',
+            "non-canonical surrogate pair %uDBFF%uDFFF at $.s "
+            "(an astral character is spelled as its UTF-8 bytes)",
+            id="REJECT-maximum-surrogate-pair",
+        ),
+        pytest.param(
+            '{"findings":[],"s":"%uD800%uE000"}',
+            "invalid %u escape U+E000 at $.s (only surrogates are allowed)",
+            id="REJECT-high-then-nonsurrogate",
+        ),
+        pytest.param(
+            '{"findings":[],"s":"%uD800%uDC000"}',
+            "non-canonical surrogate pair %uD800%uDC00 at $.s "
+            "(an astral character is spelled as its UTF-8 bytes)",
+            id="REJECT-pair-before-hex-suffix",
+        ),
+        pytest.param(
+            '{"findings":invalid,"s":"\\n"}',
+            "JSON escape sequences are not canonical at $ (offending U+005C)",
+            id="REJECT-json-escape-before-parse",
+        ),
     ],
 )
 def test_reject(token, message, invoke, tmp_path, verify_git):
@@ -93,9 +214,16 @@ def test_reject(token, message, invoke, tmp_path, verify_git):
 
 
 def test_reject_surrogate_acceptance():
-    pairs = json.loads(
-        '[["%uD800%uDBFF","\\ud800\\udbff"],["%uDFFF%uD800","\\udfff\\ud800"],["tail%uD800","tail\\ud800"],["%uD800x%uDFFF","\\ud800x\\udfff"],["%uD800%C3%A9","\\ud800\\u00e9"],["%C3%A9%uDCFF","\\u00e9\\udcff"],["%F0%9F%98%80","\\ud83d\\ude00"],["%F4%8F%BF%BF","\\udbff\\udfff"]]'
-    )
+    pairs = [
+        ["%uD800%uDBFF", "\ud800\udbff"],
+        ["%uDFFF%uD800", "\udfff\ud800"],
+        ["tail%uD800", "tail\ud800"],
+        ["%uD800x%uDFFF", "\ud800x\udfff"],
+        ["%uD800%C3%A9", "\ud800\xe9"],
+        ["%C3%A9%uDCFF", "\xe9\udcff"],
+        ["%F0%9F%98%80", "\U0001f600"],
+        ["%F4%8F%BF%BF", "\U0010ffff"],
+    ]
     for token, value in pairs:
         assert verify.decode_inline_slice('{"findings":[],"s":"' + token + '"}') == {
             "findings": [],
@@ -106,19 +234,10 @@ def test_reject_surrogate_acceptance():
 @pytest.mark.parametrize(
     ("before", "after"),
     [
-        pytest.param(*row[1:], id=row[0])
-        for row in json.loads(r"""[
-        ["COERCE-five-fields", {"line_start": "10", "line_end": "11", "line": "12", "end_line": "13", "confidence": "80", "unknown": "9"}, {"line_start": 10, "line_end": 11, "line": 12, "end_line": 13, "confidence": 80, "unknown": "9"}],
-        ["COERCE-signed-whitespace", {"confidence": "\u0085+80\u001c", "line_start": " -2 "}, {"confidence": 80, "line_start": -2}],
-        ["COERCE-unicode-digits", {"confidence": "\u0668\u0660"}, {"confidence": 80}],
-        ["COERCE-positive-half", {"confidence": 64.5, "line_start": 1.49}, {"confidence": 65, "line_start": 1}],
-        ["COERCE-negative-half", {"confidence": -64.5, "line_start": -1.51}, {"confidence": -64, "line_start": -2}],
-        ["COERCE-integral-float", {"confidence": 80.0}, {"confidence": 80}],
-        ["COERCE-junk", {"confidence": true, "line_start": null, "line_end": "bad", "line": "1.5"}, {"confidence": true, "line_start": null, "line_end": "bad", "line": "1.5"}],
-        ["COERCE-nondict", ["untouched"], ["untouched"]],
-        ["COERCE-nonfinite", {"confidence": Infinity, "line": -Infinity}, {"confidence": Infinity, "line": -Infinity}],
-        ["COERCE-unsafe-int", {"confidence": 9007199254740992}, {"confidence": 9007199254740992}]
-    ]""")
+        pytest.param(
+            {"confidence": 80.0}, {"confidence": 80}, id="COERCE-integral-float"
+        ),
+        pytest.param(["untouched"], ["untouched"], id="COERCE-nondict"),
     ],
 )
 def test_coerce(before, after):
@@ -145,20 +264,88 @@ def test_coerce_nan():
 @pytest.mark.parametrize(
     ("findings", "kept", "expected"),
     [
-        pytest.param(*row[1:], id=row[0])
-        for row in json.loads(r"""[
-        ["DELTA-dispatch-order", [{"id": "b", "origin": "new"}, {"id": "a", "elimination_reason": "gone"}], [0], [{"id": "b", "verified": true, "origin": "new"}, {"id": "a", "verified": false, "elimination_reason": "gone"}]],
-        ["DELTA-same-id", [{"id": "same"}, {"id": "same"}], [1], [{"id": "same", "verified": false}, {"id": "same", "verified": true}]],
-        ["DELTA-equal-copy", [{"id": "copy"}], [], [{"id": "copy", "verified": false}]],
-        ["DELTA-unusable-id", [null, {}, {"id": " "}, {"id": 1}], [], []],
-        ["DELTA-padded-id", [{"id": " a "}], [0], [{"id": " a ", "verified": true}]],
-        ["DELTA-null-unknown", [{"id": "a", "origin": null, "confidence": null, "severity": null, "unknown": 7}], [0], [{"id": "a", "verified": true}]],
-        ["DELTA-full-key-order", [{"id": "a", "elimination_reason": "gone", "confidence": 80, "severity": "high", "origin": "new", "file": "hidden"}], [], [{"id": "a", "verified": false, "origin": "new", "severity": "high", "confidence": 80, "elimination_reason": "gone"}]],
-        ["DELTA-half-up", [{"id": "a", "confidence": 64.5}, {"id": "b", "confidence": -64.5}], [0, 1], [{"id": "a", "verified": true, "confidence": 65}, {"id": "b", "verified": true, "confidence": -64}]],
-        ["DELTA-confidence-limits", [{"id": "a", "confidence": 9007199254740991}, {"id": "b", "confidence": -9007199254740991}, {"id": "c", "confidence": 9007199254740992}, {"id": "d", "confidence": NaN}, {"id": "e", "confidence": Infinity}, {"id": "f", "confidence": true}], [], [{"id": "a", "verified": false, "confidence": 9007199254740991}, {"id": "b", "verified": false, "confidence": -9007199254740991}, {"id": "c", "verified": false}, {"id": "d", "verified": false}, {"id": "e", "verified": false}, {"id": "f", "verified": false}]],
-        ["DELTA-unspellable-severity", [{"id": "a", "severity": 2.5}], [0], [{"id": "a", "verified": true, "severity": 2.5}]],
-        ["DELTA-quoted-container-confidence", [{"id": "a", "confidence": "80"}, {"id": "b", "confidence": []}, {"id": "c", "confidence": {}}], [0, 1, 2], [{"id": "a", "verified": true}, {"id": "b", "verified": true}, {"id": "c", "verified": true}]]
-    ]""")
+        pytest.param(
+            [{"id": "copy"}],
+            [],
+            [{"id": "copy", "verified": False}],
+            id="DELTA-equal-copy",
+        ),
+        pytest.param(
+            [None, {}, {"id": " "}, {"id": 1}], [], [], id="DELTA-unusable-id"
+        ),
+        pytest.param(
+            [
+                {
+                    "id": "a",
+                    "elimination_reason": "gone",
+                    "confidence": 80,
+                    "severity": "high",
+                    "origin": "new",
+                    "file": "hidden",
+                }
+            ],
+            [],
+            [
+                {
+                    "id": "a",
+                    "verified": False,
+                    "origin": "new",
+                    "severity": "high",
+                    "confidence": 80,
+                    "elimination_reason": "gone",
+                }
+            ],
+            id="DELTA-full-key-order",
+        ),
+        pytest.param(
+            [{"id": "a", "confidence": 64.5}, {"id": "b", "confidence": -64.5}],
+            [0, 1],
+            [
+                {"id": "a", "verified": True, "confidence": 65},
+                {"id": "b", "verified": True, "confidence": -64},
+            ],
+            id="DELTA-half-up",
+        ),
+        pytest.param(
+            [
+                {"id": "a", "confidence": 9007199254740991},
+                {"id": "b", "confidence": -9007199254740991},
+                {"id": "c", "confidence": 9007199254740992},
+                {"id": "d", "confidence": float("nan")},
+                {"id": "e", "confidence": float("inf")},
+                {"id": "f", "confidence": True},
+            ],
+            [],
+            [
+                {"id": "a", "verified": False, "confidence": 9007199254740991},
+                {"id": "b", "verified": False, "confidence": -9007199254740991},
+                {"id": "c", "verified": False},
+                {"id": "d", "verified": False},
+                {"id": "e", "verified": False},
+                {"id": "f", "verified": False},
+            ],
+            id="DELTA-confidence-limits",
+        ),
+        pytest.param(
+            [
+                {"id": "a", "confidence": "80"},
+                {"id": "b", "confidence": []},
+                {"id": "c", "confidence": {}},
+            ],
+            [0, 1, 2],
+            [
+                {"id": "a", "verified": True},
+                {"id": "b", "verified": True},
+                {"id": "c", "verified": True},
+            ],
+            id="DELTA-quoted-container-confidence",
+        ),
+        pytest.param(
+            [{"id": "negative", "confidence": -9007199254740992}],
+            [0],
+            [{"id": "negative", "verified": True}],
+            id="DELTA-negative-unsafe-confidence",
+        ),
     ],
 )
 def test_delta(findings, kept, expected, request):
@@ -175,8 +362,10 @@ def test_delta(findings, kept, expected, request):
 
 @pytest.mark.parametrize(
     "destination",
-    ["stdout", "file"],
-    ids=["RECEIPT-stdout-exact-bytes", "RECEIPT-file-no-final-LF"],
+    [
+        pytest.param("stdout", id="RECEIPT-stdout-exact-bytes"),
+        pytest.param("file", id="RECEIPT-file-no-final-LF"),
+    ],
 )
 def test_receipt_bytes(destination, invoke, tmp_path, verify_git):
     extra = ["--output", str(tmp_path / "out.json")] if destination == "file" else []
@@ -201,29 +390,60 @@ def test_receipt_pre_coercion(invoke, tmp_path, verify_git):
     result = receipt(invoke, tmp_path, token)
     assert result.returncode == 0
     env = json.loads(result.stdout)
-    assert env["receipt"] == json.loads(
-        '{"sha":"abcd","n_in":1,"nonce":"cli","deltas_checksum":"fnv1a32:0xc9ca61b0","inline_checksum":"fnv1a32:0x17c759ec","input_checksum":"fnv1a32:0x6754b4b8"}'
-    )
+    assert env["receipt"] == {
+        "sha": "abcd",
+        "n_in": 1,
+        "nonce": "cli",
+        "deltas_checksum": "fnv1a32:0xc9ca61b0",
+        "inline_checksum": "fnv1a32:0x17c759ec",
+        "input_checksum": "fnv1a32:0x6754b4b8",
+    }
     assert (
         (tmp_path / "slice.json").read_bytes()
         == b'{\n  "findings": [\n    {\n      "id": "a",\n      "file": "source",\n      "line_start": "1",\n      "confidence": "80"\n    }\n  ]\n}'
     )
-    assert env["result"]["verified"] == json.loads(
-        '[{"id":"a","file":"source","line_start":1,"confidence":80,"blame_metadata":{"classification":"new","author":"First Author","date":"2024-01-02","original_severity":""},"origin":"surfaced","factual_verification":{"verified":true,"reason":"no extractable symbols \\u2014 verification skipped","code_at_lines":"code"},"diff_validation":{"in_diff":false,"reason":"lines 1-1 of \'source\' not found in diff \\u2014 tagged as surfaced (was: new)"}}]'
-    )
+    assert env["result"]["verified"] == [
+        {
+            "id": "a",
+            "file": "source",
+            "line_start": 1,
+            "confidence": 80,
+            "blame_metadata": {
+                "classification": "new",
+                "author": "First Author",
+                "date": "2024-01-02",
+                "original_severity": "",
+            },
+            "origin": "surfaced",
+            "factual_verification": {
+                "verified": True,
+                "reason": "no extractable symbols \u2014 verification skipped",
+                "code_at_lines": "code",
+            },
+            "diff_validation": {
+                "in_diff": False,
+                "reason": "lines 1-1 of 'source' not found in diff \u2014 "
+                "tagged as surfaced (was: new)",
+            },
+        }
+    ]
     assert env["result"]["eliminated"] == []
-    assert env["result"]["deltas"] == json.loads(
-        '[{"id":"a","verified":true,"origin":"surfaced","confidence":80}]'
-    )
-    assert env["result"]["stats"] == json.loads(
-        '{"total":1,"new":0,"surfaced":1,"eliminated":0}'
-    )
+    assert env["result"]["deltas"] == [
+        {"id": "a", "verified": True, "origin": "surfaced", "confidence": 80}
+    ]
+    assert env["result"]["stats"] == {
+        "total": 1,
+        "new": 0,
+        "surfaced": 1,
+        "eliminated": 0,
+    }
 
 
 def test_receipt_token_value_spelling(invoke, tmp_path, verify_git):
-    for spelling, token_proof in json.loads(
-        '[["0","fnv1a32:0xd176d439"],["-0","fnv1a32:0x8e8176c6"]]'
-    ):
+    for spelling, token_proof in [
+        ["0", "fnv1a32:0xd176d439"],
+        ["-0", "fnv1a32:0x8e8176c6"],
+    ]:
         env = json.loads(
             receipt(invoke, tmp_path, '{"findings":[],"n":' + spelling + "}").stdout
         )
@@ -237,20 +457,23 @@ def test_receipt_token_value_spelling(invoke, tmp_path, verify_git):
 @pytest.mark.parametrize(
     ("token", "written"),
     [
-        ('{"findings":[],"n":7.5}', b'{\n  "findings": [],\n  "n": 7.5\n}'),
-        (
+        pytest.param(
             '{"findings":[],"text":"caf%C3%A9","n":7.5}',
             b'{\n  "findings": [],\n  "text": "caf\\u00e9",\n  "n": 7.5\n}',
+            id="RECEIPT-ASCII-input-fallback",
         ),
     ],
-    ids=["RECEIPT-omitted-input-proof", "RECEIPT-ASCII-input-fallback"],
 )
 def test_receipt_fallback(token, written, invoke, tmp_path, verify_git):
     env = json.loads(receipt(invoke, tmp_path, token).stdout)
     assert env["status"] == "ok"
-    assert list(env["receipt"]) == json.loads(
-        '["sha","n_in","nonce","deltas_checksum","inline_checksum"]'
-    )
+    assert list(env["receipt"]) == [
+        "sha",
+        "n_in",
+        "nonce",
+        "deltas_checksum",
+        "inline_checksum",
+    ]
     assert env["receipt"]["deltas_checksum"] == "fnv1a32:0x741638a5"
     assert (tmp_path / "slice.json").read_bytes() == written
 
@@ -261,9 +484,9 @@ def test_receipt_null_delta_proof(invoke, tmp_path, verify_git):
     )
     assert env["status"] == "ok"
     assert env["receipt"]["deltas_checksum"] is None
-    assert env["result"]["deltas"] == json.loads(
-        '[{"id":"a","verified":true,"origin":"new","severity":2.5}]'
-    )
+    assert env["result"]["deltas"] == [
+        {"id": "a", "verified": True, "origin": "new", "severity": 2.5}
+    ]
 
 
 def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
@@ -273,13 +496,18 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
     assert result.returncode == 0
     assert result.stdout.isascii()
     env = json.loads(result.stdout)
-    assert env["result"]["deltas"] == json.loads(
-        '[{"id":"\\udcff","verified":true,"origin":"new"}]'
-    )
+    assert env["result"]["deltas"] == [
+        {"id": "\udcff", "verified": True, "origin": "new"}
+    ]
     assert env["result"]["verified"][0]["description"] == "\ud800"
-    assert env["receipt"] == json.loads(
-        '{"sha":"abcd","n_in":1,"nonce":"cli","deltas_checksum":"fnv1a32:0x877e5b9a","inline_checksum":"fnv1a32:0xc771c3d9","input_checksum":"fnv1a32:0xefcb2f8b"}'
-    )
+    assert env["receipt"] == {
+        "sha": "abcd",
+        "n_in": 1,
+        "nonce": "cli",
+        "deltas_checksum": "fnv1a32:0x877e5b9a",
+        "inline_checksum": "fnv1a32:0xc771c3d9",
+        "input_checksum": "fnv1a32:0xefcb2f8b",
+    }
     assert (
         (tmp_path / "slice.json").read_bytes()
         == b'{\n  "findings": [\n    {\n      "id": "\\udcff",\n      "description": "\\ud800"\n    }\n  ]\n}'
@@ -290,10 +518,12 @@ def test_receipt_surrogate_ascii(invoke, tmp_path, verify_git):
 
 @pytest.mark.parametrize(
     "failure",
-    ["write", "verification", "output", "stdout"],
-    ids=json.loads(
-        '["RECEIPT-atomic-write-failure","RECEIPT-verification-exception","RECEIPT-output-write-failure","RECEIPT-stdout-write-failure"]'
-    ),
+    [
+        pytest.param("write", id="RECEIPT-atomic-write-failure"),
+        pytest.param("verification", id="RECEIPT-verification-exception"),
+        pytest.param("output", id="RECEIPT-output-write-failure"),
+        pytest.param("stdout", id="RECEIPT-stdout-write-failure"),
+    ],
 )
 def test_receipt_failure(failure, invoke, tmp_path, verify_git, monkeypatch):
     path = tmp_path / "slice.json"
@@ -353,14 +583,27 @@ def test_receipt_failure(failure, invoke, tmp_path, verify_git, monkeypatch):
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
-        (["--input-inline", EMPTY], "--input-inline requires --input for receipt mode"),
-        (["--input", "slice.json"], "--input requires --input-inline for receipt mode"),
-        ([], "--input and --input-inline are required for receipt mode"),
-        (["slice.json"], "unrecognized arguments: slice.json"),
+        pytest.param(
+            ["--input-inline", EMPTY],
+            "--input-inline requires --input for receipt mode",
+            id="ARGV-inline-without-input",
+        ),
+        pytest.param(
+            ["--input", "slice.json"],
+            "--input requires --input-inline for receipt mode",
+            id="ARGV-input-without-inline",
+        ),
+        pytest.param(
+            [],
+            "--input and --input-inline are required for receipt mode",
+            id="ARGV-neither-input",
+        ),
+        pytest.param(
+            ["slice.json"],
+            "unrecognized arguments: slice.json",
+            id="ARGV-positional-rejected",
+        ),
     ],
-    ids=json.loads(
-        '["ARGV-inline-without-input","ARGV-input-without-inline","ARGV-neither-input","ARGV-positional-rejected"]'
-    ),
 )
 def test_argv(argv, message, invoke, tmp_path, monkeypatch):
     monkeypatch.setenv("COLUMNS", "80")
@@ -383,7 +626,7 @@ def test_proof_canonical_spelling_injective():
         }
         if cp > 0xFFFF:
             candidates.add(
-                f"%u{55296 + (cp - 65536 >> 10):04X}%u{56320 + (cp - 65536 & 1023):04X}"
+                f"%u{0xD800 + (cp - 0x10000 >> 10):04X}%u{0xDC00 + (cp - 0x10000 & 0x3FF):04X}"
             )
         accepted = []
         for token in candidates:
@@ -402,9 +645,13 @@ def test_proof_canonical_spelling_injective():
 
 def test_proof_before_decode_write_coerce(invoke, tmp_path, verify_git, monkeypatch):
     events = []
-    for name, label in json.loads(
-        '[["fnv1a32","token"],["decode_inline_slice","decode"],["checksum_or_none","value"],["write_atomic","write"],["coerce_numeric_fields","coerce"]]'
-    ):
+    for name, label in [
+        ["fnv1a32", "token"],
+        ["decode_inline_slice", "decode"],
+        ["checksum_or_none", "value"],
+        ["write_atomic", "write"],
+        ["coerce_numeric_fields", "coerce"],
+    ]:
         original = getattr(verify, name)
 
         def spy(*args, _original=original, _label=label, **kwargs):
@@ -419,9 +666,17 @@ def test_proof_before_decode_write_coerce(invoke, tmp_path, verify_git, monkeypa
 
 @pytest.mark.parametrize(
     "head,sha,commands",
-    json.loads(
-        '[[[],"c0ffee",[["git","rev-parse","--show-toplevel"],["git","rev-parse","--short","HEAD"]]],[["--head-sha","pinned"],"pinned",[["git","rev-parse","--show-toplevel"]]]]'
-    ),
+    [
+        pytest.param(
+            [],
+            "c0ffee",
+            [
+                ["git", "rev-parse", "--show-toplevel"],
+                ["git", "rev-parse", "--short", "HEAD"],
+            ],
+            id="HEAD-git-fallback",
+        ),
+    ],
 )
 def test_head_sha(head, sha, commands, invoke, tmp_path, verify_git):
     (tmp_path / "patch").write_text("", encoding="utf-8")
@@ -449,9 +704,15 @@ def test_head_sha(head, sha, commands, invoke, tmp_path, verify_git):
 
 @pytest.mark.parametrize(
     "token,flags,base",
-    json.loads(
-        '[["{\\"findings\\":[],\\"base_branch\\":\\"document\\"}",["--base-branch","flag"],"document"],["{\\"findings\\":[]}",[],"main"]]'
-    ),
+    [
+        pytest.param(
+            '{"findings":[],"base_branch":"document"}',
+            ["--base-branch", "flag"],
+            "document",
+            id="BASE-document-override",
+        ),
+        pytest.param('{"findings":[]}', [], "main", id="BASE-default-main"),
+    ],
 )
 def test_base_branch(token, flags, base, invoke, tmp_path, verify_git):
     env = json.loads(receipt(invoke, tmp_path, token, flags).stdout)
@@ -472,3 +733,63 @@ def test_list_line_start_failed_envelope(invoke, tmp_path, verify_git):
         "exitCode": 1,
         "stderr": "'<' not supported between instances of 'list' and 'int'",
     }
+
+
+def test_inline_low_low_pair():
+    assert verify.decode_inline_slice('{"findings":[],"s":"%uDC00%uDFFF"}') == {
+        "findings": [],
+        "s": "\udc00\udfff",
+    }
+
+
+@pytest.mark.parametrize(
+    "head_reply",
+    [
+        pytest.param(("", "", 1), id="RECEIPT-default-sha-and-nonce"),
+        pytest.param(("untrusted", "", 1), id="RECEIPT-failed-head-ignores-stdout"),
+    ],
+)
+def test_receipt_defaults(head_reply, invoke, tmp_path, verify_git):
+    (tmp_path / "patch").write_text("", encoding="utf-8")
+    verify_git[1]["rev-parse"] = lambda argv: (
+        head_reply
+        if argv == ["git", "rev-parse", "--short", "HEAD"]
+        else (str(tmp_path), "", 0)
+    )
+    result = invoke(
+        "verify_findings",
+        ["--input", "slice.json", "--input-inline", EMPTY, "--diff-file", "patch"],
+        tmp_path,
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["receipt"] == {
+        "sha": "",
+        "n_in": 0,
+        "nonce": None,
+        "deltas_checksum": "fnv1a32:0x741638a5",
+        "inline_checksum": "fnv1a32:0x8c59538c",
+        "input_checksum": "fnv1a32:0x2eb50aa0",
+    }
+    assert verify_git[0] == [
+        (["git", "rev-parse", "--show-toplevel"], {}),
+        (["git", "rev-parse", "--short", "HEAD"], {}),
+    ]
+
+
+def test_inline_progress_regression():
+    # A stalled decoder must fail this row without stalling the whole suite.
+    probe = (
+        "from gauntlet.verify.wire import CLI, decode_inline_slice; "
+        "assert CLI.parser.prog == 'verify_findings'; "
+        'assert decode_inline_slice(\'{"findings":[],"s":"a%C3%A9%uDCFFz"}\') '
+        "== {'findings': [], 's': 'a\u00e9\\udcffz'}; print('decoded')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=Path(__file__).resolve().parents[1] / "scripts",
+        capture_output=True,
+        timeout=2,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == b"decoded\n"

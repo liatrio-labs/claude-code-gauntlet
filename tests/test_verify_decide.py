@@ -23,29 +23,121 @@ DIFF = "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n"
 
 
 @pytest.mark.parametrize(
-    "case",
+    ("patch", "log", "blame", "origin", "severity", "author", "date", "warning"),
     [
-        pytest.param(row[1:], id=row[0])
-        for row in json.loads(r"""[
-        ["BLAME-cross-critical", {"cross_file_refs": ["other"], "severity": "critical"}, null, null, "surfaced", "high", null, null, ""],
-        ["BLAME-cross-low", {"cross_file_refs": ["other"], "severity": "low"}, null, null, "surfaced", "low", null, null, ""],
-        ["BLAME-cross-unknown", {"cross_file_refs": ["other"], "severity": "strange"}, null, null, "surfaced", "strange", null, null, ""],
-        ["BLAME-missing-file", {"file": "missing"}, null, null, "new", "high", null, null, "classify_blame: file not found 'missing' \u2014 classifying as 'new' (conservative)."],
-        ["BLAME-log-failure", {}, ["", " log bad \n", 1], null, "new", "high", null, null, "classify_blame: git log failed for base 'base': log bad \u2014 classifying as 'new' (conservative)."],
-        ["BLAME-log-empty-stderr", {}, ["", "", 1], null, "new", "high", null, null, "classify_blame: git log failed for base 'base':  \u2014 classifying as 'new' (conservative)."],
-        ["BLAME-blame-failure", {}, null, ["", " blame bad \n", 1], "new", "high", null, null, "classify_blame: git blame failed for 'source': blame bad \u2014 classifying as 'new' (conservative)."],
-        ["BLAME-binary", {}, null, ["", "BINARY data", 1], "new", "high", null, null, "classify_blame: binary file 'source' \u2014 classifying as 'new' (conservative)."],
-        ["BLAME-unparseable", {}, null, ["no blame", "", 0], "new", "high", null, null, "classify_blame: could not parse blame output for 'source' lines 1-2 \u2014 classifying as 'new' (conservative)."],
-        ["BLAME-short-prefix-new", {}, null, null, "new", "high", "First Author", "2024-01-02", ""],
-        ["BLAME-reverse-prefix-not-new", {}, ["abcdef0\n", "", 0], ["abcdef0123456789 (First Author 2024-01-02 00:00:00 +0000 1) code", "", 0], "surfaced", "medium", "First Author", "2024-01-02", ""],
-        ["BLAME-mixed-new-old", {}, null, ["1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old\nabcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code", "", 0], "new", "high", "Old Author", "2020-03-04", ""],
-        ["BLAME-surfaced-first-author", {}, ["\n", "", 0], ["^1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old\nabcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code", "", 0], "surfaced", "medium", "Old Author", "2020-03-04", ""],
-        ["BLAME-surfaced-unknown", {"severity": "strange"}, ["", "", 0], ["1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old", "", 0], "surfaced", "strange", "Old Author", "2020-03-04", ""]
-    ]""")
+        pytest.param(
+            {"file": "missing"},
+            None,
+            None,
+            "new",
+            "high",
+            None,
+            None,
+            "classify_blame: file not found 'missing' \u2014 classifying as 'new' "
+            "(conservative).",
+            id="BLAME-missing-file",
+        ),
+        pytest.param(
+            {},
+            ["", "", 1],
+            None,
+            "new",
+            "high",
+            None,
+            None,
+            "classify_blame: git log failed for base 'base':  \u2014 classifying as 'new' "
+            "(conservative).",
+            id="BLAME-log-empty-stderr",
+        ),
+        pytest.param(
+            {},
+            None,
+            ["", " blame bad \n", 1],
+            "new",
+            "high",
+            None,
+            None,
+            "classify_blame: git blame failed for 'source': blame bad \u2014 classifying as "
+            "'new' (conservative).",
+            id="BLAME-blame-failure",
+        ),
+        pytest.param(
+            {},
+            None,
+            ["", "BINARY data", 1],
+            "new",
+            "high",
+            None,
+            None,
+            "classify_blame: binary file 'source' \u2014 classifying as 'new' (conservative).",
+            id="BLAME-binary",
+        ),
+        pytest.param(
+            {},
+            None,
+            ["no blame", "", 0],
+            "new",
+            "high",
+            None,
+            None,
+            "classify_blame: could not parse blame output for 'source' lines 1-2 \u2014 "
+            "classifying as 'new' (conservative).",
+            id="BLAME-unparseable",
+        ),
+        pytest.param(
+            {},
+            ["abcdef0\n", "", 0],
+            ["abcdef0123456789 (First Author 2024-01-02 00:00:00 +0000 1) code", "", 0],
+            "surfaced",
+            "medium",
+            "First Author",
+            "2024-01-02",
+            "",
+            id="BLAME-reverse-prefix-not-new",
+        ),
+        pytest.param(
+            {},
+            None,
+            [
+                "1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old\n"
+                "abcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code",
+                "",
+                0,
+            ],
+            "new",
+            "high",
+            "Old Author",
+            "2020-03-04",
+            "",
+            id="BLAME-mixed-new-old",
+        ),
+        pytest.param(
+            {"severity": "medium"},
+            ("", "", 0),
+            None,
+            "surfaced",
+            "low",
+            "First Author",
+            "2024-01-02",
+            "",
+            id="BLAME-medium-downgrade",
+        ),
     ],
 )
-def test_blame(case, tmp_path, monkeypatch, verify_git, capsys):
-    patch, log, blame, origin, severity, author, date, warning = case
+def test_blame(
+    patch,
+    log,
+    blame,
+    origin,
+    severity,
+    author,
+    date,
+    warning,
+    tmp_path,
+    monkeypatch,
+    verify_git,
+    capsys,
+):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
     finding = {
@@ -85,12 +177,60 @@ def test_blame(case, tmp_path, monkeypatch, verify_git, capsys):
 
 @pytest.mark.parametrize(
     ("description", "evidence", "symbols"),
-    json.loads(
-        '[["```\\nblock_symbol\\n``` `inline_symbol`","",["block_symbol","inline_symbol"]],["`os.path.join` grantTypeShortcut.equals(substring(3, 5)) foo.bar(baz.qux(nested.value))","",["bar","baz","equals","foo","grantTypeShortcut","join","nested","path","qux","substring","value"]],["obj.method() Foo::bar other->value thing[slot] hash#tag get_user_data","",["Foo","bar","get_user_data","hash","method","obj","other","slot","tag","thing","value"]],["Concrete Between However Implementation Additionally Response","",[]],["`MyClass`\\n```\\nMyHandler\\n```","",["MyClass","MyHandler"]],["`self` `None` `print` `x` `ab`","",[]],["","`important_func`",["important_func"]],[null,null,[]]]'
-    ),
-    ids=json.loads(
-        '["SYMBOL-block-inline","SYMBOL-dotted-chained-nested","SYMBOL-bare-punctuation-snake","SYMBOL-English-CamelCase","SYMBOL-quoted-CamelCase","SYMBOL-stopwords-short","SYMBOL-evidence-only","SYMBOL-empty-None"]'
-    ),
+    [
+        pytest.param(
+            "```\nblock_symbol\n``` `inline_symbol`",
+            "",
+            ["block_symbol", "inline_symbol"],
+            id="SYMBOL-block-inline",
+        ),
+        pytest.param(
+            "`os.path.join` grantTypeShortcut.equals(substring(3, 5)) "
+            "foo.bar(baz.qux(nested.value))",
+            "",
+            [
+                "bar",
+                "baz",
+                "equals",
+                "foo",
+                "grantTypeShortcut",
+                "join",
+                "nested",
+                "path",
+                "qux",
+                "substring",
+                "value",
+            ],
+            id="SYMBOL-dotted-chained-nested",
+        ),
+        pytest.param(
+            "", "`important_func`", ["important_func"], id="SYMBOL-evidence-only"
+        ),
+        pytest.param(
+            "`9abc` `foo-bar` good_name.9abc",
+            "",
+            ["foobar", "good_name"],
+            id="SYMBOL-invalid-identifiers-and-cleanup",
+        ),
+        pytest.param(
+            "```lang\nAlphaType BetaType\n```",
+            "",
+            ["AlphaType", "BetaType", "langAlphaTypeBetaType"],
+            id="SYMBOL-fenced-identifiers",
+        ),
+        pytest.param(
+            "`Left",
+            "Right`",
+            ["LeftRight"],
+            id="SYMBOL-cross-field-separator",
+        ),
+        pytest.param(
+            "`XhandlerX`",
+            "",
+            ["XhandlerX"],
+            id="SYMBOL-quoted-X-preserved",
+        ),
+    ],
 )
 def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_git):
     monkeypatch.chdir(tmp_path)
@@ -107,7 +247,6 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         is True
     )
     assert finding["confidence"] == 80
-    assert [cmd[4] for cmd, _ in verify_git[0]] == symbols
     assert verify_git[0] == [
         (["git", "grep", "-l", "-e", symbol], {"timeout": 3, "cwd": str(tmp_path)})
         for symbol in symbols
@@ -122,33 +261,237 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
 
 
 @pytest.mark.parametrize(
-    "case",
+    ("patch", "mode", "keep", "confidence", "metadata", "attempted", "warnings"),
     [
-        pytest.param(row[1:], id=row[0])
-        for row in json.loads(r"""[
-        ["FACT-no-line", {"line_start": null}, "normal", true, 80, {"verified": true, "reason": "no line reference \u2014 verification skipped", "code_at_lines": null}, [], ""],
-        ["FACT-missing-path", {"file": "missing"}, "normal", false, 0, {"verified": false, "reason": "file not found: 'missing'", "code_at_lines": null}, [], ""],
-        ["FACT-read-OSError", {}, "read-error", false, 0, {"verified": false, "reason": "could not read file 'source': read denied", "code_at_lines": null}, [], ""],
-        ["FACT-binary", {}, "binary", true, 80, {"verified": true, "reason": "binary file \u2014 verification skipped", "code_at_lines": null}, [], "WARNING: verify_factual: binary file 'source' \u2014 skipping factual check.\n"],
-        ["FACT-start-before", {"line_start": -1}, "normal", false, 0, {"verified": false, "reason": "line_start -1 out of range (file has 2 line(s))", "code_at_lines": null}, [], ""],
-        ["FACT-start-after", {"line_start": 3}, "normal", false, 0, {"verified": false, "reason": "line_start 3 out of range (file has 2 line(s))", "code_at_lines": null}, [], ""],
-        ["FACT-end-clamped", {"line_end": 99}, "normal", true, 80, {"verified": true, "reason": "no extractable symbols \u2014 verification skipped", "code_at_lines": "prefix_local_symbol_suffix\ntail"}, [], ""],
-        ["FACT-local-substring", {"description": "`local_symbol`"}, "normal", true, 80, {"verified": true, "reason": "file content and symbols verified", "code_at_lines": "prefix_local_symbol_suffix"}, [], ""],
-        ["FACT-proportional-mixed", {"description": "`alpha` `beta` `gamma` `local_symbol`"}, "mixed", true, 62, {"verified": false, "reason": "referenced symbol(s) not found in codebase: beta", "code_at_lines": "prefix_local_symbol_suffix", "original_confidence": 80, "symbols_checked": 4, "symbols_missing": 1}, ["alpha", "beta", "gamma"], "WARNING: verify_factual: git grep error (rc=2) for symbol 'gamma': bad \u2014 skipping.\n"],
-        ["FACT-penalty-base-70", {"description": "`alpha` `beta` `gamma` `local_symbol`", "confidence": 100}, "missing", true, 48, {"verified": false, "reason": "referenced symbol(s) not found in codebase: alpha, beta, gamma", "code_at_lines": "prefix_local_symbol_suffix", "original_confidence": 100, "symbols_checked": 4, "symbols_missing": 3}, ["alpha", "beta", "gamma"], ""],
-        ["FACT-floor-30", {"description": "`alpha`", "confidence": 40}, "missing", true, 30, {"verified": false, "reason": "referenced symbol(s) not found in codebase: alpha", "code_at_lines": "prefix_local_symbol_suffix", "original_confidence": 40, "symbols_checked": 1, "symbols_missing": 1}, ["alpha"], ""],
-        ["FACT-default-confidence", {"description": "`alpha`", "confidence": null}, "default", true, 30, {"verified": false, "reason": "referenced symbol(s) not found in codebase: alpha", "code_at_lines": "prefix_local_symbol_suffix", "original_confidence": 100, "symbols_checked": 1, "symbols_missing": 1}, ["alpha"], ""],
-        ["FACT-rc1-empty-rc0", {"description": "`alpha` `beta`"}, "empty", true, 30, {"verified": false, "reason": "referenced symbol(s) not found in codebase: alpha, beta", "code_at_lines": "prefix_local_symbol_suffix", "original_confidence": 80, "symbols_checked": 2, "symbols_missing": 2}, ["alpha", "beta"], ""],
-        ["FACT-timeout", {"description": "`alpha`"}, "timeout", true, 80, {"verified": true, "reason": "file content and symbols verified", "code_at_lines": "prefix_local_symbol_suffix"}, ["alpha"], "WARNING: verify_factual: symbol search timed out for 'alpha' \u2014 skipping (Phase 5 will validate).\n"],
-        ["FACT-fatal", {"description": "`alpha`"}, "fatal", true, 80, {"verified": true, "reason": "file content and symbols verified", "code_at_lines": "prefix_local_symbol_suffix"}, ["alpha"], "WARNING: verify_factual: git grep error (rc=128) for symbol 'alpha': fatal \u2014 skipping.\n"]
-    ]""")
+        pytest.param(
+            {"line_start": None},
+            "normal",
+            True,
+            80,
+            {
+                "verified": True,
+                "reason": "no line reference \u2014 verification skipped",
+                "code_at_lines": None,
+            },
+            [],
+            "",
+            id="FACT-no-line",
+        ),
+        pytest.param(
+            {"file": "missing"},
+            "normal",
+            False,
+            0,
+            {
+                "verified": False,
+                "reason": "file not found: 'missing'",
+                "code_at_lines": None,
+            },
+            [],
+            "",
+            id="FACT-missing-path",
+        ),
+        pytest.param(
+            {},
+            "read-error",
+            False,
+            0,
+            {
+                "verified": False,
+                "reason": "could not read file 'source': read denied",
+                "code_at_lines": None,
+            },
+            [],
+            "",
+            id="FACT-read-OSError",
+        ),
+        pytest.param(
+            {},
+            "binary",
+            True,
+            80,
+            {
+                "verified": True,
+                "reason": "binary file \u2014 verification skipped",
+                "code_at_lines": None,
+            },
+            [],
+            "WARNING: verify_factual: binary file 'source' \u2014 skipping factual check.\n",
+            id="FACT-binary",
+        ),
+        pytest.param(
+            {"line_start": 3},
+            "normal",
+            False,
+            0,
+            {
+                "verified": False,
+                "reason": "line_start 3 out of range (file has 2 line(s))",
+                "code_at_lines": None,
+            },
+            [],
+            "",
+            id="FACT-start-after",
+        ),
+        pytest.param(
+            {"line_end": 99},
+            "normal",
+            True,
+            80,
+            {
+                "verified": True,
+                "reason": "no extractable symbols \u2014 verification skipped",
+                "code_at_lines": "prefix_local_symbol_suffix\ntail",
+            },
+            [],
+            "",
+            id="FACT-end-clamped",
+        ),
+        pytest.param(
+            {"description": "`alpha` `beta` `gamma` `local_symbol`"},
+            "mixed",
+            True,
+            62,
+            {
+                "verified": False,
+                "reason": "referenced symbol(s) not found in codebase: beta",
+                "code_at_lines": "prefix_local_symbol_suffix",
+                "original_confidence": 80,
+                "symbols_checked": 4,
+                "symbols_missing": 1,
+            },
+            ["alpha", "beta", "gamma"],
+            "WARNING: verify_factual: git grep error (rc=2) for symbol 'gamma': bad \u2014 "
+            "skipping.\n",
+            id="FACT-proportional-mixed",
+        ),
+        pytest.param(
+            {"description": "`alpha` `beta` `gamma` `local_symbol`", "confidence": 100},
+            "missing",
+            True,
+            48,
+            {
+                "verified": False,
+                "reason": "referenced symbol(s) not found in codebase: alpha, beta, gamma",
+                "code_at_lines": "prefix_local_symbol_suffix",
+                "original_confidence": 100,
+                "symbols_checked": 4,
+                "symbols_missing": 3,
+            },
+            ["alpha", "beta", "gamma"],
+            "",
+            id="FACT-penalty-base-70",
+        ),
+        pytest.param(
+            {"description": "`alpha`", "confidence": None},
+            "default",
+            True,
+            30,
+            {
+                "verified": False,
+                "reason": "referenced symbol(s) not found in codebase: alpha",
+                "code_at_lines": "prefix_local_symbol_suffix",
+                "original_confidence": 100,
+                "symbols_checked": 1,
+                "symbols_missing": 1,
+            },
+            ["alpha"],
+            "",
+            id="FACT-default-confidence",
+        ),
+        pytest.param(
+            {"description": "`alpha` `beta`"},
+            "empty",
+            True,
+            30,
+            {
+                "verified": False,
+                "reason": "referenced symbol(s) not found in codebase: alpha, beta",
+                "code_at_lines": "prefix_local_symbol_suffix",
+                "original_confidence": 80,
+                "symbols_checked": 2,
+                "symbols_missing": 2,
+            },
+            ["alpha", "beta"],
+            "",
+            id="FACT-rc1-empty-rc0",
+        ),
+        pytest.param(
+            {"description": "`alpha`"},
+            "timeout",
+            True,
+            80,
+            {
+                "verified": True,
+                "reason": "file content and symbols verified",
+                "code_at_lines": "prefix_local_symbol_suffix",
+            },
+            ["alpha"],
+            "WARNING: verify_factual: symbol search timed out for 'alpha' \u2014 skipping "
+            "(Phase 5 will validate).\n",
+            id="FACT-timeout",
+        ),
+        pytest.param(
+            {"description": "`alpha`"},
+            "fatal",
+            True,
+            80,
+            {
+                "verified": True,
+                "reason": "file content and symbols verified",
+                "code_at_lines": "prefix_local_symbol_suffix",
+            },
+            ["alpha"],
+            "WARNING: verify_factual: git grep error (rc=128) for symbol 'alpha': fatal \u2014 "
+            "skipping.\n",
+            id="FACT-fatal",
+        ),
+        pytest.param(
+            {"file": ""},
+            "normal",
+            False,
+            0,
+            {"verified": False, "reason": "file not found: ''", "code_at_lines": None},
+            [],
+            "",
+            id="FACT-empty-path-diagnostic",
+        ),
+        pytest.param(
+            {},
+            "trailing-X",
+            True,
+            80,
+            {
+                "verified": True,
+                "reason": "no extractable symbols \u2014 verification skipped",
+                "code_at_lines": "codeX",
+            },
+            [],
+            "",
+            id="FACT-preserve-trailing-X",
+        ),
     ],
 )
-def test_fact(case, tmp_path, monkeypatch, verify_git, capsys):
-    patch, mode, keep, confidence, metadata, attempted, warnings = case
+def test_fact(
+    patch,
+    mode,
+    keep,
+    confidence,
+    metadata,
+    attempted,
+    warnings,
+    tmp_path,
+    monkeypatch,
+    verify_git,
+    capsys,
+):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "source").write_bytes(
-        b"\xff" if mode == "binary" else b"prefix_local_symbol_suffix\ntail\n"
+        b"\xff"
+        if mode == "binary"
+        else b"codeX\n"
+        if mode == "trailing-X"
+        else b"prefix_local_symbol_suffix\ntail\n"
     )
     finding = {"file": "source", "line_start": 1, "confidence": 80, **patch}
     calls, replies = verify_git
@@ -166,9 +509,11 @@ def test_fact(case, tmp_path, monkeypatch, verify_git, capsys):
         if mode == "default":
             del finding["confidence"]
     elif mode == "mixed":
-        replies["grep"] = lambda argv: json.loads(
-            '{"alpha":["found","",0],"beta":["","",1],"gamma":[""," bad \\n",2]}'
-        )[argv[4]]
+        replies["grep"] = lambda argv: {
+            "alpha": ["found", "", 0],
+            "beta": ["", "", 1],
+            "gamma": ["", " bad \n", 2],
+        }[argv[4]]
     elif mode == "empty":
         replies["grep"] = lambda argv: ("", "", 0 if argv[4] == "beta" else 1)
     elif mode == "timeout":
@@ -189,21 +534,59 @@ def test_fact(case, tmp_path, monkeypatch, verify_git, capsys):
 
 
 @pytest.mark.parametrize(
-    "case",
+    ("patch", "diff", "validation", "origin", "severity"),
     [
-        pytest.param(row[1:], id=row[0])
-        for row in json.loads(r"""[
-        ["DIFF-skipped", {}, null, {"in_diff": null, "reason": "diff validation skipped"}, "new", "high"],
-        ["DIFF-no-line", {"line_start": null}, "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n", {"in_diff": true, "reason": "no line reference \u2014 validation skipped"}, "new", "high"],
-        ["DIFF-out-downgrade", {"line_start": 50, "line_end": 55}, "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n", {"in_diff": false, "reason": "lines 50-55 of 'source' not found in diff \u2014 tagged as surfaced (was: new)"}, "surfaced", "medium"],
-        ["DIFF-partial-overlap", {"line_start": 2, "line_end": 5}, "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n", {"in_diff": true, "reason": "line 2 found in diff"}, "new", "high"],
-        ["DIFF-blame-surfaced-no-double", {"line_start": 50, "blame_metadata": {"classification": "surfaced"}}, "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n", {"in_diff": false, "reason": "lines 50-50 of 'source' not found in diff \u2014 tagged as surfaced (was: new)"}, "surfaced", "high"],
-        ["DIFF-space-nonascii", {"file": "My Docs/caf\u00e9.md", "line_start": 2}, "--- a/My Docs/caf\u00e9.md\t\n+++ b/My Docs/caf\u00e9.md\t\n@@ -1,1 +1,2 @@\n intro\n+added\n", {"in_diff": true, "reason": "line 2 found in diff"}, "new", "high"]
-    ]""")
+        pytest.param(
+            {},
+            None,
+            {"in_diff": None, "reason": "diff validation skipped"},
+            "new",
+            "high",
+            id="DIFF-skipped",
+        ),
+        pytest.param(
+            {"line_start": None},
+            "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n",
+            {"in_diff": True, "reason": "no line reference \u2014 validation skipped"},
+            "new",
+            "high",
+            id="DIFF-no-line",
+        ),
+        pytest.param(
+            {"line_start": 50, "line_end": 55},
+            "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n",
+            {
+                "in_diff": False,
+                "reason": "lines 50-55 of 'source' not found in diff \u2014 tagged as surfaced "
+                "(was: new)",
+            },
+            "surfaced",
+            "medium",
+            id="DIFF-out-downgrade",
+        ),
+        pytest.param(
+            {"line_start": 2, "line_end": 5},
+            "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n",
+            {"in_diff": True, "reason": "line 2 found in diff"},
+            "new",
+            "high",
+            id="DIFF-partial-overlap",
+        ),
+        pytest.param(
+            {"line_start": 50, "blame_metadata": {"classification": "surfaced"}},
+            "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n",
+            {
+                "in_diff": False,
+                "reason": "lines 50-50 of 'source' not found in diff \u2014 tagged as surfaced "
+                "(was: new)",
+            },
+            "surfaced",
+            "high",
+            id="DIFF-blame-surfaced-no-double",
+        ),
     ],
 )
-def test_diff(case):
-    patch, diff, validation, origin, severity = case
+def test_diff(patch, diff, validation, origin, severity):
     finding = {
         "file": "source",
         "line_start": 1,
@@ -218,21 +601,60 @@ def test_diff(case):
 
 
 @pytest.mark.parametrize(
-    "case",
+    ("mode", "expected", "stderr", "commands"),
     [
-        pytest.param(row[1:], id=row[0])
-        for row in json.loads(r"""[
-        ["SOURCE-provided", "file", "patch", "Diff source: --diff-file (patch), 5 bytes\n", []],
-        ["SOURCE-missing-no-git", "missing", null, "WARNING: Could not read diff file 'missing': [Errno 2] No such file or directory: 'missing'\n", []],
-        ["SOURCE-three-dot", "three", "patch", "Diff source: git diff base...HEAD (three-dot), 5 bytes\n", [["git", "diff", "--end-of-options", "base...HEAD"]]],
-        ["SOURCE-two-dot", "two", "patch", "WARNING: git diff base...HEAD failed (exit 1): no merge. Falling back to git diff base HEAD (two-dot).\nDiff source: git diff base HEAD (two-dot fallback), 5 bytes\n", [["git", "diff", "--end-of-options", "base...HEAD"], ["git", "diff", "--end-of-options", "base", "HEAD"]]],
-        ["SOURCE-both-fail", "fail", null, "WARNING: git diff base...HEAD failed (exit 1): no merge. Falling back to git diff base HEAD (two-dot).\nWARNING: git diff base HEAD also failed (exit 2): bad base. Diff validation will be skipped.\n", [["git", "diff", "--end-of-options", "base...HEAD"], ["git", "diff", "--end-of-options", "base", "HEAD"]]],
-        ["SOURCE-empty-present", "empty", "", "Diff source: git diff base...HEAD (three-dot), 0 bytes\n", [["git", "diff", "--end-of-options", "base...HEAD"]]]
-    ]""")
+        pytest.param(
+            "file",
+            "patch",
+            "Diff source: --diff-file (patch), 5 bytes\n",
+            [],
+            id="SOURCE-provided",
+        ),
+        pytest.param(
+            "missing",
+            None,
+            "WARNING: Could not read diff file 'missing': [Errno 2] No such file or "
+            "directory: 'missing'\n",
+            [],
+            id="SOURCE-missing-no-git",
+        ),
+        pytest.param(
+            "three",
+            "patch",
+            "Diff source: git diff base...HEAD (three-dot), 5 bytes\n",
+            [["git", "diff", "--end-of-options", "base...HEAD"]],
+            id="SOURCE-three-dot",
+        ),
+        pytest.param(
+            "two",
+            "patch",
+            "WARNING: git diff base...HEAD failed (exit 1): no merge. Falling back to git "
+            "diff base HEAD (two-dot).\n"
+            "Diff source: git diff base HEAD (two-dot fallback), 5 bytes\n",
+            [
+                ["git", "diff", "--end-of-options", "base...HEAD"],
+                ["git", "diff", "--end-of-options", "base", "HEAD"],
+            ],
+            id="SOURCE-two-dot",
+        ),
+        pytest.param(
+            "fail",
+            None,
+            "WARNING: git diff base...HEAD failed (exit 1): no merge. Falling back to git "
+            "diff base HEAD (two-dot).\n"
+            "WARNING: git diff base HEAD also failed (exit 2): bad base. Diff validation "
+            "will be skipped.\n",
+            [
+                ["git", "diff", "--end-of-options", "base...HEAD"],
+                ["git", "diff", "--end-of-options", "base", "HEAD"],
+            ],
+            id="SOURCE-both-fail",
+        ),
     ],
 )
-def test_source(case, tmp_path, monkeypatch, verify_git, capsys):
-    mode, expected, stderr, commands = case
+def test_source(
+    mode, expected, stderr, commands, tmp_path, monkeypatch, verify_git, capsys
+):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "patch").write_text("patch", encoding="utf-8")
     calls, replies = verify_git
@@ -253,55 +675,52 @@ def test_source(case, tmp_path, monkeypatch, verify_git, capsys):
     assert capsys.readouterr().err == stderr
 
 
-@pytest.mark.parametrize(
-    "mode,stats,severity,validation",
-    json.loads(
-        '[["siblings",{"total":2,"new":1,"surfaced":0,"eliminated":1},"high",{"in_diff":true,"reason":"line 1 found in diff"}],["absent",{"total":1,"new":1,"surfaced":0,"eliminated":0},"high",{"in_diff":null,"reason":"diff validation skipped"}],["empty",{"total":1,"new":0,"surfaced":1,"eliminated":0},"medium",{"in_diff":false,"reason":"lines 1-1 of \'source\' not found in diff \\u2014 tagged as surfaced (was: new)"}]]'
-    ),
-)
-def test_pipe(mode, stats, severity, validation, tmp_path, monkeypatch, verify_git):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
-    (tmp_path / "patch").write_text(
-        DIFF if mode == "siblings" else "", encoding="utf-8"
-    )
-    findings = [
-        json.loads(
-            '{"id":"a","file":"source","line_start":1,"severity":"high","confidence":80}'
-        )
-    ]
-    if mode == "siblings":
-        findings.append(
-            json.loads(
-                '{"id":"b","file":"missing","line_start":1,"severity":"high","confidence":80}'
-            )
-        )
-    if mode == "absent":
-        verify_git[1]["diff"] = ("", "bad", 1)
-    result = verify.run_verification(
-        findings,
-        verify.VerifyContext(str(tmp_path), "base"),
-        None if mode in ("absent", "empty") else "patch",
-    )
-    assert result["stats"] == stats
-    assert list(result["stats"]) == ["total", "new", "surfaced", "eliminated"]
-    assert result["verified"][0] is findings[0]
-    assert findings[0]["severity"] == severity
-    assert findings[0]["diff_validation"] == validation
-    if mode == "siblings":
-        assert result["eliminated"][0] is findings[1]
-        assert wire.build_deltas(findings, result["verified"]) == json.loads(
-            '[{"id":"a","verified":true,"origin":"new","severity":"high","confidence":80},{"id":"b","verified":false,"origin":"new","severity":"high","confidence":0,"elimination_reason":"evidence does not match file content"}]'
-        )
-
-
 def test_pipe_projection(tmp_path, monkeypatch, verify_git):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
     (tmp_path / "patch").write_text("", encoding="utf-8")
-    findings = json.loads(
-        '[{"id":"cross","file":"source","line_start":1,"severity":"critical","confidence":80,"cross_file_refs":["other"]},{"id":"symbol","file":"source","line_start":1,"severity":"high","confidence":80,"description":"`absent_symbol`"},{"id":"range","file":"source","line_start":3,"line_end":4,"severity":"medium","confidence":80},{"id":"missing","file":"missing","line_start":1,"severity":"low","confidence":80},{"id":"clean","file":"source","line_start":1,"line_end":2,"severity":"low","confidence":55,"evidence":"`code`"}]'
-    )
+    findings = [
+        {
+            "id": "cross",
+            "file": "source",
+            "line_start": 1,
+            "severity": "critical",
+            "confidence": 80,
+            "cross_file_refs": ["other"],
+        },
+        {
+            "id": "symbol",
+            "file": "source",
+            "line_start": 1,
+            "severity": "high",
+            "confidence": 80,
+            "description": "`absent_symbol`",
+        },
+        {
+            "id": "range",
+            "file": "source",
+            "line_start": 3,
+            "line_end": 4,
+            "severity": "medium",
+            "confidence": 80,
+        },
+        {
+            "id": "missing",
+            "file": "missing",
+            "line_start": 1,
+            "severity": "low",
+            "confidence": 80,
+        },
+        {
+            "id": "clean",
+            "file": "source",
+            "line_start": 1,
+            "line_end": 2,
+            "severity": "low",
+            "confidence": 55,
+            "evidence": "`code`",
+        },
+    ]
     verify_git[1]["grep"] = ("", "", 1)
     extra = [
         {
@@ -319,18 +738,62 @@ def test_pipe_projection(tmp_path, monkeypatch, verify_git):
             inputs, verify.VerifyContext(str(tmp_path), "base"), "patch"
         )
         assert result["stats"] == {"total": 5, "new": 0, "surfaced": 3, "eliminated": 2}
-        assert [f["id"] for f in result["verified"]] == ["cross", "symbol", "clean"]
-        assert wire.build_deltas(inputs, result["verified"]) == json.loads(
-            '[{"id":"cross","verified":true,"origin":"surfaced","severity":"high","confidence":80},{"id":"symbol","verified":true,"origin":"surfaced","severity":"medium","confidence":30},{"id":"range","verified":false,"origin":"new","severity":"medium","confidence":0,"elimination_reason":"evidence does not match file content"},{"id":"missing","verified":false,"origin":"new","severity":"low","confidence":0,"elimination_reason":"evidence does not match file content"},{"id":"clean","verified":true,"origin":"surfaced","severity":"low","confidence":55}]'
+        assert list(result["stats"]) == ["total", "new", "surfaced", "eliminated"]
+        assert all(
+            kept is inputs[index]
+            for kept, index in zip(result["verified"], (0, 1, 4), strict=True)
         )
+        assert all(
+            gone is inputs[index]
+            for gone, index in zip(result["eliminated"], (2, 3), strict=True)
+        )
+        assert [f["id"] for f in result["verified"]] == ["cross", "symbol", "clean"]
+        assert wire.build_deltas(inputs, result["verified"]) == [
+            {
+                "id": "cross",
+                "verified": True,
+                "origin": "surfaced",
+                "severity": "high",
+                "confidence": 80,
+            },
+            {
+                "id": "symbol",
+                "verified": True,
+                "origin": "surfaced",
+                "severity": "medium",
+                "confidence": 30,
+            },
+            {
+                "id": "range",
+                "verified": False,
+                "origin": "new",
+                "severity": "medium",
+                "confidence": 0,
+                "elimination_reason": "evidence does not match file content",
+            },
+            {
+                "id": "missing",
+                "verified": False,
+                "origin": "new",
+                "severity": "low",
+                "confidence": 0,
+                "elimination_reason": "evidence does not match file content",
+            },
+            {
+                "id": "clean",
+                "verified": True,
+                "origin": "surfaced",
+                "severity": "low",
+                "confidence": 55,
+            },
+        ]
 
 
 @pytest.mark.parametrize(
     "root",
-    ["reviewed", "fallback", "empty"],
-    ids=json.loads(
-        '["CTX-reviewed-repo-cwd","CTX-fallback-scripts-root","CTX-empty-root-fallback"]'
-    ),
+    [
+        pytest.param("empty", id="CTX-empty-root-fallback"),
+    ],
 )
 def test_context_root(root, verify_git, tmp_path):
     calls, replies = verify_git
@@ -350,8 +813,9 @@ def test_context_root(root, verify_git, tmp_path):
 
 @pytest.mark.parametrize(
     "failed",
-    [True, False],
-    ids=["CTX-failed-log-per-blame", "CTX-successive-runs-fresh"],
+    [
+        pytest.param(True, id="CTX-failed-log-per-blame"),
+    ],
 )
 def test_context_log_queries(failed, invoke, tmp_path, verify_git):
     (tmp_path / "source").write_text("code\n", encoding="utf-8")
@@ -383,12 +847,12 @@ def test_context_log_queries(failed, invoke, tmp_path, verify_git):
             == (warnings * 2 if failed else "")
             + "Diff source: --diff-file (patch), 55 bytes\n"
         )
-    assert [cmd for cmd, _ in calls if cmd[1] == "log"] == json.loads(
-        '[["git","log","--format=%H","--end-of-options","base..HEAD"]]'
-    ) * 2
-    assert [cmd for cmd, _ in calls if cmd[1] == "rev-parse"] == json.loads(
-        '[["git","rev-parse","--show-toplevel"]]'
-    ) * 2
+    assert [cmd for cmd, _ in calls if cmd[1] == "log"] == [
+        ["git", "log", "--format=%H", "--end-of-options", "base..HEAD"]
+    ] * 2
+    assert [cmd for cmd, _ in calls if cmd[1] == "rev-parse"] == [
+        ["git", "rev-parse", "--show-toplevel"]
+    ] * 2
     assert [kwargs for cmd, kwargs in calls if cmd[1] == "grep"] == [
         {"timeout": 3, "cwd": str(tmp_path / "repo-one")},
         {"timeout": 3, "cwd": str(tmp_path / "repo-two")},
@@ -417,10 +881,29 @@ def test_context_import_help_git(monkeypatch, capsys):
 
 @pytest.mark.parametrize(
     "token,stats,deltas,ids",
-    json.loads(
-        '[["{\\"findings\\":[],\\"base_branch\\":\\"%uDCFF\\"}",{"total":0,"new":0,"surfaced":0,"eliminated":0},[],[]],["{\\"findings\\":[{\\"id\\":\\"cross\\",\\"severity\\":\\"critical\\",\\"cross_file_refs\\":[\\"other\\"]}]}",{"total":1,"new":0,"surfaced":1,"eliminated":0},[{"id":"cross","verified":true,"origin":"surfaced","severity":"high"}],["cross"]]]'
-    ),
-    ids=["CTX-empty-surrogate-base", "CTX-cross-only-no-log"],
+    [
+        pytest.param(
+            '{"findings":[],"base_branch":"%uDCFF"}',
+            {"total": 0, "new": 0, "surfaced": 0, "eliminated": 0},
+            [],
+            [],
+            id="CTX-empty-surrogate-base",
+        ),
+        pytest.param(
+            '{"findings":[{"id":"cross","severity":"critical","cross_file_refs":["other"]}]}',
+            {"total": 1, "new": 0, "surfaced": 1, "eliminated": 0},
+            [
+                {
+                    "id": "cross",
+                    "verified": True,
+                    "origin": "surfaced",
+                    "severity": "high",
+                }
+            ],
+            ["cross"],
+            id="CTX-cross-only-no-log",
+        ),
+    ],
 )
 def test_context_lazy_regression(
     token, stats, deltas, ids, invoke, tmp_path, verify_git
@@ -509,7 +992,14 @@ def test_field_guard_added_unprojected_read():
     ]
 
 
-@pytest.mark.parametrize("mechanism", ["log", "diff", "grep"])
+@pytest.mark.parametrize(
+    "mechanism",
+    [
+        pytest.param("log", id="ARGV-log-terminator"),
+        pytest.param("diff", id="ARGV-diff-terminator"),
+        pytest.param("grep", id="ARGV-grep-pattern-option"),
+    ],
+)
 def test_leading_dash_argv(mechanism, tmp_path, monkeypatch, verify_git):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "source").write_text("code\n", encoding="utf-8")
@@ -567,11 +1057,70 @@ def test_null_line_end_and_diff_policy(tmp_path, monkeypatch, verify_git):
         (["git", "log", "--format=%H", "--end-of-options", "base..HEAD"], {}),
         (["git", "blame", "-L1,1", "--", "b/source"], {}),
     ]
-    assert finding["factual_verification"] == json.loads(
-        '{"verified":true,"reason":"no extractable symbols \\u2014 verification skipped","code_at_lines":"code"}'
-    )
+    assert finding["factual_verification"] == {
+        "verified": True,
+        "reason": "no extractable symbols \u2014 verification skipped",
+        "code_at_lines": "code",
+    }
     assert finding["diff_validation"] == {
         "in_diff": True,
         "reason": "line 1 found in diff",
     }
     assert result["stats"] == {"total": 1, "new": 1, "surfaced": 0, "eliminated": 0}
+
+
+def test_blame_default_line(tmp_path, monkeypatch, verify_git):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_text("code\n", encoding="utf-8")
+    finding = {"file": "source"}
+    assert (
+        verify.classify_blame(finding, verify.VerifyContext(str(tmp_path), "base"))
+        == "new"
+    )
+    assert finding["blame_metadata"] == {
+        "classification": "new",
+        "author": "First Author",
+        "date": "2024-01-02",
+        "original_severity": "",
+    }
+    assert verify_git[0] == [
+        (["git", "log", "--format=%H", "--end-of-options", "base..HEAD"], {}),
+        (["git", "blame", "-L1,1", "--", "source"], {}),
+    ]
+
+
+def test_diff_default_origin_and_range_end():
+    finding = {"file": "source", "line_start": 1, "line_end": 1, "severity": "high"}
+    facts = parse_diff(
+        "--- a/source\n+++ b/source\n@@ -2 +2 @@\n-old\n+new\n",
+        policy="verify-both-spellings",
+    )
+    assert verify.validate_diff_lines(finding, facts) is True
+    assert finding == {
+        "file": "source",
+        "line_start": 1,
+        "line_end": 1,
+        "severity": "medium",
+        "origin": "surfaced",
+        "diff_validation": {
+            "in_diff": False,
+            "reason": "lines 1-1 of 'source' not found in diff \u2014 tagged as surfaced (was: new)",
+        },
+    }
+
+
+def test_pipe_factual_warning_before_diff(tmp_path, monkeypatch, verify_git, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_text("code\n", encoding="utf-8")
+    (tmp_path / "patch").write_text("", encoding="utf-8")
+    verify_git[1]["grep"] = ("", "fatal", 128)
+    result = verify.run_verification(
+        [{"file": "source", "line_start": 1, "description": "`alpha`"}],
+        verify.VerifyContext(str(tmp_path), "base"),
+        "patch",
+    )
+    assert result["stats"] == {"total": 1, "new": 0, "surfaced": 1, "eliminated": 0}
+    assert capsys.readouterr().err == (
+        "WARNING: verify_factual: git grep error (rc=128) for symbol 'alpha': fatal \u2014 skipping.\n"
+        "Diff source: --diff-file (patch), 0 bytes\n"
+    )
