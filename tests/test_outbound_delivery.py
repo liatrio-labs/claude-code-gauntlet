@@ -38,6 +38,72 @@ FAKE_FINDING_MARKER = review_marker.build_finding_marker(SHA, "0123456789abcdef"
 pytestmark = pytest.mark.usefixtures("poster_state")
 
 
+def test_direct_sessions_interleave_live_and_dry_delivery(capsys):
+    live = post_review.DeliverySession(dry_run=False)
+    dry = post_review.DeliverySession(dry_run=True)
+    facts = diff_facts({("x.py", 2): None}, line_texts={("x.py", 2): "old"})
+    wrapper = {"owner": "o", "repo": "r", "pr_number": 7, "sha": SHA}
+    finding = {"file": "x.py", "line": 2, "title": "T", "body": "b"}
+
+    class InterleavingForge(FakeGitLab):
+        def submit(self, request):
+            if request.endpoint.endswith("/notes"):
+                post_review.post_github(
+                    {**wrapper, "findings": [{**finding, "suggested_fix_code": "new"}]},
+                    facts,
+                    forge=FakeForge(),
+                    session=dry,
+                )
+            return super().submit(request)
+
+    version = {
+        "base_commit_sha": "base",
+        "head_commit_sha": "head",
+        "start_commit_sha": "start",
+    }
+    forge = InterleavingForge(refs=[JsonFetch([version], None)])
+    assert (
+        post_review.post_gitlab(
+            {
+                **wrapper,
+                "findings": [{**finding, "end_line": 2, "suggested_fix_code": "new"}],
+            },
+            facts,
+            forge=forge,
+            session=live,
+        )
+        == 0
+    )
+    assert dry.dry_run_payload("github")["payload"]["comments"] == [
+        {
+            "path": "x.py",
+            "line": 2,
+            "side": "RIGHT",
+            "body": "**\U0001f4a1 [LOW] T**\n\nb\n\n\u2694\ufe0f *Code Gauntlet*",
+        }
+    ]
+    assert dry.dry_run_payload("github")["skipped"] == [
+        "suggested-fix downgraded: x.py:2 (missing_end_line)"
+    ]
+    assert live.captured == []
+    assert live.skipped == []
+    discussions = [
+        call.request.payload
+        for call in forge.calls
+        if call.request is not None and call.request.endpoint.endswith("/discussions")
+    ]
+    assert len(discussions) == 1
+    assert "```suggestion\nnew\n```" in discussions[0]["body"]
+    out, err = capsys.readouterr()
+    assert err == "WARNING: suggested-fix downgraded: x.py:2 (missing_end_line)\n"
+    assert out == (
+        "Review captured (dry-run).\n  1 inline comment(s) captured.\n"
+        "  0 suggested fix(es) passed the apply-check.\n  1 suggested fix(es) downgraded to prose.\n"
+        "MR summary note posted.\n  1 inline discussion(s) posted.\n"
+        "  1 suggested fix(es) passed the apply-check.\n  0 suggested fix(es) downgraded to prose.\n"
+    )
+
+
 @pytest.mark.parametrize(
     ("agent", "dimension", "confidence", "expected_identity"),
     [
@@ -119,7 +185,12 @@ def _deliver(
     lines: dict[tuple[str, int], int | None] | None = None,
     texts: dict[tuple[str, int], str] | None = None,
     check_position: bool = True,
-) -> tuple[dict[str, object] | list[PostRequest], list[ForgeCall]]:
+) -> tuple[
+    list[PostRequest]
+    | post_review.GitHubDryRunPayload
+    | post_review.GitLabDryRunPayload,
+    list[ForgeCall],
+]:
     if lines is None:
         lines = {("src/edited.py", 2): None}
     if texts is None:
@@ -162,10 +233,9 @@ def _deliver(
         )
     )
     # Direct poster calls share one test process, so each delivery starts fresh.
-    post_review.reset_run_state()
+    session = post_review.DeliverySession(dry_run=not live)
     with (
         contextlib.ExitStack() as stack,
-        patch.object(post_review, "DRY_RUN", not live),
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(io.StringIO()),
     ):
@@ -175,7 +245,7 @@ def _deliver(
             )
         if platform == "github":
             post_review.post_github(
-                data, diff_facts(lines, line_texts=texts), forge=fake
+                data, diff_facts(lines, line_texts=texts), forge=fake, session=session
             )
         else:
             assert isinstance(fake, FakeGitLab)
@@ -188,6 +258,7 @@ def _deliver(
                     old_paths={path: path for path, _ in lines},
                 ),
                 forge=fake,
+                session=session,
             )
         payload = (
             [
@@ -196,7 +267,7 @@ def _deliver(
                 if call.method == "submit" and call.request is not None
             ]
             if live
-            else post_review.build_dry_run_payload(platform)
+            else session.dry_run_payload(platform)
         )
     return payload, [call for call in fake.calls if call.method == "review_entries"]
 
@@ -442,7 +513,6 @@ class TestDeliveryTitleKeys(unittest.TestCase):
         line = finding["line"]
 
         with (
-            patch.object(post_review, "DRY_RUN", False),
             patch(
                 "gauntlet.delivery.post.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
@@ -465,6 +535,7 @@ class TestDeliveryTitleKeys(unittest.TestCase):
                     old_paths={filepath: filepath},
                 ),
                 forge=fake,
+                session=post_review.DeliverySession(dry_run=False),
             )
         discussion = next(
             call.request.payload
@@ -800,7 +871,7 @@ def test_outbound_composer_contracts__legacy_report_summary_is_guarded_on_the_re
             ),
             contextlib.redirect_stdout(io.StringIO()),
         ):
-            post_review.main()
+            post_review.CLI.invoke(sys.argv[1:])
         assert report_path.read_bytes() == original_report
         payload = json.loads(payload_path.read_text(encoding="utf-8"))
     review_body = payload["payload"]["body"]

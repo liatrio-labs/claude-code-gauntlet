@@ -81,13 +81,7 @@ def forge_factory(monkeypatch, request):
 
 @pytest.fixture
 def poster_state(monkeypatch):
-    from gauntlet.delivery import post
-
     monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
-    post.reset_run_state()
-    monkeypatch.setattr(post, "DRY_RUN", False)
-    yield
-    post.reset_run_state()
 
 
 @pytest.fixture

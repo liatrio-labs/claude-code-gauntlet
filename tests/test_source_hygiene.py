@@ -22,7 +22,6 @@ MIGRATING_PYTHON = {
     "output_dir.py",
     "contract_gen.py",
     "materialize.py",
-    "delivery/post.py",
     "fix_tasks.py",
     "config.py",
     "verify/decide.py",

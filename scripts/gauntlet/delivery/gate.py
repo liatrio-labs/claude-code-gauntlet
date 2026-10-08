@@ -1,7 +1,7 @@
 """Pure suggested-fix validation and platform apply sites."""
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final, Literal, TypeGuard, cast
 
 from gauntlet import diff, registry
@@ -15,7 +15,10 @@ __all__ = [
     "FenceOffsets",
     "FixReason",
     "FixVerdict",
+    "GitHubApplySite",
+    "GitLabApplySite",
     "OverlapCandidate",
+    "demote",
     "evaluate_fix",
     "fix_code_text",
     "format_fix_warning",
@@ -64,13 +67,35 @@ class FixVerdict:
     reason: FixReason | None
     apply_range: ApplyRange | None
 
+    @property
+    def downgrade_reason(self) -> FixReason:
+        assert not self.keep and self.reason is not None
+        return self.reason
+
+
+def demote(verdict: FixVerdict) -> FixVerdict:
+    # Per-finding failures outrank overlap demotion.
+    return (
+        replace(verdict, keep=False, reason="overlaps_kept_fence")
+        if verdict.keep
+        else verdict
+    )
+
 
 @dataclass(frozen=True, slots=True)
-class ApplySite:
+class GitHubApplySite:
+    apply_range: tuple[object, object]
+    multiline: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class GitLabApplySite:
     apply_range: tuple[object, object]
     offsets: FenceOffsets | None = None
-    multiline: bool = False
     cap_exceeded: bool = False
+
+
+ApplySite = GitHubApplySite | GitLabApplySite
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,17 +211,13 @@ def evaluate_fix(
     apply_range: tuple[object, object] | None,
     facts: DiffFacts | None,
     mismatch_reason: FixReason = "anchor_mismatch",
-    demote_reason: FixReason | None = None,
 ) -> FixVerdict:
     evaluated = None
     if apply_range is not None and all(is_plain_int(v) for v in apply_range):
         evaluated = cast(ApplyRange, apply_range)
     if "suggested_fix_code" not in finding:
         return FixVerdict(True, None, evaluated)
-    # Resolve at the finding's own line, never the render site's anchor, so the
-    # overlap pre-pass and render site reach the same decision.
-    # A None apply_range marks a site where no fence can apply, such as a
-    # position-less note or a degraded body section.
+    # Resolve at the finding's own line so verdict and render agree; None means no fence can apply there.
     path_lookup = diff.diff_path_spelling(
         facts,
         cast(str, finding.get("file", "?")),
@@ -206,10 +227,8 @@ def evaluate_fix(
         finding, apply_range=apply_range, facts=facts, path_lookup=path_lookup
     )
     keep = reason is None
-    # Per-finding failures outrank set-level demotion; only anchor failure is renamed.
-    if keep and demote_reason is not None:
-        keep, reason = False, demote_reason
-    elif not keep and reason == "anchor_mismatch":
+    # Only anchor failure is renamed.
+    if not keep and reason == "anchor_mismatch":
         reason = mismatch_reason
     return FixVerdict(keep, reason, evaluated)
 
@@ -219,30 +238,33 @@ def github_apply_range(
     filepath: str,
     line: object,
     end_line: object,
-) -> ApplySite:
+) -> GitHubApplySite:
     # Preserve isinstance's bool/float comparisons here; the content gate is stricter.
     start = cast(int, line)
+    # Keep multiline ranges in one hunk because an end outside it rejects the whole review.
     multiline = (
         isinstance(end_line, int)
         and end_line > start
         and diff.range_is_valid(facts, filepath, start, end_line)
     )
-    return ApplySite(
+    return GitHubApplySite(
         (line, end_line) if multiline else (line, line), multiline=multiline
     )
 
 
-def gitlab_apply_range(finding: Mapping[str, object], anchor: object) -> ApplySite:
+def gitlab_apply_range(
+    finding: Mapping[str, object], anchor: object
+) -> GitLabApplySite:
     line, end_line = finding.get("line"), finding.get("end_line")
     if not is_plain_int(anchor) or not is_plain_int(line) or not is_plain_int(end_line):
-        return ApplySite((anchor, anchor))
+        return GitLabApplySite((anchor, anchor))
     above, below = anchor - line, end_line - anchor
     # Offsets extend outward from the anchor, so an outside anchor cannot realize a range.
     if above < 0 or below < 0:
-        return ApplySite((anchor, anchor))
+        return GitLabApplySite((anchor, anchor))
     if above > GITLAB_SUGGESTION_OFFSET_CAP or below > GITLAB_SUGGESTION_OFFSET_CAP:
-        return ApplySite((anchor, anchor), cap_exceeded=True)
-    return ApplySite((anchor - above, anchor + below), offsets=(above, below))
+        return GitLabApplySite((anchor, anchor), cap_exceeded=True)
+    return GitLabApplySite((anchor - above, anchor + below), offsets=(above, below))
 
 
 def ranges_overlap(a: ApplyRange, b: ApplyRange) -> bool:

@@ -1,10 +1,7 @@
-"""Patch artifact bytes, receipt progress and isolation from delivery state."""
-
-from copy import deepcopy
+"""Patch artifact bytes, receipt progress, and repeat-run isolation."""
 
 import pytest
 from gauntlet import patches
-from gauntlet.delivery import post
 
 from tests.support.delivery import patch_inputs
 from tests.support.path_text import normalize_path_text
@@ -301,13 +298,8 @@ def test_confinement(case, tmp_path, invoke):
     assert outside.read_bytes() == b"PRE-EXISTING CONTENT\n"
 
 
-@pytest.mark.usefixtures("poster_state")
-def test_run_isolation(tmp_path, invoke):
+def test_repeat_runs_identical_output_and_leave_findings_untouched(tmp_path, invoke):
     primary = tmp_path / "code-gauntlet-findings-abc1234.json"
-    post._CAPTURED.append({"sentinel": True})
-    state = deepcopy(
-        (post._FIX_COUNTS, post._FIX_REASON_COUNTS, post._SKIP_WARNINGS, post._CAPTURED)
-    )
     documents = []
     for _ in range(2):
         findings, capture, expected, _ = REPORT_CASES["verbatim"]
@@ -323,12 +315,6 @@ def test_run_isolation(tmp_path, invoke):
             normalize_path_text(result.stdout.decode(), tmp_path, "<OUT>") == expected
         )
         documents.append((tmp_path / "code-gauntlet-patches-abc1234.md").read_bytes())
-        assert state == (
-            post._FIX_COUNTS,
-            post._FIX_REASON_COUNTS,
-            post._SKIP_WARNINGS,
-            post._CAPTURED,
-        )
         assert (primary.read_bytes(), primary.stat().st_mtime_ns) == before
     assert documents[0] == documents[1]
     assert sorted(p.name for p in tmp_path.iterdir()) == [
