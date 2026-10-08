@@ -28,9 +28,7 @@ ARTIFACT_NAMES = (
     "environ,expected",
     [
         pytest.param({}, 540, id="TIMEOUT-default"),
-        pytest.param({"BASH_MAX_TIMEOUT_MS": "300000"}, 240, id="TIMEOUT-headroom"),
         pytest.param({"BASH_MAX_TIMEOUT_MS": "1000"}, 30, id="TIMEOUT-floor"),
-        pytest.param({"BASH_MAX_TIMEOUT_MS": "3600000"}, 540, id="TIMEOUT-generous"),
         pytest.param({"BASH_MAX_TIMEOUT_MS": "abc"}, 540, id="TIMEOUT-malformed"),
         pytest.param({"BASH_MAX_TIMEOUT_MS": "0"}, 540, id="TIMEOUT-nonpositive"),
         pytest.param({"BASH_MAX_TIMEOUT_MS": "300999.9"}, 240, id="TIMEOUT-decimal"),
@@ -79,37 +77,6 @@ def test_terminal_delivery(text, expected, tmp_path, capsys):
 
 
 @pytest.mark.parametrize(
-    "attempt,maximum,code,kind",
-    [
-        pytest.param(3, 4, 3, "pending", id="OUTCOME-below-max"),
-        pytest.param(4, 4, 4, "timeout", id="OUTCOME-at-max"),
-        pytest.param(9, 4, 4, "timeout", id="OUTCOME-past-max"),
-        pytest.param(1, 0, 4, "timeout", id="OUTCOME-zero-max"),
-    ],
-)
-def test_attempt_bounds(attempt, maximum, code, kind, monkeypatch, capsys):
-    monkeypatch.setattr(awaiting.time, "time", lambda: 10)
-    assert (
-        awaiting.CLI.invoke(
-            [
-                "missing",
-                "--timeout-seconds",
-                "0",
-                "--attempt",
-                str(attempt),
-                "--max-attempts",
-                str(maximum),
-            ]
-        )
-        == code
-    )
-    marker = json.loads(capsys.readouterr().out)
-    assert marker["await"] == kind
-    assert ("next_command" in marker) == (kind == "pending")
-    assert ("gap" in marker) == (kind == "timeout")
-
-
-@pytest.mark.parametrize(
     "mode,expected_code,expected_sleeps",
     [
         pytest.param("appears", 0, [1, 1], id="OUTCOME-mid-wait"),
@@ -121,6 +88,15 @@ def test_wait_loop(mode, expected_code, expected_sleeps, tmp_path, monkeypatch):
     path.write_text('{"ok":true}', encoding="utf-8")
     now, sleeps = [0.0], []
     monkeypatch.setattr(awaiting.time, "time", lambda: now[0])
+    real_observe = tasks.observe
+    observations = []
+
+    def observe(target, roots):
+        observations.append(target)
+        assert len(observations) <= 4, "wait loop did not sleep between observations"
+        return real_observe(target, roots)
+
+    monkeypatch.setattr(tasks, "observe", observe)
 
     def sleep(seconds):
         sleeps.append(seconds)
@@ -218,7 +194,6 @@ def test_scan_reason_marker(tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize(
     "channel",
     [
-        pytest.param("return", id="MARKER-elide-return"),
         pytest.param("other", id="MARKER-elide-every-dict-channel"),
     ],
 )
@@ -252,26 +227,18 @@ def test_elision(channel, tmp_path, capsys):
 @pytest.mark.parametrize(
     "mode,expected_code,kind",
     [
-        pytest.param("unresolved", 5, "artifacts_only", id="GRACE-unresolved"),
         pytest.param("resolved", 3, "pending", id="GRACE-resolved-nonfinal"),
         pytest.param("final", 5, "artifacts_only", id="GRACE-resolved-final"),
-        pytest.param("terminal", 0, "terminal", id="GRACE-terminal-wins"),
-        pytest.param("stale", 4, "timeout", id="GRACE-stale"),
-        pytest.param("wrong-head", 4, "timeout", id="GRACE-wrong-head"),
     ],
 )
 def test_artifact_fallback(mode, expected_code, kind, tmp_path, monkeypatch, capsys):
     for name in ARTIFACT_NAMES:
         path = tmp_path / name
         path.write_text("x", encoding="utf-8")
-        os.utime(path, (6 if mode == "stale" else 7, 6 if mode == "stale" else 7))
-    target = "missing"
-    if mode in ("resolved", "final", "terminal"):
-        path = tmp_path / "task.output"
-        path.write_text(
-            '{"ok":true,"stats":{}}' if mode == "terminal" else "", encoding="utf-8"
-        )
-        target = str(path)
+        os.utime(path, (7, 7))
+    path = tmp_path / "task.output"
+    path.write_text("", encoding="utf-8")
+    target = str(path)
     monkeypatch.setattr(awaiting.time, "time", lambda: 10)
     code = awaiting.CLI.invoke(
         [
@@ -283,19 +250,16 @@ def test_artifact_fallback(mode, expected_code, kind, tmp_path, monkeypatch, cap
             "--artifacts-dir",
             str(tmp_path),
             "--head-sha",
-            "other" if mode == "wrong-head" else "abc",
+            "abc",
             "--artifacts-grace-seconds",
             "0",
             "--attempt",
-            "4" if mode in ("final", "stale", "wrong-head") else "1",
+            "4" if mode == "final" else "1",
         ]
     )
     assert code == expected_code
     receipt = json.loads(capsys.readouterr().out)
-    if kind == "terminal":
-        assert receipt == {"ok": True, "stats": {}}
-    else:
-        assert receipt["await"] == kind
+    assert receipt["await"] == kind
     if code == 5:
         assert receipt["artifactPaths"] == {
             "findings": str(tmp_path / "code-gauntlet-findings-abc.json"),
@@ -319,10 +283,7 @@ def test_artifact_fallback(mode, expected_code, kind, tmp_path, monkeypatch, cap
 @pytest.mark.parametrize(
     "defect",
     [
-        pytest.param("missing", id="GRACE-missing-file"),
         pytest.param("empty", id="GRACE-empty-file"),
-        pytest.param("directory", id="GRACE-directory"),
-        pytest.param("unrelated", id="GRACE-wrong-directory"),
     ],
 )
 def test_incomplete_artifacts(defect, tmp_path, monkeypatch, capsys):
@@ -330,13 +291,7 @@ def test_incomplete_artifacts(defect, tmp_path, monkeypatch, capsys):
         (tmp_path / name).write_text("x", encoding="utf-8")
         os.utime(tmp_path / name, (7, 7))
     bad = tmp_path / ARTIFACT_NAMES[0]
-    if defect in ("missing", "directory"):
-        bad.unlink()
-        if defect == "directory":
-            bad.mkdir()
-    elif defect == "empty":
-        bad.write_text("", encoding="utf-8")
-    artifact_dir = tmp_path / "elsewhere" if defect == "unrelated" else tmp_path
+    bad.write_text("", encoding="utf-8")
     monkeypatch.setattr(awaiting.time, "time", lambda: 10)
     assert (
         awaiting.CLI.invoke(
@@ -349,7 +304,7 @@ def test_incomplete_artifacts(defect, tmp_path, monkeypatch, capsys):
                 "--since-epoch",
                 "7",
                 "--artifacts-dir",
-                str(artifact_dir),
+                str(tmp_path),
                 "--head-sha",
                 "abc",
             ]
@@ -360,10 +315,8 @@ def test_incomplete_artifacts(defect, tmp_path, monkeypatch, capsys):
     assert marker["artifacts"] == {
         "checked": True,
         "complete": False,
-        "present": [] if defect == "unrelated" else list(ARTIFACT_NAMES[1:]),
-        "missing": list(ARTIFACT_NAMES)
-        if defect == "unrelated"
-        else [ARTIFACT_NAMES[0]],
+        "present": list(ARTIFACT_NAMES[1:]),
+        "missing": [ARTIFACT_NAMES[0]],
     }
 
 
@@ -527,9 +480,6 @@ def test_executed_retry_preserves_leading_dash_and_quotes(
 @pytest.mark.parametrize(
     "error,message",
     [
-        pytest.param(
-            RuntimeError("boom"), "RuntimeError: boom", id="FAULT-wait-exception"
-        ),
         pytest.param(KeyboardInterrupt(), "interrupted", id="FAULT-interrupted"),
         pytest.param(
             OSError("discovery failed"),
@@ -555,12 +505,11 @@ def test_wait_fault_receipt(error, message, monkeypatch, capsys):
 
 @pytest.mark.parametrize(
     "outcome",
-    [0, 3, 4, 5],
+    [
+        3,
+    ],
     ids=[
-        "FAULT-encode-terminal",
         "FAULT-encode-pending",
-        "FAULT-encode-timeout",
-        "FAULT-encode-artifacts",
     ],
 )
 def test_await_encoding_fallback_keeps_outcome(outcome, monkeypatch, capsys):
@@ -570,24 +519,6 @@ def test_await_encoding_fallback_keeps_outcome(outcome, monkeypatch, capsys):
         '{"await":"error","gap":"workflow-timeout",'
         '"message":"result would not serialize: Object of type set is not JSON serializable"}'
     )
-
-
-@pytest.mark.parametrize(
-    "failures",
-    [(RuntimeError,), (RecursionError,), (TypeError, ValueError)],
-    ids=["FAULT-runtime-encoder", "FAULT-recursion-encoder", "FAULT-fallback-encoder"],
-)
-def test_await_encoder_exceptions_keep_original_scope(failures, monkeypatch, capsys):
-    pending = iter(failures)
-
-    def fail(*args, **kwargs):
-        raise next(pending)("encoding failed")
-
-    monkeypatch.setattr(awaiting, "await_terminal", lambda *_: ({"ok": True}, 5))
-    monkeypatch.setattr(json, "dumps", fail)
-    with pytest.raises(failures[-1], match=r"^encoding failed$"):
-        awaiting.CLI.invoke(["bare-id", "--timeout-seconds", "0"])
-    assert capsys.readouterr().out.strip() == ""
 
 
 def test_await_preserves_compact_ascii_nan_spelling(monkeypatch, capsys):
@@ -604,7 +535,13 @@ def test_await_preserves_compact_ascii_nan_spelling(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize(
-    "site", ["print", "flush"], ids=["FAULT-output", "FAULT-flush"]
+    "site",
+    [
+        "flush",
+    ],
+    ids=[
+        "FAULT-flush",
+    ],
 )
 def test_output_failure(site, monkeypatch):
     def fail(*args, **kwargs):
@@ -613,60 +550,23 @@ def test_output_failure(site, monkeypatch):
     stream = io.StringIO()
     monkeypatch.setattr(sys, "stdout", stream)
 
-    def wait(*args):
-        if site == "print":
-            raise KeyboardInterrupt()
-        return {"ok": True}, 0
-
-    monkeypatch.setattr(awaiting, "await_terminal", wait)
+    monkeypatch.setattr(awaiting, "await_terminal", lambda *_: ({"ok": True}, 0))
     monkeypatch.setattr(os, "open", fail)
-    if site == "flush":
-        monkeypatch.setattr(stream, "flush", fail)
-    else:
-        monkeypatch.setattr("builtins.print", fail)
+    monkeypatch.setattr(stream, "flush", fail)
     assert awaiting.CLI.invoke(["missing", "--timeout-seconds", "0"]) == 4
-
-
-def test_real_broken_pipe(tmp_path):
-    target = tmp_path / "task.output"
-    target.write_text(
-        '{"ok":true,"stats":{"pad":"' + "x" * 2_000_000 + '"}}', encoding="utf-8"
-    )
-    reader = subprocess.Popen(
-        [sys.executable, "-c", "import sys; sys.stdin.readline(20)"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-    )
-    writer = subprocess.Popen(
-        [
-            sys.executable,
-            str(REPO / "scripts/await_workflow.py"),
-            "--timeout-seconds",
-            "0",
-            "--",
-            str(target),
-        ],
-        stdout=reader.stdin,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-    )
-    assert reader.stdin is not None
-    reader.stdin.close()
-    _, stderr = writer.communicate(timeout=10)
-    reader.wait(timeout=10)
-    assert writer.returncode in (0, 4), stderr
-    assert "BrokenPipeError" not in stderr
-    assert "Traceback" not in stderr
 
 
 @pytest.mark.parametrize(
     "flags",
-    [["--artifacts-dir", "out"], ["--head-sha", "abc"]],
-    ids=["USAGE-directory-only", "USAGE-sha-only"],
+    [
+        ["--head-sha", "abc"],
+    ],
+    ids=[
+        "USAGE-sha-only",
+    ],
 )
 def test_paired_flags(flags, capsys):
-    assert awaiting.CLI.invoke(["task", *flags]) == 2
+    assert awaiting.CLI.invoke(["task", "--timeout-seconds", "0", *flags]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert (

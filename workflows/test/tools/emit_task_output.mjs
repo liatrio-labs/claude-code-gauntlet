@@ -3,7 +3,7 @@
 // tool's `{ summary, agentCount, logs, result, workflowProgress, ... }` envelope,
 // pretty-printed, with the compact return nested at `result`.
 //
-// Consumed by tests/test_materialize_artifacts.py so the materializer is proven against
+// Consumed by tests/test_materialize.py so the materializer is proven against
 // REAL pipeline output rather than a hand-authored payload: if a stage stops emitting a
 // field, or writeArtifacts stops carrying the primaries home, the Python side sees it.
 //

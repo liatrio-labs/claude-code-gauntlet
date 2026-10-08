@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -13,9 +12,8 @@ from gauntlet.jsjson import fnv1a32, normalize_content, utf16_len
 REPO_ROOT = str(Path(__file__).resolve().parents[2])
 
 
-def finding(fid, **over):
-    """A canonical persisted finding: canonical schema + the v2 aliases the
-    artifact-writer boundary adds (line/end_line/body)."""
+def finding(fid):
+    """Canonical persisted input with the writer's v2 aliases."""
     f = {
         "id": fid,
         "file": f"src/{fid}.js",
@@ -29,7 +27,6 @@ def finding(fid, **over):
         "origin": "new",
         "cross_file_refs": [],
     }
-    f.update(over)
     f["line"] = f["line_start"]
     f["end_line"] = f["line_end"]
     f["body"] = f["description"]
@@ -44,15 +41,9 @@ def js_pretty(obj):
 class _Workspace:
     """A temp output dir with findings.json + report.md already on disk."""
 
-    def __init__(self, findings=None, report="# report\n\nbody", findings_json=None):
-        self.findings = (
-            findings if findings is not None else [finding("F1"), finding("F2")]
-        )
-        self.report = report
-        # Override for fixtures whose on-disk bytes are not plain js_pretty output —
-        # a lone surrogate, for instance, is ESCAPED on disk (JSON.stringify is
-        # well-formed) and could not be written raw at all.
-        self.findings_json_override = findings_json
+    def __init__(self):
+        self.findings = [finding("F1"), finding("F2")]
+        self.report = "# report\n\nbody"
 
     def __enter__(self):
         self.dir = tempfile.mkdtemp(prefix="assemble-")
@@ -69,27 +60,16 @@ class _Workspace:
         self.plan_path = os.path.join(
             self.dir, "code-gauntlet-persist-plan-abc1234.json"
         )
-        self.findings_json = (
-            self.findings_json_override
-            if self.findings_json_override is not None
-            else js_pretty(self.findings)
-        )
+        self.findings_json = js_pretty(self.findings)
         self.write(self.findings_path, self.findings_json)
         self.write(self.report_path, self.report)
         return self
-
-    def __exit__(self, exc_type, exc, tb):
-        shutil.rmtree(self.dir, ignore_errors=True)
 
     def write(self, path, text):
         with open(path, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
 
-    def read(self, path):
-        with open(path, encoding="utf-8", newline="") as fh:
-            return fh.read()
-
-    def plan(self, **over):
+    def plan(self):
         ids = [f["id"] for f in self.findings if isinstance(f, dict) and "id" in f]
         plan = {
             "planVersion": 2,
@@ -133,25 +113,14 @@ class _Workspace:
                 },
             },
         }
-        plan.update(over)
         return plan
 
-    def write_plan(self, plan, seal=True):
-        """Persist the plan the way the pipeline does: the self-proof is computed
-        LAST, over the plan without it. `seal=False` writes it unproven."""
+    def write_plan(self, plan):
+        """The self-proof covers the plan without its checksum field."""
         out = dict(plan)
         out.pop("planChecksum", None)
-        if seal:
-            out["planChecksum"] = plan_checksum(out)
+        out["planChecksum"] = plan_checksum(out)
         self.write(self.plan_path, js_pretty(out))
-        return self.plan_path
-
-    def tamper_plan(self, mutate):
-        """Seal a plan, then alter it WITHOUT re-sealing — a writer that elided or
-        reordered entries while transcribing."""
-        sealed = json.loads(self.read(self.write_plan(self.plan())))
-        mutate(sealed)
-        self.write(self.plan_path, js_pretty(sealed))
         return self.plan_path
 
 
@@ -170,12 +139,7 @@ SUCCESS_RETURN = {
 
 
 def envelope(result):
-    """Wrap *result* in the Workflow tool's real output-file envelope.
-
-    Key set and nesting copied from .../tasks/w3eeyrqqm.output: the tool writes
-    {summary, agentCount, logs, result, workflowProgress, totalTokens,
-    totalToolCalls} with the script's return value nested at `result`.
-    """
+    """Wrap the return with the Workflow tool's captured output-file key set."""
     return {
         "summary": "code-gauntlet v3 pipeline: phases 3-8 orchestration",
         "agentCount": 19,

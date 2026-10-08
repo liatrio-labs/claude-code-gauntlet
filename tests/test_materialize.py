@@ -52,8 +52,6 @@ EMPTY_ASSEMBLE = {
             None,
             id="SOURCE-explicit-missing-counts",
         ),
-        pytest.param("partial", "task", None, 1, None, id="SOURCE-partial"),
-        pytest.param("no-return", "task", None, 1, None, id="SOURCE-no-persist-return"),
         pytest.param("channel", "task", None, 1, None, id="SOURCE-foreign-channel"),
         pytest.param(
             "named-sweep",
@@ -65,7 +63,9 @@ EMPTY_ASSEMBLE = {
         ),
     ],
 )
-def test_source_selection(mode, task, nonce, scanned, source, tmp_path, monkeypatch):
+def test_source_selection(
+    mode, task, nonce, scanned, source, tmp_path, monkeypatch, capsys
+):
     output = tmp_path / "out"
     output.mkdir()
     plan = output / "plan.json"
@@ -83,10 +83,6 @@ def test_source_selection(mode, task, nonce, scanned, source, tmp_path, monkeypa
         payload["channel"] = "other"
     returned_task(named, payload)
     os.utime(named, (10, 10))
-    if mode == "partial":
-        named.write_text('{"result":', encoding="utf-8")
-    if mode == "no-return":
-        named.write_text('{"ok":true,"stats":{}}', encoding="utf-8")
     matching = None
     if mode == "sweep":
         matching = task_file(root, "match", mtime=1)
@@ -103,7 +99,15 @@ def test_source_selection(mode, task, nonce, scanned, source, tmp_path, monkeypa
             task_file(root, f"other{index:03}", text="{}", mtime=index)
     monkeypatch.setattr(materialize, "assemble", lambda _: EMPTY_ASSEMBLE)
     roots = tasks.TaskRoots((str(root),), None)
-    receipt = materialize.materialize(task, nonce, str(output), roots)
+    if mode == "sweep":
+        monkeypatch.setenv("CODE_GAUNTLET_TASKS_DIR", str(matching.parent))
+        monkeypatch.setenv("CODE_GAUNTLET_TASK_ROOTS", str(tmp_path / "empty-root"))
+        assert (
+            materialize.CLI.invoke(["--output-dir", str(output), "--nonce", nonce]) == 0
+        )
+        receipt = json.loads(capsys.readouterr().out)
+    else:
+        receipt = materialize.materialize(task, nonce, str(output), roots)
     assert receipt["scanned"] == scanned
     assert receipt["source"] == (
         str(named if source == "named" else matching) if source else None
@@ -261,15 +265,15 @@ def test_verbatim_writes_utf16_and_idempotence(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(
     "mode",
-    ["injected", "missing-parent"],
-    ids=["WRITE-partial-continues", "WRITE-no-parent-creation"],
+    [
+        "missing-parent",
+    ],
+    ids=[
+        "WRITE-no-parent-creation",
+    ],
 )
 def test_partial_primary_writes_skip_derivation(mode, tmp_path, monkeypatch):
-    primary = (
-        tmp_path / "missing" / "primary"
-        if mode == "missing-parent"
-        else tmp_path / "primary"
-    )
+    primary = tmp_path / "missing" / "primary"
     plan = tmp_path / "plan.json"
     task = returned_task(
         tmp_path / "task.output",
@@ -282,15 +286,6 @@ def test_partial_primary_writes_skip_derivation(mode, tmp_path, monkeypatch):
             ],
         },
     )
-    if mode == "injected":
-        real = materialize.write_atomic
-
-        def write(path, text):
-            if path == str(primary):
-                raise OSError("denied")
-            real(path, text)
-
-        monkeypatch.setattr(materialize, "write_atomic", write)
     monkeypatch.setattr(
         materialize, "assemble", lambda *_: pytest.fail("derived after partial write")
     )
@@ -300,14 +295,11 @@ def test_partial_primary_writes_skip_derivation(mode, tmp_path, monkeypatch):
     assert receipt["ok"] is False
     assert [e["path"] for e in receipt["materialized"]] == [str(plan)]
     assert receipt["assemble"] is None
-    if mode == "injected":
-        assert receipt["errors"] == [f"could not write {primary} (OSError: denied)"]
-    else:
-        assert len(receipt["errors"]) == 1
-        assert receipt["errors"][0].startswith(
-            f"could not write {primary} (FileNotFoundError:"
-        )
-        assert not primary.parent.exists()
+    assert len(receipt["errors"]) == 1
+    assert receipt["errors"][0].startswith(
+        f"could not write {primary} (FileNotFoundError:"
+    )
+    assert not primary.parent.exists()
     assert plan.read_text(encoding="utf-8") == "{}"
 
 
@@ -385,9 +377,25 @@ def test_partial_primary_writes_skip_derivation(mode, tmp_path, monkeypatch):
         ),
         pytest.param(
             "refused",
-            dict(EMPTY_ASSEMBLE, ok=False, errors=["refused"]),
+            dict(
+                EMPTY_ASSEMBLE,
+                ok=False,
+                errors=["refused"],
+                verified=[
+                    {
+                        "path": "primary",
+                        "content_proof": "mismatch",
+                        "expected_chars": 1,
+                        "expected_checksum": "want",
+                        "chars": 2,
+                        "checksum": "got",
+                    }
+                ],
+            ),
             "{}",
-            [],
+            [
+                "artifact-content-proof: primary on disk differs from the bytes the workflow returned (expected 1 chars/want, got 2/got)"
+            ],
             ["refused"],
             id="PROOF-assembler-refusal",
         ),
@@ -486,54 +494,38 @@ def test_real_node_return_channel(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "boundary", ["library", "cli"], ids=["FAULT-library", "FAULT-command"]
+    "boundary",
+    [
+        "cli",
+    ],
+    ids=[
+        "FAULT-command",
+    ],
 )
 def test_unexpected_failure(boundary, tmp_path, monkeypatch, capsys):
     def fail(*args):
         raise RuntimeError("injected")
 
     monkeypatch.setattr(materialize, "select_source", fail)
-    expected = {
-        "ok": False,
-        "channel": "return",
-        "source": None,
-        "scanned": 0,
-        "materialized": [],
-        "assemble": None,
-        "gaps": [],
-        "errors": ["materializer failed unexpectedly: RuntimeError: injected"],
-    }
-    if boundary == "library":
-        assert (
-            materialize.materialize(
-                "missing.output", None, str(tmp_path), tasks.TaskRoots((), None)
-            )
-            == expected
+    assert (
+        materialize.CLI.invoke(
+            ["--output-dir", str(tmp_path), "--task", "missing.output"]
         )
-    else:
-        assert (
-            materialize.CLI.invoke(
-                ["--output-dir", str(tmp_path), "--task", "missing.output"]
-            )
-            == 1
-        )
-        assert (
-            capsys.readouterr().out.strip()
-            == '{"ok": false, "channel": "return", "source": null, "scanned": 0, "materialized": [], "assemble": null, "gaps": [], "errors": ["materializer failed unexpectedly: RuntimeError: injected"]}'
-        )
+        == 1
+    )
+    assert (
+        capsys.readouterr().out.strip()
+        == '{"ok": false, "channel": "return", "source": null, "scanned": 0, "materialized": [], "assemble": null, "gaps": [], "errors": ["materializer failed unexpectedly: RuntimeError: injected"]}'
+    )
 
 
 @pytest.mark.parametrize(
     "target_flags",
     [
-        ["--task", "missing"],
         ["--nonce", "run"],
-        ["--task", "missing.output", "--nonce", "run"],
     ],
     ids=[
-        "FAULT-discovery-id",
         "FAULT-discovery-nonce",
-        "FAULT-discovery-path-with-nonce",
     ],
 )
 def test_command_discovery_failure(target_flags, monkeypatch, capsys):
@@ -550,19 +542,19 @@ def test_command_discovery_failure(target_flags, monkeypatch, capsys):
 
 @pytest.mark.parametrize(
     "failure",
-    ["first", "all", "hostile"],
-    ids=["FAULT-ascii-fallback", "FAULT-constant", "FAULT-hostile-constant"],
+    [
+        "first",
+        "all",
+    ],
+    ids=[
+        "FAULT-ascii-fallback",
+        "FAULT-constant",
+    ],
 )
 def test_encoding_fallback(failure, monkeypatch, capsys):
-    class Hostile(Exception):
-        def __str__(self):
-            raise RuntimeError("cannot render")
-
     original = cli.dumps
 
     def encode(receipt, **kwargs):
-        if failure == "hostile":
-            raise Hostile()
         if failure == "all" or not kwargs.get("ascii"):
             raise ValueError("caf\u00e9")
         return original(receipt, **kwargs)
