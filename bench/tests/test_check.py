@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from gauntlet.awaiting import ARTIFACT_BASENAMES
+from gauntlet.registry import ARTIFACT_BASENAMES
 
 from bench import run
 from bench.runner import check, citations, invoke

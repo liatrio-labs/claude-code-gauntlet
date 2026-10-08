@@ -11,45 +11,24 @@ import unittest
 from unittest.mock import patch
 
 from gauntlet.artifacts import plan_checksum
-from gauntlet.materialize import main, materialize
+from gauntlet.materialize import CLI, materialize
+from gauntlet.tasks import TaskRoots, sweep_paths
+
+from tests.support.artifacts import NONCE, record_task_output
 
 
 def test_sweep_uses_literal_task_root(tmp_path, monkeypatch):
-    from gauntlet import materialize as module
-
     root = tmp_path / "claude-[g]"
     target = root / "slug" / "session" / "tasks" / "w123.output"
     target.parent.mkdir(parents=True)
     target.write_text("", encoding="utf-8")
-    monkeypatch.setattr(module, "task_roots", lambda _env: [str(root)])
-    assert module._sweep_paths({}) == [str(target)]
+    assert list(sweep_paths(TaskRoots((str(root),), None))) == [str(target)]
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "materialize_artifacts.py")
-RECORDER = os.path.join(REPO_ROOT, "workflows", "test", "tools", "emit_task_output.mjs")
-NONCE = "nonce-materialize-test"
-
-
-def record_task_output(tmp, nonce=NONCE):
-    """Run the wired pipeline on the return channel; return (task_path, out_dir)."""
-    out_dir = os.path.join(tmp, ".code-gauntlet")
-    os.makedirs(out_dir, exist_ok=True)
-    task_path = os.path.join(tmp, "tasks", "task-abc123.output")
-    os.makedirs(os.path.dirname(task_path), exist_ok=True)
-    proc = subprocess.run(
-        ["node", RECORDER, task_path, out_dir, nonce],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        encoding="utf-8",
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"recorder failed: {proc.stderr}")
-    return task_path, out_dir
 
 
 def payload_of(task_path):
@@ -175,7 +154,7 @@ class TestHappyPath(MaterializeTestCase):
 
     def test_materialize_happy_path_returns_a_success_receipt(self):
         # Direct materialize() on a pristine recorder task takes the success path.
-        receipt = materialize(self.task, None, self.out_dir, environ={})
+        receipt = materialize(self.task, None, self.out_dir, roots=TaskRoots((), None))
         self.assertTrue(receipt["ok"], receipt)
         self.assertEqual(receipt["channel"], "return")
 
@@ -215,13 +194,15 @@ class TestUnexpectedFailure(unittest.TestCase):
         # the guard is asserted where it lives. Without this, moving the guard back
         # into main() would leave the docstring's promise untested and false again.
         with self.raising_source():
-            receipt = materialize("/nonexistent", None, self.out_dir, environ={})
+            receipt = materialize(
+                "/nonexistent", None, self.out_dir, roots=TaskRoots((), None)
+            )
         self.assertEqual(receipt, UNEXPECTED_RECEIPT)
 
     def test_main_unexpected_exception_still_prints_one_line_receipt(self):
         buf = io.StringIO()
         with self.raising_source(), patch("sys.stdout", buf):
-            code = main(
+            code = CLI.invoke(
                 ["--output-dir", self.out_dir, "--task", "/nonexistent"],
             )
         lines = [line for line in buf.getvalue().splitlines() if line.strip()]

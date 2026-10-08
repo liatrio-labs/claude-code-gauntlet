@@ -37,7 +37,10 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterator
 from typing import Any
+
+import pytest
 
 
 class _SessionState:
@@ -52,6 +55,7 @@ class _SessionState:
 _STATE = _SessionState()
 
 _TEMP_VARS = ("TMPDIR", "TEMP", "TMP")
+_TASK_ROOTS_VAR = "CODE_GAUNTLET_TASK_ROOTS"
 
 
 def _git_local_env_vars() -> list[str]:
@@ -71,7 +75,12 @@ def pytest_configure(config: Any) -> None:
     # fails, nothing has been touched yet, so nothing leaks; and teardown
     # must only ever restore what was actually saved here.
     _STATE.saved_tempdir = tempfile.tempdir
-    names_to_clear = (*_TEMP_VARS, "GIT_CEILING_DIRECTORIES", *_git_local_env_vars())
+    names_to_clear = (
+        *_TEMP_VARS,
+        _TASK_ROOTS_VAR,
+        "GIT_CEILING_DIRECTORIES",
+        *_git_local_env_vars(),
+    )
     for name in names_to_clear:
         _STATE.saved_env[name] = os.environ.pop(name, None)
 
@@ -83,6 +92,10 @@ def pytest_configure(config: Any) -> None:
     for name in _TEMP_VARS:
         os.environ[name] = root
     os.environ["GIT_CEILING_DIRECTORIES"] = os.path.realpath(root)
+
+    task_root = os.path.join(root, "task-roots")
+    os.mkdir(task_root)
+    os.environ[_TASK_ROOTS_VAR] = task_root
 
     tempfile.tempdir = root
 
@@ -98,3 +111,20 @@ def pytest_unconfigure(config: Any) -> None:
 
     if _STATE.root is not None:
         shutil.rmtree(_STATE.root, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _guard_default_task_discovery(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    from gauntlet import tasks
+
+    calls: list[str | None] = []
+
+    def forbidden(tmpdir: str | None) -> tuple[str, ...]:
+        calls.append(tmpdir)
+        raise AssertionError("default task-root discovery is forbidden in tests")
+
+    monkeypatch.setattr(tasks, "_default_roots", forbidden)
+    yield
+    # Production may have converted the exception into a receipt; still fail this test.
+    if calls:
+        pytest.fail("default task-root discovery was reached during the test")

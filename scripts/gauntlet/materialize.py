@@ -1,124 +1,44 @@
-#!/usr/bin/env python3
-"""
-materialize_artifacts.py — put the review's artifacts on disk from the workflow's
-own return value, with no model in the path.
+"""Persist returned primaries verbatim and grade their derived artifacts."""
 
-Usage:
-    python3 materialize_artifacts.py --output-dir DIR --task <task-id-or-path>
-    python3 materialize_artifacts.py --output-dir DIR --nonce <args.nonce>
-    python3 materialize_artifacts.py --output-dir DIR --task <id> --nonce <nonce>
-
-Why this script exists
-----------------------
-The workflow sandbox has no disk, so every artifact used to reach disk through an
-artifact-writer agent: a language model asked to reproduce ~50 KB of escape-dense
-JSON verbatim. Measured across every recorded run (38 writer journals / 84
-artifacts), 26 of 73 attempted writes — 36% — failed their own content proof and
-12 artifacts were never written at all. Nothing about a document predicts which
-one fails: a 47 KB findings.json with 104 backslashes came back byte-perfect, a
-6.4 KB zero-backslash .md was truncated. The worst losses are silent
-summarization (one checkpoint lost 29,132 chars because the writer dropped 11
-fields from every finding; another lost 13,008 with its schema intact and its
-prose simply rewritten shorter), which no encoding or format prevents — and both
-parse cleanly. When findings.json is the casualty, gauntlet.artifacts
-correctly refuses to derive anything, post-review.json is never produced, and no
-PR comment can be posted.
-
-A workflow's return value is different in kind: the HARNESS serializes it to
-``tasks/<task-id>.output``, and nothing retypes it. Measured 2026-07-30 with a
-zero-subagent probe, the on-disk file was byte-exact at 200,000 / 500,000 /
-4,000,000 requested chars (fnv1a32 match at each, a lone surrogate included), in
-18-122 ms, with no ceiling found. The largest run ever recorded carries ~66 KB of
-unique content. So the pipeline now returns the primaries instead of dictating
-them, and this script — run from Phase 8, which has Bash — reads them out of that
-file and writes them itself.
-
-What it does
-------------
-1. Finds the task output file (by id/path, by the run's ``nonce``, or both) and
-   pulls the compact return's ``persistReturn`` payload out of it, reusing
-   gauntlet.awaiting's resolution and terminal-detection rather than a second
-   copy of either.
-2. Writes every ``{ path, text }`` entry it carries — findings.json, report.md
-   and the persist plan — verbatim, atomically, and only inside --output-dir.
-3. Runs gauntlet.artifacts' assembler on the plan to derive post-review.json
-   and checkpoint-all.json from what actually landed, exactly as the executor
-   agent does on the writer path.
-
-THE CONTENT PROOF IS THE POINT, and it is not reimplemented here. The plan's
-``expect[]`` proves the two primaries, its ``planChecksum`` proves itself, and
-its ``derive[]`` proves the two projections. The first two gradings are
-gauntlet.artifacts' own; the derive[] comparison is done here, in
-proof_gaps(), against the assembler's own reported numbers — aimed at a
-harness-written copy rather than a model-written one. Assume truncation, if it
-ever happens, is SILENT: the proof is what would catch it.
-
-Output
-------
-EXACTLY one line of JSON on stdout (diagnostics go to stderr), on every path
-including an unexpected internal error:
-
-    { "ok": bool, "channel": "return", "source": path|null, "scanned": N,
-      "materialized": [ { path, chars, checksum } ],
-      "assemble": { ...gauntlet.artifacts' receipt... }|null,
-      "gaps": [ ... ], "errors": [ ... ] }
-
-Exit codes
-    0  Every artifact is on disk and every content proof matched.
-    1  Something failed. ``errors`` says what, ``gaps`` says what to disclose,
-       and ``materialized`` names whatever DID land — a run whose findings.json
-       is proven and whose projections failed is still deliverable, so this is
-       "disclose and deliver what exists", never "the review is gone".
-    2  Usage error (argparse), with an empty stdout.
-
-No external Python dependencies — stdlib only.
-"""
+from __future__ import annotations
 
 import argparse
 import json
 import os
-import sys
+from collections.abc import Hashable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import TypedDict, cast
 
-from gauntlet.artifacts import assemble
-from gauntlet.awaiting import (
-    TASK_OUTPUT_DIR_GLOB,
-    TASKS_DIR_ENV,
-    find_terminal,
-    read_text,
-    resolve_target,
-    task_roots,
-)
-from gauntlet.cli import Command
-from gauntlet.fs import confined, glob_under, write_atomic
-from gauntlet.jsjson import escape_lone_surrogates, fnv1a32, utf16_len
+from gauntlet import tasks
+from gauntlet.artifacts import AssembleReceipt, PlanEntry, WrittenArtifact, assemble
+from gauntlet.cli import Command, Parser, UsageError
+from gauntlet.fs import confined, write_atomic
+from gauntlet.jsjson import fnv1a32, utf16_len
 
-#: The value `persistReturn.channel` must carry. A payload that does not name this
-#: channel is not this contract and is skipped rather than guessed at.
+# Only this persist channel carries primary text rather than a writer plan.
 CHANNEL = "return"
 
-#: How many task-output files a nonce sweep will read before giving up. The sweep
-#: exists for the case where no task id is in hand (a fast run returns inline),
-#: and a session directory accumulates one file per background task, so it has to
-#: be bounded — the same reason gauntlet.awaiting bounds its embedded-object scan.
-#: Newest-first ordering means the run that just finished is the first file read.
-MAX_SCANNED_FILES = 200
+
+@dataclass(frozen=True, slots=True)
+class SourceSelection:
+    path: str | None
+    payload: Mapping[str, object] | None
+    scanned: int
 
 
-# ---------------------------------------------------------------------------
-# Finding the run's own task output file
-# ---------------------------------------------------------------------------
+class MaterializeReceipt(TypedDict):
+    ok: bool
+    channel: str
+    source: str | None
+    scanned: int
+    materialized: list[WrittenArtifact]
+    assemble: AssembleReceipt | None
+    gaps: list[str]
+    errors: list[str]
 
 
-def persist_return_of(path):
-    """Return the ``persistReturn`` payload carried by *path*, or None.
-
-    Never raises: an absent, half-written or unrelated file is simply not a
-    source. `find_terminal` is gauntlet.awaiting's — it already knows the
-    Workflow tool's `{summary, ..., result}` envelope, the stringified-result
-    variant, and the bare return, and it already refuses to accept a nested agent
-    receipt as the pipeline's return.
-    """
-    terminal, _saw_bare_ok, _stop_reason = find_terminal(read_text(path))
+def persist_return_of(path: str) -> Mapping[str, object] | None:
+    terminal, _saw_bare_ok, _stop_reason = tasks.find_terminal(tasks.read_task(path))
     if not isinstance(terminal, dict):
         return None
     payload = terminal.get("persistReturn")
@@ -127,54 +47,18 @@ def persist_return_of(path):
     return payload
 
 
-def _sweep_paths(environ):
-    """Every task-output file that may hold this session's runs, newest first.
-
-    Bounded to MAX_SCANNED_FILES. $CODE_GAUNTLET_TASKS_DIR is honoured first and
-    exactly as gauntlet.awaiting honours it: one documented escape hatch for an
-    environment whose task directory cannot be derived, never a guess.
-    """
-    roots_and_patterns = []
-    override = environ.get(TASKS_DIR_ENV)
-    if override:
-        roots_and_patterns.append((override, "*.output"))
-    for root in task_roots(environ):
-        roots_and_patterns.append(
-            (root, os.path.join(TASK_OUTPUT_DIR_GLOB, "*.output"))
-        )
-    hits = []
-    for root, pattern in roots_and_patterns:
-        found = glob_under(root, pattern)
-        for path in found:
-            try:
-                hits.append((os.path.getmtime(path), path))
-            except OSError:
-                continue
-    hits.sort(key=lambda pair: pair[0], reverse=True)
-    return [path for _mtime, path in hits[:MAX_SCANNED_FILES]]
-
-
-def select_source(task, nonce, environ):
-    """Return ``(path, payload, scanned)`` for the run's task output file.
-
-    The named target is tried first and costs one read. The nonce sweep is the
-    fallback for a run whose task id was never printed (the Workflow tool returns
-    inline when the pipeline finishes fast — the file is written either way), and
-    it is also what makes a mis-typed id fail over instead of failing.
-
-    When a nonce is given it is REQUIRED to match. Task ids are short and a
-    session directory holds every run, so a payload from another review is a
-    reachable accident — and delivering one review's findings under another's
-    name is worse than not resolving at all.
-    """
+# Named paths cost one candidate; unresolved ids cost none. A supplied nonce must match.
+def select_source(
+    task: str | None, nonce: str | None, roots: tasks.TaskRoots
+) -> SourceSelection:
     scanned = 0
     candidates = []
     if task:
-        resolved, _searched = resolve_target(task, environ)
+        resolved, _searched = tasks.resolve_target(task, roots)
         if resolved:
             candidates.append(resolved)
     if nonce:
-        for path in _sweep_paths(environ):
+        for path in tasks.sweep_paths(roots):
             if path not in candidates:
                 candidates.append(path)
     for path in candidates:
@@ -184,21 +68,14 @@ def select_source(task, nonce, environ):
             continue
         if nonce and payload.get("nonce") != nonce:
             continue
-        return path, payload, scanned
-    return None, None, scanned
+        return SourceSelection(path, payload, scanned)
+    return SourceSelection(None, None, scanned)
 
 
-# ---------------------------------------------------------------------------
-# Writing what it carries
-# ---------------------------------------------------------------------------
-
-
-def plan_entries(payload, output_root, errors):
-    """Validate the payload and return ``(entries, plan_path)``.
-
-    Every failure here is structural and nothing is written: the payload is the
-    whole input, so a malformed one cannot be partially honoured.
-    """
+# Validate the whole payload before writing anything; malformed later entries cannot be ignored.
+def plan_entries(
+    payload: Mapping[str, object], output_root: str, errors: list[str]
+) -> tuple[list[PlanEntry] | None, str | None]:
     entries = payload.get("entries")
     if not isinstance(entries, list) or not entries:
         errors.append("persistReturn carries no entries to write")
@@ -222,12 +99,12 @@ def plan_entries(payload, output_root, errors):
                 f"inside {output_root}"
             )
             return None, None
-        checked.append((path, text))
+        checked.append(PlanEntry(path, text))
     plan_path = payload.get("planPath")
     if not isinstance(plan_path, str) or not plan_path:
         errors.append("persistReturn names no persist plan to derive from")
         return None, None
-    if plan_path not in [path for path, _text in checked]:
+    if plan_path not in [entry.path for entry in checked]:
         errors.append(
             f"the named persist plan {plan_path} is not among the entries this "
             "payload carries"
@@ -236,10 +113,12 @@ def plan_entries(payload, output_root, errors):
     return checked, plan_path
 
 
-def write_entries(entries, materialized, errors):
-    """Write every entry verbatim and report failed replacements."""
+def write_entries(
+    entries: Sequence[PlanEntry], materialized: list[WrittenArtifact], errors: list[str]
+) -> bool:
     ok = True
-    for path, text in entries:
+    for entry in entries:
+        path, text = cast(str, entry.path), entry.text
         try:
             write_atomic(path, text)
         except Exception as exc:  # noqa: BLE001 - reported, never raised
@@ -252,31 +131,10 @@ def write_entries(entries, materialized, errors):
     return ok
 
 
-# ---------------------------------------------------------------------------
-# Grading what landed
-# ---------------------------------------------------------------------------
-
-
-def proof_gaps(receipt, plan_text):
-    """The content-proof failures in *receipt*, worded for the caller's gaps.
-
-    Two gradings, both the assembler's own numbers — nothing is re-checksummed
-    here:
-
-    * a PRIMARY whose `content_proof` came back `mismatch`: the bytes on disk are
-      not the bytes the pipeline returned, so the return channel itself lost
-      something. On the writer path this was an expected 36%; here it should be
-      unreachable, which is exactly why it must be disclosed rather than assumed
-      away.
-    * a DERIVED document whose chars/checksum differ from the plan's own
-      `derive[]` expectation. The plan is the pipeline's serialization of the
-      document it held in memory, so a difference is a real Python-vs-JS
-      serializer divergence (or a stale plan) — the canary the workflow's
-      trustAssembleReceipt keeps on the writer path, kept here too now that no
-      executor grades this run.
-    """
+# Use the assembler numbers; derive expectations detect serializer divergence or stale plans.
+def proof_gaps(receipt: Mapping[str, object], plan_text: str) -> list[str]:
     gaps = []
-    for entry in receipt.get("verified") or []:
+    for entry in cast(Sequence[object], receipt.get("verified") or []):
         if not isinstance(entry, dict) or entry.get("content_proof") == "match":
             continue
         gaps.append(
@@ -288,16 +146,16 @@ def proof_gaps(receipt, plan_text):
         )
     try:
         expected = {
-            item.get("path"): item
+            cast(Hashable, item.get("path")): item
             for item in (json.loads(plan_text).get("derive") or [])
             if isinstance(item, dict)
         }
     except ValueError:
         return [*gaps, "the persist plan just written is not valid JSON"]
-    for entry in receipt.get("written") or []:
+    for entry in cast(Sequence[object], receipt.get("written") or []):
         if not isinstance(entry, dict):
             continue
-        want = expected.get(entry.get("path"))
+        want = expected.get(cast(Hashable, entry.get("path")))
         if want is None:
             gaps.append(
                 "artifact-content-proof: the persist plan carries no derived-content "
@@ -317,12 +175,15 @@ def proof_gaps(receipt, plan_text):
     return gaps
 
 
-# ---------------------------------------------------------------------------
-# The run
-# ---------------------------------------------------------------------------
-
-
-def _receipt(ok, source, scanned, materialized, assemble_receipt, gaps, errors):
+def _receipt(
+    ok: bool,
+    source: str | None,
+    scanned: int,
+    materialized: list[WrittenArtifact],
+    assemble_receipt: AssembleReceipt | None,
+    gaps: list[str],
+    errors: list[str],
+) -> MaterializeReceipt:
     return {
         "ok": ok,
         "channel": CHANNEL,
@@ -335,15 +196,16 @@ def _receipt(ok, source, scanned, materialized, assemble_receipt, gaps, errors):
     }
 
 
-def _materialize(task, nonce, output_dir, environ=None):
-    """Write what the run returned, derive the projections, return the receipt."""
-    environ = os.environ if environ is None else environ
-    errors = []
-    gaps = []
-    materialized = []
+def _materialize(
+    task: str | None, nonce: str | None, output_dir: str, roots: tasks.TaskRoots
+) -> MaterializeReceipt:
+    errors: list[str] = []
+    gaps: list[str] = []
+    materialized: list[WrittenArtifact] = []
     output_root = os.path.realpath(output_dir)
 
-    source, payload, scanned = select_source(task, nonce, environ)
+    selection = select_source(task, nonce, roots)
+    source, payload, scanned = selection.path, selection.payload, selection.scanned
     if payload is None:
         errors.append(
             "no task output file carrying this run's returned artifacts was found "
@@ -356,13 +218,13 @@ def _materialize(task, nonce, output_dir, environ=None):
     if entries is None:
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
 
+    # Skip derivation after a partial write: its source could belong to an earlier run.
     if not write_entries(entries, materialized, errors):
-        # A partial write is still reported entry by entry; derivation is skipped
-        # because the assembler would read a file that is not this run's.
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
 
-    receipt = assemble(plan_path)
-    plan_text = dict(entries).get(plan_path, "")
+    # plan_entries proved that plan_path is a string present among the validated entries.
+    receipt = assemble(cast(str, plan_path))
+    plan_text = {entry.path: entry.text for entry in entries}.get(plan_path, "")
     gaps.extend(proof_gaps(receipt, plan_text))
     if not receipt.get("ok"):
         errors.extend(
@@ -372,17 +234,12 @@ def _materialize(task, nonce, output_dir, environ=None):
     return _receipt(not gaps, source, scanned, materialized, receipt, gaps, errors)
 
 
-def materialize(task, nonce, output_dir, environ=None):
-    """_materialize, with a last-resort guard so the caller ALWAYS gets a receipt.
-
-    Same shape and same reason as gauntlet.artifacts' assemble(): the guard
-    belongs to the function that promises a receipt, not to one caller of it, so
-    every caller — main(), a test, a future importer — gets the promise. Every
-    expected failure is already a receipt above; this catches the unexpected one
-    and still reports it honestly as ok:false.
-    """
+# Keep the receipt guarantee at the library boundary for every caller.
+def materialize(
+    task: str | None, nonce: str | None, output_dir: str, roots: tasks.TaskRoots
+) -> MaterializeReceipt:
     try:
-        return _materialize(task, nonce, output_dir, environ)
+        return _materialize(task, nonce, output_dir, roots)
     except Exception as exc:  # noqa: BLE001 - the one-line-receipt contract
         return _receipt(
             False,
@@ -395,36 +252,22 @@ def materialize(task, nonce, output_dir, environ=None):
         )
 
 
-def _minimal_receipt_line(exc):
-    """A hand-built one-line receipt for when the real one will not serialize.
-
-    Same last hop as gauntlet.artifacts': an empty stdout is
-    indistinguishable from a dead process, and this one is read by a model that
-    branches on it.
-    """
-    try:
-        return json.dumps(
-            _receipt(
-                False,
-                None,
-                0,
-                [],
-                None,
-                [],
-                [f"receipt could not be serialized: {type(exc).__name__}: {exc}"],
-            )
-        )
-    except Exception:  # noqa: BLE001 - the never-print-nothing contract
-        return (
-            '{"ok": false, "channel": "return", "source": null, "scanned": 0, '
-            '"materialized": [], "assemble": null, "gaps": [], '
-            '"errors": ["receipt could not be serialized"]}'
-        )
+def _fallback_receipt(exc: Exception) -> MaterializeReceipt:
+    return _receipt(
+        False,
+        None,
+        0,
+        [],
+        None,
+        [],
+        [f"receipt could not be serialized: {type(exc).__name__}: {exc}"],
+    )
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(
-        description="Write the review's artifacts from the workflow's own return value."
+def build_parser() -> Parser:
+    parser = Parser(
+        prog="materialize_artifacts",
+        description="Write the review's artifacts from the workflow's own return value.",
     )
     parser.add_argument(
         "--output-dir",
@@ -437,7 +280,7 @@ def build_parser():
         "--task",
         metavar="TASK_ID_OR_PATH",
         help="The Task ID printed by the Workflow tool, or the task output file's "
-        "path (resolved exactly as gauntlet.awaiting resolves it).",
+        "path (resolved exactly as gauntlet.tasks resolves it).",
     )
     parser.add_argument(
         "--nonce",
@@ -448,22 +291,24 @@ def build_parser():
     return parser
 
 
-def main(argv=None, environ=None):
-    parser = build_parser()
-    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+def main(args: argparse.Namespace) -> tuple[MaterializeReceipt, int]:
     if not args.task and not args.nonce:
-        parser.error("give --task, --nonce, or both — there is nothing to resolve")
-    receipt = materialize(args.task, args.nonce, args.output_dir, environ)
-    try:
-        line = escape_lone_surrogates(
-            json.dumps(receipt, ensure_ascii=False, allow_nan=False)
+        raise UsageError(
+            "give --task, --nonce, or both \u2014 there is nothing to resolve", 2
         )
-        ok = bool(receipt["ok"])
-    except Exception as exc:  # noqa: BLE001 - stdout is NEVER empty
-        line = _minimal_receipt_line(exc)
-        ok = False
-    sys.stdout.write(line + "\n")
-    return 0 if ok else 1
+    roots = tasks.roots_from_environment(os.environ)
+    receipt = materialize(args.task, args.nonce, args.output_dir, roots)
+    return receipt, 0 if receipt["ok"] else 1
 
 
-CLI = Command.legacy(main, prog="materialize_artifacts.py")
+CLI = Command(
+    parser=build_parser(),
+    main=main,
+    ascii=False,
+    fallback_receipt=_fallback_receipt,
+    fallback_line=(
+        '{"ok": false, "channel": "return", "source": null, "scanned": 0, '
+        '"materialized": [], "assemble": null, "gaps": [], '
+        '"errors": ["receipt could not be serialized"]}'
+    ),
+)

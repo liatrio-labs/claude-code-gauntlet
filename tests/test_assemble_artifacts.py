@@ -28,21 +28,20 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 import pytest
 from gauntlet.artifacts import (
     assemble,
-    plan_checksum,
 )
 from gauntlet.jsjson import (
     fnv1a32,
     js_stringify_pretty,
-    normalize_content,
     utf16_len,
 )
+
+from tests.support.artifacts import _Workspace, finding, js_pretty
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -75,148 +74,6 @@ def js_stringify_many(docs_as_json_text):
     if proc.returncode != 0:
         raise AssertionError(proc.stderr)
     return json.loads(proc.stdout)
-
-
-def finding(fid, **over):
-    """A canonical persisted finding: canonical schema + the v2 aliases the
-    artifact-writer boundary adds (line/end_line/body)."""
-    f = {
-        "id": fid,
-        "file": f"src/{fid}.js",
-        "line_start": 10,
-        "line_end": 12,
-        "title": f"finding {fid}",
-        "description": f"a real problem in {fid}",
-        "severity": "high",
-        "confidence": 90,
-        "dimension": "bug",
-        "origin": "new",
-        "cross_file_refs": [],
-    }
-    f.update(over)
-    f["line"] = f["line_start"]
-    f["end_line"] = f["line_end"]
-    f["body"] = f["description"]
-    return f
-
-
-def js_pretty(obj):
-    """Byte-equivalent of JSON.stringify(obj, null, 2)."""
-    return json.dumps(obj, indent=2, ensure_ascii=False)
-
-
-class _Workspace:
-    """A temp output dir with findings.json + report.md already on disk."""
-
-    def __init__(self, findings=None, report="# report\n\nbody", findings_json=None):
-        self.findings = (
-            findings if findings is not None else [finding("F1"), finding("F2")]
-        )
-        self.report = report
-        # Override for fixtures whose on-disk bytes are not plain js_pretty output —
-        # a lone surrogate, for instance, is ESCAPED on disk (JSON.stringify is
-        # well-formed) and could not be written raw at all.
-        self.findings_json_override = findings_json
-
-    def __enter__(self):
-        self.dir = tempfile.mkdtemp(prefix="assemble-")
-        self.findings_path = os.path.join(
-            self.dir, "code-gauntlet-findings-abc1234.json"
-        )
-        self.report_path = os.path.join(self.dir, "code-gauntlet-report-abc1234.md")
-        self.post_path = os.path.join(
-            self.dir, "code-gauntlet-post-review-abc1234.json"
-        )
-        self.checkpoint_path = os.path.join(
-            self.dir, "code-gauntlet-checkpoint-all-abc1234.json"
-        )
-        self.plan_path = os.path.join(
-            self.dir, "code-gauntlet-persist-plan-abc1234.json"
-        )
-        self.findings_json = (
-            self.findings_json_override
-            if self.findings_json_override is not None
-            else js_pretty(self.findings)
-        )
-        self.write(self.findings_path, self.findings_json)
-        self.write(self.report_path, self.report)
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        shutil.rmtree(self.dir, ignore_errors=True)
-
-    def write(self, path, text):
-        with open(path, "w", encoding="utf-8", newline="") as fh:
-            fh.write(text)
-
-    def read(self, path):
-        with open(path, encoding="utf-8", newline="") as fh:
-            return fh.read()
-
-    def plan(self, **over):
-        ids = [f["id"] for f in self.findings if isinstance(f, dict) and "id" in f]
-        plan = {
-            "planVersion": 2,
-            "expect": [
-                {
-                    "path": self.findings_path,
-                    "chars": utf16_len(self.findings_json),
-                    "checksum": fnv1a32(self.findings_json),
-                },
-                {
-                    "path": self.report_path,
-                    "chars": utf16_len(normalize_content(self.report)),
-                    "checksum": fnv1a32(normalize_content(self.report)),
-                },
-            ],
-            "postReview": {
-                "path": self.post_path,
-                "source": self.findings_path,
-                "ids": list(ids),
-                "wrapper": None,
-            },
-            "checkpoint": {
-                "path": self.checkpoint_path,
-                "source": self.findings_path,
-                "challengeFindingIds": list(ids),
-                "stripAliasFields": ["line", "end_line", "body"],
-                "skeleton": {
-                    "phases": {
-                        "challenge": {
-                            "findings": [],
-                            "unverified": [],
-                            "eliminated": [],
-                            "gaps": [],
-                            "stats": {},
-                            "generated_at": "2026-07-27T00:00:00Z",
-                        }
-                    },
-                    "completed": ["challenge"],
-                    "phaseReached": "report",
-                    "counts": {"challenge": len(ids)},
-                },
-            },
-        }
-        plan.update(over)
-        return plan
-
-    def write_plan(self, plan, seal=True):
-        """Persist the plan the way the pipeline does: the self-proof is computed
-        LAST, over the plan without it. `seal=False` writes it unproven."""
-        out = dict(plan)
-        out.pop("planChecksum", None)
-        if seal:
-            out["planChecksum"] = plan_checksum(out)
-        self.write(self.plan_path, js_pretty(out))
-        return self.plan_path
-
-    def tamper_plan(self, mutate):
-        """Seal a plan, then alter it WITHOUT re-sealing — a writer that elided or
-        reordered entries while transcribing."""
-        sealed = json.loads(self.read(self.write_plan(self.plan())))
-        mutate(sealed)
-        self.write(self.plan_path, js_pretty(sealed))
-        return self.plan_path
 
 
 def run_script(plan_path):
@@ -1072,9 +929,24 @@ class TestStdoutIsNeverEmpty(unittest.TestCase):
             self.assertFalse(json.loads(proc.stdout)["ok"])
 
     def test_the_minimal_line_is_well_formed_and_self_describing(self):
-        from gauntlet.artifacts import _minimal_receipt_line
+        import io
+        from unittest.mock import patch
 
-        receipt = json.loads(_minimal_receipt_line(ValueError("out of range float")))
+        from gauntlet.artifacts import CLI
+
+        out = io.StringIO()
+        from gauntlet import cli
+
+        real_dumps = cli.dumps
+
+        def encode(receipt, **kwargs):
+            if not kwargs.get("ascii"):
+                raise ValueError("out of range float")
+            return real_dumps(receipt, **kwargs)
+
+        with patch("sys.stdout", out), patch("gauntlet.cli.dumps", side_effect=encode):
+            CLI.invoke(["--plan", "/missing-plan"])
+        receipt = json.loads(out.getvalue())
         self.assertEqual(receipt["ok"], False)
         self.assertEqual(receipt["written"], [])
         self.assertEqual(receipt["verified"], [])
@@ -1086,13 +958,22 @@ class TestStdoutIsNeverEmpty(unittest.TestCase):
         )
 
     def test_the_minimal_line_survives_an_exception_it_cannot_render(self):
-        from gauntlet.artifacts import _minimal_receipt_line
+        import io
+        from unittest.mock import patch
+
+        from gauntlet.artifacts import CLI
 
         class Hostile(Exception):
             def __str__(self):
                 raise RuntimeError("even str() fails here")
 
-        line = _minimal_receipt_line(Hostile())
+        out = io.StringIO()
+        with (
+            patch("sys.stdout", out),
+            patch("gauntlet.cli.dumps", side_effect=Hostile()),
+        ):
+            CLI.invoke(["--plan", "/missing-plan"])
+        line = out.getvalue()
         self.assertNotEqual(line.strip(), "")
         self.assertFalse(json.loads(line)["ok"])
 

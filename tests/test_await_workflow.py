@@ -14,41 +14,44 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from gauntlet.awaiting import (
-    COMPACT_RETURN_KEYS,
+    CLI,
     DEFAULT_TIMEOUT_SECONDS,
     MIN_TIMEOUT_SECONDS,
-    SCAN_MAX_CHARS,
-    _newest,
-    artifact_paths,
     artifacts_state,
     build_next_command,
     build_parser,
     default_timeout_seconds,
-    emit,
+)
+from gauntlet.awaiting import (
+    _artifact_paths as artifact_paths,
+)
+from gauntlet.registry import ARTIFACT_BASENAMES, ARTIFACT_PATH_TEMPLATES
+from gauntlet.tasks import (
+    COMPACT_RETURN_KEYS,
+    SCAN_MAX_CHARS,
+    TaskRoots,
+    _newest,
+    _root_candidates,
     find_terminal,
     is_terminal_return,
     looks_like_path,
-    main,
     resolve_target,
-    task_roots,
+    roots_from_environment,
     terminal_from,
 )
-from gauntlet.registry import ARTIFACT_BASENAMES, ARTIFACT_PATH_TEMPLATES
+
+from tests.support.artifacts import SUCCESS_RETURN, envelope
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def test_resolve_target_uses_literal_task_root(tmp_path, monkeypatch):
-    from gauntlet import awaiting
-
     root = tmp_path / "claude-[g]"
     target = root / "slug" / "session" / "tasks" / "w123.output"
     target.parent.mkdir(parents=True)
     target.write_text("", encoding="utf-8")
-    monkeypatch.setattr(awaiting, "task_roots", lambda _env: [str(root)])
-    assert resolve_target("w123", {})[0] == str(target)
+    assert resolve_target("w123", TaskRoots((str(root),), None))[0] == str(target)
 
 
 def test_next_command_keeps_symlinked_plugin_root(tmp_path, symlink_or_skip):
@@ -102,18 +105,6 @@ POSIX_SHELL = _find_posix_shell()
 # The success return, exactly as observed at `.result` in
 # .../tasks/w3eeyrqqm.output (a real headless smoke run, 2026-07-28), with the
 # stats/artifactPaths sub-objects trimmed to a representative key or two.
-SUCCESS_RETURN = {
-    "ok": True,
-    "phaseReached": "report",
-    "stats": {"discovered": 9, "merged": 9, "verified": True},
-    "artifactPaths": {
-        "findings": "/out/code-gauntlet-findings-da09bc08.json",
-        "report": "/out/code-gauntlet-report-da09bc08.md",
-    },
-    "resolvedPolicy": {"subagentModel": None},
-    "checkpoints": {"completed": ["summarize", "report"]},
-    "gaps": [],
-}
 
 # The early-failure return, as observed in two 615-byte task files. It omits
 # `resolvedPolicy` and `checkpoints` entirely — nothing had produced them yet —
@@ -190,32 +181,6 @@ VERIFY_RECEIPT = {
 }
 
 
-def envelope(result):
-    """Wrap *result* in the Workflow tool's real output-file envelope.
-
-    Key set and nesting copied from .../tasks/w3eeyrqqm.output: the tool writes
-    {summary, agentCount, logs, result, workflowProgress, totalTokens,
-    totalToolCalls} with the script's return value nested at `result`.
-    """
-    return {
-        "summary": "code-gauntlet v3 pipeline: phases 3-8 orchestration",
-        "agentCount": 19,
-        "logs": [],
-        "result": result,
-        "workflowProgress": [
-            {
-                "type": "workflow_agent",
-                "index": 1,
-                "label": "summarize",
-                "state": "done",
-                "lastToolSummary": "ok",
-            },
-        ],
-        "totalTokens": 669337,
-        "totalToolCalls": 118,
-    }
-
-
 class _Workspace:
     """A throwaway directory, cleaned up on exit."""
 
@@ -254,8 +219,7 @@ def _plant_task_output(test, prefix, name):
     """Plant an empty task output beneath a temporary task root."""
     base = tempfile.mkdtemp(prefix=prefix)
     test.addCleanup(shutil.rmtree, base, ignore_errors=True)
-    env = {"TMPDIR": base}
-    root = next(root for root in task_roots(env) if os.path.dirname(root) == base)
+    root = os.path.join(base, "claude")
     path = os.path.join(root, "slug", "session", "tasks", name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
@@ -266,8 +230,12 @@ def _plant_task_output(test, prefix, name):
 def run_main(argv, environ=None):
     """Call main() with captured streams. Returns ``(code, stdout, stderr)``."""
     out, err = io.StringIO(), io.StringIO()
-    with patch("sys.stdout", new=out), patch("sys.stderr", new=err):
-        code = main(argv, environ if environ is not None else {})
+    with (
+        patch("sys.stdout", new=out),
+        patch("sys.stderr", new=err),
+        patch.dict(os.environ, environ or {}),
+    ):
+        code = CLI.invoke(argv)
     return code, out.getvalue(), err.getvalue()
 
 
@@ -927,14 +895,16 @@ class TestArtifactFlagsMustBePaired(unittest.TestCase):
     """A safety net that silently turns itself off is worse than none."""
 
     def test_artifacts_dir_without_head_sha_is_a_usage_error(self):
-        with self.assertRaises(SystemExit) as caught:
-            run_main(["w1", "--timeout-seconds", "0", "--artifacts-dir", "/tmp/x"])
-        self.assertEqual(caught.exception.code, 2)
+        code, _, _ = run_main(
+            ["w1", "--timeout-seconds", "0", "--artifacts-dir", "/tmp/x"]
+        )
+        self.assertEqual(code, 2)
 
     def test_head_sha_without_artifacts_dir_is_a_usage_error(self):
-        with self.assertRaises(SystemExit) as caught:
-            run_main(["w1", "--timeout-seconds", "0", "--head-sha", "abc12345"])
-        self.assertEqual(caught.exception.code, 2)
+        code, _, _ = run_main(
+            ["w1", "--timeout-seconds", "0", "--head-sha", "abc12345"]
+        )
+        self.assertEqual(code, 2)
 
 
 class TestSawOkWithoutCorroborator(unittest.TestCase):
@@ -956,34 +926,34 @@ class TestSawOkWithoutCorroborator(unittest.TestCase):
 
 class TestResolveTarget(unittest.TestCase):
     def test_absolute_path_used_verbatim(self):
-        path, searched = resolve_target("/tmp/x/tasks/w1.output", {})
+        path, searched = resolve_target("/tmp/x/tasks/w1.output", TaskRoots((), None))
         self.assertEqual(path, "/tmp/x/tasks/w1.output")
         self.assertEqual(searched, [])
 
     def test_bare_output_filename_used_verbatim(self):
-        path, _ = resolve_target("w1.output", {})
+        path, _ = resolve_target("w1.output", TaskRoots((), None))
         self.assertEqual(path, "w1.output")
 
     def test_task_id_resolved_under_the_env_override(self):
         with _Workspace() as ws:
             ws.write("wabc123.output", "")
-            path, searched = resolve_target(
-                "wabc123", {"CODE_GAUNTLET_TASKS_DIR": ws.path}
-            )
+            path, searched = resolve_target("wabc123", TaskRoots((), ws.path))
             self.assertEqual(path, os.path.join(ws.path, "wabc123.output"))
             self.assertTrue(searched)
 
     def test_glob_metacharacters_in_task_id_do_not_match_other_runs(self):
         """An unescaped id is a pattern that can return another run's file."""
         base, path = _plant_task_output(self, "resolve-plain-", "wabc123.output")
-        env = {"TMPDIR": base}
+        roots = TaskRoots((os.path.join(base, "claude"),), None)
 
-        self.assertEqual(resolve_target("wabc123", env)[0], path)
-        self.assertIsNone(resolve_target("w?bc123", env)[0])
-        self.assertIsNone(resolve_target("*", env)[0])
+        self.assertEqual(resolve_target("wabc123", roots)[0], path)
+        self.assertIsNone(resolve_target("w?bc123", roots)[0])
+        self.assertIsNone(resolve_target("*", roots)[0])
 
     def test_unresolvable_id_returns_none_and_reports_what_it_tried(self):
-        path, searched = resolve_target("wnosuchtask000", {})
+        path, searched = resolve_target(
+            "wnosuchtask000", roots_from_environment(os.environ)
+        )
         self.assertIsNone(path)
         self.assertTrue(all("wnosuchtask000.output" in p for p in searched))
 
@@ -992,14 +962,19 @@ class TestResolveTarget(unittest.TestCase):
         looked for. Filtering non-existent roots made `searched` empty there, so
         the marker named no reason and pointed at no fix — which is the whole
         job of that field. CI is exactly such a machine."""
-        path, searched = resolve_target("wnosuchtask000", {"TMPDIR": "/no/such/tmp"})
+        path, searched = resolve_target(
+            "wnosuchtask000", TaskRoots(("/no/such/tmp/claude",), None)
+        )
         self.assertIsNone(path)
         self.assertTrue(searched, "searched must never be empty on a failure")
         self.assertTrue(any("/no/such/tmp" in p for p in searched))
 
     def test_env_override_miss_falls_through_to_the_globs(self):
         path, searched = resolve_target(
-            "wnosuchtask000", {"CODE_GAUNTLET_TASKS_DIR": "/nonexistent-dir"}
+            "wnosuchtask000",
+            TaskRoots(
+                roots_from_environment(os.environ).directories, "/nonexistent-dir"
+            ),
         )
         self.assertIsNone(path)
         self.assertIn(
@@ -1009,10 +984,11 @@ class TestResolveTarget(unittest.TestCase):
     def test_missing_getuid_uses_system_temp_root(self):
         with (
             tempfile.TemporaryDirectory() as sentinel,
-            patch.object(os, "getuid", None, create=True),
-            patch("gauntlet.awaiting.tempfile.gettempdir", return_value=sentinel),
         ):
-            path, searched = resolve_target("wnosuchtask000", {})
+            candidates = _root_candidates((sentinel,), None, None, sentinel)
+            path, searched = resolve_target(
+                "wnosuchtask000", TaskRoots(candidates, None)
+            )
         self.assertIsNone(path)
         # pattern shape is root/*/*/tasks/<id>.output, so the root is four
         # levels up from the pattern string.
@@ -1255,8 +1231,14 @@ class TestExitCodeContract(unittest.TestCase):
 
     def test_non_serializable_payload_emits_fallback_line(self):
         out = io.StringIO()
-        with patch("sys.stdout", new=out):
-            emit({"await": "ok", "bad": {1, 2, 3}})
+        with (
+            patch("sys.stdout", new=out),
+            patch(
+                "gauntlet.awaiting.await_terminal",
+                return_value=({"await": "ok", "bad": {1, 2, 3}}, 0),
+            ),
+        ):
+            CLI.invoke(["w1", "--timeout-seconds", "0"])
         marker = sole_json_line(out.getvalue())
         self.assertEqual(marker["await"], "error")
         self.assertEqual(marker["gap"], "workflow-timeout")
@@ -1462,7 +1444,7 @@ class TestNextCommand(unittest.TestCase):
             argv += ["--" + key.replace("_", "-"), str(value)]
         # Target last, behind `--` — the same shape the script emits, and the
         # only shape that survives a target beginning with a dash.
-        return build_parser({}).parse_args([*argv, "--", target])
+        return build_parser().parse_args([*argv, "--", target])
 
     def test_increments_the_attempt(self):
         cmd = build_next_command(self._args(attempt=2, max_attempts=4), None, 1.0)
@@ -1659,11 +1641,6 @@ class TestWaitLoop(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Lockstep and acceptance guards
 # ---------------------------------------------------------------------------
-
-
-def test_artifact_mapping_is_read_only():
-    with pytest.raises(TypeError):
-        ARTIFACT_PATH_TEMPLATES["findings"] = "elsewhere-{sha}.json"
 
 
 class TestWaitProtocolAcceptance(unittest.TestCase):

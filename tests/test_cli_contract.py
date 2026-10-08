@@ -555,19 +555,19 @@ def test_windows_skips_only_named_exceptions_or_path_receipts(name, case):
 
 def _built_success(name, directory):
     if name == "assemble_artifacts":
-        from tests.test_assemble_artifacts import _Workspace
+        from tests.support.artifacts import _Workspace
 
         workspace = _Workspace()
         with patch("tempfile.mkdtemp", return_value=str(directory)):
             workspace.__enter__()
         return ["--plan", workspace.write_plan(workspace.plan())]
     if name == "await_workflow":
-        from tests.test_await_workflow import SUCCESS_RETURN, envelope
+        from tests.support.artifacts import SUCCESS_RETURN, envelope
 
         task = directory / "task.output"
         task.write_text(json.dumps(envelope(SUCCESS_RETURN)), encoding="utf-8")
         return [str(task), "--timeout-seconds", "0"]
-    from tests.test_materialize_artifacts import record_task_output
+    from tests.support.artifacts import record_task_output
 
     task, output = record_task_output(str(directory))
     return ["--output-dir", output, "--task", task]
@@ -580,7 +580,7 @@ def _command_line(name, case, directory):
             (directory / relative).write_text(text, encoding="utf-8")
         return command_line
     if case == "artifacts_only":
-        from gauntlet.awaiting import ARTIFACT_BASENAMES
+        from gauntlet.registry import ARTIFACT_BASENAMES
 
         for template in ARTIFACT_BASENAMES:
             (directory / template.format(sha="abc12345")).write_text(

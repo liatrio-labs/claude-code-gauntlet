@@ -5,6 +5,7 @@ import subprocess
 import unittest
 from typing import ClassVar
 
+import pytest
 from gauntlet import contract_gen as gen
 from gauntlet import registry
 from gauntlet.delivery import compose
@@ -386,6 +387,11 @@ class TestIdentitySurface(unittest.TestCase):
             "unfenced emoji lines must be allowlisted by exact line and reason: "
             f"{unfenced}",
         )
+
+
+def test_artifact_mapping_is_read_only():
+    with pytest.raises(TypeError):
+        registry.ARTIFACT_PATH_TEMPLATES["findings"] = "elsewhere-{sha}.json"
 
 
 if __name__ == "__main__":
