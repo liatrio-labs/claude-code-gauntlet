@@ -11,8 +11,8 @@ import { loadCases } from './helpers/goldenCases.js';
 
 // --- verify_deltas: cross-runtime equivalence claim -----------
 //
-// Python (verify_findings.py's build_deltas/deltas_checksum, run by the recorder) owns
-// the producing half; this block owns the reconstructing half (joinVerifyDeltas/
+// Python (gauntlet.verify.wire.build_deltas and gauntlet.jsjson.checksum_or_none,
+// run by the recorder) owns the producing half; this block owns the reconstructing half (joinVerifyDeltas/
 // deltaContentProof, the same functions verifyStage actually calls). One golden fixture
 // sits between them, so a change to either side that breaks the join is caught here
 // rather than only by the two runtimes agreeing with themselves.
@@ -26,7 +26,8 @@ for (const c of loadCases('verify_deltas')) {
     assert.deepEqual(joined, c.expected.joined);
 
     // (2) The two runtimes compute the SAME content proof over the SAME deltas --
-    // Python's deltas_checksum(deltas) (over the deltas in dispatch order) against JS's
+    // Python's gauntlet.jsjson.checksum_or_none(deltas) (over the deltas in dispatch
+    // order) against JS's
     // deltaContentProof (which re-keys by id before stringifying), so an order-dependent
     // divergence between the two canonicalisations would fail here even though each
     // runtime's own deltas array already carries the checksum that produced it.

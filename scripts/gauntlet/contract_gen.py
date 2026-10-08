@@ -580,7 +580,11 @@ def render_python_registry(identity):
     if not set(identity["required"]) <= set(field_types):
         raise SystemExit("required finding field absent from schema")
     delta_keys = identity["deltaKeys"]
-    if delta_keys[:2] != ["id", "verified"] or len(delta_keys) != len(set(delta_keys)):
+    required_delta_keys = delta_keys[:2]
+    delta_value_fields = delta_keys[2:]
+    if required_delta_keys != ["id", "verified"] or len(delta_keys) != len(
+        set(delta_keys)
+    ):
         raise SystemExit("invalid ordered delta keys")
     if not set(identity["verifySliceFields"]) <= set(field_types):
         raise SystemExit("verify slice field absent from finding schema")
@@ -625,14 +629,14 @@ def render_python_registry(identity):
         f"Severity = {literal_type(identity['severityOrder'])}",
         f"Reachability = {literal_type(identity['reachability'])}",
         f"DeltaKey = {literal_type(delta_keys)}",
-        f"DeltaValueField = {literal_type(delta_keys[2:])}",
+        f"DeltaValueField = {literal_type(delta_value_fields)}",
         "",
     ]
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
         "REACHABILITY_VALUES": tuple(identity["reachability"]),
         "DELTA_KEYS": tuple(delta_keys),
-        "DELTA_VALUE_FIELDS": tuple(delta_keys[2:]),
+        "DELTA_VALUE_FIELDS": tuple(delta_value_fields),
         "VERIFY_SLICE_FIELDS": tuple(identity["verifySliceFields"]),
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
@@ -659,16 +663,14 @@ def render_python_registry(identity):
         [
             "",
             "class _DeltaRequired(TypedDict):",
-            *(
-                f"    {field}: {'str' if field == 'id' else 'bool'}"
-                for field in delta_keys[:2]
-            ),
+            "    id: str",
+            "    verified: bool",
             "",
             "",
             "class Delta(_DeltaRequired, total=False):",
             *(
                 f"    {field}: {'int' if field == 'confidence' else 'object'}"
-                for field in delta_keys[2:]
+                for field in delta_value_fields
             ),
             "",
             "",

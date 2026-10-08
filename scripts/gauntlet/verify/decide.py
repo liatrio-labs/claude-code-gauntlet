@@ -6,13 +6,13 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict
 
 from gauntlet import proc
 from gauntlet.cli import warn
 from gauntlet.diff import DiffFacts, is_line_valid, parse_diff
 from gauntlet.paths import entry
-from gauntlet.registry import VerifySliceFinding
+from gauntlet.registry import SEVERITY_ORDER, VerifySliceFinding
 
 Origin = Literal["new", "surfaced"]
 
@@ -63,21 +63,114 @@ class VerificationResult(TypedDict):
     stats: Stats
 
 
-_SEVERITY_DOWNGRADE = {
-    "critical": "high",
-    "high": "medium",
-    "medium": "low",
-    "low": "low",
-}
+_SEVERITY_DOWNGRADE = dict(
+    zip(SEVERITY_ORDER, (*SEVERITY_ORDER[1:], SEVERITY_ORDER[-1]), strict=True)
+)
+_SKIP_SYMBOLS = frozenset(
+    [
+        "the",
+        "this",
+        "that",
+        "with",
+        "from",
+        "import",
+        "class",
+        "def",
+        "for",
+        "not",
+        "and",
+        "its",
+        "but",
+        "are",
+        "was",
+        "were",
+        "can",
+        "should",
+        "would",
+        "could",
+        "also",
+        "will",
+        "has",
+        "have",
+        "been",
+        "when",
+        "then",
+        "else",
+        "elif",
+        "True",
+        "False",
+        "None",
+        "self",
+        "return",
+        "raise",
+        "pass",
+        "break",
+        "continue",
+        "lambda",
+        "yield",
+        "async",
+        "await",
+        "print",
+        "isinstance",
+        "len",
+        "str",
+        "int",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "type",
+        "super",
+        "object",
+        "Exception",
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "AttributeError",
+        "IndexError",
+        "RuntimeError",
+        "StopIteration",
+        "OSError",
+        "IOError",
+        "FileNotFoundError",
+        "NotImplementedError",
+        "AssertionError",
+        "OverflowError",
+        "ZeroDivisionError",
+    ]
+)
+
+
+def _downgrade_severity(finding: FindingWire) -> None:
+    severity = finding.get("severity", "")
+    if severity in _SEVERITY_DOWNGRADE:
+        finding["severity"] = _SEVERITY_DOWNGRADE[severity]
 
 
 # The per-invocation lazy cache must be mutable so empty and ineligible slices query no log.
 @dataclass(slots=True)
 class VerifyContext:
     repo_root: str
-    base_branch: object
-    pr_commits: frozenset[str] | None = None
+    base_branch: str
+    _pr_commits: frozenset[str] | None = None
     commit_error: str | None = None
+
+    def commits(self) -> frozenset[str] | None:
+        if self._pr_commits is None and self.commit_error is None:
+            stdout, stderr, rc = proc.output(
+                [
+                    "git",
+                    "log",
+                    "--format=%H",
+                    "--end-of-options",
+                    f"{self.base_branch}..HEAD",
+                ]
+            )
+            if rc != 0:
+                self.commit_error = stderr.strip()
+            else:
+                self._pr_commits = frozenset(stdout.strip().splitlines())
+        return self._pr_commits
 
 
 def resolve_repo_root() -> str:
@@ -125,7 +218,7 @@ def get_diff(context: VerifyContext, diff_file: str | None = None) -> str | None
     )
 
     stdout, stderr, rc = proc.output(
-        ["git", "diff", "--end-of-options", cast(str, base_branch), "HEAD"]
+        ["git", "diff", "--end-of-options", base_branch, "HEAD"]
     )
     if rc == 0:
         print(
@@ -169,10 +262,8 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
     cross_file_refs = finding.get("cross_file_refs") or []
 
     if cross_file_refs:
-        classification: Origin = "surfaced"
-        if original_severity in _SEVERITY_DOWNGRADE:
-            finding["severity"] = _SEVERITY_DOWNGRADE[original_severity]
-        return _stamp_blame(finding, classification, original_severity)
+        _downgrade_severity(finding)
+        return _stamp_blame(finding, "surfaced", original_severity)
 
     # File not found on disk → skip (return "new" to keep finding, conservative)
     if not os.path.exists(filepath):
@@ -181,23 +272,13 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         )
         return _stamp_blame(finding, "new", original_severity)
 
-    if context.pr_commits is None and context.commit_error is None:
-        pr_stdout, pr_stderr, pr_rc = proc.output(
-            ["git", "log", "--format=%H", "--end-of-options", f"{base_branch}..HEAD"]
-        )
-        if pr_rc != 0:
-            context.commit_error = pr_stderr.strip()
-        else:
-            context.pr_commits = frozenset(pr_stdout.strip().splitlines())
-    if context.commit_error is not None:
+    pr_commits = context.commits()
+    if pr_commits is None:
         warn(
             f"classify_blame: git log failed for base '{base_branch}': {context.commit_error}"
             " — classifying as 'new' (conservative)."
         )
         return _stamp_blame(finding, "new", original_severity)
-
-    pr_commits = context.pr_commits
-    assert pr_commits is not None
 
     blame_cmd = ["git", "blame", f"-L{line_start},{line_end}", "--", filepath]
     blame_stdout, blame_stderr, blame_rc = proc.output(blame_cmd)
@@ -249,10 +330,10 @@ def classify_blame(finding: FindingWire, context: VerifyContext) -> Origin:
         full_sha.startswith(s) for s in blamed_shas for full_sha in pr_commits
     )
 
-    classification = "new" if has_pr_commit else "surfaced"
+    classification: Origin = "new" if has_pr_commit else "surfaced"
 
-    if classification == "surfaced" and original_severity in _SEVERITY_DOWNGRADE:
-        finding["severity"] = _SEVERITY_DOWNGRADE[original_severity]
+    if classification == "surfaced":
+        _downgrade_severity(finding)
 
     return _stamp_blame(
         finding, classification, original_severity, first_author, first_date
@@ -319,17 +400,6 @@ def _extract_symbols(description: str, evidence: str) -> set[str]:
     # cause false-positive symbol misses that kill true positives.
 
     # Filter out very common English words, Python builtins, and short tokens
-    stop_words = (
-        "the this that with from import class def for not and its but are was "
-        "were can should would could also will has have been when then else elif "
-        "True False None self return raise pass break continue lambda yield async "
-        "await print isinstance len str int list dict set tuple type super object "
-        "Exception ValueError TypeError KeyError AttributeError IndexError "
-        "RuntimeError StopIteration OSError IOError FileNotFoundError "
-        "NotImplementedError AssertionError OverflowError ZeroDivisionError"
-    )
-    _SKIP_SYMBOLS = frozenset(stop_words.split())
-
     return {s for s in raw_symbols if s not in _SKIP_SYMBOLS and len(s) > 2}
 
 
@@ -421,9 +491,7 @@ def verify_factual(finding: FindingWire, context: VerifyContext) -> bool:
                 ["git", "grep", "-l", "-e", symbol], timeout=3, cwd=context.repo_root
             )
         except proc.TimeoutExpired:
-            stdout, grep_stderr, rc = "", "", -1
-        # rc=-1: timeout — skip symbol, Phase 5 validators will verify
-        if rc == -1:
+            # Timeout: skip symbol, Phase 5 validators will verify
             warn(
                 f"verify_factual: symbol search timed out for "
                 f"'{symbol}' — skipping (Phase 5 will validate)."
@@ -511,9 +579,7 @@ def validate_diff_lines(finding: FindingWire, facts: DiffFacts | None) -> bool:
     blame_meta = finding.get("blame_metadata")
     # Blame downgrades when it tags surfaced; a second downgrade would drop two levels.
     if not blame_meta or blame_meta.get("classification") != "surfaced":
-        original_severity = finding.get("severity", "")
-        if original_severity in _SEVERITY_DOWNGRADE:
-            finding["severity"] = _SEVERITY_DOWNGRADE[original_severity]
+        _downgrade_severity(finding)
 
     return True
 

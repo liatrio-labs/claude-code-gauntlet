@@ -319,22 +319,24 @@ def test_coerce_nan():
 
 
 @pytest.mark.parametrize(
-    ("findings", "kept", "expected"),
+    ("findings", "kept", "expected", "copy_verified"),
     [
         pytest.param(
             [{"id": "copy"}],
             [],
             [{"id": "copy", "verified": False}],
+            True,
             id="DELTA-equal-copy",
         ),
         pytest.param(
             [{"id": " a "}],
             [0],
             [{"id": " a ", "verified": True}],
+            False,
             id="DELTA-padded-id",
         ),
         pytest.param(
-            [None, {}, {"id": " "}, {"id": 1}], [], [], id="DELTA-unusable-id"
+            [None, {}, {"id": " "}, {"id": 1}], [], [], False, id="DELTA-unusable-id"
         ),
         pytest.param(
             [
@@ -358,6 +360,7 @@ def test_coerce_nan():
                     "elimination_reason": "gone",
                 }
             ],
+            False,
             id="DELTA-full-key-order",
         ),
         pytest.param(
@@ -367,6 +370,7 @@ def test_coerce_nan():
                 {"id": "a", "verified": True, "confidence": 65},
                 {"id": "b", "verified": True, "confidence": -64},
             ],
+            False,
             id="DELTA-half-up",
         ),
         pytest.param(
@@ -387,6 +391,7 @@ def test_coerce_nan():
                 {"id": "e", "verified": False},
                 {"id": "f", "verified": False},
             ],
+            False,
             id="DELTA-confidence-limits",
         ),
         pytest.param(
@@ -401,20 +406,22 @@ def test_coerce_nan():
                 {"id": "b", "verified": True},
                 {"id": "c", "verified": True},
             ],
+            False,
             id="DELTA-quoted-container-confidence",
         ),
         pytest.param(
             [{"id": "negative", "confidence": -9007199254740992}],
             [0],
             [{"id": "negative", "verified": True}],
+            False,
             id="DELTA-negative-unsafe-confidence",
         ),
     ],
 )
-def test_delta(findings, kept, expected, request):
+def test_delta(findings, kept, expected, copy_verified):
     originals = copy.deepcopy(findings)
     verified = [originals[i] for i in kept]
-    if request.node.callspec.id == "DELTA-equal-copy":
+    if copy_verified:
         verified = copy.deepcopy(originals)
     actual = verify.build_deltas(originals, verified)
     assert actual == expected
@@ -515,18 +522,10 @@ def test_receipt_token_value_spelling(invoke, tmp_path, verify_git):
         ).read_bytes() == b'{\n  "findings": [],\n  "n": 0\n}'
 
 
-@pytest.mark.parametrize(
-    ("token", "written"),
-    [
-        pytest.param(
-            '{"findings":[],"text":"caf%C3%A9","n":7.5}',
-            b'{\n  "findings": [],\n  "text": "caf\\u00e9",\n  "n": 7.5\n}',
-            id="RECEIPT-ASCII-input-fallback",
-        ),
-    ],
-)
-def test_receipt_fallback(token, written, invoke, tmp_path, verify_git):
-    env = json.loads(receipt(invoke, tmp_path, token).stdout)
+def test_receipt_fallback(invoke, tmp_path, verify_git):
+    env = json.loads(
+        receipt(invoke, tmp_path, '{"findings":[],"text":"caf%C3%A9","n":7.5}').stdout
+    )
     assert env["status"] == "ok"
     assert list(env["receipt"]) == [
         "sha",
@@ -536,7 +535,9 @@ def test_receipt_fallback(token, written, invoke, tmp_path, verify_git):
         "inline_checksum",
     ]
     assert env["receipt"]["deltas_checksum"] == "fnv1a32:0x741638a5"
-    assert (tmp_path / "slice.json").read_bytes() == written
+    assert (
+        tmp_path / "slice.json"
+    ).read_bytes() == b'{\n  "findings": [],\n  "text": "caf\\u00e9",\n  "n": 7.5\n}'
 
 
 def test_receipt_null_delta_proof(invoke, tmp_path, verify_git):

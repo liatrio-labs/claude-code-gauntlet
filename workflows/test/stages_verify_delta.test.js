@@ -359,7 +359,8 @@ test('deltaContentProof keys by exact id text, not trimmed', () => {
       elimination_reason: ELIMINATION_STAMP,
     },
   ];
-  // The golden recorded by verify_findings.build_deltas/deltas_checksum for this shape.
+  // The golden recorded by gauntlet.verify.wire.build_deltas and
+  // gauntlet.jsjson.checksum_or_none for this shape.
   assert.equal(deltaContentProof(ids, deltas), 'fnv1a32:0x336f631c');
 });
 

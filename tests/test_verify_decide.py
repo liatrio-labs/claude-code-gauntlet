@@ -332,11 +332,21 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
 
 
 @pytest.mark.parametrize(
-    ("patch", "mode", "keep", "confidence", "metadata", "attempted", "warnings"),
+    (
+        "patch",
+        "mode",
+        "content",
+        "keep",
+        "confidence",
+        "metadata",
+        "attempted",
+        "warnings",
+    ),
     [
         pytest.param(
             {"line_start": None},
             "normal",
+            b"prefix_local_symbol_suffix\ntail\n",
             True,
             80,
             {
@@ -351,6 +361,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"file": "missing"},
             "normal",
+            b"prefix_local_symbol_suffix\ntail\n",
             False,
             0,
             {
@@ -365,6 +376,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {},
             "read-error",
+            b"prefix_local_symbol_suffix\ntail\n",
             False,
             0,
             {
@@ -379,6 +391,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {},
             "binary",
+            b"\xff",
             True,
             80,
             {
@@ -393,6 +406,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"line_start": 3},
             "normal",
+            b"prefix_local_symbol_suffix\ntail\n",
             False,
             0,
             {
@@ -407,6 +421,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"line_start": -1},
             "normal",
+            b"prefix_local_symbol_suffix\ntail\n",
             False,
             0,
             {
@@ -421,6 +436,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"line_end": 99},
             "normal",
+            b"prefix_local_symbol_suffix\ntail\n",
             True,
             80,
             {
@@ -435,6 +451,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"description": "`alpha` `beta` `gamma` `local_symbol`"},
             "mixed",
+            b"prefix_local_symbol_suffix\ntail\n",
             True,
             62,
             {
@@ -453,6 +470,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"description": "`alpha` `beta` `gamma` `local_symbol`", "confidence": 100},
             "missing",
+            b"prefix_local_symbol_suffix\ntail\n",
             True,
             48,
             {
@@ -470,6 +488,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"description": "`alpha`", "confidence": None},
             "default",
+            b"prefix_local_symbol_suffix\ntail\n",
             True,
             30,
             {
@@ -487,6 +506,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"description": "`alpha` `beta`"},
             "empty",
+            b"prefix_local_symbol_suffix\ntail\n",
             True,
             30,
             {
@@ -504,6 +524,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"description": "`alpha`"},
             "timeout",
+            b"prefix_local_symbol_suffix\ntail\n",
             True,
             80,
             {
@@ -519,6 +540,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"description": "`alpha`"},
             "fatal",
+            b"prefix_local_symbol_suffix\ntail\n",
             True,
             80,
             {
@@ -534,6 +556,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {"file": ""},
             "normal",
+            b"prefix_local_symbol_suffix\ntail\n",
             False,
             0,
             {"verified": False, "reason": "file not found: ''", "code_at_lines": None},
@@ -544,6 +567,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
         pytest.param(
             {},
             "trailing-X",
+            b"codeX\n",
             True,
             80,
             {
@@ -560,6 +584,7 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
 def test_fact(
     patch,
     mode,
+    content,
     keep,
     confidence,
     metadata,
@@ -571,13 +596,7 @@ def test_fact(
     capsys,
 ):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "source").write_bytes(
-        b"\xff"
-        if mode == "binary"
-        else b"codeX\n"
-        if mode == "trailing-X"
-        else b"prefix_local_symbol_suffix\ntail\n"
-    )
+    (tmp_path / "source").write_bytes(content)
     finding = {"file": "source", "line_start": 1, "confidence": 80, **patch}
     calls, replies = verify_git
     if mode == "read-error":
@@ -686,10 +705,11 @@ def test_diff(patch, diff, validation, origin, severity):
 
 
 @pytest.mark.parametrize(
-    ("mode", "expected", "stderr", "commands"),
+    ("path", "reply", "expected", "stderr", "commands"),
     [
         pytest.param(
-            "file",
+            "patch",
+            ("patch", "", 0),
             "patch",
             "Diff source: --diff-file (patch), 5 bytes\n",
             [],
@@ -697,6 +717,7 @@ def test_diff(patch, diff, validation, origin, severity):
         ),
         pytest.param(
             "missing",
+            ("patch", "", 0),
             None,
             "WARNING: Could not read diff file 'missing': [Errno 2] No such file or "
             "directory: 'missing'\n",
@@ -704,14 +725,18 @@ def test_diff(patch, diff, validation, origin, severity):
             id="SOURCE-missing-no-git",
         ),
         pytest.param(
-            "three",
+            None,
+            ("patch", "", 0),
             "patch",
             "Diff source: git diff base...HEAD (three-dot), 5 bytes\n",
             [["git", "diff", "--end-of-options", "base...HEAD"]],
             id="SOURCE-three-dot",
         ),
         pytest.param(
-            "two",
+            None,
+            lambda argv: (
+                ("", " no merge \n", 1) if len(argv) == 4 else ("patch", "", 0)
+            ),
             "patch",
             "WARNING: git diff base...HEAD failed (exit 1): no merge. Falling back to git "
             "diff base HEAD (two-dot).\n"
@@ -723,7 +748,10 @@ def test_diff(patch, diff, validation, origin, severity):
             id="SOURCE-two-dot",
         ),
         pytest.param(
-            "fail",
+            None,
+            lambda argv: (
+                ("", " no merge \n", 1) if len(argv) == 4 else ("", " bad base \n", 2)
+            ),
             None,
             "WARNING: git diff base...HEAD failed (exit 1): no merge. Falling back to git "
             "diff base HEAD (two-dot).\n"
@@ -738,21 +766,12 @@ def test_diff(patch, diff, validation, origin, severity):
     ],
 )
 def test_source(
-    mode, expected, stderr, commands, tmp_path, monkeypatch, verify_git, capsys
+    path, reply, expected, stderr, commands, tmp_path, monkeypatch, verify_git, capsys
 ):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "patch").write_text("patch", encoding="utf-8")
     calls, replies = verify_git
-    replies["diff"] = lambda argv: (
-        ("", " no merge \n", 1)
-        if len(argv) == 4 and mode in ("two", "fail")
-        else ("", " bad base \n", 2)
-        if mode == "fail"
-        else ("", "", 0)
-        if mode == "empty"
-        else ("patch", "", 0)
-    )
-    path = "patch" if mode == "file" else "missing" if mode == "missing" else None
+    replies["diff"] = reply
     assert (
         verify.get_diff(verify.VerifyContext(str(tmp_path), "base"), path) == expected
     )
@@ -760,18 +779,7 @@ def test_source(
     assert capsys.readouterr().err == stderr
 
 
-@pytest.mark.parametrize(
-    ("stats", "severity", "validation"),
-    [
-        pytest.param(
-            {"total": 1, "new": 1, "surfaced": 0, "eliminated": 0},
-            "high",
-            {"in_diff": None, "reason": "diff validation skipped"},
-            id="absent-stats1-high-validation1",
-        ),
-    ],
-)
-def test_pipe(stats, severity, validation, tmp_path, monkeypatch, verify_git):
+def test_pipe(tmp_path, monkeypatch, verify_git):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
     finding = {
@@ -785,11 +793,14 @@ def test_pipe(stats, severity, validation, tmp_path, monkeypatch, verify_git):
     result = verify.run_verification(
         [finding], verify.VerifyContext(str(tmp_path), "base")
     )
-    assert result["stats"] == stats
+    assert result["stats"] == {"total": 1, "new": 1, "surfaced": 0, "eliminated": 0}
     assert list(result["stats"]) == ["total", "new", "surfaced", "eliminated"]
     assert result["verified"] == [finding]
-    assert finding["severity"] == severity
-    assert finding["diff_validation"] == validation
+    assert finding["severity"] == "high"
+    assert finding["diff_validation"] == {
+        "in_diff": None,
+        "reason": "diff validation skipped",
+    }
     assert [cmd for cmd, _kwargs in verify_git[0] if cmd[1] == "diff"] == [
         ["git", "diff", "--end-of-options", "base...HEAD"],
         ["git", "diff", "--end-of-options", "base", "HEAD"],

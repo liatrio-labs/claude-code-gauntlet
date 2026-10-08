@@ -278,7 +278,7 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
         # value proof covers the dispatched document before numeric values are rewritten.
         inline_checksum = fnv1a32(args.input_inline)
         data = validate_input_shape(decode_inline_slice(args.input_inline))
-        proof = checksum_or_none(data)
+        input_checksum = checksum_or_none(data)
         try:
             input_text = js_stringify_pretty(data)
         except JsSerializationError:
@@ -288,7 +288,7 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
             coerce_numeric_fields(finding)
         findings = cast(list[FindingWire], data["findings"])
         context = decide.VerifyContext(
-            repo_root, data.get("base_branch") or args.base_branch
+            repo_root, cast(str, data.get("base_branch") or args.base_branch)
         )
         result = decide.run_verification(findings, context, args.diff_file)
         deltas = build_deltas(findings, result["verified"])
@@ -301,8 +301,8 @@ def run_receipt(args: argparse.Namespace) -> Envelope:
         }
         # Omit unavailable input proof rather than null: the executor schema only accepts
         # strings, and trustSlice skips the check when dispatch cannot compute it either.
-        if proof is not None:
-            receipt["input_checksum"] = proof
+        if input_checksum is not None:
+            receipt["input_checksum"] = input_checksum
         # Deltas must precede the full arrays so a capped executor Read preserves the echo.
         return {
             "status": "ok",
