@@ -271,6 +271,10 @@ the trigger-based rule.
 - `platform` — optional; "github" or "gitlab". If omitted, the poster recognizes validated `github.com`/`gitlab.com` hosts and their dot subdomains from git remote. Other hosts must set `platform` explicitly.
 - `sha` — optional; the full commit the review actually ran against. `post_review.py` stamps this into the prior-review marker, falling back to `git rev-parse HEAD` when absent. Always set it (the workflow's `prIdentity` wrapper already carries it) — if HEAD moved between the review and the post, the fallback records a commit no review examined, and the next run's incremental diff is scoped against it.
 
+A wrong type on the fields below is refused before any forge access; other fields are not type-checked.
+`owner`/`repo`: strings; `pr_number`: non-bool integer or string; `platform`: string or null.
+`findings`: array of objects; `file`: string when present; `line`/`end_line`: non-bool integer or null; `consolidation_key`: string or null.
+
 **Example workflow:**
 
 ```bash

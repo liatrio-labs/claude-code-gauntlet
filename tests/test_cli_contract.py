@@ -903,7 +903,6 @@ def test_poster_auto_detection(
         pytest.param("", None, None, 1, "unknown", id="empty-payload"),
         pytest.param(None, None, None, 1, "unknown", id="null-payload"),
         pytest.param("github", "", None, 1, "unknown", id="empty-cli"),
-        pytest.param(7, None, None, 0, "nonstring", id="truthy-nonstring"),
     ],
 )
 @pytest.mark.parametrize(
@@ -972,11 +971,6 @@ def test_explicit_platform(
             assert result.stderr == (
                 b"post_review: Could not detect platform from git remote. "
                 b"Set 'platform' field in findings JSON to 'github' or 'gitlab'.\n"
-            )
-        elif error == "nonstring":
-            assert (
-                result.stderr
-                == b"AttributeError: 'int' object has no attribute 'lower'\n"
             )
         else:
             assert (
@@ -1323,9 +1317,7 @@ def test_patch_stdio(path, line, title, stdout, stderr, tmp_path):
 POSTING_STATUS_STDOUT = {
     "partial-rejection": "MR summary note posted.\n  1 inline discussion(s) posted.\n  1 inline discussion(s) not delivered (see warnings above).\n",
     "all-rejected": "MR summary note posted.\n  0 inline discussion(s) posted.\n  2 inline discussion(s) not delivered (see warnings above).\n",
-    "all-invalid": "MR summary note posted.\n  0 inline discussion(s) posted.\n  1 finding(s) had a malformed position (see warnings above).\n",
     "standing-rejected": "MR summary note for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa already on the MR — skipping.\n  0 inline discussion(s) posted.\n  2 inline discussion(s) already on the MR from an earlier run — left alone.\n  1 inline discussion(s) not delivered (see warnings above).\n",
-    "standing-invalid": "MR summary note for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa already on the MR — skipping.\n  0 inline discussion(s) posted.\n  2 inline discussion(s) already on the MR from an earlier run — left alone.\n  1 finding(s) had a malformed position (see warnings above).\n",
 }
 
 
@@ -1336,13 +1328,11 @@ def test_posting_live_status(case, tmp_path, monkeypatch, capsys, forge_factory)
     pc = posting_cases
     findings = [pc.CONTEXT, pc.ADDED]
     entries = None
-    if case == "all-invalid":
-        findings = [{**pc.CONTEXT, "line": 61.0}]
     if case.startswith("standing"):
-        findings += [{**pc.NEW, "line": 1.0} if case.endswith("invalid") else pc.NEW]
+        findings += [pc.NEW]
         entries = pc.prior(pc.CONTEXT_KEY, pc.ADDED_KEY)
     rejected = PostResult(None, "denied", None)
-    replies = None if case.endswith("invalid") else {"discussions": [rejected]}
+    replies = {"discussions": [rejected]}
     if case in ("partial-rejection", "all-rejected"):
         replies["notes"] = [PostResult({}, None, None)]
         replies["discussions"].append(

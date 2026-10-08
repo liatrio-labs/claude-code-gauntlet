@@ -17,6 +17,7 @@ import gauntlet.marker as review_marker
 import gauntlet.text as outbound_text
 import pytest
 from gauntlet.delivery import compose
+from gauntlet.delivery.input import Finding, ReviewInput
 from gauntlet.forge import JsonFetch, Platform, PostRequest, PostResult, ReviewTarget
 from gauntlet.markdown import code_spans
 from gauntlet.prior_review import PriorDelivery
@@ -176,7 +177,7 @@ def _assert_no_hostile_prose(test, body, expected_markers=()):
 
 def _deliver(
     platform: Platform,
-    findings: list[dict[str, object]],
+    findings: list[Finding],
     review_body: str = "",
     *,
     live: bool = False,
@@ -184,7 +185,6 @@ def _deliver(
     reject_first: bool = False,
     lines: dict[tuple[str, int], int | None] | None = None,
     texts: dict[tuple[str, int], str] | None = None,
-    check_position: bool = True,
 ) -> tuple[
     list[PostRequest]
     | post_review.GitHubDryRunPayload
@@ -195,7 +195,7 @@ def _deliver(
         lines = {("src/edited.py", 2): None}
     if texts is None:
         texts = {("src/edited.py", 2): "changed"}
-    data = {
+    data: ReviewInput = {
         "owner": "o",
         "repo": "r",
         "pr_number": 7,
@@ -235,14 +235,9 @@ def _deliver(
     # Direct poster calls share one test process, so each delivery starts fresh.
     session = post_review.DeliverySession(dry_run=not live)
     with (
-        contextlib.ExitStack() as stack,
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(io.StringIO()),
     ):
-        if not check_position:
-            stack.enter_context(
-                patch.object(post_review, "validate_position", return_value=[])
-            )
         if platform == "github":
             post_review.post_github(
                 data, diff_facts(lines, line_texts=texts), forge=fake, session=session
@@ -587,6 +582,9 @@ class TestDeliveryTitleKeys(unittest.TestCase):
 class TestPoisonedOutboundSinks(unittest.TestCase):
     @staticmethod
     def _capture(platform, findings, *, anchored):
+        for member in findings:
+            member["line"] = 2
+            member["end_line"] = 2
         first = findings[0]
         filepath, line = first.get("file"), first.get("line")
         return _deliver(
@@ -595,7 +593,6 @@ class TestPoisonedOutboundSinks(unittest.TestCase):
             _poison("review_body"),
             lines={(filepath, line): None} if anchored else {},
             texts={(filepath, line): "context"} if anchored else {},
-            check_position=False,
         )[0]
 
     def test_poisoned_python_fields_never_reach_any_comment_sink(self):
@@ -1036,7 +1033,7 @@ def test_gitlab_live_fallback_contracts__changed_content_key_reposts_once_after_
 def test_markup_rekeys_once(
     title: str, body: str, old_sections: str, sections: str, old_key: str, new_key: str
 ) -> None:
-    finding: dict[str, object] = {
+    finding: Finding = {
         "file": "src/edited.py",
         "line": 2,
         "severity": "high",
@@ -1195,6 +1192,10 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
     property_names = set(_js_finding_property_union()) | {"unknown_key"}
     primary = _poisoned_outbound_sinks_finding(property_names, set(), primary=True)
     corroborator = _poisoned_outbound_sinks_finding(property_names, set())
+    primary["line"] = 2
+    primary["end_line"] = 2
+    corroborator["line"] = 2
+    corroborator["end_line"] = 2
     primary["consolidation_key"] = "poison-group"
     corroborator["consolidation_key"] = "poison-group"
     rejected_calls = _deliver(
@@ -1204,7 +1205,6 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
         reject_first=True,
         live=True,
         review_body=_poison("review_body"),
-        check_position=False,
         lines={
             (
                 [primary, corroborator][0].get("file"),
@@ -1233,6 +1233,10 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
 
     primary = _poisoned_outbound_sinks_finding(property_names, set(), primary=True)
     corroborator = _poisoned_outbound_sinks_finding(property_names, set())
+    primary["line"] = 2
+    primary["end_line"] = 2
+    corroborator["line"] = 2
+    corroborator["end_line"] = 2
     primary["consolidation_key"] = "poison-group"
     corroborator["consolidation_key"] = "poison-group"
     corroborator["line"] = None
@@ -1248,7 +1252,6 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
             prior=PriorDelivery(True, frozenset({"1" * 16}), frozenset(), None),
             live=True,
             review_body=_poison("review_body"),
-            check_position=False,
             lines={
                 (
                     [primary, corroborator][0].get("file"),
@@ -1290,7 +1293,7 @@ def test_poisoned_outbound_sinks__poisoned_gitlab_live_fallback_discussion_and_n
 def test_prose_active_fences_preserve_owned_patch(
     platform: Platform, end_line: int, patch_text: str, patch_header: str
 ) -> None:
-    finding = {
+    finding: Finding = {
         "file": "src/edited.py",
         "line": 2,
         "end_line": end_line,

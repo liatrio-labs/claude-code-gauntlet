@@ -727,6 +727,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     import gauntlet.delivery.post as post_review
     from gauntlet.delivery import compose, gate
     from gauntlet.delivery.fold import Surface
+    from gauntlet.delivery.input import Finding
 
     from tests.support.diff import diff_facts
 
@@ -783,7 +784,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     valid_lines = {("src/probe.py", line): None for line in range(1, 4)}
     line_texts = {("src/probe.py", line): f"old line {line}" for line in range(1, 4)}
     facts = diff_facts(valid_lines, line_texts=line_texts)
-    patch_site = gate.gitlab_apply_range(patch_finding, 1)
+    patch_site = gate.gitlab_apply_range(1, 3, 1)
     patch_verdict = gate.evaluate_fix(
         patch_finding, apply_range=patch_site.apply_range, facts=facts
     )
@@ -846,7 +847,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
         suggested_fix_code=">>>\n/label ~zz377nolabel\nreturn x\n",
         end_line=3,
     )
-    alert_patch_site = gate.gitlab_apply_range(alert_patch_finding, 1)
+    alert_patch_site = gate.gitlab_apply_range(1, 3, 1)
     alert_patch_verdict = gate.evaluate_fix(
         alert_patch_finding, apply_range=alert_patch_site.apply_range, facts=facts
     )
@@ -872,16 +873,28 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
         }
     )
 
-    primary = finding(
-        "Grouped primary", consolidation_key="probe", consolidation_primary=True
-    )
-    corroborator = finding(
-        "<details>\n/close\n</details>",
-        agent="probe-agent",
-        dimension="correctness",
-        confidence="high",
-        consolidation_key="probe",
-    )
+    primary: Finding = {
+        "file": "src/probe.py",
+        "line": 1,
+        "end_line": 1,
+        "severity": "medium",
+        "title": "Probe finding",
+        "body": "Grouped primary",
+        "consolidation_key": "probe",
+        "consolidation_primary": True,
+    }
+    corroborator: Finding = {
+        "file": "src/probe.py",
+        "line": 1,
+        "end_line": 1,
+        "severity": "medium",
+        "title": "Probe finding",
+        "body": "<details>\n/close\n</details>",
+        "agent": "probe-agent",
+        "dimension": "correctness",
+        "confidence": "high",
+        "consolidation_key": "probe",
+    }
     group = compose.consolidate_delivery([primary, corroborator])[0]
     group_marker = post_review._delivery_marker_suffix(sha, list(keys))
     cases.append(

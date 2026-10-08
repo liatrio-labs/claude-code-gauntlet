@@ -55,9 +55,7 @@ GITLAB_SUGGESTION_OFFSET_CAP: Final[int] = 100
 
 
 def is_plain_int(value: object) -> TypeGuard[int]:
-    """True only for a real ``int`` — ``True`` and ``2.0`` both hash equal to the
-    integer key, so they survive every dict lookup and equality check; type is the
-    only thing that separates them from the integer they impersonate."""
+    # Bool and float hash equality would otherwise let malformed locations match diff keys.
     return isinstance(value, int) and not isinstance(value, bool)
 
 
@@ -84,13 +82,13 @@ def demote(verdict: FixVerdict) -> FixVerdict:
 
 @dataclass(frozen=True, slots=True)
 class GitHubApplySite:
-    apply_range: tuple[object, object]
+    apply_range: ApplyRange
     multiline: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class GitLabApplySite:
-    apply_range: tuple[object, object]
+    apply_range: ApplyRange
     offsets: FenceOffsets | None = None
     cap_exceeded: bool = False
 
@@ -236,27 +234,21 @@ def evaluate_fix(
 def github_apply_range(
     facts: DiffFacts | None,
     filepath: str,
-    line: object,
-    end_line: object,
+    line: int,
+    end_line: int | None,
 ) -> GitHubApplySite:
-    # Preserve isinstance's bool/float comparisons here; the content gate is stricter.
-    start = cast(int, line)
     # Keep multiline ranges in one hunk because an end outside it rejects the whole review.
-    multiline = (
-        isinstance(end_line, int)
-        and end_line > start
-        and diff.range_is_valid(facts, filepath, start, end_line)
-    )
-    return GitHubApplySite(
-        (line, end_line) if multiline else (line, line), multiline=multiline
-    )
+    if (
+        end_line is not None
+        and end_line > line
+        and diff.range_is_valid(facts, filepath, line, end_line)
+    ):
+        return GitHubApplySite((line, end_line), multiline=True)
+    return GitHubApplySite((line, line))
 
 
-def gitlab_apply_range(
-    finding: Mapping[str, object], anchor: object
-) -> GitLabApplySite:
-    line, end_line = finding.get("line"), finding.get("end_line")
-    if not is_plain_int(anchor) or not is_plain_int(line) or not is_plain_int(end_line):
+def gitlab_apply_range(line: int, end_line: int | None, anchor: int) -> GitLabApplySite:
+    if end_line is None:
         return GitLabApplySite((anchor, anchor))
     above, below = anchor - line, end_line - anchor
     # Offsets extend outward from the anchor, so an outside anchor cannot realize a range.

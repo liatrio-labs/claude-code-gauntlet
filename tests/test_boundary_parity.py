@@ -541,30 +541,7 @@ class TestPostReviewBoundary(unittest.TestCase):
             if finding.get("failure_scenario"):
                 self.assertNotIn(finding["failure_scenario"], bodies)
 
-    def test_missing_file_alias_would_break_the_retained_poster(self):
-        # Documents why the `file` alias is load-bearing for a finding that DOES carry
-        # a line: strip it from the REAL findings and post_review's direct index
-        # f["file"] raises KeyError. This is the exact boundary the persisted-schema
-        # union (writeArtifacts aliasing) closes.
-        stripped = [
-            {k: v for k, v in f.items() if k != "file"} for f in PERSISTED_FINDINGS
-        ]
-        self._write(stripped)
-        with (
-            patch.object(
-                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
-            ),
-            _boundary_run(self.forge_factory, build_gh_diff(PERSISTED_FINDINGS)),
-            self.assertRaises(KeyError),
-        ):
-            post_review.CLI.invoke(sys.argv[1:])
-
     def test_missing_line_alias_degrades_gracefully_not_a_crash(self):
-        # Issue #192: a finding with no `line` alias at all must NOT crash the whole
-        # poster — it degrades into the skipped section instead. Unlike the `file`
-        # alias above, `line`/`end_line`/`body` are no longer load-bearing for
-        # crash-avoidance; this pins that this stripped shape used to raise KeyError
-        # and now does not.
         stripped = [
             {k: v for k, v in f.items() if k not in ("line", "end_line", "body")}
             for f in PERSISTED_FINDINGS

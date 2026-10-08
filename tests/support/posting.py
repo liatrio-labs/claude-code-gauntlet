@@ -7,7 +7,7 @@ from pathlib import Path
 
 from gauntlet import proc
 from gauntlet.delivery import post
-from gauntlet.forge import JsonFetch, PostRequest
+from gauntlet.forge import JsonFetch, Platform, PostRequest
 
 from tests.support.forge import FakeForge, FakeGitLab
 
@@ -84,9 +84,7 @@ ERRORS = {
     "gh-inline": "post_review: The composed inline review comment is 117 bytes, over the 20-byte GitHub body limit; nothing was posted.\n",
     "gl-summary": "post_review: The composed summary note is 1000002 bytes, over the 1000000-byte GitLab body limit; nothing was posted.\n",
     "all-rejected": "post_review: all 2 finding(s) attempted this run were not delivered \u2014 nothing new was posted inline. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
-    "all-invalid": "post_review: 1 finding(s) had a malformed position \u2014 nothing new was posted inline. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
     "standing-rejected": "post_review: all 1 finding(s) attempted this run were not delivered \u2014 nothing new was posted inline. 2 from an earlier run remain on the MR. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
-    "standing-invalid": "post_review: 1 finding(s) had a malformed position \u2014 nothing new was posted inline. 2 from an earlier run remain on the MR. The MR summary note is on the MR; rerunning retries the inline comments without duplicating what is already there.\n",
 }
 
 
@@ -139,7 +137,8 @@ class PostingRun:
     payload: dict | None
     raw: bytes | None
     requests: tuple[PostRequest, ...]
-    fake: FakeForge
+    fake: FakeForge | None
+    forge_factory_calls: tuple[Platform, ...]
     head_calls: tuple[tuple[str, ...], ...]
 
 
@@ -158,6 +157,9 @@ def invoke_posting(
     submissions=None,
     availability=None,
     dry_run=True,
+    environment_dry_run=False,
+    configure_forge=True,
+    keep_existing_artifact=False,
     arguments=(),
     head="deadbeefcafe\n",
     head_status=0,
@@ -165,7 +167,11 @@ def invoke_posting(
     path = directory / "findings.json"
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     artifact = Path(os.path.abspath(path)).parent / "post-review-payload.json"
-    artifact.unlink(missing_ok=True)
+    preserved_artifact = (
+        artifact.read_bytes() if keep_existing_artifact and artifact.exists() else None
+    )
+    if not keep_existing_artifact:
+        artifact.unlink(missing_ok=True)
     platform = data.get("platform", "github") if isinstance(data, dict) else "github"
     options = {
         "diffs": [(diff, diff_error, diff_status)],
@@ -173,28 +179,31 @@ def invoke_posting(
         "submissions": submissions,
         "availability": availability,
     }
-    fake = (
-        FakeGitLab(
-            refs=[
-                refs
-                if refs is not None
-                else JsonFetch(
-                    [
-                        {
-                            "base_commit_sha": "base1",
-                            "head_commit_sha": "head1",
-                            "start_commit_sha": "start1",
-                        }
-                    ],
-                    None,
-                )
-            ],
-            **options,
+    fake = None
+    if configure_forge:
+        fake = (
+            FakeGitLab(
+                refs=[
+                    refs
+                    if refs is not None
+                    else JsonFetch(
+                        [
+                            {
+                                "base_commit_sha": "base1",
+                                "head_commit_sha": "head1",
+                                "start_commit_sha": "start1",
+                            }
+                        ],
+                        None,
+                    )
+                ],
+                **options,
+            )
+            if platform == "gitlab"
+            else FakeForge(**options)
         )
-        if platform == "gitlab"
-        else FakeForge(**options)
-    )
-    factory.configure(fake)
+        factory.configure(fake)
+    factory_call_start = len(factory.calls)
     head_calls = []
 
     def run(command, **kwargs):
@@ -205,17 +214,25 @@ def invoke_posting(
 
     monkeypatch.setattr(proc, "run", run)
     monkeypatch.delenv("CODE_GAUNTLET_POST_MODE", raising=False)
+    if environment_dry_run:
+        monkeypatch.setenv("CODE_GAUNTLET_POST_MODE", "dry-run")
     capsys.readouterr()
     code = post.CLI.invoke([str(path), *arguments, *(["--dry-run"] if dry_run else [])])
     captured = capsys.readouterr()
     raw = artifact.read_bytes() if artifact.exists() else None
+    payload = None
+    if raw is not None and raw != preserved_artifact:
+        payload = json.loads(raw)
     return PostingRun(
         code,
         captured.out,
         captured.err,
-        json.loads(raw) if raw is not None else None,
+        payload,
         raw,
-        tuple(call.request for call in fake.calls if call.request is not None),
+        tuple(call.request for call in fake.calls if call.request is not None)
+        if fake is not None
+        else (),
         fake,
+        tuple(factory.calls[factory_call_start:]),
         tuple(head_calls),
     )

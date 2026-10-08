@@ -7,7 +7,7 @@ import os
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal, NoReturn, TypedDict, cast
+from typing import Literal, NoReturn, TypedDict, cast
 
 from gauntlet import diff, proc
 from gauntlet.cli import CliError, Command, Parser
@@ -18,7 +18,8 @@ from gauntlet.delivery.fold import (
     body_limit,
     utf8_len,
 )
-from gauntlet.delivery.gate import ApplySite, FixVerdict, is_plain_int
+from gauntlet.delivery.gate import ApplySite, FixVerdict
+from gauntlet.delivery.input import Finding, ReviewInput, validate_review_input
 from gauntlet.diff import DiffFacts
 from gauntlet.forge import (
     Forge,
@@ -45,13 +46,13 @@ from gauntlet.text import prepare_line
 
 class _GitHubCommentRequired(TypedDict):
     path: str
-    line: object
+    line: int
     side: Literal["RIGHT"]
     body: str
 
 
 class GitHubComment(_GitHubCommentRequired, total=False):
-    start_line: object
+    start_line: int
     start_side: Literal["RIGHT"]
 
 
@@ -67,7 +68,7 @@ class _GitLabPositionRequired(TypedDict):
     head_sha: str
     start_sha: str
     new_path: str
-    new_line: object
+    new_line: int
 
 
 class GitLabPosition(_GitLabPositionRequired, total=False):
@@ -105,15 +106,15 @@ DeliveryOutcome = Literal["posted", "already_present", "invalid", "failed"]
 @dataclass(frozen=True, slots=True)
 class Anchor:
     path: str
-    line: object
+    line: int
     site: ApplySite
 
 
 @dataclass(frozen=True, slots=True)
 class FindingPlan:
     index: int
-    finding: Mapping[str, object]
-    path: object
+    finding: Finding
+    path: str
     anchor: Anchor | None
     verdict: FixVerdict | None
 
@@ -152,10 +153,10 @@ class DeliverySession:
         self.kept_fixes = 0
         self.downgraded_fixes = 0
 
-    def activate(self, member: FindingPlan) -> Mapping[str, object]:
+    def activate(self, member: FindingPlan) -> Finding:
         finding, verdict = member.finding, member.verdict
         # Corroborations carry no fence and must not count as render-site verdicts.
-        if not isinstance(finding, dict) or "suggested_fix_code" not in finding:
+        if "suggested_fix_code" not in finding:
             return finding
         assert verdict is not None
         if verdict.keep:
@@ -165,7 +166,7 @@ class DeliverySession:
         self.downgraded_fixes += 1
         self.warn_skip(gate.format_fix_warning(finding, reason, label="suggested-fix"))
         # Preserve unknown caller fields without mutating the original finding.
-        stripped = dict(finding)
+        stripped = finding.copy()
         del stripped["suggested_fix_code"]
         return stripped
 
@@ -262,47 +263,6 @@ def fetch_diff_facts(target: ReviewTarget, *, forge: Forge) -> DiffFacts | None:
     return diff.parse_diff(stdout, policy=diff.posting_policy(forge.platform))
 
 
-def validate_position(
-    position: Mapping[str, object],
-    shas: tuple[str, str, str],
-    facts: DiffFacts | None,
-    filepath: str,
-    line: object,
-) -> list[str]:
-    # Validate both modes independently of assembly so captures expose wire defects.
-    base_sha, head_sha, start_sha = shas
-    expected: dict[str, object] = {
-        "position_type": "text",
-        "base_sha": base_sha,
-        "head_sha": head_sha,
-        "start_sha": start_sha,
-        "new_path": filepath,
-        "new_line": line,
-    }
-    expected_old_line = diff.old_line_for(facts, filepath, cast(int | None, line))
-    if expected_old_line is not None:
-        expected["old_line"] = expected_old_line
-    if not diff.is_new_file(facts, filepath):
-        expected["old_path"] = diff.old_path_for(facts, filepath)
-
-    problems = []
-
-    # Bool and float lines survive lookup and equality, so reject their raw wire spelling.
-    new_line = position.get("new_line")
-    if "new_line" in position and not is_plain_int(new_line):
-        problems.append(f"new_line must be an integer, got {new_line!r}")
-
-    for key in sorted(set(expected) - set(position)):
-        problems.append(f"{key} is missing, expected {expected[key]!r}")
-    for key in sorted(set(position) - set(expected)):
-        problems.append(f"{key} must not be sent for this position")
-    for key in sorted(set(position) & set(expected)):
-        if position[key] != expected[key]:
-            problems.append(f"{key} is {position[key]!r}, expected {expected[key]!r}")
-
-    return problems
-
-
 def _site_verdict(
     finding: Mapping[str, object], anchor: Anchor | None, facts: DiffFacts | None
 ) -> FixVerdict:
@@ -318,18 +278,18 @@ def _site_verdict(
 
 
 def _anchor(
-    finding: Mapping[str, object],
+    finding: Finding,
     path: str,
     facts: DiffFacts | None,
     platform: Platform,
 ) -> Anchor | None:
     line = finding.get("line")
-    if line is None or not diff.is_line_valid(facts, path, cast(int | None, line)):
+    if line is None or not diff.is_line_valid(facts, path, line):
         return None
     site = (
         gate.github_apply_range(facts, path, line, finding.get("end_line"))
         if platform == "github"
-        else gate.gitlab_apply_range(finding, line)
+        else gate.gitlab_apply_range(line, finding.get("end_line"), line)
     )
     return Anchor(path, line, site)
 
@@ -361,22 +321,20 @@ def _group_skip_warning(
 
 
 def plan_delivery(
-    data: Mapping[str, object], facts: DiffFacts | None, *, platform: Platform
+    data: ReviewInput, facts: DiffFacts | None, *, platform: Platform
 ) -> DeliveryPlan:
-    findings = cast(Sequence[object], data.get("findings", []))
+    findings = data["findings"]
     indexes = {id(finding): index for index, finding in enumerate(findings)}
     groups: list[GroupPlan] = []
     candidates: list[gate.OverlapCandidate] = []
     for group in compose.consolidate_delivery(findings):
         primary = group.primary
         line = primary.get("line")
-        # Ship the diff's spelling before validation or GitHub rejects the whole review.
-        path = (
-            diff.diff_path_spelling(facts, cast(str, primary["file"]), cast(int, line))
-            if line is not None
-            else primary.get("file", "?")
-        )
-        anchor = _anchor(primary, cast(str, path), facts, platform)
+        path = primary.get("file", "?")
+        if line is not None:
+            # Ship the diff's spelling before validation or GitHub rejects the whole review.
+            path = diff.diff_path_spelling(facts, path, line)
+        anchor = _anchor(primary, path, facts, platform)
         members = tuple(
             FindingPlan(
                 indexes[id(member)],
@@ -393,7 +351,6 @@ def plan_delivery(
         verdict = planned.verdict
         if (
             anchor is not None
-            and isinstance(primary, dict)
             and "suggested_fix_code" in primary
             and verdict is not None
             and verdict.keep
@@ -406,9 +363,7 @@ def plan_delivery(
             GroupPlan(
                 group,
                 members,
-                _group_skip_warning(
-                    group, facts, cast(str, path) if line is not None else None
-                )
+                _group_skip_warning(group, facts, path if line is not None else None)
                 if anchor is None
                 else None,
             )
@@ -453,9 +408,7 @@ def resolve_members(group: GroupPlan, facts: DiffFacts | None) -> GroupPlan:
         path = member.path
         anchor = None
         if line is not None:
-            path = diff.diff_path_spelling(
-                facts, cast(str, finding.get("file", "?")), cast(int, line)
-            )
+            path = diff.diff_path_spelling(facts, finding.get("file", "?"), line)
             anchor = _anchor(finding, path, facts, "gitlab")
         members.append(replace(member, path=path, anchor=anchor))
     return replace(group, members=tuple(members))
@@ -515,7 +468,7 @@ def render_inline(
 
 
 def plan_summary(
-    data: Mapping[str, object],
+    data: ReviewInput,
     skipped_groups: Sequence[Sequence[compose.SkippedEntry]],
     *,
     platform: Platform,
@@ -526,7 +479,7 @@ def plan_summary(
         data.get("review_body", ""),
         skipped_groups,
         platform=platform,
-        findings_count=len(cast(Sequence[object], data.get("findings", []))),
+        findings_count=len(data["findings"]),
         sha=sha,
         inline_count=inline_count,
     )
@@ -598,7 +551,7 @@ def get_head_sha() -> str:
     return stdout.strip() if rc == 0 else "unknown"
 
 
-def resolve_marker_sha(data: Mapping[str, object]) -> str:
+def resolve_marker_sha(data: ReviewInput) -> str:
     # Prefer the reviewed SHA so a later HEAD cannot mislabel the review.
     sha = data.get("sha")
     if isinstance(sha, str) and SHA_RE.fullmatch(sha.strip()):
@@ -615,7 +568,7 @@ def resolve_marker_sha(data: Mapping[str, object]) -> str:
 
 
 def post_github(
-    data: Mapping[str, object],
+    data: ReviewInput,
     facts: DiffFacts | None,
     *,
     forge: Forge,
@@ -653,7 +606,7 @@ def post_github(
         if isinstance(anchor.site, gate.GitHubApplySite) and anchor.site.multiline:
             comment["start_line"] = anchor.line
             comment["start_side"] = "RIGHT"
-            comment["line"] = primary.finding.get("end_line")
+            comment["line"] = anchor.site.apply_range[1]
         comments.append(comment)
 
     # Inline warnings, envelope checks and fold notices precede marker SHA resolution.
@@ -732,7 +685,7 @@ def gitlab_prior_delivery(
 
 
 def post_gitlab(
-    data: Mapping[str, object],
+    data: ReviewInput,
     facts: DiffFacts | None,
     *,
     forge: GitLab,
@@ -759,7 +712,6 @@ def post_gitlab(
             )
         validated_shas.append(value)
     base_sha, head_sha, start_sha = validated_shas
-    shas = (base_sha, head_sha, start_sha)
 
     plan = plan_delivery(data, facts, platform="gitlab")
     skipped_groups = [
@@ -810,7 +762,7 @@ def post_gitlab(
         assert anchor is not None
         filepath, line = anchor.path, anchor.line
         finding = member.finding
-        # Render before dedup for rerun counts; fold notices follow dedup and position checks.
+        # Render before dedup for rerun counts; fold notices follow dedup.
         marker_suffix = _delivery_marker_suffix(sha, keys)
         inline = render_inline(
             group,
@@ -838,7 +790,7 @@ def post_gitlab(
             "new_line": line,
         }
         # Context needs both sides; added lines omit the old side.
-        old_line = diff.old_line_for(facts, filepath, cast(int | None, line))
+        old_line = diff.old_line_for(facts, filepath, line)
         if old_line is not None:
             position["old_line"] = old_line
         # A new-file old_path causes HTTP 500 after creation; modified files need it for anchoring.
@@ -846,13 +798,6 @@ def post_gitlab(
             # Renames need the old spelling; unavailable facts leave only the finding path.
             position["old_path"] = diff.old_path_for(facts, filepath)
 
-        problems = validate_position(position, shas, facts, filepath, line)
-        if problems:
-            session.warn_skip(
-                f"Skipping finding '{finding.get('title', '?')}' at {filepath}:{line} "
-                f"— malformed GitLab position: {'; '.join(problems)}."
-            )
-            return "invalid"
         _report_inline_budget(inline.body, "gitlab", "discussion", filepath, line)
         payload: GitLabDiscussionPayload = {
             "body": inline.body.body
@@ -970,7 +915,7 @@ def post_gitlab(
                     counters[deliver_unanchored(group, member_index, key)] += 1
             continue
         outcome = deliver(group, 0, member_keys, grouped=True)
-        if outcome in ("invalid", "failed"):
+        if outcome == "failed":
             counters[outcome] += 1
             for member_index, key in enumerate(member_keys[1:], 1):
                 counters[deliver_corroborator(group, member_index, key)] += 1
@@ -1014,25 +959,17 @@ def post_gitlab(
                 f"duplicating what is already there."
             )
 
-    # Any invalid position fails a dry run; returning still lets the command write its capture.
+    # A budget failure can leave unanchored corroborators beside captured siblings.
     if session.dry_run:
         return 1 if invalid else 0
-
-    # Partial live delivery succeeds with warnings to avoid inviting unnecessary retries.
-    if invalid and posted == 0:
-        die(
-            f"{invalid} finding(s) had a malformed position — nothing new was posted "
-            f"inline.{standing} The MR summary note is on the MR; rerunning retries the "
-            f"inline comments without duplicating what is already there."
-        )
     return 0
 
 
-def _target(data: Mapping[str, object]) -> ReviewTarget:
+def _target(data: ReviewInput) -> ReviewTarget:
     return ReviewTarget(
-        cast(str, data["owner"]),
-        cast(str, data["repo"]),
-        cast(int | str, data["pr_number"]),
+        data["owner"],
+        data["repo"],
+        data["pr_number"],
     )
 
 
@@ -1087,30 +1024,28 @@ def _execute(args: argparse.Namespace) -> int:
         raise exc.cause from exc
 
     if isinstance(loaded, list):
-        data: dict[str, Any] = {"review_body": "", "findings": loaded}
+        raw: dict[str, object] = {"review_body": "", "findings": loaded}
     elif isinstance(loaded, dict):
-        data = loaded
+        raw = loaded
     else:
         die("Findings JSON must be an object or an array.")
 
     for name in _INPUT_FIELDS:
         value = getattr(args, name)
         if value is not None:
-            data[name] = value
-    if args.report and not data.get("review_body"):
+            raw[name] = value
+    if args.report and not raw.get("review_body"):
         try:
             with open(args.report, encoding="utf-8") as fh:
                 report = fh.read()
         except FileNotFoundError:
             die(f"Report file not found: {args.report}")
         try:
-            data["review_body"] = compose.summary_body_from_report(report)
+            raw["review_body"] = compose.summary_body_from_report(report)
         except compose.ReportShapeError as exc:
             die(str(exc))
 
-    for field in ("owner", "repo", "pr_number"):
-        if field not in data:
-            die(f"Missing required field in findings JSON: '{field}'")
+    data = validate_review_input(raw)
 
     platform = data.get("platform")
     if platform:
@@ -1126,18 +1061,11 @@ def _execute(args: argparse.Namespace) -> int:
                 "Set 'platform' field in findings JSON to 'github' or 'gitlab'."
             )
 
-    delivery_platform: Platform
-    if platform == "github":
-        delivery_platform = "github"
-    elif platform == "gitlab":
-        delivery_platform = "gitlab"
-    else:
-        die(f"Unsupported platform: '{platform}'. Use 'github' or 'gitlab'.")
+    delivery_platform: Platform = "github" if platform == "github" else "gitlab"
 
     forge = make_forge(delivery_platform)
     facts = fetch_diff_facts(_target(data), forge=forge)
 
-    # Returned payload defects must not preempt the artifact that explains them.
     if isinstance(forge, GitLab):
         status = post_gitlab(data, facts, forge=forge, session=session)
     else:

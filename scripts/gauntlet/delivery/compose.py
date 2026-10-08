@@ -3,7 +3,6 @@
 import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
 
 from gauntlet import registry
 from gauntlet.delivery import gate
@@ -16,6 +15,7 @@ from gauntlet.delivery.fold import (
     utf8_len,
 )
 from gauntlet.delivery.gate import FenceOffsets
+from gauntlet.delivery.input import Finding
 from gauntlet.markdown import fence_run
 from gauntlet.marker import LEGACY_PRODUCT, build_footer, build_prose_footer
 from gauntlet.text import (
@@ -68,8 +68,8 @@ class CommentStyle:
 
 @dataclass(frozen=True, slots=True)
 class Group:
-    primary: Mapping[str, object]
-    corroborators: tuple[Mapping[str, object], ...]
+    primary: Finding
+    corroborators: tuple[Finding, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -501,12 +501,11 @@ def finding_key(filepath: object, line: object, title: object, body: str) -> str
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
-def consolidate_delivery(findings: Sequence[object]) -> list[Group]:
-    members_by_group: list[list[Mapping[str, object]]] = []
-    key_to_group: dict[object, int] = {}
-    for f in findings:
-        finding = cast(Mapping[str, object], f)  # Input is unvalidated on purpose.
-        key = f.get("consolidation_key") if isinstance(f, dict) else None
+def consolidate_delivery(findings: Sequence[Finding]) -> list[Group]:
+    members_by_group: list[list[Finding]] = []
+    key_to_group: dict[str, int] = {}
+    for finding in findings:
+        key = finding.get("consolidation_key")
         if not key:
             members_by_group.append([finding])
             continue
@@ -518,14 +517,13 @@ def consolidate_delivery(findings: Sequence[object]) -> list[Group]:
         else:
             members_by_group[index].append(finding)
 
-    # filterFindings.js stamps one primary; hand-built unstamped groups keep their first member.
     groups: list[Group] = []
     for members in members_by_group:
         primary_index = next(
             (
                 index
                 for index, member in enumerate(members)
-                if isinstance(member, dict) and member.get("consolidation_primary")
+                if member.get("consolidation_primary")
             ),
             0,
         )
