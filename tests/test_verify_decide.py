@@ -17,8 +17,6 @@ from gauntlet.verify import wire
 from tests.test_verify_wire import receipt
 
 DASH = "\u2014"
-BLAMED = "abcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code"
-OLD = "1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old"
 DIFF = "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n"
 
 
@@ -122,6 +120,56 @@ DIFF = "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n"
             "",
             id="BLAME-medium-downgrade",
         ),
+        pytest.param(
+            {"cross_file_refs": ["other"], "severity": "strange"},
+            None,
+            None,
+            "surfaced",
+            "strange",
+            None,
+            None,
+            "",
+            id="BLAME-cross-unknown",
+        ),
+        pytest.param(
+            {},
+            ["", " log bad \n", 1],
+            None,
+            "new",
+            "high",
+            None,
+            None,
+            "classify_blame: git log failed for base 'base': log bad "
+            "\u2014 classifying as 'new' (conservative).",
+            id="BLAME-log-failure",
+        ),
+        pytest.param(
+            {},
+            ["\n", "", 0],
+            [
+                "^1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old\n"
+                "abcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code",
+                "",
+                0,
+            ],
+            "surfaced",
+            "medium",
+            "Old Author",
+            "2020-03-04",
+            "",
+            id="BLAME-surfaced-first-author",
+        ),
+        pytest.param(
+            {"severity": "strange"},
+            ("", "", 0),
+            ["1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old", "", 0],
+            "surfaced",
+            "strange",
+            "Old Author",
+            "2020-03-04",
+            "",
+            id="BLAME-surfaced-unknown",
+        ),
     ],
 )
 def test_blame(
@@ -213,6 +261,27 @@ def test_blame(
             id="SYMBOL-invalid-identifiers-and-cleanup",
         ),
         pytest.param(
+            "obj.method() Foo::bar other->value thing[slot] hash#tag get_user_data",
+            "",
+            [
+                "Foo",
+                "bar",
+                "get_user_data",
+                "hash",
+                "method",
+                "obj",
+                "other",
+                "slot",
+                "tag",
+                "thing",
+                "value",
+            ],
+            id="SYMBOL-bare-punctuation-snake",
+        ),
+        pytest.param(
+            "`self` `None` `print` `x` `ab`", "", [], id="SYMBOL-stopwords-short"
+        ),
+        pytest.param(
             "```lang\nAlphaType BetaType\n```",
             "",
             ["AlphaType", "BetaType", "langAlphaTypeBetaType"],
@@ -230,6 +299,8 @@ def test_blame(
             ["XhandlerX"],
             id="SYMBOL-quoted-X-preserved",
         ),
+        pytest.param("`_private`", "", ["private"], id="SYMBOL-underscore-backtick"),
+        pytest.param(None, None, [], id="SYMBOL-empty-None"),
     ],
 )
 def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_git):
@@ -332,6 +403,20 @@ def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_gi
             [],
             "",
             id="FACT-start-after",
+        ),
+        pytest.param(
+            {"line_start": -1},
+            "normal",
+            False,
+            0,
+            {
+                "verified": False,
+                "reason": "line_start -1 out of range (file has 2 line(s))",
+                "code_at_lines": None,
+            },
+            [],
+            "",
+            id="FACT-start-before",
         ),
         pytest.param(
             {"line_end": 99},
@@ -675,6 +760,42 @@ def test_source(
     assert capsys.readouterr().err == stderr
 
 
+@pytest.mark.parametrize(
+    ("stats", "severity", "validation"),
+    [
+        pytest.param(
+            {"total": 1, "new": 1, "surfaced": 0, "eliminated": 0},
+            "high",
+            {"in_diff": None, "reason": "diff validation skipped"},
+            id="absent-stats1-high-validation1",
+        ),
+    ],
+)
+def test_pipe(stats, severity, validation, tmp_path, monkeypatch, verify_git):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
+    finding = {
+        "id": "a",
+        "file": "source",
+        "line_start": 1,
+        "severity": "high",
+        "confidence": 80,
+    }
+    verify_git[1]["diff"] = ("", "bad", 1)
+    result = verify.run_verification(
+        [finding], verify.VerifyContext(str(tmp_path), "base")
+    )
+    assert result["stats"] == stats
+    assert list(result["stats"]) == ["total", "new", "surfaced", "eliminated"]
+    assert result["verified"] == [finding]
+    assert finding["severity"] == severity
+    assert finding["diff_validation"] == validation
+    assert [cmd for cmd, _kwargs in verify_git[0] if cmd[1] == "diff"] == [
+        ["git", "diff", "--end-of-options", "base...HEAD"],
+        ["git", "diff", "--end-of-options", "base", "HEAD"],
+    ]
+
+
 def test_pipe_projection(tmp_path, monkeypatch, verify_git):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
@@ -792,15 +913,14 @@ def test_pipe_projection(tmp_path, monkeypatch, verify_git):
 @pytest.mark.parametrize(
     "root",
     [
+        pytest.param("reviewed", id="CTX-reviewed-repo-cwd"),
         pytest.param("empty", id="CTX-empty-root-fallback"),
     ],
 )
 def test_context_root(root, verify_git, tmp_path):
     calls, replies = verify_git
     replies["rev-parse"] = (
-        (str(tmp_path) + "\n", "", 0)
-        if root == "reviewed"
-        else ("", "", 1 if root == "fallback" else 0)
+        (str(tmp_path) + "\n", "", 0) if root == "reviewed" else ("", "", 0)
     )
     expected = (
         str(tmp_path)
@@ -811,41 +931,29 @@ def test_context_root(root, verify_git, tmp_path):
     assert calls == [(["git", "rev-parse", "--show-toplevel"], {})]
 
 
-@pytest.mark.parametrize(
-    "failed",
-    [
-        pytest.param(True, id="CTX-failed-log-per-blame"),
-    ],
-)
-def test_context_log_queries(failed, invoke, tmp_path, verify_git):
+def test_context_log_queries(invoke, tmp_path, verify_git):
     (tmp_path / "source").write_text("code\n", encoding="utf-8")
     (tmp_path / "patch").write_text(DIFF, encoding="utf-8")
     calls, replies = verify_git
     token = '{"findings":[{"file":"source","line_start":1,"description":"%60remote_symbol%60"},{"file":"source","line_start":1}]}'
     warnings = f"WARNING: classify_blame: git log failed for base 'base': bad {DASH} classifying as 'new' (conservative).\n"
-    for iteration, root in enumerate(["repo-one", "repo-two"]):
+    for root in ["repo-one", "repo-two"]:
         replies["rev-parse"] = (str(tmp_path / root), "", 0)
-        replies["log"] = (
-            ("", "bad", 1)
-            if failed
-            else ("abcdef0123456789\n", "", 0)
-            if iteration == 0
-            else ("", "", 0)
-        )
+        replies["log"] = ("", "bad", 1)
         result = receipt(
             invoke, tmp_path, token, ["--base-branch", "base", "--diff-file", "patch"]
         )
         env = json.loads(result.stdout)
         assert env["status"] == "ok"
-        assert env["result"]["stats"] == (
-            {"total": 2, "new": 2, "surfaced": 0, "eliminated": 0}
-            if failed or iteration == 0
-            else {"total": 2, "new": 0, "surfaced": 2, "eliminated": 0}
-        )
+        assert env["result"]["stats"] == {
+            "total": 2,
+            "new": 2,
+            "surfaced": 0,
+            "eliminated": 0,
+        }
         assert (
             result.stderr.decode()
-            == (warnings * 2 if failed else "")
-            + "Diff source: --diff-file (patch), 55 bytes\n"
+            == warnings * 2 + "Diff source: --diff-file (patch), 55 bytes\n"
         )
     assert [cmd for cmd, _ in calls if cmd[1] == "log"] == [
         ["git", "log", "--format=%H", "--end-of-options", "base..HEAD"]

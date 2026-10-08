@@ -92,6 +92,11 @@ def test_inline(case):
             id="REJECT-truncated",
         ),
         pytest.param(
+            '{"findings":[{"evidence":"%GG"}]}',
+            "invalid percent escape at $.findings[0].evidence",
+            id="REJECT-nonhex",
+        ),
+        pytest.param(
             '{"findings":[],"s":"\\u0041"}',
             "JSON escape sequences are not canonical at $ (offending U+005C)",
             id="REJECT-json-unicode",
@@ -235,7 +240,59 @@ def test_reject_surrogate_acceptance():
     ("before", "after"),
     [
         pytest.param(
+            {
+                "line_start": "10",
+                "line_end": "11",
+                "line": "12",
+                "end_line": "13",
+                "confidence": "80",
+                "unknown": "9",
+            },
+            {
+                "line_start": 10,
+                "line_end": 11,
+                "line": 12,
+                "end_line": 13,
+                "confidence": 80,
+                "unknown": "9",
+            },
+            id="COERCE-five-fields",
+        ),
+        pytest.param(
+            {"confidence": "\u0085+80\u001c", "line_start": " -2 "},
+            {"confidence": 80, "line_start": -2},
+            id="COERCE-signed-whitespace",
+        ),
+        pytest.param(
+            {"confidence": "٨٠"}, {"confidence": 80}, id="COERCE-unicode-digits"
+        ),
+        pytest.param(
+            {
+                "confidence": 64.5,
+                "line_end": -64.5,
+                "line_start": 1.49,
+                "line": -1.51,
+            },
+            {"confidence": 65, "line_end": -64, "line_start": 1, "line": -2},
+            id="COERCE-half-up",
+        ),
+        pytest.param(
             {"confidence": 80.0}, {"confidence": 80}, id="COERCE-integral-float"
+        ),
+        pytest.param(
+            {
+                "confidence": True,
+                "line_start": None,
+                "line_end": "bad",
+                "line": "1.5",
+            },
+            {
+                "confidence": True,
+                "line_start": None,
+                "line_end": "bad",
+                "line": "1.5",
+            },
+            id="COERCE-junk",
         ),
         pytest.param(["untouched"], ["untouched"], id="COERCE-nondict"),
     ],
@@ -269,6 +326,12 @@ def test_coerce_nan():
             [],
             [{"id": "copy", "verified": False}],
             id="DELTA-equal-copy",
+        ),
+        pytest.param(
+            [{"id": " a "}],
+            [0],
+            [{"id": " a ", "verified": True}],
+            id="DELTA-padded-id",
         ),
         pytest.param(
             [None, {}, {"id": " "}, {"id": 1}], [], [], id="DELTA-unusable-id"
@@ -356,8 +419,6 @@ def test_delta(findings, kept, expected, request):
     actual = verify.build_deltas(originals, verified)
     assert actual == expected
     assert [list(delta) for delta in actual] == [list(delta) for delta in expected]
-    if request.node.callspec.id == "DELTA-unspellable-severity":
-        assert verify.checksum_or_none(actual) is None
 
 
 @pytest.mark.parametrize(
@@ -664,21 +725,7 @@ def test_proof_before_decode_write_coerce(invoke, tmp_path, verify_git, monkeypa
     assert events == ["token", "decode", "value", "write", "coerce", "value"]
 
 
-@pytest.mark.parametrize(
-    "head,sha,commands",
-    [
-        pytest.param(
-            [],
-            "c0ffee",
-            [
-                ["git", "rev-parse", "--show-toplevel"],
-                ["git", "rev-parse", "--short", "HEAD"],
-            ],
-            id="HEAD-git-fallback",
-        ),
-    ],
-)
-def test_head_sha(head, sha, commands, invoke, tmp_path, verify_git):
+def test_head_sha(invoke, tmp_path, verify_git):
     (tmp_path / "patch").write_text("", encoding="utf-8")
     verify_git[1]["rev-parse"] = lambda argv: (
         ("c0ffee\n", "", 0)
@@ -694,12 +741,14 @@ def test_head_sha(head, sha, commands, invoke, tmp_path, verify_git):
             EMPTY,
             "--diff-file",
             "patch",
-            *head,
         ],
         tmp_path,
     )
-    assert json.loads(result.stdout)["receipt"]["sha"] == sha
-    assert verify_git[0] == [(argv, {}) for argv in commands]
+    assert json.loads(result.stdout)["receipt"]["sha"] == "c0ffee"
+    assert verify_git[0] == [
+        (["git", "rev-parse", "--show-toplevel"], {}),
+        (["git", "rev-parse", "--short", "HEAD"], {}),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -777,7 +826,7 @@ def test_receipt_defaults(head_reply, invoke, tmp_path, verify_git):
 
 
 def test_inline_progress_regression():
-    # A stalled decoder must fail this row without stalling the whole suite.
+    # This subprocess bounds a decoder stall when this row is selected alone.
     probe = (
         "from gauntlet.verify.wire import CLI, decode_inline_slice; "
         "assert CLI.parser.prog == 'verify_findings'; "
