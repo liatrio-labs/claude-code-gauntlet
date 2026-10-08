@@ -1,0 +1,739 @@
+"""Repository decisions through real files and the process leaf."""
+
+import ast
+import builtins
+import copy
+import importlib.util
+import json
+import os
+from pathlib import Path
+
+import pytest
+from gauntlet import proc
+from gauntlet.diff import parse_diff
+from gauntlet.paths import entry
+from gauntlet.registry import VERIFY_SLICE_FIELDS
+from gauntlet.verify import decide as verify
+
+DASH = "\u2014"
+BLAMED = "abcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code"
+OLD = "1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old"
+DIFF = "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n"
+
+
+@pytest.mark.parametrize(
+    ("patch", "log", "blame", "origin", "severity", "author", "date", "warning"),
+    [
+        pytest.param(*row[1:], id=row[0])
+        for row in json.loads(r"""[
+        ["BLAME-cross-critical", {"cross_file_refs": ["other"], "severity": "critical"}, null, null, "surfaced", "high", null, null, ""],
+        ["BLAME-cross-low", {"cross_file_refs": ["other"], "severity": "low"}, null, null, "surfaced", "low", null, null, ""],
+        ["BLAME-cross-unknown", {"cross_file_refs": ["other"], "severity": "strange"}, null, null, "surfaced", "strange", null, null, ""],
+        ["BLAME-missing-file", {"file": "missing"}, null, null, "new", "high", null, null, "classify_blame: file not found 'missing' \u2014 classifying as 'new' (conservative)."],
+        ["BLAME-log-failure", {}, ["", " log bad \n", 1], null, "new", "high", null, null, "classify_blame: git log failed for base 'base': log bad \u2014 classifying as 'new' (conservative)."],
+        ["BLAME-blame-failure", {}, null, ["", " blame bad \n", 1], "new", "high", null, null, "classify_blame: git blame failed for 'source': blame bad \u2014 classifying as 'new' (conservative)."],
+        ["BLAME-binary", {}, null, ["", "BINARY data", 1], "new", "high", null, null, "classify_blame: binary file 'source' \u2014 classifying as 'new' (conservative)."],
+        ["BLAME-unparseable", {}, null, ["no blame", "", 0], "new", "high", null, null, "classify_blame: could not parse blame output for 'source' lines 1-2 \u2014 classifying as 'new' (conservative)."],
+        ["BLAME-short-prefix-new", {}, null, null, "new", "high", "First Author", "2024-01-02", ""],
+        ["BLAME-reverse-prefix-not-new", {}, ["abcdef0\n", "", 0], ["abcdef0123456789 (First Author 2024-01-02 00:00:00 +0000 1) code", "", 0], "surfaced", "medium", "First Author", "2024-01-02", ""],
+        ["BLAME-mixed-new-old", {}, null, ["1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old\nabcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code", "", 0], "new", "high", "Old Author", "2020-03-04", ""],
+        ["BLAME-surfaced-first-author", {}, ["\n", "", 0], ["^1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old\nabcdef0 (First Author 2024-01-02 00:00:00 +0000 1) code", "", 0], "surfaced", "medium", "Old Author", "2020-03-04", ""],
+        ["BLAME-surfaced-unknown", {"severity": "strange"}, ["", "", 0], ["1234567 (Old Author 2020-03-04 00:00:00 +0000 2) old", "", 0], "surfaced", "strange", "Old Author", "2020-03-04", ""]
+    ]""")
+    ],
+)
+def test_blame(
+    patch,
+    log,
+    blame,
+    origin,
+    severity,
+    author,
+    date,
+    warning,
+    tmp_path,
+    monkeypatch,
+    verify_git,
+    capsys,
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
+    finding = {
+        "file": "source",
+        "line_start": 1,
+        "line_end": 2,
+        "severity": "high",
+        **patch,
+    }
+    original_severity = finding["severity"]
+    calls, replies = verify_git
+    if log is not None:
+        replies["log"] = log
+    if blame is not None:
+        replies["blame"] = blame
+    assert verify.classify_blame(finding, "base") == origin
+    assert finding["severity"] == severity
+    assert finding["blame_metadata"] == {
+        "classification": origin,
+        "author": author,
+        "date": date,
+        "original_severity": original_severity,
+    }
+    expected_commands = (
+        []
+        if patch.get("cross_file_refs") or patch.get("file") == "missing"
+        else [["git", "log", "--format=%H", "base..HEAD"]]
+    )
+    if expected_commands and (log is None or log[2] == 0):
+        expected_commands.append(["git", "blame", "-L1,2", "--", "source"])
+    assert calls == [(cmd, {"timeout": None, "cwd": None}) for cmd in expected_commands]
+    assert capsys.readouterr().err == (f"WARNING: {warning}\n" if warning else "")
+
+
+@pytest.mark.parametrize(
+    ("description", "evidence", "symbols"),
+    [
+        (
+            "```\nblock_symbol\n``` `inline_symbol`",
+            "",
+            ["block_symbol", "inline_symbol"],
+        ),
+        (
+            "`os.path.join` grantTypeShortcut.equals(substring(3, 5)) foo.bar(baz.qux(nested.value))",
+            "",
+            [
+                "bar",
+                "baz",
+                "equals",
+                "foo",
+                "grantTypeShortcut",
+                "join",
+                "nested",
+                "path",
+                "qux",
+                "substring",
+                "value",
+            ],
+        ),
+        (
+            "obj.method() Foo::bar other->value thing[slot] hash#tag get_user_data",
+            "",
+            [
+                "Foo",
+                "bar",
+                "get_user_data",
+                "hash",
+                "method",
+                "obj",
+                "other",
+                "slot",
+                "tag",
+                "thing",
+                "value",
+            ],
+        ),
+        ("Concrete Between However Implementation Additionally Response", "", []),
+        ("`MyClass`\n```\nMyHandler\n```", "", ["MyClass", "MyHandler"]),
+        ("`self` `None` `print` `x` `ab`", "", []),
+        ("", "`important_func`", ["important_func"]),
+        (None, None, []),
+    ],
+    ids=[
+        "SYMBOL-block-inline",
+        "SYMBOL-dotted-chained-nested",
+        "SYMBOL-bare-punctuation-snake",
+        "SYMBOL-English-CamelCase",
+        "SYMBOL-quoted-CamelCase",
+        "SYMBOL-stopwords-short",
+        "SYMBOL-evidence-only",
+        "SYMBOL-empty-None",
+    ],
+)
+def test_symbol(description, evidence, symbols, tmp_path, monkeypatch, verify_git):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_text("plain\n", encoding="utf-8")
+    finding = {
+        "file": "source",
+        "line_start": 1,
+        "description": description,
+        "evidence": evidence,
+        "confidence": 80,
+    }
+    assert verify.verify_factual(finding) is True
+    assert finding["confidence"] == 80
+    assert [cmd[3] for cmd, _ in verify_git[0]] == symbols
+    assert verify_git[0] == [
+        (["git", "grep", "-l", symbol], {"timeout": 3, "cwd": verify.REPO_ROOT})
+        for symbol in symbols
+    ]
+    assert finding["factual_verification"] == {
+        "verified": True,
+        "reason": "file content and symbols verified"
+        if symbols
+        else f"no extractable symbols {DASH} verification skipped",
+        "code_at_lines": "plain",
+    }
+
+
+@pytest.mark.parametrize(
+    ("patch", "mode", "keep", "confidence", "metadata", "attempted", "warnings"),
+    [
+        pytest.param(*row[1:], id=row[0])
+        for row in json.loads(r"""[
+        ["FACT-no-line", {"line_start": null}, "normal", true, 80, {"verified": true, "reason": "no line reference \u2014 verification skipped", "code_at_lines": null}, [], ""],
+        ["FACT-missing-path", {"file": "missing"}, "normal", false, 0, {"verified": false, "reason": "file not found: 'missing'", "code_at_lines": null}, [], ""],
+        ["FACT-empty-path", {"file": ""}, "normal", false, 0, {"verified": false, "reason": "file not found: ''", "code_at_lines": null}, [], ""],
+        ["FACT-read-OSError", {}, "read-error", false, 0, {"verified": false, "reason": "could not read file 'source': read denied", "code_at_lines": null}, [], ""],
+        ["FACT-binary", {}, "binary", true, 80, {"verified": true, "reason": "binary file \u2014 verification skipped", "code_at_lines": null}, [], "WARNING: verify_factual: binary file 'source' \u2014 skipping factual check.\n"],
+        ["FACT-start-before", {"line_start": -1}, "normal", false, 0, {"verified": false, "reason": "line_start -1 out of range (file has 2 line(s))", "code_at_lines": null}, [], ""],
+        ["FACT-start-after", {"line_start": 3}, "normal", false, 0, {"verified": false, "reason": "line_start 3 out of range (file has 2 line(s))", "code_at_lines": null}, [], ""],
+        ["FACT-end-clamped", {"line_end": 99}, "normal", true, 80, {"verified": true, "reason": "no extractable symbols \u2014 verification skipped", "code_at_lines": "prefix_local_symbol_suffix\ntail"}, [], ""],
+        ["FACT-no-symbol", {}, "normal", true, 80, {"verified": true, "reason": "no extractable symbols \u2014 verification skipped", "code_at_lines": "prefix_local_symbol_suffix"}, [], ""],
+        ["FACT-local-substring", {"description": "`local_symbol`"}, "normal", true, 80, {"verified": true, "reason": "file content and symbols verified", "code_at_lines": "prefix_local_symbol_suffix"}, [], ""],
+        ["FACT-all-found", {"description": "`alpha` `beta`"}, "normal", true, 80, {"verified": true, "reason": "file content and symbols verified", "code_at_lines": "prefix_local_symbol_suffix"}, ["alpha", "beta"], ""],
+        ["FACT-proportional-mixed", {"description": "`alpha` `beta` `gamma` `local_symbol`"}, "mixed", true, 62, {"verified": false, "reason": "referenced symbol(s) not found in codebase: beta", "code_at_lines": "prefix_local_symbol_suffix", "original_confidence": 80, "symbols_checked": 4, "symbols_missing": 1}, ["alpha", "beta", "gamma"], "WARNING: verify_factual: git grep error (rc=2) for symbol 'gamma': bad \u2014 skipping.\n"],
+        ["FACT-floor-30", {"description": "`alpha`", "confidence": 40}, "missing", true, 30, {"verified": false, "reason": "referenced symbol(s) not found in codebase: alpha", "code_at_lines": "prefix_local_symbol_suffix", "original_confidence": 40, "symbols_checked": 1, "symbols_missing": 1}, ["alpha"], ""],
+        ["FACT-default-confidence", {"description": "`alpha`", "confidence": null}, "default", true, 30, {"verified": false, "reason": "referenced symbol(s) not found in codebase: alpha", "code_at_lines": "prefix_local_symbol_suffix", "original_confidence": 100, "symbols_checked": 1, "symbols_missing": 1}, ["alpha"], ""],
+        ["FACT-rc1-empty-rc0", {"description": "`alpha` `beta`"}, "empty", true, 30, {"verified": false, "reason": "referenced symbol(s) not found in codebase: alpha, beta", "code_at_lines": "prefix_local_symbol_suffix", "original_confidence": 80, "symbols_checked": 2, "symbols_missing": 2}, ["alpha", "beta"], ""],
+        ["FACT-timeout", {"description": "`alpha`"}, "timeout", true, 80, {"verified": true, "reason": "file content and symbols verified", "code_at_lines": "prefix_local_symbol_suffix"}, ["alpha"], "WARNING: verify_factual: symbol search timed out for 'alpha' \u2014 skipping (Phase 5 will validate).\n"],
+        ["FACT-fatal", {"description": "`alpha`"}, "fatal", true, 80, {"verified": true, "reason": "file content and symbols verified", "code_at_lines": "prefix_local_symbol_suffix"}, ["alpha"], "WARNING: verify_factual: git grep error (rc=128) for symbol 'alpha': fatal \u2014 skipping.\n"]
+    ]""")
+    ],
+)
+def test_fact(
+    patch,
+    mode,
+    keep,
+    confidence,
+    metadata,
+    attempted,
+    warnings,
+    tmp_path,
+    monkeypatch,
+    verify_git,
+    capsys,
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_bytes(
+        b"\xff" if mode == "binary" else b"prefix_local_symbol_suffix\ntail\n"
+    )
+    finding = {"file": "source", "line_start": 1, "confidence": 80, **patch}
+    calls, replies = verify_git
+    if mode == "read-error":
+        original = builtins.open
+
+        def open_file(path, *args, **kwargs):
+            if path == "source":
+                raise OSError("read denied")
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", open_file)
+    if mode in ("missing", "default"):
+        replies["grep"] = ("", "", 1)
+        if mode == "default":
+            del finding["confidence"]
+    elif mode == "mixed":
+        replies["grep"] = lambda argv: {
+            "alpha": ("found", "", 0),
+            "beta": ("", "", 1),
+            "gamma": ("", " bad \n", 2),
+        }[argv[3]]
+    elif mode == "empty":
+        replies["grep"] = lambda argv: ("", "", 0 if argv[3] == "beta" else 1)
+    elif mode == "timeout":
+        replies["grep"] = proc.TimeoutExpired(["git", "grep"], 3)
+    elif mode == "fatal":
+        replies["grep"] = ("", "fatal", 128)
+    assert verify.verify_factual(finding) is keep
+    assert finding["confidence"] == confidence
+    assert finding["factual_verification"] == metadata
+    assert calls == [
+        (["git", "grep", "-l", symbol], {"timeout": 3, "cwd": verify.REPO_ROOT})
+        for symbol in attempted
+    ]
+    assert capsys.readouterr().err == warnings
+
+
+@pytest.mark.parametrize(
+    ("patch", "diff", "validation", "origin", "severity"),
+    [
+        pytest.param(*row[1:], id=row[0])
+        for row in json.loads(r"""[
+        ["DIFF-skipped", {}, null, {"in_diff": null, "reason": "diff validation skipped"}, "new", "high"],
+        ["DIFF-no-line", {"line_start": null}, "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n", {"in_diff": true, "reason": "no line reference \u2014 validation skipped"}, "new", "high"],
+        ["DIFF-in-range", {}, "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n", {"in_diff": true, "reason": "line 1 found in diff"}, "new", "high"],
+        ["DIFF-out-downgrade", {"line_start": 50, "line_end": 55}, "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n", {"in_diff": false, "reason": "lines 50-55 of 'source' not found in diff \u2014 tagged as surfaced (was: new)"}, "surfaced", "medium"],
+        ["DIFF-partial-overlap", {"line_start": 2, "line_end": 5}, "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n", {"in_diff": true, "reason": "line 2 found in diff"}, "new", "high"],
+        ["DIFF-blame-surfaced-no-double", {"line_start": 50, "blame_metadata": {"classification": "surfaced"}}, "--- a/source\n+++ b/source\n@@ -1,1 +1,2 @@\n code\n+added\n", {"in_diff": false, "reason": "lines 50-50 of 'source' not found in diff \u2014 tagged as surfaced (was: new)"}, "surfaced", "high"],
+        ["DIFF-glab-spelling", {"file": "b/source"}, "--- source\n+++ source\n@@ -1,1 +1,2 @@\n code\n+added\n", {"in_diff": true, "reason": "line 1 found in diff"}, "new", "high"],
+        ["DIFF-space-nonascii", {"file": "My Docs/caf\u00e9.md", "line_start": 2}, "--- a/My Docs/caf\u00e9.md\t\n+++ b/My Docs/caf\u00e9.md\t\n@@ -1,1 +1,2 @@\n intro\n+added\n", {"in_diff": true, "reason": "line 2 found in diff"}, "new", "high"]
+    ]""")
+    ],
+)
+def test_diff(patch, diff, validation, origin, severity):
+    finding = {
+        "file": "source",
+        "line_start": 1,
+        "origin": "new",
+        "severity": "high",
+        **patch,
+    }
+    facts = None if diff is None else parse_diff(diff, policy="verify-both-spellings")
+    assert verify.validate_diff_lines(finding, facts) is True
+    assert finding["diff_validation"] == validation
+    assert (finding["origin"], finding["severity"]) == (origin, severity)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected", "stderr", "commands"),
+    [
+        pytest.param(*row[1:], id=row[0])
+        for row in json.loads(r"""[
+        ["SOURCE-provided", "file", "patch", "Diff source: --diff-file (patch), 5 bytes\n", []],
+        ["SOURCE-missing-no-git", "missing", null, "WARNING: Could not read diff file 'missing': [Errno 2] No such file or directory: 'missing'\n", []],
+        ["SOURCE-three-dot", "three", "patch", "Diff source: git diff base...HEAD (three-dot), 5 bytes\n", [["git", "diff", "base...HEAD"]]],
+        ["SOURCE-two-dot", "two", "patch", "WARNING: git diff base...HEAD failed (exit 1): no merge. Falling back to git diff base HEAD (two-dot).\nDiff source: git diff base HEAD (two-dot fallback), 5 bytes\n", [["git", "diff", "base...HEAD"], ["git", "diff", "base", "HEAD"]]],
+        ["SOURCE-both-fail", "fail", null, "WARNING: git diff base...HEAD failed (exit 1): no merge. Falling back to git diff base HEAD (two-dot).\nWARNING: git diff base HEAD also failed (exit 2): bad base. Diff validation will be skipped.\n", [["git", "diff", "base...HEAD"], ["git", "diff", "base", "HEAD"]]],
+        ["SOURCE-empty-present", "empty", "", "Diff source: git diff base...HEAD (three-dot), 0 bytes\n", [["git", "diff", "base...HEAD"]]]
+    ]""")
+    ],
+)
+def test_source(
+    mode, expected, stderr, commands, tmp_path, monkeypatch, verify_git, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "patch").write_text("patch", encoding="utf-8")
+    calls, replies = verify_git
+    replies["diff"] = lambda argv: (
+        ("", " no merge \n", 1)
+        if len(argv) == 3 and mode in ("two", "fail")
+        else ("", " bad base \n", 2)
+        if mode == "fail"
+        else ("", "", 0)
+        if mode == "empty"
+        else ("patch", "", 0)
+    )
+    path = "patch" if mode == "file" else "missing" if mode == "missing" else None
+    assert verify.get_diff("base", path) == expected
+    assert calls == [(cmd, {"timeout": None, "cwd": None}) for cmd in commands]
+    assert capsys.readouterr().err == stderr
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["siblings", "reclassifies", "absent", "empty", "projection"],
+    ids=[
+        "PIPE-verified-eliminated-stamp",
+        "PIPE-diff-stats",
+        "PIPE-absent-diff",
+        "PIPE-empty-diff",
+        "PIPE-full-projected-literal",
+    ],
+)
+def test_pipe(mode, tmp_path, monkeypatch, verify_git):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_text("code\nadded\n", encoding="utf-8")
+    (tmp_path / "patch").write_text(
+        DIFF if mode == "siblings" else "", encoding="utf-8"
+    )
+    calls, replies = verify_git
+    findings = [
+        {
+            "id": "a",
+            "file": "source",
+            "line_start": 1,
+            "severity": "high",
+            "confidence": 80,
+        }
+    ]
+    if mode == "siblings":
+        findings.append(
+            {
+                "id": "b",
+                "file": "missing",
+                "line_start": 1,
+                "severity": "high",
+                "confidence": 80,
+            }
+        )
+    if mode == "absent":
+        replies["diff"] = ("", "bad", 1)
+    if mode == "projection":
+        findings = [
+            {
+                "id": "cross",
+                "file": "source",
+                "line_start": 1,
+                "severity": "critical",
+                "confidence": 80,
+                "cross_file_refs": ["other"],
+            },
+            {
+                "id": "symbol",
+                "file": "source",
+                "line_start": 1,
+                "severity": "high",
+                "confidence": 80,
+                "description": "`absent_symbol`",
+            },
+            {
+                "id": "range",
+                "file": "source",
+                "line_start": 3,
+                "line_end": 4,
+                "severity": "medium",
+                "confidence": 80,
+            },
+            {
+                "id": "missing",
+                "file": "missing",
+                "line_start": 1,
+                "severity": "low",
+                "confidence": 80,
+            },
+            {
+                "id": "clean",
+                "file": "source",
+                "line_start": 1,
+                "line_end": 2,
+                "severity": "low",
+                "confidence": 55,
+                "evidence": "`code`",
+            },
+        ]
+        replies["grep"] = ("", "", 1)
+    runs = [findings]
+    if mode == "projection":
+        runs.append(
+            [
+                {
+                    **copy.deepcopy(f),
+                    "title": "extra",
+                    "dimension": "bug",
+                    "agent": "reader",
+                    "suggestion": "unused",
+                    "criticality": 7,
+                }
+                for f in findings
+            ]
+        )
+    for inputs in runs:
+        result = verify.run_verification(
+            inputs,
+            "base",
+            None if mode in ("absent", "empty") else "patch",
+            verbose=False,
+        )
+        if mode == "projection":
+            assert result["stats"] == {
+                "total": 5,
+                "new": 0,
+                "surfaced": 3,
+                "eliminated": 2,
+            }
+            assert verify.build_deltas(inputs, result["verified"]) == [
+                {
+                    "id": "cross",
+                    "verified": True,
+                    "origin": "surfaced",
+                    "severity": "high",
+                    "confidence": 80,
+                },
+                {
+                    "id": "symbol",
+                    "verified": True,
+                    "origin": "surfaced",
+                    "severity": "medium",
+                    "confidence": 30,
+                },
+                {
+                    "id": "range",
+                    "verified": False,
+                    "origin": "new",
+                    "severity": "medium",
+                    "confidence": 0,
+                    "elimination_reason": "evidence does not match file content",
+                },
+                {
+                    "id": "missing",
+                    "verified": False,
+                    "origin": "new",
+                    "severity": "low",
+                    "confidence": 0,
+                    "elimination_reason": "evidence does not match file content",
+                },
+                {
+                    "id": "clean",
+                    "verified": True,
+                    "origin": "surfaced",
+                    "severity": "low",
+                    "confidence": 55,
+                },
+            ]
+            assert [f["id"] for f in result["verified"]] == ["cross", "symbol", "clean"]
+        else:
+            new = mode in ("siblings", "absent")
+            assert result["stats"] == {
+                "total": 2 if mode == "siblings" else 1,
+                "new": 1 if new else 0,
+                "surfaced": 0 if new else 1,
+                "eliminated": 1 if mode == "siblings" else 0,
+            }
+            assert result["verified"][0] is inputs[0]
+            assert inputs[0]["severity"] == ("high" if new else "medium")
+            assert inputs[0]["diff_validation"] == (
+                {"in_diff": None, "reason": "diff validation skipped"}
+                if mode == "absent"
+                else {"in_diff": True, "reason": "line 1 found in diff"}
+                if mode == "siblings"
+                else {
+                    "in_diff": False,
+                    "reason": f"lines 1-1 of 'source' not found in diff {DASH} tagged as surfaced (was: new)",
+                }
+            )
+            if mode == "siblings":
+                assert result["eliminated"][0] is inputs[1]
+                assert (
+                    inputs[1]["elimination_reason"]
+                    == "evidence does not match file content"
+                )
+                assert verify.build_deltas(inputs, result["verified"]) == [
+                    {
+                        "id": "a",
+                        "verified": True,
+                        "origin": "new",
+                        "severity": "high",
+                        "confidence": 80,
+                    },
+                    {
+                        "id": "b",
+                        "verified": False,
+                        "origin": "new",
+                        "severity": "high",
+                        "confidence": 0,
+                        "elimination_reason": "evidence does not match file content",
+                    },
+                ]
+        assert list(result["stats"]) == ["total", "new", "surfaced", "eliminated"]
+
+
+def cold_verify():
+    spec = importlib.util.spec_from_file_location(
+        "gauntlet.verify.probe", verify.__file__
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    "root",
+    ["reviewed", "fallback"],
+    ids=["CTX-reviewed-repo-cwd", "CTX-fallback-scripts-root"],
+)
+def test_context_root(root, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs, os.getcwd()))
+        return proc.CompletedProcess(
+            argv,
+            0 if root == "reviewed" else 1,
+            str(tmp_path) + "\n" if root == "reviewed" else "",
+            "",
+        )
+
+    monkeypatch.setattr(proc, "run", run)
+    module = cold_verify()
+    expected_root = (
+        str(tmp_path)
+        if root == "reviewed"
+        else str(Path(entry("verify_findings")).parent)
+    )
+    assert expected_root == module.REPO_ROOT
+    assert calls == [(["git", "rev-parse", "--show-toplevel"], {}, str(tmp_path))]
+
+
+def test_context_grep_root_blame_cwd(tmp_path, monkeypatch, verify_git):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_text("code\n", encoding="utf-8")
+    finding = {"file": "source", "line_start": 1, "description": "`remote_symbol`"}
+    assert verify.classify_blame(finding, "base") == "new"
+    assert verify.verify_factual(finding) is True
+    assert verify_git[0] == [
+        (["git", "log", "--format=%H", "base..HEAD"], {"timeout": None, "cwd": None}),
+        (["git", "blame", "-L1,1", "--", "source"], {"timeout": None, "cwd": None}),
+        (
+            ["git", "grep", "-l", "remote_symbol"],
+            {"timeout": 3, "cwd": verify.REPO_ROOT},
+        ),
+    ]
+    assert os.getcwd() == str(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "failed",
+    [True, False],
+    ids=["CTX-failed-log-per-blame", "CTX-successive-runs-fresh"],
+)
+def test_context_log_queries(failed, tmp_path, monkeypatch, verify_git, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "source").write_text("code\n", encoding="utf-8")
+    (tmp_path / "patch").write_text(DIFF, encoding="utf-8")
+    calls, replies = verify_git
+    if failed:
+        replies["log"] = ("", "bad", 1)
+    for _ in range(2):
+        result = verify.run_verification(
+            [{"file": "source"}, {"file": "source"}], "base", "patch", verbose=False
+        )
+        assert result["stats"] == {"total": 2, "new": 2, "surfaced": 0, "eliminated": 0}
+    assert [cmd for cmd, _ in calls if cmd[1] == "log"] == [
+        ["git", "log", "--format=%H", "base..HEAD"]
+    ] * 4
+    warning = f"WARNING: classify_blame: git log failed for base 'base': bad {DASH} classifying as 'new' (conservative).\n"
+    assert (
+        capsys.readouterr().err
+        == (warning * 2 if failed else "")
+        + "Diff source: --diff-file (patch), 55 bytes\n"
+        + (warning * 2 if failed else "")
+        + "Diff source: --diff-file (patch), 55 bytes\n"
+    )
+
+
+def test_context_import_help_git(monkeypatch, capsys):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return proc.CompletedProcess(argv, 1, "", "")
+
+    monkeypatch.setattr(proc, "run", run)
+    module = cold_verify()
+    assert calls == [["git", "rev-parse", "--show-toplevel"]]
+    calls.clear()
+    assert module.CLI.invoke(["--help"]) == 0
+    assert calls == []
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        '{"findings":[],"base_branch":"%uDCFF"}',
+        '{"findings":[{"id":"cross","cross_file_refs":["other"]}]}',
+    ],
+    ids=["CTX-empty-surrogate-base", "CTX-cross-only-no-log"],
+)
+def test_context_lazy_regression(token, invoke, tmp_path, verify_git):
+    (tmp_path / "patch").write_text("", encoding="utf-8")
+    result = invoke(
+        "verify_findings",
+        [
+            "--input",
+            str(tmp_path / "slice.json"),
+            "--input-inline",
+            token,
+            "--head-sha",
+            "abcd",
+            "--diff-file",
+            "patch",
+        ],
+        tmp_path,
+    )
+    assert result.returncode == 0
+    env = json.loads(result.stdout)
+    assert env["status"] == "ok"
+    assert not [cmd for cmd, _ in verify_git[0] if cmd[1] == "log"]
+    assert env["result"]["stats"] == (
+        {"total": 0, "new": 0, "surfaced": 0, "eliminated": 0}
+        if not env["result"]["verified"]
+        else {"total": 1, "new": 0, "surfaced": 1, "eliminated": 0}
+    )
+
+
+def foreign_reads(source):
+    tree = ast.parse(source)
+    allowed = set(VERIFY_SLICE_FIELDS) | {
+        "blame_metadata",
+        "factual_verification",
+        "diff_validation",
+        "elimination_reason",
+        "classification",
+    }
+    document_sites = {
+        "_validate_input_shape": {"findings"},
+        "_run_receipt": {"findings", "base_branch", "verified"},
+        "load_input": {"findings"},
+        "_run_legacy": {
+            "findings",
+            "base_branch",
+            "trailing_bytes",
+            "stats",
+            "new",
+            "surfaced",
+            "eliminated",
+            "verified",
+            "batches",
+        },
+    }
+    bad = []
+    sites = {
+        id(node): function.name
+        for function in ast.walk(tree)
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for node in ast.walk(function)
+    }
+    for node in ast.walk(tree):
+        site = sites.get(id(node), "<module>")
+        key = None
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+            key = node.slice
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+        ):
+            key = node.args[0]
+        if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+            continue
+        if key.value in allowed or key.value in document_sites.get(site, set()):
+            continue
+        # The batch fallback is removed together with positional input.
+        if site == "batch_findings" and key.value == "finding_id":
+            continue
+        bad.append((site, key.value))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "_NUMERIC_FIELDS"
+            for target in node.targets
+        ):
+            assert isinstance(node.value, ast.Tuple)
+            bad.extend(
+                ("_NUMERIC_FIELDS", item.value)
+                for item in node.value.elts
+                if isinstance(item, ast.Constant)
+                and item.value not in allowed | {"line", "end_line"}
+            )
+    return bad
+
+
+def test_field_guard_live():
+    for path in Path(verify.__file__).parent.glob("*.py"):
+        assert foreign_reads(path.read_text(encoding="utf-8")) == [], str(path)
+
+
+def test_field_guard_added_unprojected_read():
+    source = """def verify_factual(renamed):
+    renamed["unknown_write"] = 1
+    if enabled:
+        return renamed.get("title"), renamed["line"], renamed.get("end_line")
+"""
+    assert foreign_reads(source) == [
+        ("verify_factual", "title"),
+        ("verify_factual", "line"),
+        ("verify_factual", "end_line"),
+    ]
