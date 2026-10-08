@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.42.26 (2026-10-08)
+
+### Bug Fixes
+
+- Terminate git arguments in verify so a base branch or symbol cannot be read as an option
+  ([#483](https://github.com/liatrio-labs/claude-code-gauntlet/pull/483),
+  [`a225822`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a22582204fe9a2e15407846deca2e59799cbfb7a))
+
+### Refactoring
+
+- Verify split into wire and decide, per-run VerifyContext, verify_findings as a Command
+  ([#483](https://github.com/liatrio-labs/claude-code-gauntlet/pull/483),
+  [`a225822`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a22582204fe9a2e15407846deca2e59799cbfb7a))
+
+
 ## v3.42.25 (2026-10-08)
 
 ### Bug Fixes
