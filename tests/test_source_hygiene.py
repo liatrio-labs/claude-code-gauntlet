@@ -12,12 +12,9 @@ ISSUE = re.compile(r"(?:\bissue\s*#?\d+|#\d+)", re.IGNORECASE)
 
 # Exact violation matching prevents completed cleanup from staying exempt.
 MIGRATING_PYTHON = {
-    "style.py",
     "numstat.py",
     "stale.py",
     "shared_context.py",
-    "style_hook.py",
-    "contract_gen.py",
 }
 MIGRATING_JS = {
     "args.js",

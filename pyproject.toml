@@ -61,6 +61,10 @@ exclude = "(?x)(^(bench/vendor|bench/workspace)/)"
 [[tool.mypy.overrides]]
 module = [
   "gauntlet.cli",
+  "gauntlet.contract_gen",
+  "gauntlet.style",
+  "gauntlet.style_hook",
+  "gauntlet.generate",
   "gauntlet.config",
   "gauntlet.output_dir",
   "gauntlet.project_rules",

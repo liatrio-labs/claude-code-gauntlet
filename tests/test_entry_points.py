@@ -33,7 +33,11 @@ def test_entry_is_the_template_over_a_command(path):
     source = path.read_text(encoding="utf-8")
     module = IMPORT.search(source)[1]
     assert source == _entry_template(path.stem, module)
-    assert isinstance(importlib.import_module(f"gauntlet.{module}").CLI, Command)
+    command = importlib.import_module(f"gauntlet.{module}").CLI
+    assert isinstance(command, Command)
+    assert command.parser is not None
+    assert command.main is not None
+    assert command._legacy is None
 
 
 def test_no_two_entries_share_a_module():

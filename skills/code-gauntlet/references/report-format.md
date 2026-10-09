@@ -53,7 +53,7 @@ Without a valid identity or linkable file path, the same location renders as a p
 
 ## Finding Fields Reference
 
-The pipeline's declaration lives in `workflows/src/registry.js`. A field this table lists but the registry does not declare is rejected at the dispatch boundary (the item schema is closed — `additionalProperties: false`) before any stage sees it — which is why `tests/test_dimensions_registry.py` pins this table, the registry, and the agent contracts to each other.
+The pipeline's declaration lives in `workflows/src/registry.js`. A field this table lists but the registry does not declare is rejected at the dispatch boundary (the item schema is closed — `additionalProperties: false`) before any stage sees it — which is why `tests/test_registry_contracts.py` pins this table, the registry, and the agent contracts to each other.
 
 ### Canonical fields — every finding, every dimension
 

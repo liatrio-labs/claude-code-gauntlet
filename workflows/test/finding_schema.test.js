@@ -1,7 +1,7 @@
 // finding_schema.test.js — the DISPATCHED finding schema, checked against the registry
 // that declares it (issue #47).
 //
-// tests/test_dimensions_registry.py owns the other half of this loop: it pins the registry
+// tests/test_registry_contracts.py owns the other half of this loop: it pins the registry
 // against the seven agent .md output contracts and against the prose in
 // report-format.md. What Python cannot see is what actually reaches the platform — the
 // schema object handed to agent({schema}) at each dispatch. That is what these tests read,
