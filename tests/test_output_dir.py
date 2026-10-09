@@ -15,10 +15,13 @@ def output_repo(tmp_path):
     return repo
 
 
-@pytest.fixture
-def output_cli(invoke, monkeypatch, output_repo):
+@pytest.fixture(autouse=True)
+def no_ambient_output_dir(monkeypatch):
     monkeypatch.delenv("CODE_GAUNTLET_OUTPUT_DIR", raising=False)
 
+
+@pytest.fixture
+def output_cli(invoke, monkeypatch, output_repo):
     def call(value=None, cwd=None, arguments=None):
         if value is not None:
             monkeypatch.setenv("CODE_GAUNTLET_OUTPUT_DIR", str(value))

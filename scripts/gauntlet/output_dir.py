@@ -104,6 +104,48 @@ def _gitignore_failure(abs_dir: str, detail: str) -> CliError:
     )
 
 
+def _establish_ignore(cwd: str, repo_root: str, abs_dir: str) -> str:
+    """Make git ignore abs_dir and return the disclosure line."""
+    ignore_rc = git_check_ignore(cwd, abs_dir)
+    if ignore_rc == 128:
+        raise CliError(f"git check-ignore failed (exit 128) for {abs_dir}", 2)
+    if ignore_rc not in (0, 1):
+        raise CliError(f"git check-ignore returned unexpected exit {ignore_rc}", 2)
+    if ignore_rc == 0:
+        return f"exclude: already-ignored {abs_dir}"
+    exclude_path = git_exclude_path(cwd)
+    if exclude_path is None:
+        raise _gitignore_failure(
+            abs_dir,
+            "info/exclude unresolvable via `git rev-parse --git-path`, not otherwise ignored",
+        )
+    if not exclude_writable(exclude_path):
+        raise _gitignore_failure(
+            abs_dir, "info/exclude unwritable, not otherwise ignored"
+        )
+    try:
+        pattern = anchored_exclude_pattern(repo_root, abs_dir)
+    except ValueError as exc:
+        raise CliError(f"cannot derive exclude pattern: {exc}", 2) from exc
+    try:
+        append_exclude_pattern(exclude_path, pattern)
+    except OSError as exc:
+        raise _gitignore_failure(
+            abs_dir, f"failed to append to info/exclude: {exc}"
+        ) from exc
+    verify_rc = git_check_ignore(cwd, abs_dir)
+    if verify_rc == 128:
+        raise CliError(
+            f"git check-ignore failed (exit 128) after exclude append for {abs_dir}",
+            2,
+        )
+    if verify_rc != 0:
+        raise _gitignore_failure(
+            abs_dir, f"appended {pattern!r} but check-ignore still fails"
+        )
+    return f"exclude: added {pattern} via {exclude_path}"
+
+
 def _handle(args: argparse.Namespace) -> int:
     cwd = os.path.realpath(args.cwd or os.getcwd())
     if "CODE_GAUNTLET_OUTPUT_DIR" in os.environ:
@@ -141,45 +183,7 @@ def _handle(args: argparse.Namespace) -> int:
         )
     else:
         # The ignore gate must finish before creating the output directory.
-        ignore_rc = git_check_ignore(cwd, abs_dir)
-        if ignore_rc == 128:
-            raise CliError(f"git check-ignore failed (exit 128) for {abs_dir}", 2)
-        if ignore_rc not in (0, 1):
-            raise CliError(f"git check-ignore returned unexpected exit {ignore_rc}", 2)
-        if ignore_rc == 1:
-            exclude_path = git_exclude_path(cwd)
-            if exclude_path is None:
-                raise _gitignore_failure(
-                    abs_dir,
-                    "info/exclude unresolvable via `git rev-parse --git-path`, not otherwise ignored",
-                )
-            if not exclude_writable(exclude_path):
-                raise _gitignore_failure(
-                    abs_dir, "info/exclude unwritable, not otherwise ignored"
-                )
-            try:
-                pattern = anchored_exclude_pattern(repo_root, abs_dir)
-            except ValueError as exc:
-                raise CliError(f"cannot derive exclude pattern: {exc}", 2) from exc
-            try:
-                append_exclude_pattern(exclude_path, pattern)
-            except OSError as exc:
-                raise _gitignore_failure(
-                    abs_dir, f"failed to append to info/exclude: {exc}"
-                ) from exc
-            verify_rc = git_check_ignore(cwd, abs_dir)
-            if verify_rc == 128:
-                raise CliError(
-                    f"git check-ignore failed (exit 128) after exclude append for {abs_dir}",
-                    2,
-                )
-            if verify_rc != 0:
-                raise _gitignore_failure(
-                    abs_dir, f"appended {pattern!r} but check-ignore still fails"
-                )
-            disclosure = f"exclude: added {pattern} via {exclude_path}"
-        else:
-            disclosure = f"exclude: already-ignored {abs_dir}"
+        disclosure = _establish_ignore(cwd, repo_root, abs_dir)
 
     try:
         os.makedirs(abs_dir, exist_ok=True)
