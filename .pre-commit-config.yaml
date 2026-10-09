@@ -5,8 +5,8 @@ default_stages: [pre-commit]
 # Pin surface: the rev: fields below pin all lint/format tooling. The CI pytest
 # stack (pytest, pytest-cov, coverage) is pinned separately in pyproject.toml
 # [dependency-groups]. Two homes on purpose — pre-commit revs can't express the
-# pytest stack, and nothing here runs it. Keep each pin in its own place, except
-# Ruff: the dev group pins it too, and a test holds the two pins equal.
+# pytest stack. Hooks that need pytest and Ruff also use the dev group's pins;
+# tests hold those pins equal across the two files.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -75,11 +75,12 @@ repos:
 
       # The hook above is scoped `types: [python]`, so a markdown-only commit never fires
       # it, and markdown-only commits are how instruction files grow or gain a shadowing
-      # CLAUDE.md. Stdlib unittest, not pytest: CI's lint job installs only pre-commit.
+      # CLAUDE.md. This hook owns pytest so CI's lint job only needs pre-commit installed.
       - id: agent-instruction-layout
         name: agent instruction files stay small, unshadowed, and name real code
-        entry: env PYTHONPATH=scripts python -m unittest tests.test_agent_instruction_layout
-        language: system
+        entry: python -m pytest tests/test_agent_instruction_layout.py -q -p no:cacheprovider
+        language: python
+        additional_dependencies: ["pytest==9.1.1"]
         files: (^|/)(AGENTS|CLAUDE|CLAUDE\.local)\.md$|^REVIEW\.md$
         pass_filenames: false
 
