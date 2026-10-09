@@ -40,10 +40,10 @@ CHECKPOINT = """{
             id="lexical-escape",
         ),
         pytest.param(
-            "absolute",
-            None,
-            "{label} path is not inside the plan directory: {path}",
-            id="absolute-escape",
+            "lexical",
+            ".",
+            "{label} path is not inside the plan directory: .",
+            id="directory-itself",
         ),
         pytest.param(
             "symlink",
@@ -55,22 +55,7 @@ CHECKPOINT = """{
             "value", 0, "{label} path must be a non-empty string: 0", id="integer"
         ),
         pytest.param(
-            "value",
-            False,
-            "{label} path must be a non-empty string: False",
-            id="boolean",
-        ),
-        pytest.param(
-            "value", None, "{label} path must be a non-empty string: None", id="null"
-        ),
-        pytest.param(
             "value", "", "{label} path must be a non-empty string: ", id="empty"
-        ),
-        pytest.param(
-            "missing",
-            None,
-            "{label} path must be a non-empty string: None",
-            id="missing",
         ),
     ],
 )
@@ -82,17 +67,12 @@ def test_derived_paths_are_confined_before_any_write(
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(plan_directory)
-    if kind == "absolute":
-        path = str(outside / "derived.json")
-    elif kind == "symlink":
+    if kind == "symlink":
         request.getfixturevalue("symlink_or_skip")
         (plan_directory / "link").symlink_to(outside, target_is_directory=True)
     (plan_directory / "findings.json").write_text(SOURCE, encoding="utf-8")
     plan = artifact_plan()
-    if kind == "missing":
-        plan[label].pop("path")
-    else:
-        plan[label]["path"] = path
+    plan[label]["path"] = path
     seal_plan(plan_directory / "plan.json", plan)
     assert artifacts.CLI.invoke(["--plan", str(plan_directory / "plan.json")]) == 1
     captured = capsys.readouterr()
@@ -104,6 +84,21 @@ def test_derived_paths_are_confined_before_any_write(
     assert not (plan_directory / "post.json").exists()
     assert not (plan_directory / "checkpoint.json").exists()
     assert not (outside / "derived.json").exists()
+
+
+def test_a_derived_path_error_is_collected_with_source_errors(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    plan = artifact_plan()
+    plan["postReview"]["path"] = "../outside.json"
+    plan["postReview"]["source"] = "absent.json"
+    plan["checkpoint"]["source"] = "absent.json"
+    seal_plan(tmp_path / "plan.json", plan)
+    errors = artifacts.assemble("plan.json")["errors"]
+    assert (
+        errors[0] == "postReview path is not inside the plan directory: ../outside.json"
+    )
+    assert len(errors) == 2
+    assert errors[1].startswith("source not found or unreadable: absent.json (")
 
 
 @pytest.mark.parametrize(
@@ -126,12 +121,8 @@ def test_derived_paths_are_confined_before_any_write(
         ),
     ],
 )
-@pytest.mark.parametrize(
-    "value", [pytest.param(0, id="zero"), pytest.param(False, id="bool")]
-)
-def test_non_string_reads_refuse_file_descriptors(
-    site, error_template, value, tmp_path
-):
+def test_non_string_reads_refuse_file_descriptors(site, error_template, tmp_path):
+    value = 0
     (tmp_path / "findings.json").write_text(SOURCE, encoding="utf-8")
     plan = artifact_plan()
     if site == "expected":

@@ -65,7 +65,9 @@ def _derived_path(
         errors.append(f"{label} path must be a non-empty string: {path}")
         return None
     # A task-output file can supply the plan, so confine derived paths to its directory as primaries are confined to the output root.
-    if not fs.confined(path, plan_directory):
+    if not fs.confined(path, plan_directory) or os.path.realpath(
+        path
+    ) == os.path.realpath(plan_directory):
         errors.append(f"{label} path is not inside the plan directory: {path}")
         return None
     return path
