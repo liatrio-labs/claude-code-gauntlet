@@ -4,10 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, planVerifySlices,
-  VERIFY_ATTEMPTS_PER_SLICE, agentActive, agentSpecs,
+  summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits,
+  agentActive, agentSpecs,
   allActiveDimensionsDegraded, sharedContextLine,
 } from '../src/stages.js';
+import { planVerifySlices, VERIFY_ATTEMPTS_PER_SLICE } from '../src/capacity.js';
 import { VERIFY_INLINE_CHAR_BUDGET } from '../src/verifyWire.js';
 import { AGENTS, DIMENSIONS } from '../src/registry.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';

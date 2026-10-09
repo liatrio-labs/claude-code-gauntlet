@@ -16,11 +16,12 @@
 // bucket members without per-bucket gaps, and emits one generic gap if no partial
 // survives, the merge or single-call result is null, or any summarize dispatch throws.
 // No wall-clock, no import at runtime.
-import { DIMENSIONS, AGENTS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, FINDING_TEXT_FIELD_NAMES, conditionalSchemaActive } from './registry.js';
+import { DIMENSIONS, AGENTS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, FINDING_TEXT_FIELD_NAMES, conditionalSchemaActive } from './registry.js';
 import { merge, normalizeFindingPaths } from './mergeFindings.js';
 import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, safeFindingLabel } from './paths.js';
 import { INT_POLICY, coerceInt, deepClone, firstUnsafeNumber, fnv1a32, normalizeForChecksum, shellWord } from './wire.js';
 import { VERIFY_INLINE_CHAR_BUDGET, deltaContentProof, deltaHas, encodeSliceInline, joinVerifyDeltas, pinNumericFields, projectVerifySliceFinding, sliceInputChecksum, sliceTokenChecksum } from './verifyWire.js';
+import { VERIFY_ATTEMPTS_PER_SLICE, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices, predictVerifySliceInlineLength } from './capacity.js';
 import { applyValidations, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
@@ -78,12 +79,6 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
     gaps.push('host-path-text: change summary mentions a host path - text left unchanged');
   }
   return gaps;
-}
-
-// Resolve the dispatch model for an agent type from the args-waist policy object —
-// the single place the policy shape maps onto resolvePolicy's opts.
-function modelFor(agentType, policy) {
-  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
 }
 
 // Char budget for the workflow's RETURN value — the object the HARNESS serializes to
@@ -189,72 +184,6 @@ export function sharedContextLine(inp) {
   }
   const span = plan[0].limit;
   return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
-}
-
-// planVerifySlices(findings, sliceSize, budget, baseBranch) -> { slices, oversize, closeReasons }.
-// A projected finding's cost is its encoded object alone. A slice's exact cost is the
-// encoded empty envelope plus those object costs plus one comma for each additional
-// finding. The greedy planner keeps both the finding-count and inline-character bounds
-// in one place, and planner consumers and the dispatch assertion share this accounting.
-// closeReasons is aligned with slices: a terminal slice has no following boundary and is
-// tagged null; every other closed slice names the bound that closed it.
-const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
-const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
-  envelopeLength + findingCost + Math.max(0, findingCount - 1);
-const projectedVerifyFindingInlineLength = (finding) =>
-  encodeSliceInline(projectVerifySliceFinding(finding)).length;
-
-// This is the planner's predicted length, exposed for the exact-accounting test and
-// kept on the same cost primitive as the greedy admission check above.
-export function predictVerifySliceInlineLength(slice, baseBranch = 'main') {
-  const branch = effectiveVerifyBaseBranch(baseBranch);
-  const envelopeLength = encodeSliceInline({ findings: [], base_branch: branch }).length;
-  let findingCost = 0;
-  for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding);
-  return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
-}
-
-export function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main') {
-  const source = Array.isArray(findings) ? findings : [];
-  const branch = effectiveVerifyBaseBranch(baseBranch);
-  const maxFindings = Math.max(1, sliceSize || source.length || 1);
-  const maxChars = Math.max(1, budget || VERIFY_INLINE_CHAR_BUDGET);
-  const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: branch }).length;
-  const slices = [];
-  const oversize = [];
-  const closeReasons = [];
-  let current = [];
-  let currentFindingCost = 0;
-  const flush = (reason = null) => {
-    if (current.length > 0) {
-      slices.push(current);
-      closeReasons.push(reason);
-    }
-    current = [];
-    currentFindingCost = 0;
-  };
-
-  for (const finding of source) {
-    const findingCost = projectedVerifyFindingInlineLength(finding);
-    const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
-    if (singleCost > maxChars) {
-      flush('oversize');
-      oversize.push(finding);
-      continue;
-    }
-    const candidateCost = verifySliceLengthFromCosts(
-      envelopeAllowance,
-      currentFindingCost + findingCost,
-      current.length + 1,
-    );
-    if (current.length > 0 && (current.length >= maxFindings || candidateCost > maxChars)) {
-      flush(current.length >= maxFindings ? 'count' : 'budget');
-    }
-    current.push(finding);
-    currentFindingCost += findingCost;
-  }
-  flush();
-  return { slices, oversize, closeReasons };
 }
 
 // --- Phase 1: Summarize -----------------------------------------------------
@@ -855,17 +784,6 @@ const VERIFY_SCHEMA = {
   required: ['status'], // discriminated union: receipt/result only present on status:'ok'
 };
 
-// Dispatches per verify slice: the first executor call plus EXACTLY ONE fresh
-// re-dispatch when that call comes back untrusted (verifySliceWithRetry).
-//
-// It is a named constant because two independent things must agree with the retry
-// verifySliceWithRetry actually performs: worstCaseAgentCount's verify term (a guard that
-// undercounts the worst case is a guard that does not hold) and the tests that pin the
-// dispatch count. Exported so those tests assert against THIS value rather than a
-// hand-copied literal — raise it here without touching verifySliceWithRetry and the
-// dispatch-count test fails instead of the guard silently over-counting.
-export const VERIFY_ATTEMPTS_PER_SLICE = 2;
-
 // Issue #72: verifySliceSize is deliberately NOT floored. A very small slice is the
 // legitimate mitigation for a transcription-fidelity failure (#25 req 1 — a smaller slice
 // means less content per executor round trip, less to transcribe faithfully, less to
@@ -1407,7 +1325,6 @@ const effectiveChallengeCap = (L, findings) =>
 // The four LIMIT_DEFAULTS numbers live in exactly one place (workflows/src/args.js); these
 // helpers read it rather than restating a literal.
 const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || LIMIT_DEFAULTS.summarizeBucketSize);
-const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
 
 function findingCount(findings) {

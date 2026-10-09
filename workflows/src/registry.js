@@ -368,3 +368,9 @@ export function resolvePolicy(agentType, opts = {}) {
   const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider);
   return { model };
 }
+
+// Resolve the dispatch model for an agent type from the args-waist policy object —
+// the single place the policy shape maps onto resolvePolicy's opts.
+export function modelFor(agentType, policy) {
+  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
+}

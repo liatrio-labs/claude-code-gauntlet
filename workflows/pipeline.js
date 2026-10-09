@@ -133,6 +133,9 @@ function resolvePolicy(agentType, opts = {}) {
   const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider);
   return { model };
 }
+function modelFor(agentType, policy) {
+  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
+}
 // --- findingDedup.js ---
 function dedupById(ndjsonFindings, textFindings) {
   const seen = new Map(); // id -> { finding, priority }
@@ -903,6 +906,62 @@ function deltaContentProof(ids, deltas) {
   }
   return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], byId), null, 2));
 }
+// --- capacity.js ---
+const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
+const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
+  envelopeLength + findingCost + Math.max(0, findingCount - 1);
+const projectedVerifyFindingInlineLength = (finding) =>
+  encodeSliceInline(projectVerifySliceFinding(finding)).length;
+function predictVerifySliceInlineLength(slice, baseBranch = 'main') {
+  const branch = effectiveVerifyBaseBranch(baseBranch);
+  const envelopeLength = encodeSliceInline({ findings: [], base_branch: branch }).length;
+  let findingCost = 0;
+  for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding);
+  return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
+}
+function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main') {
+  const source = Array.isArray(findings) ? findings : [];
+  const branch = effectiveVerifyBaseBranch(baseBranch);
+  const maxFindings = Math.max(1, sliceSize || source.length || 1);
+  const maxChars = Math.max(1, budget || VERIFY_INLINE_CHAR_BUDGET);
+  const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: branch }).length;
+  const slices = [];
+  const oversize = [];
+  const closeReasons = [];
+  let current = [];
+  let currentFindingCost = 0;
+  const flush = (reason = null) => {
+    if (current.length > 0) {
+      slices.push(current);
+      closeReasons.push(reason);
+    }
+    current = [];
+    currentFindingCost = 0;
+  };
+  for (const finding of source) {
+    const findingCost = projectedVerifyFindingInlineLength(finding);
+    const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
+    if (singleCost > maxChars) {
+      flush('oversize');
+      oversize.push(finding);
+      continue;
+    }
+    const candidateCost = verifySliceLengthFromCosts(
+      envelopeAllowance,
+      currentFindingCost + findingCost,
+      current.length + 1,
+    );
+    if (current.length > 0 && (current.length >= maxFindings || candidateCost > maxChars)) {
+      flush(current.length >= maxFindings ? 'count' : 'budget');
+    }
+    current.push(finding);
+    currentFindingCost += findingCost;
+  }
+  flush();
+  return { slices, oversize, closeReasons };
+}
+const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
+const VERIFY_ATTEMPTS_PER_SLICE = 2;
 // --- applyValidations.js ---
 const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 function applyValidations(findings, validations) {
@@ -4299,9 +4358,6 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
   }
   return gaps;
 }
-function modelFor(agentType, policy) {
-  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
-}
 const RETURN_CHAR_BUDGET = 1000000;
 const READ_PLAN_MAX_LINES = 750;
 const READ_PLAN_MAX_CHARS = 30000;
@@ -4342,59 +4398,6 @@ function sharedContextLine(inp) {
   }
   const span = plan[0].limit;
   return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
-}
-const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
-const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
-  envelopeLength + findingCost + Math.max(0, findingCount - 1);
-const projectedVerifyFindingInlineLength = (finding) =>
-  encodeSliceInline(projectVerifySliceFinding(finding)).length;
-function predictVerifySliceInlineLength(slice, baseBranch = 'main') {
-  const branch = effectiveVerifyBaseBranch(baseBranch);
-  const envelopeLength = encodeSliceInline({ findings: [], base_branch: branch }).length;
-  let findingCost = 0;
-  for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding);
-  return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
-}
-function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main') {
-  const source = Array.isArray(findings) ? findings : [];
-  const branch = effectiveVerifyBaseBranch(baseBranch);
-  const maxFindings = Math.max(1, sliceSize || source.length || 1);
-  const maxChars = Math.max(1, budget || VERIFY_INLINE_CHAR_BUDGET);
-  const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: branch }).length;
-  const slices = [];
-  const oversize = [];
-  const closeReasons = [];
-  let current = [];
-  let currentFindingCost = 0;
-  const flush = (reason = null) => {
-    if (current.length > 0) {
-      slices.push(current);
-      closeReasons.push(reason);
-    }
-    current = [];
-    currentFindingCost = 0;
-  };
-  for (const finding of source) {
-    const findingCost = projectedVerifyFindingInlineLength(finding);
-    const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
-    if (singleCost > maxChars) {
-      flush('oversize');
-      oversize.push(finding);
-      continue;
-    }
-    const candidateCost = verifySliceLengthFromCosts(
-      envelopeAllowance,
-      currentFindingCost + findingCost,
-      current.length + 1,
-    );
-    if (current.length > 0 && (current.length >= maxFindings || candidateCost > maxChars)) {
-      flush(current.length >= maxFindings ? 'count' : 'budget');
-    }
-    current.push(finding);
-    currentFindingCost += findingCost;
-  }
-  flush();
-  return { slices, oversize, closeReasons };
 }
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
 async function summarize(ctx, input) {
@@ -4683,7 +4686,6 @@ const VERIFY_SCHEMA = {
   },
   required: ['status'], // discriminated union: receipt/result only present on status:'ok'
 };
-const VERIFY_ATTEMPTS_PER_SLICE = 2;
 const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 async function verifyStage(ctx, input) {
   const c = ctx || defaultCtx();
@@ -4944,7 +4946,6 @@ const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
 const effectiveChallengeCap = (L, findings) =>
   Math.max(0, L.challengeCap != null ? L.challengeCap : findings);
 const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || LIMIT_DEFAULTS.summarizeBucketSize);
-const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
 function findingCount(findings) {
   return Array.isArray(findings) ? findings.length : Math.max(0, findings || 0);
