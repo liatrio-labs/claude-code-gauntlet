@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.42.27 (2026-10-09)
+
+### Bug Fixes
+
+- Assemble_artifacts confines its derived post-review and checkpoint writes to the plan file's
+  directory ([#484](https://github.com/liatrio-labs/claude-code-gauntlet/pull/484),
+  [`1323a51`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1323a51849b783f276c1b59d1cd72f5b614bf9b3))
+
+### Refactoring
+
+- Task output in gauntlet.tasks, injectable task roots, await, materialize and assemble as Commands
+  ([#484](https://github.com/liatrio-labs/claude-code-gauntlet/pull/484),
+  [`1323a51`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1323a51849b783f276c1b59d1cd72f5b614bf9b3))
+
+
 ## v3.42.26 (2026-10-08)
 
 ### Bug Fixes
