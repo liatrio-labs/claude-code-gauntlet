@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve the code-gauntlet configuration and print its receipt.
-
-Usage:
-    python3 scripts/resolve_config.py [--target pr|mr|local] [--cwd DIR] [--plugin-root DIR]
-
-``--target`` is optional.  Without it, target-dependent validation is skipped and the
-success JSON contains ``"target": null``.  ``--cwd`` defaults to the process directory.
-``--plugin-root`` defaults to two levels above this script and, when supplied, must name
-that same directory.  stdin is unused.
-
-On success, exactly one JSON object is returned on stdout with the rendered block on
-stderr.  Every non-zero result has empty stdout.  Exit 0 is successful resolution.  Exit
-1 is an invalid pin, invalid ``REVIEW.md`` value, or target-incompatible delivery.  Exit
-2 is argument usage, not a git repository, an unreadable or missing bundle version, or
-another resolver setup failure.
-"""
+"""Resolve configuration and preserve the machine-parsed receipt blocks."""
 
 from __future__ import annotations
 
@@ -24,14 +9,21 @@ import os
 import re
 import sys
 from collections.abc import Mapping, Sequence
-from typing import Any, NoReturn, cast
+from typing import Any, TypedDict
 
 from gauntlet import proc
-from gauntlet.cli import Command
+from gauntlet.cli import CliError, Command, Parser
+from gauntlet.fs import read_text
+from gauntlet.jsjson import JS_MAX_SAFE_INTEGER
 from gauntlet.paths import PLUGIN_ROOT
-from gauntlet.registry import JS_TRIM_CHARS, KNOB_REGISTRY
+from gauntlet.registry import JS_TRIM_CHARS
+from gauntlet.registry import KNOB_REGISTRY as KNOB_REGISTRY
 
-MAX_SAFE_INTEGER = 9007199254740991
+
+class ConfigEchoEntry(TypedDict):
+    value: str
+    source: str
+
 
 _CONTROL_RE = re.compile(r"[\u0000-\u001f\u007f]")
 _CANDIDATE_RE = re.compile(r"^[a-z_]+(,[a-z_]+)*$")
@@ -60,13 +52,12 @@ def _selected_rule(rule: Any, mode: str) -> Any:
 def _safe_integer(value: str) -> bool:
     try:
         number = int(value)
-        return 0 <= number <= MAX_SAFE_INTEGER
+        return 0 <= number <= JS_MAX_SAFE_INTEGER
     except (TypeError, ValueError):
         return False
 
 
-def matches_rule(rule: Any, value: Any, mode: str) -> bool:
-    """Return whether a string satisfies a registry rule for ``mode``."""
+def matches_rule(rule: Any, value: object, mode: str) -> bool:
     selected = _selected_rule(rule, mode)
     if not isinstance(value, str) or not isinstance(selected, dict):
         return False
@@ -117,7 +108,7 @@ def _rule_display(
     return "valid value"
 
 
-def _error_value(value: Any) -> str:
+def _error_value(value: object) -> str:
     if isinstance(value, str):
         if _CONTROL_RE.search(value):
             return json.dumps(value, ensure_ascii=False)
@@ -127,7 +118,7 @@ def _error_value(value: Any) -> str:
 
 def _invalid_message(
     row: Mapping[str, Any],
-    value: Any,
+    value: object,
     mode: str,
     *,
     review_value: bool = False,
@@ -153,7 +144,7 @@ def _default_for(row: Mapping[str, Any], mode: str) -> tuple[Any, Any] | None:
     return value[0], value[1]
 
 
-def _typed_value(row: Mapping[str, Any], value: str) -> Any:
+def _typed_value(row: Mapping[str, Any], value: str) -> object:
     kind = row.get("type")
     if kind == "csv_list":
         return value.split(",")
@@ -167,16 +158,16 @@ def _registry_rows(
 ) -> list[Mapping[str, Any]]:
     if registry is not None:
         return list(registry)
-    return cast(list[Mapping[str, Any]], list(KNOB_REGISTRY))
+    rows: list[Mapping[str, Any]] = list(KNOB_REGISTRY)
+    return rows
 
 
 def serialize_receipt(
     mode: str,
-    config_echo: Mapping[str, Any],
+    config_echo: Mapping[str, object],
     *,
     registry: Sequence[Mapping[str, Any]] | None = None,
 ) -> str:
-    """Serialize the mode's receipt in registry order."""
     rows = _registry_rows(registry)
     receipt = {}
     for row in rows:
@@ -196,7 +187,6 @@ def resolve(
     *,
     registry: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Resolve registry rows once, using env, REVIEW.md, then the mode default."""
     rows = _registry_rows(registry)
     if mode not in {"headless", "interactive"}:
         raise ResolverSetupError(f"unsupported mode: {mode}")
@@ -204,8 +194,8 @@ def resolve(
         raise ResolverSetupError(f"unsupported target: {target}")
 
     review_value = parse_default_delivery(review_md_text)
-    config_echo: dict[str, dict[str, str]] = {}
-    resolved: dict[str, Any] = {}
+    config_echo: dict[str, ConfigEchoEntry] = {}
+    resolved: dict[str, object] = {}
     for row in rows:
         if mode not in row.get("modes", []):
             continue
@@ -268,7 +258,7 @@ def resolve(
     }
 
 
-def _receipt_as_text(value: Any) -> str:
+def _receipt_as_text(value: object) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
@@ -284,28 +274,25 @@ def _receipt_as_text(value: Any) -> str:
     return str(value)
 
 
-def one_line(value: Any) -> str:
-    """Apply the report renderer's one-line whitespace rule."""
+def one_line(value: object) -> str:
     text = _receipt_as_text(value)
     text = re.sub(r"[\r\n]+", " ", text)
     text = re.sub(r" +", " ", text)
     return text.strip(JS_TRIM_CHARS)
 
 
-def receipt_safe(value: Any) -> str:
-    """Apply the report receipt's one-line, backtick-safe rendering rule."""
+def receipt_safe(value: object) -> str:
     text = one_line(value).replace("`", "")
     return text or "unknown"
 
 
 def render_block(
     mode: str,
-    config_echo: Mapping[str, Any],
-    identity: Mapping[str, Any],
+    config_echo: Mapping[str, object],
+    identity: Mapping[str, object],
     *,
     registry: Sequence[Mapping[str, Any]] | None = None,
 ) -> str:
-    """Render the resolver receipt in registry order without a trailing newline."""
     rows = _registry_rows(registry)
     lines = ["Headless config:" if mode == "headless" else "Resolved config:"]
     for row in rows:
@@ -336,7 +323,6 @@ def render_block(
 
 
 def parse_default_delivery(text: str | None) -> str | None:
-    """Return the root Default Delivery candidate, or ``None`` when it is unset."""
     if not isinstance(text, str):
         return None
     body = _default_delivery_body(re.split(r"\r\n|\r|\n", text))
@@ -353,7 +339,6 @@ def parse_default_delivery(text: str | None) -> str | None:
 
 
 def _default_delivery_body(lines: Sequence[str]) -> list[str] | None:
-    """Return the root Default Delivery body before a shape boundary."""
     start = next(
         (
             index
@@ -388,11 +373,9 @@ def _git_repo_root(cwd: str) -> str:
 
 
 def read_pipeline_version(plugin_root: str) -> str:
-    """Read the bundle's non-empty PIPELINE_VERSION declaration."""
     path = os.path.join(plugin_root, "workflows", "pipeline.js")
     try:
-        with open(path, encoding="utf-8") as handle:
-            text = handle.read()
+        text = read_text(path)
     except OSError as exc:
         raise ResolverSetupError(f"cannot read pipeline bundle: {exc}") from exc
     match = _PIPELINE_VERSION_RE.search(text)
@@ -402,50 +385,28 @@ def read_pipeline_version(plugin_root: str) -> str:
 
 
 def probe_review_md(repo_root: str) -> tuple[bool, str | None]:
-    """Inspect only the repository-root REVIEW.md for presence and text."""
     path = os.path.join(repo_root, "REVIEW.md")
     if not os.path.isfile(path):
         return False, None
     try:
-        with open(path, encoding="utf-8", newline=None) as handle:
-            return True, handle.read()
+        return True, read_text(path)
     except OSError as exc:
         raise ResolverSetupError(f"cannot read root REVIEW.md: {exc}") from exc
 
 
-class _ResolverArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> NoReturn:
-        raise ResolverSetupError(message)
-
-    def exit(self, status: int = 0, message: str | None = None) -> NoReturn:
-        detail = (message or "argument parsing failed").strip()
-        raise ResolverSetupError(detail)
-
-
-def _parser() -> argparse.ArgumentParser:
-    return _ResolverArgumentParser(
+def build_parser() -> Parser:
+    parser = Parser(
+        prog="resolve_config",
         add_help=False,
         description="Resolve the code-gauntlet configuration.",
-        exit_on_error=False,
     )
-
-
-def run(
-    argv: list[str] | None = None,
-    environ: Mapping[str, str] | None = None,
-) -> tuple[int, str, str]:
-    """Run the resolver and return ``(exit_code, stdout, stderr)``."""
-    parser = _parser()
     parser.add_argument("--target", choices=("pr", "mr", "local"), default=None)
     parser.add_argument("--cwd", default=None)
     parser.add_argument("--plugin-root", default=None)
-    try:
-        args = parser.parse_args([] if argv is None else argv)
-    except (argparse.ArgumentError, ResolverSetupError) as exc:
-        detail = " ".join(str(exc).splitlines()).strip()
-        return 2, "", f"RESOLVER SETUP ERROR: {detail}\n"
+    return parser
 
-    env = environ if environ is not None else os.environ
+
+def _handle(args: argparse.Namespace) -> int:
     try:
         cwd = os.path.realpath(args.cwd or os.getcwd())
         plugin_root = os.path.realpath(args.plugin_root or PLUGIN_ROOT)
@@ -454,8 +415,12 @@ def run(
         repo_root = _git_repo_root(cwd)
         version = read_pipeline_version(plugin_root)
         _, review_text = probe_review_md(repo_root)
-        mode = "headless" if env.get("CODE_GAUNTLET_HEADLESS") == "1" else "interactive"
-        result = resolve(mode, env, review_text, args.target)
+        mode = (
+            "headless"
+            if os.environ.get("CODE_GAUNTLET_HEADLESS") == "1"
+            else "interactive"
+        )
+        result = resolve(mode, os.environ, review_text, args.target)
         identity = {"pipeline_version": version, "plugin_root": plugin_root}
         block = render_block(mode, result["configEcho"], identity)
         payload = {
@@ -466,20 +431,14 @@ def run(
             "resolved": result["resolved"],
             "identity": identity,
         }
-        stdout = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-        return 0, stdout, block + "\n"
+        sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+        sys.stderr.write(block + "\n")
+        return 0
     except ResolverError as exc:
-        return 1, "", f"{exc}\n"
+        sys.stderr.write(f"{exc}\n")
+        return 1
     except ResolverSetupError as exc:
-        return 2, "", f"RESOLVER SETUP ERROR: {exc}\n"
+        raise CliError(str(exc), 2) from exc
 
 
-def main() -> int:
-    """Run the CLI, writing only the resolver payload to stdout."""
-    code, stdout, stderr = run(sys.argv[1:], os.environ)
-    sys.stdout.write(stdout)
-    sys.stderr.write(stderr)
-    return code
-
-
-CLI = Command.legacy(main, prog="resolve_config.py")
+CLI = Command(parser=build_parser(), main=_handle)

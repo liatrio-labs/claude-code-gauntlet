@@ -79,6 +79,7 @@ def open_fence(
     return state
 
 
+# Twin of ``proseFenceCloser`` in ``workflows/src/renderReport.js``.
 def fence_closer(prefix: str) -> str:
     state = open_fence(prefix)
     return "" if state is None else state[0] * state[1]

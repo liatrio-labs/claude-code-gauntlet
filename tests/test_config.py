@@ -391,7 +391,7 @@ def test_usage_and_setup_fail_without_process_stream_noise(case, config_cli, tmp
     assert result.returncode == 2
     assert result.stdout == b""
     assert result.stderr.count(b"\n") == 1
-    assert result.stderr.startswith(b"RESOLVER SETUP ERROR: ")
+    assert result.stderr.startswith(b"resolve_config: ")
 
 
 @pytest.mark.usefixtures("symlink_or_skip")
@@ -400,7 +400,7 @@ def test_plugin_root_must_match_and_matching_symlink_is_allowed(config_cli, tmp_
     assert (result.returncode, result.stdout, result.stderr) == (
         2,
         b"",
-        b"RESOLVER SETUP ERROR: plugin root mismatch\n",
+        b"resolve_config: plugin root mismatch\n",
     )
     link = tmp_path / "plugin"
     link.symlink_to(ROOT, target_is_directory=True)
@@ -429,7 +429,7 @@ def test_git_root_probe_oserror_is_setup_failure(config_cli, monkeypatch):
     assert (result.returncode, result.stdout, result.stderr) == (
         2,
         b"",
-        b"RESOLVER SETUP ERROR: git repository probe failed: probe denied\n",
+        b"resolve_config: git repository probe failed: probe denied\n",
     )
 
 

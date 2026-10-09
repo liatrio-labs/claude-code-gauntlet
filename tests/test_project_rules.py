@@ -425,10 +425,19 @@ def test_project_import_of_rendered_review_stops_at_that_target(
         else ["CLAUDE.md"]
     )
     assert source_paths(receipt) == expected_paths
-    assert receipt["skipped"] == [
-        {"path": "REVIEW.md", "reason": "review_rules_source"}
-    ] * (2 if case == "two-importers" else 1)
-    assert receipt["gaps"] == []
+    unfollowed = case in ("one-import", "two-importers")
+    skip = {"path": "REVIEW.md", "reason": "review_rules_source"}
+    if unfollowed:
+        skip["detail"] = "1 import(s) not followed"
+    assert receipt["skipped"] == [skip] * (2 if case == "two-importers" else 1)
+    assert receipt["gaps"] == (
+        [
+            "project_rules_unfollowed: REVIEW.md (review_rules_source) \u2014 "
+            "1 import(s) not followed; their rules are not in the review context"
+        ]
+        if unfollowed
+        else []
+    )
     assert ("SHARED-CONTENT" in body) is (case == "already-collected")
     assert receipt["review_md"] == [
         {

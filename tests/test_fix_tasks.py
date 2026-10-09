@@ -790,9 +790,8 @@ def test_windows_absolute_path_is_rejected(
     malformed = invoke("render_fix_tasks", [str(fix_artifact)], tmp_path)
     assert malformed.returncode == 2
     assert malformed.stdout == b""
-    assert malformed.stderr.startswith(b"usage: render_fix_tasks.py ")
-    assert (
-        b"error: the following arguments are required: --repo-root" in malformed.stderr
+    assert malformed.stderr == (
+        b"render_fix_tasks: the following arguments are required: --repo-root\n"
     )
 
 
@@ -904,7 +903,7 @@ def test_caller_fix_help(invoke, tmp_path):
     assert result.returncode == 0
     assert result.stderr == b""
     assert result.stdout.startswith(
-        b"usage: render_fix_tasks.py [-h] --repo-root REPO_ROOT POST_REVIEW\n"
+        b"usage: render_fix_tasks [-h] --repo-root REPO_ROOT POST_REVIEW\n"
     )
     assert (
         b"Render persisted review findings as deterministic FIX-task payloads."

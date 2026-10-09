@@ -1204,7 +1204,19 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
                 if mode == "headless":
                     env["CODE_GAUNTLET_HEADLESS"] = "1"
                 with self.subTest(mode=mode, cap=cap):
-                    code, stdout, stderr = resolve_config.run(["--target", "pr"], env)
+                    stdout_stream, stderr_stream = io.StringIO(), io.StringIO()
+                    clean_env = {
+                        key: value
+                        for key, value in os.environ.items()
+                        if not key.startswith("CODE_GAUNTLET_")
+                    }
+                    with (
+                        patch.dict(os.environ, {**clean_env, **env}, clear=True),
+                        contextlib.redirect_stdout(stdout_stream),
+                        contextlib.redirect_stderr(stderr_stream),
+                    ):
+                        code = resolve_config.CLI.invoke(["--target", "pr"])
+                    stdout, stderr = stdout_stream.getvalue(), stderr_stream.getvalue()
                     accepted = (
                         cap in {"6", "25", "9007199254740991"}
                         if mode == "headless"

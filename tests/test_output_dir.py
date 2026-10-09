@@ -127,7 +127,9 @@ def test_check_ignore_128_is_usage_error(output_cli, output_repo, monkeypatch):
     result = output_cli()
     assert result.returncode == 2
     assert result.stdout == b""
-    assert result.stderr.decode().startswith("git check-ignore failed (exit 128) for ")
+    assert result.stderr.decode().startswith(
+        "ensure_output_dir: git check-ignore failed (exit 128) for "
+    )
     assert not (output_repo / ".code-gauntlet").exists()
 
 
@@ -140,7 +142,9 @@ def test_mkdir_failure_exit_1_empty_stdout(output_cli, output_repo):
     result = output_cli()
     assert result.returncode == 1
     assert result.stdout == b""
-    assert result.stderr.decode().startswith(f"mkdir failed for {blocker.resolve()}: ")
+    assert result.stderr.decode().startswith(
+        f"ensure_output_dir: mkdir failed for {blocker.resolve()}: "
+    )
 
 
 def test_worktree_uses_git_path_exclude(tmp_path, output_cli):
@@ -184,5 +188,5 @@ def test_not_a_git_repository_is_usage_error(output_cli, tmp_path):
     assert result.stdout == b""
     assert (
         result.stderr
-        == b"not a git repository (git rev-parse --show-toplevel failed)\n"
+        == b"ensure_output_dir: not a git repository (git rev-parse --show-toplevel failed)\n"
     )

@@ -44,6 +44,15 @@ def write_atomic(
         raise
 
 
+def read_text(
+    path: str | os.PathLike[str],
+    *,
+    errors: Literal["strict", "replace"] = "strict",
+) -> str:
+    with open(path, encoding="utf-8", errors=errors) as handle:
+        return handle.read()
+
+
 def read_json(
     path: str | os.PathLike[str],
     *,
@@ -52,8 +61,7 @@ def read_json(
 ) -> object:
     """Read a JSON file and distinguish I/O from invalid content."""
     try:
-        with open(path, encoding="utf-8", errors=errors) as handle:
-            content = handle.read()
+        content = read_text(path, errors=errors)
     except (OSError, UnicodeError) as exc:
         raise JsonReadError("read", exc) from exc
     try:
