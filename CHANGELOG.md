@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.42.28 (2026-10-09)
+
+### Bug Fixes
+
+- A project import skipped as a review-rules source reports that target's unfollowed files as a gap
+  ([#485](https://github.com/liatrio-labs/claude-code-gauntlet/pull/485),
+  [`0a20a35`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0a20a35777fe1855f2df6bd439a897a7198538ca))
+
+### Refactoring
+
+- Config, output dir, project rules and fix tasks as Commands, unfollowed review imports as a gap
+  ([#485](https://github.com/liatrio-labs/claude-code-gauntlet/pull/485),
+  [`0a20a35`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0a20a35777fe1855f2df6bd439a897a7198538ca))
+
+
 ## v3.42.27 (2026-10-09)
 
 ### Bug Fixes

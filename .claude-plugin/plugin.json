@@ -1,6 +1,6 @@
 {
   "name": "code-gauntlet",
-  "version": "3.42.27",
+  "version": "3.42.28",
   "description": "Adversarial code review for Claude Code: each GitHub PR or GitLab MR runs a gauntlet of up to seven specialist agents for bugs, security, tests and cross-file impact, and every finding must survive verification, a skeptical validator, and a blind challenge before it is posted.",
   "author": {
     "name": "Lee Hopper"
