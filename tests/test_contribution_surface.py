@@ -1663,3 +1663,27 @@ class TestCoverageGateCommandIdentity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_no_sleep_poll_loop_survives_anywhere_under_skills():
+    offenders = []
+    for path in (REPO / "skills").rglob("*.md"):
+        if re.search(r"\bsleep\s+\d+\b", path.read_text(encoding="utf-8")):
+            offenders.append(str(path.relative_to(REPO)))
+    assert offenders == [], "sleep-based poll loop still present"
+
+
+def test_both_wait_protocol_copies_reference_the_awaiter():
+    for relative in (
+        "skills/code-gauntlet/SKILL.md",
+        "skills/code-gauntlet/references/phase3-dispatch.md",
+    ):
+        assert "await_workflow.py" in (REPO / relative).read_text(encoding="utf-8")
+
+
+def test_headless_reference_points_at_the_protocol():
+    text = (REPO / "skills/code-gauntlet/references/headless-mode.md").read_text(
+        encoding="utf-8"
+    )
+    assert "await_workflow.py" in text
+    assert "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS" in text

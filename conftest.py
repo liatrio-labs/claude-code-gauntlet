@@ -1,10 +1,9 @@
-"""Make the pytest process hermetic to an ambient TMPDIR and to git's own
-repository-local environment variables.
+"""Make pytest hermetic to ambient temp, git, and task-directory discovery.
 
-Two things outside a checkout can make its suites lie about what they cover:
+Three things outside a checkout can make its suites lie about what they cover:
 
 * A hostile ambient temp directory. The temp root may sit inside a work tree
-  — for example a session scratch directory — and if ``TMPDIR`` (or the
+  (for example a session scratch directory) and if ``TMPDIR`` (or the
   platform's ``TEMP``/``TMP``) already points there, anything this process
   writes under ``tempfile.gettempdir()`` lands inside that other repository
   instead of a scratch area, and a git command run from there discovers and
@@ -15,17 +14,24 @@ Two things outside a checkout can make its suites lie about what they cover:
   A pytest run started that way inherits them, so a git subprocess a
   test issues resolves against the enclosing repository instead of the one
   the test built, unless those variables are cleared first.
+* Host task-directory discovery. Default roots include task files from other
+  sessions, so a test may read files it did not create or match another run.
 
-This module fixes both for the lifetime of the pytest process: it points the
-temp environment at a private, single-use directory and pops every
-git-local variable, restoring everything at teardown.
+This module isolates all three for the lifetime of the pytest process: it
+points the temp environment at a private, single-use directory and pops
+every git-local variable. It clears both task variables, points task roots
+at a private directory, and uses an autouse guard to fail any test that reaches
+default discovery, restoring the environment at teardown.
 
 Covers: git repository discovery and git environment leakage into
-subprocesses spawned during the run, and the shape of temp-root names it
-manufactures. Does not cover: a test that runs git with its own scrubbed
-environment (nothing here re-injects variables a test itself removed), or a
-run started outside pytest (e.g. ``python -m unittest`` never loads this
-file). Only pytest's own DEFAULT basetemp (the ``pytest-of-<user>`` area)
+subprocesses spawned during the run, the shape of temp-root names it
+manufactures, task-root isolation for children that inherit the task-roots
+variable, and the guard against in-process default discovery. Does not
+cover: a test that runs git with its own scrubbed environment (nothing here
+re-injects variables a test itself removed), a child launched with a
+hand-built environment that omits the task-roots variable, or a run started
+outside pytest (e.g. ``python -m unittest`` never loads this file). Only
+pytest's own DEFAULT basetemp (the ``pytest-of-<user>`` area)
 lands under the private root created here and is removed at teardown; an
 explicit ``--basetemp`` is used exactly as given, outside this mechanism,
 which is the way to keep one.
@@ -37,7 +43,10 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterator
 from typing import Any
+
+import pytest
 
 
 class _SessionState:
@@ -52,6 +61,8 @@ class _SessionState:
 _STATE = _SessionState()
 
 _TEMP_VARS = ("TMPDIR", "TEMP", "TMP")
+_TASK_ROOTS_VAR = "CODE_GAUNTLET_TASK_ROOTS"
+_TASKS_DIR_VAR = "CODE_GAUNTLET_TASKS_DIR"
 
 
 def _git_local_env_vars() -> list[str]:
@@ -71,7 +82,13 @@ def pytest_configure(config: Any) -> None:
     # fails, nothing has been touched yet, so nothing leaks; and teardown
     # must only ever restore what was actually saved here.
     _STATE.saved_tempdir = tempfile.tempdir
-    names_to_clear = (*_TEMP_VARS, "GIT_CEILING_DIRECTORIES", *_git_local_env_vars())
+    names_to_clear = (
+        *_TEMP_VARS,
+        _TASK_ROOTS_VAR,
+        _TASKS_DIR_VAR,
+        "GIT_CEILING_DIRECTORIES",
+        *_git_local_env_vars(),
+    )
     for name in names_to_clear:
         _STATE.saved_env[name] = os.environ.pop(name, None)
 
@@ -83,6 +100,10 @@ def pytest_configure(config: Any) -> None:
     for name in _TEMP_VARS:
         os.environ[name] = root
     os.environ["GIT_CEILING_DIRECTORIES"] = os.path.realpath(root)
+
+    task_root = os.path.join(root, "task-roots")
+    os.mkdir(task_root)
+    os.environ[_TASK_ROOTS_VAR] = task_root
 
     tempfile.tempdir = root
 
@@ -98,3 +119,20 @@ def pytest_unconfigure(config: Any) -> None:
 
     if _STATE.root is not None:
         shutil.rmtree(_STATE.root, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _guard_default_task_discovery(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    from gauntlet import tasks
+
+    calls: list[str | None] = []
+
+    def forbidden(tmpdir: str | None) -> tuple[str, ...]:
+        calls.append(tmpdir)
+        raise AssertionError("default task-root discovery is forbidden in tests")
+
+    monkeypatch.setattr(tasks, "_default_roots", forbidden)
+    yield
+    # Production may have converted the exception into a receipt; still fail this test.
+    if calls:
+        pytest.fail("default task-root discovery was reached during the test")

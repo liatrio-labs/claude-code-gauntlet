@@ -32,7 +32,7 @@ import json
 import re
 from pathlib import Path
 
-from gauntlet.awaiting import ARTIFACT_BASENAMES
+from gauntlet.registry import ARTIFACT_BASENAMES
 
 from bench.runner import citations
 from bench.runner.invoke import (

@@ -1,16 +1,4 @@
-"""Direct coverage for the root conftest.py's pytest_configure/pytest_unconfigure
-pair, specifically the teardown side (pytest_unconfigure) that no other test
-exercises directly. It also checks that the private temp root's name carries a
-glob metacharacter.
-
-This drives the two hooks on an isolated snapshot of process-global state
-(os.environ and tempfile.tempdir), asserting the exact restore behavior:
-a variable that had a prior value is restored to that exact value, a
-variable that was absent before stays absent, and tempfile.tempdir and the
-private root directory are cleaned up. It restores the live session's own
-conftest state (the module-level _STATE object) afterward so this test
-cannot disturb the pytest session running it.
-"""
+"""The root hooks isolate task discovery and restore process-global state."""
 
 from __future__ import annotations
 
@@ -20,8 +8,9 @@ import os
 import shutil
 import sys
 import tempfile
-import unittest
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -30,80 +19,63 @@ if str(REPO_ROOT) not in sys.path:
 import conftest as root_conftest  # noqa: E402
 
 
-class TestConftestTempRootName(unittest.TestCase):
-    def test_temp_root_name_carries_a_glob_guard(self) -> None:
-        """The guard makes every temp-derived suite path prove literal handling."""
-        temp_root = tempfile.gettempdir()
-        self.assertTrue(glob.has_magic(os.path.basename(temp_root)))
-        self.assertEqual(glob.glob(temp_root), [])
+def test_temp_root_name_carries_a_glob_guard():
+    temp_root = tempfile.gettempdir()
+    assert glob.has_magic(os.path.basename(temp_root))
+    assert glob.glob(temp_root) == []
 
 
-class TestConftestHermeticTeardown(unittest.TestCase):
-    def setUp(self) -> None:
-        # Snapshot the real environment and tempfile.tempdir so any mutation
-        # this test makes (directly, or via pytest_configure/pytest_unconfigure)
-        # is undone regardless of test outcome.
-        self._saved_environ = dict(os.environ)
-        self._saved_tempdir = tempfile.tempdir
-        self.addCleanup(self._restore_environ_and_tempdir)
-
-        # Snapshot the live session's own conftest state, since pytest_configure
-        # ran it for real when this session started; pytest_unconfigure must not
-        # run against that live state during this test.
-        self._saved_live_state = copy.deepcopy(root_conftest._STATE.__dict__)
-        self.addCleanup(self._restore_live_state)
-
-    def _restore_environ_and_tempdir(self) -> None:
-        os.environ.clear()
-        os.environ.update(self._saved_environ)
-        tempfile.tempdir = self._saved_tempdir
-
-    def _restore_live_state(self) -> None:
-        root_conftest._STATE.__dict__.clear()
-        root_conftest._STATE.__dict__.update(self._saved_live_state)
-
-    def test_configure_then_unconfigure_restores_exact_prior_state(self) -> None:
-        # Arrange: a variable with a prior value to be restored exactly, and a
-        # variable absent before that pytest_configure sets, to confirm it is
-        # popped back to absent rather than restored to "".
+@pytest.mark.parametrize("prior_roots", [None, "/sentinel/prior/task-roots"])
+@pytest.mark.parametrize("prior_tasks_dir", [None, "/sentinel/prior/tasks-dir"])
+def test_configure_then_unconfigure_restores_exact_prior_state(
+    prior_roots, prior_tasks_dir
+):
+    saved_environ = dict(os.environ)
+    saved_tempdir = tempfile.tempdir
+    saved_state = copy.deepcopy(root_conftest._STATE.__dict__)
+    prior_tempdir = tempfile.mkdtemp(prefix="cg-prior-sentinel-")
+    try:
         os.environ["TMPDIR"] = "/sentinel/prior/tmpdir"
         os.environ["GIT_DIR"] = "/sentinel/prior/git-dir"
         os.environ.pop("GIT_CEILING_DIRECTORIES", None)
-
-        # tempfile.mkdtemp (called inside pytest_configure) uses the current
-        # tempfile.tempdir as its base directory, so the "prior" sentinel must
-        # be a real, existing directory rather than a synthetic path.
-        prior_tempdir = tempfile.mkdtemp(prefix="cg-prior-sentinel-")
-        self.addCleanup(shutil.rmtree, prior_tempdir, ignore_errors=True)
+        if prior_roots is None:
+            os.environ.pop("CODE_GAUNTLET_TASK_ROOTS", None)
+        else:
+            os.environ["CODE_GAUNTLET_TASK_ROOTS"] = prior_roots
+        if prior_tasks_dir is None:
+            os.environ.pop("CODE_GAUNTLET_TASKS_DIR", None)
+        else:
+            os.environ["CODE_GAUNTLET_TASKS_DIR"] = prior_tasks_dir
+        # mkdtemp needs a real prior directory even though TMPDIR is a literal sentinel.
         tempfile.tempdir = prior_tempdir
-
-        # Use a fresh state object so this test's configure/unconfigure pass
-        # never touches the live session's _STATE (restored by addCleanup
-        # regardless, but keeping the fresh instance makes the intent explicit).
-        fresh_state = root_conftest._SessionState()
         root_conftest._STATE.__dict__.clear()
-        root_conftest._STATE.__dict__.update(fresh_state.__dict__)
-
+        root_conftest._STATE.__dict__.update(root_conftest._SessionState().__dict__)
         root_conftest.pytest_configure(None)
-
         created_root = root_conftest._STATE.root
         assert created_root is not None
-        self.assertTrue(os.path.isdir(created_root))
-        self.assertEqual(os.environ["TMPDIR"], created_root)
-        self.assertEqual(tempfile.tempdir, created_root)
+        assert os.path.isdir(created_root)
+        assert os.environ["TMPDIR"] == created_root
+        assert tempfile.tempdir == created_root
+        assert os.environ["CODE_GAUNTLET_TASK_ROOTS"] == os.path.join(
+            created_root, "task-roots"
+        )
+        assert os.path.isdir(os.environ["CODE_GAUNTLET_TASK_ROOTS"])
+        assert "CODE_GAUNTLET_TASKS_DIR" not in os.environ
+        os.environ["CODE_GAUNTLET_TASKS_DIR"] = "/sentinel/session/tasks-dir"
 
         root_conftest.pytest_unconfigure(None)
-
-        with self.subTest("prior value restored exactly"):
-            self.assertEqual(os.environ["TMPDIR"], "/sentinel/prior/tmpdir")
-            self.assertEqual(os.environ["GIT_DIR"], "/sentinel/prior/git-dir")
-        with self.subTest("previously absent variable stays absent"):
-            self.assertNotIn("GIT_CEILING_DIRECTORIES", os.environ)
-        with self.subTest("tempfile.tempdir restored"):
-            self.assertEqual(tempfile.tempdir, prior_tempdir)
-        with self.subTest("private root directory removed"):
-            self.assertFalse(os.path.exists(created_root))
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert os.environ["TMPDIR"] == "/sentinel/prior/tmpdir"
+        assert os.environ["GIT_DIR"] == "/sentinel/prior/git-dir"
+        assert "GIT_CEILING_DIRECTORIES" not in os.environ
+        assert os.environ.get("CODE_GAUNTLET_TASK_ROOTS") == prior_roots
+        assert os.environ.get("CODE_GAUNTLET_TASKS_DIR") == prior_tasks_dir
+        assert tempfile.tempdir == prior_tempdir
+        assert not os.path.exists(created_root)
+    finally:
+        # Calls to these hooks must not disturb the session running this test.
+        os.environ.clear()
+        os.environ.update(saved_environ)
+        tempfile.tempdir = saved_tempdir
+        root_conftest._STATE.__dict__.clear()
+        root_conftest._STATE.__dict__.update(saved_state)
+        shutil.rmtree(prior_tempdir, ignore_errors=True)

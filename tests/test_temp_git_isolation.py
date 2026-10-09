@@ -32,8 +32,8 @@ NODE_IDS = (
     "tests/test_resolve_config.py::TestResolverCli::"
     "test_usage_and_setup_fail_without_process_stream_noise",
     "bench/tests/test_report.py::TestCli::test_git_sha_tolerates_non_repo",
-    "tests/test_await_workflow.py::TestResolveTarget::"
-    "test_missing_getuid_uses_system_temp_root",
+    "tests/test_tasks.py::"
+    "test_real_default_discovery_preserves_order_and_deduplicates[no-getuid-system-temp]",
 )
 
 

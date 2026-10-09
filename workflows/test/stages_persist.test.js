@@ -1272,7 +1272,7 @@ test('provenPrimaryPaths salvages NOTHING from a receipt that cannot be trusted'
 //
 // The primaries ride home in the workflow's own return value, which the HARNESS
 // serializes to tasks/<taskid>.output, and scripts/gauntlet/materialize.py writes them
-// from there. No agent transcribes them. tests/test_materialize_artifacts.py owns the
+// from there. No agent transcribes them. tests/test_materialize.py owns the
 // disk half (against a task output file this pipeline actually produced); these pin the
 // workflow half: that nothing is dispatched, that the bytes carried are the SAME bytes
 // the writer path would have been handed, and that the one refusal falls back rather

@@ -435,11 +435,12 @@ invariant labels, under which the message is correct. Severity split of the 59 s
 comment — land in the pull request that carries this document. Three findings do not, because
 rewording them would be dishonest: the three high-severity findings in test files where the
 docstring or test name claims a stronger assertion than the test actually makes
-(`tests/test_materialize_artifacts.py:284` injects no failure at all,
+(the materializer failure test at the audit revision injects no failure at all,
 `tests/test_verify_findings.py:572` never inspects whether the grep ran, and
 `tests/test_post_review.py:838` exercises the opposite case from the one its name states). The
 honest fix there is to strengthen or rename the test, which is a code change, and it is deferred to
-**#109**.
+**#109**. The materializer test is now replaced by
+`tests/test_materialize.py::test_unexpected_failure`, which injects a source-selection failure.
 
 ### Appendix — all 59 surviving findings
 
@@ -448,7 +449,7 @@ honest fix there is to strengthen or rename the test, which is a code change, an
 | `scripts/filter_findings.py:252` | Docstring says security findings use `security_min_confidence` as the bar; the code takes `min()` of it and `confidence_threshold`, so it can only lower the bar | high |
 | `scripts/filter_findings.py:1068` | Step-1 dedup described as test-analyzer-specific; `dedup_cross_agent`'s winner rule never consults agent identity | high |
 | `workflows/src/stages.js:3010` | Comment says every stage but the report-writer receives `contextPath`; no stage receives it — only a prebuilt `contextLine` is threaded | high |
-| `tests/test_materialize_artifacts.py:284` | Test name and comment claim an injected internal failure; none is injected and the happy path runs | high |
+| Materializer failure test at the audit revision; current guard: `tests/test_materialize.py::test_unexpected_failure` | Test name and comment claimed an injected internal failure; none was injected and the happy path ran | high |
 | `tests/test_verify_findings.py:572` | Docstring claims the test proves a git-grep call is skipped; the test never inspects whether grep ran | high |
 | `tests/test_post_review.py:838` | Test name says no diagnostic is emitted for `valid_lines=None`; the test passes `set()` and asserts the diagnostic *is* present | high |
 | `scripts/filter_findings.py:588` | Says singletons pass through unmodified; they are annotated and penalised -15 outside `_CORE_DIMENSIONS` | medium |
@@ -593,5 +594,5 @@ The orchestrator replaces each token with the real issue number after filing.
 | #106 | Harden the Actions supply chain: SHA-pin every `uses:`, add `dependabot.yml`, and gate `.github/workflows` with zizmor | 23 pins, 7 `persist-credentials: false`, 3 `permissions:` blocks, grouped weekly Dependabot, zizmor hook plus `.github/zizmor.yml` |
 | #107 | Add the OpenSSF Scorecard action and badge after the pinning pass lands | SHA-pinned action, weekly cron, SARIF to code scanning; sequenced after #106 |
 | #108 | Enforce the merge, tag, and rules-file gates that are currently advisory | Required checks on ruleset 16049246, tag ruleset, frozen check-run names, octo-sts claim scoping, twin-sync drift check made enforcing, the four rules-file corrections |
-| #109 | Strengthen the three tests whose docstrings claim more than they assert | `test_materialize_artifacts.py:284`, `test_verify_findings.py:572`, `test_post_review.py:838` — add the missing assertion or rename to the truth |
+| #109 | Strengthen the three tests whose docstrings claim more than they assert | Materializer failure injection is now guarded by `tests/test_materialize.py::test_unexpected_failure`; the audit also named `test_verify_findings.py:572` and `test_post_review.py:838` |
 | #110 | Remove the nine accidental duplications recorded in the retired duplication register (see #409) | Priority: the two brace scanners across both runtimes and the `invoke.py` baseline walk, where a correctness invariant is held by copy-paste |
