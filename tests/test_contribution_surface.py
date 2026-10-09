@@ -1413,6 +1413,35 @@ def _ci_workflow_tests_node_version(text: str) -> str:
     return str(matches[0])
 
 
+def test_layout_hook_owns_pytest_and_keeps_markdown_scope() -> None:
+    text = _read(".pre-commit-config.yaml")
+    block = _pre_commit_hook_block(text, "agent-instruction-layout")
+    assert _pre_commit_hook_value(block, "name") == (
+        "agent instruction files stay small, unshadowed, and name real code"
+    )
+    assert _pre_commit_hook_value(block, "entry") == (
+        "python -m pytest tests/test_agent_instruction_layout.py -q -p no:cacheprovider"
+    )
+    assert _pre_commit_hook_value(block, "language") == "python"
+    assert _pre_commit_hook_value(block, "files") == (
+        r"(^|/)(AGENTS|CLAUDE|CLAUDE\.local)\.md$|^REVIEW\.md$"
+    )
+    assert _pre_commit_hook_value(block, "pass_filenames") == "false"
+    assert not re.search(r"(?m)^        (types|types_or|stages):", block)
+    assert re.search(r"(?m)^default_stages: \[pre-commit\]$", text)
+    assert re.search(r"pytest==[0-9][A-Za-z0-9.!+_-]*", block)
+
+
+def test_pytest_hook_pins_match_dev_dependency() -> None:
+    pins = re.findall(r'"(pytest==[^"\s]+)"', _read("pyproject.toml"))
+    assert len(pins) == 1, f"expected one exact pytest dev pin, found {pins}"
+    text = _read(".pre-commit-config.yaml")
+    hook_pins = re.findall(r"pytest==[0-9][A-Za-z0-9.!+_-]*", text)
+    assert hook_pins, "no pre-commit hook owns a pytest pin"
+    mismatched = [pin for pin in hook_pins if pin != pins[0]]
+    assert not mismatched, f"pytest hook pins differ from {pins[0]}: {mismatched}"
+
+
 class TestContractFenceHook(unittest.TestCase):
     def test_contract_fence_hook_is_scoped_and_covers_derived_inputs(self):
         text = _read(".pre-commit-config.yaml")

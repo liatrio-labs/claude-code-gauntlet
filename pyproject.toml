@@ -1,9 +1,8 @@
 # Config + CI pin surface only — this is not a packaged project.
-# No [project] / [build-system] on purpose (see #102 / AGENTS.md).
+# No [project] / [build-system]: this is a plugin, not a Python package.
 #
-# This table pins the CI pytest stack. Lint-tool versions are pinned by the
-# rev: fields in .pre-commit-config.yaml. Ruff is the one twin: the import-ban
-# test runs it, and tests/test_ruff_import_boundary.py holds the two pins equal.
+# Ruff and pytest are the twin pins: their pre-commit versions are held equal
+# to these dev pins by tests/test_ruff_import_boundary.py and the hook-pin test.
 [dependency-groups]
 dev = [
   "pytest==9.1.1",
@@ -14,9 +13,7 @@ dev = [
 
 [tool.coverage.run]
 branch = true
-# patch=["subprocess"] is load-bearing: without it pytest-cov does NOT measure the
-# sys.executable child processes the suites spawn, and labels_diff reads
-# 0% (aggregate collapses ~92%->85%). coverage.py >=7.10. See #102 requirement 8.
+# Measure sys.executable child processes as well as the parent pytest process.
 patch = ["subprocess"]
 relative_files = true
 parallel = true
@@ -64,6 +61,10 @@ exclude = "(?x)(^(bench/vendor|bench/workspace)/)"
 [[tool.mypy.overrides]]
 module = [
   "gauntlet.cli",
+  "gauntlet.config",
+  "gauntlet.output_dir",
+  "gauntlet.project_rules",
+  "gauntlet.fix_tasks",
   "gauntlet.tasks",
   "gauntlet.awaiting",
   "gauntlet.materialize",

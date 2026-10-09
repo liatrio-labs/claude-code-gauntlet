@@ -1,32 +1,7 @@
 #!/usr/bin/env python3
-"""Render persisted review findings as deterministic FIX-task payloads.
+"""Render persisted review findings as deterministic FIX-task payloads."""
 
-The input is the ``artifactPaths.postReview`` JSON artifact.  It may be the
-persisted wrapper or the bare findings array.  The output is a JSON array for
-the Phase 8 task-board flow.  Each finding becomes one object with ``subject``,
-``description``, and ``metadata``.
-
-Usage:
-    python3 scripts/render_fix_tasks.py POST_REVIEW --repo-root REPO_ROOT
-
-Non-goals
----------
-This script does not create tasks, run a test, read source files, or infer
-which findings are valid.  It only renders the delivered findings and selects
-nearby tracked files as implementation patterns.  Its build-system table is
-language-agnostic: it fills three command strings from fixed root-level config
-precedence and degrades to empty command lists when nothing is detected.  It never
-filters, ranks, or reads findings by language.
-
-Exit codes
-----------
-0 -- the payload was rendered and written to stdout.
-1 -- a content, repository-root, or derived-data failure occurred; stdout is empty.
-2 -- argparse rejected a malformed command.
-
-No external Python dependencies are used.  Python 3.10 is supported, so this
-module intentionally does not use ``tomllib`` or newer pattern-matching syntax.
-"""
+from __future__ import annotations
 
 import argparse
 import difflib
@@ -36,10 +11,12 @@ import posixpath
 import re
 import stat
 import sys
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
+from typing import NoReturn, TypedDict
 
 from gauntlet import proc
-from gauntlet.cli import Command, warn
+from gauntlet.cli import CliError, Command, Parser, warn
 from gauntlet.fs import JsonReadError, confined, read_json
 from gauntlet.jsjson import write_result
 from gauntlet.markdown import code_span, fence_run
@@ -71,18 +48,20 @@ HEADING_RE = re.compile(r"(?m)^([ ]{0,3})(#{1,6})(?= |$)")
 MAX_CONFIG_BYTES = 1024 * 1024
 
 
-class ContentError(Exception):
-    """A content failure that must not emit a stdout payload."""
+class FixTaskWire(TypedDict):
+    subject: str
+    description: str
+    metadata: dict[str, object]
 
 
-def _one_line(value):
+def _one_line(value: object) -> str:
     text = str(value)
     text = CONTROL_RE.sub(" ", text)
     text = re.sub(r" +", " ", text).strip()
     return neutralize_comment_openers(text)
 
 
-def _safe_prose(value):
+def _safe_prose(value: object) -> str:
     text = str(value).replace("\r\n", "\n").replace("\r", "\n")
     text = "".join(
         character
@@ -95,12 +74,7 @@ def _safe_prose(value):
     return re.sub(r"(?m)^([ ]{0,3})(=+|-+)[ \t]*$", r"\1\\\2", text)
 
 
-def _fence(value):
-    fence = fence_run(value)
-    return f"{fence}\n{value}\n{fence}"
-
-
-def _present(value):
+def _present(value: object) -> bool:
     if value is None:
         return False
     if isinstance(value, str):
@@ -110,8 +84,9 @@ def _present(value):
     return True
 
 
-def _field(finding, canonical, optional=False):
-    """Read canonical data first, then the persisted v2 alias."""
+def _field(
+    finding: Mapping[str, object], canonical: str, optional: bool = False
+) -> tuple[object, bool]:
     if canonical in finding:
         return finding[canonical], True
     alias = OPTIONAL_ALIASES.get(canonical) if optional else ALIASES.get(canonical)
@@ -120,48 +95,42 @@ def _field(finding, canonical, optional=False):
     return None, False
 
 
-def _reject_json_constant(value):
+def _reject_json_constant(value: str) -> NoReturn:
     raise ValueError(f"non-standard JSON constant {value}")
 
 
-def _load_findings(path):
+def _load_findings(path: str) -> list[dict[str, object]]:
     try:
         data = read_json(path, parse_constant=_reject_json_constant)
     except JsonReadError as exc:
-        raise ContentError(
-            f"could not read valid JSON from {path}: {exc.cause}"
-        ) from exc
+        raise CliError(f"could not read valid JSON from {path}: {exc.cause}") from exc
 
     if isinstance(data, list):
         findings = data
     elif isinstance(data, dict) and isinstance(data.get("findings"), list):
         findings = data["findings"]
     else:
-        raise ContentError(
+        raise CliError(
             "post-review artifact must be a findings array or an object with a findings array"
         )
 
     normalized_findings = []
     for index, finding in enumerate(findings):
         if not isinstance(finding, dict):
-            raise ContentError(f"finding at index {index} is not an object")
-        for field in REQUIRED_FIELDS:
-            _, present = _field(finding, field)
-            if not present:
-                raise ContentError(
-                    f"finding at index {index} lacks required key {field}"
-                )
+            raise CliError(f"finding at index {index} is not an object")
         normalized = dict(finding)
         for field in (*REQUIRED_FIELDS, "line_end"):
             value, present = _field(finding, field, optional=field == "line_end")
             if present and field not in normalized:
                 normalized[field] = value
+        for field in REQUIRED_FIELDS:
+            if field not in normalized:
+                raise CliError(f"finding at index {index} lacks required key {field}")
         normalized_findings.append(normalized)
     return normalized_findings
 
 
-def _path_info(value, root):
-    """Return (accepted, real path) for a repo-relative artifact path."""
+def _path_info(value: object, root: str) -> tuple[bool, str | None]:
     if not isinstance(value, str) or not value or "\x00" in value:
         return False, None
     if os.path.isabs(value) or ntpath.isabs(value) or ntpath.splitdrive(value)[0]:
@@ -175,18 +144,18 @@ def _path_info(value, root):
     return True, target
 
 
-def _valid_cross_file_refs(finding, root):
+def _valid_cross_file_refs(
+    finding: Mapping[str, object], root: str
+) -> tuple[list[str], int]:
     raw, present = _field(finding, "cross_file_refs", optional=True)
     if not present or not isinstance(raw, list):
         return [], 0
     accepted = []
     rejected = 0
     for value in raw:
-        if not isinstance(value, str):
-            rejected += 1
-            continue
         ok, _ = _path_info(value, root)
         if ok:
+            assert isinstance(value, str)
             accepted.append(value)
         else:
             rejected += 1
@@ -194,11 +163,11 @@ def _valid_cross_file_refs(finding, root):
 
 
 class SiblingIndex:
-    """One cached root-level git listing used for all findings."""
+    """Cache one root git listing for all findings."""
 
-    def __init__(self, root):
-        self.paths = None
-        self.error = None
+    def __init__(self, root: str) -> None:
+        self.paths: list[str] | None = None
+        self.error: str | None = None
         try:
             result = proc.run_bytes(["git", "ls-files", "-z"], cwd=root, timeout=10)
         except (OSError, proc.TimeoutExpired) as exc:
@@ -209,7 +178,7 @@ class SiblingIndex:
             return
         self.paths = [os.fsdecode(path) for path in result.stdout.split(b"\0") if path]
 
-    def siblings(self, file_path, delivered):
+    def siblings(self, file_path: str, delivered: Sequence[str]) -> list[str]:
         if self.paths is None:
             return []
         normalized = posixpath.normpath(file_path)
@@ -235,7 +204,7 @@ class SiblingIndex:
         return [item[2] for item in candidates[:2]]
 
 
-def _candidate_names(root):
+def _candidate_names(root: str) -> list[str]:
     names = ["package.json", "Cargo.toml", "go.mod", "pyproject.toml", "Makefile"]
     with suppress(OSError):
         names.extend(
@@ -246,7 +215,7 @@ def _candidate_names(root):
     return names
 
 
-def _safe_candidate(root, name, notes):
+def _safe_candidate(root: str, name: str, notes: list[str]) -> str | None:
     path = os.path.join(root, name)
     if not os.path.lexists(path):
         return None
@@ -255,11 +224,11 @@ def _safe_candidate(root, name, notes):
         if not confined(real, root):
             notes.append(f"toolchain candidate {name} rejected: outside repo root")
             return None
-        mode = os.stat(real).st_mode
-        if not stat.S_ISREG(mode):
+        info = os.stat(real)
+        if not stat.S_ISREG(info.st_mode):
             notes.append(f"toolchain candidate {name} rejected: not a regular file")
             return None
-        if os.stat(real).st_size > MAX_CONFIG_BYTES:
+        if info.st_size > MAX_CONFIG_BYTES:
             notes.append(f"toolchain candidate {name} rejected: larger than 1 MiB")
             return None
         with open(real, "rb") as handle:
@@ -270,7 +239,7 @@ def _safe_candidate(root, name, notes):
     return real
 
 
-def _package_command(scripts, prefix, default):
+def _package_command(scripts: Mapping[str, object], prefix: str, default: str) -> str:
     valid = sorted(
         name
         for name in scripts
@@ -286,7 +255,7 @@ def _package_command(scripts, prefix, default):
     return default
 
 
-def _package_toolchain(path):
+def _package_toolchain(path: str) -> dict[str, str]:
     defaults = {"test": "npm test", "lint": "npm run lint", "build": "npm run build"}
     try:
         data = read_json(path)
@@ -302,8 +271,8 @@ def _package_toolchain(path):
     }
 
 
-def _toolchain(root, notes):
-    table = {
+def _toolchain(root: str, notes: list[str]) -> Mapping[str, str | None] | None:
+    table: dict[str, dict[str, str | None]] = {
         "Cargo.toml": {
             "test": "cargo test",
             "lint": "cargo clippy",
@@ -333,7 +302,7 @@ def _toolchain(root, notes):
     return None
 
 
-def _commit_scope(file_path):
+def _commit_scope(file_path: str) -> str:
     normalized = posixpath.normpath(file_path)
     directory = posixpath.dirname(normalized)
     if directory:
@@ -341,7 +310,7 @@ def _commit_scope(file_path):
     return posixpath.splitext(posixpath.basename(normalized))[0]
 
 
-def _detail_value(value):
+def _detail_value(value: object) -> str | None:
     if isinstance(value, list):
         if not value:
             return None
@@ -355,7 +324,7 @@ def _detail_value(value):
     return _one_line(value)
 
 
-def _details(finding):
+def _details(finding: Mapping[str, object]) -> list[str]:
     dimension = finding.get("dimension")
     fields = (
         _DETAIL_FIELDS_BY_DIMENSION.get(dimension, ())
@@ -385,7 +354,13 @@ def _details(finding):
     return lines
 
 
-def _render_description(finding, file_path, rejected, toolchain, severity):
+def _render_description(
+    finding: Mapping[str, object],
+    file_path: object,
+    rejected: bool,
+    toolchain: Mapping[str, str | None] | None,
+    severity: str,
+) -> str:
     sections = [f"## Issue\n{_safe_prose(finding['description'])}"]
     if rejected:
         sections.append("## Location\n(path rejected: outside repo root)")
@@ -400,7 +375,8 @@ def _render_description(finding, file_path, rejected, toolchain, severity):
 
     evidence = finding.get("evidence")
     if _present(evidence):
-        sections.append(f"## Evidence\n{_fence(str(evidence))}")
+        fence = fence_run(str(evidence))
+        sections.append(f"## Evidence\n{fence}\n{evidence}\n{fence}")
     suggestion = finding.get("suggestion")
     if _present(suggestion):
         sections.append(f"## Suggested Fix\n{_safe_prose(suggestion)}")
@@ -417,7 +393,14 @@ def _render_description(finding, file_path, rejected, toolchain, severity):
     return "\n\n".join(sections)
 
 
-def _task(finding, root, toolchain, sibling_index, delivered, rejected_count):
+def _task(
+    finding: Mapping[str, object],
+    root: str,
+    toolchain: Mapping[str, str | None] | None,
+    sibling_index: SiblingIndex,
+    delivered: Sequence[str],
+    rejected_count: int,
+) -> tuple[FixTaskWire, int]:
     file_path = finding["file"]
     accepted, _ = _path_info(file_path, root)
     refs, rejected_refs = _valid_cross_file_refs(finding, root)
@@ -427,23 +410,27 @@ def _task(finding, root, toolchain, sibling_index, delivered, rejected_count):
     if rejected:
         files_to_modify = []
         patterns = []
-        commit_scope = "fix"
-    elif finding["dimension"] == "test_coverage":
-        files_to_modify = refs
-        pattern_target = refs[0] if refs else file_path
-        patterns = sibling_index.siblings(pattern_target, delivered + files_to_modify)
-        commit_scope = _commit_scope(file_path)
     else:
-        files_to_modify = [file_path]
-        patterns = sibling_index.siblings(file_path, delivered)
-        commit_scope = _commit_scope(file_path)
+        assert isinstance(file_path, str)
+        if finding["dimension"] == "test_coverage":
+            files_to_modify = refs
+            pattern_target = refs[0] if refs else file_path
+            patterns = sibling_index.siblings(
+                pattern_target, [*delivered, *files_to_modify]
+            )
+        else:
+            files_to_modify = [file_path]
+            patterns = sibling_index.siblings(file_path, delivered)
+    commit_scope = "fix" if rejected else _commit_scope(str(file_path))
 
     finding_id = _one_line(finding["id"])
     title = _one_line(finding["title"])
     severity = normalize_report_severity(finding["severity"], SEVERITY_EMOJI)
     dimension = _one_line(finding["dimension"])
     complexity = "trivial" if severity in ("medium", "low") else "standard"
-    metadata = {
+    proof_artifacts: list[dict[str, object]] = []
+    verification: dict[str, list[str | None]] = {"pre": [], "post": []}
+    metadata: dict[str, object] = {
         "task_type": "review-fix",
         "task_id": f"FIX-{finding_id}",
         "category": dimension,
@@ -463,8 +450,8 @@ def _task(finding, root, toolchain, sibling_index, delivered, rejected_count):
                 "testable": True,
             }
         ],
-        "proof_artifacts": [],
-        "verification": {"pre": [], "post": []},
+        "proof_artifacts": proof_artifacts,
+        "verification": verification,
         "commit": {"template": f"fix({commit_scope}): {title}"},
         "review_context": {
             "finding_id": finding["id"],
@@ -478,17 +465,17 @@ def _task(finding, root, toolchain, sibling_index, delivered, rejected_count):
         },
     }
     if not rejected:
-        metadata["proof_artifacts"].append({"type": "file", "path": file_path})
+        proof_artifacts.append({"type": "file", "path": file_path})
     if toolchain is not None:
-        metadata["proof_artifacts"].insert(
+        proof_artifacts.insert(
             0, {"type": "test", "command": toolchain["test"], "expected": "All pass"}
         )
-        metadata["verification"]["pre"] = [
+        verification["pre"] = [
             command
             for command in (toolchain["lint"], toolchain["build"])
             if command is not None
         ]
-        metadata["verification"]["post"] = [toolchain["test"]]
+        verification["post"] = [toolchain["test"]]
     return {
         "subject": f"FIX: {title}",
         "description": _render_description(
@@ -498,14 +485,21 @@ def _task(finding, root, toolchain, sibling_index, delivered, rejected_count):
     }, rejected_count
 
 
-def build_tasks(findings, root, notes):
+def build_tasks(
+    findings: Sequence[Mapping[str, object]],
+    root: str,
+    notes: list[str],
+) -> tuple[list[FixTaskWire], int]:
     toolchain = _toolchain(root, notes)
     sibling_index = SiblingIndex(root)
     if sibling_index.error:
         notes.append(sibling_index.error)
-    delivered = [
-        finding["file"] for finding in findings if _path_info(finding["file"], root)[0]
-    ]
+    delivered = []
+    for finding in findings:
+        file_path = finding["file"]
+        if _path_info(file_path, root)[0]:
+            assert isinstance(file_path, str)
+            delivered.append(file_path)
     tasks = []
     rejected_count = 0
     for finding in findings:
@@ -516,29 +510,27 @@ def build_tasks(findings, root, notes):
     return tasks, rejected_count
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(description=__doc__)
+def build_parser() -> Parser:
+    parser = Parser(
+        prog="render_fix_tasks",
+        description="Render persisted review findings as deterministic FIX-task payloads.",
+    )
     parser.add_argument("post_review", metavar="POST_REVIEW")
     parser.add_argument("--repo-root", metavar="REPO_ROOT", required=True)
     return parser
 
 
-def main(argv=None):
-    args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
+def _handle(args: argparse.Namespace) -> int:
     root = os.path.realpath(args.repo_root)
     if not os.path.isdir(root):
-        print(
-            f"ERROR: --repo-root is not a directory: {args.repo_root}", file=sys.stderr
-        )
-        return 1
+        raise CliError(f"--repo-root is not a directory: {args.repo_root}")
     try:
         findings = _load_findings(args.post_review)
-        notes = []
+        notes: list[str] = []
         tasks, rejected_count = build_tasks(findings, root, notes)
         write_result(tasks)
-    except Exception as exc:  # noqa: BLE001 - no content failure may leak a payload
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+    except Exception as exc:  # Content failures must not leak stdout or tracebacks.
+        raise CliError(str(exc)) from exc
     for note in notes:
         warn(note)
     task_label = "task" if len(tasks) == 1 else "tasks"
@@ -551,4 +543,4 @@ def main(argv=None):
     return 0
 
 
-CLI = Command.legacy(main, prog="render_fix_tasks.py")
+CLI = Command(parser=build_parser(), main=_handle)

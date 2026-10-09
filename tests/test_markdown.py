@@ -38,6 +38,7 @@ from gauntlet.markdown import (
         ),
         pytest.param("~~~a`b\n", False, ("~", 3, 0), id="tilde-info-allows-backtick"),
         pytest.param("    ```\n", False, None, id="four-space-indent-is-not-opener"),
+        pytest.param("\t```\n", False, None, id="tab-indent-is-not-opener"),
         pytest.param("``\n", False, None, id="opener-needs-three-ticks"),
         pytest.param(" ```\n", True, None, id="strict-indent-one"),
         pytest.param("  ```\n", True, None, id="strict-indent-two"),
