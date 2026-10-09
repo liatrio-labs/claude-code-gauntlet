@@ -537,10 +537,7 @@ def test_omit_parser(raw, field, expected):
 
 
 def test_convention_vocabulary():
-    assert (
-        "required by the dispatch schema"
-        not in "dimension-conditional dispatch requirement"
-    )
+    assert _DISPATCH_REQUIRED_PHRASE not in _DIMENSION_CONDITIONAL_PHRASE
     assert declared_by_agent()["code-gauntlet:test-analyzer"]["criticality"] == "number"
     assert all_extras()["criticality"] == "test_coverage"
     text = read("agents/conventions-and-intent.md")
@@ -877,10 +874,19 @@ def test_triage_dispatch():
 
 
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
-def test_summary_is_not_benchmark_candidate(platform):
+@pytest.mark.parametrize(
+    "summary",
+    [
+        pytest.param(
+            "9 reported issues from 10 findings after the gauntlet.\n\n- index entry\n\n3 more reported issues not listed here (over the delivery cap of 6 findings).",
+            id="findings",
+        ),
+        pytest.param("0 findings after the gauntlet.", id="zero-findings"),
+    ],
+)
+def test_summary_is_not_benchmark_candidate(platform, summary):
     from bench.adapter.adapt import payload_to_candidates
 
-    summary = "9 reported issues from 10 findings after the gauntlet.\n\n- index entry\n\n3 more reported issues not listed here (over the delivery cap of 6 findings)."
     payload = (
         {
             "payload": {
@@ -918,6 +924,17 @@ def test_style_source_contract(source):
             assert "\u2014" not in line
             assert line.rstrip().endswith((".", '."'))
             assert lines[index + 1] == ""
+    in_fence = False
+    headings = 0
+    for line in lines:
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and line.startswith("## "):
+            headings += 1
+    carrier = read("docs/style/session-context.md")
+    section_name = "Wording" if source == "wording-rules.md" else "Cadence"
+    section = carrier.split(f"## {section_name}\n", 1)[1].split("\n## ", 1)[0]
+    assert headings == sum(line.startswith("- ") for line in section.splitlines())
     starts = [index for index, line in enumerate(lines) if line.startswith("## ")]
     for start, end in zip(starts, [*starts[1:], len(lines)], strict=True):
         section = lines[start:end]
@@ -974,3 +991,38 @@ def test_full_report_predicates(surface):
     assert "{finding.body}" not in text
     assert "suggested_fix_code" not in text
     assert "not apply-checked" not in text
+
+
+def test_no_null_string_instructions():
+    extras = set(all_extras()) | {"claude_md_rule"}
+    for agent_type, fields in declared_by_agent().items():
+        text = read(f"agents/{agent_name(agent_type)}.md")
+        for field in extras & fields.keys():
+            if fields[field] != "string":
+                continue
+            assert re.search(r'"' + re.escape(field) + r'"\s*:\s*null', text) is None, (
+                agent_type,
+                field,
+            )
+            if field in text:
+                assert "otherwise null" not in text.split(field, 1)[1][:120], (
+                    agent_type,
+                    field,
+                )
+
+
+@pytest.mark.parametrize(
+    ("rel", "symbol"),
+    [
+        pytest.param(rel, symbol, id=rel.split("/")[-1] + ":" + symbol)
+        for rel, symbols in gen.IDENTITY_FENCES.items()
+        for symbol in symbols
+    ],
+)
+def test_identity_marker_lines(rel, symbol):
+    lines = read(rel).splitlines()
+    assert (
+        f"<!-- generated-from-registry-identity:{symbol} "
+        "\u2014 do not edit; run scripts/generate_contract_requirements.py -->"
+    ) in lines
+    assert f"<!-- /generated-from-registry-identity:{symbol} -->" in lines

@@ -47,43 +47,47 @@ def test_fenced_example(style_tree, invoke):
 
 
 @pytest.mark.parametrize(
-    ("source", "message"),
+    ("source", "message", "source_first"),
     [
         pytest.param(
             "## Hidden\n```text\nRULE: Poison.\n```\n",
             "section '## Hidden' has 0 RULE: lines; all sections must carry exactly one",
+            True,
             id="fenced-only-rule",
         ),
         pytest.param(
-            "## Plain\nRULE: Use plain words.\n```\n",
+            "## Empty\n```\nRULE: Hidden.\n",
             "unbalanced code fence in",
+            False,
             id="unbalanced",
         ),
         pytest.param(
-            "# no rules\njust prose\n", "yields zero RULE: lines", id="zero-rules"
+            "# no rules\njust prose\n", "yields zero RULE: lines", True, id="zero-rules"
         ),
         pytest.param(
             "## Empty\n\n## Next\nRULE: Live.\n",
             "section '## Empty' has 0 RULE: lines; all sections must carry exactly one",
+            True,
             id="missing-section-rule",
         ),
         pytest.param(
             "## Twice\nRULE: First.\nRULE: Second.\n",
             "section '## Twice' has 2 RULE: lines; all sections must carry exactly one",
+            True,
             id="duplicate-section-rule",
         ),
     ],
 )
-def test_source_diagnostic(style_tree, invoke, source, message):
+def test_source_diagnostic(style_tree, invoke, source, message, source_first):
     (style_tree / "docs/style/wording-rules.md").write_text(source, encoding="utf-8")
     result = invoke(
         "build_style_artifacts", ["--repo-root", str(style_tree)], style_tree
     )
     assert result.returncode == 1
     assert result.stdout == b""
-    assert message in result.stderr.decode()
-    assert re.fullmatch(r"build_style_artifacts: [^\n]+\n", result.stderr.decode())
-    assert str(Path("docs/style/wording-rules.md")) in result.stderr.decode()
+    path = Path("docs/style/wording-rules.md")
+    diagnostic = f"{path} {message}" if source_first else f"{message} {path}"
+    assert result.stderr.decode() == f"build_style_artifacts: {diagnostic}\n"
 
 
 def test_missing_source(style_tree, invoke):
@@ -169,3 +173,15 @@ def test_unreadable_carrier(style_tree, invoke):
     assert re.fullmatch(r"build_style_artifacts: [^\n]+\n", result.stderr.decode())
     assert "stale generated carrier" not in result.stderr.decode()
     assert carrier.is_dir()
+
+
+def test_unreadable_source(style_tree, invoke):
+    source = style_tree / "docs/style/wording-rules.md"
+    source.write_bytes(b"\xff")
+    result = invoke(
+        "build_style_artifacts", ["--repo-root", str(style_tree)], style_tree
+    )
+    assert result.returncode == 1
+    assert result.stdout == b""
+    assert re.fullmatch(r"build_style_artifacts: [^\n]+\n", result.stderr.decode())
+    assert source.read_bytes() == b"\xff"

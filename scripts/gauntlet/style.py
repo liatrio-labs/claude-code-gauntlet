@@ -27,20 +27,19 @@ RULE_PREFIX = "RULE: "
 
 
 def extract_rules(text: str, source_name: str) -> list[str]:
-    """Every line starting `RULE: `, verbatim, skipping fenced code blocks.
-
-    Each rule lives in its own `##` section, so a stray or missing fence delimiter that
-    would silently swallow later rules is caught by per-section attribution: every
-    section outside a fence must carry exactly one RULE: line, and a violation names both
-    the source and the offending section heading. An aggregate count comparison would pass
-    when one section has zero RULE: lines and another has two; this does not. Preamble
-    text before the first `## ` heading is exempt and may carry zero rules. An unclosed
-    fence at end of file is a separate hard error.
-    """
+    """Attribute rules per section so one missing rule cannot hide behind a duplicate."""
     rules = []
     current_heading = None
     section_count = 0
     in_fence = False
+
+    def check_section() -> None:
+        if current_heading is not None and section_count != 1:
+            raise CliError(
+                f"{source_name} section {current_heading!r} has {section_count} "
+                "RULE: lines; all sections must carry exactly one"
+            )
+
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("```"):
@@ -49,11 +48,7 @@ def extract_rules(text: str, source_name: str) -> list[str]:
         if in_fence:
             continue
         if line.startswith("## "):
-            if current_heading is not None and section_count != 1:
-                raise CliError(
-                    f"{source_name} section {current_heading!r} has {section_count} "
-                    "RULE: lines; all sections must carry exactly one"
-                )
+            check_section()
             current_heading = line
             section_count = 0
             continue
@@ -62,11 +57,7 @@ def extract_rules(text: str, source_name: str) -> list[str]:
             section_count += 1
     if in_fence:
         raise CliError(f"unbalanced code fence in {source_name}")
-    if current_heading is not None and section_count != 1:
-        raise CliError(
-            f"{source_name} section {current_heading!r} has {section_count} "
-            "RULE: lines; all sections must carry exactly one"
-        )
+    check_section()
     if not rules:
         raise CliError(f"{source_name} yields zero RULE: lines")
     return rules

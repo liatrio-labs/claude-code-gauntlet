@@ -24,7 +24,7 @@ def strip_banner(text: str) -> str:
 
 
 def main(args: argparse.Namespace) -> int:
-    if not os.path.exists(CARRIER):
+    if not os.path.isfile(CARRIER):
         return 0
     try:
         contents = read_text(CARRIER)

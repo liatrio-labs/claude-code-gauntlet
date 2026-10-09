@@ -19,12 +19,10 @@ def sync_targets(
         path = os.path.join(repo_root, name)
         try:
             current = read_text(path)
-        except FileNotFoundError as exc:
+        except FileNotFoundError:
             if callable(target):
-                raise CliError(str(exc)) from exc
+                raise
             current = ""
-        except (OSError, UnicodeError) as exc:
-            raise CliError(str(exc)) from exc
         expected = target(current) if callable(target) else target
         if expected == current:
             continue

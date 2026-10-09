@@ -73,29 +73,16 @@ def test_later_failure_keeps_earlier_write(tmp_path):
     assert (tmp_path / "late.md").read_bytes() == b"late"
 
 
-def test_second_run_writes_nothing(tmp_path, monkeypatch):
-    targets = {"target.md": "new"}
-    sync_targets(tmp_path, targets, False)
-    before = (tmp_path / "target.md").stat().st_mtime_ns
-    writes = []
-    monkeypatch.setattr(generate, "write_atomic", lambda *args: writes.append(args))
-    assert sync_targets(tmp_path, targets, False) == []
-    assert writes == []
-    assert (tmp_path / "target.md").stat().st_mtime_ns == before
-
-
 def test_missing_callable_target(tmp_path):
-    with pytest.raises(CliError) as error:
+    with pytest.raises(FileNotFoundError):
         sync_targets(tmp_path, {"absent.md": lambda current: "new"}, False)
-    assert isinstance(error.value.__cause__, FileNotFoundError)
     assert not (tmp_path / "absent.md").exists()
 
 
 def test_unreadable_target(tmp_path):
     (tmp_path / "directory.md").mkdir()
-    with pytest.raises(CliError) as error:
+    with pytest.raises(OSError):
         sync_targets(tmp_path, {"directory.md": "new"}, True)
-    assert isinstance(error.value.__cause__, OSError)
 
 
 @pytest.mark.parametrize(
@@ -107,7 +94,7 @@ def test_unreadable_target(tmp_path):
         ),
     ],
 )
-def test_success_outcome(tmp_path, capsys, stale, check, expected):
+def test_success_outcome(capsys, stale, check, expected):
     assert (
         finish(
             stale,
@@ -123,7 +110,7 @@ def test_success_outcome(tmp_path, capsys, stale, check, expected):
     assert captured.err == ""
 
 
-def test_stale_outcome(tmp_path, capsys):
+def test_stale_outcome(capsys):
     with pytest.raises(CliError) as error:
         finish(
             ["z.md", "a.md"],

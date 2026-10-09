@@ -10,6 +10,8 @@ import pytest
 from gauntlet import contract_gen as gen
 from gauntlet.cli import CliError
 
+from tests.support.generator_inputs import declared_inputs
+
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = (
     "agents/security-reviewer.md",
@@ -30,7 +32,7 @@ TARGETS = (
 
 @pytest.fixture
 def registry_tree(tmp_path):
-    for rel in set(TARGETS) | gen.declared_inputs(str(ROOT)):
+    for rel in set(TARGETS) | declared_inputs(str(ROOT)):
         target = tmp_path / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT / rel).read_bytes())
@@ -576,8 +578,40 @@ def test_conditional_paragraphs():
     )
 
 
-def test_block_anchor():
-    sentence = "`a`, `b`, and `c` are required by the dispatch schema - old wording."
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        pytest.param(
+            "`a` is required by the dispatch schema \u2014 a finding without it is "
+            "rejected at the StructuredOutput boundary and retried, so it must always be "
+            "present.",
+            id="one-field",
+        ),
+        pytest.param(
+            "`a` and `b` are required by the dispatch schema \u2014 a finding "
+            "missing any of them is rejected at the StructuredOutput boundary and "
+            "retried, so all must always be present.",
+            id="two-fields",
+        ),
+        pytest.param(
+            "`a`, `b`, and `c` are required by the dispatch schema \u2014 a finding "
+            "missing any of them is rejected at the StructuredOutput boundary and "
+            "retried, so all must always be present.",
+            id="three-fields",
+        ),
+        pytest.param(
+            "`a`, `b`, `c`, and `d` are required by the dispatch schema \u2014 a finding "
+            "missing any of them is rejected at the StructuredOutput boundary and "
+            "retried, so all must always be present.",
+            id="four-fields",
+        ),
+        pytest.param(
+            "`x` is required by the dispatch schema - old wording.",
+            id="single-first-run",
+        ),
+    ],
+)
+def test_block_anchor(sentence):
     assert gen.splice(
         "before\n" + sentence + "\nafter\n", gen._SINGLE_SENTENCE_ANCHOR, "new"
     ) == (
@@ -599,6 +633,12 @@ def test_block_anchor():
             "<!-- generated-from-registry: do not edit; scripts/generate_contract_requirements.py -->\n",
             "malformed generated-block markers (1 open, 0 close)",
             id="malformed",
+        ),
+        pytest.param(
+            "<!-- generated-from-registry: do not edit; scripts/generate_contract_requirements.py -->\none\n<!-- /generated-from-registry -->\n"
+            "<!-- generated-from-registry: do not edit; scripts/generate_contract_requirements.py -->\ntwo\n<!-- /generated-from-registry -->\n",
+            "malformed generated-block markers (2 open, 2 close)",
+            id="two-blocks",
         ),
         pytest.param(
             "<!-- generated-from-registry: do not edit; scripts/generate_contract_requirements.py -->body<!-- /generated-from-registry -->",
@@ -655,6 +695,11 @@ def test_field_status(field_registry, field, expected):
             id="unknown-field",
         ),
         pytest.param(
+            "| `claude_md_rule` | string | no | d |",
+            "| `claude_md_rule` | string | conditional | d |",
+            id="no-trailing-newline",
+        ),
+        pytest.param(
             "| `id` | string | MAYBE | invalid cell |\n",
             "| `id` | string | MAYBE | invalid cell |\n",
             id="invalid-required",
@@ -673,7 +718,10 @@ def test_required_column(field_registry, text, expected):
     ],
 )
 def test_identity_body(rel, symbol, expected):
-    assert "\n".join(gen.identity_body(rel, symbol, deepcopy(IDENTITY))) == expected
+    assert (
+        "\n".join(gen.identity_body(rel, symbol, deepcopy(IDENTITY), str(ROOT)))
+        == expected
+    )
 
 
 def test_identity_body_inventory():
@@ -725,9 +773,19 @@ def test_identity_pair_diagnostic(markers, message):
     ("change", "message"),
     [
         pytest.param(
-            "missing-key",
+            "deriveWhen",
             "identity_body: identity lacks a deriveWhen key",
-            id="missing-key",
+            id="missing-deriveWhen",
+        ),
+        pytest.param(
+            "derivedFrom",
+            "identity_body: identity lacks a derivedFrom key",
+            id="missing-derivedFrom",
+        ),
+        pytest.param(
+            "waistRequired",
+            "identity_body: identity lacks a waistRequired key",
+            id="missing-waistRequired",
         ),
         pytest.param(
             "missing-description",
@@ -746,8 +804,8 @@ def test_identity_pair_diagnostic(markers, message):
 )
 def test_derived_identity_diagnostic(change, message):
     identity = deepcopy(IDENTITY)
-    if change == "missing-key":
-        del identity["deriveWhen"]
+    if change in {"deriveWhen", "derivedFrom", "waistRequired"}:
+        del identity[change]
     elif change == "missing-description":
         del identity["deriveWhen"]["gamma"]
     elif change == "empty-description":
@@ -755,12 +813,12 @@ def test_derived_identity_diagnostic(change, message):
     else:
         identity["knobs"][1]["type"] = "number"
     with pytest.raises(CliError, match=re.escape(message)):
-        gen.identity_body("x.md", "derived_waist_fields", identity)
+        gen.identity_body("x.md", "derived_waist_fields", identity, str(ROOT))
 
 
 def test_unknown_identity_body():
     with pytest.raises(CliError, match=r"no identity body for 'nope' in x.md"):
-        gen.identity_body("x.md", "nope", IDENTITY)
+        gen.identity_body("x.md", "nope", IDENTITY, str(ROOT))
 
 
 def test_undeclared_identity_fence():
@@ -782,14 +840,16 @@ def test_undeclared_identity_fence():
     with pytest.raises(
         CliError, match="identity marker pair\\(s\\) bogus match no declared symbol"
     ):
-        gen.fill_identity_fences(text, rel, IDENTITY)
+        gen.fill_identity_fences(text, rel, IDENTITY, str(ROOT))
 
 
-@pytest.mark.parametrize("failure", ["missing", "failed"])
+@pytest.mark.parametrize("failure", ["missing", "failed", "invalid-json"])
 def test_node_diagnostic(monkeypatch, tmp_path, failure, invoke):
     def run(command, **kwargs):
         if failure == "missing":
             raise FileNotFoundError("node")
+        if failure == "invalid-json":
+            return gen.proc.CompletedProcess(command, 0, stdout="not json", stderr="")
         raise gen.proc.CalledProcessError(
             1, command, stderr="early\nforced JS failure\n"
         )
@@ -803,9 +863,12 @@ def test_node_diagnostic(monkeypatch, tmp_path, failure, invoke):
     assert result.returncode == 1
     assert result.stdout == b""
     message = result.stderr.decode().rstrip("\n")
-    assert message.startswith(
-        "generate_contract_requirements: node 24 command failed: node --input-type=module -e "
-    )
+    if failure == "invalid-json":
+        assert message.startswith("generate_contract_requirements: ")
+    else:
+        assert message.startswith(
+            "generate_contract_requirements: node 24 command failed: node --input-type=module -e "
+        )
     assert "\n" not in message
     if failure == "failed":
         assert message.endswith(": forced JS failure")
@@ -1011,14 +1074,8 @@ def test_identity_fill_order():
             f"<!-- /generated-from-registry-identity:{symbol} -->",
         ]
     )
-    filled = gen.fill_identity_fences(text, rel, IDENTITY)
+    filled = gen.fill_identity_fences(text, rel, IDENTITY, str(ROOT))
     assert "STALE" not in filled
-    assert (
-        filled.index("### MARK NAME")
-        < filled.index("- **Identity:**")
-        < filled.index("Product mark: MARK")
-        < filled.index("````markdown")
-    )
     expected = "\n".join(
         line
         for symbol in [
@@ -1034,12 +1091,11 @@ def test_identity_fill_order():
         ]
     )
     assert filled == expected
-    assert gen.fill_identity_fences(expected, rel, IDENTITY) == expected
+    assert gen.fill_identity_fences(expected, rel, IDENTITY, str(ROOT)) == expected
 
 
-def test_usage(invoke, monkeypatch, tmp_path):
+def test_usage(invoke, tmp_path):
     name = "generate_contract_requirements"
-    monkeypatch.setattr(sys, "argv", [name + ".py"])
     help_result = invoke(name, ["--help"], tmp_path)
     assert help_result.returncode == 0
     assert (
@@ -1193,3 +1249,128 @@ def test_identity_markers_inside_code_fence():
         ],
         "x.py",
     ) == {"alpha": (1, 3)}
+
+
+def test_target_steps_compose(monkeypatch):
+    path = "agents/code-simplifier.md"
+    identity = {
+        "dimensions": [
+            {
+                "agentType": "code-gauntlet:code-simplifier",
+                "requiredExtra": ["x"],
+            }
+        ],
+        "brand": {"mark": "MARK", "name": "NAME"},
+        "severityEmoji": {},
+        "ruleSourceLabels": {},
+    }
+    monkeypatch.setattr(gen, "IDENTITY_FENCES", {path: ["summary_header"]})
+    text = (
+        "`x` is required by the dispatch schema - old wording.\n"
+        "<!-- generated-from-registry-identity:summary_header -->\n"
+        "STALE\n<!-- /generated-from-registry-identity:summary_header -->\n"
+    )
+    # The fence step must see the result of the preceding dispatch splice.
+    fill = gen.fill_identity_fences
+
+    def fill_after_splice(current, **kwargs):
+        assert "old wording" not in current
+        return fill(current, **kwargs)
+
+    monkeypatch.setattr(gen, "fill_identity_fences", fill_after_splice)
+    target = gen.rendered_targets(str(ROOT), identity, "registry")[path]
+    assert callable(target)
+    assert target(text) == (
+        "<!-- generated-from-registry: do not edit; "
+        "scripts/generate_contract_requirements.py -->\n"
+        "`x` is required by the dispatch schema \u2014 a finding without it is "
+        "rejected at the StructuredOutput boundary and retried, so it must always be "
+        "present.\n<!-- /generated-from-registry -->\n"
+        "<!-- generated-from-registry-identity:summary_header -->\n"
+        "### MARK NAME\n<!-- /generated-from-registry-identity:summary_header -->\n"
+    )
+
+
+def test_conditional_anchor_command(registry_tree, invoke):
+    path = registry_tree / "agents/conventions-and-intent.md"
+    original = path.read_bytes()
+    stripped = b"\n".join(
+        line
+        for line in original.split(b"\n")
+        if not line.startswith(
+            (b"<!-- generated-from-registry:", b"<!-- /generated-from-registry -->")
+        )
+    )
+    path.write_bytes(stripped)
+    result = invoke(
+        "generate_contract_requirements",
+        ["--repo-root", str(registry_tree)],
+        registry_tree,
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert path.read_bytes() == original
+
+
+def test_no_conditional_fields():
+    assert (
+        gen.conditional_paragraphs([{"dimension": "bug", "requiredWhenDimension": []}])
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "old", "new", "projection"),
+    [
+        pytest.param(
+            "filterFindings.js",
+            "FIX_MAX_LINES = 100",
+            "FIX_MAX_LINES = 101",
+            "FIX_MAX_LINES = 101",
+            id="fix-bound",
+        ),
+        pytest.param(
+            "applyValidations.js",
+            "'uncertain'",
+            "'unsure'",
+            '    "unsure",',
+            id="reachability",
+        ),
+        pytest.param(
+            "stages.js",
+            "'cross_file_refs', 'origin'];",
+            "'cross_file_refs', 'title'];",
+            '    "title",',
+            id="verify-slice",
+        ),
+        pytest.param(
+            "registry.js",
+            "Code Gauntlet",
+            "Changed Gauntlet",
+            'BRAND_NAME = "Changed Gauntlet"',
+            id="brand",
+        ),
+    ],
+)
+def test_registry_source_projection(
+    registry_tree, invoke, source, old, new, projection
+):
+    path = registry_tree / "workflows/src" / source
+    contents = path.read_text(encoding="utf-8")
+    assert old in contents
+    path.write_text(contents.replace(old, new), encoding="utf-8")
+    args = ["--repo-root", str(registry_tree)]
+    stale = invoke("generate_contract_requirements", [*args, "--check"], registry_tree)
+    assert stale.returncode == 1
+    assert stale.stdout == b""
+    assert stale.stderr.decode().startswith(
+        "generate_contract_requirements: stale generated registry blocks: "
+    )
+    assert "scripts/gauntlet/registry.py" in stale.stderr.decode()
+    repaired = invoke("generate_contract_requirements", args, registry_tree)
+    assert repaired.returncode == 0
+    assert repaired.stderr == b""
+    module = (registry_tree / "scripts/gauntlet/registry.py").read_text(
+        encoding="utf-8"
+    )
+    assert projection in module.splitlines()

@@ -37,6 +37,8 @@ from unittest.mock import patch
 
 from gauntlet import contract_gen as contract_gen
 
+from tests.support import generator_inputs
+
 REPO = Path(__file__).resolve().parents[1]
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
 LABELS_DIFF = REPO / ".github" / "labels_diff.py"
@@ -1475,7 +1477,7 @@ class TestContractFenceHook(unittest.TestCase):
         )
         scope = re.compile(files_pattern)
 
-        declared_inputs = contract_gen.declared_inputs(str(REPO))
+        declared_inputs = generator_inputs.declared_inputs(str(REPO))
         self.assertTrue(
             {
                 "scripts/gauntlet/delivery/compose.py",

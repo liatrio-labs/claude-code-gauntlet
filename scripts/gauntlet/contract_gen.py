@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Python registry and Markdown contracts from live workflow sources.
-
-Dispatch phrases remain exact because other tools parse them.
-"""
+"""Generate registry contracts; dispatch phrases stay exact because tools parse them."""
 
 from __future__ import annotations
 
@@ -10,7 +7,6 @@ import argparse
 import importlib.util
 import json
 import os
-import posixpath
 import re
 import sys
 import types
@@ -22,7 +18,6 @@ from typing import Any, Literal
 
 from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser
-from gauntlet.fs import read_text
 from gauntlet.generate import finish, sync_targets
 from gauntlet.paths import ENTRY_ROOT
 
@@ -59,9 +54,7 @@ IDENTITY_FENCES = {
         "inline_sample",
         "delivery_identity",
     ],
-    # D9's chat convention names the mark in prose. A hand-authored fourth copy would
-    # break the one-edit property (a registry edit + a generator run + a hand edit
-    # nothing turns red on), so it is generated like the rest.
+    # Generate the prose mark too so a registry edit updates every identity surface.
     "skills/code-gauntlet/SKILL.md": [
         "chat_identity",
         "config_receipt",
@@ -86,93 +79,7 @@ _CONDITIONAL_NOUNS = {
 }
 
 
-_NODE_PROGRAM_ROOTS = (
-    "workflows/src/registry.js",
-    "workflows/src/args.js",
-    "workflows/src/renderReport.js",
-    "workflows/src/applyValidations.js",
-    "workflows/src/filterFindings.js",
-    "workflows/src/stages.js",
-)
-_WORKFLOW_RELATIVE_IMPORT_RE = re.compile(
-    r"^\s*(?:import|export)\b.*?\bfrom\s+['\"](\.[^'\"]+)['\"]",
-    re.MULTILINE,
-)
-_PYTHON_FROM_IMPORT_RE = re.compile(
-    r"^\s*from\s+(?P<module>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+import\s+"
-    r"(?P<names>[^\n#]+)$",
-    re.MULTILINE,
-)
-_PYTHON_IMPORT_RE = re.compile(
-    r"^\s*import\s+(?P<modules>[^\n#]+)$",
-    re.MULTILINE,
-)
-_DYNAMIC_SCRIPT_PATH_RE = re.compile(
-    r"os\.path\.join\(\s*repo_root\s*,\s*['\"]scripts['\"]\s*,\s*"
-    r"(?P<package>['\"]gauntlet['\"]\s*,\s*)?"
-    r"['\"](?P<path>[^'\"]+\.py)['\"]\s*\)",
-)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
-
-
-def _script_module_path(module: str, repo_root: str) -> str | None:
-    """Resolve a module name to a Python file under scripts/, if it exists."""
-    if module == "gauntlet":
-        return None
-    if module.startswith("gauntlet."):
-        module = module[len("gauntlet.") :]
-    elif "." in module:
-        return None
-    rel_path = posixpath.join("scripts", "gauntlet", *module.split(".")) + ".py"
-    if os.path.isfile(os.path.join(repo_root, rel_path)):
-        return rel_path
-    return None
-
-
-def _python_imported_script_paths(source: str, repo_root: str) -> set[str]:
-    """Find local Python modules named by absolute or direct-invocation imports."""
-    imported: set[str] = set()
-    for match in _PYTHON_FROM_IMPORT_RE.finditer(source):
-        module = match.group("module")
-        names = [part.strip().split()[0] for part in match.group("names").split(",")]
-        path = _script_module_path(module, repo_root)
-        if path:
-            imported.add(path)
-        for name in names:
-            path = _script_module_path(f"{module}.{name}", repo_root)
-            if path:
-                imported.add(path)
-    for match in _PYTHON_IMPORT_RE.finditer(source):
-        for part in match.group("modules").split(","):
-            module = part.strip().split()[0]
-            path = _script_module_path(module, repo_root)
-            if path:
-                imported.add(path)
-    for match in _DYNAMIC_SCRIPT_PATH_RE.finditer(source):
-        prefix = "scripts/gauntlet" if match.group("package") else "scripts"
-        rel_path = posixpath.normpath(posixpath.join(prefix, match.group("path")))
-        if rel_path.startswith("scripts/") and os.path.isfile(
-            os.path.join(repo_root, rel_path)
-        ):
-            imported.add(rel_path)
-    return imported
-
-
-def _python_import_closure(repo_root: str) -> set[str]:
-    """Return the generator and every local Python module in its import closure."""
-    pending = ["scripts/gauntlet/contract_gen.py"]
-    seen = set()
-    while pending:
-        rel_path = pending.pop()
-        if rel_path in seen:
-            continue
-        seen.add(rel_path)
-        path = os.path.join(repo_root, rel_path)
-        source = read_text(path)
-        for imported in _python_imported_script_paths(source, repo_root):
-            if imported not in seen:
-                pending.append(imported)
-    return seen
 
 
 def _stderr_tail(stderr: str | None) -> str:
@@ -206,31 +113,7 @@ def _run_node(node_src: str, repo_root: str) -> proc.CompletedProcess[str]:
         raise CliError(_node_failure_message(command, error.stderr)) from None
 
 
-def _workflow_import_closure(repo_root: str) -> set[str]:
-    """Return the relative workflows/src modules used by both Node programs."""
-    pending = list(_NODE_PROGRAM_ROOTS)
-    seen = set()
-    while pending:
-        rel_path = pending.pop()
-        if rel_path in seen:
-            continue
-        seen.add(rel_path)
-        path = os.path.join(repo_root, rel_path)
-        source = read_text(path)
-        base = posixpath.dirname(rel_path)
-        for specifier in _WORKFLOW_RELATIVE_IMPORT_RE.findall(source):
-            imported = posixpath.normpath(posixpath.join(base, specifier))
-            if imported not in seen:
-                pending.append(imported)
-    return seen
-
-
-def declared_inputs(repo_root: str = REPO_ROOT) -> set[str]:
-    """Return generator sources and every local module that can affect its output."""
-    return _python_import_closure(repo_root) | _workflow_import_closure(repo_root)
-
-
-def load_registry(repo_root: str = REPO_ROOT) -> Mapping[str, Any]:
+def load_registry(repo_root: str) -> Mapping[str, Any]:
     """Import the live schemas and keep finding and waist required lists distinct."""
     node_src = (
         "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/args.js'), import('./workflows/src/applyValidations.js'), import('./workflows/src/filterFindings.js'), import('./workflows/src/stages.js')]).then(([m, a, v, f, s]) => console.log(JSON.stringify({"
@@ -279,12 +162,7 @@ def agent_name(agent_type: str) -> str:
 
 
 def dispatch_required_sentence(fields: Sequence[str]) -> str:
-    """The requiredExtra-sense sentence for one or more fields on the same agent row.
-
-    Generalized over field count rather than hardcoding either/both wording for exactly
-    two — a third field promoted to requiredExtra must not silently render an ungrammatical
-    (or, worse, a truncated/wrong) sentence.
-    """
+    """Render every required field so schema growth cannot silently truncate the sentence."""
     if len(fields) == 1:
         return (
             f"`{fields[0]}` is required by the dispatch schema — a finding without it is "
@@ -358,10 +236,6 @@ def conditional_paragraphs(agent_rows: Sequence[Mapping[str, Any]]) -> list[str]
     return paragraphs
 
 
-def wrap_block(body: str) -> str:
-    return f"{MARKER_OPEN}\n{body}\n{MARKER_CLOSE}"
-
-
 _EXISTING_BLOCK = re.compile(
     re.escape(MARKER_OPEN) + r"\n.*?\n" + re.escape(MARKER_CLOSE), re.DOTALL
 )
@@ -377,14 +251,7 @@ _CONDITIONAL_ANCHOR = re.compile(
 
 
 def splice(text: str, anchor_re: re.Pattern[str], body: str) -> str:
-    """Replace the existing generated block, or (first run) the anchor text, with `body`.
-
-    Fails loudly rather than silently leaving stale text behind. Two marker counts are
-    checked before anything else: more than one MARKER_OPEN (a second block would be
-    invisible to the single-block regex below and go stale forever) and an OPEN/CLOSE
-    count mismatch (an orphaned marker — hand-edited or typo'd — that would otherwise
-    make a subsequent `--check` call the file current while real debris sits in it).
-    """
+    """Reject duplicate or orphan markers so a later check cannot silently accept stale debris."""
     open_count = text.count(MARKER_OPEN)
     close_count = text.count(MARKER_CLOSE)
     if open_count > 1 or open_count != close_count:
@@ -392,7 +259,7 @@ def splice(text: str, anchor_re: re.Pattern[str], body: str) -> str:
             f"malformed generated-block markers ({open_count} open, {close_count} close) "
             "— expected exactly one matched pair or none; fix by hand before regenerating"
         )
-    new_block = wrap_block(body)
+    new_block = f"{MARKER_OPEN}\n{body}\n{MARKER_CLOSE}"
     if open_count == 1:
         replaced, count = _EXISTING_BLOCK.subn(new_block, text, count=1)
         if count != 1:
@@ -414,24 +281,6 @@ def single_dimension_targets(registry: Mapping[str, Any]) -> dict[str, str]:
         path = f"agents/{agent_name(row['agentType'])}.md"
         targets[path] = dispatch_required_sentence(fields)
     return targets
-
-
-def conventions_and_intent_target(registry: Mapping[str, Any]) -> tuple[str, str]:
-    rows = [
-        r
-        for r in registry["dimensions"]
-        if r["agentType"] == "code-gauntlet:conventions-and-intent"
-    ]
-    paragraphs = conditional_paragraphs(rows)
-    return "agents/conventions-and-intent.md", "\n\n".join(paragraphs)
-
-
-def known_fields(registry: Mapping[str, Any]) -> set[str]:
-    """Every field name the registry declares anywhere — canonical or per-dimension."""
-    fields: set[str] = set(registry["canonicalFields"])
-    for row in registry["dimensions"]:
-        fields.update(row["extraFields"])
-    return fields
 
 
 def field_required_status(
@@ -457,7 +306,9 @@ _PERDIM_ROW = re.compile(
 
 def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
     """Rewrite only the Required cell of rows whose first cell names a registry-known field."""
-    known = known_fields(registry)
+    known = set(registry["canonicalFields"])
+    for row in registry["dimensions"]:
+        known.update(row["extraFields"])
     out_lines = []
     for line in text.splitlines():
         rewritten = line
@@ -475,11 +326,6 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
     if text.endswith("\n"):
         text_out += "\n"
     return text_out
-
-
-# Product identity comes from `workflows/src/registry.js`. Each generated symbol
-# has a paired marker fence, validated by `_IDENTITY_MARKER_RE` and `find_identity_pairs`.
-# A file may carry several symbols, so a whole-file marker count is insufficient.
 
 
 def _python_literal(value: object, indent: int = 0) -> str:
@@ -1061,14 +907,9 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
 
 
 def identity_body(
-    rel_path: str, symbol: str, identity: Mapping[str, Any], repo_root: str = REPO_ROOT
+    rel_path: str, symbol: str, identity: Mapping[str, Any], repo_root: str
 ) -> list[str]:
-    """The generated lines for one fence — keyed by BOTH file and symbol.
-
-    `severity_legend` renders differently in report-format.md and delivery-guide.md
-    (the first also carries the no-shortcodes rule), so the body is a function of the
-    pair, not of the symbol alone.
-    """
+    """Render by file and symbol because the same legend has different wording in each file."""
     mark = identity["brand"]["mark"]
     name = identity["brand"]["name"]
     pairs = [(emoji, severity) for severity, emoji in identity["severityEmoji"].items()]
@@ -1197,16 +1038,15 @@ def identity_body(
     raise CliError(f"no identity body for {symbol!r} in {rel_path}")
 
 
+# Product identity comes from `workflows/src/registry.js`. Each generated symbol
+# has a paired marker fence, validated by `_IDENTITY_MARKER_RE` and `find_identity_pairs`.
+# A file may carry several symbols, so a whole-file marker count is insufficient.
+
+
 def find_identity_pairs(
     lines: Sequence[str], rel_path: str
 ) -> dict[str, tuple[int, int]]:
-    """{symbol: (open_index, close_index)} for every identity marker pair in `lines`.
-
-    Hard-fails PER SYMBOL, not on a whole-file marker count: a file carrying several
-    independent pairs is the normal case here. What is malformed: a symbol whose open
-    and close markers do not appear exactly once each, in that order, without another
-    pair opening in between.
-    """
+    """Validate per symbol because one file may carry several independent identity fences."""
     opens: dict[str, int] = {}
     closes: dict[str, int] = {}
     for index, line in enumerate(lines):
@@ -1249,14 +1089,9 @@ def find_identity_pairs(
 
 
 def fill_identity_fences(
-    text: str, rel_path: str, identity: Mapping[str, Any], repo_root: str = REPO_ROOT
+    text: str, rel_path: str, identity: Mapping[str, Any], repo_root: str
 ) -> str:
-    """Rewrite every declared identity fence in `text` from the registry.
-
-    Both directions fail loudly: a declared symbol with no fence (which would silently
-    ship an unmaintained hand-written copy) and a fence naming no declared symbol
-    (stale debris a later --check would call current).
-    """
+    """Reject missing and undeclared fences so neither unmaintained copies nor stale debris ship."""
     lines = text.split("\n")
     pairs = find_identity_pairs(lines, rel_path)
     expected = set(IDENTITY_FENCES[rel_path])
@@ -1283,28 +1118,45 @@ def fill_identity_fences(
 def rendered_targets(
     repo_root: str, registry: Mapping[str, Any], source: str
 ) -> dict[str, str | Callable[[str], str]]:
-    targets: dict[str, str | Callable[[str], str]] = {}
+    steps: dict[str, list[Callable[[str], str]]] = {}
     for rel_path, sentence in single_dimension_targets(registry).items():
-        targets[rel_path] = partial(
-            splice, anchor_re=_SINGLE_SENTENCE_ANCHOR, body=sentence
+        steps.setdefault(rel_path, []).append(
+            partial(splice, anchor_re=_SINGLE_SENTENCE_ANCHOR, body=sentence)
         )
-    ci_path, ci_body = conventions_and_intent_target(registry)
-    targets[ci_path] = lambda text: splice(text, _CONDITIONAL_ANCHOR, ci_body)
+    rows = [
+        row
+        for row in registry["dimensions"]
+        if row["agentType"] == "code-gauntlet:conventions-and-intent"
+    ]
+    steps.setdefault("agents/conventions-and-intent.md", []).append(
+        partial(
+            splice,
+            anchor_re=_CONDITIONAL_ANCHOR,
+            body="\n\n".join(conditional_paragraphs(rows)),
+        )
+    )
     for rel_path in IDENTITY_FENCES:
+        path_steps = steps.setdefault(rel_path, [])
         if rel_path == REPORT_FORMAT_REL:
-            targets[rel_path] = lambda text: fill_identity_fences(
-                rewrite_required_column(text, registry),
-                REPORT_FORMAT_REL,
-                registry,
-                repo_root,
-            )
-        else:
-            targets[rel_path] = partial(
+            path_steps.insert(0, partial(rewrite_required_column, registry=registry))
+        path_steps.append(
+            partial(
                 fill_identity_fences,
                 rel_path=rel_path,
                 identity=registry,
                 repo_root=repo_root,
             )
+        )
+
+    def apply_steps(text: str, *, transforms: Sequence[Callable[[str], str]]) -> str:
+        for transform in transforms:
+            text = transform(text)
+        return text
+
+    targets: dict[str, str | Callable[[str], str]] = {
+        rel_path: partial(apply_steps, transforms=transforms)
+        for rel_path, transforms in steps.items()
+    }
     targets["scripts/gauntlet/registry.py"] = source
     return targets
 

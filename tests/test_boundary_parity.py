@@ -1001,6 +1001,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
                 "skills/code-gauntlet/SKILL.md",
                 "derived_waist_fields",
                 identity,
+                str(REPO),
             )
         )
         waist_body = body.split(
