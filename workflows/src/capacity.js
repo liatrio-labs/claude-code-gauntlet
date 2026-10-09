@@ -2,13 +2,12 @@
 // can cost. The stage and the agent-count guard both read it, so the two cannot disagree.
 import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding } from './verifyWire.js';
 
-// planVerifySlices(findings, sliceSize, budget, baseBranch) -> { slices, oversize, closeReasons }.
 // A projected finding's cost is its encoded object alone. A slice's exact cost is the
 // encoded empty envelope plus those object costs plus one comma for each additional
 // finding. The greedy planner keeps both the finding-count and inline-character bounds
 // in one place, and planner consumers and the dispatch assertion share this accounting.
-// closeReasons is aligned with slices: a terminal slice has no following boundary and is
-// tagged null; every other closed slice names the bound that closed it.
+// closeReasons records boundaries explicitly because skipped oversize findings prevent
+// consumers from reconstructing them from neighbouring slices. Only the final flush is null.
 export const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
 const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
   envelopeLength + findingCost + Math.max(0, findingCount - 1);
@@ -17,7 +16,7 @@ const projectedVerifyFindingInlineLength = (finding) =>
 
 // This is the planner's predicted length, exposed for the exact-accounting test and
 // kept on the same cost primitive as the planner's greedy admission check.
-export function predictVerifySliceInlineLength(slice, baseBranch = 'main') {
+export function predictVerifySliceInlineLength(slice, baseBranch) {
   const branch = effectiveVerifyBaseBranch(baseBranch);
   const envelopeLength = encodeSliceInline({ findings: [], base_branch: branch }).length;
   let findingCost = 0;
@@ -25,7 +24,7 @@ export function predictVerifySliceInlineLength(slice, baseBranch = 'main') {
   return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
 }
 
-export function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main') {
+export function planVerifySlices(findings, sliceSize, budget, baseBranch) {
   const source = Array.isArray(findings) ? findings : [];
   const branch = effectiveVerifyBaseBranch(baseBranch);
   const maxFindings = Math.max(1, sliceSize || source.length || 1);

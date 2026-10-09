@@ -47,17 +47,13 @@ export function encodeInlineString(s) {
       out.push(ch);
       continue;
     }
-    if (unit >= 0xD800 && unit <= 0xDBFF) {
-      const next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
-      if (next >= 0xDC00 && next <= 0xDFFF) {
+    if (unit >= 0xD800 && unit <= 0xDFFF) {
+      const next = text.charCodeAt(i + 1);
+      if (unit <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) {
         appendInlineUtf8(out, 0x10000 + ((unit - 0xD800) << 10) + (next - 0xDC00));
         i += 1;
         continue;
       }
-      out.push(`%u${unit.toString(16).toUpperCase().padStart(4, '0')}`);
-      continue;
-    }
-    if (unit >= 0xDC00 && unit <= 0xDFFF) {
       out.push(`%u${unit.toString(16).toUpperCase().padStart(4, '0')}`);
       continue;
     }
@@ -114,27 +110,24 @@ const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified'
 
 export const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 
-// joinVerifyDeltas(slice, deltas) -> the slice's verified findings, enriched.
-// Exported for the dual-runtime golden fixtures: the parity case records
-// gauntlet.verify.wire's own delta and its own verified findings, and asserts THIS function
-// reconstructs the latter from the former.
-//
-// Walks the DISPATCHED slice, never the echo: order, membership and every untouched field
-// (the merge-added `agent` among them) come from data this stage already holds. A finding
-// whose delta says verified:false was eliminated by the script and is omitted.
-//
-// PRECONDITION, and the one way this function could ever drop a finding: it must be called
-// only with deltas that trustSlice has already accepted, which is what proves every
-// dispatched id has exactly one delta carrying a boolean `verified`. A finding with NO
-// delta is skipped here — there is no honest alternative, since keeping it would deliver an
-// unverified finding as a verified one — so a caller that skips the coverage check drops
-// findings silently. Nothing but dispatchVerifySlice (immediately after its trustSlice
-// call) and the golden-fixture test calls it; keep it that way.
-export function joinVerifyDeltas(slice, deltas) {
+// Keep exact id text: trimming would miss padded ids and collide distinct findings.
+function deltasById(deltas) {
   const byId = new Map();
   for (const d of Array.isArray(deltas) ? deltas : []) {
     if (d && typeof d.id === 'string') byId.set(d.id, d);
   }
+  return byId;
+}
+
+// Walks the DISPATCHED slice, never the echo: order, membership and every untouched field
+// (the merge-added `agent` among them) come from data this stage already holds. A finding
+// whose delta says verified:false was eliminated by the script and is omitted.
+//
+// Call only after trustSlice accepts the deltas: it proves every dispatched id has exactly
+// one boolean `verified`. Skipping that coverage check would silently drop findings with
+// no delta; retaining them here would falsely deliver unverified findings as verified.
+export function joinVerifyDeltas(slice, deltas) {
+  const byId = deltasById(deltas);
   const out = [];
   for (const f of slice) {
     const delta = byId.get(f.id);
@@ -196,9 +189,7 @@ export function projectVerifySliceFinding(finding) {
 // order by projectVerifySliceFinding, the script reads it back in that order, and a
 // document that comes back in a different shape is a regenerated token rather than a
 // copied one. Sorting would forgive exactly that regeneration while leaving the proof's
-// array-order, extra-field and number-spelling sensitivities untouched. It is a named
-// function so the regression that pins the decision calls the production code instead of
-// re-deriving both sides of it.
+// array-order, extra-field and number-spelling sensitivities untouched.
 export function sliceInputChecksum(content) {
   return fnv1a32(JSON.stringify(content, null, 2));
 }
@@ -216,7 +207,7 @@ export function sliceTokenChecksum(payload) {
   return fnv1a32(String(payload));
 }
 
-// canonicalDeltas(ids, deltas) -> the deltas in a form both runtimes spell identically.
+// The deltas in a form both runtimes spell identically.
 // Rebuilt from the DISPATCHED id order, one object per id, keys in DELTA_KEYS order,
 // absent values omitted — so the echo's own array order, key order, and any field it
 // invented cannot move the checksum. Only the VALUES the script decided can.
@@ -236,20 +227,8 @@ function canonicalDeltas(ids, byId) {
   });
 }
 
-// deltaContentProof(ids, deltas) -> "fnv1a32:0x........"
-// The workflow half of the delta echo's content proof. Exported because the tests must
-// build valid envelopes with the REAL computation rather than a second copy of it — a
-// helper that re-derives the canonicalisation would happily agree with a broken one. The
-// cross-runtime half is pinned separately, by the golden fixture whose checksum
-// verify_findings.py itself produced.
+// Exported so envelope fixtures use the real canonicalisation instead of a duplicate
+// that could agree with the same bug. Python-produced goldens pin the other runtime.
 export function deltaContentProof(ids, deltas) {
-  const byId = new Map();
-  for (const d of Array.isArray(deltas) ? deltas : []) {
-    // Exact id text, never trimmed: dispatchableIds, trustSlice, joinVerifyDeltas and
-    // Python's build_deltas all key on the raw id. A trimmed key makes a whitespace-padded
-    // dispatched id miss its delta, so an honest checksum fails the recomputation, and it
-    // collides two ids that differ only by surrounding whitespace.
-    if (d && typeof d.id === 'string') byId.set(d.id, d);
-  }
-  return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], byId), null, 2));
+  return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], deltasById(deltas)), null, 2));
 }

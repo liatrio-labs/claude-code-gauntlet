@@ -102,8 +102,6 @@ export function coerceInt(value, policy) {
     const s = policy.trim ? value.replace(policy.trim, '') : value.trim();
     return /^[+-]?[0-9]+$/.test(s) ? parseInt(s, 10) : null;
   }
-  // Any string whose numeric value is an integer ("153", "12.0", "1e5"). The Python
-  // side is narrower: it accepts plain digits only.
   if (value.trim() === '') return null;
   const n = Number(value);
   return Number.isInteger(n) ? n : null;
