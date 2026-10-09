@@ -35,7 +35,6 @@ _DYNAMIC_SCRIPT_PATH_RE = re.compile(
 
 
 def _script_module_path(module: str, repo_root: str) -> str | None:
-    """Resolve a module name to a Python file under scripts/, if it exists."""
     if module == "gauntlet":
         return None
     if module.startswith("gauntlet."):
@@ -49,7 +48,6 @@ def _script_module_path(module: str, repo_root: str) -> str | None:
 
 
 def _python_imported_script_paths(source: str, repo_root: str) -> set[str]:
-    """Find local Python modules named by absolute or direct-invocation imports."""
     imported: set[str] = set()
     for match in _PYTHON_FROM_IMPORT_RE.finditer(source):
         module = match.group("module")
@@ -78,7 +76,6 @@ def _python_imported_script_paths(source: str, repo_root: str) -> set[str]:
 
 
 def _python_import_closure(repo_root: str) -> set[str]:
-    """Return the generator and every local Python module in its import closure."""
     pending = ["scripts/gauntlet/contract_gen.py"]
     seen = set()
     while pending:
@@ -95,7 +92,6 @@ def _python_import_closure(repo_root: str) -> set[str]:
 
 
 def _workflow_import_closure(repo_root: str) -> set[str]:
-    """Return the relative workflows/src modules used by both Node programs."""
     pending = list(_NODE_PROGRAM_ROOTS)
     seen = set()
     while pending:
@@ -114,5 +110,4 @@ def _workflow_import_closure(repo_root: str) -> set[str]:
 
 
 def declared_inputs(repo_root: str) -> set[str]:
-    """Return generator sources and every local module that can affect its output."""
     return _python_import_closure(repo_root) | _workflow_import_closure(repo_root)

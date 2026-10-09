@@ -21,8 +21,6 @@ from gauntlet.cli import CliError, Command, Parser
 from gauntlet.generate import finish, sync_targets
 from gauntlet.paths import ENTRY_ROOT
 
-REPO_ROOT = ENTRY_ROOT
-
 MARKER_OPEN = (
     "<!-- generated-from-registry: do not edit; "
     "scripts/generate_contract_requirements.py -->"
@@ -83,7 +81,6 @@ _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def _stderr_tail(stderr: str | None) -> str:
-    """Return a single-line, bounded tail from a failed child process."""
     for line in reversed((stderr or "").splitlines()):
         clean = _CONTROL_RE.sub("", line)
         if clean.strip():
@@ -99,14 +96,9 @@ def _node_failure_message(command: Sequence[str], stderr: str | None = None) -> 
 
 
 def _run_node(node_src: str, repo_root: str) -> proc.CompletedProcess[str]:
-    """Run one of the generator's Node programs with a concise failure diagnostic."""
     command = ["node", "--input-type=module", "-e", node_src]
     try:
-        return proc.run(
-            command,
-            cwd=repo_root,
-            check=True,
-        )
+        return proc.run(command, cwd=repo_root, check=True)
     except FileNotFoundError:
         raise CliError(_node_failure_message(command)) from None
     except proc.CalledProcessError as error:
@@ -154,11 +146,6 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
     out = _run_node(node_src, repo_root)
     registry: Mapping[str, Any] = json.loads(out.stdout)
     return registry
-
-
-def agent_name(agent_type: str) -> str:
-    """'code-gauntlet:bug-detector' -> 'bug-detector'."""
-    return agent_type.split(":", 1)[1]
 
 
 def dispatch_required_sentence(fields: Sequence[str]) -> str:
@@ -272,13 +259,13 @@ def splice(text: str, anchor_re: re.Pattern[str], body: str) -> str:
 
 
 def single_dimension_targets(registry: Mapping[str, Any]) -> dict[str, str]:
-    """{relative agent path: sentence} for the four single-field/dual-field requiredExtra agents."""
+    """Return registry-defined requiredExtra dispatch targets."""
     targets: dict[str, str] = {}
     for row in registry["dimensions"]:
         fields = row["requiredExtra"]
         if not fields:
             continue
-        path = f"agents/{agent_name(row['agentType'])}.md"
+        path = f"agents/{row['agentType'].split(':', 1)[1]}.md"
         targets[path] = dispatch_required_sentence(fields)
     return targets
 
@@ -286,7 +273,6 @@ def single_dimension_targets(registry: Mapping[str, Any]) -> dict[str, str]:
 def field_required_status(
     field: str, registry: Mapping[str, Any]
 ) -> Literal["yes", "conditional", "no"]:
-    """'yes' / 'conditional' / 'no' — the tri-state Required column value for `field`."""
     if field in registry["required"]:
         return "yes"
     for row in registry["dimensions"]:
@@ -392,7 +378,6 @@ def _detail_fields(identity: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
 
 
 def render_python_registry(identity: Mapping[str, Any]) -> str:
-    """Render the complete Python projection of the live JavaScript registry."""
     field_types = identity["findingTypes"]
     for field, schema in field_types.items():
         if schema not in (
@@ -532,23 +517,6 @@ def _load_resolver(repo_root: str) -> types.ModuleType:
     return module
 
 
-def _rule_values(row: Mapping[str, Any], mode: str) -> str:
-    rule = row.get("rule")
-    if isinstance(rule, dict) and "kind" not in rule:
-        rule = rule.get(mode)
-    if not isinstance(rule, dict):
-        return "valid value"
-    kind = rule.get("kind")
-    if kind == "positive_digits":
-        return "positive integer"
-    if kind == "digits_or_null":
-        return "digits or null"
-    values = rule.get("values")
-    if isinstance(values, list):
-        return ",".join(str(value) for value in values)
-    return "valid value"
-
-
 # A placeholder fixture whose every field value is its own placeholder, run through the REAL
 # renderer, so the documented template IS the renderer's literal output. The critical finding
 # carries every optional field; the other severity examples stay minimal.
@@ -686,14 +654,12 @@ def _render_report(repo_root: str, fixture: Mapping[str, Any]) -> str:
 
 
 def render_template_block(repo_root: str, identity: Mapping[str, Any]) -> str:
-    """Run the placeholder fixture through the real report renderer."""
     fixture = _template_fixture()
     fixture["dimensions"]["dispatched"] = identity["agents"]
     return "````markdown\n" + _render_report(repo_root, fixture) + "\n````"
 
 
 def render_permalink_sample(repo_root: str) -> list[str]:
-    """Render identity and Location sample lines through the real renderer."""
     fixture = _template_fixture()
     fixture["findings"] = [fixture["findings"][0]]
     fixture["unverified"] = []
@@ -724,7 +690,6 @@ def render_permalink_sample(repo_root: str) -> list[str]:
 
 
 def permalink_formats_body(identity: Mapping[str, Any]) -> list[str]:
-    """Render the registry's platform templates and segment-encoding rules."""
     lines: list[str] = []
     for platform, templates in identity["permalinkTemplates"].items():
         lines.append(
@@ -742,7 +707,6 @@ def permalink_formats_body(identity: Mapping[str, Any]) -> list[str]:
 
 
 def pr_identity_fields_body(identity: Mapping[str, Any]) -> list[str]:
-    """Render the ordered identity field list and its sole producer command."""
     lines = ["`delivery.prIdentity` fields:", ""]
     for field in identity["prIdentityFields"]:
         requirement = "required" if field["required"] else "optional"
@@ -791,7 +755,7 @@ _DERIVED_WAIST_TYPES = {"string", "csv_list", "int_or_null"}
 
 def _identity_description(
     identity: Mapping[str, Any], table_name: str, name: str
-) -> str:
+) -> None:
     descriptions = identity[table_name]
     if name not in descriptions:
         raise CliError(
@@ -802,7 +766,6 @@ def _identity_description(
         raise CliError(
             f"identity_body: {table_name} description for {name!r} is empty or whitespace"
         )
-    return description
 
 
 def _validate_derived_waist_identity(identity: Mapping[str, Any]) -> None:
@@ -870,9 +833,7 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
                 type_note = "; the comma-separated value derives as a list"
             condition = ""
             if row.get("deriveWhen") is not None:
-                condition = ", when " + _identity_description(
-                    identity, "deriveWhen", row["deriveWhen"]
-                )
+                condition = ", when " + identity["deriveWhen"][row["deriveWhen"]]
             line = (
                 f"- `{row['waistPath']}` ({_modes_phrase(row['modes'])}{condition}): "
                 f"from `configEcho.{row['key']}`{type_note}"
@@ -896,9 +857,7 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
                 "The workflow fills these receipt entries itself; never stamp them."
             )
         for row in derived_rows:
-            description = _identity_description(
-                identity, "derivedFrom", row["derivedFrom"]
-            )
+            description = identity["derivedFrom"][row["derivedFrom"]]
             lines.append(
                 f"- `configEcho.{row['key']}` ({_modes_phrase(row['modes'])}): "
                 f"{description}."
@@ -946,10 +905,26 @@ def identity_body(
         for row in identity["knobs"]:
             if not row.get("env"):
                 continue
-            mode = "headless"
             env_name = row["env"]
-            values = _rule_values(row, mode)
-            default = row.get("defaults", {}).get(mode, ["", ""])[0]
+            rule = row.get("rule")
+            if isinstance(rule, dict) and "kind" not in rule:
+                rule = rule.get("headless")
+            if not isinstance(rule, dict):
+                values = "valid value"
+            else:
+                kind = rule.get("kind")
+                if kind == "positive_digits":
+                    values = "positive integer"
+                elif kind == "digits_or_null":
+                    values = "digits or null"
+                else:
+                    choices = rule.get("values")
+                    values = (
+                        ",".join(str(value) for value in choices)
+                        if isinstance(choices, list)
+                        else "valid value"
+                    )
+            default = row.get("defaults", {}).get("headless", ["", ""])[0]
             lines.append(f"| `{env_name}` | `{values}` | `{default}` |")
         return lines
     if symbol == "chat_identity":
@@ -970,22 +945,13 @@ def identity_body(
         receipts: dict[str, list[str]] = {}
         for mode in ("interactive", "headless"):
             resolved = resolver.resolve(
-                mode,
-                {},
-                None,
-                "pr",
-                registry=identity["knobs"],
+                mode, {}, None, "pr", registry=identity["knobs"]
             )
             receipts[mode] = resolver.serialize_receipt(
-                mode,
-                resolved["configEcho"],
-                registry=identity["knobs"],
+                mode, resolved["configEcho"], registry=identity["knobs"]
             ).splitlines()
             rendered[mode] = resolver.render_block(
-                mode,
-                resolved["configEcho"],
-                docs_identity,
-                registry=identity["knobs"],
+                mode, resolved["configEcho"], docs_identity, registry=identity["knobs"]
             ).splitlines()
         return [
             "The resolver owns the printed configuration block and the keyed `configEcho` receipt.",
@@ -1135,10 +1101,11 @@ def rendered_targets(
             body="\n\n".join(conditional_paragraphs(rows)),
         )
     )
+    steps.setdefault(REPORT_FORMAT_REL, []).append(
+        partial(rewrite_required_column, registry=registry)
+    )
     for rel_path in IDENTITY_FENCES:
         path_steps = steps.setdefault(rel_path, [])
-        if rel_path == REPORT_FORMAT_REL:
-            path_steps.insert(0, partial(rewrite_required_column, registry=registry))
         path_steps.append(
             partial(
                 fill_identity_fences,
@@ -1200,7 +1167,7 @@ parser = Parser(
     prog="generate_contract_requirements",
     description="Generate Python registry and Markdown contracts from live workflow sources.",
 )
-parser.add_argument("--repo-root", default=REPO_ROOT)
+parser.add_argument("--repo-root", default=ENTRY_ROOT)
 parser.add_argument(
     "--check",
     action="store_true",

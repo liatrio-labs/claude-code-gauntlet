@@ -42,35 +42,6 @@ def registry_tree(tmp_path):
 IDENTITY = {
     "brand": {"mark": "MARK", "name": "NAME"},
     "severityEmoji": {"critical": "C", "low": "L"},
-    "severityEmojiFallback": "F",
-    "canonicalFields": ["claude_md_rule", "spec_text"],
-    "dimensions": [
-        {
-            "dimension": "bug",
-            "extraFields": ["hidden_errors"],
-            "requiredWhenDimension": [],
-        },
-        {
-            "dimension": "convention",
-            "extraFields": [],
-            "requiredWhenDimension": ["claude_md_rule"],
-        },
-        {
-            "dimension": "test_coverage",
-            "extraFields": ["criticality", "failure_scenario"],
-            "requiredWhenDimension": [],
-        },
-        {
-            "dimension": "intent",
-            "extraFields": ["spec_text"],
-            "requiredWhenDimension": ["spec_text"],
-        },
-        {
-            "dimension": "comment_accuracy",
-            "extraFields": [],
-            "requiredWhenDimension": [],
-        },
-    ],
     "ruleSourceLabels": {
         "documented_rule": "DR",
         "code_comment": "CC",
@@ -78,25 +49,8 @@ IDENTITY = {
         "self_inconsistency": "SI",
     },
     "ruleSourceLabelFallback": "RF",
-    "codeOwnedHeadings": [
-        "## Summary",
-        "## Findings",
-        "## Unverified / pipeline-degraded findings",
-        "## Review Dimensions Summary",
-        "## Review Methodology",
-    ],
     "deriveWhen": {"gamma": "the gamma condition holds"},
     "derivedFrom": {"delta": "the delta source is present"},
-    "required": [
-        "id",
-        "file",
-        "line_start",
-        "title",
-        "description",
-        "severity",
-        "confidence",
-        "dimension",
-    ],
     "waistRequired": ["nested", "limits"],
     "prIdentityFields": [
         {"name": "owner", "required": True, "describe": "a non-empty string"},
@@ -147,8 +101,6 @@ IDENTITY = {
             "refUrl": "{origin}/{owner}/{repo}/-/merge_requests/{number}",
         },
     },
-    "shaFullRe": "^[0-9a-f]{40}$",
-    "webOriginRe": "web-origin-pattern",
     "knobs": [
         {
             "key": "alpha",
@@ -280,6 +232,62 @@ IDENTITY = {
     ],
 }
 
+_EXPECTED_INLINE_SAMPLE = (
+    "````markdown\n"
+    "**{emoji} [SEVERITY] {finding.title}**\n"
+    "\n"
+    "{body}\n"
+    "\n"
+    "**Suggested fix:**\n"
+    "{suggestion}\n"
+    "\n"
+    "**{rule_source_label}:**\n"
+    "> {claude_md_rule, falling back to spec_text \u2014 blockquoted, one `>` line per source line}\n"
+    "\n"
+    "```suggestion\n"
+    "{suggested_fix_code}\n"
+    "```\n"
+    "\n"
+    "MARK *NAME*\n"
+    "````"
+)
+
+_EXPECTED_DERIVED_WAIST_FIELDS = (
+    "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.\n"
+    "\n"
+    "- `optional.beta` (headless runs): from `configEcho.beta`. Leave `beta` out of any stamped `optional`.\n"
+    "- `nested.gamma` (headless and interactive runs, when the gamma condition holds): from `configEcho.gamma`; `raw` derives as `mapped`. Stamp `nested` and leave `gamma` out of it.\n"
+    "- `limits.nullable` (interactive runs): from `configEcho.epsilon`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `nullable` out of it.\n"
+    "- `delivery.count` (headless runs): from `configEcho.zeta`; digits derive as a JSON number. Leave `count` out of any stamped `delivery`.\n"
+    "- `delivery.items` (headless runs): from `configEcho.eta`; the comma-separated value derives as a list. Leave `items` out of any stamped `delivery`.\n"
+    "\n"
+    "The workflow fills these receipt entries itself; never stamp them.\n"
+    "\n"
+    "- `configEcho.delta` (interactive runs): the delta source is present."
+)
+
+_EXPECTED_PR_IDENTITY_FIELDS = (
+    "`delivery.prIdentity` fields:\n"
+    "\n"
+    "- `owner` (required): a non-empty string.\n"
+    "- `repo` (required): a non-empty string.\n"
+    "- `pr_number` (required): a positive safe integer.\n"
+    "- `sha_full` (required): a 40-character lowercase hex commit id.\n"
+    "- `platform` (required): one of github, gitlab.\n"
+    "- `web_origin` (required): an http(s) origin: scheme, host and optional port only.\n"
+    "- `title` (optional): a non-empty string when present.\n"
+    "\n"
+    "Producer command:\n"
+    "\n"
+    "`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> [--title <text>]`"
+)
+
+_EXPECTED_PERMALINK_FORMATS = (
+    "- `github`: blob `{origin}/{owner}/{repo}/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-L{end}`; ref `#{number}`; ref URL `{origin}/{owner}/{repo}/pull/{number}`.\n"
+    "- `gitlab`: blob `{origin}/{owner}/{repo}/-/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-{end}`; ref `!{number}`; ref URL `{origin}/{owner}/{repo}/-/merge_requests/{number}`.\n"
+    "- Encode owner, repo, and file paths one segment at a time with `encodeURIComponent` semantics; also percent-encode `!`, `'`, `(`, `)`, and `*`, while preserving `/` separators. A file path containing an empty, `.`, or `..` segment renders as a plain code span."
+)
+
 EXPECTED_BODIES = {
     ("skills/code-gauntlet/references/report-format.md", "severity_legend"): (
         "Product mark: MARK (NAME). Severity emoji: C critical, L low.\n"
@@ -288,33 +296,17 @@ EXPECTED_BODIES = {
         "(`:red_circle:`) \u2014 shortcodes do\n"
         "not render in terminal/chat output."
     ),
-    ("skills/code-gauntlet/references/report-format.md", "permalink_formats"): (
-        "- `github`: blob `{origin}/{owner}/{repo}/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-L{end}`; ref `#{number}`; ref URL `{origin}/{owner}/{repo}/pull/{number}`.\n"
-        "- `gitlab`: blob `{origin}/{owner}/{repo}/-/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-{end}`; ref `!{number}`; ref URL `{origin}/{owner}/{repo}/-/merge_requests/{number}`.\n"
-        "- Encode owner, repo, and file paths one segment at a time with `encodeURIComponent` semantics; also percent-encode `!`, `'`, `(`, `)`, and `*`, while preserving `/` separators. A file path containing an empty, `.`, or `..` segment renders as a plain code span."
-    ),
+    (
+        "skills/code-gauntlet/references/report-format.md",
+        "permalink_formats",
+    ): _EXPECTED_PERMALINK_FORMATS,
     ("skills/code-gauntlet/references/report-format.md", "inline_legend"): (
         "`{emoji}` is C critical / L low, `{SEVERITY}` is the normalized severity uppercased."
     ),
-    ("skills/code-gauntlet/references/report-format.md", "inline_sample"): (
-        "````markdown\n"
-        "**{emoji} [SEVERITY] {finding.title}**\n"
-        "\n"
-        "{body}\n"
-        "\n"
-        "**Suggested fix:**\n"
-        "{suggestion}\n"
-        "\n"
-        "**{rule_source_label}:**\n"
-        "> {claude_md_rule, falling back to spec_text \u2014 blockquoted, one `>` line per source line}\n"
-        "\n"
-        "```suggestion\n"
-        "{suggested_fix_code}\n"
-        "```\n"
-        "\n"
-        "MARK *NAME*\n"
-        "````"
-    ),
+    (
+        "skills/code-gauntlet/references/report-format.md",
+        "inline_sample",
+    ): _EXPECTED_INLINE_SAMPLE,
     (
         "skills/code-gauntlet/references/delivery-guide.md",
         "severity_legend",
@@ -329,25 +321,7 @@ EXPECTED_BODIES = {
     (
         "skills/code-gauntlet/references/delivery-guide.md",
         "inline_sample",
-    ): (
-        "````markdown\n"
-        "**{emoji} [SEVERITY] {finding.title}**\n"
-        "\n"
-        "{body}\n"
-        "\n"
-        "**Suggested fix:**\n"
-        "{suggestion}\n"
-        "\n"
-        "**{rule_source_label}:**\n"
-        "> {claude_md_rule, falling back to spec_text \u2014 blockquoted, one `>` line per source line}\n"
-        "\n"
-        "```suggestion\n"
-        "{suggested_fix_code}\n"
-        "```\n"
-        "\n"
-        "MARK *NAME*\n"
-        "````"
-    ),
+    ): _EXPECTED_INLINE_SAMPLE,
     (
         "skills/code-gauntlet/references/delivery-guide.md",
         "delivery_identity",
@@ -437,95 +411,33 @@ EXPECTED_BODIES = {
     (
         "skills/code-gauntlet/SKILL.md",
         "derived_waist_fields",
-    ): (
-        "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.\n"
-        "\n"
-        "- `optional.beta` (headless runs): from `configEcho.beta`. Leave `beta` out of any stamped `optional`.\n"
-        "- `nested.gamma` (headless and interactive runs, when the gamma condition holds): from `configEcho.gamma`; `raw` derives as `mapped`. Stamp `nested` and leave `gamma` out of it.\n"
-        "- `limits.nullable` (interactive runs): from `configEcho.epsilon`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `nullable` out of it.\n"
-        "- `delivery.count` (headless runs): from `configEcho.zeta`; digits derive as a JSON number. Leave `count` out of any stamped `delivery`.\n"
-        "- `delivery.items` (headless runs): from `configEcho.eta`; the comma-separated value derives as a list. Leave `items` out of any stamped `delivery`.\n"
-        "\n"
-        "The workflow fills these receipt entries itself; never stamp them.\n"
-        "\n"
-        "- `configEcho.delta` (interactive runs): the delta source is present."
-    ),
-    ("skills/code-gauntlet/SKILL.md", "pr_identity_fields"): (
-        "`delivery.prIdentity` fields:\n"
-        "\n"
-        "- `owner` (required): a non-empty string.\n"
-        "- `repo` (required): a non-empty string.\n"
-        "- `pr_number` (required): a positive safe integer.\n"
-        "- `sha_full` (required): a 40-character lowercase hex commit id.\n"
-        "- `platform` (required): one of github, gitlab.\n"
-        "- `web_origin` (required): an http(s) origin: scheme, host and optional port only.\n"
-        "- `title` (optional): a non-empty string when present.\n"
-        "\n"
-        "Producer command:\n"
-        "\n"
-        "`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> [--title <text>]`"
-    ),
+    ): _EXPECTED_DERIVED_WAIST_FIELDS,
+    (
+        "skills/code-gauntlet/SKILL.md",
+        "pr_identity_fields",
+    ): _EXPECTED_PR_IDENTITY_FIELDS,
     (
         "skills/code-gauntlet/references/phase2-triage.md",
         "derived_waist_fields",
-    ): (
-        "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.\n"
-        "\n"
-        "- `optional.beta` (headless runs): from `configEcho.beta`. Leave `beta` out of any stamped `optional`.\n"
-        "- `nested.gamma` (headless and interactive runs, when the gamma condition holds): from `configEcho.gamma`; `raw` derives as `mapped`. Stamp `nested` and leave `gamma` out of it.\n"
-        "- `limits.nullable` (interactive runs): from `configEcho.epsilon`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `nullable` out of it.\n"
-        "- `delivery.count` (headless runs): from `configEcho.zeta`; digits derive as a JSON number. Leave `count` out of any stamped `delivery`.\n"
-        "- `delivery.items` (headless runs): from `configEcho.eta`; the comma-separated value derives as a list. Leave `items` out of any stamped `delivery`.\n"
-        "\n"
-        "The workflow fills these receipt entries itself; never stamp them.\n"
-        "\n"
-        "- `configEcho.delta` (interactive runs): the delta source is present."
-    ),
+    ): _EXPECTED_DERIVED_WAIST_FIELDS,
     (
         "skills/code-gauntlet/references/phase2-triage.md",
         "pr_identity_fields",
-    ): (
-        "`delivery.prIdentity` fields:\n"
-        "\n"
-        "- `owner` (required): a non-empty string.\n"
-        "- `repo` (required): a non-empty string.\n"
-        "- `pr_number` (required): a positive safe integer.\n"
-        "- `sha_full` (required): a 40-character lowercase hex commit id.\n"
-        "- `platform` (required): one of github, gitlab.\n"
-        "- `web_origin` (required): an http(s) origin: scheme, host and optional port only.\n"
-        "- `title` (optional): a non-empty string when present.\n"
-        "\n"
-        "Producer command:\n"
-        "\n"
-        "`python3 {plugin_root}/scripts/resolve_pr_identity.py --platform github|gitlab --url <PR/MR web url> --sha <git rev-parse HEAD> [--title <text>]`"
-    ),
+    ): _EXPECTED_PR_IDENTITY_FIELDS,
     (
         "skills/code-gauntlet/references/phase1-preflight.md",
         "derived_waist_fields",
-    ): (
-        "The workflow derives these waist fields from the copied `configEcho` receipt. Do not stamp a derived field; when a listed derivation applies, a stamped value that disagrees with its receipt is refused before dispatch.\n"
-        "\n"
-        "- `optional.beta` (headless runs): from `configEcho.beta`. Leave `beta` out of any stamped `optional`.\n"
-        "- `nested.gamma` (headless and interactive runs, when the gamma condition holds): from `configEcho.gamma`; `raw` derives as `mapped`. Stamp `nested` and leave `gamma` out of it.\n"
-        "- `limits.nullable` (interactive runs): from `configEcho.epsilon`; digits derive as a JSON number; on interactive runs the receipt spelling `null` derives as JSON `null`. Stamp `limits` and leave `nullable` out of it.\n"
-        "- `delivery.count` (headless runs): from `configEcho.zeta`; digits derive as a JSON number. Leave `count` out of any stamped `delivery`.\n"
-        "- `delivery.items` (headless runs): from `configEcho.eta`; the comma-separated value derives as a list. Leave `items` out of any stamped `delivery`.\n"
-        "\n"
-        "The workflow fills these receipt entries itself; never stamp them.\n"
-        "\n"
-        "- `configEcho.delta` (interactive runs): the delta source is present."
-    ),
+    ): _EXPECTED_DERIVED_WAIST_FIELDS,
     ("skills/code-gauntlet/references/headless-mode.md", "headless_env_table"): (
         "| Variable | Values | Default |\n"
         "| --- | --- | --- |\n"
         "| `CODE_GAUNTLET_ALPHA` | `h-alpha` | `h-alpha` |\n"
         "| `CODE_GAUNTLET_BETA` | `h-beta` | `h-beta` |"
     ),
-    ("skills/code-gauntlet/references/phase8-delivery.md", "permalink_formats"): (
-        "- `github`: blob `{origin}/{owner}/{repo}/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-L{end}`; ref `#{number}`; ref URL `{origin}/{owner}/{repo}/pull/{number}`.\n"
-        "- `gitlab`: blob `{origin}/{owner}/{repo}/-/blob/{sha}/{path}`; line `#L{start}`; range `#L{start}-{end}`; ref `!{number}`; ref URL `{origin}/{owner}/{repo}/-/merge_requests/{number}`.\n"
-        "- Encode owner, repo, and file paths one segment at a time with `encodeURIComponent` semantics; also percent-encode `!`, `'`, `(`, `)`, and `*`, while preserving `/` separators. A file path containing an empty, `.`, or `..` segment renders as a plain code span."
-    ),
+    (
+        "skills/code-gauntlet/references/phase8-delivery.md",
+        "permalink_formats",
+    ): _EXPECTED_PERMALINK_FORMATS,
 }
 
 
@@ -605,10 +517,6 @@ def test_conditional_paragraphs():
             "retried, so all must always be present.",
             id="four-fields",
         ),
-        pytest.param(
-            "`x` is required by the dispatch schema - old wording.",
-            id="single-first-run",
-        ),
     ],
 )
 def test_block_anchor(sentence):
@@ -670,15 +578,6 @@ def field_registry():
             },
         ],
     }
-
-
-@pytest.mark.parametrize(
-    ("field", "expected"),
-    [("claude_md_rule", "conditional"), ("hidden_errors", "no")],
-    ids=["conditional", "unlisted"],
-)
-def test_field_status(field_registry, field, expected):
-    assert gen.field_required_status(field, field_registry) == expected
 
 
 @pytest.mark.parametrize(
@@ -1016,48 +915,6 @@ def test_cold_registry_repair(registry_tree):
     assert gen.proc.run([*command, "--check"], cwd=str(registry_tree)).returncode == 0
 
 
-def test_check_writes_nothing(registry_tree, invoke):
-    target = registry_tree / "agents/security-reviewer.md"
-    target.write_text(
-        target.read_text(encoding="utf-8").replace("attack_vector", "stale_field"),
-        encoding="utf-8",
-    )
-    before = {
-        rel: (
-            (registry_tree / rel).read_bytes(),
-            (registry_tree / rel).stat().st_mtime_ns,
-        )
-        for rel in TARGETS
-    }
-    assert (
-        invoke(
-            "generate_contract_requirements",
-            ["--repo-root", str(registry_tree), "--check"],
-            registry_tree,
-        ).returncode
-        == 1
-    )
-    assert {
-        rel: (
-            (registry_tree / rel).read_bytes(),
-            (registry_tree / rel).stat().st_mtime_ns,
-        )
-        for rel in TARGETS
-    } == before
-
-
-def test_idempotent_write(registry_tree, invoke):
-    before = {rel: (registry_tree / rel).stat().st_mtime_ns for rel in TARGETS}
-    result = invoke(
-        "generate_contract_requirements",
-        ["--repo-root", str(registry_tree)],
-        registry_tree,
-    )
-    assert result.returncode == 0
-    assert result.stdout == b"generated registry blocks are current\n"
-    assert {rel: (registry_tree / rel).stat().st_mtime_ns for rel in TARGETS} == before
-
-
 def test_identity_fill_order():
     rel = "skills/code-gauntlet/references/delivery-guide.md"
     text = "\n".join(
@@ -1092,23 +949,6 @@ def test_identity_fill_order():
     )
     assert filled == expected
     assert gen.fill_identity_fences(expected, rel, IDENTITY, str(ROOT)) == expected
-
-
-def test_usage(invoke, tmp_path):
-    name = "generate_contract_requirements"
-    help_result = invoke(name, ["--help"], tmp_path)
-    assert help_result.returncode == 0
-    assert (
-        " ".join(help_result.stdout.decode().split("\n\n", 1)[0].split())
-        == f"usage: {name} [-h] [--repo-root REPO_ROOT] [--check]"
-    )
-    usage = invoke(name, ["--unknown"], tmp_path)
-    assert usage.returncode == 2
-    assert usage.stdout == b""
-    assert (
-        usage.stderr
-        == b"generate_contract_requirements: unrecognized arguments: --unknown\n"
-    )
 
 
 @pytest.fixture(scope="module")

@@ -1,6 +1,5 @@
 """SessionStart payload bytes and the style hook's banner policy."""
 
-import json
 import re
 
 import pytest
@@ -40,12 +39,6 @@ def test_payload(tmp_path, monkeypatch, invoke):
         b'{"hookSpecificOutput": {"hookEventName": "SessionStart", '
         b'"additionalContext": "# Session output style\\n\\n- Caf\\u00e9.\\n"}}\n'
     )
-    assert json.loads(result.stdout) == {
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": "# Session output style\n\n- Caf\u00e9.\n",
-        }
-    }
 
 
 def test_missing_carrier(tmp_path, monkeypatch, invoke):

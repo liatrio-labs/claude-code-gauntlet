@@ -15,10 +15,14 @@ from gauntlet import registry as python_registry
 from tests.support.js_values import js_values
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = ROOT
 REPORT_FORMAT = ROOT / "skills/code-gauntlet/references/report-format.md"
 
-PIPELINE_STAMPED = {"origin"}
+RULE_SOURCES = (
+    "documented_rule",
+    "code_comment",
+    "repo_precedent",
+    "self_inconsistency",
+)
 
 # Fence casing affects Markdown display, so only the marker is case-insensitive.
 _JSON_BLOCK = re.compile("```(?i:json)\\n(.*?)\\n```", re.DOTALL)
@@ -50,7 +54,7 @@ def registry():
     )
     out = subprocess.run(
         ["node", "--input-type=module", "-e", node_src],
-        cwd=REPO,
+        cwd=ROOT,
         capture_output=True,
         text=True,
         check=True,
@@ -112,31 +116,19 @@ _DISPATCH_REQUIRED_PHRASE = "required by the dispatch schema"
 _DIMENSION_CONDITIONAL_PHRASE = "dimension-conditional dispatch requirement"
 
 
-def dispatch_required_claims(name):
-    text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
+def phrase_claims(name, phrase):
+    text = (ROOT / "agents" / f"{name}.md").read_text(encoding="utf-8")
     claimed = set()
     for line in text.splitlines():
-        if _DISPATCH_REQUIRED_PHRASE in line:
-            claimed |= set(_BACKTICKED_FIELD.findall(line))
-    return claimed
-
-
-def dimension_conditional_claims(name):
-    text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
-    claimed = set()
-    for line in text.splitlines():
-        if _DIMENSION_CONDITIONAL_PHRASE in line:
+        if phrase in line:
             claimed |= set(_BACKTICKED_FIELD.findall(line))
     return claimed
 
 
 def raw_contract_blocks(name):
-    text = (REPO / "agents" / f"{name}.md").read_text(encoding="utf-8")
+    text = (ROOT / "agents" / f"{name}.md").read_text(encoding="utf-8")
     raw_blocks = _JSON_BLOCK.findall(text)
-    if not raw_blocks:
-        raise AssertionError(
-            f"agents/{name}.md has no ```json output-contract block \u2014 either the contract was removed or its fence changed, and this whole lockstep guard just stopped covering that agent. Restore the block or update the parser deliberately."
-        )
+    assert raw_blocks
     return raw_blocks
 
 
@@ -144,16 +136,8 @@ def contract_blocks(name):
     blocks = []
     for raw in raw_contract_blocks(name):
         normalized = _UNQUOTED_PLACEHOLDER.sub(" 0", raw)
-        try:
-            obj = json.loads(normalized)
-        except json.JSONDecodeError as exc:
-            raise AssertionError(
-                f"agents/{name}.md: a ```json output-contract block is not valid JSON ({exc}). The block is what the model is shown as the shape to emit, so it must parse. Block:\n{raw}"
-            ) from exc
-        if not isinstance(obj, dict):
-            raise AssertionError(
-                f"agents/{name}.md: a ```json block is not an object: {raw!r}"
-            )
+        obj = json.loads(normalized)
+        assert isinstance(obj, dict)
         blocks.append(obj)
     return blocks
 
@@ -165,7 +149,7 @@ def report_format_tables():
     )
     if not match:
         raise AssertionError(
-            f"{REPORT_FORMAT.relative_to(REPO)} has no '## Finding Fields Reference' section (or no following H2 to bound it) \u2014 the field documentation this test pins is gone."
+            f"{REPORT_FORMAT.relative_to(ROOT)} has no '## Finding Fields Reference' section (or no following H2 to bound it) \u2014 the field documentation this test pins is gone."
         )
     tables, current = ({}, None)
     for line in match.group(1).splitlines():
@@ -192,18 +176,9 @@ def table_named(tables, keyword):
 
 def delivery_guide_json_object(text: str) -> dict:
     blocks = _JSON_BLOCK.findall(text)
-    if len(blocks) != 1:
-        raise AssertionError(
-            f"delivery-guide.md must contain exactly one json fence (the findings-schema example); found {len(blocks)}"
-        )
-    try:
-        obj = json.loads(blocks[0])
-    except json.JSONDecodeError as exc:
-        raise AssertionError(
-            f"delivery-guide.md's json fence is not valid JSON ({exc}). Never skip a parse failure \u2014 silent skip is how this guard stops guarding."
-        ) from exc
-    if not isinstance(obj, dict):
-        raise AssertionError("delivery-guide.md JSON fence must contain a JSON object.")
+    assert len(blocks) == 1
+    obj = json.loads(blocks[0])
+    assert isinstance(obj, dict)
     return obj
 
 
@@ -471,9 +446,9 @@ def test_contract_schema(agent_type):
     for row in registry()["dimensions"]:
         if row["agentType"] != agent_type:
             continue
-        assert dispatch_required_claims(name) & set(row["extras"]) == set(
-            row["requiredExtra"]
-        )
+        assert phrase_claims(name, _DISPATCH_REQUIRED_PHRASE) & set(
+            row["extras"]
+        ) == set(row["requiredExtra"])
         for field in row["requiredExtra"]:
             assert not any(
                 field_carries_omit_instruction(raw, field, source=name)
@@ -491,7 +466,7 @@ def test_contract_schema(agent_type):
         if row["agentType"] == agent_type
         for field in row["requiredWhenDimension"]
     }
-    assert dimension_conditional_claims(name) == expected_conditional
+    assert phrase_claims(name, _DIMENSION_CONDITIONAL_PHRASE) == expected_conditional
 
 
 @pytest.mark.parametrize(
@@ -549,12 +524,7 @@ def test_convention_vocabulary():
     assert section is not None
     values = re.search(r"^Allowed values are (.+)\.$", section.group(1), re.MULTILINE)
     assert values is not None
-    assert set(re.findall(r"`([^`]+)`", values.group(1))) == {
-        "documented_rule",
-        "code_comment",
-        "repo_precedent",
-        "self_inconsistency",
-    }
+    assert set(re.findall(r"`([^`]+)`", values.group(1))) == set(RULE_SOURCES)
     examples = [
         block
         for block in contract_blocks("conventions-and-intent")
@@ -563,12 +533,7 @@ def test_convention_vocabulary():
         )
     ]
     assert len(examples) == 1
-    assert examples[0]["rule_source"] in {
-        "documented_rule",
-        "code_comment",
-        "repo_precedent",
-        "self_inconsistency",
-    }
+    assert examples[0]["rule_source"] in RULE_SOURCES
 
 
 def test_handwritten_field_tables():
@@ -748,8 +713,7 @@ def test_machine_string_registry():
     composite = [
         row
         for row in parse_composite_rows(text)
-        if set(row["strings"])
-        == {"documented_rule", "code_comment", "repo_precedent", "self_inconsistency"}
+        if set(row["strings"]) == set(RULE_SOURCES)
     ]
     assert len(composite) == 1
     assert composite[0]["producers"] == ["agents/conventions-and-intent.md"]

@@ -11,8 +11,6 @@ from gauntlet.fs import read_text
 from gauntlet.generate import finish, sync_targets
 from gauntlet.paths import ENTRY_ROOT
 
-REPO_ROOT = ENTRY_ROOT
-
 WORDING_SOURCE = os.path.join("docs", "style", "wording-rules.md")
 CADENCE_SOURCE = os.path.join("docs", "style", "cadence-rules.md")
 CARRIER = os.path.join("docs", "style", "session-context.md")
@@ -117,7 +115,7 @@ parser = Parser(
     prog="build_style_artifacts",
     description="Generate the style carrier from wording and cadence rule sources.",
 )
-parser.add_argument("--repo-root", default=REPO_ROOT)
+parser.add_argument("--repo-root", default=ENTRY_ROOT)
 parser.add_argument(
     "--check",
     action="store_true",

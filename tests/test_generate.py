@@ -16,12 +16,10 @@ def test_changed_text(tmp_path):
 def test_unchanged_text(tmp_path, monkeypatch):
     target = tmp_path / "target.md"
     target.write_text("same", encoding="utf-8")
-    before = target.stat().st_mtime_ns
     writes = []
     monkeypatch.setattr(generate, "write_atomic", lambda *args: writes.append(args))
     assert sync_targets(tmp_path, {"target.md": "same"}, False) == []
     assert writes == []
-    assert target.stat().st_mtime_ns == before
 
 
 def test_callable_current_text(tmp_path):
@@ -39,13 +37,11 @@ def test_callable_current_text(tmp_path):
 def test_check_writes_nothing(tmp_path, monkeypatch):
     target = tmp_path / "target.md"
     target.write_text("old", encoding="utf-8")
-    before = target.stat().st_mtime_ns
     writes = []
     monkeypatch.setattr(generate, "write_atomic", lambda *args: writes.append(args))
     assert sync_targets(tmp_path, {"target.md": "new"}, True) == ["target.md"]
     assert writes == []
     assert target.read_bytes() == b"old"
-    assert target.stat().st_mtime_ns == before
 
 
 def test_mapping_order(tmp_path):

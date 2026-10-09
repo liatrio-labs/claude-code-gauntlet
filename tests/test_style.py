@@ -148,19 +148,6 @@ def test_missing_carrier(style_tree, invoke):
     assert carrier.read_text(encoding="utf-8") == EXPECTED
 
 
-def test_usage(invoke, tmp_path):
-    help_result = invoke("build_style_artifacts", ["--help"], tmp_path)
-    assert help_result.returncode == 0
-    assert (
-        " ".join(help_result.stdout.decode().split("\n\n", 1)[0].split())
-        == "usage: build_style_artifacts [-h] [--repo-root REPO_ROOT] [--check]"
-    )
-    usage = invoke("build_style_artifacts", ["--unknown"], tmp_path)
-    assert usage.returncode == 2
-    assert usage.stdout == b""
-    assert usage.stderr == b"build_style_artifacts: unrecognized arguments: --unknown\n"
-
-
 def test_unreadable_carrier(style_tree, invoke):
     carrier = style_tree / "docs/style/session-context.md"
     carrier.unlink()

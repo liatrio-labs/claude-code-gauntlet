@@ -9,8 +9,7 @@ from gauntlet.cli import CliError, Command, Parser
 from gauntlet.fs import read_text
 from gauntlet.paths import ENTRY_ROOT
 
-REPO_ROOT = ENTRY_ROOT
-CARRIER = os.path.join(REPO_ROOT, "docs", "style", "session-context.md")
+CARRIER = os.path.join(ENTRY_ROOT, "docs", "style", "session-context.md")
 
 
 def strip_banner(text: str) -> str:
