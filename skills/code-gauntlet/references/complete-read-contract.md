@@ -19,7 +19,7 @@
 > 10. `agents/change-summarizer.md`
 >
 > Each agent copy is preceded by a `<!-- Canonical source: references/complete-read-contract.md -->`
-> comment pointing back here. `tests/test_agent_contracts.py::TestCompleteReadContract`
+> comment pointing back here. `tests/test_registry_contracts.py::test_agent_mirrors[complete-read]`
 > asserts every copy is byte-identical to the block below — the guard that stops the
 > copies drifting apart. Same duplication rationale as
 > `references/false-positive-exclusions.md`: every agent must carry the rule even if a

@@ -84,7 +84,7 @@ export const CODE_OWNED_HEADINGS = [
 // discovery contracts) and `spec_text`/`criticality`/`failure_scenario` (one contract each)
 // went years declared by no schema and silently dropped at the StructuredOutput boundary.
 // Adding a finding field is now ONE entry here plus the owning agent's .md output contract,
-// and tests/test_dimensions_registry.py fails the build when those two drift apart.
+// and tests/test_registry_contracts.py fails the build when those two drift apart.
 //
 // A value is EITHER a type-name shorthand string ('string'/'number', expanded by
 // findingItemSchema to { type: <name> }) OR a full JSON-Schema fragment used verbatim — which

@@ -280,7 +280,7 @@ test('every DIMENSIONS row declares requiredWhenDimension as an array of field-n
 });
 
 // [v3] Pipeline-stamped canonical fields no agent ever emits (mirrors PIPELINE_STAMPED in
-// tests/test_dimensions_registry.py). Excluded from the canonical-field arm below: the bare
+// tests/test_registry_contracts.py). Excluded from the canonical-field arm below: the bare
 // either-or rule would otherwise admit `origin`, and schema-requiring a field within a
 // dimension no agent contract ever instructs guarantees that dimension's dispatch degrades.
 const PIPELINE_STAMPED = new Set(['origin']);

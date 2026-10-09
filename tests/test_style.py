@@ -1,5 +1,6 @@
 """Style source validation and the carrier command's visible outcomes."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -81,6 +82,7 @@ def test_source_diagnostic(style_tree, invoke, source, message):
     assert result.returncode == 1
     assert result.stdout == b""
     assert message in result.stderr.decode()
+    assert re.fullmatch(r"build_style_artifacts: [^\n]+\n", result.stderr.decode())
     assert str(Path("docs/style/wording-rules.md")) in result.stderr.decode()
 
 
@@ -93,7 +95,7 @@ def test_missing_source(style_tree, invoke):
     assert result.stdout == b""
     assert (
         result.stderr.decode()
-        == f"missing style rule source: {Path('docs/style/cadence-rules.md')}\n"
+        == f"build_style_artifacts: missing style rule source: {Path('docs/style/cadence-rules.md')}\n"
     )
 
 
@@ -105,8 +107,7 @@ def test_carrier_drift(style_tree, invoke):
     assert stale.returncode == 1
     assert stale.stdout == b""
     assert stale.stderr.decode() == (
-        f"stale generated carrier: {Path('docs/style/session-context.md')}\n"
-        "run: python3 scripts/build_style_artifacts.py\n"
+        f"build_style_artifacts: stale generated carrier: {Path('docs/style/session-context.md')}; run: python3 scripts/build_style_artifacts.py\n"
     )
     assert carrier.read_text(encoding="utf-8") == "stale\n"
     repaired = invoke("build_style_artifacts", args, style_tree)
@@ -148,9 +149,23 @@ def test_usage(invoke, tmp_path):
     assert help_result.returncode == 0
     assert (
         " ".join(help_result.stdout.decode().split("\n\n", 1)[0].split())
-        == "usage: build_style_artifacts.py [-h] [--repo-root REPO_ROOT] [--check]"
+        == "usage: build_style_artifacts [-h] [--repo-root REPO_ROOT] [--check]"
     )
     usage = invoke("build_style_artifacts", ["--unknown"], tmp_path)
     assert usage.returncode == 2
     assert usage.stdout == b""
-    assert b"unrecognized arguments: --unknown" in usage.stderr
+    assert usage.stderr == b"build_style_artifacts: unrecognized arguments: --unknown\n"
+
+
+def test_unreadable_carrier(style_tree, invoke):
+    carrier = style_tree / "docs/style/session-context.md"
+    carrier.unlink()
+    carrier.mkdir()
+    result = invoke(
+        "build_style_artifacts", ["--repo-root", str(style_tree), "--check"], style_tree
+    )
+    assert result.returncode == 1
+    assert result.stdout == b""
+    assert re.fullmatch(r"build_style_artifacts: [^\n]+\n", result.stderr.decode())
+    assert "stale generated carrier" not in result.stderr.decode()
+    assert carrier.is_dir()

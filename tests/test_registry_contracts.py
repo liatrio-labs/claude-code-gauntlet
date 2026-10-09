@@ -3,6 +3,7 @@
 import json
 import re
 import subprocess
+import time
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
@@ -496,16 +497,43 @@ def test_contract_schema(agent_type):
 @pytest.mark.parametrize(
     ("raw", "field", "expected"),
     [
-        (
+        pytest.param(
             '{"affected_consumers": ["<OMIT this field when inapplicable>"]}',
             "affected_consumers",
             True,
-        )
+            id="array-omit",
+        ),
+        pytest.param(
+            '{"criticality": <1-10, OMIT if not applicable>}',
+            "criticality",
+            True,
+            id="angle-omit",
+        ),
+        pytest.param('{"other_field": "x"}', "attack_vector", False, id="absent"),
+        pytest.param(
+            '{"weird_field": {"nested": "object"}}',
+            "weird_field",
+            None,
+            id="unsupported-object",
+        ),
+        pytest.param(
+            '{"affected_consumers": [' + '"a" ' * 200 + "x",
+            "affected_consumers",
+            None,
+            id="pathological-array",
+        ),
     ],
-    ids=["array-omit"],
 )
 def test_omit_parser(raw, field, expected):
-    assert field_carries_omit_instruction(raw, field) is expected
+    start = time.perf_counter()
+    if expected is None:
+        with pytest.raises(AssertionError) as error:
+            field_carries_omit_instruction(raw, field, source="agents/x.md")
+        assert field in str(error.value)
+        assert "agents/x.md" in str(error.value)
+        assert time.perf_counter() - start < 1.0
+    else:
+        assert field_carries_omit_instruction(raw, field) is expected
 
 
 def test_convention_vocabulary():
@@ -553,14 +581,37 @@ def test_handwritten_field_tables():
     per_dimension = table_named(tables, "Per-dimension")
     assert {field for field, cells in canonical} == set(registry()["propTypes"])
     assert {field for field, cells in per_dimension} == set(all_extras())
+    required = set(registry()["required"])
+    extra_required = {
+        field for row in registry()["dimensions"] for field in row["requiredExtra"]
+    }
+    conditional = {
+        field
+        for row in registry()["dimensions"]
+        for field in row["requiredWhenDimension"]
+    }
     for field, cells in canonical:
         assert cells[0] == registry()["propTypes"][field]
-        assert cells[1].lower() in {"yes", "no", "conditional"}
+        expected = (
+            "yes"
+            if field in required
+            else "conditional"
+            if field in conditional
+            else "no"
+        )
+        assert cells[1].lower() == expected
     for field, cells in per_dimension:
         row = next(row for row in registry()["dimensions"] if field in row["extras"])
         assert cells[0] == row["extras"][field]
         assert cells[1] == row["dimension"]
-        assert cells[2].lower() in {"yes", "no", "conditional"}
+        expected = (
+            "yes"
+            if field in extra_required
+            else "conditional"
+            if field in conditional
+            else "no"
+        )
+        assert cells[2].lower() == expected
 
 
 @pytest.mark.parametrize("surface", ["delivery-json", "delivery-bash"])
@@ -899,3 +950,27 @@ def test_mark_producer_registry():
             producers.add(rel)
     assert "\u2694\ufe0f" in read("scripts/gauntlet/registry.py")
     assert set(marked[0]["producers"]) == producers
+
+
+@pytest.mark.parametrize("surface", ["rendered", "handwritten-remainder"])
+def test_full_report_predicates(surface):
+    if surface == "rendered":
+        text = gen.render_template_block(str(ROOT), gen.load_registry(str(ROOT)))
+        assert "{finding.description}" in text
+    else:
+        match = re.search(
+            r"^## Full Report Template\n(.*?)(?=^## PR Comment Format\b)",
+            read("skills/code-gauntlet/references/report-format.md"),
+            re.MULTILINE | re.DOTALL,
+        )
+        assert match is not None
+        text, count = re.subn(
+            r"<!-- generated-from-registry-identity:full_report_template[^\n]*\n.*?<!-- /generated-from-registry-identity:full_report_template -->",
+            "",
+            match.group(1),
+            flags=re.DOTALL,
+        )
+        assert count == 1
+    assert "{finding.body}" not in text
+    assert "suggested_fix_code" not in text
+    assert "not apply-checked" not in text

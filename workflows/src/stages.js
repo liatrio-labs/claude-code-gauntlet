@@ -575,7 +575,7 @@ export function allActiveDimensionsDegraded(dispatched, degraded) {
 // 8/8, then 5/5 across three PRs of a single smoke — permitted, never a contract). Closing the
 // item schema is safe because the declaration is complete and STAYS complete: every field an
 // agent contract instructs is one entry in FINDING_PROP_TYPES or a dimension's `schemaExtra` in
-// registry.js, and tests/test_dimensions_registry.py fails the build when the declared set
+// registry.js, and tests/test_registry_contracts.py fails the build when the declared set
 // drifts from what the .md contracts instruct (declared − instructed == {origin}), so the
 // closed schema cannot reject a field a contract asks for (issue #47: `suggestion`/
 // `claude_md_rule`/`spec_text`/`criticality`/`failure_scenario` were instructed by the

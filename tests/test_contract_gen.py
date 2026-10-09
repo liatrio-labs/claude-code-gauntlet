@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from gauntlet import contract_gen as gen
+from gauntlet.cli import CliError
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = (
@@ -607,7 +608,7 @@ def test_block_anchor():
     ],
 )
 def test_block_diagnostic(text, message):
-    with pytest.raises(SystemExit, match=re.escape(message)):
+    with pytest.raises(CliError, match=re.escape(message)):
         gen.splice(text, gen._SINGLE_SENTENCE_ANCHOR, "new")
 
 
@@ -716,7 +717,7 @@ def test_identity_pair_diagnostic(markers, message):
         f"# {marker[:1] if marker.startswith('/') else ''}generated-from-registry-identity:{marker.lstrip('/')}"
         for marker in markers
     ]
-    with pytest.raises(SystemExit, match=re.escape(message)):
+    with pytest.raises(CliError, match=re.escape(message)):
         gen.find_identity_pairs(lines, "x.py")
 
 
@@ -753,12 +754,12 @@ def test_derived_identity_diagnostic(change, message):
         identity["deriveWhen"]["gamma"] = "  \t"
     else:
         identity["knobs"][1]["type"] = "number"
-    with pytest.raises(SystemExit, match=re.escape(message)):
+    with pytest.raises(CliError, match=re.escape(message)):
         gen.identity_body("x.md", "derived_waist_fields", identity)
 
 
 def test_unknown_identity_body():
-    with pytest.raises(SystemExit, match=r"no identity body for 'nope' in x.md"):
+    with pytest.raises(CliError, match=r"no identity body for 'nope' in x.md"):
         gen.identity_body("x.md", "nope", IDENTITY)
 
 
@@ -779,16 +780,9 @@ def test_undeclared_identity_fence():
         ]
     )
     with pytest.raises(
-        SystemExit, match="identity marker pair\\(s\\) bogus match no declared symbol"
+        CliError, match="identity marker pair\\(s\\) bogus match no declared symbol"
     ):
         gen.fill_identity_fences(text, rel, IDENTITY)
-
-
-def test_unknown_target_kind():
-    with pytest.raises(
-        SystemExit, match=r"unknown target kind 'bogus' for some/file.md"
-    ):
-        gen._apply_one("text", "some/file.md", "bogus", None, {})
 
 
 @pytest.mark.parametrize("failure", ["missing", "failed"])
@@ -832,8 +826,7 @@ def test_command_drift(registry_tree, invoke):
     assert stale.returncode == 1
     assert stale.stdout == b""
     assert stale.stderr == (
-        b"stale generated registry blocks: agents/test-analyzer.md\n"
-        b"run: python3 scripts/generate_contract_requirements.py\n"
+        b"generate_contract_requirements: stale generated registry blocks: agents/test-analyzer.md; run: python3 scripts/generate_contract_requirements.py\n"
     )
     assert target.read_bytes() == broken
     repaired = invoke(
@@ -869,10 +862,9 @@ def test_added_knob(registry_tree, invoke):
     stale = invoke("generate_contract_requirements", [*args, "--check"], registry_tree)
     assert stale.returncode == 1
     assert stale.stderr == (
-        b"stale generated registry blocks: skills/code-gauntlet/SKILL.md, "
+        b"generate_contract_requirements: stale generated registry blocks: skills/code-gauntlet/SKILL.md, "
         b"skills/code-gauntlet/references/phase2-triage.md, "
-        b"skills/code-gauntlet/references/phase1-preflight.md, scripts/gauntlet/registry.py\n"
-        b"run: python3 scripts/generate_contract_requirements.py\n"
+        b"skills/code-gauntlet/references/phase1-preflight.md, scripts/gauntlet/registry.py; run: python3 scripts/generate_contract_requirements.py\n"
     )
     assert invoke("generate_contract_requirements", args, registry_tree).returncode == 0
     assert (
@@ -909,6 +901,9 @@ def test_command_identity_diagnostic(registry_tree, damage, invoke):
     assert result.returncode == 1
     assert result.stdout == b""
     assert message in result.stderr.decode()
+    assert re.fullmatch(
+        r"generate_contract_requirements: [^\n]+\n", result.stderr.decode()
+    )
 
 
 def test_both_report_regions(registry_tree, invoke):
@@ -1042,31 +1037,6 @@ def test_identity_fill_order():
     assert gen.fill_identity_fences(expected, rel, IDENTITY) == expected
 
 
-def test_report_config_order():
-    assert list(gen._TEMPLATE_FIXTURE["configEcho"]) == [
-        "model_tier",
-        "pr_comment_cap",
-        "delivery_tier",
-        "review_md",
-    ]
-    lines = gen.identity_body(
-        "skills/code-gauntlet/references/report-format.md",
-        "full_report_template",
-        gen.load_registry(str(ROOT)),
-    )
-    text = "\n".join(lines)
-    match = re.search(r"Resolved config:\n((?:  [^\n]+\n)+)", text)
-    assert match is not None
-    assert re.findall(r"^  ([a-z_]+)=", match.group(1), re.MULTILINE) == [
-        "model_tier",
-        "pr_comment_cap",
-        "delivery_tier",
-        "review_md",
-        "pipeline_version",
-        "plugin_root",
-    ]
-
-
 def test_usage(invoke, monkeypatch, tmp_path):
     name = "generate_contract_requirements"
     monkeypatch.setattr(sys, "argv", [name + ".py"])
@@ -1074,12 +1044,15 @@ def test_usage(invoke, monkeypatch, tmp_path):
     assert help_result.returncode == 0
     assert (
         " ".join(help_result.stdout.decode().split("\n\n", 1)[0].split())
-        == f"usage: {name}.py [-h] [--repo-root REPO_ROOT] [--check]"
+        == f"usage: {name} [-h] [--repo-root REPO_ROOT] [--check]"
     )
     usage = invoke(name, ["--unknown"], tmp_path)
     assert usage.returncode == 2
     assert usage.stdout == b""
-    assert b"unrecognized arguments: --unknown" in usage.stderr
+    assert (
+        usage.stderr
+        == b"generate_contract_requirements: unrecognized arguments: --unknown\n"
+    )
 
 
 @pytest.fixture(scope="module")
@@ -1163,6 +1136,9 @@ def test_registry_diagnostic(
     assert result.returncode == 1
     assert result.stdout == b""
     assert message in result.stderr.decode()
+    assert re.fullmatch(
+        r"generate_contract_requirements: [^\n]+\n", result.stderr.decode()
+    )
 
 
 def test_resolver_load_diagnostic(registry_tree, monkeypatch, invoke):
@@ -1177,6 +1153,9 @@ def test_resolver_load_diagnostic(registry_tree, monkeypatch, invoke):
     assert result.returncode == 1
     assert result.stdout == b""
     assert "cannot load resolver module from " in result.stderr.decode()
+    assert re.fullmatch(
+        r"generate_contract_requirements: [^\n]+\n", result.stderr.decode()
+    )
 
 
 def test_partial_write_order(registry_tree, invoke):

@@ -1482,6 +1482,8 @@ class TestContractFenceHook(unittest.TestCase):
                 "scripts/gauntlet/delivery/gate.py",
                 "scripts/gauntlet/config.py",
                 "scripts/gauntlet/marker.py",
+                "scripts/gauntlet/generate.py",
+                "scripts/gauntlet/fs.py",
             }.issubset(declared_inputs),
             declared_inputs,
         )
@@ -1501,7 +1503,8 @@ class TestContractFenceHook(unittest.TestCase):
             }.issubset(declared_inputs),
             declared_inputs,
         )
-        paths = set(contract_gen.compute_targets(str(REPO)))
+        registry = contract_gen.load_registry(str(REPO))
+        paths = set(contract_gen.rendered_targets(str(REPO), registry, ""))
         paths.update(declared_inputs)
         for path in sorted(paths):
             with self.subTest(path=path):
@@ -1532,12 +1535,10 @@ class TestContractFenceHook(unittest.TestCase):
             )
 
             lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
-            open_marker, close_marker = contract_gen.identity_marker_lines(
-                "derived_waist_fields",
+            open_index, close_index = contract_gen.find_identity_pairs(
+                [line.rstrip("\n") for line in lines],
                 "skills/code-gauntlet/references/phase1-preflight.md",
-            )
-            open_index = lines.index(open_marker + "\n")
-            close_index = lines.index(close_marker + "\n")
+            )["derived_waist_fields"]
             body_index = next(
                 index
                 for index in range(open_index + 1, close_index)
