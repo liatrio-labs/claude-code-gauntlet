@@ -620,10 +620,12 @@ def test_explicit_await_path_never_probes_discovery_roots(
 ):
     target = tmp_path / "task.output"
     target.write_text('{"ok":true,"stats":{}}', encoding="utf-8")
-    monkeypatch.setattr(
-        os.path, "realpath", lambda *_: pytest.fail("explicit path consulted roots")
-    )
-    assert awaiting.CLI.invoke([str(target), "--timeout-seconds", "0"]) == 0
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            os.path, "realpath", lambda *_: pytest.fail("explicit path consulted roots")
+        )
+        code = awaiting.CLI.invoke([str(target), "--timeout-seconds", "0"])
+    assert code == 0
     assert capsys.readouterr().out.strip() == '{"ok":true,"stats":{}}'
 
 

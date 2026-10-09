@@ -34,13 +34,14 @@ _REAL_DEFAULT_ROOTS = tasks._default_roots
 def test_default_root_candidate_policy_is_pure(
     tmpdir, uid, system_temp, expected, monkeypatch
 ):
-    monkeypatch.setattr(
-        os.path, "realpath", lambda *_: pytest.fail("pure policy resolved a path")
-    )
-    monkeypatch.setattr(
-        os.path, "isdir", lambda *_: pytest.fail("pure policy probed a path")
-    )
-    result = tasks._root_candidates(("base-a", "base-b"), tmpdir, uid, system_temp)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            os.path, "realpath", lambda *_: pytest.fail("pure policy resolved a path")
+        )
+        patch.setattr(
+            os.path, "isdir", lambda *_: pytest.fail("pure policy probed a path")
+        )
+        result = tasks._root_candidates(("base-a", "base-b"), tmpdir, uid, system_temp)
     # Native separators keep this a policy test on Windows too.
     assert result == expected
 
@@ -113,13 +114,17 @@ def test_real_default_discovery_preserves_order_and_deduplicates(
     else:
         monkeypatch.setattr(os, "getuid", lambda: uid, raising=False)
     monkeypatch.setattr(tasks.tempfile, "gettempdir", system_temp)
-    monkeypatch.setattr(os.path, "realpath", realpath)
-    monkeypatch.setattr(
-        os.path, "isdir", lambda *_: pytest.fail("default discovery probed a host path")
-    )
     monkeypatch.setattr(tasks, "_default_roots", _REAL_DEFAULT_ROOTS)
     environ = {} if tmpdir is None else {"TMPDIR": tmpdir}
-    assert tasks.roots_from_environment(environ) == tasks.TaskRoots(expected, None)
+    with monkeypatch.context() as patch:
+        patch.setattr(os.path, "realpath", realpath)
+        patch.setattr(
+            os.path,
+            "isdir",
+            lambda *_: pytest.fail("default discovery probed a host path"),
+        )
+        roots = tasks.roots_from_environment(environ)
+    assert roots == tasks.TaskRoots(expected, None)
     assert tuple(resolved) == realpath_inputs
     assert temp_calls == ([] if uid is not None else [True])
 
@@ -195,11 +200,10 @@ def test_guard_fails_at_teardown_even_when_discovery_exception_is_swallowed(tmp_
 )
 def test_path_targets_bypass_roots(target, monkeypatch):
     monkeypatch.setattr(os, "altsep", "!")
-    monkeypatch.setattr(os.path, "isdir", lambda *_: pytest.fail("path probed roots"))
-    assert tasks.resolve_target(target, tasks.TaskRoots(("unused",), "unused")) == (
-        target,
-        [],
-    )
+    with monkeypatch.context() as patch:
+        patch.setattr(os.path, "isdir", lambda *_: pytest.fail("path probed roots"))
+        result = tasks.resolve_target(target, tasks.TaskRoots(("unused",), "unused"))
+    assert result == (target, [])
 
 
 @pytest.mark.parametrize(

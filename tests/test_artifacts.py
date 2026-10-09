@@ -1,8 +1,11 @@
 """Persist-plan structure, proofs, projection bytes, and partial writes."""
 
 import json
+import os
 import shutil
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from gauntlet import artifacts, cli
@@ -24,6 +27,150 @@ CHECKPOINT = """{
     }
   }
 }"""
+
+
+@pytest.mark.parametrize("label", ["postReview", "checkpoint"])
+@pytest.mark.parametrize(
+    "kind,path,error_template",
+    [
+        pytest.param(
+            "lexical",
+            "../outside/derived.json",
+            "{label} path is not inside the plan directory: ../outside/derived.json",
+            id="lexical-escape",
+        ),
+        pytest.param(
+            "absolute",
+            None,
+            "{label} path is not inside the plan directory: {path}",
+            id="absolute-escape",
+        ),
+        pytest.param(
+            "symlink",
+            "link/derived.json",
+            "{label} path is not inside the plan directory: link/derived.json",
+            id="symlink-escape",
+        ),
+        pytest.param(
+            "value", 0, "{label} path must be a non-empty string: 0", id="integer"
+        ),
+        pytest.param(
+            "value",
+            False,
+            "{label} path must be a non-empty string: False",
+            id="boolean",
+        ),
+        pytest.param(
+            "value", None, "{label} path must be a non-empty string: None", id="null"
+        ),
+        pytest.param(
+            "value", "", "{label} path must be a non-empty string: ", id="empty"
+        ),
+        pytest.param(
+            "missing",
+            None,
+            "{label} path must be a non-empty string: None",
+            id="missing",
+        ),
+    ],
+)
+def test_derived_paths_are_confined_before_any_write(
+    label, kind, path, error_template, tmp_path, monkeypatch, request, capsys
+):
+    plan_directory = tmp_path / "plan-directory"
+    plan_directory.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(plan_directory)
+    if kind == "absolute":
+        path = str(outside / "derived.json")
+    elif kind == "symlink":
+        request.getfixturevalue("symlink_or_skip")
+        (plan_directory / "link").symlink_to(outside, target_is_directory=True)
+    (plan_directory / "findings.json").write_text(SOURCE, encoding="utf-8")
+    plan = artifact_plan()
+    if kind == "missing":
+        plan[label].pop("path")
+    else:
+        plan[label]["path"] = path
+    seal_plan(plan_directory / "plan.json", plan)
+    assert artifacts.CLI.invoke(["--plan", str(plan_directory / "plan.json")]) == 1
+    captured = capsys.readouterr()
+    receipt = json.loads(captured.out)
+    assert receipt["ok"] is False
+    assert receipt["errors"] == [error_template.format(label=label, path=path)]
+    assert receipt["written"] == []
+    assert captured.err == ""
+    assert not (plan_directory / "post.json").exists()
+    assert not (plan_directory / "checkpoint.json").exists()
+    assert not (outside / "derived.json").exists()
+
+
+@pytest.mark.parametrize(
+    "site,error_template",
+    [
+        pytest.param(
+            "expected",
+            "expected artifact not found or unreadable: {value} (path must be a string)",
+            id="expected",
+        ),
+        pytest.param(
+            "source",
+            "source not found or unreadable: {value} (path must be a string)",
+            id="source",
+        ),
+        pytest.param(
+            "plan",
+            "plan not found or unreadable: {value} (path must be a string)",
+            id="plan",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "value", [pytest.param(0, id="zero"), pytest.param(False, id="bool")]
+)
+def test_non_string_reads_refuse_file_descriptors(
+    site, error_template, value, tmp_path
+):
+    (tmp_path / "findings.json").write_text(SOURCE, encoding="utf-8")
+    plan = artifact_plan()
+    if site == "expected":
+        plan["expect"] = [{"path": value}]
+    elif site == "source":
+        plan["postReview"]["source"] = value
+        plan["checkpoint"]["source"] = value
+    seal_plan(tmp_path / "plan.json", plan)
+    environ = os.environ.copy()
+    environ["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "scripts")
+    target = repr(value) if site == "plan" else repr("plan.json")
+    command = (
+        "import json, sys; from gauntlet.artifacts import assemble; "
+        f"receipt = assemble({target}); "
+        "print(json.dumps(receipt)); sys.exit(0 if receipt['ok'] else 1)"
+    )
+    # Empty stdin makes a descriptor-read regression fail promptly instead of hanging.
+    stdin = tmp_path / "stdin"
+    stdin.write_text("", encoding="utf-8")
+    with stdin.open(encoding="utf-8") as stream:
+        result = subprocess.run(
+            [sys.executable, "-c", command],
+            cwd=tmp_path,
+            env=environ,
+            stdin=stream,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+    assert result.returncode == 1, result.stdout + result.stderr
+    receipt = json.loads(result.stdout)
+    assert receipt["ok"] is False
+    assert receipt["errors"] == [error_template.format(value=value)]
+    assert receipt["written"] == []
+    assert result.stderr.strip() == ""
+    assert not (tmp_path / "post.json").exists()
+    assert not (tmp_path / "checkpoint.json").exists()
 
 
 @pytest.mark.parametrize(

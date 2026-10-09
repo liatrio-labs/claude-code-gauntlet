@@ -10,6 +10,7 @@ from collections.abc import Collection, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, TypedDict, cast
 
+from gauntlet import fs
 from gauntlet.cli import Command, Parser
 from gauntlet.fs import write_atomic
 from gauntlet.jsjson import fnv1a32, js_stringify_pretty, normalize_content, utf16_len
@@ -50,9 +51,24 @@ class AssembleReceipt(TypedDict):
 
 
 def _read_content(path: object) -> str:
+    if not isinstance(path, str):
+        raise TypeError("path must be a string")
     # Preserve internal CRLF and normalize only the BOM and one trailing newline.
-    with open(cast("str | os.PathLike[str]", path), encoding="utf-8", newline="") as fh:
+    with open(path, encoding="utf-8", newline="") as fh:
         return normalize_content(fh.read())
+
+
+def _derived_path(
+    path: object, label: str, plan_directory: str, errors: list[str]
+) -> str | None:
+    if not isinstance(path, str) or not path:
+        errors.append(f"{label} path must be a non-empty string: {path}")
+        return None
+    # A task-output file can supply the plan, so confine derived paths to its directory as primaries are confined to the output root.
+    if not fs.confined(path, plan_directory):
+        errors.append(f"{label} path is not inside the plan directory: {path}")
+        return None
+    return path
 
 
 def _receipt(
@@ -246,6 +262,10 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
 
     # Build both documents before any write, so structural failures leave outputs untouched.
     post = cast(Mapping[str, object], plan.get("postReview") or {})
+    cp = cast(Mapping[str, object], plan.get("checkpoint") or {})
+    plan_directory = os.path.dirname(os.path.abspath(plan_path))
+    post_path = _derived_path(post.get("path"), "postReview", plan_directory, errors)
+    cp_path = _derived_path(cp.get("path"), "checkpoint", plan_directory, errors)
     post_source = post.get("source")
     by_id = _load_source(post_source, cache, errors)
     if by_id is not None:
@@ -263,10 +283,9 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
             document = dict(cast(Mapping[str, object], wrapper))
             document["findings"] = projected
         text = _serialize(document, "post-review", errors)
-        if text is not None:
-            pending.append(PlanEntry(cast(str, post.get("path")), text))
+        if text is not None and post_path is not None:
+            pending.append(PlanEntry(post_path, text))
 
-    cp = cast(Mapping[str, object], plan.get("checkpoint") or {})
     cp_source = cp.get("source")
     cp_by_id = _load_source(cp_source, cache, errors)
     if cp_by_id is not None:
@@ -293,8 +312,8 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
                 f"{len(cp_ids)} challenge finding(s)"
             )
         text = _serialize(skeleton, "checkpoint", errors)
-        if text is not None:
-            pending.append(PlanEntry(cast(str, cp.get("path")), text))
+        if text is not None and cp_path is not None:
+            pending.append(PlanEntry(cp_path, text))
 
     if errors:
         return _receipt(False, plan_version, actual, verified, [], errors)
