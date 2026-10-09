@@ -28,12 +28,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gauntlet.config import (
-    KNOB_REGISTRY,
     ResolverError,
     ResolverSetupError,
     matches_rule,
     resolve,
 )
+from gauntlet.registry import KNOB_REGISTRY
 
 from bench.runner.costs import parse_costs
 from bench.runner.ledger import API_AUTH_MODE, AUTH_MODES, SUBSCRIPTION_AUTH_MODE

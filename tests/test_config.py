@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 from gauntlet import config as resolver
-from gauntlet import text
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -198,24 +197,26 @@ def test_rules_are_exact_and_fail_closed(rule, value, mode, expected):
             None,
             id="root-heading-ends-section",
         ),
+        pytest.param(
+            "prefix\r\n## Default Delivery\r\n\r\n  chat  \r\n",
+            "chat",
+            id="crlf-preamble-indented-value",
+        ),
+        pytest.param("## Default Delivery\rchat\r", "chat", id="bare-cr"),
+        pytest.param(
+            "## Default Delivery\nchat\u2028markdown\n",
+            None,
+            id="unicode-line-separator",
+        ),
+        pytest.param(
+            "## Default Delivery\n<!--\n```\n-->\nchat\n",
+            None,
+            id="comment-wrapped-fence",
+        ),
     ],
 )
 def test_default_delivery_parser(source, expected):
     assert resolver.parse_default_delivery(source) == expected
-
-
-def test_default_delivery_stops_at_fence_after_blank_body():
-    source = "## Default Delivery\n\n```yaml\nchat\n```\n"
-    lines = ["## Default Delivery", "", "```yaml", "chat", "```", ""]
-    assert resolver._default_delivery_body(lines) == [""]
-    assert resolver.parse_default_delivery(source) is None
-
-
-def test_one_line_uses_shared_js_trim_chars_at_call_time(monkeypatch):
-    assert resolver.JS_TRIM_CHARS is text.JS_TRIM_CHARS
-    monkeypatch.setattr(resolver, "JS_TRIM_CHARS", "!@")
-    assert resolver.one_line("!@left!right@!") == "left!right"
-    assert resolver.one_line("\u3000left!right\u3000") == "\u3000left!right\u3000"
 
 
 @pytest.mark.parametrize(
@@ -233,6 +234,31 @@ def test_empty_environment_defaults_have_one_wire_copy(mode, echo, resolved):
         "resolved": resolved,
     }
     assert list(result["configEcho"]) == list(echo)
+
+
+@pytest.mark.parametrize(
+    ("mode", "environ", "review", "key", "expected"),
+    [
+        pytest.param(
+            "headless",
+            {"CODE_GAUNTLET_DELIVERY": "chat"},
+            "## Default Delivery\nchat,pr_comments\n",
+            "delivery",
+            {"value": "chat", "source": "env"},
+            id="env-over-review",
+        ),
+        pytest.param(
+            "interactive",
+            {"CODE_GAUNTLET_MODEL_TIER": "optimized"},
+            None,
+            "model_tier",
+            {"value": "optimized", "source": "fixed"},
+            id="validated-fixed-model",
+        ),
+    ],
+)
+def test_valid_pins_keep_their_allowed_source(mode, environ, review, key, expected):
+    assert resolver.resolve(mode, environ, review, "pr")["configEcho"][key] == expected
 
 
 @pytest.mark.parametrize("source", ["env", "review_md"])
@@ -316,17 +342,25 @@ def test_invalid_pins_are_exact_and_stdout_is_empty(
     )
 
 
-def test_control_values_are_json_encoded_on_the_error_line(config_cli):
+@pytest.mark.parametrize(
+    ("value", "spelling"),
+    [
+        pytest.param("bad\nvalue", '"bad\\nvalue"', id="lf"),
+        pytest.param("bad\rvalue", '"bad\\rvalue"', id="cr"),
+        pytest.param("bad`value", "bad`value", id="backtick"),
+    ],
+)
+def test_control_values_are_json_encoded_on_the_error_line(value, spelling, config_cli):
     result = config_cli(
         ["--target", "pr"],
         CODE_GAUNTLET_HEADLESS="1",
-        CODE_GAUNTLET_DELIVERY="bad\nvalue",
+        CODE_GAUNTLET_DELIVERY=value,
     )
     assert result.returncode == 1
     assert result.stdout == b""
     assert (
-        result.stderr
-        == b'HEADLESS CONFIG ERROR: CODE_GAUNTLET_DELIVERY="bad\\nvalue" not in {chat,pr_comments,markdown}\n'
+        result.stderr.decode()
+        == f"HEADLESS CONFIG ERROR: CODE_GAUNTLET_DELIVERY={spelling} not in {{chat,pr_comments,markdown}}\n"
     )
 
 
@@ -457,11 +491,14 @@ def test_caller_preflight_commands_and_targetless_gate():
         'if ! OUTPUT_DIR=$(python3 "{plugin_root}/scripts/ensure_output_dir.py"); then\n'
         '  echo "output_dir: FAILED"\n  exit 1\nfi\necho "$OUTPUT_DIR"'
     ) in skill
-    assert (
-        'echo "=== config ==="\n'
+    composite = skill.split('echo "=== config ==="\n', 1)[1].split(
+        'echo "=== pr_view ==="', 1
+    )[0]
+    assert composite == (
         'if ! CONFIG_JSON=$(python3 "{plugin_root}/scripts/resolve_config.py" --target {target_type} --plugin-root "{plugin_root}"); then\n'
-        '  echo "config: FAILED"\n  exit 1\nfi\necho "$CONFIG_JSON"'
-    ) in skill
+        '  echo "config: FAILED"\n  exit 1\nfi\necho "$CONFIG_JSON"\n\n'
+    )
+    assert "review_md_root" not in skill
     reference = (
         ROOT / "skills/code-gauntlet/references/phase1-preflight.md"
     ).read_text(encoding="utf-8")

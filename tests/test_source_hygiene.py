@@ -3,6 +3,7 @@
 import ast
 import io
 import re
+import sys
 import tokenize
 from pathlib import Path
 
@@ -24,6 +25,22 @@ MIGRATING_JS = {
     "registry.js",
     "stages.js",
 }
+
+
+def test_shipped_scripts_import_only_stdlib_or_gauntlet():
+    for path in (ROOT / "scripts").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = [alias.name.split(".", 1)[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+                modules = [node.module.split(".", 1)[0]]
+            else:
+                continue
+            for module in modules:
+                assert module in sys.stdlib_module_names or module == "gauntlet", (
+                    f"{path}:{node.lineno}: {module}"
+                )
 
 
 def _python_violations(source):

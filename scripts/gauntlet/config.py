@@ -16,8 +16,7 @@ from gauntlet.cli import CliError, Command, Parser
 from gauntlet.fs import read_text
 from gauntlet.jsjson import JS_MAX_SAFE_INTEGER
 from gauntlet.paths import PLUGIN_ROOT
-from gauntlet.registry import JS_TRIM_CHARS
-from gauntlet.registry import KNOB_REGISTRY as KNOB_REGISTRY
+from gauntlet.registry import JS_TRIM_CHARS, KNOB_REGISTRY
 
 
 class ConfigEchoEntry(TypedDict):
@@ -158,8 +157,7 @@ def _registry_rows(
 ) -> list[Mapping[str, Any]]:
     if registry is not None:
         return list(registry)
-    rows: list[Mapping[str, Any]] = list(KNOB_REGISTRY)
-    return rows
+    return list(KNOB_REGISTRY)
 
 
 def serialize_receipt(
@@ -384,12 +382,12 @@ def read_pipeline_version(plugin_root: str) -> str:
     return match.group(2)
 
 
-def probe_review_md(repo_root: str) -> tuple[bool, str | None]:
+def probe_review_md(repo_root: str) -> str | None:
     path = os.path.join(repo_root, "REVIEW.md")
     if not os.path.isfile(path):
-        return False, None
+        return None
     try:
-        return True, read_text(path)
+        return read_text(path)
     except OSError as exc:
         raise ResolverSetupError(f"cannot read root REVIEW.md: {exc}") from exc
 
@@ -414,7 +412,7 @@ def _handle(args: argparse.Namespace) -> int:
             raise ResolverSetupError("plugin root mismatch")
         repo_root = _git_repo_root(cwd)
         version = read_pipeline_version(plugin_root)
-        _, review_text = probe_review_md(repo_root)
+        review_text = probe_review_md(repo_root)
         mode = (
             "headless"
             if os.environ.get("CODE_GAUNTLET_HEADLESS") == "1"

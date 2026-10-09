@@ -147,20 +147,82 @@ def test_mkdir_failure_exit_1_empty_stdout(output_cli, output_repo):
     )
 
 
-def test_worktree_uses_git_path_exclude(tmp_path, output_cli):
+@pytest.mark.parametrize("kind", ["separate-git-dir", "linked-worktree"])
+def test_worktree_uses_git_path_exclude(kind, tmp_path, output_cli, output_repo):
     # A .git indirection must use git's exclude path rather than a guessed .git directory.
     repo = tmp_path / "indirect"
-    repo.mkdir()
-    metadata = tmp_path / "metadata"
-    subprocess.run(
-        ["git", "init", "--separate-git-dir", str(metadata), str(repo)],
-        check=True,
-        capture_output=True,
-    )
+    if kind == "separate-git-dir":
+        repo.mkdir()
+        metadata = tmp_path / "metadata"
+        subprocess.run(
+            ["git", "init", "--separate-git-dir", str(metadata), str(repo)],
+            check=True,
+            capture_output=True,
+        )
+    else:
+        metadata = output_repo / ".git"
+        try:
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "test data",
+                ],
+                cwd=output_repo,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "worktree", "add", "--detach", str(repo)],
+                cwd=output_repo,
+                check=True,
+                capture_output=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            pytest.skip(f"linked worktrees unavailable: {exc}")
     assert (repo / ".git").is_file()
     result = output_cli(cwd=repo)
     assert_created_ignored(result, repo, repo / ".code-gauntlet")
     assert (metadata / "info" / "exclude").read_bytes().endswith(b"/.code-gauntlet/\n")
+
+
+def test_already_ignored_output_keeps_exclude_bytes(output_cli, output_repo):
+    (output_repo / ".gitignore").write_bytes(b"/.code-gauntlet/\n")
+    exclude = output_repo / ".git" / "info" / "exclude"
+    before = exclude.read_bytes()
+    result = output_cli()
+    assert_created_ignored(result, output_repo, output_repo / ".code-gauntlet")
+    assert exclude.read_bytes() == before
+    assert result.stderr.decode() == (
+        f"exclude: already-ignored {(output_repo / '.code-gauntlet').resolve()}\n"
+    )
+
+
+@pytest.mark.usefixtures("symlink_or_skip")
+def test_outside_alias_into_repo_is_ignored(output_cli, output_repo, tmp_path):
+    nested = output_repo / "nested"
+    nested.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(nested, target_is_directory=True)
+    result = output_cli(alias / "out")
+    assert_created_ignored(result, output_repo, nested / "out")
+    assert (output_repo / ".git/info/exclude").read_bytes().endswith(b"/nested/out/\n")
+    assert b"outside-repo" not in result.stderr
+
+
+def test_missing_info_directory_is_created(output_cli, output_repo):
+    info = output_repo / ".git" / "info"
+    (info / "exclude").unlink()
+    info.rmdir()
+    result = output_cli()
+    assert_created_ignored(result, output_repo, output_repo / ".code-gauntlet")
+    assert (info / "exclude").read_bytes() == b"/.code-gauntlet/\n"
 
 
 def test_exclude_without_trailing_newline(output_cli, output_repo):

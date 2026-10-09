@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -210,7 +211,7 @@ def test_hand_typed_expected_bytes_for_every_optional_field(
 
 
 def test_only_required_fields_apply_all_omission_rules(run_renderer, write_artifact):
-    write_artifact([make_finding()])
+    write_artifact([make_finding(origin=7)])
     task = output(run_renderer())[0]
     assert "## Evidence" not in task["description"]
     assert "## Suggested Fix" not in task["description"]
@@ -242,14 +243,67 @@ def test_wrapper_and_bare_array_inputs_are_identical(
     ]
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf")], ids=["nan", "infinity"])
-def test_non_finite_confidence_is_a_content_failure(
-    value, run_renderer, write_artifact
-):
-    write_artifact([make_finding(confidence=value)])
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        pytest.param([make_finding(confidence=float("nan"))], id="nan"),
+        pytest.param([make_finding(confidence=float("inf"))], id="infinity"),
+        pytest.param({"review": []}, id="unrecognized-shape"),
+        pytest.param(["not a finding"], id="non-object-finding"),
+        pytest.param(
+            [
+                {
+                    "id": "bug-1",
+                    "file": "src/bug.py",
+                    "line_start": 10,
+                    "title": "Avoid stale value",
+                    "description": "The value is stale.",
+                    "severity": "medium",
+                    "confidence": 81,
+                }
+            ],
+            id="missing-dimension",
+        ),
+    ],
+)
+def test_invalid_artifact_is_a_content_failure(artifact, run_renderer, write_artifact):
+    write_artifact(artifact)
     result = run_renderer()
     assert result.returncode == 1
     assert result.stdout == ""
+
+
+def test_unexpected_build_failure_keeps_stdout_empty(
+    run_renderer, write_artifact, monkeypatch
+):
+    def fail(*_args, **_kwargs):
+        raise ValueError("bad content")
+
+    write_artifact([make_finding()])
+    monkeypatch.setattr(renderer, "build_tasks", fail)
+    result = run_renderer()
+    assert (result.returncode, result.stdout, result.stderr) == (
+        1,
+        "",
+        "render_fix_tasks: bad content\n",
+    )
+
+
+def test_lone_surrogate_round_trips_through_real_script(
+    fix_root, fix_artifact, write_artifact
+):
+    write_artifact([make_finding(description="bad\ud800")])
+    script = Path(__file__).resolve().parents[1] / "scripts" / "render_fix_tasks.py"
+    result = subprocess.run(
+        [sys.executable, str(script), str(fix_artifact), "--repo-root", str(fix_root)],
+        capture_output=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8:strict"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert b"\\ud800" in result.stdout
+    assert json.loads(result.stdout)[0]["metadata"]["requirements"] == [
+        {"id": "R-bug-1.1", "text": "bad\ud800", "testable": True}
+    ]
 
 
 @pytest.mark.parametrize("shape", ["canonical", "alias", "both"])
@@ -515,7 +569,7 @@ def test_root_level_siblings_and_non_git_root(
 
 
 @pytest.mark.usefixtures("symlink_or_skip")
-def test_sibling_listing_uses_one_exact_root_git_call_per_run(
+def test_sibling_listing_uses_one_git_call_per_run(
     fix_root, tmp_path, write_artifact, run_renderer
 ):
     root_alias = tmp_path / "repo-alias"
@@ -541,8 +595,9 @@ def test_sibling_listing_uses_one_exact_root_git_call_per_run(
         result = run_renderer(root=root_alias)
         assert result.returncode == 0
     assert len(calls) == 1
-    assert calls[0][0] == (["git", "ls-files", "-z"],)
-    assert calls[0][1] == {"cwd": os.path.realpath(root_alias), "timeout": 10}
+    assert [
+        task["metadata"]["scope"]["patterns_to_follow"] for task in output(result)
+    ] == [["src/main_test.py"], ["src/main_test.py"]]
 
 
 @pytest.mark.parametrize(
@@ -578,11 +633,20 @@ def test_sibling_listing_uses_one_exact_root_git_call_per_run(
         pytest.param(
             "unknown", "low", "trivial", "haiku", "## Category\nlow | bug", id="unknown"
         ),
+        pytest.param(
+            "blocker",
+            "blocker",
+            "standard",
+            "sonnet",
+            "## Category\nblocker | bug",
+            id="generated-label",
+        ),
     ],
 )
 def test_normalized_severity_controls_category_complexity_and_model(
-    raw, label, complexity, model, category, run_renderer, write_artifact
+    raw, label, complexity, model, category, run_renderer, write_artifact, monkeypatch
 ):
+    monkeypatch.setitem(renderer.SEVERITY_EMOJI, "blocker", "!")
     write_artifact([make_finding(severity=raw)])
     task = output(run_renderer())[0]
     assert task["metadata"]["severity"] == label
@@ -800,26 +864,25 @@ def test_windows_absolute_path_is_rejected(
     [
         ("repo_precedent", "**Repo precedent:** Use the project rule."),
         ("new_kind", "**Cited rule:** Use the project rule."),
+        (None, "**Cited rule:** Use the project rule."),
     ],
-    ids=["repo-label", "fallback-label"],
+    ids=["repo-label", "fallback-label", "absent-source"],
 )
 def test_rule_source_is_a_label_for_cited_rule_details(
     source, expected, run_renderer, write_artifact
 ):
-    write_artifact(
-        [
-            make_finding(
-                dimension="convention",
-                claude_md_rule="Use the project rule.",
-                rule_source=source,
-            )
-        ]
+    finding = make_finding(
+        dimension="convention", claude_md_rule="Use the project rule."
     )
+    if source is not None:
+        finding["rule_source"] = source
+    write_artifact([finding])
     description = output(run_renderer())[0]["description"]
     details = description.split("## Details\n", 1)[1].split("\n\n## Toolchain", 1)[0]
     assert details == expected
     assert "Rule source" not in description
-    assert source not in description
+    if source is not None:
+        assert source not in description
 
 
 def test_hostile_markdown_is_sanitized_and_evidence_fence_is_long_enough(

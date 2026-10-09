@@ -105,13 +105,6 @@ def _gitignore_failure(abs_dir: str, detail: str) -> CliError:
 
 
 def _handle(args: argparse.Namespace) -> int:
-    try:
-        return _create(args)
-    except OSError as exc:
-        raise CliError(str(exc)) from exc
-
-
-def _create(args: argparse.Namespace) -> int:
     cwd = os.path.realpath(args.cwd or os.getcwd())
     if "CODE_GAUNTLET_OUTPUT_DIR" in os.environ:
         raw = os.environ["CODE_GAUNTLET_OUTPUT_DIR"]
@@ -126,7 +119,11 @@ def _create(args: argparse.Namespace) -> int:
     else:
         raw = DEFAULT_OUTPUT_DIR
 
-    repo_root = git_repo_root(cwd)
+    try:
+        repo_root = git_repo_root(cwd)
+    except OSError as exc:
+        # A missing working directory or git binary fails here, at the first probe.
+        raise CliError(f"cannot run git in {cwd}: {exc}") from exc
     if repo_root is None:
         raise CliError("not a git repository (git rev-parse --show-toplevel failed)", 2)
     abs_dir = resolve_absolute(repo_root, raw)

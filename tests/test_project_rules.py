@@ -1,6 +1,7 @@
 """Bounded rule collection and the disclosure consumed by review callers."""
 
 import json
+import ntpath
 import os
 from pathlib import Path
 from unittest import mock
@@ -49,7 +50,7 @@ def collect_rules(invoke, rule_root, rule_output, tmp_path):
         assert len(result.stdout.splitlines()) == 1
         receipt = json.loads(result.stdout)
         output = Path(rule_output)
-        body = output.read_text(encoding="utf-8") if output.exists() else ""
+        body = output.read_bytes().decode("utf-8") if output.exists() else ""
         return result.returncode, receipt, body
 
     return collect
@@ -399,23 +400,62 @@ def test_file_cap_bounds_review_reads_but_not_the_inventory(collect_rules, write
 
 
 @pytest.mark.parametrize(
-    "case", ["one-import", "two-importers", "already-collected", "fenced"]
+    ("case", "review", "count", "review_bytes"),
+    [
+        ("one-import", "@shared.md\n", 1, 11),
+        ("two-importers", "@shared.md\n", 1, 11),
+        ("already-collected", "@shared.md\n", 0, 11),
+        ("fenced", "```\n@shared.md\n```\n", 0, 19),
+        ("refused-and-self", "@payload.txt @REVIEW.md\n", 0, 24),
+        ("nested-target", "@shared.md\n", 1, 11),
+        ("two-unfollowed", "@shared.md @other.md\n", 2, 21),
+        (
+            "missing-and-alias",
+            "@missing.md @shared.md @./shared.md @directory.md\n",
+            1,
+            50,
+        ),
+    ],
+    ids=[
+        "one-import",
+        "two-importers",
+        "already-collected",
+        "fenced",
+        "refused-and-self",
+        "nested-target",
+        "two-unfollowed",
+        "missing-and-alias",
+    ],
 )
 def test_project_import_of_rendered_review_stops_at_that_target(
-    case, collect_rules, write_rule
+    case, review, count, review_bytes, collect_rules, write_rule, rule_root
 ):
-    write_rule("CLAUDE.md", "@REVIEW.md\n")
-    review = "```\n@shared.md\n```\n" if case == "fenced" else "@shared.md\n"
-    write_rule("REVIEW.md", review)
-    write_rule("shared.md", "SHARED-CONTENT\n")
+    review_path = "sub/REVIEW.md" if case == "nested-target" else "REVIEW.md"
+    write_rule("CLAUDE.md", f"@{review_path}\n")
+    write_rule(review_path, review)
+    write_rule(
+        "sub/shared.md" if case == "nested-target" else "shared.md", "SHARED-CONTENT\n"
+    )
+    if case == "refused-and-self":
+        write_rule("payload.txt", "REFUSED-CONTENT\n")
+    if case == "two-unfollowed":
+        write_rule("other.md", "OTHER-CONTENT\n")
+    if case == "missing-and-alias":
+        (Path(rule_root) / "directory.md").mkdir()
     if case == "two-importers":
         write_rule("AGENTS.md", "OTHER\n@REVIEW.md\n")
     if case == "already-collected":
         write_rule("CLAUDE.md", "@REVIEW.md\n@shared.md\n")
-    code, receipt, body = collect_rules()
+    extra = (
+        ["--changed-files", write_rule("../changed.json", '["sub/thing.txt"]')]
+        if case == "nested-target"
+        else []
+    )
+    code, receipt, body = collect_rules(*extra)
     assert code == 0
     assert receipt["ok"] is True
     assert body.count("</review-rules>") == 1
+    assert body.index("<review-rules ") < body.index("<project-rules ")
     assert '<project-rules path="REVIEW.md"' not in body
     expected_paths = (
         ["CLAUDE.md", "AGENTS.md"]
@@ -425,24 +465,23 @@ def test_project_import_of_rendered_review_stops_at_that_target(
         else ["CLAUDE.md"]
     )
     assert source_paths(receipt) == expected_paths
-    unfollowed = case in ("one-import", "two-importers")
-    skip = {"path": "REVIEW.md", "reason": "review_rules_source"}
-    if unfollowed:
-        skip["detail"] = "1 import(s) not followed"
+    skip = {"path": review_path, "reason": "review_rules_source"}
+    if count:
+        skip["detail"] = f"{count} import(s) not followed"
     assert receipt["skipped"] == [skip] * (2 if case == "two-importers" else 1)
     assert receipt["gaps"] == (
         [
-            "project_rules_unfollowed: REVIEW.md (review_rules_source) \u2014 "
-            "1 import(s) not followed; their rules are not in the review context"
+            f"project_rules_unfollowed: {review_path} (review_rules_source) \u2014 "
+            f"{count} import(s) not followed; their rules are not in the review context"
         ]
-        if unfollowed
+        if count
         else []
     )
     assert ("SHARED-CONTENT" in body) is (case == "already-collected")
     assert receipt["review_md"] == [
         {
-            "path": "REVIEW.md",
-            "bytes": 19 if case == "fenced" else 11,
+            "path": review_path,
+            "bytes": review_bytes,
             "modified_in_diff": False,
         }
     ]
@@ -699,7 +738,9 @@ def test_skipped_paths_never_leak_an_absolute_host_path(
     write_rule("CLAUDE.md", "@/etc/passwd\n@../outside.md\n")
     _, receipt, _ = collect_rules()
     for entry in receipt["skipped"]:
-        assert not entry["path"].startswith("/")
+        assert not os.path.isabs(entry["path"])
+        assert not ntpath.isabs(entry["path"])
+        assert not ntpath.splitdrive(entry["path"])[0]
 
 
 def test_find_imports_ignores_bare_decorator_tokens_without_a_dot():
@@ -721,6 +762,7 @@ def test_find_imports_deduplicates_preserving_order():
 _PROBE_ROWS = [
     ("tab-before-fence", "\t```\n@imp.md\n```\n", ["imp.md"]),
     ("space-tab-before-fence", " \t```\n@imp.md\n```\n", ["imp.md"]),
+    ("prose-punctuation", "Specify the @type. Use @media.", []),
     ("c1-opener-line", "```\n```python\n@imp.md\n```\n", []),
     ("c2-closer-trailing-text", "```\n@a.md\n``` trailing\n@b.md\n```\n", []),
     ("c3-backtick-info", "```a`b\n@imp.md\n", ["imp.md"]),
@@ -793,7 +835,7 @@ def test_full_project_context_and_receipt(
     write_rule("CLAUDE.md", "ROOT\n\n")
     write_rule("AGENTS.md", "AGENT\n")
     changed = tmp_path / "changed.json"
-    changed.write_text('["AGENTS.md"]', encoding="utf-8")
+    changed.write_text('["./AGENTS.md"]', encoding="utf-8")
     result = invoke(
         "collect_project_rules",
         [
@@ -841,3 +883,85 @@ def test_full_project_context_and_receipt(
         '<project-rules path="AGENTS.md" modified-in-this-diff="true">\n'
         "### AGENTS.md\nAGENT\n</project-rules>\n"
     )
+
+
+def test_nested_pointer_uses_its_containing_directory(collect_rules, write_rule):
+    write_rule("pkg/AGENTS.md", "@nested/RULES.md\n")
+    write_rule("pkg/nested/RULES.md", "RULE-NESTED\n")
+    write_rule("nested/RULES.md", "RULE-ROOT\n")
+    changed = write_rule("../changed.json", '["pkg/thing.txt"]')
+    code, receipt, body = collect_rules("--changed-files", changed)
+    assert code == 0
+    assert source_paths(receipt) == ["pkg/AGENTS.md", "pkg/nested/RULES.md"]
+    assert "RULE-NESTED" in body
+    assert "RULE-ROOT" not in body
+
+
+def test_review_change_marks_only_the_changed_review(collect_rules, write_rule):
+    write_rule("REVIEW.md", "ROOT\n")
+    write_rule("api/REVIEW.md", "NESTED\n")
+    changed = write_rule("../changed.json", '["api/REVIEW.md"]')
+    code, receipt, body = collect_rules("--changed-files", changed)
+    assert code == 0
+    assert {
+        entry["path"]: entry["modified_in_diff"] for entry in receipt["review_md"]
+    } == {"REVIEW.md": False, "api/REVIEW.md": True}
+    assert '<review-rules path="api/REVIEW.md" modified-in-this-diff="true">' in body
+
+
+@pytest.mark.usefixtures("symlink_or_skip")
+def test_changed_symlink_marks_the_canonical_project_source(
+    collect_rules, write_rule, rule_root
+):
+    write_rule("AGENTS.md", "RULE\n")
+    (Path(rule_root) / "CLAUDE.md").symlink_to("AGENTS.md")
+    changed = write_rule("../changed.json", '["CLAUDE.md"]')
+    code, receipt, body = collect_rules("--changed-files", changed)
+    assert code == 0
+    assert receipt["sources"] == [
+        {"path": "AGENTS.md", "bytes": 5, "via": "direct", "modified_in_diff": True}
+    ]
+    assert '<project-rules path="AGENTS.md" modified-in-this-diff="true">' in body
+
+
+def test_rules_output_creates_missing_parent(invoke, rule_root, tmp_path):
+    target = tmp_path / "missing" / "rules.md"
+    result = invoke(
+        "collect_project_rules",
+        ["--repo-root", rule_root, "--out", str(target)],
+        tmp_path,
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["ok"] is True
+    assert target.read_bytes() == (
+        b"project rules: none collected (REVIEW.md, CLAUDE.md, AGENTS.md, QODO.md)\n"
+    )
+
+
+def test_review_crlf_render_and_disk_byte_inventory(collect_rules, write_rule):
+    write_rule(
+        "REVIEW.md",
+        "## Rules\r\nR\r\n```yaml\r\n# code-gauntlet\r\nconfidence_threshold: 80\r\n```\r\n",
+    )
+    code, receipt, body = collect_rules()
+    assert code == 0
+    assert receipt["review_md"] == [
+        {"path": "REVIEW.md", "bytes": 70, "modified_in_diff": False}
+    ]
+    assert "\r" not in body
+    assert "```yaml\n# code-gauntlet\nconfidence_threshold: 80\n```\n" in body
+
+
+@pytest.mark.usefixtures("symlink_or_skip")
+def test_review_alias_preserves_direct_project_source(
+    collect_rules, write_rule, rule_root
+):
+    write_rule("AGENTS.md", "@extra.md\n")
+    write_rule("extra.md", "EXTRA-CONTENT\n")
+    (Path(rule_root) / "REVIEW.md").symlink_to("AGENTS.md")
+    code, receipt, body = collect_rules()
+    assert code == 0
+    assert source_paths(receipt) == ["AGENTS.md", "extra.md"]
+    assert receipt["skipped"] == []
+    assert receipt["gaps"] == []
+    assert "EXTRA-CONTENT" in body

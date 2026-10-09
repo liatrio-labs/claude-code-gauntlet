@@ -26,11 +26,11 @@ SkipReason = Literal[
     "not_markdown",
     "too_large",
     "total_cap_reached",
-    "file_cap_reached",
+    "file_cap_reached",  # Read-attempt bound, including empty files.
     "depth_exceeded",
     "cycle",
-    "duplicate_of",
-    "review_rules_source",
+    "duplicate_of",  # Same real path or byte-identical effective content.
+    "review_rules_source",  # Imported target already rendered as review rules.
 ]
 
 
@@ -68,6 +68,7 @@ DEFAULT_MAX_TOTAL_BYTES = 131072
 
 # Empty files do not consume bytes, so the walk needs a separate bound.
 # Measured repositories have 8-10 rule files; 512 leaves room for monorepos.
+# This is a runaway guard: raise it if it binds on a real repository.
 DEFAULT_MAX_FILES = 512
 
 # A mid-word at-sign is an email address or annotation, not an import.
@@ -155,17 +156,17 @@ class RuleCollector:
         self.review_sources: list[dict[str, object]] = []
         self.review_realpaths: dict[str, str] = {}
         self.skipped: list[ProjectRuleSkip] = []
+        self.review_skips: list[tuple[str, ProjectRuleSkip]] = []
         self.total_bytes = 0
         self.truncated = False
         self.included: set[str] = set()
         self.seen_content: set[str] = set()
         self.walked = 0
 
-    def _skip(self, path: str, reason: SkipReason, detail: str | None = None) -> None:
+    def _skip(self, path: str, reason: SkipReason) -> ProjectRuleSkip:
         entry: ProjectRuleSkip = {"path": self._display(path), "reason": reason}
-        if detail:
-            entry["detail"] = detail
         self.skipped.append(entry)
+        return entry
 
     def _display(self, path: str) -> str:
         """Never leak an absolute host path into the receipt."""
@@ -313,7 +314,9 @@ class RuleCollector:
                 self._skip(os.path.join(containing_dir, raw), reason)
                 continue
             if target in self.review_realpaths:
-                self._skip(target, "review_rules_source")
+                self.review_skips.append(
+                    (target, self._skip(target, "review_rules_source"))
+                )
                 continue
             assert target is not None
             self.visit(
@@ -322,6 +325,26 @@ class RuleCollector:
                 depth + 1,
                 (*chain, real),
             )
+
+    def count_unfollowed_review_imports(self) -> None:
+        # Count after discovery: another project source may have loaded these rules.
+        counts: dict[str, int] = {}
+        for target, entry in self.review_skips:
+            if target not in counts:
+                unfollowed: set[str] = set()
+                for raw in _find_imports(self.review_realpaths[target]):
+                    real, reason = self._resolve_pointer(raw, os.path.dirname(target))
+                    if (
+                        reason is None
+                        and real is not None
+                        and real not in self.included
+                        and real not in self.review_realpaths
+                        and os.path.isfile(real)
+                    ):
+                        unfollowed.add(real)
+                counts[target] = len(unfollowed)
+            if counts[target]:
+                entry["detail"] = f"{counts[target]} import(s) not followed"
 
 
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
@@ -392,27 +415,7 @@ def collect_sources(collector: RuleCollector, changed: Sequence[str]) -> None:
                 continue
             collector.visit(real, "direct", 0, ())
 
-    # Count after discovery: another project source may have loaded these rules.
-    counts: dict[str, int] = {}
-    for entry in collector.skipped:
-        if entry["reason"] != "review_rules_source":
-            continue
-        target = os.path.realpath(os.path.join(collector.repo_root, entry["path"]))
-        if target not in counts:
-            count = 0
-            for raw in _find_imports(collector.review_realpaths[target]):
-                pointer_real, reason = collector._resolve_pointer(
-                    raw, os.path.dirname(target)
-                )
-                if (
-                    reason is None
-                    and pointer_real not in collector.included
-                    and pointer_real not in collector.review_realpaths
-                ):
-                    count += 1
-            counts[target] = count
-        if counts[target]:
-            entry["detail"] = f"{counts[target]} import(s) not followed"
+    collector.count_unfollowed_review_imports()
 
 
 def _escape_attribute(value: str) -> str:
@@ -461,31 +464,35 @@ def _gaps(collector: RuleCollector) -> list[str]:
             "refused",
             ("outside_repo", "absolute_path", "not_markdown"),
             "pointer refused; it is not a markdown file inside the repository",
+            False,
         ),
         (
             "truncated",
             ("too_large", "total_cap_reached", "file_cap_reached", "depth_exceeded"),
             "its rules are NOT in the review context",
+            False,
         ),
         (
             "unresolved",
             ("missing", "cycle", "not_regular"),
             "this pointer did not resolve to rule content",
+            False,
         ),
         (
             "unfollowed",
             ("review_rules_source",),
             "their rules are not in the review context",
+            True,
         ),
     )
     gaps = []
-    for family, reasons, message in families:
+    for family, reasons, message, requires_detail in families:
         seen: set[str] = set()
         for entry in collector.skipped:
             if entry["reason"] not in reasons:
                 continue
             detail = ""
-            if family == "unfollowed":
+            if requires_detail:
                 if not entry.get("detail") or entry["path"] in seen:
                     continue
                 seen.add(entry["path"])

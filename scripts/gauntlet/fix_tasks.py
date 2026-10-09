@@ -529,7 +529,7 @@ def _handle(args: argparse.Namespace) -> int:
         notes: list[str] = []
         tasks, rejected_count = build_tasks(findings, root, notes)
         write_result(tasks)
-    except Exception as exc:
+    except Exception as exc:  # Content failures must not leak stdout or tracebacks.
         raise CliError(str(exc)) from exc
     for note in notes:
         warn(note)
