@@ -13,6 +13,7 @@ _NODE_PROGRAM_ROOTS = (
     "workflows/src/applyValidations.js",
     "workflows/src/filterFindings.js",
     "workflows/src/stages.js",
+    "workflows/src/verifyWire.js",
 )
 _WORKFLOW_RELATIVE_IMPORT_RE = re.compile(
     r"^\s*(?:import|export)\b.*?\bfrom\s+['\"](\.[^'\"]+)['\"]",

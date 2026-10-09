@@ -775,6 +775,134 @@ function coerceInt(value, policy) {
   const n = Number(value);
   return Number.isInteger(n) ? n : null;
 }
+// --- verifyWire.js ---
+const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
+const VERIFY_INLINE_HEX = '0123456789ABCDEF';
+const VERIFY_INLINE_PRINTABLE_RE = /^[\x20-\x26\x28-\x7E]*$/;
+function appendInlineByte(out, byte) {
+  out.push(`%${VERIFY_INLINE_HEX[(byte >> 4) & 0x0F]}${VERIFY_INLINE_HEX[byte & 0x0F]}`);
+}
+function appendInlineUtf8(out, codePoint) {
+  if (codePoint <= 0x7F) {
+    appendInlineByte(out, codePoint);
+  } else if (codePoint <= 0x7FF) {
+    appendInlineByte(out, 0xC0 | (codePoint >> 6));
+    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
+  } else if (codePoint <= 0xFFFF) {
+    appendInlineByte(out, 0xE0 | (codePoint >> 12));
+    appendInlineByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
+    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
+  } else {
+    appendInlineByte(out, 0xF0 | (codePoint >> 18));
+    appendInlineByte(out, 0x80 | ((codePoint >> 12) & 0x3F));
+    appendInlineByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
+    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
+  }
+}
+function encodeInlineString(s) {
+  const text = String(s);
+  const out = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    const ch = text[i];
+    if (VERIFY_INLINE_SAFE.includes(ch)) {
+      out.push(ch);
+      continue;
+    }
+    if (unit >= 0xD800 && unit <= 0xDBFF) {
+      const next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+      if (next >= 0xDC00 && next <= 0xDFFF) {
+        appendInlineUtf8(out, 0x10000 + ((unit - 0xD800) << 10) + (next - 0xDC00));
+        i += 1;
+        continue;
+      }
+      out.push(`%u${unit.toString(16).toUpperCase().padStart(4, '0')}`);
+      continue;
+    }
+    if (unit >= 0xDC00 && unit <= 0xDFFF) {
+      out.push(`%u${unit.toString(16).toUpperCase().padStart(4, '0')}`);
+      continue;
+    }
+    appendInlineUtf8(out, unit);
+  }
+  return out.join('');
+}
+function encodeInlineValue(value) {
+  if (typeof value === 'string') return encodeInlineString(value);
+  if (Array.isArray(value)) return value.map(encodeInlineValue);
+  if (value && typeof value === 'object') {
+    const out = Object.create(null);
+    for (const [key, child] of Object.entries(value)) {
+      out[encodeInlineString(key)] = encodeInlineValue(child);
+    }
+    return out;
+  }
+  return value;
+}
+function encodeSliceInline(content) {
+  const encoded = JSON.stringify(encodeInlineValue(content));
+  if (typeof encoded !== 'string' || !VERIFY_INLINE_PRINTABLE_RE.test(encoded)) {
+    throw new Error('encodeSliceInline produced a non-printable or quoted payload');
+  }
+  return encoded;
+}
+const VERIFY_INLINE_CHAR_BUDGET = 50000;
+const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
+const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
+const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
+function joinVerifyDeltas(slice, deltas) {
+  const byId = new Map();
+  for (const d of Array.isArray(deltas) ? deltas : []) {
+    if (d && typeof d.id === 'string') byId.set(d.id, d);
+  }
+  const out = [];
+  for (const f of slice) {
+    const delta = byId.get(f.id);
+    if (!delta || delta.verified === false) continue;
+    const joined = pinNumericFields(f);
+    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
+    out.push(joined);
+  }
+  return out;
+}
+const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'confidence'];
+function pinNumericFields(finding) {
+  const out = { ...finding };
+  for (const k of VERIFY_NUMERIC_FIELDS) {
+    const n = coerceInt(out[k], INT_POLICY.verify);
+    if (n !== null) out[k] = n;
+  }
+  return out;
+}
+const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin'];
+function projectVerifySliceFinding(finding) {
+  const projected = {};
+  for (const k of VERIFY_SLICE_FIELDS) {
+    if (finding && Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
+  }
+  return pinNumericFields(projected);
+}
+function sliceInputChecksum(content) {
+  return fnv1a32(JSON.stringify(content, null, 2));
+}
+function sliceTokenChecksum(payload) {
+  return fnv1a32(String(payload));
+}
+function canonicalDeltas(ids, byId) {
+  return ids.map((id) => {
+    const src = byId.get(id) || {};
+    const out = {};
+    for (const k of DELTA_KEYS) if (deltaHas(src, k)) out[k] = src[k];
+    return out;
+  });
+}
+function deltaContentProof(ids, deltas) {
+  const byId = new Map();
+  for (const d of Array.isArray(deltas) ? deltas : []) {
+    if (d && typeof d.id === 'string') byId.set(d.id, d);
+  }
+  return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], byId), null, 2));
+}
 // --- applyValidations.js ---
 const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 function applyValidations(findings, validations) {
@@ -4174,77 +4302,6 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
 function modelFor(agentType, policy) {
   return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
 }
-const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
-const VERIFY_INLINE_HEX = '0123456789ABCDEF';
-const VERIFY_INLINE_PRINTABLE_RE = /^[\x20-\x26\x28-\x7E]*$/;
-function appendInlineByte(out, byte) {
-  out.push(`%${VERIFY_INLINE_HEX[(byte >> 4) & 0x0F]}${VERIFY_INLINE_HEX[byte & 0x0F]}`);
-}
-function appendInlineUtf8(out, codePoint) {
-  if (codePoint <= 0x7F) {
-    appendInlineByte(out, codePoint);
-  } else if (codePoint <= 0x7FF) {
-    appendInlineByte(out, 0xC0 | (codePoint >> 6));
-    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
-  } else if (codePoint <= 0xFFFF) {
-    appendInlineByte(out, 0xE0 | (codePoint >> 12));
-    appendInlineByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
-    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
-  } else {
-    appendInlineByte(out, 0xF0 | (codePoint >> 18));
-    appendInlineByte(out, 0x80 | ((codePoint >> 12) & 0x3F));
-    appendInlineByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
-    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
-  }
-}
-function encodeInlineString(s) {
-  const text = String(s);
-  const out = [];
-  for (let i = 0; i < text.length; i += 1) {
-    const unit = text.charCodeAt(i);
-    const ch = text[i];
-    if (VERIFY_INLINE_SAFE.includes(ch)) {
-      out.push(ch);
-      continue;
-    }
-    if (unit >= 0xD800 && unit <= 0xDBFF) {
-      const next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
-      if (next >= 0xDC00 && next <= 0xDFFF) {
-        appendInlineUtf8(out, 0x10000 + ((unit - 0xD800) << 10) + (next - 0xDC00));
-        i += 1;
-        continue;
-      }
-      out.push(`%u${unit.toString(16).toUpperCase().padStart(4, '0')}`);
-      continue;
-    }
-    if (unit >= 0xDC00 && unit <= 0xDFFF) {
-      out.push(`%u${unit.toString(16).toUpperCase().padStart(4, '0')}`);
-      continue;
-    }
-    appendInlineUtf8(out, unit);
-  }
-  return out.join('');
-}
-function encodeInlineValue(value) {
-  if (typeof value === 'string') return encodeInlineString(value);
-  if (Array.isArray(value)) return value.map(encodeInlineValue);
-  if (value && typeof value === 'object') {
-    const out = Object.create(null);
-    for (const [key, child] of Object.entries(value)) {
-      out[encodeInlineString(key)] = encodeInlineValue(child);
-    }
-    return out;
-  }
-  return value;
-}
-function encodeSliceInline(content) {
-  const encoded = JSON.stringify(encodeInlineValue(content));
-  if (typeof encoded !== 'string' || !VERIFY_INLINE_PRINTABLE_RE.test(encoded)) {
-    throw new Error('encodeSliceInline produced a non-printable or quoted payload');
-  }
-  return encoded;
-}
-const VERIFY_INLINE_CHAR_BUDGET = 50000;
 const RETURN_CHAR_BUDGET = 1000000;
 const READ_PLAN_MAX_LINES = 750;
 const READ_PLAN_MAX_CHARS = 30000;
@@ -4586,7 +4643,6 @@ function mergeStage(discoverOut, meta) {
     : (Object.keys(ndjsonContents).length ? Object.keys(ndjsonContents) : AGENTS.map(shortAgentName));
   return merge(ndjsonContents, {}, { ...M, agents });
 }
-const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
@@ -4790,61 +4846,6 @@ function dispatchableIds(slice) {
     ids.push(id);
   }
   return { ok: true, ids };
-}
-const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
-const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
-function joinVerifyDeltas(slice, deltas) {
-  const byId = new Map();
-  for (const d of Array.isArray(deltas) ? deltas : []) {
-    if (d && typeof d.id === 'string') byId.set(d.id, d);
-  }
-  const out = [];
-  for (const f of slice) {
-    const delta = byId.get(f.id);
-    if (!delta || delta.verified === false) continue;
-    const joined = pinNumericFields(f);
-    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
-    out.push(joined);
-  }
-  return out;
-}
-const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'confidence'];
-function pinNumericFields(finding) {
-  const out = { ...finding };
-  for (const k of VERIFY_NUMERIC_FIELDS) {
-    const n = coerceInt(out[k], INT_POLICY.verify);
-    if (n !== null) out[k] = n;
-  }
-  return out;
-}
-const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin'];
-function projectVerifySliceFinding(finding) {
-  const projected = {};
-  for (const k of VERIFY_SLICE_FIELDS) {
-    if (finding && Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
-  }
-  return pinNumericFields(projected);
-}
-function sliceInputChecksum(content) {
-  return fnv1a32(JSON.stringify(content, null, 2));
-}
-function sliceTokenChecksum(payload) {
-  return fnv1a32(String(payload));
-}
-function canonicalDeltas(ids, byId) {
-  return ids.map((id) => {
-    const src = byId.get(id) || {};
-    const out = {};
-    for (const k of DELTA_KEYS) if (deltaHas(src, k)) out[k] = src[k];
-    return out;
-  });
-}
-function deltaContentProof(ids, deltas) {
-  const byId = new Map();
-  for (const d of Array.isArray(deltas) ? deltas : []) {
-    if (d && typeof d.id === 'string') byId.set(d.id, d);
-  }
-  return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], byId), null, 2));
 }
 function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, expectedInlineChecksum }) {
   if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };

@@ -54,7 +54,7 @@ obvious from the diff alone; the full engineering rules live in `AGENTS.md`.
   contracts and instruction files are the fallback for what cannot be made structural, not the
   first fix.
 - **Cross-runtime lists derive from JS `DELTA_KEYS`.** The generator writes Python
-  `DELTA_VALUE_FIELDS`; a `stages.js` filter builds JS `DELTA_VALUE_KEYS`. Both
+  `DELTA_VALUE_FIELDS`; a `verifyWire.js` filter builds JS `DELTA_VALUE_KEYS`. Both
   drop `id` and `verified`.
 - **One implementation per mechanism.** A second copy of a mechanism that already has a home is a
   finding.

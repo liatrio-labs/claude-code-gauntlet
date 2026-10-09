@@ -25,7 +25,8 @@
 // would make the honest ones less obvious in the file that tests them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyStage, joinVerifyDeltas, deltaContentProof } from '../src/stages.js';
+import { verifyStage } from '../src/stages.js';
+import { joinVerifyDeltas, deltaContentProof } from '../src/verifyWire.js';
 import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, sliceInputRecorder } from './helpers/verifyDelta.js';
 
 function makeFindings(n, over = {}) {

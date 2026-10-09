@@ -1182,7 +1182,7 @@ def test_no_conditional_fields():
             id="reachability",
         ),
         pytest.param(
-            "stages.js",
+            "verifyWire.js",
             "'cross_file_refs', 'origin'];",
             "'cross_file_refs', 'title'];",
             '    "title",',

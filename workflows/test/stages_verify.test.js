@@ -4,19 +4,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  encodeInlineString,
-  encodeSliceInline,
   planVerifySlices,
   predictVerifySliceInlineLength,
+  verifyStage,
+  VERIFY_ATTEMPTS_PER_SLICE,
+} from '../src/stages.js';
+import {
+  encodeInlineString,
+  encodeSliceInline,
   projectVerifySliceFinding,
   sliceInputChecksum,
   sliceTokenChecksum,
-  verifyStage,
-  VERIFY_ATTEMPTS_PER_SLICE,
   VERIFY_INLINE_SAFE,
   VERIFY_INLINE_CHAR_BUDGET,
   VERIFY_SLICE_FIELDS,
-} from '../src/stages.js';
+} from '../src/verifyWire.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 import { deltaEnvelope, ELIMINATION_STAMP, sliceInputRecorder } from './helpers/verifyDelta.js';
 import { outsideSingleQuotes, shellSplit } from './helpers/shellWords.js';

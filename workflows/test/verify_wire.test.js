@@ -5,7 +5,7 @@ import {
   deltaContentProof,
   encodeSliceInline,
   sliceTokenChecksum,
-} from '../src/stages.js';
+} from '../src/verifyWire.js';
 import { fnv1a32 } from '../src/wire.js';
 import { loadCases } from './helpers/goldenCases.js';
 
