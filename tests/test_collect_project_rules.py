@@ -209,8 +209,7 @@ class TestSecurityBoundary(_RepoCase):
         # explicit pre-join check, which is why it gets its own test.
         # The payload ends in .md so it is a real candidate and actually reaches
         # the join logic under test, rather than being dropped earlier.
-        outside = self.write("secret.md", "ABS-CANARY\n", root=self.base)
-        self.write("CLAUDE.md", f"@{outside}\n")
+        self.write("CLAUDE.md", "@/absolute-refusal/secret.md\n")
         _, receipt, body = self.run_script()
         self.assertNotIn("ABS-CANARY", body)
         self.assertIn("absolute_path", self.reasons(receipt))
