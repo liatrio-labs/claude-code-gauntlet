@@ -586,3 +586,127 @@ test('planner flushes a preceding slice before isolating an oversize finding', (
   assert.deepEqual(plan.oversize.map((finding) => finding.id), ['BIG']);
   assert.deepEqual(plan.closeReasons, ['oversize', null]);
 });
+
+// --- Pins for the exact strings and orders the verify code may not change -------------
+
+test('inline encoder escapes every surrogate that is not a high unit followed by a low unit', () => {
+  const [high, low, low2] = [0xD800, 0xDC00, 0xDC01].map((unit) => String.fromCharCode(unit));
+  assert.equal(encodeInlineString(low + low2), '%uDC00%uDC01');
+  assert.equal(encodeInlineString(`${high}a`), '%uD800a');
+  assert.equal(encodeInlineString(high + high), '%uD800%uD800');
+});
+
+// Each row answers both attempts with the same receipt fault, so the gap carries the
+// reason twice. `null` is a dropped field; the recorder stamps any field left undefined.
+const BAD_PROOF = 'fnv1a32:0xdeadbeef';
+const PROOF_REASON_ROWS = [
+  {
+    name: 'a wrong token proof is reported before a wrong content proof',
+    receipt: { inline_checksum: BAD_PROOF, input_checksum: BAD_PROOF },
+    reason: ({ token }) => `slice-input token proof mismatch (receipt ${BAD_PROOF}, dispatched ${token}) — the token the script decoded is not the token this stage dispatched`,
+    ledger: { mismatched: 1, missing: 0 },
+  },
+  {
+    name: 'a dropped token proof is reported before a wrong content proof',
+    receipt: { inline_checksum: null, input_checksum: BAD_PROOF },
+    reason: () => 'inline token proof missing from receipt',
+    ledger: { mismatched: 0, missing: 1 },
+  },
+  {
+    name: 'a wrong content proof under a good token proof',
+    receipt: { input_checksum: BAD_PROOF },
+    reason: ({ content }) => `slice-input content proof mismatch (receipt ${BAD_PROOF}, dispatched ${content}) — the document the script decoded is not the document this stage dispatched`,
+    ledger: { mismatched: 1, missing: 0 },
+  },
+  {
+    name: 'a dropped content proof under a good token proof',
+    receipt: { input_checksum: null },
+    reason: () => 'input content proof missing from receipt',
+    ledger: { mismatched: 0, missing: 1 },
+  },
+];
+for (const row of PROOF_REASON_ROWS) {
+  test(`trustSlice proof reason: ${row.name}`, async () => {
+    const input = baseInput();
+    const dispatched = {
+      findings: [
+        { id: 'F1', file: 'a.js', line_start: 1, cross_file_refs: [], origin: 'new' },
+        { id: 'F2', file: 'b.js', line_start: 2, cross_file_refs: ['c.js:9'], origin: 'new' },
+      ],
+      base_branch: 'main',
+    };
+    const expected = {
+      token: sliceTokenChecksum(encodeSliceInline(dispatched)),
+      content: sliceInputChecksum(dispatched),
+    };
+    const ctx = verifyCtx((_call, i, { attempt }) => {
+      const env = okEnvelope(input.findings, { nonce: `n-1.${i}${attempt === 2 ? '.r1' : ''}` });
+      Object.assign(env.receipt, row.receipt);
+      return env;
+    });
+    const out = await verifyStage(ctx, input);
+    const reason = row.reason(expected);
+    assert.deepEqual(out.gaps, [
+      `verify: UNVERIFIED — slice 0: ${reason} — retried once after the first attempt failed (${reason}); `
+        + '2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped',
+    ]);
+    assert.equal(out.inputProof.mismatched, row.ledger.mismatched);
+    assert.equal(out.inputProof.missing, row.ledger.missing);
+  });
+}
+
+const fanoutGapOf = async (findings) => {
+  const input = baseInput({ findings, limits: { verifySliceSize: 25 } });
+  const ctx = verifyCtx((call, i) => {
+    const dispatched = parsedInlineOf(call).findings;
+    return okEnvelope(dispatched, { nonce: `n-1.${i}`, n_in: dispatched.length });
+  });
+  const out = await verifyStage(ctx, input);
+  return out.gaps.filter((gap) => gap.startsWith('verify_fanout:'));
+};
+const fanoutGap = (count, advice) => `verify_fanout: effective verifySliceSize=25 splits ${count} finding(s) into 6 slices `
+  + `(above the 5-slice disclosure threshold) — up to 12 executor dispatches at 2 attempts per slice. ${advice}`;
+const BIG_FINDING = { id: 'BIG', origin: 'new', description: 'x'.repeat(50000) };
+
+test('verify fan-out advice names the budget when a budget and an oversize boundary both split', async () => {
+  const findings = [
+    ...Array.from({ length: 60 }, (_, i) => ({ id: `FAT${i}`, origin: 'new', description: 'x'.repeat(4100) })),
+    BIG_FINDING,
+    { id: 'TAIL', origin: 'new' },
+  ];
+  const plan = planVerifySlices(findings, 25, VERIFY_INLINE_CHAR_BUDGET, 'main');
+  assert.deepEqual(plan.closeReasons, ['budget', 'budget', 'budget', 'budget', 'oversize', null]);
+  assert.deepEqual(await fanoutGapOf(findings), [
+    fanoutGap(62, 'The inline character budget bound this split; raising verifySliceSize will not reduce this fan-out.'),
+  ]);
+});
+
+test('verify fan-out advice ignores how the last slice closed', async () => {
+  const findings = [
+    ...Array.from({ length: 150 }, (_, i) => ({ id: `C${i}`, origin: 'new' })),
+    BIG_FINDING,
+  ];
+  const plan = planVerifySlices(findings, 25, VERIFY_INLINE_CHAR_BUDGET, 'main');
+  assert.deepEqual(plan.closeReasons, ['count', 'count', 'count', 'count', 'count', 'oversize']);
+  assert.deepEqual(await fanoutGapOf(findings), [
+    fanoutGap(151, 'Raise verifySliceSize to reduce fan-out.'),
+  ]);
+});
+
+test('an empty verify config dispatches the default script, paths and base branch', async () => {
+  const input = baseInput({ verify: {} });
+  const ctx = verifyCtx((_call, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
+  const out = await verifyStage(ctx, input);
+  const call = ctx.execCalls()[0];
+  assert.equal(out.verified, true);
+  assert.equal(parsedInlineOf(call).base_branch, 'main');
+  assert.deepEqual(argvOf(call), [
+    'python3', 'scripts/verify_findings.py',
+    '--input', 'phase4-input.slice0.json',
+    '--input-inline', inlineOf(call),
+    '--output', 'phase4-output.slice0.json',
+    '--nonce', 'n-1.0',
+    '--head-sha', 'abc123',
+    '--base-branch', 'main',
+  ]);
+});

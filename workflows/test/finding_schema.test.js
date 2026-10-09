@@ -284,6 +284,11 @@ test('the verify echo declares NO finding item at all — the registry union sto
   // appearing here would mean findings crossed the boundary again.
   const result = schema.properties.result.properties;
   assert.deepEqual(Object.keys(result), ['deltas'], 'the verify result declares deltas and nothing else');
+  assert.deepEqual(
+    Object.keys(schema.properties.receipt.properties),
+    ['sha', 'n_in', 'nonce', 'deltas_checksum', 'input_checksum', 'inline_checksum'],
+    'the receipt declares the three echo fields and the three proofs, and nothing else',
+  );
   const deltaProps = result.deltas.items.properties;
   assert.deepEqual(
     Object.keys(deltaProps).sort(),
