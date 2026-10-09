@@ -19,9 +19,10 @@
 import { DIMENSIONS, AGENTS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, FINDING_TEXT_FIELD_NAMES, conditionalSchemaActive } from './registry.js';
 import { merge, normalizeFindingPaths } from './mergeFindings.js';
 import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, safeFindingLabel } from './paths.js';
-import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
+import { INT_POLICY, coerceInt, deepClone, firstUnsafeNumber, fnv1a32, normalizeForChecksum, shellWord } from './wire.js';
+import { applyValidations, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
-import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
+import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible, configEchoValue } from './args.js';
 import { renderReport, renderSummaryBody, coerceReportFindings } from './renderReport.js';
 
@@ -85,7 +86,7 @@ function modelFor(agentType, policy) {
 }
 
 // The verify boundary carries the slice as one percent-encoded, shell-inert token. The
-// alphabet is intentionally narrower than SHELL_SAFE_RE below: JSON punctuation remains
+// alphabet is intentionally narrower than shellWord's safe class: JSON punctuation remains
 // in the outer document, but no encoded string can contain a shell operator, quote, or
 // escape-bearing character.
 export const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
@@ -1377,24 +1378,11 @@ export function joinVerifyDeltas(slice, deltas) {
 // Everything else (null, non-numeric, NaN/inf, fractionally-valued numeric strings) is
 // left alone so the script's own guards still fire.
 const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'confidence'];
-function pinNumericFields(finding) {
+export function pinNumericFields(finding) {
   const out = { ...finding };
   for (const k of VERIFY_NUMERIC_FIELDS) {
-    const val = out[k];
-    if (typeof val === 'string' && val.trim() !== '' && Number.isFinite(Number(val))) {
-      const n = Number(val);
-      // Any string whose numeric VALUE is an integer ("153", but also "12.0"/"1e5");
-      // a fractionally-valued string is left alone. Python's `_INT_RE` branch is
-      // narrower — it fullmatches plain digits, so only "153" coerces there.
-      if (Number.isInteger(n)) out[k] = n;
-      continue;
-    }
-    if (typeof val === 'number' && Number.isFinite(val) && !Number.isInteger(val)) {
-      // Explicit half-up (Math.floor(x + 0.5)), matching Python's
-      // int(math.floor(value + 0.5)) — not Math.round, whose tie-breaking is easy to
-      // misread against the Python spelling this must stay locked to.
-      out[k] = Math.floor(val + 0.5);
-    }
+    const n = coerceInt(out[k], INT_POLICY.verify);
+    if (n !== null) out[k] = n;
   }
   return out;
 }
@@ -1627,25 +1615,6 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
   }
 
   return { ok: true };
-}
-
-// shellWord(tok) -> the token as ONE shell word. A token of ordinary path characters is
-// returned bare, so an ordinary command is byte-identical to a plain `parts.join(' ')`;
-// anything else is POSIX single-quoted, which keeps the command AST-safe: with no embedded
-// single quote the token is one `raw_string` node to tree-sitter-bash — no expansion, no
-// operator, nothing the sandbox's auto-approval parse does not recognise. The charset is
-// shlex.quote's: deliberately conservative, since every character outside it only costs a
-// pair of quotes. `'\''` closes, escapes, and reopens for an embedded single quote; that
-// token parses as a `concatenation` rather than a `raw_string`, so auto-approval is not
-// guaranteed on that rare edge (a quote in a repo path) — a correct command is worth more.
-const SHELL_SAFE_RE = /^[A-Za-z0-9_%+=:,.\/@-]+$/;
-function shellWord(tok) {
-  // null/undefined/'' contribute an empty string, exactly as Array.join did: an absent
-  // optional field must not materialize a literal `undefined` or a stray `''` in argv.
-  if (tok == null) return '';
-  const s = String(tok);
-  if (s === '' || SHELL_SAFE_RE.test(s)) return s;
-  return `'${s.replaceAll("'", `'\\''`)}'`;
 }
 
 // The pinned command: a single `python3 <script> --flags...` invocation whose tokens are
@@ -2087,7 +2056,7 @@ export async function challengeStage(ctx, input) {
     // every result reads unscored, every finding is skipped, and the high-confidence
     // bucket is ALWAYS empty. `??` (not `||`) so a legitimate 0 score is honoured.
     const rawScore = res && typeof res === 'object' ? (res.confidence_claim_is_correct ?? res.score) : undefined;
-    if (res === null || res === undefined || pyIntStrict(rawScore) === null) {
+    if (res === null || res === undefined || coerceInt(rawScore, INT_POLICY.validation) === null) {
       gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=skipped, pipeline-degraded)`);
       skipped.push(finding);
       return;
@@ -2859,36 +2828,6 @@ function stripPersistAliases(f) {
   return out;
 }
 
-// fnv1a32(s) -> "fnv1a32:0x........" — the content-proof checksum.
-//
-// It must be computable IDENTICALLY here and in Python. The workflow sandbox has no
-// TextEncoder and no Buffer, so the only byte source available is String#charCodeAt —
-// i.e. UTF-16 code units. scripts/gauntlet/jsjson.py reproduces this exactly by
-// unpacking the string's utf-16-le encoding, including surrogate pairs (an emoji
-// contributes TWO units on both sides). Math.imul is a language builtin, NOT a host
-// global, so it is available in the sandbox.
-export function fnv1a32(s) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
-}
-
-// Strip a UTF-8 BOM and AT MOST ONE trailing newline before checksumming. The Write
-// tool may normalise a trailing newline or prepend a BOM, and a false content-proof
-// degrade must not cost a run its artifacts. Applied on BOTH sides (here and by the
-// assembler through gauntlet.jsjson.normalize_content) so the tolerance is symmetric; two trailing newlines is a
-// REAL difference and still reports as a mismatch.
-export function normalizeForChecksum(s) {
-  let out = typeof s === 'string' ? s : '';
-  if (out.charCodeAt(0) === 0xfeff) out = out.slice(1);
-  if (out.endsWith('\r\n')) return out.slice(0, -2);
-  if (out.endsWith('\n')) return out.slice(0, -1);
-  return out;
-}
-
 // The persist plan's own path. Deliberately matches the Phase 2 stale-file truncation
 // glob `code-gauntlet-*-<sha>.*`, so no skill change is needed to clean it up. It is
 // NOT an artifactPaths key — the public contract stays at exactly four.
@@ -3065,44 +3004,6 @@ export function persistPlan(inp, paths) {
   // above. assemble_artifacts.py deletes exactly this key and recomputes.
   plan.planChecksum = fnv1a32(JSON.stringify(plan, null, 2));
   return plan;
-}
-
-// firstUnsafeNumber(root, rootPath) -> the path of the first number the Python twin
-// could not spell identically, or null.
-//
-// JS numbers are doubles and Number#toString has its own spelling rules; Python's
-// repr(float) does not share them (1e-7 vs 1e-07, 0.000001 vs 1e-06, 90 vs 90.0, 0 vs
-// -0.0, null vs NaN). scripts/gauntlet/jsjson.py deliberately does NOT reimplement
-// Number#toString — a port whose own bugs would be invisible is worse than a
-// precondition — so it refuses any number it cannot round-trip and this guard applies
-// the SAME rule one step earlier, where refusing is free: the run falls back to the
-// legacy by-value writer instead of writing a divergent artifact or losing artifacts.
-// Every number the pipeline actually produces is a count, a line number, or a
-// confidence, so the precondition never binds in practice. Integers outside JS's safe
-// range are rejected too: JS would already have parsed them lossily.
-const JS_MAX_SAFE_INTEGER = 9007199254740991;
-
-function firstUnsafeNumber(root, rootPath) {
-  const stack = [[root, rootPath]];
-  while (stack.length > 0) {
-    const [node, where] = stack.pop();
-    if (typeof node === 'number') {
-      if (!Number.isInteger(node) || node > JS_MAX_SAFE_INTEGER || node < -JS_MAX_SAFE_INTEGER) return where;
-      continue;
-    }
-    if (Array.isArray(node)) {
-      for (let i = node.length - 1; i >= 0; i -= 1) stack.push([node[i], `${where}[${i}]`]);
-      continue;
-    }
-    if (node && typeof node === 'object') {
-      const entries = Object.entries(node);
-      for (let i = entries.length - 1; i >= 0; i -= 1) {
-        const [k, v] = entries[i];
-        stack.push([v, `${where}.${k}`]);
-      }
-    }
-  }
-  return null;
 }
 
 // persistDerivable(inp) -> { ok } | { ok:false, reason }

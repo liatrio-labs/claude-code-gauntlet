@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {
   joinVerifyDeltas,
   deltaContentProof,
-  fnv1a32,
   encodeSliceInline,
   sliceTokenChecksum,
 } from '../src/stages.js';
+import { fnv1a32 } from '../src/wire.js';
 import { loadCases } from './helpers/goldenCases.js';
 
 // --- verify_deltas: cross-runtime equivalence claim -----------

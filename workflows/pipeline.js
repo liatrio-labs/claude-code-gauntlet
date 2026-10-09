@@ -704,17 +704,78 @@ function merge(ndjsonContents, textContents, meta) {
     M.repo,
   );
 }
-// --- applyValidations.js ---
-function pyIntStrict(v) {
-  if (typeof v === 'boolean') return v ? 1 : 0;
-  if (typeof v === 'number') return Number.isFinite(v) ? Math.trunc(v) : null;
-  if (typeof v === 'string') {
-    const s = v.trim();
-    if (/^[+-]?\d+$/.test(s)) return parseInt(s, 10); // int-string only
-    return null; // "72.9", "abc", "" all rejected
+// --- wire.js ---
+function fnv1a32(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
   }
-  return null; // None/object -> skip (int(None) raises TypeError in Python;
+  return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
 }
+function normalizeForChecksum(s) {
+  let out = typeof s === 'string' ? s : '';
+  if (out.charCodeAt(0) === 0xfeff) out = out.slice(1);
+  if (out.endsWith('\r\n')) return out.slice(0, -2);
+  if (out.endsWith('\n')) return out.slice(0, -1);
+  return out;
+}
+function deepClone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+function firstUnsafeNumber(root, rootPath) {
+  const stack = [[root, rootPath]];
+  while (stack.length > 0) {
+    const [node, where] = stack.pop();
+    if (typeof node === 'number') {
+      if (!Number.isSafeInteger(node)) return where;
+      continue;
+    }
+    if (Array.isArray(node)) {
+      for (let i = node.length - 1; i >= 0; i -= 1) stack.push([node[i], `${where}[${i}]`]);
+      continue;
+    }
+    if (node && typeof node === 'object') {
+      const entries = Object.entries(node);
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        const [k, v] = entries[i];
+        stack.push([v, `${where}.${k}`]);
+      }
+    }
+  }
+  return null;
+}
+const SHELL_SAFE_RE = /^[A-Za-z0-9_%+=:,.\/@-]+$/;
+function shellWord(tok) {
+  if (tok == null) return '';
+  const s = String(tok);
+  if (s === '' || SHELL_SAFE_RE.test(s)) return s;
+  return `'${s.replaceAll("'", `'\\''`)}'`;
+}
+const WS_TRIM_RE = /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g;
+const INT_POLICY = Object.freeze({
+  validation: Object.freeze({ trim: null, mode: 'pyInt' }),
+  filter: Object.freeze({ trim: WS_TRIM_RE, mode: 'pyInt' }),
+  verify: Object.freeze({ trim: null, mode: 'jsNumber' }),
+});
+function coerceInt(value, policy) {
+  const pyInt = policy.mode === 'pyInt';
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    if (Number.isInteger(value)) return value;
+    return pyInt ? Math.trunc(value) : Math.floor(value + 0.5);
+  }
+  if (typeof value === 'boolean') return pyInt ? (value ? 1 : 0) : null;
+  if (typeof value !== 'string') return null;
+  if (pyInt) {
+    const s = policy.trim ? value.replace(policy.trim, '') : value.trim();
+    return /^[+-]?[0-9]+$/.test(s) ? parseInt(s, 10) : null;
+  }
+  if (value.trim() === '') return null;
+  const n = Number(value);
+  return Number.isInteger(n) ? n : null;
+}
+// --- applyValidations.js ---
 const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 function applyValidations(findings, validations) {
   const findingById = new Map();
@@ -729,7 +790,7 @@ function applyValidations(findings, validations) {
     if (vid === null || vid === undefined) continue; // missing id -- skipped (warning)
     const rawConf = 'confidence' in validation ? validation.confidence : undefined;
     if (rawConf === null || rawConf === undefined) continue; // missing confidence -- skipped (warning)
-    const parsed = pyIntStrict(rawConf);
+    const parsed = coerceInt(rawConf, INT_POLICY.validation);
     if (parsed === null) continue; // non-integer confidence -- skipped (warning)
     const newConf = Math.max(0, Math.min(100, parsed));
     const finding = findingById.get(vid);
@@ -1406,7 +1467,6 @@ function asText(value) {
 function asConfidence(value) {
   return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
 }
-const WS_TRIM_RE = /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g;
 function pyRound(x) {
   const floor = Math.floor(x);
   const diff = x - floor;
@@ -1414,17 +1474,8 @@ function pyRound(x) {
   if (diff > 0.5) return floor + 1;
   return floor % 2 === 0 ? floor : floor + 1; // exact .5 -> nearest even
 }
-function pyIntOrNull(value) {
-  if (typeof value === 'number') return Number.isFinite(value) ? Math.trunc(value) : null;
-  if (typeof value === 'boolean') return value ? 1 : 0; // Python bool is an int subclass
-  if (typeof value === 'string') {
-    const m = /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([+-]?[0-9]+)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*$/.exec(value);
-    return m ? parseInt(m[1], 10) : null;
-  }
-  return null; // null/undefined/object/array -> TypeError in Python
-}
 function lineBucket(line, proximity) {
-  const n = pyIntOrNull(line);
+  const n = coerceInt(line, INT_POLICY.filter);
   if (n === null) return 0;
   return pyRound(n / proximity) * proximity;
 }
@@ -1813,9 +1864,6 @@ function applyExclusions(findings, exclusionPatterns, config = null) {
   return { kept, eliminated };
 }
 // --- applyChallenges.js ---
-function deepClone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
 function downgradeSeverity(severity) {
   const idx = typeof severity === 'string' ? SEVERITY_ORDER.indexOf(severity.toLowerCase()) : -1;
   if (idx < 0 || idx + 1 >= SEVERITY_ORDER.length) return null;
@@ -1847,7 +1895,7 @@ function applyChallenges(findings, challenges) {
     if (cid === undefined || cid === null) continue;
     const rawScore = 'score' in entry ? entry.score : undefined;
     if (rawScore === undefined || rawScore === null) continue;
-    if (pyIntStrict(rawScore) === null) continue;
+    if (coerceInt(rawScore, INT_POLICY.validation) === null) continue;
     challengeById.set(cid, entry);
   }
   const active = [];
@@ -1868,7 +1916,7 @@ function applyChallenges(findings, challenges) {
       continue;
     }
     const rawScore = 'score' in entry ? entry.score : 0;
-    const score = pyIntStrict(rawScore);
+    const score = coerceInt(rawScore, INT_POLICY.validation);
     const justification = 'justification' in entry ? entry.justification : undefined;
     finding = deepClone(finding);
     finding.challenge_score = score;
@@ -4764,15 +4812,8 @@ const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'co
 function pinNumericFields(finding) {
   const out = { ...finding };
   for (const k of VERIFY_NUMERIC_FIELDS) {
-    const val = out[k];
-    if (typeof val === 'string' && val.trim() !== '' && Number.isFinite(Number(val))) {
-      const n = Number(val);
-      if (Number.isInteger(n)) out[k] = n;
-      continue;
-    }
-    if (typeof val === 'number' && Number.isFinite(val) && !Number.isInteger(val)) {
-      out[k] = Math.floor(val + 0.5);
-    }
+    const n = coerceInt(out[k], INT_POLICY.verify);
+    if (n !== null) out[k] = n;
   }
   return out;
 }
@@ -4875,13 +4916,6 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
     }
   }
   return { ok: true };
-}
-const SHELL_SAFE_RE = /^[A-Za-z0-9_%+=:,.\/@-]+$/;
-function shellWord(tok) {
-  if (tok == null) return '';
-  const s = String(tok);
-  if (s === '' || SHELL_SAFE_RE.test(s)) return s;
-  return `'${s.replaceAll("'", `'\\''`)}'`;
 }
 function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   const v = inp.verify || {};
@@ -5131,7 +5165,7 @@ async function challengeStage(ctx, input) {
   results.forEach((res, idx) => {
     const finding = candidates[idx];
     const rawScore = res && typeof res === 'object' ? (res.confidence_claim_is_correct ?? res.score) : undefined;
-    if (res === null || res === undefined || pyIntStrict(rawScore) === null) {
+    if (res === null || res === undefined || coerceInt(rawScore, INT_POLICY.validation) === null) {
       gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=skipped, pipeline-degraded)`);
       skipped.push(finding);
       return;
@@ -5535,21 +5569,6 @@ function stripPersistAliases(f) {
   }
   return out;
 }
-function fnv1a32(s) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
-}
-function normalizeForChecksum(s) {
-  let out = typeof s === 'string' ? s : '';
-  if (out.charCodeAt(0) === 0xfeff) out = out.slice(1);
-  if (out.endsWith('\r\n')) return out.slice(0, -2);
-  if (out.endsWith('\n')) return out.slice(0, -1);
-  return out;
-}
 function persistPlanPath(outputDir, sha) {
   const root = requireAbsoluteOutputDir(outputDir);
   const path = `${root}/code-gauntlet-persist-plan-${sha}.json`;
@@ -5602,29 +5621,6 @@ function persistPlan(inp, paths) {
   };
   plan.planChecksum = fnv1a32(JSON.stringify(plan, null, 2));
   return plan;
-}
-const JS_MAX_SAFE_INTEGER = 9007199254740991;
-function firstUnsafeNumber(root, rootPath) {
-  const stack = [[root, rootPath]];
-  while (stack.length > 0) {
-    const [node, where] = stack.pop();
-    if (typeof node === 'number') {
-      if (!Number.isInteger(node) || node > JS_MAX_SAFE_INTEGER || node < -JS_MAX_SAFE_INTEGER) return where;
-      continue;
-    }
-    if (Array.isArray(node)) {
-      for (let i = node.length - 1; i >= 0; i -= 1) stack.push([node[i], `${where}[${i}]`]);
-      continue;
-    }
-    if (node && typeof node === 'object') {
-      const entries = Object.entries(node);
-      for (let i = entries.length - 1; i >= 0; i -= 1) {
-        const [k, v] = entries[i];
-        stack.push([v, `${where}.${k}`]);
-      }
-    }
-  }
-  return null;
 }
 function persistDerivable(inp) {
   for (const [label, value] of [

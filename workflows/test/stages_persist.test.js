@@ -23,9 +23,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   writeArtifacts, writerPayload, plannedArtifactPaths, persistPlanPath,
-  persistPlan, persistPrimaries, persistDerivable, fnv1a32, normalizeForChecksum,
+  persistPlan, persistPrimaries, persistDerivable,
   parseWriterPayload, runWith, hardenEscapeRuns, provenPrimaryPaths,
 } from '../src/stages.js';
+import { fnv1a32, normalizeForChecksum } from '../src/wire.js';
 import { validateArgs } from '../src/args.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { shellSplit } from './helpers/shellWords.js';

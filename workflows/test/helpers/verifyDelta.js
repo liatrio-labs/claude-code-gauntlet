@@ -10,7 +10,8 @@
 // with this helper is the trust/join/degradation LOGIC; that the computation itself
 // matches Python's is pinned separately by the golden fixture in
 // tests/fixtures/parity/verify_deltas/, whose checksum verify_findings.py produced.
-import { deltaContentProof, fnv1a32 } from '../../src/stages.js';
+import { deltaContentProof } from '../../src/stages.js';
+import { fnv1a32 } from '../../src/wire.js';
 import { shellSplit } from './shellWords.js';
 
 // The exact string run_verification() stamps on every real elimination. Tests that

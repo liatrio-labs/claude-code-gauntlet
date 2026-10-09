@@ -4,7 +4,8 @@
 // applyChallenges must never alias/mutate the caller's findings when it applies a score.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deepClone, applyChallenges, downgradeSeverity, rankFindings } from '../src/applyChallenges.js';
+import { applyChallenges, downgradeSeverity, rankFindings } from '../src/applyChallenges.js';
+import { deepClone } from '../src/wire.js';
 import { finding } from './helpers/findings.js';
 import { challengeStage } from '../src/stages.js';
 

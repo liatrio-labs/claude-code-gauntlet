@@ -7,9 +7,7 @@ import { runInNewContext } from 'node:vm';
 import { loadCases } from './helpers/goldenCases.js';
 import {
   pyRound,
-  pyIntOrNull,
   lineBucket,
-  WS_TRIM_RE,
   applyFilterPipeline,
   buildReviewConfig,
   configForFile,
@@ -36,6 +34,7 @@ import {
   normalizeFieldNames,
   loadExclusions,
 } from '../src/filterFindings.js';
+import { WS_TRIM_RE } from '../src/wire.js';
 import { finding } from './helpers/findings.js';
 
 test('filter data content digest', () => {
@@ -186,6 +185,27 @@ for (const c of WORD_CASES) test(`word count: ${c.name}`, () => {
   assert.equal(countWords(c.text), c.expected);
 });
 
+// The index just past the string or template that opens at `start`. A template's `${}`
+// bodies are skipped with their own quotes, so a template nested in one cannot end it early.
+function skipQuoted(source, start) {
+  const quote = source[start];
+  let i = start + 1;
+  while (i < source.length && source[i] !== quote) {
+    if (source[i] === '\\') { i += 2; continue; }
+    if (quote !== '`' || source[i] !== '$' || source[i + 1] !== '{') { i += 1; continue; }
+    i += 2;
+    for (let depth = 1; i < source.length && depth > 0;) {
+      const inner = source[i];
+      if (inner === '"' || inner === "'" || inner === '`') { i = skipQuoted(source, i); continue; }
+      if (inner === '{') depth += 1;
+      if (inner === '}') depth -= 1;
+      i += 1;
+    }
+  }
+  assert.ok(i < source.length, 'unterminated string');
+  return i + 1;
+}
+
 // Scan source so a pattern added outside SUGGESTION_SETS cannot bypass the whitespace contract.
 function regexLiterals(source) {
   const patterns = [];
@@ -209,14 +229,7 @@ function regexLiterals(source) {
       continue;
     }
     if (char === '"' || char === "'" || char === '`') {
-      const quote = char;
-      i += 1;
-      while (i < source.length && source[i] !== quote) {
-        if (source[i] === '\\') i += 1;
-        i += 1;
-      }
-      assert.ok(i < source.length, 'unterminated string');
-      i += 1;
+      i = skipQuoted(source, i);
       previous = 'value';
       continue;
     }
@@ -297,7 +310,7 @@ function inspectPattern(source, label, unionClass, checkAnchors = false) {
 }
 
 test('filter regex sources retain union whitespace and unanchored content patterns', () => {
-  const source = readFileSync(new URL('../src/filterFindings.js', import.meta.url), 'utf8');
+  const source = ['filterFindings.js', 'wire.js'].map((file) => readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8')).join('\n');
   const unionClass = String.raw`\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff`;
   const literals = regexLiterals(source);
   assert.ok(literals.length > 80, `source scan covered only ${literals.length} regex literals`);
@@ -1428,9 +1441,8 @@ const LINE_START_COERCE_TABLE = [
 ];
 
 test('#244/coerce-table: pyIntOrNull/lineBucket behavioral table', () => {
-  for (const [value, expectedInt, bucket10, bucket5] of LINE_START_COERCE_TABLE) {
+  for (const [value, , bucket10, bucket5] of LINE_START_COERCE_TABLE) {
     const label = JSON.stringify(value);
-    assert.equal(pyIntOrNull(value), expectedInt, `pyIntOrNull(${label})`);
     assert.ok(!Number.isNaN(lineBucket(value, 10)), `lineBucket(${label},10) is not NaN`);
     assert.equal(lineBucket(value, 10), bucket10, `lineBucket(${label},10)`);
     assert.equal(lineBucket(value, 5), bucket5, `lineBucket(${label},5)`);

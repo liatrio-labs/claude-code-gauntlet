@@ -2,14 +2,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { inspect } from 'node:util';
-import { pyIntStrict } from '../src/applyValidations.js';
-import { pyIntOrNull } from '../src/filterFindings.js';
-import { joinVerifyDeltas, verifyStage } from '../src/stages.js';
+import { INT_POLICY, coerceInt } from '../src/wire.js';
+import { joinVerifyDeltas, pinNumericFields, verifyStage } from '../src/stages.js';
 
-const validation = (value) => pyIntStrict(value);
-const filter = (value) => pyIntOrNull(value);
-const joinOne = (finding) => joinVerifyDeltas([{ id: 'F1', ...finding }], [{ id: 'F1', verified: true }])[0];
-const verifyPin = (value) => joinOne({ confidence: value }).confidence;
+const validation = (value) => coerceInt(value, INT_POLICY.validation);
+const filter = (value) => coerceInt(value, INT_POLICY.filter);
+const verifyPin = (value) => pinNumericFields({ confidence: value }).confidence;
 
 // The verify pin leaves a value it cannot coerce exactly as it was.
 const SAME = Symbol('unchanged');
@@ -75,18 +73,51 @@ for (const [input, asValidation, asFilter, asVerify] of INT_POLICY_TABLE) {
   });
 }
 
+// One per input class the verify policy refuses: the pin above shows the value kept,
+// this shows the parser said null and did not hand the value back.
+for (const refused of [true, NaN, '72.9', null]) {
+  test(`verify policy refuses ${label(refused)}`, () => {
+    assert.equal(coerceInt(refused, INT_POLICY.verify), null);
+  });
+}
+
+// Line buckets accept only the signed ASCII integer form inside the union whitespace class.
+const FILTER_LINE_TABLE = [
+  ['\x1c12', 12], // U+001C FS
+  ['\x1d12', 12], // U+001D GS
+  ['\x1e12', 12], // U+001E RS
+  ['\x1f12', 12], // U+001F US
+  ['\x8512', 12], // U+0085 NEL
+  ['\ufeff12', 12], // U+FEFF BOM
+  ['\x1c99', 99], // raw parseInt of this string is NaN
+  ['\u0661\u0662', null], // Arabic-Indic digits
+  ['\uff11\uff12', null], // fullwidth digits
+  ['1_2', null], // PEP 515 underscore
+  [25.7, 25],
+  [20, 20],
+  [null, null],
+  [true, 1],
+  [false, 0],
+];
+
+for (const [input, expected] of FILTER_LINE_TABLE) {
+  test(`filter line: ${label(input)}`, () => {
+    assert.equal(filter(input), expected);
+  });
+}
+
 for (const field of ['line_start', 'line_end', 'line', 'end_line', 'confidence']) {
   test(`verify pins ${field}`, () => {
-    assert.equal(joinOne({ [field]: '153' })[field], 153);
+    assert.equal(pinNumericFields({ [field]: '153' })[field], 153);
   });
 }
 
 test('verify pins no field outside its list', () => {
-  assert.equal(joinOne({ line_count: '153' }).line_count, '153');
+  assert.equal(pinNumericFields({ line_count: '153' }).line_count, '153');
 });
 
-test('verify pin adds no key the finding lacks', () => {
-  assert.deepEqual(Object.keys(joinOne({})), ['id']);
+test('the join adds no key the finding lacks', () => {
+  assert.deepEqual(Object.keys(joinVerifyDeltas([{ id: 'F1' }], [{ id: 'F1', verified: true }])[0]), ['id']);
 });
 
 test('a degraded slice carries a pinned string confidence', async () => {

@@ -1,17 +1,6 @@
 // Apply validator confidence and reachability updates to findings.
 
-// Accept finite numbers, signed integer strings, and booleans; reject other confidence values.
-export function pyIntStrict(v) {
-  if (typeof v === 'boolean') return v ? 1 : 0;
-  if (typeof v === 'number') return Number.isFinite(v) ? Math.trunc(v) : null;
-  if (typeof v === 'string') {
-    const s = v.trim();
-    if (/^[+-]?\d+$/.test(s)) return parseInt(s, 10); // int-string only
-    return null; // "72.9", "abc", "" all rejected
-  }
-  return null; // None/object -> skip (int(None) raises TypeError in Python;
-  // a plain object has no int() coercion path either).
-}
+import { INT_POLICY, coerceInt } from './wire.js';
 
 export const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 
@@ -32,7 +21,7 @@ export function applyValidations(findings, validations) {
     const rawConf = 'confidence' in validation ? validation.confidence : undefined;
     if (rawConf === null || rawConf === undefined) continue; // missing confidence -- skipped (warning)
 
-    const parsed = pyIntStrict(rawConf);
+    const parsed = coerceInt(rawConf, INT_POLICY.validation);
     if (parsed === null) continue; // non-integer confidence -- skipped (warning)
 
     const newConf = Math.max(0, Math.min(100, parsed));
