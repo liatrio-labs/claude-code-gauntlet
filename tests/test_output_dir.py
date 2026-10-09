@@ -252,3 +252,18 @@ def test_not_a_git_repository_is_usage_error(output_cli, tmp_path):
         result.stderr
         == b"ensure_output_dir: not a git repository (git rev-parse --show-toplevel failed)\n"
     )
+
+
+def test_missing_cwd_reports_one_git_error_line(invoke, tmp_path):
+    missing = tmp_path / "missing-cwd"
+    result = invoke("ensure_output_dir", ["--cwd", str(missing)], tmp_path)
+
+    assert result.returncode == 1
+    assert result.stdout == b""
+    prefix = f"ensure_output_dir: cannot run git in {missing.resolve()}: "
+    stderr = result.stderr.decode("utf-8")
+    assert stderr.startswith(prefix)
+    assert stderr.endswith("\n")
+    lines = stderr.splitlines()
+    assert len(lines) == 1
+    assert lines[0][len(prefix) :]

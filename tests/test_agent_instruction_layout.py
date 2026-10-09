@@ -205,10 +205,13 @@ def instruction_repo(tmp_path: Path) -> Path:
 def test_grown_instruction_file_fails_size_check(instruction_repo: Path) -> None:
     files = tracked(instruction_repo)
     instructions = instruction_repo / "AGENTS.md"
-    instructions.write_bytes(b"x" * 4_131)
+    instructions.write_bytes(b"x" * AGENTS_SET_BUDGET_BYTES)
     check_instruction_size(instruction_repo, files)
-    instructions.write_bytes(b"x" * 4_132)
-    with pytest.raises(AssertionError, match=r"AGENTS\.md files grew to 4132 bytes"):
+    instructions.write_bytes(b"x" * (AGENTS_SET_BUDGET_BYTES + 1))
+    with pytest.raises(
+        AssertionError,
+        match=r"AGENTS\.md files grew to \d+ bytes against a ratchet pinned at \d+",
+    ):
         check_instruction_size(instruction_repo, files)
 
 

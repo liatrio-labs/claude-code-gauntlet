@@ -333,10 +333,13 @@ class RuleCollector:
             if target not in counts:
                 unfollowed: set[str] = set()
                 for raw in _find_imports(self.review_realpaths[target]):
-                    real, reason = self._resolve_pointer(raw, os.path.dirname(target))
+                    try:
+                        real, _ = self._resolve_pointer(raw, os.path.dirname(target))
+                    except ValueError:
+                        # A NUL byte in a pointer names no file.
+                        continue
                     if (
-                        reason is None
-                        and real is not None
+                        real is not None
                         and real not in self.included
                         and real not in self.review_realpaths
                         and os.path.isfile(real)

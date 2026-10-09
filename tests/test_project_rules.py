@@ -407,6 +407,7 @@ def test_file_cap_bounds_review_reads_but_not_the_inventory(collect_rules, write
         ("already-collected", "@shared.md\n", 0, 11),
         ("fenced", "```\n@shared.md\n```\n", 0, 19),
         ("refused-and-self", "@payload.txt @REVIEW.md\n", 0, 24),
+        ("nul-pointer", "x @a\x00b.md", 0, 9),
         ("nested-target", "@shared.md\n", 1, 11),
         ("two-unfollowed", "@shared.md @other.md\n", 2, 21),
         (
@@ -422,6 +423,7 @@ def test_file_cap_bounds_review_reads_but_not_the_inventory(collect_rules, write
         "already-collected",
         "fenced",
         "refused-and-self",
+        "nul-pointer",
         "nested-target",
         "two-unfollowed",
         "missing-and-alias",

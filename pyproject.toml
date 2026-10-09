@@ -1,9 +1,8 @@
 # Config + CI pin surface only — this is not a packaged project.
 # No [project] / [build-system]: this is a plugin, not a Python package.
 #
-# This table pins the CI pytest stack. Lint-tool versions are pinned by the
-# rev: fields in .pre-commit-config.yaml. Ruff is the one twin: the import-ban
-# test runs it, and tests/test_ruff_import_boundary.py holds the two pins equal.
+# Ruff and pytest are the twin pins: their pre-commit versions are held equal
+# to these dev pins by tests/test_ruff_import_boundary.py and the hook-pin test.
 [dependency-groups]
 dev = [
   "pytest==9.1.1",
