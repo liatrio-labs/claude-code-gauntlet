@@ -1,29 +1,12 @@
-// verifyDelta.js — build the envelope shape the verify executor returns (issue #25 PR2).
-//
-// After the delta echo, an executor answer is a receipt plus a per-finding DELTA: what
-// verify_findings.py DECIDED about each dispatched id, never the findings themselves.
-// Every verify test needs to synthesise one, so it is built once here.
-//
-// The checksum is computed with the REAL exported computation (deltaContentProof), not a
-// second copy of the canonicalisation: a helper that re-derived it would agree with a
-// broken implementation just as happily as with a correct one. What the JS suite proves
-// with this helper is the trust/join/degradation LOGIC; that the computation itself
-// matches Python's is pinned separately by the golden fixture in
-// tests/fixtures/parity/verify_deltas/, whose checksum verify_findings.py produced.
+// Honest executor envelopes echo the dispatched token; fault rows override proofs explicitly.
 import { deltaContentProof } from '../../src/verifyWire.js';
 import { fnv1a32 } from '../../src/wire.js';
 import { shellSplit } from './shellWords.js';
+import { assertPrompt, assertValidSchema } from './pipelineMock.js';
 
-// The exact string run_verification() stamps on every real elimination. Tests that
-// synthesise an eliminated delta must use it — trustSlice requires a non-empty stamp,
-// and using the real one keeps the fixtures honest about what the script writes.
 export const ELIMINATION_STAMP = 'evidence does not match file content';
 
-// deltaFor(finding, overrides) -> the delta verify_findings.py would emit for a finding it
-// verified without changing anything: the fields it re-decides, echoed from the finding
-// itself, so a trusted join reproduces the dispatched finding (minus `agent`).
-// `confidence` rides only when it is already an integer — the script canonicalises it to
-// one, and trustSlice rejects anything else.
+// Confidence rides only when already an integer, matching the script output.
 export function deltaFor(finding, overrides = {}) {
   const delta = { id: finding.id, verified: true };
   if (typeof finding.origin === 'string') delta.origin = finding.origin;
@@ -32,20 +15,10 @@ export function deltaFor(finding, overrides = {}) {
   return { ...delta, ...overrides };
 }
 
-// deltasFor(findings, overridesById) -> one delta per finding, in dispatch order.
-// overridesById maps a finding id to per-delta overrides, e.g.
-//   deltasFor(slice, { F2: { verified: false, elimination_reason: ELIMINATION_STAMP } })
 export function deltasFor(findings, overridesById = {}) {
   return findings.map((f) => deltaFor(f, overridesById[f.id] || {}));
 }
 
-// deltaEnvelope(findings, opts) -> a trusted VERIFY_SCHEMA envelope for `findings`.
-//   sha / nonce / n_in   — receipt fields, defaulted to the happy path
-//   deltas               — replaces the derived delta list wholesale (substitution tests)
-//   ids                  — the id order the checksum is computed over; defaults to the
-//                          dispatched findings' ids, which is what trustSlice will use
-//   checksum             — overrides the computed proof (drift tests)
-//   overrides            — per-id delta overrides, passed to deltasFor
 export function deltaEnvelope(findings, opts = {}) {
   const deltas = opts.deltas || deltasFor(findings, opts.overrides || {});
   const ids = opts.ids || findings.map((f) => f.id);
@@ -61,13 +34,6 @@ export function deltaEnvelope(findings, opts = {}) {
   };
 }
 
-// The slice-input content proof is computed by the workflow over the content it
-// DISPATCHED, so a faithful executor mock must echo the checksum of the decoded inline
-// document -- not a value the test invented. This recorder parses the command token,
-// remembers each slice's content, and stamps the matching proof onto any executor
-// envelope that does not already declare one. Tests that probe the proof declare
-// `input_checksum` explicitly (a wrong value, or null for "the executor dropped it") and
-// the stamp leaves them alone.
 function decodeInlineString(value) {
   let out = '';
   let i = 0;
@@ -104,50 +70,64 @@ function decodeInlineValue(value) {
   return value;
 }
 
-// The slice-input content proof is computed by the workflow over the content it
-// dispatched. This test recorder decodes the command token so happy-path mocks echo
-// the same proof without duplicating the stage planner or projection.
+// Derive honest mock proofs from the actual command, leaving explicit faults untouched.
 export function sliceInputRecorder() {
-  const byPath = new Map();
-  const contentFromPrompt = (prompt) => {
-    const argv = shellSplit(prompt.split('\n').pop());
-    const index = argv.indexOf('--input-inline');
-    if (index < 0) return null;
-    return decodeInlineValue(JSON.parse(argv[index + 1]));
-  };
-  const tokenByPath = new Map();
-  const checksumFor = (i) => {
-    for (const [p, content] of byPath) {
-      if (p.endsWith('.slice' + i + '.json')) return fnv1a32(JSON.stringify(content, null, 2));
-    }
-    return null;
-  };
-  // The token proof the script computes over the bytes it received, mirrored here so a
-  // happy-path mock answers guard (4a) without re-deriving the stage's planner.
-  const tokenChecksumFor = (i) => {
-    for (const [p, token] of tokenByPath) {
-      if (p.endsWith('.slice' + i + '.json')) return fnv1a32(token);
-    }
-    return null;
-  };
   return {
-    checksumFor,
-    tokenChecksumFor,
-    stamp(env, i, prompt) {
-      const content = contentFromPrompt(prompt);
-      if (content) {
-        const argv = shellSplit(prompt.split('\n').pop());
-        const inputPath = argv[argv.indexOf('--input') + 1];
-        byPath.set(inputPath, content);
-        tokenByPath.set(inputPath, argv[argv.indexOf('--input-inline') + 1]);
-      }
-      if (env && env.status === 'ok' && env.receipt && !Object.hasOwn(env.receipt, 'input_checksum')) {
-        env.receipt.input_checksum = checksumFor(i);
-      }
-      if (env && env.status === 'ok' && env.receipt && !Object.hasOwn(env.receipt, 'inline_checksum')) {
-        env.receipt.inline_checksum = tokenChecksumFor(i);
+    stamp(env, _index, prompt) {
+      const argv = shellSplit(prompt.split('\n').pop());
+      const index = argv.indexOf('--input-inline');
+      if (index < 0) return env;
+      const token = argv[index + 1];
+      if (env && env.status === 'ok' && env.receipt) {
+        if (!Object.hasOwn(env.receipt, 'input_checksum')) {
+          env.receipt.input_checksum = fnv1a32(JSON.stringify(decodeInlineValue(JSON.parse(token)), null, 2));
+        }
+        if (!Object.hasOwn(env.receipt, 'inline_checksum')) env.receipt.inline_checksum = fnv1a32(token);
       }
       return env;
     },
+  };
+}
+
+export function verifyCtx(executorImpl) {
+  const calls = [];
+  const rec = sliceInputRecorder();
+  let inParallel = 0;
+  return {
+    calls,
+    agent: async (prompt, opts = {}) => {
+      assertPrompt(prompt);
+      assertValidSchema(opts.schema);
+      const call = { prompt, ...opts };
+      calls.push(call);
+      const match = /^verify-slice-(\d+)(-retry)?$/.exec(opts.label || '');
+      if (!match) throw new Error('verifyStage must dispatch only slice executors');
+      if (inParallel > 0) throw new Error('verifyStage must not use parallel()');
+      const index = Number(match[1]);
+      const attempt = match[2] ? 2 : 1;
+      return rec.stamp(await executorImpl(index, attempt, call), index, prompt);
+    },
+    parallel: async (thunks) => {
+      inParallel += 1;
+      try {
+        return await Promise.all(thunks.map(async (thunk) => {
+          try { return await thunk(); } catch { return null; }
+        }));
+      } finally { inParallel -= 1; }
+    },
+  };
+}
+
+export function verifyInput(findings, over = {}) {
+  return {
+    findings, nonce: 'n-1', headShaShort: 'abc123',
+    limits: { verifySliceSize: 200 }, policy: {},
+    verify: {
+      scriptPath: '/plugin/scripts/verify_findings.py',
+      inputPathBase: '/out/phase4-input-abc123',
+      outputPathBase: '/out/phase4-output-abc123',
+      baseBranch: 'main', diffPath: '/out/code-gauntlet-diff-abc123.patch',
+    },
+    ...over,
   };
 }

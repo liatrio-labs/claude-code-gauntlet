@@ -213,7 +213,7 @@ test('happy path: verify is trusted end-to-end (no UNVERIFIED gap, verified=true
 });
 
 test('partially-degraded verify: one failed slice keeps origin=unknown; healthy slices and downstream stages survive', async () => {
-  // End-to-end cover for issue #54's per-slice degradation: unit tests in stages_verify
+  // End-to-end cover for issue #54's per-slice degradation: unit tests in verifyStage
   // already pin the stage contract, but nothing else drove runWith with a mixed
   // origin='new'/origin='unknown' array through Validate → Filter → Challenge → report →
   // persist. Four findings, verifySliceSize 2 → two slices; fail slice 0 on both attempts.
@@ -412,28 +412,7 @@ test('a long description survives merge->verify->validate->filter->challenge->pe
   assert.equal(survivor.description, longDescription, 'description reaches persist unchanged');
   assert.equal(survivor.body, longDescription, 'the persisted v2 body alias mirrors the full description');
 
-  // (2) Schema shape: the verify dispatch must carry NO finding-shaped array at all — the
-  // verified/eliminated arrays that used to need a `description` property don't exist to
-  // declare one on — and its only result array (deltas) must declare exactly the six delta
-  // keys, with `id`/`verified` required. A revert that reintroduces a findings-shaped verify
-  // result array (with or without `description`) fails here.
-  const verifyCall = ctx.calls.find((c) => (c.label || '').startsWith('verify-slice-'));
-  assert.ok(verifyCall && verifyCall.schema, 'a verify-slice was dispatched with a schema');
-  const resultProps = verifyCall.schema.properties.result.properties;
-  assert.ok(!('verified' in resultProps), 'verify result no longer declares a verified findings array');
-  assert.ok(!('eliminated' in resultProps), 'verify result no longer declares an eliminated findings array');
-  assert.ok(resultProps.deltas, 'verify result declares a deltas array');
-  const deltaItemProps = resultProps.deltas.items.properties;
-  assert.deepEqual(
-    Object.keys(deltaItemProps).sort(),
-    ['confidence', 'elimination_reason', 'id', 'origin', 'severity', 'verified'],
-    'the delta item declares exactly the six delta keys — no description, no room to drop one',
-  );
-  assert.deepEqual(
-    (resultProps.deltas.items.required || []).slice().sort(),
-    ['id', 'verified'],
-    'id and verified are the only required delta keys',
-  );
+
 });
 
 for (const field of ['filtered', 'eliminated']) {

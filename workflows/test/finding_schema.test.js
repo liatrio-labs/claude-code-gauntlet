@@ -5,7 +5,7 @@
 // against the seven agent .md output contracts and against the prose in
 // report-format.md. What Python cannot see is what actually reaches the platform — the
 // schema object handed to agent({schema}) at each dispatch. That is what these tests read,
-// off a mock ctx, exactly as stages_discover/stages_verify already do.
+// off a mock ctx, exactly as stages_discover and verifyStage tests do.
 //
 // Why both directions matter: a field the registry declares but findingItemSchema drops on
 // the way to the dispatch is invisible to the Python guard (the two prose lists would still
@@ -289,6 +289,8 @@ test('the verify echo declares NO finding item at all — the registry union sto
     ['sha', 'n_in', 'nonce', 'deltas_checksum', 'input_checksum', 'inline_checksum'],
     'the receipt declares the three echo fields and the three proofs, and nothing else',
   );
+  assert.deepEqual(result.deltas.items.required, ['id', 'verified']);
+  assert.deepEqual(schema.properties.receipt.properties.deltas_checksum, { type: 'string' });
   const deltaProps = result.deltas.items.properties;
   assert.deepEqual(
     Object.keys(deltaProps).sort(),
@@ -304,8 +306,7 @@ test('the verify echo declares NO finding item at all — the registry union sto
   for (const k of Object.keys(deltaProps)) {
     assert.ok(!findingOnly.has(k), `${k} is a finding field and must not ride the delta echo`);
   }
-  // `agent` was never declarable here and must stay that way — but the constraint is now
-  // enforced structurally by joinVerifyDeltas stripping it, pinned in stages_verify_delta.test.js.
+  // Agent identity comes from the dispatched finding, never the delta echo.
   assert.equal(deltaProps.agent, undefined, 'the delta must not carry agent identity');
 });
 

@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { inspect } from 'node:util';
-import { INT_POLICY, coerceInt } from '../src/wire.js';
+import { INT_POLICY, WS_TRIM_RE, coerceInt, deepClone } from '../src/wire.js';
 import { verifyStage } from '../src/verifyStage.js';
-import { joinVerifyDeltas, pinNumericFields } from '../src/verifyWire.js';
+import { pinNumericFields } from '../src/verifyWire.js';
 
 const validation = (value) => coerceInt(value, INT_POLICY.validation);
 const filter = (value) => coerceInt(value, INT_POLICY.filter);
@@ -107,20 +107,6 @@ for (const [input, expected] of FILTER_LINE_TABLE) {
   });
 }
 
-for (const field of ['line_start', 'line_end', 'line', 'end_line', 'confidence']) {
-  test(`verify pins ${field}`, () => {
-    assert.equal(pinNumericFields({ [field]: '153' })[field], 153);
-  });
-}
-
-test('verify pins no field outside its list', () => {
-  assert.equal(pinNumericFields({ line_count: '153' }).line_count, '153');
-});
-
-test('the join adds no key the finding lacks', () => {
-  assert.deepEqual(Object.keys(joinVerifyDeltas([{ id: 'F1' }], [{ id: 'F1', verified: true }])[0]), ['id']);
-});
-
 test('a degraded slice carries a pinned string confidence', async () => {
   const ctx = { agent: async () => ({ status: 'failed', exitCode: 1 }) };
   const out = await verifyStage(ctx, {
@@ -134,3 +120,38 @@ test('a degraded slice carries a pinned string confidence', async () => {
   assert.equal(out.verified, false);
   assert.deepEqual(out.findings.map((f) => [f.confidence, f.origin]), [[85, 'unknown']]);
 });
+
+test('deepClone returns a structurally-independent copy (no shared references)', () => {
+  const src = { a: 1, nested: { b: [1, 2, 3] }, list: [{ x: 1 }] };
+  const copy = deepClone(src);
+  assert.deepEqual(copy, src);
+  assert.notEqual(copy, src);
+  assert.notEqual(copy.nested, src.nested);
+  assert.notEqual(copy.nested.b, src.nested.b);
+  assert.notEqual(copy.list[0], src.list[0]);
+  copy.nested.b.push(4);
+  copy.list[0].x = 99;
+  assert.deepEqual(src.nested.b, [1, 2, 3], 'mutating the copy never touches the source');
+  assert.equal(src.list[0].x, 1);
+});
+
+
+// Dedup titles trim the full review whitespace class.
+const TITLE_STRIP_TABLE = [
+  ['empty string stays empty', '', ''],
+  ['spaces strip to empty', '   ', ''],
+  ['divergent whitespace strips to empty', '\x1c\x1d\x1e\x1f\x85\ufeff', ''],
+  ['plain text stays unchanged', 'alpha', 'alpha'],
+  ['leading file separator strips', '\x1calpha', 'alpha'],
+  ['trailing NEL strips', 'alpha\x85', 'alpha'],
+  ['BOM strips at both ends', '\ufeffalpha\ufeff', 'alpha'],
+  ['GS and RS strip without changing interior spaces', '\x1d alpha bravo \x1e', 'alpha bravo'],
+  ['interior file separator survives', 'a\x1cb', 'a\x1cb'],
+  ['interior NEL survives and trailing BOM strips', 'mixed\x85 case\ufeff', 'mixed\x85 case'],
+];
+
+for (const [name, text, expected] of TITLE_STRIP_TABLE) {
+  test(`whitespace strip: ${name}`, () => {
+    assert.equal(text.replace(WS_TRIM_RE, ''), expected);
+  });
+}

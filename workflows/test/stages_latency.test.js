@@ -4,7 +4,7 @@
 //  D2.1  the persisted checkpoint drops `filter` (pure, agent-free, zero-cost re-run)
 //  D2.2  summarize runs CONCURRENTLY with discover (no data dependency)
 //  D2.3  verify slice inputs now travel inline with the executor command (covered in
-//        stages_verify.test.js; this file retains the latency/checkpoint contracts)
+//        verifyStage.test.js; this file retains the latency/checkpoint contracts)
 //
 // The load-bearing property for D2.2/D2.3 is that NOTHING observable changes: checkpoint
 // semantics, phaseOutputs/completed ORDER, error attribution (failingPhase), degradation

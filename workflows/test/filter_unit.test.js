@@ -34,7 +34,6 @@ import {
   normalizeFieldNames,
   loadExclusions,
 } from '../src/filterFindings.js';
-import { WS_TRIM_RE } from '../src/wire.js';
 import { finding } from './helpers/findings.js';
 
 test('filter data content digest', () => {
@@ -1420,52 +1419,32 @@ test('#211/table: countWords behavioral table', () => {
 
 // Line buckets accept only the documented signed ASCII integer form.
 const LINE_START_COERCE_TABLE = [
-  ['\x1c12', 12, 10, 10], // U+001C FS
-  ['\x1d12', 12, 10, 10], // U+001D GS
-  ['\x1e12', 12, 10, 10], // U+001E RS
-  ['\x1f12', 12, 10, 10], // U+001F US
-  ['\x8512', 12, 10, 10], // U+0085 NEL (Python-only before)
-  ['﻿12', 12, 10, 10], // U+FEFF BOM (JS-only before)
+  ['\x1c12', 10, 10], // U+001C FS
+  ['\x1d12', 10, 10], // U+001D GS
+  ['\x1e12', 10, 10], // U+001E RS
+  ['\x1f12', 10, 10], // U+001F US
+  ['\x8512', 10, 10], // U+0085 NEL (Python-only before)
+  ['﻿12', 10, 10], // U+FEFF BOM (JS-only before)
   // JS NaN-regression row: raw parseInt('\x1c99', 10) is NaN; the capture -> 99.
-  ['\x1c99', 99, 100, 100],
+  ['\x1c99', 100, 100],
   // digit-class convergence: non-ASCII digits + PEP-515 '_' now rejected.
-  ['١٢', null, 0, 0], // Arabic-Indic ١٢
-  ['１２', null, 0, 0], // fullwidth １２
-  ['1_2', null, 0, 0], // PEP-515 underscore
+  ['١٢', 0, 0], // Arabic-Indic ١٢
+  ['１２', 0, 0], // fullwidth １２
+  ['1_2', 0, 0], // PEP-515 underscore
   // raw-number path: MUST be unchanged by #244.
-  [25.7, 25, 20, 25],
-  [20, 20, 20, 20],
-  [null, null, 0, 0],
-  [true, 1, 0, 0], // bool checked BEFORE number
-  [false, 0, 0, 0],
+  [25.7, 20, 25],
+  [20, 20, 20],
+  [null, 0, 0],
+  [true, 0, 0], // bool checked BEFORE number
+  [false, 0, 0],
 ];
 
-test('#244/coerce-table: pyIntOrNull/lineBucket behavioral table', () => {
-  for (const [value, , bucket10, bucket5] of LINE_START_COERCE_TABLE) {
+test('lineBucket accepts signed ASCII integers inside review whitespace', () => {
+  for (const [value, bucket10, bucket5] of LINE_START_COERCE_TABLE) {
     const label = JSON.stringify(value);
     assert.ok(!Number.isNaN(lineBucket(value, 10)), `lineBucket(${label},10) is not NaN`);
     assert.equal(lineBucket(value, 10), bucket10, `lineBucket(${label},10)`);
     assert.equal(lineBucket(value, 5), bucket5, `lineBucket(${label},5)`);
-  }
-});
-
-// Dedup titles trim the full review whitespace class.
-const TITLE_STRIP_TABLE = [
-  ['', ''],
-  ['   ', ''],
-  ['\x1c\x1d\x1e\x1f\x85﻿', ''], // all six divergent codepoints -> empty
-  ['alpha', 'alpha'],
-  ['\x1calpha', 'alpha'], // U+001C leading
-  ['alpha\x85', 'alpha'], // U+0085 trailing
-  ['﻿alpha﻿', 'alpha'], // U+FEFF both ends
-  ['\x1d alpha bravo \x1e', 'alpha bravo'], // GS/RS ends, interior space kept
-  ['a\x1cb', 'a\x1cb'], // interior codepoint PRESERVED
-  ['mixed\x85 case﻿', 'mixed\x85 case'], // interior union kept, tail cut
-];
-
-test('#244/strip-table: WS_TRIM_RE behavioral table', () => {
-  for (const [text, expected] of TITLE_STRIP_TABLE) {
-    assert.equal(text.replace(WS_TRIM_RE, ''), expected, `strip(${JSON.stringify(text)})`);
   }
 });
 
