@@ -1,6 +1,6 @@
 # Validation Pipeline (internal workflow stages)
 
-The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic transforms live in `workflows/src/{mergeFindings,applyValidations,filterFindings,applyChallenges,findingDedup}.js`, and the stages that orchestrate them live in `workflows/src/stages.js`. The retained `verify_findings.py` executor handles the verify boundary. This reference documents what each stage does for interpreting gaps and persisted artifacts.
+The validation pipeline runs inside `workflows/pipeline.js`. Its deterministic transforms live in `workflows/src/{mergeFindings,applyValidations,filterFindings,applyChallenges,findingDedup}.js`, and the stages that orchestrate them live in `workflows/src/stages.js`, with the verify stage in `workflows/src/{verifyWire,capacity,verifyStage}.js`. The retained `verify_findings.py` executor handles the verify boundary. This reference documents what each stage does for interpreting gaps and persisted artifacts.
 
 **Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Challenge** → Report.
 

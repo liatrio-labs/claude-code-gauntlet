@@ -3,7 +3,7 @@
 // joins trusted deltas onto its own findings and degrades only an untrusted slice.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyStage } from '../src/stages.js';
+import { verifyStage } from '../src/verifyStage.js';
 import {
   planVerifySlices,
   predictVerifySliceInlineLength,

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { inspect } from 'node:util';
 import { INT_POLICY, coerceInt } from '../src/wire.js';
-import { verifyStage } from '../src/stages.js';
+import { verifyStage } from '../src/verifyStage.js';
 import { joinVerifyDeltas, pinNumericFields } from '../src/verifyWire.js';
 
 const validation = (value) => coerceInt(value, INT_POLICY.validation);

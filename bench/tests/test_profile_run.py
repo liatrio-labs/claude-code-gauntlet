@@ -692,9 +692,6 @@ class ProfileRunTestCase(unittest.TestCase):
             path.read_text(encoding="utf-8")
             for path in (REPO_ROOT / "workflows" / "src").glob("*.js")
         )
-        stages_source = (REPO_ROOT / "workflows" / "src" / "stages.js").read_text(
-            encoding="utf-8"
-        )
         for rule in pr.STAGE_RULES:
             label = rule.get("label")
             if rule["name"] in pr.HISTORICAL_STAGES:
@@ -718,7 +715,7 @@ class ProfileRunTestCase(unittest.TestCase):
                 needle = "`" + label + "${"
             self.assertIn(
                 needle,
-                stages_source,
+                source,
                 f"STAGE_RULES label {label!r} is not pinned by workflows/src; edit the rule table or live label",
             )
 
