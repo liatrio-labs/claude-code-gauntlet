@@ -543,6 +543,11 @@ def test_block_anchor(sentence):
             id="malformed",
         ),
         pytest.param(
+            "body\n<!-- /generated-from-registry -->\n",
+            "malformed generated-block markers (0 open, 1 close)",
+            id="orphaned-close",
+        ),
+        pytest.param(
             "<!-- generated-from-registry: do not edit; scripts/generate_contract_requirements.py -->\none\n<!-- /generated-from-registry -->\n"
             "<!-- generated-from-registry: do not edit; scripts/generate_contract_requirements.py -->\ntwo\n<!-- /generated-from-registry -->\n",
             "malformed generated-block markers (2 open, 2 close)",

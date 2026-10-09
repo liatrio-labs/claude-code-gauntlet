@@ -39,6 +39,8 @@ def main(args: argparse.Namespace) -> int:
     return 0
 
 
+# A SessionStart hook must not fail on its argv: NUL cannot occur in an argument, so no
+# token parses as an option and every one lands in the ignored positional.
 parser = Parser(prog="emit_style_context", add_help=False, prefix_chars="\x00")
 parser.add_argument("ignored", nargs="*")
 CLI = Command(parser=parser, main=main)

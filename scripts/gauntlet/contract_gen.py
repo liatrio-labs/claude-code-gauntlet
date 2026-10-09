@@ -753,7 +753,7 @@ def render_inline_comment_sample(identity: Mapping[str, Any]) -> str:
 _DERIVED_WAIST_TYPES = {"string", "csv_list", "int_or_null"}
 
 
-def _identity_description(
+def _require_description(
     identity: Mapping[str, Any], table_name: str, name: str
 ) -> None:
     descriptions = identity[table_name]
@@ -782,7 +782,7 @@ def _validate_derived_waist_identity(identity: Mapping[str, Any]) -> None:
         for table_name in ("deriveWhen", "derivedFrom"):
             name = row.get(table_name)
             if name is not None:
-                _identity_description(identity, table_name, name)
+                _require_description(identity, table_name, name)
 
 
 def _modes_phrase(modes: Sequence[str]) -> str:
