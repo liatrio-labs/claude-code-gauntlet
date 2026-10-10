@@ -35,6 +35,7 @@ const ENCODER_ROWS = [
   ['two-byte UTF-8', '\u00e9', '%C3%A9'],
   ['three-byte UTF-8', '\u2014', '%E2%80%94'],
   ['four-byte UTF-8', '\u{1F600}', '%F0%9F%98%80'],
+  ['pair at the top of both surrogate ranges', '\uDBFF\uDFFF', '%F4%8F%BF%BF'],
   ['lone high surrogate', '\uD800', '%uD800'],
   ['lone low surrogate', '\uDC00', '%uDC00'],
   ['low then low', '\uDC00\uDC01', '%uDC00%uDC01'],
