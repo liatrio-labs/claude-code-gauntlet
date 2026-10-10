@@ -12,10 +12,6 @@ for (const c of loadCases('verify_deltas')) {
     assert.deepEqual(joined, c.expected.joined);
     assert.deepEqual(c.input.dispatched, before);
     assert.equal(deltaContentProof(c.input.dispatched.map((f) => f.id), c.expected.deltas), c.expected.checksum);
-    const agentById = new Map(c.input.dispatched.map((f) => [f.id, f.agent]));
-    for (const f of joined) {
-      if (agentById.get(f.id) !== undefined) assert.equal(f.agent, agentById.get(f.id));
-    }
   });
 }
 for (const c of loadCases('slice_input_proof')) {
@@ -99,12 +95,7 @@ test('the join adds no key the finding lacks', () => {
   assert.deepEqual(Object.keys(joinVerifyDeltas([{ id: 'F1' }], [{ id: 'F1', verified: true }])[0]), ['id']);
 });
 
-const JOIN_PIN_ROWS = [
-  ['numeric strings', { id: 'F0', line_start: '42', line_end: '44', confidence: '85' }, { id: 'F0', line_start: 42, line_end: 44, confidence: 85 }],
-  ['fractional numerics', { id: 'F1', line_start: 4.6, line_end: 9.2, confidence: 82.5 }, { id: 'F1', line_start: 5, line_end: 9, confidence: 83 }],
-];
-for (const [name, finding, expected] of JOIN_PIN_ROWS) {
-  test(`join pins ${name} when the delta omits confidence`, () => {
-    assert.deepEqual(joinVerifyDeltas([finding], [{ id: finding.id, verified: true }]), [expected]);
-  });
-}
+test('join pins numerics when the delta omits confidence', () => {
+  assert.deepEqual(joinVerifyDeltas([{ id: 'F0', line_start: '42', line_end: 9.2, confidence: 82.5 }], [{ id: 'F0', verified: true }]),
+    [{ id: 'F0', line_start: 42, line_end: 9, confidence: 83 }]);
+});

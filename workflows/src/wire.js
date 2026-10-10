@@ -64,7 +64,7 @@ export function firstUnsafeNumber(root, rootPath) {
 // concatenation, so auto-approval is not guaranteed on that edge.
 const SHELL_SAFE_RE = /^[A-Za-z0-9_%+=:,.\/@-]+$/;
 export function shellWord(tok) {
-  // An absent optional field contributes nothing, as Array.join did.
+  // An absent optional field contributes nothing.
   if (tok == null) return '';
   const s = String(tok);
   if (s === '' || SHELL_SAFE_RE.test(s)) return s;

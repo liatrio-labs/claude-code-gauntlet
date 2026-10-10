@@ -2,20 +2,17 @@
 // can cost. The stage and the agent-count guard both read it, so the two cannot disagree.
 import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding } from './verifyWire.js';
 
-// A projected finding's cost is its encoded object alone. A slice's exact cost is the
-// encoded empty envelope plus those object costs plus one comma for each additional
-// finding. The greedy planner keeps both the finding-count and inline-character bounds
-// in one place, and planner consumers and the dispatch assertion share this accounting.
-// closeReasons records boundaries explicitly because skipped oversize findings prevent
-// consumers from reconstructing them from neighbouring slices. Only the final flush is null.
 export const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
+
+// A slice's exact cost is the encoded empty envelope, plus each projected finding's
+// encoded object, plus one comma per additional finding.
 const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
   envelopeLength + findingCost + Math.max(0, findingCount - 1);
 const projectedVerifyFindingInlineLength = (finding) =>
   encodeSliceInline(projectVerifySliceFinding(finding)).length;
 
-// This is the planner's predicted length, exposed for the exact-accounting test and
-// kept on the same cost primitive as the planner's greedy admission check.
+// The planner's predicted length, on the same cost primitive as its admission check. The
+// stage asserts each dispatched payload against it.
 export function predictVerifySliceInlineLength(slice, baseBranch) {
   const branch = effectiveVerifyBaseBranch(baseBranch);
   const envelopeLength = encodeSliceInline({ findings: [], base_branch: branch }).length;
@@ -24,6 +21,9 @@ export function predictVerifySliceInlineLength(slice, baseBranch) {
   return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
 }
 
+// Greedy, under both the finding-count and the inline-character bound. closeReasons names
+// what closed each slice (null for the final flush), because a skipped oversize finding
+// hides a boundary that neighbouring slices cannot reconstruct.
 export function planVerifySlices(findings, sliceSize, budget, baseBranch) {
   const source = Array.isArray(findings) ? findings : [];
   const branch = effectiveVerifyBaseBranch(baseBranch);
@@ -71,8 +71,7 @@ export function planVerifySlices(findings, sliceSize, budget, baseBranch) {
 // default. Never NaN: a NaN worst case would silently disable the coarsening loop.
 export const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 
-// Dispatches per verify slice: the first executor call plus exactly one fresh re-dispatch
-// when that call comes back untrusted. Named because the retry, the agent-count guard's
-// verify term and the dispatch-count tests must agree on it; the tests assert against this
-// value, so raising it without changing the retry fails a test.
+// Dispatches per verify slice: the first executor call plus one re-dispatch when it comes
+// back untrusted. Named because the retry and the agent-count guard's verify term must
+// agree on it.
 export const VERIFY_ATTEMPTS_PER_SLICE = 2;

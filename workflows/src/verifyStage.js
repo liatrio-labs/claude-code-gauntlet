@@ -20,16 +20,10 @@ const VERIFY_SCHEMA = {
         sha: { type: 'string' },
         n_in: { type: 'number' },
         nonce: { type: 'string' },
-        // The delta echo's content proof (fnv1a32 over the script's own serialisation).
-        // Optional in the SCHEMA, mandatory in trustSlice — an absent proof is a legal
-        // thing for the executor to say and an untrusted thing for the workflow to act on.
+        // The three proofs are optional here and mandatory in trustSlice: an absent proof
+        // is a legal thing for the executor to say and an untrusted thing to act on.
         deltas_checksum: { type: 'string' },
-        // The inline content proof: fnv1a32 over the document the script decoded,
-        // compared in trustSlice against the checksum this stage computed over the
-        // content it dispatched. Optional in the SCHEMA, mandatory in trustSlice.
         input_checksum: { type: 'string' },
-        // The token proof: fnv1a32 over the --input-inline token the script received,
-        // before it decoded anything. Optional in the SCHEMA, mandatory in trustSlice.
         inline_checksum: { type: 'string' },
       },
     },
@@ -59,61 +53,34 @@ const VERIFY_SCHEMA = {
   required: ['status'], // discriminated union: receipt/result only present on status:'ok'
 };
 
-// verifySliceSize is deliberately NOT floored. A very small slice is the legitimate
-// mitigation for a transcription-fidelity failure (less content per executor round trip,
-// less to mismatch), so clamping it upward would remove the knob an operator reaches for.
-// Instead: degrade-and-disclose. When the effective verifySliceSize produces MORE than
-// VERIFY_FANOUT_DISCLOSE_THRESHOLD slices, verifyStage pushes a gap naming the effective
-// size, the slice count, the dispatch ceiling (slices * VERIFY_ATTEMPTS_PER_SLICE) and the
-// bound that closed the slices, so an operator sees whether raising verifySliceSize can
-// reduce the fan-out.
+// verifySliceSize is not floored: a very small slice is the legitimate mitigation for a
+// transcription-fidelity failure. Above this many slices the stage instead discloses the
+// dispatch ceiling and the bound that closed the slices, so an operator sees whether
+// raising verifySliceSize can reduce the fan-out.
 const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 
-// Dispatches one `executor` per planned slice — one call, plus at most one retry —
-// SEQUENTIALLY (not parallel()), so each envelope pairs to its slice by order.
-//
-// DEGRADATION IS PER SLICE. An untrusted slice (receipt mismatch, status:'failed', an
-// agent() throw, or a transcription that changes the inline document) degrades ONLY ITS
-// OWN findings to the UNVERIFIED shape (origin='unknown', surfaced-classification skipped)
-// and the loop keeps going, so the size of the damage tracks the size of the fault.
-//
-// Findings are never dropped and success is never fabricated: every finding leaves this
-// stage either as its slice's trusted verified output or as itself with origin='unknown'.
-// `verified` is true only when ZERO slices degraded, so the one top-level boolean keeps
-// meaning "this whole run's classification is trustworthy".
-//
-// The never-drop half is structural: joinVerifyDeltas walks the DISPATCHED findings and
-// enriches them, so no echo, however wrong, can substitute or delete a finding. The worst
-// an untrusted echo achieves is its own slice's honest degrade.
+// Dispatches one executor per planned slice sequentially (never parallel()), so each
+// envelope pairs to its slice by order. Degradation is per slice: an untrusted slice
+// re-emits only its own findings with origin='unknown', so the damage tracks the fault.
+// No finding is dropped and no echo can substitute one, because joinVerifyDeltas walks the
+// dispatched findings. `verified` is true only when zero slices degraded.
 export async function verifyStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
-  const limits = inp.limits || {};
-  const policy = inp.policy || {};
-  const nonce = inp.nonce;
-  const headShaShort = inp.headShaShort;
-  const sliceSize = effectiveSliceSize(limits, findings.length);
-  const verify = inp.verify || {};
+  const sliceSize = effectiveSliceSize(inp.limits || {}, findings.length);
 
-  // Empty set: nothing to verify, trivially trusted (no executor dispatched). The
-  // counters are still emitted, zero-populated: a consumer that has to distinguish
-  // "no slices" from "the field is missing" is a consumer that will get it wrong.
+  // The ledger is still emitted, zero-filled, so a consumer never has to tell "no slices"
+  // from "the field is missing".
   if (findings.length === 0) {
     return { findings: [], verified: true, gaps: [], inputProof: emptyInputProof() };
   }
 
-  const model = modelFor('code-gauntlet:executor', policy);
-
-  const baseBranch = effectiveVerifyBaseBranch(verify.baseBranch);
+  const model = modelFor('code-gauntlet:executor', inp.policy || {});
+  const baseBranch = effectiveVerifyBaseBranch((inp.verify || {}).baseBranch);
   const plan = planVerifySlices(findings, sliceSize, VERIFY_INLINE_CHAR_BUDGET, baseBranch);
   const slices = plan.slices;
 
-  // Degrade-and-disclose, not abort: a small verifySliceSize is a legitimate
-  // transcription-fidelity mitigation, not a mistake to reject, but its dispatch cost is
-  // real and otherwise invisible until the run runs long or worstCaseAgentCount rejects it
-  // outright. Collected here rather than pushed straight into `gaps` so it lands ahead of
-  // any per-slice degrade gap, in the order this stage discovers information.
-  const fanoutGaps = [];
+  const gaps = [];
   if (slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD) {
     // Read the planner's tags: a skipped oversize finding prevents reconstructing a
     // boundary from the next slice. Every non-terminal slice names one of these bounds.
@@ -123,28 +90,24 @@ export async function verifyStage(ctx, input) {
       ['oversize', 'An oversize finding forced this split; raising verifySliceSize will not reduce this fan-out.'],
       ['count', 'Raise verifySliceSize to reduce fan-out.'],
     ].find(([reason]) => bounds.has(reason))[1];
-    fanoutGaps.push(`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
+    gaps.push(`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
       + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${slices.length * VERIFY_ATTEMPTS_PER_SLICE} `
       + `executor dispatches at ${VERIFY_ATTEMPTS_PER_SLICE} attempts per slice. ${fanoutAdvice}`);
   }
 
   const out = [];
-  const gaps = [...fanoutGaps];
   let degradedSlices = 0;
   const inputProof = { ...emptyInputProof(), slices: slices.length };
 
-  // Keep oversize findings in original order with planned slices. They are degraded
-  // individually, never dispatched, and do not consume a slice nonce or executor
-  // attempt. The planner returns them beside the slices and their closeReasons.
+  // Oversize findings keep their original position among the slices. They are degraded
+  // individually and consume no slice index, nonce or executor attempt.
   const units = [
     ...slices.map((slice, i) => ({ kind: 'slice', slice, index: i, position: findings.indexOf(slice[0]) })),
     ...plan.oversize.map((finding) => ({ kind: 'oversize', finding, position: findings.indexOf(finding) })),
   ].sort((a, b) => a.position - b.position);
 
-  // The output is assembled in SLICE-INDEX order — trusted output and degraded originals
-  // alike — because downstream ranking (applyChallenges' stable sort on severity then
-  // confidence) breaks ties by array position. Completion order or "trusted first" would
-  // make delivery ordering vary run to run for tied findings.
+  // Trusted and degraded findings alike leave in input order: applyChallenges' stable
+  // sort breaks ties by array position, so any other order would vary delivery run to run.
   for (const unit of units) {
     if (unit.kind === 'oversize') {
       const content = { findings: [projectVerifySliceFinding(unit.finding)], base_branch: baseBranch };
@@ -159,8 +122,7 @@ export async function verifyStage(ctx, input) {
       degradedSlices += 1;
       continue;
     }
-    const i = unit.index;
-    const slice = unit.slice;
+    const { index: i, slice } = unit;
     const content = { findings: slice.map(projectVerifySliceFinding), base_branch: baseBranch };
     const expectedInputChecksum = firstUnsafeNumber(content, `slice${i}`) === null
       ? sliceInputChecksum(content)
@@ -177,16 +139,15 @@ export async function verifyStage(ctx, input) {
       degradedSlices += 1;
     };
 
-    // Check ids before dispatch: an echo cannot be joined without a usable id set.
-    // Degrading only this slice contains a merge-side id regression instead of failing
-    // the run or spending an executor on an answer the stage cannot use.
+    // An echo cannot be joined without a usable id set, so a merge-side id regression
+    // degrades this slice before an executor is spent on an answer the stage cannot use.
     const ids = dispatchableIds(slice);
     if (!ids.ok) {
       degrade(`slice ${i}: ${ids.reason} — the delta echo is keyed by id, so this slice cannot be verified`);
       continue;
     }
 
-    const attempt = await verifySliceWithRetry(ctx, inp, i, slice, { model, nonce, headShaShort, ids: ids.ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload: payload });
+    const attempt = await verifySliceWithRetry(ctx, inp, i, slice, { model, ids: ids.ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload: payload });
     if (!attempt.ok) {
       if (attempt.inputFault === 'mismatch') inputProof.mismatched += 1;
       else if (attempt.inputFault === 'missing') inputProof.missing += 1;
@@ -207,55 +168,36 @@ export async function verifyStage(ctx, input) {
   return { findings: out, verified: degradedSlices === 0, gaps, inputProof };
 }
 
-// One slice's share of the UNVERIFIED degradation: its ORIGINAL findings re-emitted with
-// origin='unknown' (surfaced-classification skipped). Nothing is dropped and nothing is
-// upgraded; numerics are pinned because this path re-emits discovery-shaped findings.
+// A degraded slice re-emits its original findings: nothing dropped, nothing upgraded.
 function degradedSlice(slice) {
   return slice.map((f) => ({ ...pinNumericFields(f), origin: 'unknown' }));
 }
 
-// The inline proof ledger. One object, one construction site, so a new path
-// cannot forget a key. `retried` counts slices trusted only
-// on their second inline transcription attempt; `retriedMismatch`/`retriedMissing` are
-// disjoint subsets whose FIRST attempt had that input fault and whose second attempt was
-// trusted. `mismatched`/`missing` count only slices that still failed after the retry.
-// `oversize` counts findings that could not be dispatched within the measured command budget.
+// The inline proof ledger, built at one site so no path can forget a key. `retried` counts
+// slices trusted only on their second attempt; `retriedMismatch`/`retriedMissing` are its
+// disjoint subsets whose first attempt had that input fault. `mismatched`/`missing` count
+// slices that still failed after the retry, `oversize` findings too large to dispatch.
 const emptyInputProof = () => ({
   slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
   retried: 0, retriedMismatch: 0, retriedMissing: 0,
 });
 
-// The loud gap for one degraded slice. `detail` names the slice and carries the
-// underlying reason, so a reader can tell
-// WHICH share of the run lost its classification and why; `k of n` states the blast
-// radius directly, which is the whole point of per-slice degradation — a run that
-// degrades 2 of 16 findings must not read the same as one that degrades all 16.
-//
-// The UNVERIFIED token is load-bearing: tests and the bench checker's degrade scan key
-// on substrings of this string, and the underlying reason is passed through VERBATIM.
-// Verify failures carry the inline-channel reason directly; they have no registered
-// sentinel of the kind the persistence functions keep.
+// `k of n` states the blast radius: a run that degrades 2 of 16 findings must not read
+// like one that degrades all 16. The UNVERIFIED token is load-bearing: the bench checker's
+// degrade scan keys on substrings of this string, and `detail` passes through verbatim.
 function verifyDegradeGap(detail, k, n) {
   return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped`;
 }
 
-// One slice, dispatched at most VERIFY_ATTEMPTS_PER_SLICE times: the first executor call
-// and — only if that one came back untrusted — exactly ONE re-dispatch before degrading.
-// The executor is a sampled agent, not a function, so a second inline transcription is
-// a fresh sample and a plausible fix for a dropped/garbled receipt echo, a truncated
-// result body, a fabricated elimination, schema-retry exhaustion, or timeout throw.
-//
-// The retry carries a DISTINCT nonce (`${nonce}.${i}.r1`). Re-using the slice nonce
-// would move the exact confusion trustSlice defends against from space (two equal-length
-// slices satisfying each other's receipts) into time (attempt 2 satisfied by a replay of
-// attempt 1's receipt) — and since attempt 1 was untrusted, a fresh receipt is precisely
-// the thing we are re-dispatching to obtain. The suffix stays inside the args-waist nonce
-// charset (args.js NONCE_RE) and inside one AST-safe word token.
-//
-// The nonce is computed once here and threaded into verifyPrompt/verifyCommand, so the
-// command and the trust check cannot derive different values.
+// One slice, dispatched at most VERIFY_ATTEMPTS_PER_SLICE times. The executor is a sampled
+// agent, so a second attempt is a fresh sample and a plausible fix for a garbled echo, a
+// truncated body, schema-retry exhaustion or a timeout. The retry carries a distinct
+// nonce: with the slice nonce reused, a replay of the untrusted first receipt would
+// satisfy the second attempt. The `.r1` suffix stays inside the args-waist nonce charset
+// (args.js NONCE_RE). Each nonce is spelled once here and handed to both the command and
+// the trust check, so the two cannot derive different values.
 async function verifySliceWithRetry(c, inp, i, slice, record) {
-  const { nonce } = record;
+  const { nonce } = inp;
   const attempt = (sliceNonce, label) =>
     dispatchVerifySlice(c, inp, i, slice, record, sliceNonce, label);
 
@@ -264,9 +206,7 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
 
   const second = await attempt(`${nonce}.${i}.r1`, `verify-slice-${i}-retry`);
   if (second.ok) {
-    // Disclosed, not degraded: no finding lost its classification, but the run states
-    // that it took two dispatches to get there (the persist path's retry discloses the
-    // same way). Deliberately carries no UNVERIFIED token — nothing was degraded.
+    // Disclosed without the UNVERIFIED token: it took two dispatches, but nothing degraded.
     return {
       ok: true,
       verified: second.verified,
@@ -278,17 +218,15 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
   return {
     ok: false,
     reason: `${second.reason} — retried once after the first attempt failed (${first.reason})`,
-    // The FIRST attempt's fault when the second failed some other way. Without the
-    // fallback a slice whose first attempt failed its input proof and whose second died
-    // of a dropped receipt, a bad nonce or a throw incremented neither `mismatched` nor
-    // `retriedMismatch` — the ledger degraded the slice while attributing it to nothing.
+    // The first attempt's fault when the second failed some other way, or the ledger
+    // would degrade the slice while attributing it to nothing.
     inputFault: second.inputFault ?? first.inputFault,
   };
 }
 
 // One executor dispatch for one slice. Never throws: a thrown agent() becomes an
 // untrusted result carrying the message.
-async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload }, sliceNonce, label) {
+async function dispatchVerifySlice(c, inp, i, slice, { model, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload }, sliceNonce, label) {
   let env;
   try {
     env = await c.agent(verifyPrompt(inp, i, sliceNonce, inlinePayload), {
@@ -300,22 +238,16 @@ async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, ids,
   } catch (e) {
     return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };
   }
-  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length, ids, expectedInputChecksum, expectedInlineChecksum });
-  if (!trust.ok) {
-    return { ok: false, reason: trust.reason, inputFault: trust.inputFault };
-  }
+  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort: inp.headShaShort, n: slice.length, ids, expectedInputChecksum, expectedInlineChecksum });
+  if (!trust.ok) return trust;
   return { ok: true, verified: joinVerifyDeltas(slice, env.result.deltas) };
 }
 
-// The delta echo is joined by id, so a slice is only dispatchable when every finding in
-// it carries a usable string id and no two share one. Duplicates ACROSS slices are fine —
-// each slice's join is independent — so this is deliberately a per-slice check.
-//
-// Ids are matched EXACTLY, everywhere: here, in trustSlice's coverage check, and in the
-// join. Only the USABILITY test trims, mirroring gauntlet.verify.wire's `id.strip()` guard —
-// an id that is nothing but whitespace is one the script would skip. Matching on the
-// trimmed form would make two dispatched findings whose ids differ only by surrounding
-// whitespace collide into a whole-slice degrade the script itself would never produce.
+// The delta echo is joined by id, so every finding in a slice needs a usable string id no
+// other shares. Each slice's join is independent, so duplicates across slices are fine.
+// Ids match exactly here, in trustSlice and in the join; only the usability test trims,
+// mirroring gauntlet.verify.wire's `id.strip()` guard. Matching on the trimmed form would
+// collide two ids that differ only by padding into a degrade the script never produces.
 function dispatchableIds(slice) {
   const ids = [];
   const seen = new Set();
@@ -329,31 +261,20 @@ function dispatchableIds(slice) {
   return { ok: true, ids };
 }
 
-// A slice envelope is trusted only if it is the honest success shape AND its receipt
-// echoes exactly what we dispatched: the nonce (this answer is for OUR call), the head
-// sha (same tree the workflow resolved), and n_in (the executor loaded every finding we
-// sent). Four guards beyond the receipt:
+// A slice envelope is trusted only if it is the success shape and its receipt echoes the
+// dispatched nonce (this answer is for our call), head sha (the same tree) and n_in (every
+// finding was loaded). Four guards beyond the receipt:
+//   (1) coverage: the deltas name exactly the dispatched ids; sibling slices share a
+//       length, so a count cannot bind an answer to its question.
+//   (2) shape and stamp: typed fields, and only an eliminated delta carries the script's
+//       elimination_reason. Redundant with (3), kept for the precise reason in the gap.
+//   (3) content proof: the canonical rebuild checksums to what the script computed.
+//   (4) input proof: what the script decoded is what this stage dispatched.
+// Every failure degrades the whole slice and keeps every finding, so no guard can drop one.
 //
-//   (1) DELTA-ID COVERAGE — the deltas name exactly the ids this slice dispatched: no
-//       missing id, no duplicate, no stranger. A count cannot bind an answer to its
-//       question, because sibling slices share a length.
-//   (2) SHAPE AND STAMP — typed fields; a verified:false delta carries the script's
-//       elimination_reason stamp and a verified:true delta does not. Redundant with (3),
-//       kept for the precise reason it puts in the gap.
-//   (3) CONTENT PROOF — fnv1a32 over the canonical rebuild equals the checksum the script
-//       computed over its own deltas, which catches a coherent drift (1) and (2) pass.
-//   (4) INPUT PROOF — the token proof, then the value proof: what the script decoded is
-//       what this stage dispatched. (1)-(3) grade the answer; this grades the question.
-//
-// Every failure degrades the WHOLE slice to UNVERIFIED, which is conservative in the
-// direction that matters: every dispatched finding is KEPT (origin=unknown, disclosed in a
-// gap), so no guard here can be used to drop a real finding.
-//
-// Threat model: this defends against a STALE, DRIFTING or CONFUSED executor (an old/wrong
-// result, a fabricated success, another slice's answer, a garbled transcription) — NOT a
-// Byzantine one. The nonce is argv-visible and the checksum travels in the same envelope
-// as the data it covers, so a malicious executor could recompute both; an LLM transcribing
-// a document cannot, which is exactly the failure class this boundary keeps hitting.
+// Threat model: a stale, drifting or confused executor, not a Byzantine one. The nonce is
+// argv-visible and each checksum travels beside the data it covers, so a malicious
+// executor could recompute both; an LLM transcribing a document cannot.
 function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, expectedInlineChecksum }) {
   if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
   if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
@@ -376,9 +297,8 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
     for (const k of ['origin', 'severity', 'elimination_reason']) {
       if (deltaHas(d, k) && typeof d[k] !== 'string') return { ok: false, reason: `delta ${id}: ${k} is not a string` };
     }
-    // The script canonicalises confidence to an integer precisely so this side never has
-    // to agree with Python on how a float is spelled (_delta_confidence). A non-integer
-    // here therefore did not come from the script.
+    // The script canonicalises confidence to an integer (_delta_confidence) so the two
+    // runtimes never have to agree on a float's spelling; a non-integer is not the script's.
     if (deltaHas(d, 'confidence') && !Number.isInteger(d.confidence)) {
       return { ok: false, reason: `delta ${id}: confidence is not an integer` };
     }
@@ -403,47 +323,26 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
     return { ok: false, reason: `delta content proof mismatch (receipt ${proof}, recomputed ${recomputed}) — the echoed values are not the ones the script wrote` };
   }
 
-  // TOKEN PROOF — over the exact characters the executor was handed. Checked FIRST
-  // because it is the strictly stronger half: every mutation the value proof catches
-  // moves the token too, and the token also covers what the value proof cannot see
-  // (a re-spelled number, or an escaped surrogate pair whose decoded JS value would be
-  // unchanged). It is also always computable, where the value proof goes null on a
+  // The token proof goes first as the stronger half: it moves on every change the value
+  // proof catches, and it is always computable, where the value proof is null for a
   // number the two runtimes spell differently.
-  for (const { field, expected, missingReason, mismatchReason } of [
-    {
-      field: 'inline_checksum', expected: expectedInlineChecksum,
-      missingReason: 'inline token proof missing from receipt',
-      mismatchReason: (proof) => `slice-input token proof mismatch (receipt ${proof}, dispatched ${expectedInlineChecksum}) — the token the script decoded is not the token this stage dispatched`,
-    },
-    {
-      field: 'input_checksum', expected: expectedInputChecksum,
-      missingReason: 'input content proof missing from receipt',
-      mismatchReason: (proof) => `slice-input content proof mismatch (receipt ${proof}, dispatched ${expectedInputChecksum}) — the document the script decoded is not the document this stage dispatched`,
-    },
+  for (const [field, expected, missingReason, name, noun] of [
+    ['inline_checksum', expectedInlineChecksum, 'inline token proof missing from receipt', 'token', 'token'],
+    ['input_checksum', expectedInputChecksum, 'input content proof missing from receipt', 'content', 'document'],
   ]) {
     if (expected == null) continue;
-    const proof = typeof r[field] === 'string' ? r[field].trim() : '';
-    // A dropped field is retryable: a fresh executor sample can restore it.
-    if (!proof) return { ok: false, reason: missingReason, inputFault: 'missing' };
-    if (proof !== expected) return { ok: false, reason: mismatchReason(proof), inputFault: 'mismatch' };
+    const got = typeof r[field] === 'string' ? r[field].trim() : '';
+    if (!got) return { ok: false, reason: missingReason, inputFault: 'missing' };
+    if (got !== expected) return { ok: false, reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
   }
 
   return { ok: true };
 }
 
-// The pinned command: a single `python3 <script> --flags...` invocation whose tokens are
-// AST-safe (no command substitution, heredocs, env prefix,
-// or shell operators), each shellWord-quoted so a path bearing a space stays ONE argv word.
-// Per-slice input/output paths are sha-scoped and index-suffixed; verifyStage
-// supplies the slice document inline before dispatch, then the executor reads the slice
-// output. The input path is the code-written destination used by verify_findings.py.
-//
-// `sliceNonce` is THREADED IN, never re-derived: it is the same value verifySliceWithRetry
-// hands trustSlice as the expected receipt nonce, so argv and the trust check cannot
-// disagree. It varies by ATTEMPT as well as by slice (the retry's `.r1` suffix), which is
-// exactly what a second, independently-derived formula here would get wrong. The paths do
-// NOT vary by attempt: a retry re-runs the same script over the same slice input and
-// overwrites the same output.
+// One `python3 <script> --flags...` invocation of AST-safe tokens (no substitution, heredoc,
+// env prefix or operator), each shellWord-quoted so a path with a space stays one argv
+// word. The --input path is the code-written destination verify_findings.py uses. The nonce
+// varies by attempt; the paths do not, so a retry overwrites the same output.
 function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   const v = inp.verify || {};
   const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
@@ -461,11 +360,10 @@ function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   return parts.map(shellWord).join(' ');
 }
 
-// The executor is asked for a PREFIX of the output document, not the whole of
-// it: the script writes `result.deltas` as the first key precisely so a length-capped Read
-// (which returns no truncation notice) still contains everything this prompt
-// names. The large verified/eliminated arrays that follow are for bench and v2 consumers;
-// naming them here as explicitly-not-wanted is cheaper than letting the agent decide.
+// The executor is asked for a prefix of the output document: the script writes
+// `result.deltas` first so a length-capped Read, which gives no truncation notice, still
+// holds everything named here. The verified/eliminated arrays after it are for other
+// consumers, and naming them as not wanted is cheaper than letting the agent decide.
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
   return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, inline_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
 }

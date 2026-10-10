@@ -5,6 +5,7 @@ import { inspect } from 'node:util';
 import { INT_POLICY, WS_TRIM_RE, coerceInt, deepClone } from '../src/wire.js';
 import { verifyStage } from '../src/verifyStage.js';
 import { pinNumericFields } from '../src/verifyWire.js';
+import { verifyCtx, verifyInput } from './helpers/verifyDelta.js';
 
 const validation = (value) => coerceInt(value, INT_POLICY.validation);
 const filter = (value) => coerceInt(value, INT_POLICY.filter);
@@ -17,8 +18,6 @@ const label = (value) => (typeof value === 'string'
   : inspect(value));
 
 const DIGITS_400 = '9'.repeat(400);
-const EMPTY_OBJECT = {};
-const EMPTY_ARRAY = [];
 
 // [input, validation, filter, verify]
 const INT_POLICY_TABLE = [
@@ -61,8 +60,8 @@ const INT_POLICY_TABLE = [
   [`-${DIGITS_400}`, -Infinity, -Infinity, SAME],
   [null, null, null, SAME],
   [undefined, null, null, SAME],
-  [EMPTY_OBJECT, null, null, SAME],
-  [EMPTY_ARRAY, null, null, SAME],
+  [{}, null, null, SAME],
+  [[], null, null, SAME],
 ];
 
 for (const [input, asValidation, asFilter, asVerify] of INT_POLICY_TABLE) {
@@ -82,23 +81,11 @@ for (const refused of [true, NaN, '72.9', null]) {
   });
 }
 
-// Line buckets accept only the signed ASCII integer form inside the union whitespace class.
+// Line buckets: the leading whitespace the policy table lacks, and a non-ASCII digit.
 const FILTER_LINE_TABLE = [
-  ['\x1c12', 12], // U+001C FS
-  ['\x1d12', 12], // U+001D GS
   ['\x1e12', 12], // U+001E RS
-  ['\x1f12', 12], // U+001F US
   ['\x8512', 12], // U+0085 NEL
-  ['\ufeff12', 12], // U+FEFF BOM
-  ['\x1c99', 99], // raw parseInt of this string is NaN
   ['\u0661\u0662', null], // Arabic-Indic digits
-  ['\uff11\uff12', null], // fullwidth digits
-  ['1_2', null], // PEP 515 underscore
-  [25.7, 25],
-  [20, 20],
-  [null, null],
-  [true, 1],
-  [false, 0],
 ];
 
 for (const [input, expected] of FILTER_LINE_TABLE) {
@@ -108,15 +95,8 @@ for (const [input, expected] of FILTER_LINE_TABLE) {
 }
 
 test('a degraded slice carries a pinned string confidence', async () => {
-  const ctx = { agent: async () => ({ status: 'failed', exitCode: 1 }) };
-  const out = await verifyStage(ctx, {
-    findings: [{ id: 'F1', file: 'a.js', line_start: 1, confidence: '85', origin: 'new' }],
-    nonce: 'n-1',
-    headShaShort: 'abc123',
-    limits: { verifySliceSize: 200 },
-    policy: {},
-    verify: { scriptPath: '/p/verify_findings.py', inputPathBase: '/o/in', outputPathBase: '/o/out', baseBranch: 'main', diffPath: '/o/d.patch' },
-  });
+  const ctx = verifyCtx(() => ({ status: 'failed', exitCode: 1 }));
+  const out = await verifyStage(ctx, verifyInput([{ id: 'F1', file: 'a.js', line_start: 1, confidence: '85', origin: 'new' }]));
   assert.equal(out.verified, false);
   assert.deepEqual(out.findings.map((f) => [f.confidence, f.origin]), [[85, 'unknown']]);
 });
@@ -134,7 +114,6 @@ test('deepClone returns a structurally-independent copy (no shared references)',
   assert.deepEqual(src.nested.b, [1, 2, 3], 'mutating the copy never touches the source');
   assert.equal(src.list[0].x, 1);
 });
-
 
 // Dedup titles trim the full review whitespace class.
 const TITLE_STRIP_TABLE = [

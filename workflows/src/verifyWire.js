@@ -3,10 +3,9 @@
 // the stage can both import it.
 import { INT_POLICY, coerceInt, fnv1a32 } from './wire.js';
 
-// The verify boundary carries the slice as one percent-encoded, shell-inert token. The
-// alphabet is intentionally narrower than shellWord's safe class: JSON punctuation remains
-// in the outer document, but no encoded string can contain a shell operator, quote, or
-// escape-bearing character.
+// The slice travels as one percent-encoded, shell-inert token. The alphabet is narrower
+// than shellWord's safe class: JSON punctuation remains in the outer document, but no
+// encoded string can contain a shell operator, quote or escape-bearing character.
 export const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
 const VERIFY_INLINE_HEX = '0123456789ABCDEF';
 const VERIFY_INLINE_PRINTABLE_RE = /^[\x20-\x26\x28-\x7E]*$/;
@@ -33,10 +32,9 @@ function appendInlineUtf8(out, codePoint) {
   }
 }
 
-// encodeInlineString(s) -> a JSON-string-safe value with no JSON or shell escapes.
 // UTF-16 is walked deliberately: a well-formed surrogate pair becomes its four UTF-8
-// bytes, while a lone surrogate is represented as %uXXXX so Python can restore the exact
-// code unit rather than replacing it. A safe code unit passes through unchanged.
+// bytes, while a lone surrogate becomes %uXXXX so Python can restore the exact code unit
+// instead of replacing it.
 export function encodeInlineString(s) {
   const text = String(s);
   const out = [];
@@ -75,9 +73,8 @@ function encodeInlineValue(value) {
   return value;
 }
 
-// encodeSliceInline(content) -> compact JSON whose only non-JSON punctuation is from
-// printable ASCII excluding apostrophe. This post-condition is the shell safety belt:
-// shellWord can therefore wrap the complete document in one POSIX single-quoted token.
+// Compact JSON of printable ASCII with no apostrophe. The postcondition is the shell
+// safety belt: shellWord can wrap the whole document in one POSIX single-quoted token.
 export function encodeSliceInline(content) {
   const encoded = JSON.stringify(encodeInlineValue(content));
   if (typeof encoded !== 'string' || !VERIFY_INLINE_PRINTABLE_RE.test(encoded)) {
@@ -92,20 +89,16 @@ export function encodeSliceInline(content) {
 // MAX_ARG_STRLEN is 131,072, far above this.
 export const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
-// The canonical key order of one delta, and the ONLY keys that carry meaning. The checksum
-// canonicalisation and the join derive from this list; the dispatch schema is written
-// beside it by hand. The generator projects the Python delta value fields from this list.
-// Audit against gauntlet.verify.decide's assignments: origin is set by
-// classify_blame and validate_diff_lines; severity by their downgrade;
-// confidence by verify_factual; elimination_reason by run_verification.
-// No deletion path mutates a finding. These are the downstream-visible writes.
-// blame_metadata, factual_verification, and diff_validation remain only in the
-// on-disk audit trail; the finding schema does not declare them. The merge-added
-// `agent` is not a delta key: the script never writes it, and the join keeps it from the dispatched copy.
+// The canonical key order of one delta, and the only keys that carry meaning. The checksum
+// canonicalisation and the join derive from this list, the generator projects the Python
+// delta value fields from it, and the dispatch schema is written beside it by hand. These
+// are the script's downstream-visible writes (gauntlet.verify.decide): origin from
+// classify_blame and validate_diff_lines, severity from their downgrade, confidence from
+// verify_factual, elimination_reason from run_verification. The merge-added `agent` is not
+// one: the script never writes it, and the join keeps it from the dispatched copy.
 export const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
 
-// The delta keys that carry a VALUE onto a finding (DELTA_KEYS minus the two structural
-// ones). Iterated in the same fixed order the canonicalisation uses.
+// The delta keys that carry a value onto a finding.
 const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
 
 export const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
@@ -119,13 +112,12 @@ function deltasById(deltas) {
   return byId;
 }
 
-// Walks the DISPATCHED slice, never the echo: order, membership and every untouched field
-// (the merge-added `agent` among them) come from data this stage already holds. A finding
-// whose delta says verified:false was eliminated by the script and is omitted.
+// Walks the dispatched slice, never the echo: order, membership and every untouched field
+// come from data this stage already holds. A finding whose delta says verified:false was
+// eliminated by the script and is omitted.
 //
 // Call only after trustSlice accepts the deltas: it proves every dispatched id has exactly
-// one boolean `verified`. Skipping that coverage check would silently drop findings with
-// no delta; retaining them here would falsely deliver unverified findings as verified.
+// one boolean `verified`. Without that, a finding with no delta is silently dropped here.
 export function joinVerifyDeltas(slice, deltas) {
   const byId = deltasById(deltas);
   const out = [];
@@ -139,16 +131,13 @@ export function joinVerifyDeltas(slice, deltas) {
   return out;
 }
 
-// Numeric finding fields that verify_findings.py does arithmetic on (line_start - 1, line
-// comparisons), pinned to real numbers before inline encoding, on the join and on the
-// degraded path, mirroring gauntlet.verify.wire.coerce_numeric_fields. A quoted "153"
-// would make receipt-path arithmetic raise and degrade the whole slice to UNVERIFIED, and
-// a leaked "85" makes the filter's consensus boost concatenate ("85" + 10 -> "8510"). A
-// fractional number is rounded half-up because line fields are not in the delta: the join
-// would otherwise keep the fractional value while verification ran against the rounded
-// one. A delta that carries a script-decided confidence overwrites the rounded one
-// afterward. Whatever the verify policy refuses is left alone so the script's own guards
-// still fire.
+// The fields verify_findings.py does arithmetic on, pinned to real numbers before inline
+// encoding, on the join and on the degraded path, mirroring
+// gauntlet.verify.wire.coerce_numeric_fields. A quoted "153" would make the script's line
+// arithmetic raise and degrade the slice, and a leaked "85" makes the filter's consensus
+// boost concatenate ("85" + 10 -> "8510"). A fraction is rounded because line fields are
+// not in the delta: the join would keep the fraction while verification ran against the
+// rounded value. Whatever the verify policy refuses is left for the script's own guards.
 const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'confidence'];
 export function pinNumericFields(finding) {
   const out = { ...finding };
@@ -159,22 +148,17 @@ export function pinNumericFields(finding) {
   return out;
 }
 
-// The inline slice projection: the fields verify_findings.py consults on a
-// dispatched slice, walked in this fixed order so the serialized key order is
-// deterministic — NOT the order the script reads them in (classify_blame's reads come
-// first there and don't match this order). The generator projects this list into
-// gauntlet.registry; the verifier read-site test checks it against Python source.
-// `origin` is tolerated forward-compat even though classify_blame overwrites it
-// before every read site.
+// The fields verify_findings.py consults on a dispatched slice, in the fixed order that
+// makes the serialized key order deterministic (not the order the script reads them in).
+// The generator projects this list into gauntlet.registry, and the verifier read-site test
+// checks it against the Python source. `origin` is tolerated for forward compatibility:
+// classify_blame overwrites it before every read site.
 export const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin'];
 
-// projectVerifySliceFinding(finding) -> a finding narrowed to VERIFY_SLICE_FIELDS, in that
-// key order, with absent fields left absent (never written as null — an omitted key and an
-// explicit null are different signals to the script's own `.get()` defaults). The delta
-// echo (joinVerifyDeltas) rebuilds every verified finding from the workflow's OWN in-memory
-// copy, never from this projection, so a field dropped here loses nothing downstream. The
-// numeric pin is the one applied to the full finding, so a slice's on-disk numbers and its
-// in-memory numbers never diverge.
+// Absent fields stay absent, never null: an omitted key and an explicit null are different
+// signals to the script's `.get()` defaults. A field dropped here loses nothing, because
+// the join rebuilds each finding from the in-memory copy. The numeric pin is the one the
+// join applies, so a slice's dispatched numbers and its in-memory numbers never diverge.
 export function projectVerifySliceFinding(finding) {
   const projected = {};
   for (const k of VERIFY_SLICE_FIELDS) {
@@ -183,41 +167,29 @@ export function projectVerifySliceFinding(finding) {
   return pinNumericFields(projected);
 }
 
-// sliceInputChecksum(content) -> the VALUE proof over the dispatched slice document.
-// The ONE site that spells this canonical form; gauntlet.jsjson.checksum_or_none is
-// its Python twin. Deliberately unsorted: the document is built in VERIFY_SLICE_FIELDS
-// order by projectVerifySliceFinding, the script reads it back in that order, and a
-// document that comes back in a different shape is a regenerated token rather than a
-// copied one. Sorting would forgive exactly that regeneration while leaving the proof's
-// array-order, extra-field and number-spelling sensitivities untouched.
+// The value proof over the dispatched slice document, and the one site that spells this
+// canonical form; gauntlet.jsjson.checksum_or_none is its Python twin. Unsorted on
+// purpose: the document is built and read back in VERIFY_SLICE_FIELDS order, so one that
+// returns in another key order was regenerated, not copied, and sorting would forgive that.
 export function sliceInputChecksum(content) {
   return fnv1a32(JSON.stringify(content, null, 2));
 }
 
-// sliceTokenChecksum(payload) -> the BYTE proof over the inline token itself.
-// It covers the exact characters the executor was asked to reproduce, so it catches every
-// alteration the value proof can miss — key transposition, a findings-array or
-// cross_file_refs permutation, an invented field, a re-spelled number, and an astral
-// character rewritten as an escaped surrogate pair. The decoder rejects that spelling by
-// name; independently constructed documents containing an astral character or its
-// surrogate pair still serialize identically for the value proof. The token is printable
-// ASCII by construction (encodeSliceInline's postcondition), so this proof needs no
-// collation, escaping or number-spelling contract in either runtime.
+// The byte proof over the inline token: the exact characters the executor was asked to
+// reproduce, so it catches what the value proof cannot see, such as a re-spelled number
+// or an astral character rewritten as an escaped surrogate pair. The token is printable
+// ASCII (encodeSliceInline's postcondition), so this proof needs no collation, escaping
+// or number-spelling contract in either runtime.
 export function sliceTokenChecksum(payload) {
   return fnv1a32(String(payload));
 }
 
-// The deltas in a form both runtimes spell identically.
-// Rebuilt from the DISPATCHED id order, one object per id, keys in DELTA_KEYS order,
-// absent values omitted — so the echo's own array order, key order, and any field it
-// invented cannot move the checksum. Only the VALUES the script decided can.
-// gauntlet.verify.wire.build_deltas() emits exactly this shape in exactly this order.
-//
-// The rebuild therefore also makes the proof BLIND to any key outside DELTA_KEYS. That is
-// deliberate and not a hole: joinVerifyDeltas copies only DELTA_VALUE_KEYS, so a key the
-// proof ignores is a key nothing reads — and VERIFY_SCHEMA is deliberately OPEN, so an
-// undeclared key genuinely can arrive. Covering it would buy no protection and would cost
-// the order- and noise-tolerance that keeps a harmless echo quirk from degrading a slice.
+// The deltas in a form both runtimes spell identically: rebuilt in dispatched id order,
+// keys in DELTA_KEYS order, absent values omitted, as gauntlet.verify.wire.build_deltas()
+// emits them. The echo's array order, key order and invented fields cannot move the
+// checksum; only the values the script decided can. The proof is therefore blind to a key
+// outside DELTA_KEYS, which is not a hole: the join copies only DELTA_VALUE_KEYS, so a key
+// the proof ignores is a key nothing reads.
 function canonicalDeltas(ids, byId) {
   return ids.map((id) => {
     const src = byId.get(id) || {};

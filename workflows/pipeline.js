@@ -1003,20 +1003,15 @@ const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 async function verifyStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
-  const limits = inp.limits || {};
-  const policy = inp.policy || {};
-  const nonce = inp.nonce;
-  const headShaShort = inp.headShaShort;
-  const sliceSize = effectiveSliceSize(limits, findings.length);
-  const verify = inp.verify || {};
+  const sliceSize = effectiveSliceSize(inp.limits || {}, findings.length);
   if (findings.length === 0) {
     return { findings: [], verified: true, gaps: [], inputProof: emptyInputProof() };
   }
-  const model = modelFor('code-gauntlet:executor', policy);
-  const baseBranch = effectiveVerifyBaseBranch(verify.baseBranch);
+  const model = modelFor('code-gauntlet:executor', inp.policy || {});
+  const baseBranch = effectiveVerifyBaseBranch((inp.verify || {}).baseBranch);
   const plan = planVerifySlices(findings, sliceSize, VERIFY_INLINE_CHAR_BUDGET, baseBranch);
   const slices = plan.slices;
-  const fanoutGaps = [];
+  const gaps = [];
   if (slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD) {
     const bounds = new Set(plan.closeReasons.slice(0, -1));
     const fanoutAdvice = [
@@ -1024,12 +1019,11 @@ async function verifyStage(ctx, input) {
       ['oversize', 'An oversize finding forced this split; raising verifySliceSize will not reduce this fan-out.'],
       ['count', 'Raise verifySliceSize to reduce fan-out.'],
     ].find(([reason]) => bounds.has(reason))[1];
-    fanoutGaps.push(`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
+    gaps.push(`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
       + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${slices.length * VERIFY_ATTEMPTS_PER_SLICE} `
       + `executor dispatches at ${VERIFY_ATTEMPTS_PER_SLICE} attempts per slice. ${fanoutAdvice}`);
   }
   const out = [];
-  const gaps = [...fanoutGaps];
   let degradedSlices = 0;
   const inputProof = { ...emptyInputProof(), slices: slices.length };
   const units = [
@@ -1050,8 +1044,7 @@ async function verifyStage(ctx, input) {
       degradedSlices += 1;
       continue;
     }
-    const i = unit.index;
-    const slice = unit.slice;
+    const { index: i, slice } = unit;
     const content = { findings: slice.map(projectVerifySliceFinding), base_branch: baseBranch };
     const expectedInputChecksum = firstUnsafeNumber(content, `slice${i}`) === null
       ? sliceInputChecksum(content)
@@ -1072,7 +1065,7 @@ async function verifyStage(ctx, input) {
       degrade(`slice ${i}: ${ids.reason} — the delta echo is keyed by id, so this slice cannot be verified`);
       continue;
     }
-    const attempt = await verifySliceWithRetry(ctx, inp, i, slice, { model, nonce, headShaShort, ids: ids.ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload: payload });
+    const attempt = await verifySliceWithRetry(ctx, inp, i, slice, { model, ids: ids.ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload: payload });
     if (!attempt.ok) {
       if (attempt.inputFault === 'mismatch') inputProof.mismatched += 1;
       else if (attempt.inputFault === 'missing') inputProof.missing += 1;
@@ -1102,7 +1095,7 @@ function verifyDegradeGap(detail, k, n) {
   return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped`;
 }
 async function verifySliceWithRetry(c, inp, i, slice, record) {
-  const { nonce } = record;
+  const { nonce } = inp;
   const attempt = (sliceNonce, label) =>
     dispatchVerifySlice(c, inp, i, slice, record, sliceNonce, label);
   const first = await attempt(`${nonce}.${i}`, `verify-slice-${i}`);
@@ -1123,7 +1116,7 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
     inputFault: second.inputFault ?? first.inputFault,
   };
 }
-async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload }, sliceNonce, label) {
+async function dispatchVerifySlice(c, inp, i, slice, { model, ids, expectedInputChecksum, expectedInlineChecksum, inlinePayload }, sliceNonce, label) {
   let env;
   try {
     env = await c.agent(verifyPrompt(inp, i, sliceNonce, inlinePayload), {
@@ -1135,10 +1128,8 @@ async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, ids,
   } catch (e) {
     return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };
   }
-  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length, ids, expectedInputChecksum, expectedInlineChecksum });
-  if (!trust.ok) {
-    return { ok: false, reason: trust.reason, inputFault: trust.inputFault };
-  }
+  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort: inp.headShaShort, n: slice.length, ids, expectedInputChecksum, expectedInlineChecksum });
+  if (!trust.ok) return trust;
   return { ok: true, verified: joinVerifyDeltas(slice, env.result.deltas) };
 }
 function dispatchableIds(slice) {
@@ -1196,22 +1187,14 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum, e
   if (proof !== recomputed) {
     return { ok: false, reason: `delta content proof mismatch (receipt ${proof}, recomputed ${recomputed}) — the echoed values are not the ones the script wrote` };
   }
-  for (const { field, expected, missingReason, mismatchReason } of [
-    {
-      field: 'inline_checksum', expected: expectedInlineChecksum,
-      missingReason: 'inline token proof missing from receipt',
-      mismatchReason: (proof) => `slice-input token proof mismatch (receipt ${proof}, dispatched ${expectedInlineChecksum}) — the token the script decoded is not the token this stage dispatched`,
-    },
-    {
-      field: 'input_checksum', expected: expectedInputChecksum,
-      missingReason: 'input content proof missing from receipt',
-      mismatchReason: (proof) => `slice-input content proof mismatch (receipt ${proof}, dispatched ${expectedInputChecksum}) — the document the script decoded is not the document this stage dispatched`,
-    },
+  for (const [field, expected, missingReason, name, noun] of [
+    ['inline_checksum', expectedInlineChecksum, 'inline token proof missing from receipt', 'token', 'token'],
+    ['input_checksum', expectedInputChecksum, 'input content proof missing from receipt', 'content', 'document'],
   ]) {
     if (expected == null) continue;
-    const proof = typeof r[field] === 'string' ? r[field].trim() : '';
-    if (!proof) return { ok: false, reason: missingReason, inputFault: 'missing' };
-    if (proof !== expected) return { ok: false, reason: mismatchReason(proof), inputFault: 'mismatch' };
+    const got = typeof r[field] === 'string' ? r[field].trim() : '';
+    if (!got) return { ok: false, reason: missingReason, inputFault: 'missing' };
+    if (got !== expected) return { ok: false, reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
   }
   return { ok: true };
 }
@@ -4931,9 +4914,8 @@ function findingCount(findings) {
 }
 function verifyTerm(L, findings, baseBranch = 'main') {
   const count = findingCount(findings);
-  const branch = effectiveVerifyBaseBranch(baseBranch);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET, branch).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET, baseBranch).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;

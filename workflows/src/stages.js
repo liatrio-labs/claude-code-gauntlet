@@ -22,7 +22,7 @@ import { merge, normalizeFindingPaths } from './mergeFindings.js';
 import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, safeFindingLabel } from './paths.js';
 import { INT_POLICY, coerceInt, deepClone, firstUnsafeNumber, fnv1a32, normalizeForChecksum, shellWord } from './wire.js';
 import { VERIFY_INLINE_CHAR_BUDGET } from './verifyWire.js';
-import { VERIFY_ATTEMPTS_PER_SLICE, effectiveSliceSize, effectiveVerifyBaseBranch, planVerifySlices } from './capacity.js';
+import { VERIFY_ATTEMPTS_PER_SLICE, effectiveSliceSize, planVerifySlices } from './capacity.js';
 import { verifyStage } from './verifyStage.js';
 import { applyValidations, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
@@ -754,9 +754,8 @@ function findingCount(findings) {
 
 function verifyTerm(L, findings, baseBranch = 'main') {
   const count = findingCount(findings);
-  const branch = effectiveVerifyBaseBranch(baseBranch);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET, branch).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET, baseBranch).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;

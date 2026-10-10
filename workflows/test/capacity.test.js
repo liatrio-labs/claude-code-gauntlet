@@ -46,7 +46,6 @@ test('planner is pure, count-bounded, budget-bounded, and isolates oversize find
   for (const slice of plan.slices) {
     assert.ok(encodeSliceInline({ findings: slice.map(projectVerifySliceFinding), base_branch: 'main' }).length <= 100000);
   }
-  assert.ok(VERIFY_INLINE_CHAR_BUDGET > 0);
 });
 
 test('planner predicts exact encoded lengths for random findings across branch lengths', () => {

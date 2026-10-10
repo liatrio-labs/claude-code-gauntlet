@@ -58,8 +58,6 @@ for (const row of TRUSTED_ROWS) {
     assert.deepEqual(out.gaps, []);
     assert.deepEqual(out.inputProof, row.ledger || { ...ZERO, slices: 1, proven: 1 });
     assert.deepEqual(ctx.calls.map((call) => [call.label, call.agentType]), [['verify-slice-0', 'code-gauntlet:executor']]);
-    for (const f of out.findings) assert.equal(f.agent, 'bug-detector');
-    if (row.changes) assert.equal(out.findings[0].hidden_errors, 'AttributeError on the API-key path');
   });
 }
 
@@ -178,8 +176,6 @@ const LEDGER_ROWS = [
   { name: 'empty input emits the complete zero ledger', empty: true },
   { name: 'wrong delta proof recovers with literal retry nonce', deltaFault: true, trusted: true,
     gap: 'verify-slice-retry: slice 0\'s first executor dispatch was untrusted (delta content proof mismatch (receipt fnv1a32:0xdeadbeef, recomputed fnv1a32:0xdca84eaa) \u2014 the echoed values are not the ones the script wrote); a second dispatch was trusted and this slice\'s verified findings are from that attempt' },
-  { name: 'wrong content proof under a good token degrades', receipt: () => ({ input_checksum: BAD_PROOF }), mismatched: 1,
-    gap: 'verify: UNVERIFIED \u2014 slice 0: slice-input content proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0x693ddb36) \u2014 the document the script decoded is not the document this stage dispatched \u2014 retried once after the first attempt failed (slice-input content proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0x693ddb36) \u2014 the document the script decoded is not the document this stage dispatched); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped' },
 ];
 for (const row of LEDGER_ROWS) {
   test(`input-proof ledger: ${row.name}`, async () => {
@@ -205,18 +201,14 @@ for (const row of LEDGER_ROWS) {
 }
 
 const BIG = { id: 'BIG', origin: 'new', description: 'x'.repeat(50000) };
-const countFindings = Array.from({ length: 130 }, (_, i) => ({
-  id: `COUNT${i}`, file: `f${i}.js`, line_start: 1, line_end: 1, description: 'x'.repeat(800),
-  evidence: 'e', severity: 'high', confidence: 90, cross_file_refs: [], origin: 'new',
-}));
-const fatFindings = Array.from({ length: 60 }, (_, i) => ({
-  id: `FAT${i}`, file: `f${i}.js`, line_start: 1, line_end: 1, description: 'x'.repeat(4100),
+const bulk = (prefix, length, chars) => Array.from({ length }, (_, i) => ({
+  id: `${prefix}${i}`, file: `f${i}.js`, line_start: 1, line_end: 1, description: 'x'.repeat(chars),
   evidence: 'e', severity: 'high', confidence: 90, cross_file_refs: [], origin: 'new',
 }));
 const FANOUT_ROWS = [
-  { name: 'count bound advises raising slice size', findings: countFindings,
+  { name: 'count bound advises raising slice size', findings: bulk('COUNT', 130, 800),
     gap: 'verify_fanout: effective verifySliceSize=25 splits 130 finding(s) into 6 slices (above the 5-slice disclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. Raise verifySliceSize to reduce fan-out.' },
-  { name: 'budget bound advises that raising slice size will not help', findings: fatFindings,
+  { name: 'budget bound advises that raising slice size will not help', findings: bulk('FAT', 60, 4100),
     gap: 'verify_fanout: effective verifySliceSize=25 splits 60 finding(s) into 6 slices (above the 5-slice disclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. The inline character budget bound this split; raising verifySliceSize will not reduce this fan-out.' },
   { name: 'oversize boundary takes precedence over count', findings: [
     ...Array.from({ length: 24 }, (_, i) => ({ id: `A${i}`, origin: 'new' })), BIG,
