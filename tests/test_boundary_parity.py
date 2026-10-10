@@ -394,7 +394,7 @@ def test_verify_consumes_pipeline_findings_without_error(tmp_path):
     diff_path = tmp_path / "diff.patch"
     diff_path.write_text(build_gh_diff(PERSISTED_FINDINGS), encoding="utf-8")
     source = (
-        "import { encodeSliceInline } from './workflows/src/stages.js';"
+        "import { encodeSliceInline } from './workflows/src/verifyWire.js';"
         "let source = ''; for await (const chunk of process.stdin) source += chunk;"
         "process.stdout.write(encodeSliceInline(JSON.parse(source)));"
     )

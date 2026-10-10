@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fnv1a32, normalizeForChecksum } from '../src/stages.js';
+import { fnv1a32, normalizeForChecksum } from '../src/wire.js';
 import { matchesRule } from '../src/args.js';
 import { foldInline, foldProse, openProseFence, proseFenceCloser } from '../src/renderReport.js';
 

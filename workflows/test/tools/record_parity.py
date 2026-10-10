@@ -52,7 +52,7 @@ def _slice_inline(inp):
     from gauntlet.verify.wire import checksum_or_none
 
     source = (
-        "import { encodeSliceInline } from './workflows/src/stages.js'; "
+        "import { encodeSliceInline } from './workflows/src/verifyWire.js'; "
         "import fs from 'node:fs'; "
         "process.stdout.write(encodeSliceInline(JSON.parse(fs.readFileSync(0, 'utf8'))));"
     )

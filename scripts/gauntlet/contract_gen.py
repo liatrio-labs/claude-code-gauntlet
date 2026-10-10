@@ -108,7 +108,7 @@ def _run_node(node_src: str, repo_root: str) -> proc.CompletedProcess[str]:
 def load_registry(repo_root: str) -> Mapping[str, Any]:
     """Import the live schemas and keep finding and waist required lists distinct."""
     node_src = (
-        "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/args.js'), import('./workflows/src/applyValidations.js'), import('./workflows/src/filterFindings.js'), import('./workflows/src/stages.js')]).then(([m, a, v, f, s]) => console.log(JSON.stringify({"
+        "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/args.js'), import('./workflows/src/applyValidations.js'), import('./workflows/src/filterFindings.js'), import('./workflows/src/stages.js'), import('./workflows/src/verifyWire.js')]).then(([m, a, v, f, s, w]) => console.log(JSON.stringify({"
         "  required: m.FINDING_REQUIRED,"
         "  waistRequired: a.REQUIRED,"
         "  canonicalFields: Object.keys(m.FINDING_PROP_TYPES),"
@@ -123,8 +123,8 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
         "  severityEmoji: m.SEVERITY_EMOJI,"
         "  severityOrder: f.SEVERITY_ORDER,"
         "  reachability: v.REACHABILITY_VALUES,"
-        "  deltaKeys: s.DELTA_KEYS,"
-        "  verifySliceFields: s.VERIFY_SLICE_FIELDS,"
+        "  deltaKeys: w.DELTA_KEYS,"
+        "  verifySliceFields: w.VERIFY_SLICE_FIELDS,"
         "  fixMaxLines: f.FIX_MAX_LINES, fixMaxChars: f.FIX_MAX_CHARS,"
         "  artifactPaths: s.plannedArtifactPaths('/__gauntlet_registry_root__', '__GAUNTLET_SHA__'),"
         "  jsTrimChars: Array.from({length: 65536}, (_, i) => String.fromCharCode(i)).filter(c => c.trim() === '' && c !== '').join(''),"

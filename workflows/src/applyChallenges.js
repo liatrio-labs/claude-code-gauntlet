@@ -1,20 +1,11 @@
 // Apply challenge scores to findings and preserve the consolidation fields.
 
 import { consolidateCrossAgent, SEVERITY_ORDER } from './filterFindings.js';
-import { pyIntStrict } from './applyValidations.js';
+import { INT_POLICY, coerceInt, deepClone } from './wire.js';
 
 // SEVERITY_ORDER is imported from filterFindings.js (its single owner) — see the
 // note there. A second top-level `const SEVERITY_ORDER` here collided in the
 // concatenated bundle after build.js strips the `export` keyword.
-
-// Deep clone via JSON round-trip. The workflow runtime sandbox does NOT provide
-// structuredClone (a node/browser global, absent here — it crashed the live smoke
-// run at the call site below). Findings are JSON-safe by construction (strings,
-// numbers, booleans, null, plain arrays/objects — no Date/Map/Set/undefined/
-// functions), so a JSON round-trip is a faithful deep copy.
-export function deepClone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
 
 export function downgradeSeverity(severity) {
   const idx = typeof severity === 'string' ? SEVERITY_ORDER.indexOf(severity.toLowerCase()) : -1;
@@ -51,7 +42,7 @@ export function applyChallenges(findings, challenges) {
     if (cid === undefined || cid === null) continue;
     const rawScore = 'score' in entry ? entry.score : undefined;
     if (rawScore === undefined || rawScore === null) continue;
-    if (pyIntStrict(rawScore) === null) continue;
+    if (coerceInt(rawScore, INT_POLICY.validation) === null) continue;
     challengeById.set(cid, entry);
   }
 
@@ -76,7 +67,7 @@ export function applyChallenges(findings, challenges) {
     }
 
     const rawScore = 'score' in entry ? entry.score : 0;
-    const score = pyIntStrict(rawScore);
+    const score = coerceInt(rawScore, INT_POLICY.validation);
     const justification = 'justification' in entry ? entry.justification : undefined;
 
     // Deep-clone before mutation -- no aliasing of the caller's finding.

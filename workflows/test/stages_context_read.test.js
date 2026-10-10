@@ -17,7 +17,7 @@
 // that stops after one call.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -332,9 +332,10 @@ test('GUARD (source): no stage input carries the context path — the capability
   // asserted the literal "Read the shared context at " appeared once in stages.js — an
   // adversarial review defeated that in one edit by rewording to "Open the shared context
   // at ...", whole suite green. A capability you removed needs no phrase policing.
-  const src = readFileSync(join(SRC, 'stages.js'), 'utf8');
-  const offenders = src.split('\n')
-    .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+  // Every src module, so a stage that lives outside stages.js stays inside the guard.
+  const offenders = readdirSync(SRC).filter((name) => name.endsWith('.js')).sort()
+    .flatMap((name) => readFileSync(join(SRC, name), 'utf8').split('\n')
+      .map((line, i) => ({ line: line.trim(), n: `${name}:${i + 1}` })))
     .filter(({ line }) => !line.startsWith('//') && !line.startsWith('*'))
     // Stage-input object literals: `contextPath,` (shorthand) or `contextPath: <expr>`.
     .filter(({ line }) => /(^|[\s{(])contextPath\s*(,|:\s*\w)/.test(line))

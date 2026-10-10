@@ -7,25 +7,23 @@
 //
 // What these tests pin:
 //   1. persistPlan is a pure, directly-testable projection description.
-//   2. The fnv1a32-over-UTF-16-code-units checksum matches the Python twin
-//      (the constants below were produced by scripts/gauntlet/jsjson.py;
-//      tests/fixtures/cross_runtime/fnv1a32.json pins both runtimes).
-//   3. writeArtifacts' PUBLIC contract is unchanged: same return shape, the same
+//   2. writeArtifacts' PUBLIC contract is unchanged: same return shape, the same
 //      four artifactPaths keys, the same partial-artifacts degradation.
-//   4. A structural failure degrades (partial); a content-proof MISMATCH does not
+//   3. A structural failure degrades (partial); a content-proof MISMATCH does not
 //      — it derives from on-disk truth and raises a loud gap. Never-fabricate.
-//   5. The id-integrity guard falls back to the legacy full by-value writer
+//   4. The id-integrity guard falls back to the legacy full by-value writer
 //      prompt rather than degrading a run on pathological input.
-//   6. IN-RUN BYTE IDENTITY (issue #38 requirement 2's verification clause):
+//   5. IN-RUN BYTE IDENTITY (issue #38 requirement 2's verification clause):
 //      applying the plan's derivation rules to the primaries reproduces
 //      writerPayload(inp).postReview and .checkpoints EXACTLY.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   writeArtifacts, writerPayload, plannedArtifactPaths, persistPlanPath,
-  persistPlan, persistPrimaries, persistDerivable, fnv1a32, normalizeForChecksum,
+  persistPlan, persistPrimaries, persistDerivable,
   parseWriterPayload, runWith, hardenEscapeRuns, provenPrimaryPaths,
 } from '../src/stages.js';
+import { fnv1a32, normalizeForChecksum } from '../src/wire.js';
 import { validateArgs } from '../src/args.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { shellSplit } from './helpers/shellWords.js';
@@ -165,55 +163,6 @@ function persistCtx(opts = {}) {
 }
 
 const labels = (ctx) => ctx.calls.map((c) => c.label);
-
-// --- Checksum ---------------------------------------------------------------
-
-// Vectors produced by scripts/gauntlet/jsjson.py's fnv1a32 (the Python twin).
-// tests/fixtures/cross_runtime/fnv1a32.json pins both runtimes over the same class of
-// inputs; these constants pin the checksums of this module's own fixtures.
-const CHECKSUM_VECTORS = [
-  ['', 'fnv1a32:0x811c9dc5'],
-  ['a', 'fnv1a32:0xe40c292c'],
-  ['hello world', 'fnv1a32:0xd58b3fa7'],
-  ['café — naïve', 'fnv1a32:0xee9e4013'],
-  ['日本語のテキスト', 'fnv1a32:0xa12d849c'],
-  ['😀🎉', 'fnv1a32:0x07bbe09f'],
-  ['𝕏 astral', 'fnv1a32:0xb9ade380'],
-];
-
-test('fnv1a32 matches the Python twin for ascii, CJK and astral-plane input', () => {
-  for (const [input, expected] of CHECKSUM_VECTORS) {
-    assert.equal(fnv1a32(input), expected, `checksum drift for ${JSON.stringify(input)}`);
-  }
-});
-
-test('fnv1a32 walks UTF-16 code units (surrogate pairs count as two)', () => {
-  // Same code units, different codepoints: proves charCodeAt semantics, and that an
-  // emoji is not silently collapsed to one unit (the surrogate-pair trap).
-  assert.notEqual(fnv1a32('😀'), fnv1a32('ab'));
-  assert.equal('😀'.length, 2);
-  assert.match(fnv1a32('anything'), /^fnv1a32:0x[0-9a-f]{8}$/);
-});
-
-test('fnv1a32 needs no host globals (no TextEncoder/Buffer in the sandbox)', () => {
-  const saved = { TextEncoder: globalThis.TextEncoder, Buffer: globalThis.Buffer };
-  delete globalThis.TextEncoder;
-  delete globalThis.Buffer;
-  try {
-    assert.equal(fnv1a32('hello world'), 'fnv1a32:0xd58b3fa7');
-  } finally {
-    globalThis.TextEncoder = saved.TextEncoder;
-    globalThis.Buffer = saved.Buffer;
-  }
-});
-
-test('normalizeForChecksum strips a BOM and AT MOST one trailing newline', () => {
-  assert.equal(normalizeForChecksum('﻿abc'), 'abc');
-  assert.equal(normalizeForChecksum('abc\n'), 'abc');
-  assert.equal(normalizeForChecksum('abc\r\n'), 'abc');
-  assert.equal(normalizeForChecksum('abc\n\n'), 'abc\n');
-  assert.equal(normalizeForChecksum('abc'), 'abc');
-});
 
 // --- persistPlan (pure) -----------------------------------------------------
 

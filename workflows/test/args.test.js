@@ -2124,7 +2124,7 @@ test('validateArgs rejects a path-bearing field carrying an embedded control cha
 });
 
 test('validateArgs rejects headShaShort that would split or inject in the verify argv', () => {
-  // headShaShort reaches the shell-run string verifyCommand builds (stages.js), where it
+  // headShaShort reaches the shell-run string verifyCommand builds (verifyStage.js), where it
   // is carried as a bare word. Apply the same NONCE_RE charset as the nonce — whitespace,
   // shell metacharacters, and anything outside [A-Za-z0-9._-] must fail at the waist. A
   // real short SHA never needs them (unlike a path, which verifyCommand quotes instead).

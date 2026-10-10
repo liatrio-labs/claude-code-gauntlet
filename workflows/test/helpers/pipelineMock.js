@@ -181,7 +181,6 @@ export function makeCtx(args, opts = {}) {
   const calls = [];
   const violations = [];
   const A = args;
-  const rec = sliceInputRecorder();
   const seedFindings = () => (opts.findings ? opts.findings.map((f) => ({ ...f })) : makeFindings());
 
   // Mirror verifyStage's chunking so a multi-slice mock can echo the right findings and
@@ -230,12 +229,12 @@ export function makeCtx(args, opts = {}) {
       // "verified" apart from "unknown"/degraded origin; the override here reproduces that
       // same signal on every delta in the slice.
       const originOverrides = Object.fromEntries(slice.map((f) => [f.id, { origin: 'new' }]));
-      return rec.stamp(deltaEnvelope(slice, {
+      return sliceInputRecorder(deltaEnvelope(slice, {
         sha: A.headShaShort,
         nonce: sliceNonce,
         n_in: slice.length,
         overrides: originOverrides,
-      }), sliceIndex, prompt);
+      }), prompt);
     }
     if (label.startsWith('validate-batch-')) return { validations: [] }; // object-rooted { validations: [...] }
     if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };

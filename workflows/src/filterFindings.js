@@ -1,5 +1,7 @@
 // Normalize, filter, consolidate, and tag findings for the workflow.
 
+import { INT_POLICY, WS_TRIM_RE, coerceInt } from './wire.js';
+
 // --- Field normalization (BF-14) --------------------------------------------
 
 export const FIELD_RENAMES = { body: 'description', line: 'line_start', blame_tag: 'origin' };
@@ -801,9 +803,6 @@ function asConfidence(value) {
   return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
 }
 
-// Trim the union whitespace class at both ends of titles and review lines.
-export const WS_TRIM_RE = /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g;
-
 export function pyRound(x) {
   const floor = Math.floor(x);
   const diff = x - floor;
@@ -812,19 +811,8 @@ export function pyRound(x) {
   return floor % 2 === 0 ? floor : floor + 1; // exact .5 -> nearest even
 }
 
-export function pyIntOrNull(value) {
-  if (typeof value === 'number') return Number.isFinite(value) ? Math.trunc(value) : null;
-  if (typeof value === 'boolean') return value ? 1 : 0; // Python bool is an int subclass
-  if (typeof value === 'string') {
-    // Accept signed ASCII integers surrounded by the union whitespace class.
-    const m = /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([+-]?[0-9]+)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*$/.exec(value);
-    return m ? parseInt(m[1], 10) : null;
-  }
-  return null; // null/undefined/object/array -> TypeError in Python
-}
-
 export function lineBucket(line, proximity) {
-  const n = pyIntOrNull(line);
+  const n = coerceInt(line, INT_POLICY.filter);
   if (n === null) return 0;
   return pyRound(n / proximity) * proximity;
 }

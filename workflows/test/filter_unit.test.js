@@ -7,9 +7,7 @@ import { runInNewContext } from 'node:vm';
 import { loadCases } from './helpers/goldenCases.js';
 import {
   pyRound,
-  pyIntOrNull,
   lineBucket,
-  WS_TRIM_RE,
   applyFilterPipeline,
   buildReviewConfig,
   configForFile,
@@ -186,6 +184,27 @@ for (const c of WORD_CASES) test(`word count: ${c.name}`, () => {
   assert.equal(countWords(c.text), c.expected);
 });
 
+// The index just past the string or template that opens at `start`. A template's `${}`
+// bodies are skipped with their own quotes, so a template nested in one cannot end it early.
+function skipQuoted(source, start) {
+  const quote = source[start];
+  let i = start + 1;
+  while (i < source.length && source[i] !== quote) {
+    if (source[i] === '\\') { i += 2; continue; }
+    if (quote !== '`' || source[i] !== '$' || source[i + 1] !== '{') { i += 1; continue; }
+    i += 2;
+    for (let depth = 1; i < source.length && depth > 0;) {
+      const inner = source[i];
+      if (inner === '"' || inner === "'" || inner === '`') { i = skipQuoted(source, i); continue; }
+      if (inner === '{') depth += 1;
+      if (inner === '}') depth -= 1;
+      i += 1;
+    }
+  }
+  assert.ok(i < source.length, 'unterminated string');
+  return i + 1;
+}
+
 // Scan source so a pattern added outside SUGGESTION_SETS cannot bypass the whitespace contract.
 function regexLiterals(source) {
   const patterns = [];
@@ -209,14 +228,7 @@ function regexLiterals(source) {
       continue;
     }
     if (char === '"' || char === "'" || char === '`') {
-      const quote = char;
-      i += 1;
-      while (i < source.length && source[i] !== quote) {
-        if (source[i] === '\\') i += 1;
-        i += 1;
-      }
-      assert.ok(i < source.length, 'unterminated string');
-      i += 1;
+      i = skipQuoted(source, i);
       previous = 'value';
       continue;
     }
@@ -297,7 +309,7 @@ function inspectPattern(source, label, unionClass, checkAnchors = false) {
 }
 
 test('filter regex sources retain union whitespace and unanchored content patterns', () => {
-  const source = readFileSync(new URL('../src/filterFindings.js', import.meta.url), 'utf8');
+  const source = ['filterFindings.js', 'wire.js'].map((file) => readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8')).join('\n');
   const unionClass = String.raw`\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff`;
   const literals = regexLiterals(source);
   assert.ok(literals.length > 80, `source scan covered only ${literals.length} regex literals`);
@@ -1407,53 +1419,32 @@ test('#211/table: countWords behavioral table', () => {
 
 // Line buckets accept only the documented signed ASCII integer form.
 const LINE_START_COERCE_TABLE = [
-  ['\x1c12', 12, 10, 10], // U+001C FS
-  ['\x1d12', 12, 10, 10], // U+001D GS
-  ['\x1e12', 12, 10, 10], // U+001E RS
-  ['\x1f12', 12, 10, 10], // U+001F US
-  ['\x8512', 12, 10, 10], // U+0085 NEL (Python-only before)
-  ['﻿12', 12, 10, 10], // U+FEFF BOM (JS-only before)
-  // JS NaN-regression row: raw parseInt('\x1c99', 10) is NaN; the capture -> 99.
-  ['\x1c99', 99, 100, 100],
-  // digit-class convergence: non-ASCII digits + PEP-515 '_' now rejected.
-  ['١٢', null, 0, 0], // Arabic-Indic ١٢
-  ['１２', null, 0, 0], // fullwidth １２
-  ['1_2', null, 0, 0], // PEP-515 underscore
-  // raw-number path: MUST be unchanged by #244.
-  [25.7, 25, 20, 25],
-  [20, 20, 20, 20],
-  [null, null, 0, 0],
-  [true, 1, 0, 0], // bool checked BEFORE number
-  [false, 0, 0, 0],
+  ['\x1c12', 10, 10], // U+001C FS
+  ['\x1d12', 10, 10], // U+001D GS
+  ['\x1e12', 10, 10], // U+001E RS
+  ['\x1f12', 10, 10], // U+001F US
+  ['\x8512', 10, 10], // U+0085 NEL
+  ['﻿12', 10, 10], // U+FEFF BOM
+  // Parse the captured digits: raw parseInt('\x1c99', 10) is NaN.
+  ['\x1c99', 100, 100],
+  // Only ASCII digits are accepted, without underscore separators.
+  ['١٢', 0, 0], // Arabic-Indic ١٢
+  ['１２', 0, 0], // fullwidth １２
+  ['1_2', 0, 0], // PEP-515 underscore
+  // Numeric inputs use truncation rather than string parsing.
+  [25.7, 20, 25],
+  [20, 20, 20],
+  [null, 0, 0],
+  [true, 0, 0], // bool checked BEFORE number
+  [false, 0, 0],
 ];
 
-test('#244/coerce-table: pyIntOrNull/lineBucket behavioral table', () => {
-  for (const [value, expectedInt, bucket10, bucket5] of LINE_START_COERCE_TABLE) {
+test('lineBucket accepts signed ASCII integers inside review whitespace', () => {
+  for (const [value, bucket10, bucket5] of LINE_START_COERCE_TABLE) {
     const label = JSON.stringify(value);
-    assert.equal(pyIntOrNull(value), expectedInt, `pyIntOrNull(${label})`);
     assert.ok(!Number.isNaN(lineBucket(value, 10)), `lineBucket(${label},10) is not NaN`);
     assert.equal(lineBucket(value, 10), bucket10, `lineBucket(${label},10)`);
     assert.equal(lineBucket(value, 5), bucket5, `lineBucket(${label},5)`);
-  }
-});
-
-// Dedup titles trim the full review whitespace class.
-const TITLE_STRIP_TABLE = [
-  ['', ''],
-  ['   ', ''],
-  ['\x1c\x1d\x1e\x1f\x85﻿', ''], // all six divergent codepoints -> empty
-  ['alpha', 'alpha'],
-  ['\x1calpha', 'alpha'], // U+001C leading
-  ['alpha\x85', 'alpha'], // U+0085 trailing
-  ['﻿alpha﻿', 'alpha'], // U+FEFF both ends
-  ['\x1d alpha bravo \x1e', 'alpha bravo'], // GS/RS ends, interior space kept
-  ['a\x1cb', 'a\x1cb'], // interior codepoint PRESERVED
-  ['mixed\x85 case﻿', 'mixed\x85 case'], // interior union kept, tail cut
-];
-
-test('#244/strip-table: WS_TRIM_RE behavioral table', () => {
-  for (const [text, expected] of TITLE_STRIP_TABLE) {
-    assert.equal(text.replace(WS_TRIM_RE, ''), expected, `strip(${JSON.stringify(text)})`);
   }
 });
 

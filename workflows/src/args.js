@@ -148,11 +148,9 @@ const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'ex
 // the single contract for these literals; riskTable values must stay in lockstep with it.
 const RISK_LEVELS = ['low', 'medium', 'high'];
 
-// Issue #24 req 7: the ONE place the benchmarked-default limits live. Every stage that
-// used to hand-roll `Math.max(1, limits.X || <literal>)` (stages.js summarize/verify/
-// validate/challenge) and the worstCaseAgentCount/coarsenLimits helpers now read a limits
-// object normalizeArgs has already filled from this constant — the literal default exists
-// in exactly one place, not triplicated across stage bodies, helpers, and prose tables.
+// The one home of the benchmarked default limits. normalizeArgs fills a limits object from
+// this constant, and every stage and capacity helper reads that object, so no literal default
+// is repeated in a stage body, a helper or a prose table.
 //
 // deliveryCap and discoveryCap are DELIBERATELY ABSENT from this table: their null/absent
 // state is meaningful DATA (uncapped delivery / no per-agent discovery ceiling), not a
