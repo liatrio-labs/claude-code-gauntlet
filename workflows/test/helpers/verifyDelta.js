@@ -71,27 +71,22 @@ function decodeInlineValue(value) {
 }
 
 // Derive honest mock proofs from the actual command, leaving explicit faults untouched.
-export function sliceInputRecorder() {
-  return {
-    stamp(env, _index, prompt) {
-      const argv = shellSplit(prompt.split('\n').pop());
-      const index = argv.indexOf('--input-inline');
-      if (index < 0) return env;
-      const token = argv[index + 1];
-      if (env && env.status === 'ok' && env.receipt) {
-        if (!Object.hasOwn(env.receipt, 'input_checksum')) {
-          env.receipt.input_checksum = fnv1a32(JSON.stringify(decodeInlineValue(JSON.parse(token)), null, 2));
-        }
-        if (!Object.hasOwn(env.receipt, 'inline_checksum')) env.receipt.inline_checksum = fnv1a32(token);
-      }
-      return env;
-    },
-  };
+export function sliceInputRecorder(env, prompt) {
+  const argv = shellSplit(prompt.split('\n').pop());
+  const index = argv.indexOf('--input-inline');
+  if (index < 0) return env;
+  const token = argv[index + 1];
+  if (env && env.status === 'ok' && env.receipt) {
+    if (!Object.hasOwn(env.receipt, 'input_checksum')) {
+      env.receipt.input_checksum = fnv1a32(JSON.stringify(decodeInlineValue(JSON.parse(token)), null, 2));
+    }
+    if (!Object.hasOwn(env.receipt, 'inline_checksum')) env.receipt.inline_checksum = fnv1a32(token);
+  }
+  return env;
 }
 
 export function verifyCtx(executorImpl) {
   const calls = [];
-  const rec = sliceInputRecorder();
   let inParallel = 0;
   return {
     calls,
@@ -105,7 +100,7 @@ export function verifyCtx(executorImpl) {
       if (inParallel > 0) throw new Error('verifyStage must not use parallel()');
       const index = Number(match[1]);
       const attempt = match[2] ? 2 : 1;
-      return rec.stamp(await executorImpl(index, attempt, call), index, prompt);
+      return sliceInputRecorder(await executorImpl(index, attempt, call), prompt);
     },
     parallel: async (thunks) => {
       inParallel += 1;

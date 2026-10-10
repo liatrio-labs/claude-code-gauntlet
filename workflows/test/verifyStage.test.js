@@ -28,6 +28,13 @@ const inlineOf = (call) => {
 
 const TRUSTED_ROWS = [
   { name: 'plain receipt preserves agent and dispatches only one executor', findings: findingsFor(2) },
+  { name: 'schema declares five top-level keys and an undeclared envelope key is ignored', findings: BASE,
+    envelope: { input_recovery: { trailing_bytes: '}\n' } },
+    schemaKeys: ['status', 'receipt', 'result', 'exitCode', 'stderr'] },
+  { name: 'dispatched slice document carries pinned numerics',
+    findings: [{ id: 'F1', file: 'a.js', line_start: 3.5, confidence: 90.2, origin: 'new' }],
+    changes: { line_start: 4, confidence: 90 },
+    inline: '{"findings":[{"id":"F1","file":"a.js","line_start":4,"confidence":90,"origin":"new"}],"base_branch":"main"}' },
   { name: 'unsafe numbers remain trusted with an unprovable content proof',
     findings: BASE.map((f) => ({ ...f, line_start: Number.MAX_SAFE_INTEGER + 10 })),
     receipt: { input_checksum: null }, ledger: { ...ZERO, slices: 1, unprovable: 1 } },
@@ -49,6 +56,7 @@ for (const row of TRUSTED_ROWS) {
     const ctx = verifyCtx(() => {
       const env = deltaEnvelope(row.findings, { nonce: 'n-1.0', ...row.options?.(row.findings) });
       Object.assign(env.receipt, row.receipt);
+      Object.assign(env, row.envelope);
       return env;
     });
     const out = await verifyStage(ctx, verifyInput(row.findings));
@@ -58,6 +66,8 @@ for (const row of TRUSTED_ROWS) {
     assert.deepEqual(out.gaps, []);
     assert.deepEqual(out.inputProof, row.ledger || { ...ZERO, slices: 1, proven: 1 });
     assert.deepEqual(ctx.calls.map((call) => [call.label, call.agentType]), [['verify-slice-0', 'code-gauntlet:executor']]);
+    if (row.schemaKeys) assert.deepEqual(Object.keys(ctx.calls[0].schema.properties), row.schemaKeys);
+    if (row.inline) assert.equal(inlineOf(ctx.calls[0]), row.inline);
   });
 }
 
@@ -109,6 +119,10 @@ const UNTRUSTED_ROWS = [
     origins: ['new', 'new', 'unknown', 'unknown', 'new'], ledger: { ...ZERO, slices: 3, proven: 2 },
     labels: ['verify-slice-0', 'verify-slice-1', 'verify-slice-1-retry', 'verify-slice-2'],
     nonces: ['n-1.0', 'n-1.1', 'n-1.1.r1', 'n-1.2'],
+    inputs: [
+      '/out/phase4-input-abc123.slice0.json', '/out/phase4-input-abc123.slice1.json',
+      '/out/phase4-input-abc123.slice1.json', '/out/phase4-input-abc123.slice2.json',
+    ],
     gap: 'verify: UNVERIFIED \u2014 slice 1: receipt nonce mismatch (got WRONG, expected n-1.1.r1) \u2014 retried once after the first attempt failed (receipt nonce mismatch (got WRONG, expected n-1.1)); 2 of 5 finding(s) marked origin=unknown, surfaced-classification skipped' },
 ];
 for (const row of UNTRUSTED_ROWS) {
@@ -127,6 +141,7 @@ for (const row of UNTRUSTED_ROWS) {
     assert.deepEqual(ctx.calls.map((call) => call.label), row.labels || ['verify-slice-0', 'verify-slice-0-retry']);
     assert.deepEqual(out.inputProof, row.ledger || { ...ZERO, slices: 1 });
     if (row.nonces) assert.deepEqual(ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--nonce') + 1]; }), row.nonces);
+    if (row.inputs) assert.deepEqual(ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--input') + 1]; }), row.inputs);
     assert.deepEqual(out.gaps, [row.gap]);
   });
 }

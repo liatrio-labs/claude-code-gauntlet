@@ -1423,15 +1423,15 @@ const LINE_START_COERCE_TABLE = [
   ['\x1d12', 10, 10], // U+001D GS
   ['\x1e12', 10, 10], // U+001E RS
   ['\x1f12', 10, 10], // U+001F US
-  ['\x8512', 10, 10], // U+0085 NEL (Python-only before)
-  ['﻿12', 10, 10], // U+FEFF BOM (JS-only before)
-  // JS NaN-regression row: raw parseInt('\x1c99', 10) is NaN; the capture -> 99.
+  ['\x8512', 10, 10], // U+0085 NEL
+  ['﻿12', 10, 10], // U+FEFF BOM
+  // Parse the captured digits: raw parseInt('\x1c99', 10) is NaN.
   ['\x1c99', 100, 100],
-  // digit-class convergence: non-ASCII digits + PEP-515 '_' now rejected.
+  // Only ASCII digits are accepted, without underscore separators.
   ['١٢', 0, 0], // Arabic-Indic ١٢
   ['１２', 0, 0], // fullwidth １２
   ['1_2', 0, 0], // PEP-515 underscore
-  // raw-number path: MUST be unchanged by #244.
+  // Numeric inputs use truncation rather than string parsing.
   [25.7, 20, 25],
   [20, 20, 20],
   [null, 0, 0],
