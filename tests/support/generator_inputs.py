@@ -12,7 +12,7 @@ _NODE_PROGRAM_ROOTS = (
     "workflows/src/renderReport.js",
     "workflows/src/applyValidations.js",
     "workflows/src/filterFindings.js",
-    "workflows/src/stages.js",
+    "workflows/src/outputPaths.js",
     "workflows/src/verifyWire.js",
 )
 _WORKFLOW_RELATIVE_IMPORT_RE = re.compile(

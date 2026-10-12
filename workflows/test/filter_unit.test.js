@@ -1028,7 +1028,7 @@ test('applyFilterPipeline emits a correct {field}s_removed stat for EVERY scanne
 });
 
 // applyInjectedProseStrip (round-1 review item 8): the single-finding composition
-// exported for the #213 replay belt (stages.js). Direct unit coverage beyond the
+// exported for the replay belt (checkpoints.js). Direct unit coverage beyond the
 // runWith-level replay-belt test in stages_delivery.test.js, which exercises it only
 // through the full pipeline.
 
@@ -1047,7 +1047,7 @@ test('applyInjectedProseStrip is idempotent: stripping an already-stripped findi
 });
 
 test('applyInjectedProseStrip is a no-op on a finding the LIVE pipeline already filtered (nothing left to match)', () => {
-  // Mirrors what a FRESH (non-replay) run hands the #213 belt in stages.js: a finding
+  // Mirrors what a FRESH (non-replay) run hands the belt in checkpoints.js: a finding
   // that already passed through applyInjectionFilter, which has already stripped any
   // matching field. The belt must not re-eliminate, re-strip, or otherwise alter it.
   const findings = [cleanFinding({

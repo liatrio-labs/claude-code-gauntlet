@@ -106,3 +106,8 @@ export function coerceInt(value, policy) {
   const n = Number(value);
   return Number.isInteger(n) ? n : null;
 }
+
+// Guard against pathological return values, far above any recorded run and below the
+// largest proven return. Above it, persistence falls back to the artifact-writer and the
+// failure-path resume state shrinks to phase names.
+export const RETURN_CHAR_BUDGET = 1000000;

@@ -96,7 +96,7 @@ class JsSerializationError(ValueError):
 
 # Python and JS spell floats differently (1e-7 against 1e-07, 90 against 90.0), so
 # floats are refused rather than porting Number#toString. Integers beyond the safe
-# range are refused because JS parses them lossily. persistDerivable in stages.js
+# range are refused because JS parses them lossily. persistDerivable in persistPlan.js
 # applies the same precondition.
 JS_MAX_SAFE_INTEGER = 2**53 - 1
 

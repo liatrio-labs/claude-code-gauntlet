@@ -8,7 +8,8 @@
 //   agent(prompt, opts)   — prompt is a STRING; opts = { label, agentType, model, schema }
 //   parallel(thunks)      — thunks is an array of ZERO-ARG FUNCTIONS each calling agent(...);
 //                           a thrown member resolves to null (siblings unaffected).
-import { parseWriterPayload, plannedArtifactPaths } from '../../src/stages.js';
+import { parseWriterPayload } from '../../src/persist.js';
+import { plannedArtifactPaths } from '../../src/outputPaths.js';
 import { AGENTS } from '../../src/registry.js';
 import { deltaEnvelope, sliceInputRecorder } from './verifyDelta.js';
 
