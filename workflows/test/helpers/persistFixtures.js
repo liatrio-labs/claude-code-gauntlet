@@ -16,45 +16,22 @@ export function challengeOutput(over = {}) {
     generated_at: '2026-07-18T00:00:00Z', ...over,
   };
 }
-export const PROJECTION_A = {
-  id: "A",
-  line_start: 7,
-  line_end: 9,
-  description: "body text",
-  report_tag: "suggestion"
-};
-
-export const PROJECTION_B = {
-  id: "B",
-  line_start: 3,
-  description: "other",
-  confidence: 71,
-  report_tag: "main"
-};
-
+export const PROJECTION_A = { id: 'A', line_start: 7, line_end: 9, description: 'body text', report_tag: 'suggestion' };
+export const PROJECTION_B = { id: 'B', line_start: 3, description: 'other', confidence: 71, report_tag: 'main' };
 export const PROJECTION_C = {
-  id: "C",
-  title: "\u4e2d\u6587\u6807\u9898 \ud83c\udf89",
-  description: "\u65e5\u672c\u8a9e\u306e\u8aac\u660e \ud83d\ude00 with an astral \ud835\udd4f character"
+  id: 'C', title: '\u4e2d\u6587\u6807\u9898 \ud83c\udf89',
+  description: '\u65e5\u672c\u8a9e\u306e\u8aac\u660e \ud83d\ude00 with an astral \ud835\udd4f character',
 };
-
 export const ESCAPED_PROJECTION = {
-  id: "A",
-  description: "gradeInputProof produces \\\"the executor's receipt carried no input_checksum\\\" here"
+  id: 'A', description: "gradeInputProof produces \\\"the executor's receipt carried no input_checksum\\\" here",
 };
 
 export function persistCheckpoints(findings) {
   return {
-    phases: {
-      challenge: challengeOutput({
-        findings,
-        stats: { final_count: findings.length },
-        generated_at: '2026-07-27T00:00:00Z',
-      }),
-    },
-    completed: ['summarize', 'discover', 'challenge'],
-    phaseReached: 'report',
-    counts: { challenge: findings.length },
+    phases: { challenge: challengeOutput({
+      findings, stats: { final_count: findings.length }, generated_at: '2026-07-27T00:00:00Z',
+    }) },
+    completed: ['summarize', 'discover', 'challenge'], phaseReached: 'report', counts: { challenge: findings.length },
   };
 }
 
@@ -126,4 +103,25 @@ export function wellFormedCheckpoints() {
     challenge: challengeOutput({ findings: [makeFinding('C1')] }),
     report: { report: '# r', gaps: [] },
   };
+}
+
+// Copy every ancestor so overrides cannot mutate the golden or another row's oracle.
+export function expectedWith(golden, overrides = {}) {
+  const copy = (value) => Array.isArray(value) ? value.map(copy)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, copy(child)])) : value;
+  const expected = copy(golden);
+  for (const [path, value] of Object.entries(overrides)) {
+    const keys = path.split('.');
+    const parent = keys.slice(0, -1).reduce((object, key) => object[key], expected);
+    parent[keys.at(-1)] = copy(value);
+  }
+  return expected;
+}
+
+// Original line offsets let a row describe only changed bytes, including indentation and commas.
+export function textWithLines(golden, edits = []) {
+  const lines = golden.split('\n');
+  for (const [start, count, ...replacement] of [...edits].reverse()) lines.splice(start, count, ...replacement);
+  return lines.join('\n');
 }

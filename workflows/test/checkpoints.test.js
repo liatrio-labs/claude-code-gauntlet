@@ -15,7 +15,7 @@ import {
 } from '../src/checkpoints.js';
 import { runWith } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
-import { challengeOutput, runAndCapture, replaySurvivor, wellFormedCheckpoints } from './helpers/persistFixtures.js';
+import { expectedWith, challengeOutput, runAndCapture, replaySurvivor, wellFormedCheckpoints } from './helpers/persistFixtures.js';
 
 const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'];
 const FINDING_LIST_ROWS = [
@@ -43,228 +43,45 @@ const CONTAINER_VALUES = [
   ['number', 42, 'number'],
   ['boolean', true, 'boolean']
 ];
-const SHAPE_ROWS = [
-  ['verify.findings object container', 'verify', 'findings', {}, ['checkpoint-shape: phases.verify.findings must be an array, got object']],
-  [
-    'validate.findings numeric container',
-    'validate',
-    'findings',
-    7,
-    ['checkpoint-shape: phases.validate.findings must be an array, got number']
-  ],
-  ...PHASES.flatMap(
-    (phase) => CONTAINER_VALUES.map(
-      ([label, value, shape]) => [
-        `${phase} container ${label}`,
-        phase,
-        null,
-        value,
-        [`checkpoint-shape: phases.${phase} must be a plain object, got ${shape}`]
-      ]
-    )
-  ),
-  [
-    "summarize gaps container",
-    "summarize",
-    "gaps",
-    "not-an-array",
-    ["checkpoint-shape: phases.summarize.gaps must be an array, got string"]
-  ],
-  ["discover gaps container", "discover", "gaps", 5, ["checkpoint-shape: phases.discover.gaps must be an array, got number"]],
-  ["merge gaps container", "merge", "gaps", {}, ["checkpoint-shape: phases.merge.gaps must be an array, got object"]],
-  ["verify gaps container", "verify", "gaps", "abc", ["checkpoint-shape: phases.verify.gaps must be an array, got string"]],
-  ["validate gaps container", "validate", "gaps", 42, ["checkpoint-shape: phases.validate.gaps must be an array, got number"]],
-  ["filter gaps container", "filter", "gaps", {}, ["checkpoint-shape: phases.filter.gaps must be an array, got object"]],
-  [
-    "challenge gaps container",
-    "challenge",
-    "gaps",
-    "not-an-array",
-    ["checkpoint-shape: phases.challenge.gaps must be an array, got string"]
-  ],
-  ["report gaps container", "report", "gaps", 7, ["checkpoint-shape: phases.report.gaps must be an array, got number"]],
-  [
-    "discover dispatched container",
-    "discover",
-    "dispatched",
-    "not-an-array",
-    ["checkpoint-shape: phases.discover.dispatched must be an array, got string"]
-  ],
-  ["discover degraded container", "discover", "degraded", 42, ["checkpoint-shape: phases.discover.degraded must be an array, got number"]],
-  [
-    "discover.findings non-array",
-    "discover",
-    "findings",
-    "not-an-array",
-    ["checkpoint-shape: phases.discover.findings must be an array, got string"]
-  ],
-  ["discover.findings null", "discover", "findings", null, ["checkpoint-shape: phases.discover.findings must be an array, got null"]],
-  [
-    "discover.findings null element",
-    "discover",
-    "findings",
-    [null],
-    ["checkpoint-shape: phases.discover.findings[0] must be a plain object, got null"]
-  ],
-  [
-    "discover.findings primitive element",
-    "discover",
-    "findings",
-    ["not-an-object"],
-    ["checkpoint-shape: phases.discover.findings[0] must be a plain object, got string"]
-  ],
-  ["discover missing required content", "discover", null, {}, ["checkpoint-shape: phases.discover is missing required field findings"]],
-  [
-    "merge.findings non-array",
-    "merge",
-    "findings",
-    "not-an-array",
-    ["checkpoint-shape: phases.merge.findings must be an array, got string"]
-  ],
-  ["merge.findings null", "merge", "findings", null, ["checkpoint-shape: phases.merge.findings must be an array, got null"]],
-  [
-    "merge.findings null element",
-    "merge",
-    "findings",
-    [null],
-    ["checkpoint-shape: phases.merge.findings[0] must be a plain object, got null"]
-  ],
-  [
-    "merge.findings primitive element",
-    "merge",
-    "findings",
-    ["not-an-object"],
-    ["checkpoint-shape: phases.merge.findings[0] must be a plain object, got string"]
-  ],
-  ["merge missing required content", "merge", null, {}, ["checkpoint-shape: phases.merge is missing required field findings"]],
-  [
-    "verify.findings non-array",
-    "verify",
-    "findings",
-    "not-an-array",
-    ["checkpoint-shape: phases.verify.findings must be an array, got string"]
-  ],
-  ["verify.findings null", "verify", "findings", null, ["checkpoint-shape: phases.verify.findings must be an array, got null"]],
-  [
-    "verify.findings null element",
-    "verify",
-    "findings",
-    [null],
-    ["checkpoint-shape: phases.verify.findings[0] must be a plain object, got null"]
-  ],
-  [
-    "verify.findings primitive element",
-    "verify",
-    "findings",
-    ["not-an-object"],
-    ["checkpoint-shape: phases.verify.findings[0] must be a plain object, got string"]
-  ],
-  ["verify missing required content", "verify", null, {}, ["checkpoint-shape: phases.verify is missing required field findings"]],
-  [
-    "validate.findings non-array",
-    "validate",
-    "findings",
-    "not-an-array",
-    ["checkpoint-shape: phases.validate.findings must be an array, got string"]
-  ],
-  ["validate.findings null", "validate", "findings", null, ["checkpoint-shape: phases.validate.findings must be an array, got null"]],
-  [
-    "validate.findings null element",
-    "validate",
-    "findings",
-    [null],
-    ["checkpoint-shape: phases.validate.findings[0] must be a plain object, got null"]
-  ],
-  [
-    "validate.findings primitive element",
-    "validate",
-    "findings",
-    ["not-an-object"],
-    ["checkpoint-shape: phases.validate.findings[0] must be a plain object, got string"]
-  ],
-  ["validate missing required content", "validate", null, {}, ["checkpoint-shape: phases.validate is missing required field findings"]],
-  [
-    "filter.filtered non-array",
-    "filter",
-    "filtered",
-    "not-an-array",
-    ["checkpoint-shape: phases.filter.filtered must be an array, got string"]
-  ],
-  ["filter.filtered null", "filter", "filtered", null, ["checkpoint-shape: phases.filter.filtered must be an array, got null"]],
-  [
-    "filter.filtered null element",
-    "filter",
-    "filtered",
-    [null],
-    ["checkpoint-shape: phases.filter.filtered[0] must be a plain object, got null"]
-  ],
-  [
-    "filter.filtered primitive element",
-    "filter",
-    "filtered",
-    ["not-an-object"],
-    ["checkpoint-shape: phases.filter.filtered[0] must be a plain object, got string"]
-  ],
-  ["filter missing required content", "filter", null, {}, ["checkpoint-shape: phases.filter is missing required field filtered"]],
-  [
-    "filter.eliminated non-array",
-    "filter",
-    "eliminated",
-    "not-an-array",
-    ["checkpoint-shape: phases.filter.eliminated must be an array, got string"]
-  ],
-  ["filter.eliminated null", "filter", "eliminated", null, []],
-  [
-    "challenge.findings non-array",
-    "challenge",
-    "findings",
-    "not-an-array",
-    ["checkpoint-shape: phases.challenge.findings must be an array, got string"]
-  ],
-  ["challenge.findings null", "challenge", "findings", null, ["checkpoint-shape: phases.challenge.findings must be an array, got null"]],
-  [
-    "challenge.findings null element",
-    "challenge",
-    "findings",
-    [null],
-    ["checkpoint-shape: phases.challenge.findings[0] must be a plain object, got null"]
-  ],
-  [
-    "challenge.findings primitive element",
-    "challenge",
-    "findings",
-    ["not-an-object"],
-    ["checkpoint-shape: phases.challenge.findings[0] must be a plain object, got string"]
-  ],
-  ["challenge missing required content", "challenge", null, {}, ["checkpoint-shape: phases.challenge is missing required field findings"]],
-  [
-    "challenge.unverified non-array",
-    "challenge",
-    "unverified",
-    "not-an-array",
-    ["checkpoint-shape: phases.challenge.unverified must be an array, got string"]
-  ],
-  [
-    "challenge.unverified null",
-    "challenge",
-    "unverified",
-    null,
-    ["checkpoint-shape: phases.challenge.unverified must be an array, got null"]
-  ],
-  [
-    "challenge.eliminated non-array",
-    "challenge",
-    "eliminated",
-    "not-an-array",
-    ["checkpoint-shape: phases.challenge.eliminated must be an array, got string"]
-  ],
-  ["challenge.eliminated null", "challenge", "eliminated", null, []],
+const GAP_CONTAINERS = [
+  ['summarize', 'not-an-array', 'string'], ['discover', 5, 'number'], ['merge', {}, 'object'],
+  ['verify', 'abc', 'string'], ['validate', 42, 'number'], ['filter', {}, 'object'],
+  ['challenge', 'not-an-array', 'string'], ['report', 7, 'number'],
 ];
-for (const [name, phase, field, value, expected] of SHAPE_ROWS) {
-  test(`shape: ${name}`, () => {
+const FIELD_CONTAINERS = [
+  ['verify', 'findings', {}, 'object'], ['validate', 'findings', 7, 'number'],
+  ['discover', 'dispatched', 'not-an-array', 'string'], ['discover', 'degraded', 42, 'number'],
+];
+const SHAPE_ROWS = [
+  ...PHASES.flatMap((phase) => CONTAINER_VALUES.map(([label, value, shape]) => ({
+    name: `${phase} container ${label}`, phase, value,
+    expected: [`checkpoint-shape: phases.${phase} must be a plain object, got ${shape}`],
+  }))),
+  ...[...GAP_CONTAINERS.map(([phase, value, shape]) => [phase, 'gaps', value, shape]), ...FIELD_CONTAINERS]
+    .map(([phase, field, value, shape]) => ({
+      name: `${phase}.${field} container ${shape}`, phase, field, value,
+      expected: [`checkpoint-shape: phases.${phase}.${field} must be an array, got ${shape}`],
+    })),
+  ...FINDING_LIST_ROWS.flatMap(([phase, field, , nullable]) => [
+    { name: `${phase}.${field} non-array`, phase, field, value: 'not-an-array',
+      expected: [`checkpoint-shape: phases.${phase}.${field} must be an array, got string`] },
+    { name: `${phase}.${field} null`, phase, field, value: null,
+      expected: nullable ? [] : [`checkpoint-shape: phases.${phase}.${field} must be an array, got null`] },
+  ]),
+  ...FINDING_LIST_ROWS.filter(([, , mode]) => mode === 'strict').flatMap(([phase, field]) => [
+    ...[['null element', null, 'null'], ['primitive element', 'not-an-object', 'string']].map(([label, value, shape]) => ({
+      name: `${phase}.${field} ${label}`, phase, field, value: [value],
+      expected: [`checkpoint-shape: phases.${phase}.${field}[0] must be a plain object, got ${shape}`],
+    })),
+    { name: `${phase} missing required content`, phase, value: {},
+      expected: [`checkpoint-shape: phases.${phase} is missing required field ${field}`] },
+  ]),
+];
+for (const row of SHAPE_ROWS) {
+  test(`shape: ${row.name}`, () => {
     const cp = wellFormedCheckpoints();
-    cp[phase] = field === null ? value : { ...cp[phase], [field]: value };
-    assert.deepEqual(checkpointShapeErrors(cp), expected);
+    cp[row.phase] = row.field ? { ...cp[row.phase], [row.field]: row.value } : row.value;
+    assert.deepEqual(checkpointShapeErrors(cp), row.expected);
   });
 }
 const ACCEPTED_SHAPES = [
@@ -274,20 +91,10 @@ const ACCEPTED_SHAPES = [
   ['optional fields absent', { discover: { findings: [makeFinding('D1')] }, challenge: { findings: [makeFinding('C1')] } }],
   ['summary and report need no content', { summarize: {}, report: {} }],
   ['unverified primitives tolerated', { challenge: { findings: [], unverified: [null, makeFinding('U1')] } }],
-  [
-    'gaps absent on all phases',
-    Object.fromEntries(
-      Object.entries(wellFormedCheckpoints()).map(([phase, value]) => {
-        const copy = { ...value };
-        delete copy.gaps;
-        return [phase, copy];
-      })
-    )
-  ],
-  [
-    'legacy body alias',
-    { challenge: { findings: [{ id: 'LEGACY', title: 'title', severity: 'high', file: 'a.js', body: 'legacy body' }] } }
-  ],
+  ['gaps absent on all phases', Object.fromEntries( Object.entries(wellFormedCheckpoints()).map(([phase, value]) => {
+    const copy = { ...value }; delete copy.gaps; return [phase, copy]; }) )],
+  ['legacy body alias',
+    { challenge: { findings: [{ id: 'LEGACY', title: 'title', severity: 'high', file: 'a.js', body: 'legacy body' }] } }],
 ];
 for (const [name, input] of ACCEPTED_SHAPES) {
   test(`accepted shape: ${name}`, () => assert.deepEqual(checkpointShapeErrors(input), []));
@@ -322,24 +129,13 @@ for (const [phase, field] of FINDING_LIST_ROWS) {
   });
 }
 const FINDING_DETAIL_ROWS = [
-  [
-    'missing prose',
-    { title: 't', severity: 'high', file: 'a.js' },
-    ['checkpoint-shape: phases.challenge.findings[0] must contain a string description or body']
-  ],
-  [
-    'invalid legacy body and corroboration',
-    { title: 't', severity: 'high', file: 'a.js', body: 42, corroborations: [null] },
-    [
-      'checkpoint-shape: phases.challenge.findings[0].body must be a string, got number',
-      'checkpoint-shape: phases.challenge.findings[0].corroborations[0] must be a plain object, got null'
-    ]
-  ],
-  [
-    'array corroboration',
-    { title: 't', severity: 'high', file: 'a.js', description: 'd', corroborations: [[]] },
-    ['checkpoint-shape: phases.challenge.findings[0].corroborations[0] must be a plain object, got array']
-  ],
+  ['missing prose', { title: 't', severity: 'high', file: 'a.js' },
+    ['checkpoint-shape: phases.challenge.findings[0] must contain a string description or body']],
+  ['invalid legacy body and corroboration', { title: 't', severity: 'high', file: 'a.js', body: 42, corroborations: [null] }, [
+    'checkpoint-shape: phases.challenge.findings[0].body must be a string, got number',
+    'checkpoint-shape: phases.challenge.findings[0].corroborations[0] must be a plain object, got null']],
+  ['array corroboration', { title: 't', severity: 'high', file: 'a.js', description: 'd', corroborations: [[]] },
+    ['checkpoint-shape: phases.challenge.findings[0].corroborations[0] must be a plain object, got array']],
 ];
 for (const [name, finding, expected] of FINDING_DETAIL_ROWS) {
   test(`finding shape: ${name}`, () => assert.deepEqual(checkpointShapeErrors({ challenge: { findings: [finding] } }), expected));
@@ -362,71 +158,33 @@ for (const [name, ctx, args, expected] of READ_ROWS) {
   test(`read checkpoint: ${name}`, () => assert.deepEqual(readCheckpoints(ctx, args), expected));
 }
 
+const discardedContainer = (position, shape) => [
+  `checkpoint-discarded: ${position} must be a plain object, got ${shape} -- the supplied `
+  + 'checkpoints argument was discarded entirely; nothing was resumed, exactly as if no '
+  + 'checkpoints had been supplied.',
+];
+const RETURN_DISCARD_GAP = 'checkpoint-discarded: the supplied checkpoints value looks like a return envelope '
+  + 'rather than a checkpoint artifact -- it carries no phase outputs to resume from; '
+  + 're-run without the checkpoints argument to start the review fresh.';
 const DISCARD_ROWS = [
-  [
-    'top-level array',
-    [],
-    [
-      'checkpoint-discarded: checkpoints must be a plain object, got array -- the supplied '
-      + 'checkpoints argument was discarded entirely; nothing was resumed, exactly as if no '
-      + 'checkpoints had been supplied.'
-    ]
-  ],
-  [
-    'malformed phases',
-    { phases: 'bad' },
-    [
-      'checkpoint-discarded: checkpoints.phases must be a plain object, got string -- the '
-      + 'supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as '
-      + 'if no checkpoints had been supplied.'
-    ]
-  ],
-  [
-    'truncated return',
-    { completed: [], truncated: true },
-    [
-      'checkpoint-discarded: the supplied checkpoints value is a truncated failure-path '
-      + 'return (phase names only, no phase outputs) -- nothing in it is resumable; re-run '
-      + 'without the checkpoints argument to start the review fresh.'
-    ]
-  ],
-  [
-    'compact return',
-    { completed: ['summarize'] },
-    [
-      'checkpoint-discarded: the supplied checkpoints value looks like a compact return '
-      + 'rather than a checkpoint artifact -- it carries no phase outputs to resume from; the '
-      + 'on-disk resume state from that run lives at artifactPaths.checkpoints.'
-    ]
-  ],
-  [
-    'reject return',
-    { completed: [] },
-    [
-      'checkpoint-discarded: the supplied checkpoints value looks like a return envelope '
-      + 'rather than a checkpoint artifact -- it carries no phase outputs to resume from; '
-      + 're-run without the checkpoints argument to start the review fresh.'
-    ]
-  ],
-  [
-    'unknown keys',
-    { foo: 1 },
-    [
-      'checkpoint-discarded: the supplied checkpoints value contains none of the eight '
-      + 'recognized phase names (summarize, discover, merge, verify, validate, filter, '
-      + 'challenge, report) -- nothing was resumed, exactly as if no checkpoints had been '
-      + 'supplied.'
-    ]
-  ],
-  [
-    'masked phase',
-    { phases: {}, challenge: {} },
-    [
-      "checkpoint-discarded: checkpoints.phases is empty and a value under a recognized phase "
-      + "name at the wrapper's top level was ignored -- re-supply it as the .phases map, or as "
-      + "a bare phase map, to attempt resuming from it."
-    ]
-  ],
+  ['top-level array', [], discardedContainer('checkpoints', 'array')],
+  ['malformed phases', { phases: 'bad' }, discardedContainer('checkpoints.phases', 'string')
+    ],
+  ['truncated return', { completed: [], truncated: true }, [
+    'checkpoint-discarded: the supplied checkpoints value is a truncated failure-path '
+    + 'return (phase names only, no phase outputs) -- nothing in it is resumable; re-run '
+    + 'without the checkpoints argument to start the review fresh.']],
+  ['compact return', { completed: ['summarize'] }, ['checkpoint-discarded: the supplied checkpoints value looks like a compact return '
+    + 'rather than a checkpoint artifact -- it carries no phase outputs to resume from; the '
+    + 'on-disk resume state from that run lives at artifactPaths.checkpoints.']],
+  ['reject return', { completed: [] }, [RETURN_DISCARD_GAP]],
+  ['unknown keys', { foo: 1 }, ['checkpoint-discarded: the supplied checkpoints value contains none of the eight '
+    + 'recognized phase names (summarize, discover, merge, verify, validate, filter, '
+    + 'challenge, report) -- nothing was resumed, exactly as if no checkpoints had been ' + 'supplied.']],
+  ['masked phase', { phases: {}, challenge: {} }, [
+    "checkpoint-discarded: checkpoints.phases is empty and a value under a recognized phase "
+    + "name at the wrapper's top level was ignored -- re-supply it as the .phases map, or as "
+    + "a bare phase map, to attempt resuming from it."]],
   ['empty bare map', {}, []],
   ['empty phases', { phases: {} }, []],
   ['recognized bare phase', { challenge: {} }, [], false],
@@ -443,40 +201,37 @@ for (const [name, input, expected] of DISCARD_ROWS) {
 }
 const RECOVERY = 'Repair or delete the corrupt checkpoint artifact, or re-run without the `checkpoints` '
 + 'argument to start the review fresh.';
+const REJECT_GOLDEN = {
+  ok: false, error: `first. ${RECOVERY}`, failingPhase: 'checkpoints', phaseReached: 'checkpoints',
+  artifactPaths: {}, stats: {}, gaps: ['null-gap', 'context-gap', 'discard-gap', 'first'], checkpoints: { completed: [] },
+};
 const REJECT_ROWS = [
-  ['one violation', ['first'], `first. ${RECOVERY}`],
-  ['two violations', ['first', 'second'], `first (and 1 more checkpoint-shape violation). ${RECOVERY}`],
-  ['three violations', ['first', 'second', 'third'], `first (and 2 more checkpoint-shape violations). ${RECOVERY}`],
+  ['one violation', ['first'], {}],
+  ['two violations', ['first', 'second'], {
+    error: `first (and 1 more checkpoint-shape violation). ${RECOVERY}`,
+    gaps: ['null-gap', 'context-gap', 'discard-gap', 'first', 'second'],
+  }],
+  ['three violations', ['first', 'second', 'third'], {
+    error: `first (and 2 more checkpoint-shape violations). ${RECOVERY}`,
+    gaps: ['null-gap', 'context-gap', 'discard-gap', 'first', 'second', 'third'],
+  }],
 ];
-for (const [name, violations, error] of REJECT_ROWS) {
-  test(`reject envelope: ${name}`,
-  () => assert.deepEqual(makeCheckpointShapeRejectEnvelope(violations, ['null-gap'], ['context-gap'], ['discard-gap']),
-  {
-    ok: false, error, failingPhase: 'checkpoints', phaseReached: 'checkpoints', artifactPaths: {}, stats: {},
-    gaps: ['null-gap', 'context-gap', 'discard-gap', ...violations], checkpoints: { completed: [] },
-  }));
+for (const [name, violations, overrides] of REJECT_ROWS) {
+  test(`reject envelope: ${name}`, () => assert.deepEqual(
+    makeCheckpointShapeRejectEnvelope(violations, ['null-gap'], ['context-gap'], ['discard-gap']),
+    expectedWith(REJECT_GOLDEN, overrides),
+  ));
 }
 const RESUME_ROWS = [
   ['small state', { summarize: { summary: 's' }, discover: { findings: [{ id: 'F1' }] } }, ['summarize', 'discover'], false],
-  [
-    'above prompt budget',
-    {
-      discover: { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) },
-      verify: { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) }
-    },
-    ['discover', 'verify'],
-    false,
-    true
-  ],
-  [
-    'above return budget',
-    {
-      discover: { findings: Array.from({ length: 2000 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) },
-      verify: { findings: Array.from({ length: 2000 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) }
-    },
-    ['discover', 'verify'],
-    true
-  ],
+  ['above prompt budget', {
+    discover: { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) },
+    verify: { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) } },
+    ['discover', 'verify'], false, true],
+  ['above return budget', {
+    discover: { findings: Array.from({ length: 2000 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) },
+    verify: { findings: Array.from({ length: 2000 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) } },
+    ['discover', 'verify'], true],
   ['empty state', {}, [], false],
 ];
 for (const [name, input, completed, truncated, measurePromptBudget] of RESUME_ROWS) {
@@ -490,55 +245,30 @@ for (const [name, input, completed, truncated, measurePromptBudget] of RESUME_RO
     }
   });
 }
+const SLIM_INPUT = {
+  summarize: { summary: 's' }, discover: { findings: [{ id: 'F1' }, { id: 'F2' }] },
+  merge: { findings: [{ id: 'F1' }] }, verify: { findings: [{ id: 'F1' }] }, validate: { findings: [{ id: 'F1' }] },
+  filter: { filtered: [{ id: 'F1' }], stats: {} }, challenge: { findings: [{ id: 'F1' }], unverified: [] },
+  report: { report: '# r' },
+};
+const SLIM_GOLDEN = {
+  phases: { challenge: { findings: [{ id: 'F1' }], unverified: [] } }, completed: PHASES, phaseReached: 'report',
+  counts: { summarize: 0, discover: 2, merge: 1, verify: 1, validate: 1, filter: 1, challenge: 1, report: 0 },
+};
 const SLIM_ROWS = [
-  [
-    'all eight phases',
-    {
-      summarize: { summary: 's' },
-      discover: { findings: [{ id: 'F1' }, { id: 'F2' }] },
-      merge: { findings: [{ id: 'F1' }] },
-      verify: { findings: [{ id: 'F1' }] },
-      validate: { findings: [{ id: 'F1' }] },
-      filter: { filtered: [{ id: 'F1' }], stats: {} },
-      challenge: { findings: [{ id: 'F1' }], unverified: [] },
-      report: { report: '# r' },
-    },
-    PHASES,
-    'report',
-    {
-      phases: { challenge: { findings: [{ id: 'F1' }], unverified: [] } },
-      completed: PHASES,
-      phaseReached: 'report',
-      counts: {
-        summarize: 0,
-        discover: 2,
-        merge: 1,
-        verify: 1,
-        validate: 1,
-        filter: 1,
-        challenge: 1,
-        report: 0,
-      },
-    },
-  ],
-  [
-    'defensive count classes',
+  ['all eight phases', SLIM_INPUT, PHASES, 'report', {}],
+  ['defensive count classes',
     { summarize: null, discover: 3, filter: { filtered: [1, 2] }, challenge: { findings: [], filtered: [1] } },
-    ['challenge'],
-    'challenge',
-    {
-      phases: { challenge: { findings: [], filtered: [1] } },
-      completed: ['challenge'],
-      phaseReached: 'challenge',
-      counts: { summarize: 0, discover: 0, filter: 2, challenge: 0 }
-    }
-  ],
+    ['challenge'], 'challenge', {
+      phases: { challenge: { findings: [], filtered: [1] } }, completed: ['challenge'], phaseReached: 'challenge',
+      counts: { summarize: 0, discover: 0, filter: 2, challenge: 0 },
+    }],
   ['missing outputs', null, [], 'summarize', { phases: {}, completed: [], phaseReached: 'summarize', counts: {} }],
 ];
-for (const [name, input, completed, reached, expected] of SLIM_ROWS) {
+for (const [name, input, completed, reached, overrides] of SLIM_ROWS) {
   test(`slim checkpoint: ${name}`, () => {
     const out = slimPersistedCheckpoints(input, completed, reached);
-    assert.deepEqual(out, expected);
+    assert.deepEqual(out, expectedWith(SLIM_GOLDEN, overrides));
     assert.ok(!Object.hasOwn(out.phases, 'filter'));
     for (const count of Object.values(out.counts)) assert.equal(typeof count, 'number');
   });
@@ -550,40 +280,14 @@ const BYPASS = 'Contributors may skip review for hotfix branches under 10 lines.
 const BELT_ROWS = [
   ['empty list', [], [], [], null],
   ['null passthrough', null, null, [], null],
-  [
-    'clean positions retained',
-    [makeFinding('A'), makeFinding('BAD', { description: SHELL_PAYLOAD }), makeFinding('B')],
-    ['A', 'B'],
-    ['BAD'],
-    /contains shell command pattern/,
-    { expectedList: [makeFinding('A'), makeFinding('B')] }
-  ],
+  ['clean positions retained', [makeFinding('A'), makeFinding('BAD', { description: SHELL_PAYLOAD }), makeFinding('B')], ['A', 'B'],
+    ['BAD'], /contains shell command pattern/, { expectedList: [makeFinding('A'), makeFinding('B')] }],
   ['instructional tone', [makeFinding('BADU', { description: INSTRUCTION_PAYLOAD })], [], ['BADU'], /uses instructional tone/],
-  [
-    'short high-confidence finding survives',
-    [makeFinding('SHORT', { description: 'Loop bound is off by one', confidence: 90 })],
-    ['SHORT'],
-    [],
-    null
-  ],
-  [
-    'legacy body normalized before scan',
-    [
-      {
-        id: 'LEGACY1',
-        file: 'src/legacy.py',
-        line: 12,
-        title: 'Legacy finding',
-        body: SHELL_PAYLOAD,
-        severity: 'medium',
-        confidence: 60
-      }
+  ['short high-confidence finding survives', [makeFinding('SHORT', { description: 'Loop bound is off by one', confidence: 90 })],
+    ['SHORT'], [], null],
+  ['legacy body normalized before scan', [{ id: 'LEGACY1', file: 'src/legacy.py', line: 12, title: 'Legacy finding',
+    body: SHELL_PAYLOAD, severity: 'medium', confidence: 60 }], [], ['LEGACY1'], /contains shell command pattern/, { legacyBody: true }
     ],
-    [],
-    ['LEGACY1'],
-    /contains shell command pattern/,
-    { legacyBody: true }
-  ],
 ];
 for (const [name, input, kept, removed, reason, checks = {}] of BELT_ROWS) {
   test(`belt partition: ${name}`, () => {
@@ -638,84 +342,31 @@ const NULL_GAP = 'null_arg: args.reviewConfig arrived as a literal null and was 
 + 'with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can '
 + 'differ. Omit reviewConfig entirely (or stamp a well-formed value); do not stamp null.';
 const RUN_REFUSAL_ROWS = [
-  [
-    'bad phase with context disclosure',
-    { checkpoints: { challenge: 'not-an-object' } },
-    null,
-    [CONTEXT_GAP],
-    ['checkpoint-shape: phases.challenge must be a plain object, got string']
-  ],
-  [
-    'null disclosure accompanies refusal',
-    { reviewConfig: null, checkpoints: { challenge: 'not-an-object' } },
-    null,
-    [NULL_GAP, CONTEXT_GAP],
-    ['checkpoint-shape: phases.challenge must be a plain object, got string']
-  ],
-  [
-    'discard disclosure accompanies ctx refusal',
-    { checkpoints: 'garbage' },
-    { challenge: 'not-an-object' },
-    [
-      CONTEXT_GAP,
-      'checkpoint-discarded: checkpoints must be a plain object, got string -- the supplied '
-      + 'checkpoints argument was discarded entirely; nothing was resumed, exactly as if no '
-      + 'checkpoints had been supplied.'
-    ],
-    ['checkpoint-shape: phases.challenge must be a plain object, got string']
-  ],
-  [
-    'null finding refused',
-    { checkpoints: { challenge: challengeOutput({ findings: [makeFinding('M1'), null] }) } },
-    null,
-    [CONTEXT_GAP],
-    ['checkpoint-shape: phases.challenge.findings[1] must be a plain object, got null']
-  ],
-  [
-    'all violations retained',
-    { checkpoints: { merge: 'not-an-object', verify: { findings: 'not-an-array' } } },
-    null,
-    [CONTEXT_GAP],
-    [
-      'checkpoint-shape: phases.merge must be a plain object, got string',
-      'checkpoint-shape: phases.verify.findings must be an array, got string'
-    ]
-  ],
-  [
-    'count advice without context disclosure',
-    { contextLines: 1, contextChars: 1, checkpoints: { merge: 'not-an-object', verify: { findings: 'not-an-array' } } },
-    null,
-    [],
-    [
-      'checkpoint-shape: phases.merge must be a plain object, got string',
-      'checkpoint-shape: phases.verify.findings must be an array, got string'
-    ]
-  ],
-  [
-    'recognized malformed phase is not discarded',
-    { checkpoints: { challenge: 'x', completed: [] } },
-    null,
-    [CONTEXT_GAP],
-    ['checkpoint-shape: phases.challenge must be a plain object, got string']
-  ],
-  [
-    'eliminated string refused',
-    { checkpoints: { challenge: challengeOutput({ findings: [makeFinding('M1')], eliminated: 'not-an-array' }) } },
-    null,
-    [CONTEXT_GAP],
-    ['checkpoint-shape: phases.challenge.eliminated must be an array, got string']
-  ],
-  [
-    'eliminated object refused without host echo',
-    {
-      checkpoints: {
-        challenge: challengeOutput({ findings: [makeFinding('M1')], eliminated: { file: '/private/tmp/host-secret/file.js' } })
-      }
-    },
-    null,
-    [CONTEXT_GAP],
-    ['checkpoint-shape: phases.challenge.eliminated must be an array, got object']
-  ],
+  ['bad phase with context disclosure', { checkpoints: { challenge: 'not-an-object' } }, null, [CONTEXT_GAP],
+    ['checkpoint-shape: phases.challenge must be a plain object, got string']],
+  ['null disclosure accompanies refusal', { reviewConfig: null, checkpoints: { challenge: 'not-an-object' } }, null,
+    [NULL_GAP, CONTEXT_GAP], ['checkpoint-shape: phases.challenge must be a plain object, got string']],
+  ['discard disclosure accompanies ctx refusal', { checkpoints: 'garbage' }, { challenge: 'not-an-object' }, [CONTEXT_GAP,
+    'checkpoint-discarded: checkpoints must be a plain object, got string -- the supplied '
+    + 'checkpoints argument was discarded entirely; nothing was resumed, exactly as if no ' + 'checkpoints had been supplied.'],
+    ['checkpoint-shape: phases.challenge must be a plain object, got string']],
+  ['null finding refused', { checkpoints: { challenge: challengeOutput({ findings: [makeFinding('M1'), null] }) } }, null,
+    [CONTEXT_GAP], ['checkpoint-shape: phases.challenge.findings[1] must be a plain object, got null']],
+  ['all violations retained', { checkpoints: { merge: 'not-an-object', verify: { findings: 'not-an-array' } } }, null, [CONTEXT_GAP], [
+    'checkpoint-shape: phases.merge must be a plain object, got string',
+    'checkpoint-shape: phases.verify.findings must be an array, got string']],
+  ['count advice without context disclosure',
+    { contextLines: 1, contextChars: 1, checkpoints: { merge: 'not-an-object', verify: { findings: 'not-an-array' } } }, null, [], [
+    'checkpoint-shape: phases.merge must be a plain object, got string',
+    'checkpoint-shape: phases.verify.findings must be an array, got string']],
+  ['recognized malformed phase is not discarded', { checkpoints: { challenge: 'x', completed: [] } }, null, [CONTEXT_GAP],
+    ['checkpoint-shape: phases.challenge must be a plain object, got string']],
+  ['eliminated string refused',
+    { checkpoints: { challenge: challengeOutput({ findings: [makeFinding('M1')], eliminated: 'not-an-array' }) } }, null, [CONTEXT_GAP],
+    ['checkpoint-shape: phases.challenge.eliminated must be an array, got string']],
+  ['eliminated object refused without host echo', { checkpoints: {
+    challenge: challengeOutput({ findings: [makeFinding('M1')], eliminated: { file: '/private/tmp/host-secret/file.js' } }) } }, null,
+    [CONTEXT_GAP], ['checkpoint-shape: phases.challenge.eliminated must be an array, got object']],
 ];
 for (const [name, input, fallback, prior, violations] of RUN_REFUSAL_ROWS) {
   test(`runWith checkpoint refusal: ${name}`, async () => {
@@ -724,15 +375,9 @@ for (const [name, input, fallback, prior, violations] of RUN_REFUSAL_ROWS) {
     const ctx = { ...makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), checkpoints: fallback };
     const out = await runWith(ctx, args);
     const more = violations.length > 1 ? ` (and ${violations.length - 1} more checkpoint-shape violation)` : '';
-    assert.deepEqual(out, {
-      ok: false,
-      error: `${violations[0]}${more}. ${RECOVERY}`,
-      failingPhase: 'checkpoints',
-      phaseReached: 'checkpoints',
-      artifactPaths: {},
-      stats: {},
-      gaps: [...prior, ...violations], checkpoints: { completed: [] },
-    });
+    assert.deepEqual(out, expectedWith(REJECT_GOLDEN, {
+      error: `${violations[0]}${more}. ${RECOVERY}`, gaps: [...prior, ...violations],
+    }));
     assert.deepEqual(ctx.calls, []);
     assert.equal(persisted, null);
     assert.ok(!JSON.stringify(out).includes('/private/tmp/host-secret/file.js'));
@@ -740,54 +385,15 @@ for (const [name, input, fallback, prior, violations] of RUN_REFUSAL_ROWS) {
 }
 const RUN_DISCARD_ROWS = [
   ...DISCARD_ROWS.filter(([, , , includeInRun = true]) => includeInRun).map(([name, input, expected]) => [name, input, expected]),
-  [
-    'phases array',
-    { phases: [] },
-    [
-      'checkpoint-discarded: checkpoints.phases must be a plain object, got array -- the '
-      + 'supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as '
-      + 'if no checkpoints had been supplied.'
-    ]
-  ],
-  [
-    'top-level garbage',
-    'garbage',
-    [
-      'checkpoint-discarded: checkpoints must be a plain object, got string -- the supplied '
-      + 'checkpoints argument was discarded entirely; nothing was resumed, exactly as if no '
-      + 'checkpoints had been supplied.'
-    ]
-  ],
-  [
-    'nonarray completed',
-    { completed: 'not-an-array' },
-    [
-      'checkpoint-discarded: the supplied checkpoints value looks like a return envelope '
-      + 'rather than a checkpoint artifact -- it carries no phase outputs to resume from; '
-      + 're-run without the checkpoints argument to start the review fresh.'
-    ]
-  ],
-  [
-    'false truncated flag',
-    { completed: [], truncated: false },
-    [
-      'checkpoint-discarded: the supplied checkpoints value looks like a return envelope '
-      + 'rather than a checkpoint artifact -- it carries no phase outputs to resume from; '
-      + 're-run without the checkpoints argument to start the review fresh.'
-    ]
-  ],
+  ['phases array', { phases: [] }, discardedContainer('checkpoints.phases', 'array')
+    ],
+  ['top-level garbage', 'garbage', discardedContainer('checkpoints', 'string')],
+  ['nonarray completed', { completed: 'not-an-array' }, [RETURN_DISCARD_GAP]],
+  ['false truncated flag', { completed: [], truncated: false }, [RETURN_DISCARD_GAP]],
   ['first-phase crash', { phases: {}, completed: [] }, []],
   ['absent checkpoints', undefined, []],
-  [
-    'garbage args with inert ctx fallback',
-    'garbage',
-    [
-      'checkpoint-discarded: checkpoints must be a plain object, got string -- the supplied '
-      + 'checkpoints argument was discarded entirely; nothing was resumed, exactly as if no '
-      + 'checkpoints had been supplied.'
-    ],
-    { completed: [] }
-  ],
+  ['garbage args with inert ctx fallback', 'garbage', discardedContainer('checkpoints', 'string'),
+    { completed: [] }],
 ];
 for (const [name, checkpoints, expected, fallback] of RUN_DISCARD_ROWS) {
   test(`runWith checkpoint discard: ${name}`, async () => {
@@ -829,159 +435,64 @@ for (const [name, checkpoints, replayChallenge, dispatchChallenge = !replayChall
     else assert.ok(ctx.calls.some((call) => call.label.startsWith('challenge-')));
   });
 }
+const LEGACY_FINDING = {
+  id: 'LEGACY1', file: 'src/legacy.py', line: 12, title: 'Legacy finding', body: SHELL_PAYLOAD,
+  severity: 'medium', confidence: 60,
+};
+const REPLAY_INPUT = challengeOutput({
+  findings: [replaySurvivor(), makeFinding('BAD1', { description: SHELL_PAYLOAD })],
+  stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 999 },
+});
+const REPLAY_GOLDEN = { kept: ['M1'], unverified: [], eliminated: ['BAD1'], final: 1, skipped: 0, belt: 1 };
 const REPLAY_ROWS = [
-  {
-    name: 'findings elimination corrects stale final count',
-    challenge: challengeOutput(
-      {
-        findings: [replaySurvivor(), makeFinding('BAD1', { description: SHELL_PAYLOAD })],
-        stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 999 }
-      }
-    ),
-    kept: ['M1'],
-    unverified: [],
-    eliminated: ['BAD1'],
-    final: 1,
-    skipped: 0,
-    belt: 1,
-    reason: /contains shell command pattern/,
-    repeat: true
-  },
-  {
-    name: 'unverified elimination corrects skipped count',
-    challenge: challengeOutput(
-      {
-        findings: [replaySurvivor()],
-        unverified: [makeFinding('BADU', { description: INSTRUCTION_PAYLOAD })],
-        stats: { total_input: 2, dispatched: 1, completed: 1, skipped: 1, final_count: 1 }
-      }
-    ),
-    kept: ['M1'],
-    unverified: [],
-    eliminated: ['BADU'],
-    final: 1,
-    skipped: 0,
-    belt: 1,
-    reason: /uses instructional tone/
-  },
-  {
-    name: 'confidence-free call site keeps short prose',
-    challenge: challengeOutput(
-      {
-        findings: [
-          makeFinding('SHORT', { severity: 'medium', confidence: 90, description: 'Loop bound is off by one' }),
-          makeFinding('BAD1', { description: SHELL_PAYLOAD })
-        ],
-        stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 2 }
-      }
-    ),
-    kept: ['SHORT'],
-    unverified: [],
-    eliminated: ['BAD1'],
-    final: 1,
-    skipped: 0,
-    belt: 1,
-    reason: /contains shell command pattern/
-  },
-  {
-    name: 'newly eliminated prose is stripped after append',
-    challenge: challengeOutput(
-      {
-        findings: [makeFinding('BAD2', { description: SHELL_PAYLOAD, claude_md_rule: BYPASS })],
-        stats: { total_input: 1, dispatched: 1, completed: 1, skipped: 0, final_count: 1 }
-      }
-    ),
-    kept: [],
-    unverified: [],
-    eliminated: ['BAD2'],
-    final: 0,
-    skipped: 0,
-    belt: 1,
-    reason: /contains shell command pattern/,
-    stripped: 'BAD2'
-  },
-  {
-    name: 'legacy body is scanned before persistence',
-    challenge: challengeOutput(
-      {
-        findings: [
-          {
-            id: 'LEGACY1',
-            file: 'src/legacy.py',
-            line: 12,
-            title: 'Legacy finding',
-            body: SHELL_PAYLOAD,
-            severity: 'medium',
-            confidence: 60
-          }
-        ],
-        stats: { total_input: 1, dispatched: 1, completed: 1, skipped: 0, final_count: 1 }
-      }
-    ),
-    kept: [],
-    unverified: [],
-    eliminated: ['LEGACY1'],
-    final: 0,
-    skipped: 0,
-    belt: 1,
-    reason: /contains shell command pattern/,
-    legacyBody: true
-  },
-  {
-    name: 'null unverified dropped while real prose stripped',
-    challenge: challengeOutput(
-      {
-        findings: [replaySurvivor()],
-        unverified: [null, makeFinding('U1', { claude_md_rule: BYPASS })],
-        stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 1 }
-      }
-    ),
-    kept: ['M1'],
-    unverified: ['U1'],
-    eliminated: [],
-    final: 1,
-    belt: 0,
-    dropped: true,
-    stripped: 'U1'
-  },
-  {
-    name: 'null eliminated normalizes to empty',
-    challenge: challengeOutput({ findings: [makeFinding('M1')], eliminated: null }),
-    kept: ['M1'],
-    unverified: [],
-    eliminated: [],
-    final: undefined,
-    belt: 0
-  },
-  {
-    name: 'primitive eliminated host path is dropped',
-    challenge: challengeOutput({ findings: [makeFinding('M1')], eliminated: ['/private/tmp/host-secret/x.js'] }),
-    kept: ['M1'],
-    unverified: [],
-    eliminated: [],
-    final: undefined,
-    belt: 0,
-    dropped: true
-  },
-  { name: 'fresh challenge output is already filtered', kept: ['F1', 'F2'], unverified: [], eliminated: [], final: 2, skipped: 0, belt: 0 },
+  { name: 'findings elimination corrects stale final count', challenge: {}, expected: {},
+    reason: /contains shell command pattern/, repeat: true },
+  { name: 'unverified elimination corrects skipped count', challenge: {
+    findings: [replaySurvivor()], unverified: [makeFinding('BADU', { description: INSTRUCTION_PAYLOAD })],
+    'stats.dispatched': 1, 'stats.completed': 1, 'stats.skipped': 1, 'stats.final_count': 1,
+  }, expected: { eliminated: ['BADU'] }, reason: /uses instructional tone/ },
+  { name: 'confidence-free call site keeps short prose', challenge: {
+    findings: [makeFinding('SHORT', { severity: 'medium', confidence: 90, description: 'Loop bound is off by one' }),
+      makeFinding('BAD1', { description: SHELL_PAYLOAD })], 'stats.final_count': 2,
+  }, expected: { kept: ['SHORT'] }, reason: /contains shell command pattern/ },
+  { name: 'newly eliminated prose is stripped after append', challenge: {
+    findings: [makeFinding('BAD2', { description: SHELL_PAYLOAD, claude_md_rule: BYPASS })],
+    'stats.total_input': 1, 'stats.dispatched': 1, 'stats.completed': 1, 'stats.final_count': 1,
+  }, expected: { kept: [], eliminated: ['BAD2'], final: 0 }, reason: /contains shell command pattern/, stripped: 'BAD2' },
+  { name: 'legacy body is scanned before persistence', challenge: {
+    findings: [LEGACY_FINDING], 'stats.total_input': 1, 'stats.dispatched': 1, 'stats.completed': 1, 'stats.final_count': 1,
+  }, expected: { kept: [], eliminated: ['LEGACY1'], final: 0 }, reason: /contains shell command pattern/, legacyBody: true },
+  { name: 'null unverified dropped while real prose stripped', challenge: {
+    findings: [replaySurvivor()], unverified: [null, makeFinding('U1', { claude_md_rule: BYPASS })], 'stats.final_count': 1,
+  }, expected: { unverified: ['U1'], eliminated: [], belt: 0, skipped: undefined }, dropped: true, stripped: 'U1' },
+  { name: 'null eliminated normalizes to empty', challenge: {
+    findings: [makeFinding('M1')], eliminated: null, stats: {},
+  }, expected: { eliminated: [], final: undefined, skipped: undefined, belt: 0 } },
+  { name: 'primitive eliminated host path is dropped', challenge: {
+    findings: [makeFinding('M1')], eliminated: ['/private/tmp/host-secret/x.js'], stats: {},
+  }, expected: { eliminated: [], final: undefined, skipped: undefined, belt: 0 }, dropped: true },
+  { name: 'fresh challenge output is already filtered', fresh: true,
+    expected: { kept: ['F1', 'F2'], eliminated: [], final: 2, belt: 0 } },
 ];
 for (const row of REPLAY_ROWS) {
   test(`runWith replay belt: ${row.name}`, async () => {
-    const args = validArgs(row.challenge ? { checkpoints: { challenge: row.challenge } } : {});
+    const expected = expectedWith(REPLAY_GOLDEN, row.expected);
+    const challenge = row.fresh ? null : expectedWith(REPLAY_INPUT, row.challenge);
+    const args = validArgs(challenge ? { checkpoints: { challenge } } : {});
     const { out, ctx, payload } = await runAndCapture(args);
     assert.equal(out.ok, true);
     const cp = payload.checkpoints.phases.challenge;
-    assert.deepEqual(cp.findings.map((finding) => finding.id), row.kept);
-    assert.deepEqual(payload.findings.map((finding) => finding.id), row.kept);
-    assert.deepEqual(payload.postReview.map((finding) => finding.id), row.kept);
-    assert.deepEqual(cp.unverified.map((finding) => finding.id), row.unverified);
-    assert.deepEqual(cp.eliminated.map((finding) => finding.id), row.eliminated);
-    assert.equal(out.stats.challenge.final_count, row.final);
-    assert.equal(out.stats.highConfidence, row.kept.length);
-    assert.equal(out.stats.unverified, row.unverified.length);
-    if (row.skipped !== undefined) assert.equal(out.stats.challenge.skipped, row.skipped);
-    assert.equal(out.stats.challenge.replay_belt_eliminated, row.belt);
-    if (row.challenge) assert.ok(!ctx.calls.some((call) => call.label.startsWith('challenge-')));
+    assert.deepEqual(cp.findings.map((finding) => finding.id), expected.kept);
+    assert.deepEqual(payload.findings.map((finding) => finding.id), expected.kept);
+    assert.deepEqual(payload.postReview.map((finding) => finding.id), expected.kept);
+    assert.deepEqual(cp.unverified.map((finding) => finding.id), expected.unverified);
+    assert.deepEqual(cp.eliminated.map((finding) => finding.id), expected.eliminated);
+    assert.equal(out.stats.challenge.final_count, expected.final);
+    assert.equal(out.stats.highConfidence, expected.kept.length);
+    assert.equal(out.stats.unverified, expected.unverified.length);
+    if (expected.skipped !== undefined) assert.equal(out.stats.challenge.skipped, expected.skipped);
+    assert.equal(out.stats.challenge.replay_belt_eliminated, expected.belt);
+    if (challenge) assert.ok(!ctx.calls.some((call) => call.label.startsWith('challenge-')));
     else assert.ok(ctx.calls.some((call) => call.label.startsWith('challenge-')));
     for (const finding of [...cp.findings, ...cp.eliminated, ...payload.postReview]) {
       assert.ok(!Object.hasOwn(finding, '__replayBeltIndex'));
@@ -1003,7 +514,7 @@ for (const row of REPLAY_ROWS) {
       assert.equal(cp.eliminated[0].body, undefined);
     }
     const gaps = out.gaps.filter((gap) => gap.startsWith('replay-filter:'));
-    if (row.belt) {
+    if (expected.belt) {
       assert.equal(gaps.length, 1);
       assert.match(gaps[0], /^replay-filter: 1 finding\(s\)/);
       assert.equal(
