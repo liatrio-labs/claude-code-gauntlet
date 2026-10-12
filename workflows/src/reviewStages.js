@@ -80,7 +80,7 @@ export async function validateStage(ctx, input) {
       return;
     }
     completed += 1;
-    // The agent contract emits finding_id while the schema uses id; accepting both prevents silently unmatched confidence adjustments.
+    // The validator returns finding_id per its schema and agent contract; applyValidations matches on id, so copy it across or no adjustment matches.
     for (const e of list) {
       validations.push(e && typeof e === 'object' ? { ...e, id: e.id ?? e.finding_id } : e);
     }
@@ -201,7 +201,7 @@ export async function challengeStage(ctx, input) {
 
   results.forEach((res, idx) => {
     const finding = candidates[idx];
-    // The agent contract emits confidence_claim_is_correct; accepting the score alias also supports schema-shaped callers.
+    // The schema field is confidence_claim_is_correct; score is accepted as a legacy alias.
     // Nullish fallback preserves a legitimate zero score.
     const rawScore = res && typeof res === 'object' ? (res.confidence_claim_is_correct ?? res.score) : undefined;
     if (res === null || res === undefined || coerceInt(rawScore, INT_POLICY.validation) === null) {

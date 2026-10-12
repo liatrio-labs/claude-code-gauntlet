@@ -19,7 +19,7 @@ function contextReadPlan(lines, chars) {
   }
   return plan;
 }
-function formatSharedContextLine(inp, plan) {
+function sharedContextLine(inp, plan) {
   const path = inp && inp.contextPath;
   if (!path) return '';
   const head = `Read the shared context at ${path} first — it has the diff, project rules, and risk classification.`;
@@ -41,9 +41,6 @@ function formatSharedContextLine(inp, plan) {
   }
   const span = plan[0].limit;
   return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
-}
-function sharedContextLine(inp, plan = undefined) {
-  return formatSharedContextLine(inp, plan);
 }
 function setupContext(inp) {
   const plan = contextReadPlan(inp.contextLines, inp.contextChars);
@@ -2810,6 +2807,7 @@ function findingSchema(spec, policy) {
     required: ['findings', 'complete', 'total_seen'],
   };
 }
+const effectiveMaxLineSpan = (L) => Math.max(1, L.maxLineSpan || LIMIT_DEFAULTS.maxLineSpan);
 function dropSuggestedFixCode(f) {
   if (!('suggested_fix_code' in f)) return false;
   delete f.suggested_fix_code;
@@ -2900,7 +2898,6 @@ function discoverPrompt(inp, spec) {
   const base = `${ctxLine}This is a code gauntlet built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines you actually inspected (in the diff or in a file you opened) — a finding you cannot ground in inspected code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
   return spec.promptExtra ? `${base} ${spec.promptExtra}` : base;
 }
-const effectiveMaxLineSpan = (L) => Math.max(1, L.maxLineSpan || LIMIT_DEFAULTS.maxLineSpan);
 // --- applyValidations.js ---
 const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 function applyValidations(findings, validations) {
@@ -4603,9 +4600,10 @@ function merge(findingsByAgent, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
   const allWarnings = [];
-  const clonedGroups = Object.fromEntries(Object.entries(findingsByAgent || {}).map(([agent, group]) => {
+  const selected = {};
+  for (const agent of agents) {
+    const group = (findingsByAgent || {})[agent] || [];
     const findings = [];
-    const warnings = [];
     for (let i = 0; i < group.length; i += 1) {
       let obj;
       try {
@@ -4614,18 +4612,12 @@ function merge(findingsByAgent, meta) {
         obj = undefined;
       }
       if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
-        warnings.push(`[${agent}] finding ${i + 1}: expected object, got ${jsonTypeName(obj)}`);
+        allWarnings.push(`[${agent}] finding ${i + 1}: expected object, got ${jsonTypeName(obj)}`);
       } else {
         findings.push(obj);
       }
     }
-    return [agent, { findings, warnings }];
-  }));
-  const selected = {};
-  for (const agent of agents) {
-    const { findings, warnings } = clonedGroups[agent] || { findings: [], warnings: [] };
     selected[agent] = findings;
-    for (const w of warnings) allWarnings.push(w);
   }
   for (const [agent, findings] of Object.entries(selected)) injectAgentField(findings, agent);
   const allFlat = Object.values(selected).flat();
@@ -4663,7 +4655,7 @@ function mergeStage(discoverOut, meta) {
   const findings = out.findings || [];
   const byAgent = {};
   for (const f of findings) {
-    const a = f?.agent || 'unknown';
+    const a = f.agent || 'unknown';
     (byAgent[a] = byAgent[a] || []).push(f);
   }
   const shortAgentName = (a) => (typeof a === 'string' ? a.split(':').pop() : a);
@@ -5742,7 +5734,7 @@ function normalizePhaseFindings(name, out, replayed, args) {
   out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
 }
 function applyChallengeReplayBelt(challengeOut) {
-  if (!challengeOut || typeof challengeOut !== 'object') return;
+  if (!challengeOut || typeof challengeOut !== 'object') return 0;
   const findingsResult = beltPartitionList(challengeOut.findings);
   const unverifiedResult = beltPartitionList(challengeOut.unverified);
   challengeOut.findings = findingsResult.list;
@@ -5753,7 +5745,7 @@ function applyChallengeReplayBelt(challengeOut) {
   if (challengeOut.stats && typeof challengeOut.stats === 'object') {
     const k1 = findingsResult.eliminated.length;
     const k2 = unverifiedResult.eliminated.length;
-    if (typeof challengeOut.stats.final_count === 'number') {
+    if (typeof challengeOut.stats.final_count === 'number' && Array.isArray(challengeOut.findings)) {
       challengeOut.stats.final_count = challengeOut.findings.length;
     }
     if (typeof challengeOut.stats.skipped === 'number' && Array.isArray(challengeOut.unverified)) {
@@ -5761,6 +5753,7 @@ function applyChallengeReplayBelt(challengeOut) {
     }
     challengeOut.stats.replay_belt_eliminated = k1 + k2;
   }
+  return challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
 }
 // --- run.js ---
 function defaultCtx() {
@@ -5938,12 +5931,9 @@ async function runWith(ctx, rawArgs) {
       findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
     }));
     gaps.push(...(challengeOut.gaps || []));
-    applyChallengeReplayBelt(challengeOut);
-    if (challengeOut && typeof challengeOut === 'object') {
-      const markedCount = challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
-      if (markedCount > 0) {
-        gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
-      }
+    const markedCount = applyChallengeReplayBelt(challengeOut);
+    if (markedCount > 0) {
+      gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
     }
     gaps.push(...hostPathTextGaps(
       challengeOut,

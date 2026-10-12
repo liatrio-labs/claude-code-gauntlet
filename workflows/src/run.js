@@ -229,15 +229,11 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(challengeOut.gaps || []));
 
-    applyChallengeReplayBelt(challengeOut);
-    if (challengeOut && typeof challengeOut === 'object') {
-      // Derive the loss disclosure from carried eliminations so resumes report the same loss.
-      // Keep it outside the persisted challenge output to avoid duplicating gaps on replay.
-      const markedCount = challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
-      if (markedCount > 0) {
-        gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
-      }
-
+    // Derive the loss disclosure from carried eliminations so resumes report the same loss.
+    // Keep it outside the persisted challenge output to avoid duplicating gaps on replay.
+    const markedCount = applyChallengeReplayBelt(challengeOut);
+    if (markedCount > 0) {
+      gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
     }
 
     gaps.push(...hostPathTextGaps(
@@ -353,6 +349,7 @@ export async function runWith(ctx, rawArgs) {
       checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
       gaps,
       // Keep bulk persistence data last so a truncated return still includes status and gaps.
+      // scripts/gauntlet/awaiting.py elides persistReturn.entries from the terminal response; materialization reads the original task file.
       ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
     };
   } catch (e) {

@@ -10,7 +10,7 @@
       "id": "F1",
       "line_start": 10,
       "severity": "medium",
-      "title": "from ndjson"
+      "title": "first"
     }
   ],
   "head_sha": "abc123",

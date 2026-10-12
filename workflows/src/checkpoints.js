@@ -354,7 +354,7 @@ export function normalizePhaseFindings(name, out, replayed, args) {
 // Confidence heuristics are excluded because later adjustments can change their result.
 export function applyChallengeReplayBelt(challengeOut) {
   // Fresh outputs can be malformed even though replay checkpoints are shape-gated.
-  if (!challengeOut || typeof challengeOut !== 'object') return;
+  if (!challengeOut || typeof challengeOut !== 'object') return 0;
   // Preserve list order so replay deduplication sees the same sequence; mutate in place for reporting, delivery, and persistence.
   const findingsResult = beltPartitionList(challengeOut.findings);
   const unverifiedResult = beltPartitionList(challengeOut.unverified);
@@ -370,7 +370,7 @@ export function applyChallengeReplayBelt(challengeOut) {
   if (challengeOut.stats && typeof challengeOut.stats === 'object') {
     const k1 = findingsResult.eliminated.length;
     const k2 = unverifiedResult.eliminated.length;
-    if (typeof challengeOut.stats.final_count === 'number') {
+    if (typeof challengeOut.stats.final_count === 'number' && Array.isArray(challengeOut.findings)) {
       challengeOut.stats.final_count = challengeOut.findings.length;
     }
     if (typeof challengeOut.stats.skipped === 'number' && Array.isArray(challengeOut.unverified)) {
@@ -378,4 +378,5 @@ export function applyChallengeReplayBelt(challengeOut) {
     }
     challengeOut.stats.replay_belt_eliminated = k1 + k2;
   }
+  return challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
 }

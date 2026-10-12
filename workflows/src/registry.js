@@ -78,9 +78,9 @@ export const CODE_OWNED_HEADINGS = [
 //
 // FINDING_PROP_TYPES + FINDING_REQUIRED + each DIMENSIONS row's `schemaExtra` are, together,
 // the WHOLE declaration of what a finding may carry. They live in this one file on purpose
-// (issue #47): the canonical half used to sit in discover.js, the per-dimension half here, and
-// `cross_file_refs` was a third hardcoded special case inside findingItemSchema — three places
-// to add a finding field, which is how `suggestion`/`claude_md_rule` (instructed by all 7
+// because splitting the declaration across modules made a new field take three edits: the
+// canonical fields, per-dimension fields, and a hardcoded `cross_file_refs` special case.
+// That is how `suggestion`/`claude_md_rule` (instructed by all 7
 // discovery contracts) and `spec_text`/`criticality`/`failure_scenario` (one contract each)
 // went years declared by no schema and silently dropped at the StructuredOutput boundary.
 // Adding a finding field is now ONE entry here plus the owning agent's .md output contract,

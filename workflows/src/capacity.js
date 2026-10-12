@@ -70,8 +70,11 @@ export const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize
 // The retry and the agent-count guard must agree on dispatches per slice.
 export const VERIFY_ATTEMPTS_PER_SLICE = 2;
 
+// Stay strictly under the platform's per-run agent fan-out ceiling; the gap is headroom.
 const AGENT_COUNT_GUARD = 900;
+// Widen the summarize bucket once its term alone exceeds this.
 const SUMMARIZE_TERM_BOUND = 300;
+// Never challenge fewer than this many findings.
 const CHALLENGE_CAP_FLOOR = 5;
 
 const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
@@ -99,7 +102,7 @@ function verifyTerm(L, findings, baseBranch = 'main') {
 }
 
 // Every verify slice can retry independently, so its term must include retries.
-// Guard headroom covers report segmentation and writer retries omitted from their nominal terms.
+// The +2 covers up to two artifact-writer attempts; renderReport is code-only.
 export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main') {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);

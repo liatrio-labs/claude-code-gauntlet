@@ -117,10 +117,11 @@ export function merge(findingsByAgent, meta) {
   const agents = M.agents;
   const allWarnings = [];
 
-  // Clone all groups before roster selection so even unselected inputs retain JSON ownership effects.
-  const clonedGroups = Object.fromEntries(Object.entries(findingsByAgent || {}).map(([agent, group]) => {
+  // Dictionary selection preserves repeated roster keys and integer-key enumeration.
+  const selected = {};
+  for (const agent of agents) {
+    const group = (findingsByAgent || {})[agent] || [];
     const findings = [];
-    const warnings = [];
     for (let i = 0; i < group.length; i += 1) {
       let obj;
       try {
@@ -129,20 +130,12 @@ export function merge(findingsByAgent, meta) {
         obj = undefined;
       }
       if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
-        warnings.push(`[${agent}] finding ${i + 1}: expected object, got ${jsonTypeName(obj)}`);
+        allWarnings.push(`[${agent}] finding ${i + 1}: expected object, got ${jsonTypeName(obj)}`);
       } else {
         findings.push(obj);
       }
     }
-    return [agent, { findings, warnings }];
-  }));
-
-  // Dictionary selection preserves repeated roster keys and integer-key enumeration.
-  const selected = {};
-  for (const agent of agents) {
-    const { findings, warnings } = clonedGroups[agent] || { findings: [], warnings: [] };
     selected[agent] = findings;
-    for (const w of warnings) allWarnings.push(w);
   }
   for (const [agent, findings] of Object.entries(selected)) injectAgentField(findings, agent);
 
@@ -187,7 +180,7 @@ export function mergeStage(discoverOut, meta) {
 
   const byAgent = {};
   for (const f of findings) {
-    const a = f?.agent || 'unknown';
+    const a = f.agent || 'unknown';
     (byAgent[a] = byAgent[a] || []).push(f);
   }
 

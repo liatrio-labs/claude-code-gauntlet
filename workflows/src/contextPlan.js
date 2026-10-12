@@ -27,7 +27,7 @@ export function contextReadPlan(lines, chars) {
 }
 
 // Stages receive a prebuilt instruction, removing their ability to construct competing context-read plans.
-function formatSharedContextLine(inp, plan) {
+export function sharedContextLine(inp, plan) {
   const path = inp && inp.contextPath;
   if (!path) return '';
   const head = `Read the shared context at ${path} first — it has the diff, project rules, and risk classification.`;
@@ -50,10 +50,6 @@ function formatSharedContextLine(inp, plan) {
   }
   const span = plan[0].limit;
   return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
-}
-
-export function sharedContextLine(inp, plan = undefined) {
-  return formatSharedContextLine(inp, plan);
 }
 
 export function setupContext(inp) {
