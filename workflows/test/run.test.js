@@ -506,6 +506,7 @@ for (const row of SUMMARY_HOST_ROWS) test(`summary host text: ${row.name}`, asyn
 
 const METHODOLOGY_REPLAY_ROWS = [
   { name: 'string with path warnings', methodology: '/repo/raw-methodology', file: '/repo/src/a.js', expected: {} },
+  { name: 'array with path warnings', methodology: ['/repo/raw-methodology'], file: '/repo/src/a.js', expected: {} },
   { name: 'null without path warnings', methodology: null, file: 'src/a.js', expected: {} },
 ];
 for (const row of METHODOLOGY_REPLAY_ROWS) test(`legacy methodology: ${row.name}`, async () => {

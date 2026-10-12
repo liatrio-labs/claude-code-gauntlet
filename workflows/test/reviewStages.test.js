@@ -228,6 +228,7 @@ const DELIVERY_ROWS = [
   { name: 'zero cap', cap: 0, expected: [] }, { name: 'binding cap includes suggestion', cap: 2, expected: ['MAIN_CRIT', 'SUGG_HIGH'] },
   { name: 'main only', tier: 'main_only', expected: ['MAIN_CRIT', 'MAIN_MED'] },
   { name: 'main only cap filters before slicing', tier: 'main_only', cap: 2, expected: ['MAIN_CRIT', 'MAIN_MED'] },
+  { name: 'main only cap', tier: 'main_only', cap: 1, expected: ['MAIN_CRIT'] },
   { name: 'destination fallback', tier: 'main_only', input: [
     finding({ id: 'D_MAIN', report_destination: 'main' }), finding({ id: 'D_SUGG', report_destination: 'suggestion' }),
   ], expected: ['D_MAIN'] },
