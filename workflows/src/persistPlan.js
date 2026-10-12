@@ -61,8 +61,8 @@ export function hardenEscapeRuns(json) {
 // Markdown stays verbatim because JSON escape spelling would change its content.
 export function persistPrimaries(inp) {
   return {
-    findingsJson: hardenEscapeRuns(JSON.stringify(((inp || {}).findings || []).map(toV2Aliased), null, 2)),
-    reportMd: (inp || {}).report || '',
+    findingsJson: hardenEscapeRuns(JSON.stringify((inp.findings || []).map(toV2Aliased), null, 2)),
+    reportMd: inp.report || '',
   };
 }
 
@@ -118,10 +118,10 @@ export function persistPlan(inp, paths) {
 export function persistDerivable(inp) {
   // The Python serializer accepts only safe integers for byte-identical derivation.
   for (const [label, value] of [
-    ['findings', (inp || {}).findings],
-    ['postReview', (inp || {}).postReview],
-    ['checkpoints', (inp || {}).checkpoints],
-    ['prIdentity', (inp || {}).prIdentity],
+    ['findings', inp.findings],
+    ['postReview', inp.postReview],
+    ['checkpoints', inp.checkpoints],
+    ['prIdentity', inp.prIdentity],
   ]) {
     if (value === undefined || value === null) continue;
     const bad = firstUnsafeNumber(value, label);
@@ -129,7 +129,7 @@ export function persistDerivable(inp) {
       return { ok: false, reason: `${bad} is not a JS-safe integer — the Python assembler cannot spell it byte-identically, so the derived artifact would diverge` };
     }
   }
-  const findings = (inp || {}).findings || [];
+  const findings = inp.findings || [];
   const byId = new Map();
   for (let i = 0; i < findings.length; i += 1) {
     const f = findings[i];

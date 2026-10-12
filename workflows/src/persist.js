@@ -239,12 +239,12 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
     return fail(`assemble executor threw (${persistErrorMessage(e)})`);
   }
   if (receipt && typeof receipt === 'object') {
-    const receiptFields = [];
     const verified = receiptRows(receipt, 'verified');
     const receiptWritten = receiptRows(receipt, 'written');
-    verified.forEach((e, i) => receiptFields.push({ name: `verified[${i}]`, path: e && e.path, present: true }));
-    receiptWritten.forEach((e, i) => receiptFields.push({ name: `receipt.written[${i}]`, path: e && e.path, present: true }));
-    const receiptEscape = pathEscapeReason(outputDir, receiptFields);
+    const receiptEscape = pathEscapeReason(outputDir, [
+      ...verified.map((e, i) => ({ name: `verified[${i}]`, path: e && e.path, present: true })),
+      ...receiptWritten.map((e, i) => ({ name: `receipt.written[${i}]`, path: e && e.path, present: true })),
+    ]);
     if (receiptEscape) return fail(receiptEscape);
   }
   const trust = trustAssembleReceipt(receipt, paths, plan);

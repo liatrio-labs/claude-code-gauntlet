@@ -4656,8 +4656,8 @@ function hardenEscapeRuns(json) {
 }
 function persistPrimaries(inp) {
   return {
-    findingsJson: hardenEscapeRuns(JSON.stringify(((inp || {}).findings || []).map(toV2Aliased), null, 2)),
-    reportMd: (inp || {}).report || '',
+    findingsJson: hardenEscapeRuns(JSON.stringify((inp.findings || []).map(toV2Aliased), null, 2)),
+    reportMd: inp.report || '',
   };
 }
 function persistPlan(inp, paths) {
@@ -4701,10 +4701,10 @@ function persistPlan(inp, paths) {
 }
 function persistDerivable(inp) {
   for (const [label, value] of [
-    ['findings', (inp || {}).findings],
-    ['postReview', (inp || {}).postReview],
-    ['checkpoints', (inp || {}).checkpoints],
-    ['prIdentity', (inp || {}).prIdentity],
+    ['findings', inp.findings],
+    ['postReview', inp.postReview],
+    ['checkpoints', inp.checkpoints],
+    ['prIdentity', inp.prIdentity],
   ]) {
     if (value === undefined || value === null) continue;
     const bad = firstUnsafeNumber(value, label);
@@ -4712,7 +4712,7 @@ function persistDerivable(inp) {
       return { ok: false, reason: `${bad} is not a JS-safe integer — the Python assembler cannot spell it byte-identically, so the derived artifact would diverge` };
     }
   }
-  const findings = (inp || {}).findings || [];
+  const findings = inp.findings || [];
   const byId = new Map();
   for (let i = 0; i < findings.length; i += 1) {
     const f = findings[i];
@@ -4943,12 +4943,12 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
     return fail(`assemble executor threw (${persistErrorMessage(e)})`);
   }
   if (receipt && typeof receipt === 'object') {
-    const receiptFields = [];
     const verified = receiptRows(receipt, 'verified');
     const receiptWritten = receiptRows(receipt, 'written');
-    verified.forEach((e, i) => receiptFields.push({ name: `verified[${i}]`, path: e && e.path, present: true }));
-    receiptWritten.forEach((e, i) => receiptFields.push({ name: `receipt.written[${i}]`, path: e && e.path, present: true }));
-    const receiptEscape = pathEscapeReason(outputDir, receiptFields);
+    const receiptEscape = pathEscapeReason(outputDir, [
+      ...verified.map((e, i) => ({ name: `verified[${i}]`, path: e && e.path, present: true })),
+      ...receiptWritten.map((e, i) => ({ name: `receipt.written[${i}]`, path: e && e.path, present: true })),
+    ]);
     if (receiptEscape) return fail(receiptEscape);
   }
   const trust = trustAssembleReceipt(receipt, paths, plan);

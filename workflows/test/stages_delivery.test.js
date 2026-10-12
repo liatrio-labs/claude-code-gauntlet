@@ -532,12 +532,6 @@ test('runWith echoes exclusionsSource independently of reviewConfigSource: exclu
   assert.equal(out.stats.exclusionsSource, 'exclusionsText');
 });
 
-// --- runWith: #213 replay belt -----------------------------------------------
-
-// A challenge checkpoint recorded by a pipeline version that predates the
-// claude_md_rule/spec_text scan (before #213) — the citation field is raw and
-// unstripped, exactly as an older version would have persisted it, and its
-// sibling suggested_fix_code was never propagation-stripped either.
 test('runWith with legacy args.reviewConfig (no args.reviewMd) threads it into the filter stage and echoes "preParsed"', async () => {
   // Req 8 backward compat, at the runWith level: an older caller (or a bench child) that
   // still stamps the pre-parsed reviewConfig/exclusionPatterns pair directly — never
@@ -563,6 +557,9 @@ test('runWith with legacy args.reviewConfig (no args.reviewMd) threads it into t
   assert.equal(out.stats.filter.total, 2);
   assert.equal(out.stats.filter.passed_threshold, 1);
 });
+
+// --- replay delivery wiring --------------------------------------------------
+
 const REPLAY_PROJECTION_ROWS = [
   ['legacy delivery bytes', undefined], ['return delivery projection', { returnPrimaries: true }],
 ];
