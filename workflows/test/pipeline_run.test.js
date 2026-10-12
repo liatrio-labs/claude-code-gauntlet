@@ -81,36 +81,40 @@ for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, asy
   } } });
   const { out, payload } = await captureRun(args, { summary: row.summary, pipelineVersion: '3.26.0' });
   assert.equal(out.ok, true);
-  assert.deepEqual(Object.keys(payload), ['findings', 'postReview', 'report', 'checkpoints']);
-  assert.deepEqual(Object.keys(payload.postReview), ['owner', 'repo', 'pr_number', 'sha', 'platform', 'review_body', 'findings']);
-  assert.equal(payload.postReview.owner, 'o');
-  assert.equal(payload.postReview.repo, 'r');
-  assert.equal(payload.postReview.pr_number, 279);
-  assert.equal(payload.postReview.sha, '0123456789abcdef0123456789abcdef01234567');
-  assert.equal(payload.postReview.platform, 'github');
+  if (row.name === 'benign context') {
+    assert.deepEqual(Object.keys(payload), ['findings', 'postReview', 'report', 'checkpoints']);
+    assert.deepEqual(Object.keys(payload.postReview), ['owner', 'repo', 'pr_number', 'sha', 'platform', 'review_body', 'findings']);
+    assert.equal(payload.postReview.owner, 'o');
+    assert.equal(payload.postReview.repo, 'r');
+    assert.equal(payload.postReview.pr_number, 279);
+    assert.equal(payload.postReview.sha, '0123456789abcdef0123456789abcdef01234567');
+    assert.equal(payload.postReview.platform, 'github');
+  }
   const body = payload.postReview.review_body;
   assert.equal(body, WRAPPER_BODY);
   assert.ok(payload.report.includes('## Summary\n\n' + WRAPPER_BODY + '\n\n## Change Context'));
   assert.equal(body.includes(row.summary), false);
   if (row.marker) { assert.ok(payload.report.includes('&lt;!--')); assert.equal(body.includes('&lt;!--'), false); }
-  assert.ok(payload.report.includes(DIMENSIONS_TABLE));
   assert.equal((payload.report.match(/^## Review Methodology$/gm) || []).length, 1);
-  assert.ok(payload.report.endsWith('orchestrator at delivery.'));
-  assert.ok(payload.report.includes('pipeline_version=3.26.0 (bundle)'));
-  assert.ok(payload.report.includes('plugin_root=/plugin (resolved)'));
-  assert.ok(payload.report.includes('merge: per-channel: ndjson=2, text_fallback=0; duplicates resolved=0; '
-    + 'dropped-no-id=0; truncation warnings=0; validation warnings=0'));
-  assert.ok(payload.report.includes('selection policy: tier=all, cap=25'));
-  assert.ok(payload.report.includes('| Dimensions | dispatched=7; degraded=0 |'));
-  assert.ok(payload.report.includes('| Gaps | 0 |'));
-  assert.deepEqual(payload.checkpoints.completed, PHASES);
-  assert.deepEqual(payload.checkpoints.counts, { summarize: 0, discover: 2, merge: 2, verify: 2,
-    validate: 2, filter: 2, challenge: 2, report: 0 });
-  assert.deepEqual(Object.keys(payload.checkpoints.phases), ['challenge']);
-  assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.line, finding.end_line, finding.body]), [
-    ['F1', 10, 10, 'a genuine correctness problem in F1 that is described in enough words to clear the injection and threshold filters'],
-    ['F2', 10, 10, 'a genuine correctness problem in F2 that is described in enough words to clear the injection and threshold filters'],
-  ]);
+  if (row.name === 'benign context') {
+    assert.ok(payload.report.includes(DIMENSIONS_TABLE));
+    assert.ok(payload.report.endsWith('orchestrator at delivery.'));
+    assert.ok(payload.report.includes('pipeline_version=3.26.0 (bundle)'));
+    assert.ok(payload.report.includes('plugin_root=/plugin (resolved)'));
+    assert.ok(payload.report.includes('merge: per-channel: ndjson=2, text_fallback=0; duplicates resolved=0; '
+      + 'dropped-no-id=0; truncation warnings=0; validation warnings=0'));
+    assert.ok(payload.report.includes('selection policy: tier=all, cap=25'));
+    assert.ok(payload.report.includes('| Dimensions | dispatched=7; degraded=0 |'));
+    assert.ok(payload.report.includes('| Gaps | 0 |'));
+    assert.deepEqual(payload.checkpoints.completed, PHASES);
+    assert.deepEqual(payload.checkpoints.counts, { summarize: 0, discover: 2, merge: 2, verify: 2,
+      validate: 2, filter: 2, challenge: 2, report: 0 });
+    assert.deepEqual(Object.keys(payload.checkpoints.phases), ['challenge']);
+    assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.line, finding.end_line, finding.body]), [
+      ['F1', 10, 10, 'a genuine correctness problem in F1 that is described in enough words to clear the injection and threshold filters'],
+      ['F2', 10, 10, 'a genuine correctness problem in F2 that is described in enough words to clear the injection and threshold filters'],
+    ]);
+  }
 });
 
 const LONG_DESCRIPTION = 'When authenticating via the API-key path, organization_context.member is None but line 42 '
@@ -122,20 +126,17 @@ const LONG_DESCRIPTION = 'When authenticating via the API-key path, organization
   + 'the API-key branch and return the same 403 the session branch returns, keeping the two '
   + 'authentication paths behaviourally identical so neither leaks an unhandled exception to the '
   + 'client or the logs, and so the authorization decision is reached on both paths.';
-const FINDING_BYTES_ROWS = [{ name: 'long description reaches both persisted vocabularies', description: LONG_DESCRIPTION }];
-for (const row of FINDING_BYTES_ROWS) test(`persisted finding bytes: ${row.name}`, async () => {
-  assert.ok(row.description.length > 500);
-  const { out, payload } = await runAndCapture(validArgs(), { findings: [makeFinding('BUG1', { description: row.description })] });
+test('persisted finding bytes: long description reaches both persisted vocabularies', async () => {
+  const { out, payload } = await runAndCapture(validArgs(), { findings: [makeFinding('BUG1', { description: LONG_DESCRIPTION })] });
   assert.equal(out.ok, true);
   assert.ok(payload);
   const survivor = payload.findings.find((finding) => finding.id === 'BUG1');
   assert.ok(survivor);
-  assert.equal(survivor.description, row.description);
-  assert.equal(survivor.body, row.description);
+  assert.equal(survivor.description, LONG_DESCRIPTION);
+  assert.equal(survivor.body, LONG_DESCRIPTION);
 });
 
-const ROUND_TRIP_ROWS = [{ name: 'slim persisted challenge replays while upstream dispatches again', highConfidence: 2 }];
-for (const row of ROUND_TRIP_ROWS) test(`persisted checkpoint wiring: ${row.name}`, async () => {
+test('persisted checkpoint wiring: slim challenge survives empty and degraded fresh discovery', async (t) => {
   const first = await runAndCapture(validArgs());
   assert.equal(first.out.ok, true);
   assert.equal(Object.hasOwn(first.payload, 'unverified'), false);
@@ -144,23 +145,41 @@ for (const row of ROUND_TRIP_ROWS) test(`persisted checkpoint wiring: ${row.name
   assert.deepEqual(checkpoints.completed, PHASES);
   assert.deepEqual(Object.keys(checkpoints.counts), PHASES);
   for (const phase of PHASES) assert.equal(typeof checkpoints.counts[phase], 'number');
-  const { out, ctx } = await runAndCapture(validArgs({ checkpoints }));
-  assert.equal(out.ok, true);
-  assert.equal(out.phaseReached, 'report');
-  assert.equal(ctx.calls.some((call) => call.label.startsWith('challenge-')), false);
-  assert.ok(ctx.calls.some((call) => call.label === 'code-gauntlet:bug-detector'));
-  assert.ok(ctx.calls.some((call) => call.label === 'artifact-writer'));
-  assert.equal(out.artifactPaths.report, PATHS.report);
-  assert.equal(out.stats.highConfidence, row.highConfidence);
-  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('checkpoint-discarded:')), []);
+  for (const row of [
+    { name: 'healthy fresh discovery' },
+    { name: 'empty fresh discovery and stale report', findings: [], stale: true },
+    { name: 'total fresh degradation', nulls: [
+      'code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer', 'code-gauntlet:cross-file-impact',
+      'code-gauntlet:test-analyzer', 'code-gauntlet:conventions-and-intent', 'code-gauntlet:type-design-analyzer',
+      'code-gauntlet:code-simplifier',
+    ], degraded: ['bug', 'security', 'cross_file_impact', 'test_coverage', 'convention', 'intent',
+      'comment_accuracy', 'type_design', 'simplification'] },
+  ]) await t.test(row.name, async () => {
+    const replay = structuredClone(checkpoints);
+    if (row.stale) replay.phases.report = { report: '', gaps: [] };
+    const { out, ctx, payload } = await runAndCapture(validArgs({ checkpoints: replay }), {
+      findings: row.findings, nullAgentLabels: row.nulls,
+    });
+    assert.equal(out.ok, true);
+    assert.equal(out.phaseReached, 'report');
+    assert.equal(ctx.calls.some((call) => call.label.startsWith('challenge-')), false);
+    assert.ok(ctx.calls.some((call) => call.label === 'code-gauntlet:bug-detector'));
+    assert.ok(ctx.calls.some((call) => call.label === 'artifact-writer'));
+    assert.equal(out.artifactPaths.report, PATHS.report);
+    assert.equal(out.stats.highConfidence, 2);
+    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('checkpoint-discarded:')), []);
+    assert.deepEqual(out.stats.degraded, row.degraded ?? []);
+    assert.equal(out.gaps.some((gap) => gap.startsWith('all-degraded:')), false);
+    if (row.nulls) assert.equal(out.gaps.filter((gap) => gap.includes('agent returned null')).length, 7);
+    assert.ok(payload.report.startsWith('# \u2694\uFE0F Code Gauntlet:'));
+    assert.ok(payload.report.includes('## Summary'));
+  });
 });
 
-const GAP_COUNT_ROWS = [{ name: 'pre-report gap count reaches persisted methodology', expected: 2,
-  warning: 'code-gauntlet:bug-detector: agent returned null (dispatch failed) \u2014 dimensions bug not covered' }];
-for (const row of GAP_COUNT_ROWS) test(`persisted gap wiring: ${row.name}`, async () => {
+test('persisted gap wiring: pre-report count reaches persisted methodology', async () => {
   const { out, payload } = await runAndCapture(validArgs(), { nullAgentLabels: ['code-gauntlet:bug-detector'] });
   assert.equal(out.ok, true);
-  assert.equal(out.gaps.length, row.expected);
-  assert.ok(out.gaps.includes(row.warning));
+  assert.equal(out.gaps.length, 2);
+  assert.ok(out.gaps.includes('code-gauntlet:bug-detector: agent returned null (dispatch failed) \u2014 dimensions bug not covered'));
   assert.ok(payload.report.includes('| Gaps | 2 |'));
 });

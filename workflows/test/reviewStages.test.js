@@ -37,6 +37,17 @@ const VALIDATE_ROWS = [
       ['F1', 80, undefined, undefined, undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'validated'],
       ['F3', 80, undefined, undefined, undefined, 'skipped'], ['F4', 80, undefined, undefined, undefined, 'skipped'],
     ] },
+  { name: 'malformed object retains confidence', input: [finding({ id: 'F1', confidence: 80 })], reply: {},
+    expected: [['F1', 80, undefined, undefined, undefined, 'skipped']],
+    stats: { batches_dispatched: 1, batches_completed: 0, validated: 0, skipped: 1, adjusted: 0 }, gaps: [
+      'validate-batch-0: validator returned null/malformed \u2014 1 finding(s) unvalidated '
+      + '(validation=skipped, kept conservatively)',
+    ] },
+  { name: 'fractional batch clamps to one', batch: 0.5,
+    input: [finding({ id: 'F1', confidence: 80 }), finding({ id: 'F2', confidence: 80 })], reply: [],
+    expected: [['F1', 80, undefined, undefined, undefined, 'validated'], ['F2', 80, undefined, undefined, undefined, 'validated']],
+    stats: { batches_dispatched: 2, batches_completed: 2, validated: 2, skipped: 0, adjusted: 0 },
+    labels: ['validate-batch-0', 'validate-batch-1'] },
   { name: 'empty', input: [], reply: [], expected: [], labels: [],
     stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, adjusted: 0 } },
 ];
@@ -58,6 +69,8 @@ const VALIDATE_TAIL = '\nReturn { validations: [{ finding_id, confidence, justif
   + 'reachability (current | future_change_only | uncertain) }] } \u2014 confidence 0-100 '
   + '(one entry per finding you scored; omit the rest).';
 const VALIDATE_PROMPT_ROWS = [
+  { name: 'equal range endpoints print once', fields: { file: 'one.js', line_start: 42, line_end: 42 },
+    block: '- f1 [bug/high] one.js:42 \u2014 The function returns the wrong result for a real input.' },
   { name: 'single line', fields: { file: 'SENTINEL_VALIDATE_FILE.js', line_start: 42, description: 'SENTINEL_VALIDATE_DESC' },
     block: '- f1 [bug/high] SENTINEL_VALIDATE_FILE.js:42 \u2014 SENTINEL_VALIDATE_DESC' },
   { name: 'range and evidence', fields: { file: 'range.js', line_start: 12, line_end: 20, evidence: 'INSPECTED_LINES' },
@@ -76,6 +89,10 @@ for (const row of VALIDATE_PROMPT_ROWS) test(`validate prompt: ${row.name}`, asy
 });
 
 const FILTER_ROWS = [
+  { name: 'exclusion patterns reach the pipeline', findings: [
+    finding({ id: 'EXCLUDED', title: 'Excluded sentinel', file: 'generated/x.py' }),
+    finding({ id: 'KEPT', file: 'src/x.py' })], config: {}, exclusions: ['Excluded sentinel'],
+    kept: ['KEPT'], eliminated: ['EXCLUDED'] },
   { name: 'threshold, timestamp and determinism', findings: [
     finding({ id: 'F1', file: 'a.js', confidence: 90 }),
     finding({ id: 'F2', file: 'b.js', confidence: 30, severity: 'low', dimension: 'convention', agent: 'conventions-and-intent' }),
@@ -86,7 +103,8 @@ const FILTER_ROWS = [
     kept: ['legacy'], eliminated: ['api'] },
 ];
 for (const row of FILTER_ROWS) test(`filter forwarding: ${row.name}`, () => {
-  const input = { findings: row.findings, reviewConfig: row.config, exclusionPatterns: [], generatedAt: '2026-07-18T00:00:00Z' };
+  const input = { findings: row.findings, reviewConfig: row.config, exclusionPatterns: row.exclusions ?? [],
+    generatedAt: '2026-07-18T00:00:00Z' };
   const out = filterStage(structuredClone(input));
   assert.deepEqual(out, filterStage(structuredClone(input)));
   assert.equal(out.generated_at, '2026-07-18T00:00:00Z');
@@ -99,6 +117,20 @@ const CHALLENGE_GOLDEN = {
   challenge_contested: 0, challenge_survived: 1, unchallenged: 0, cross_agent_consolidated: 0, final_count: 1,
 };
 const CHALLENGE_ROWS = [
+  { name: 'negative cap clamps to zero', input: [finding({ id: 'F1' }), finding({ id: 'F2', severity: 'critical' })],
+    cap: -1, reply: { score: 80 }, kept: [], scores: [], labels: [], unverified: [['F2', 'skipped'], ['F1', 'skipped']],
+    gaps: ['challenge: 2 finding(s) over challengeCap=0 left unchallenged (challenge=skipped, pipeline-degraded)'],
+    stats: { ...CHALLENGE_GOLDEN, total_input: 2, dispatched: 0, completed: 0, skipped: 2,
+      challenge_survived: 0, final_count: 0 } },
+  { name: 'failed candidates stay ranked in unverified', input: [finding({ id: 'LOW', severity: 'low' }),
+    finding({ id: 'HIGH', severity: 'high' }), finding({ id: 'CRIT', severity: 'critical' })],
+    reply: null, kept: [], scores: [], labels: ['challenge-0', 'challenge-1', 'challenge-2'],
+    unverified: [['CRIT', 'skipped'], ['HIGH', 'skipped'], ['LOW', 'skipped']], gaps: [
+      'challenge-0: challenger returned null/unscored \u2014 finding CRIT unchallenged (challenge=skipped, pipeline-degraded)',
+      'challenge-1: challenger returned null/unscored \u2014 finding HIGH unchallenged (challenge=skipped, pipeline-degraded)',
+      'challenge-2: challenger returned null/unscored \u2014 finding LOW unchallenged (challenge=skipped, pipeline-degraded)',
+    ], stats: { ...CHALLENGE_GOLDEN, total_input: 3, dispatched: 3, completed: 0, skipped: 3,
+      challenge_survived: 0, final_count: 0 } },
   { name: 'legacy score and stage envelope', input: [finding()], reply: { score: 80 }, kept: ['f1'], scores: [80] },
   { name: 'canonical scores follow ranked indices', input: [finding({ id: 'F1' }), finding({ id: 'F2', severity: 'critical' })],
     reply: { confidence_claim_is_correct: 90, justification: 'claim holds' }, kept: ['F2', 'F1'], scores: [90, 90],
@@ -191,10 +223,11 @@ const MIXED = [
 const DELIVERY_GOLDEN = ['MAIN_CRIT', 'SUGG_HIGH', 'MAIN_MED', 'SUGG_LOW'];
 const DELIVERY_ROWS = [
   { name: 'absent cap and tier' }, { name: 'null cap and tier', cap: null, tier: null },
-  { name: 'explicit all', tier: 'all' }, { name: 'nonbinding cap', cap: 25 },
+  { name: 'nonbinding cap', cap: 25 },
+  { name: 'negative cap', cap: -1, expected: [] },
   { name: 'zero cap', cap: 0, expected: [] }, { name: 'binding cap includes suggestion', cap: 2, expected: ['MAIN_CRIT', 'SUGG_HIGH'] },
   { name: 'main only', tier: 'main_only', expected: ['MAIN_CRIT', 'MAIN_MED'] },
-  { name: 'main only cap', tier: 'main_only', cap: 1, expected: ['MAIN_CRIT'] },
+  { name: 'main only cap filters before slicing', tier: 'main_only', cap: 2, expected: ['MAIN_CRIT', 'MAIN_MED'] },
   { name: 'destination fallback', tier: 'main_only', input: [
     finding({ id: 'D_MAIN', report_destination: 'main' }), finding({ id: 'D_SUGG', report_destination: 'suggestion' }),
   ], expected: ['D_MAIN'] },

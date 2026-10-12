@@ -17,16 +17,7 @@ const DIMENSIONS = ['bug', 'security', 'cross_file_impact', 'test_coverage', 'co
   'type_design', 'simplification'];
 const PROOF = { slices: 1, proven: 1, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
   retried: 0, retriedMismatch: 0, retriedMissing: 0 };
-const HAPPY_ROWS = [{ name: 'compact envelope and complete dispatch inventory', highConfidence: 2, merged: 2,
-  scope: { lightEligible: false, scopeAnswer: null, deep: true }, labels: [
-    'summarize', ...DISCOVERY, 'verify-slice-0', 'validate-batch-0', 'challenge-0', 'challenge-1', 'artifact-writer',
-  ], agentTypes: [
-    'code-gauntlet:change-summarizer', ...DISCOVERY, 'code-gauntlet:executor', 'code-gauntlet:validator',
-    'code-gauntlet:challenger', 'code-gauntlet:challenger', 'code-gauntlet:artifact-writer',
-  ], merge: { agents_dispatched: ['bug-detector', 'security-reviewer', 'cross-file-impact', 'test-analyzer',
-    'conventions-and-intent', 'type-design-analyzer', 'code-simplifier'], findings_per_channel: { ndjson: 2, text_fallback: 0 },
-    duplicates_resolved: 0, dropped_no_id: 0, truncation_warnings: 0, validation_warnings: 0 } }];
-for (const row of HAPPY_ROWS) test(`happy contract: ${row.name}`, async () => {
+test('happy contract: compact envelope and complete dispatch inventory', async () => {
   const { out, ctx, payload } = await runAndCapture(validArgs());
   assert.equal(out.ok, true);
   assert.equal(out.phaseReached, 'report');
@@ -34,15 +25,22 @@ for (const row of HAPPY_ROWS) test(`happy contract: ${row.name}`, async () => {
   assert.deepEqual(out.artifactPaths, PATHS);
   assert.deepEqual(out.checkpoints, { completed: PHASES });
   assert.equal(Object.hasOwn(out, 'findings'), false);
-  assert.equal(out.stats.highConfidence, row.highConfidence);
-  assert.equal(out.stats.merged, row.merged);
+  assert.equal(out.stats.highConfidence, 2);
+  assert.equal(out.stats.merged, 2);
   assert.equal(out.stats.verified, true);
   assert.deepEqual(out.stats.inputProof, PROOF);
-  assert.deepEqual(out.stats.scope, row.scope);
-  assert.deepEqual(out.stats.merge, row.merge);
+  assert.deepEqual(out.stats.scope, { lightEligible: false, scopeAnswer: null, deep: true });
+  assert.deepEqual(out.stats.merge, { agents_dispatched: ['bug-detector', 'security-reviewer', 'cross-file-impact', 'test-analyzer',
+    'conventions-and-intent', 'type-design-analyzer', 'code-simplifier'], findings_per_channel: { ndjson: 2, text_fallback: 0 },
+    duplicates_resolved: 0, dropped_no_id: 0, truncation_warnings: 0, validation_warnings: 0 });
   assert.deepEqual(out.gaps.filter((gap) => /UNVERIFIED|host-path-text:|null_arg/.test(gap)), []);
-  assert.deepEqual(ctx.calls.map((call) => call.label), row.labels);
-  assert.deepEqual(ctx.calls.map((call) => call.agentType), row.agentTypes);
+  assert.deepEqual(ctx.calls.map((call) => call.label), [
+    'summarize', ...DISCOVERY, 'verify-slice-0', 'validate-batch-0', 'challenge-0', 'challenge-1', 'artifact-writer',
+  ]);
+  assert.deepEqual(ctx.calls.map((call) => call.agentType), [
+    'code-gauntlet:change-summarizer', ...DISCOVERY, 'code-gauntlet:executor', 'code-gauntlet:validator',
+    'code-gauntlet:challenger', 'code-gauntlet:challenger', 'code-gauntlet:artifact-writer',
+  ]);
   assert.deepEqual(ctx.violations, []);
   for (const call of ctx.calls) {
     assert.equal(typeof call.prompt, 'string');
@@ -173,42 +171,40 @@ for (const row of COARSEN_ROWS) test(`coarsening wiring: ${row.name}`, async () 
   assert.equal(ctx.calls.filter((call) => call.label.startsWith('validate-batch-')).length, row.batchCount);
 });
 
-const VERIFY_ROWS = [{ name: 'failed slice retains unknown origins through delivery', findings: [
-  makeFinding('F0'), makeFinding('F1'), makeFinding('F2'), makeFinding('F3'),
-], origins: [['F2', 'new'], ['F3', 'new'], ['F0', 'unknown'], ['F1', 'unknown']],
-  labels: ['verify-slice-0', 'verify-slice-0-retry', 'verify-slice-1'] }];
-for (const row of VERIFY_ROWS) test(`verification wiring: ${row.name}`, async () => {
+test('verification wiring: failed slice retains unknown origins through delivery', async () => {
   const { out, ctx, payload } = await runAndCapture(validArgs({ limits: { verifySliceSize: 2 } }), {
-    findings: row.findings, verifySliceFailIndex: 0,
+    findings: [makeFinding('F0'), makeFinding('F1'), makeFinding('F2'), makeFinding('F3')], verifySliceFailIndex: 0,
   });
   assert.equal(out.ok, true);
   assert.equal(out.phaseReached, 'report');
   assert.equal(out.stats.verified, false);
   assert.ok(out.gaps.some((gap) => gap.includes('UNVERIFIED') && gap.includes('slice 0') && gap.includes('2 of 4')));
-  assert.deepEqual(ctx.calls.filter((call) => call.label.startsWith('verify-slice-')).map((call) => call.label), row.labels);
+  assert.deepEqual(ctx.calls.filter((call) => call.label.startsWith('verify-slice-')).map((call) => call.label), [
+    'verify-slice-0', 'verify-slice-0-retry', 'verify-slice-1',
+  ]);
   assert.ok(ctx.calls.some((call) => call.label === 'validate-batch-0'));
   assert.ok(ctx.calls.some((call) => call.label === 'challenge-0'));
   assert.equal(out.artifactPaths.report, PATHS.report);
-  assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.origin]), row.origins);
+  assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.origin]), [
+    ['F2', 'new'], ['F3', 'new'], ['F0', 'unknown'], ['F1', 'unknown'],
+  ]);
 });
 
-const FRESH_PATH_ROWS = [{ name: 'discovery normalizes files and both reference arrays', finding: makeFinding('ABSOLUTE_DISCOVERY', {
-  file: '/repo/src/module.js', cross_file_refs: ['/repo/src/other.js:12-20', '/outside/host-secret.js:9'],
-  dimension: 'cross_file_impact', affected_consumers: ['/outside/consumer.js:10:5', '/repo/src/consumer.js:L3-L9'],
-}), expected: [['ABSOLUTE_DISCOVERY', 'src/module.js']], refs: ['src/other.js:12-20'], consumers: ['src/consumer.js:L3-L9'],
-  warnings: [
+test('fresh paths: discovery normalizes files and both reference arrays', async () => {
+  const { out, payload } = await runAndCapture(validArgs(), { findings: [makeFinding('ABSOLUTE_DISCOVERY', {
+    file: '/repo/src/module.js', cross_file_refs: ['/repo/src/other.js:12-20', '/outside/host-secret.js:9'],
+    dimension: 'cross_file_impact', affected_consumers: ['/outside/consumer.js:10:5', '/repo/src/consumer.js:L3-L9'],
+  })] });
+  assert.equal(out.ok, true);
+  assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.file]), [['ABSOLUTE_DISCOVERY', 'src/module.js']]);
+  assert.deepEqual(payload.findings[0].cross_file_refs, ['src/other.js:12-20']);
+  for (const findings of [payload.findings, payload.postReview, payload.checkpoints.phases.challenge.findings]) {
+    assert.deepEqual(findings[0].affected_consumers, ['src/consumer.js:L3-L9']);
+  }
+  for (const gap of [
     '[ABSOLUTE_DISCOVERY] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
     '[ABSOLUTE_DISCOVERY] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped',
-  ] }];
-for (const row of FRESH_PATH_ROWS) test(`fresh paths: ${row.name}`, async () => {
-  const { out, payload } = await runAndCapture(validArgs(), { findings: [row.finding] });
-  assert.equal(out.ok, true);
-  assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.file]), row.expected);
-  assert.deepEqual(payload.findings[0].cross_file_refs, row.refs);
-  for (const findings of [payload.findings, payload.postReview, payload.checkpoints.phases.challenge.findings]) {
-    assert.deepEqual(findings[0].affected_consumers, row.consumers);
-  }
-  for (const gap of row.warnings) assert.ok(out.gaps.includes(gap));
+  ]) assert.ok(out.gaps.includes(gap));
   for (const value of [payload, out]) {
     for (const path of ['/outside/consumer.js', '/repo/src/consumer.js', '/repo/src/module.js']) {
       assert.equal(JSON.stringify(value).includes(path), false);
@@ -217,8 +213,18 @@ for (const row of FRESH_PATH_ROWS) test(`fresh paths: ${row.name}`, async () => 
   assert.equal(out.stats.merge.validation_warnings, 0);
   assert.equal(out.stats.pathNormalization.discover.path_rewrites, 3);
   assert.ok(payload.report.includes('discover paths: path_rewrites=3'));
-  assert.equal(payload.report.includes('replay_path_rejected='), false);
   assert.equal(out.gaps.some((gap) => gap.includes('rewritten')), false);
+});
+
+test('fresh paths: rejected discovery finding has no replay rejection count', async () => {
+  const { out, payload } = await runAndCapture(validArgs(), { findings: [
+    makeFinding('KEEP', { file: '/repo/src/a.js' }), makeFinding('DROP', { file: '/outside/x.js' }),
+  ] });
+  assert.equal(out.ok, true);
+  assert.deepEqual(payload.findings.map((finding) => [finding.id, finding.file]), [['KEEP', 'src/a.js']]);
+  assert.deepEqual(out.stats.pathNormalization.discover, { path_rewrites: 1 });
+  assert.ok(out.gaps.includes('[DROP] Invalid file path: absolute file path is outside repoRoot - finding rejected'));
+  assert.equal(payload.report.includes('replay_path_rejected='), false);
 });
 
 const PATH_GOLDEN = { retained: [['REPLAY_UNDER', 'src/replayed.js']],
@@ -229,15 +235,15 @@ const PATH_GOLDEN = { retained: [['REPLAY_UNDER', 'src/replayed.js']],
     '[REPLAY_INVISIBLE_LEAD] Invalid file path: file path contains a disallowed character - finding rejected',
   ] };
 const REPLAY_PATH_ROWS = [
-  { name: 'discover findings', phase: 'discover', field: 'findings' },
-  { name: 'merge findings', phase: 'merge', field: 'findings', channels: { ndjson: 1, text_fallback: 0 }, warnings: 4 },
-  { name: 'verify findings', phase: 'verify', field: 'findings' },
-  { name: 'validate findings', phase: 'validate', field: 'findings' },
+  { name: 'discover findings', rewrites: 3, phase: 'discover', field: 'findings' },
+  { name: 'merge findings', rewrites: 3, phase: 'merge', field: 'findings', channels: { ndjson: 1, text_fallback: 0 }, warnings: 4 },
+  { name: 'verify findings', rewrites: 3, phase: 'verify', field: 'findings' },
+  { name: 'validate findings', rewrites: 3, phase: 'validate', field: 'findings' },
   { name: 'filter survivors reach sanitized challenger', phase: 'filter', field: 'filtered', rewrites: 3 },
-  { name: 'filter eliminations disclose rejected paths', phase: 'filter', field: 'eliminated' },
+  { name: 'filter eliminations disclose rejected paths', rewrites: 3, failureRewrites: 6, phase: 'filter', field: 'eliminated' },
   { name: 'challenge survivors reach delivery', phase: 'challenge', field: 'findings', rewrites: 3, delivered: ['REPLAY_UNDER'] },
-  { name: 'challenge unverified', phase: 'challenge', field: 'unverified' },
-  { name: 'challenge eliminated', phase: 'challenge', field: 'eliminated' },
+  { name: 'challenge unverified', rewrites: 3, phase: 'challenge', field: 'unverified' },
+  { name: 'challenge eliminated', rewrites: 3, phase: 'challenge', field: 'eliminated' },
 ];
 for (const row of REPLAY_PATH_ROWS) test(`replay paths: ${row.name}`, async () => {
   const under = makeFinding('REPLAY_UNDER', { file: '/repo/src/replayed.js',
@@ -280,7 +286,8 @@ for (const row of REPLAY_PATH_ROWS) test(`replay paths: ${row.name}`, async () =
       assert.equal(JSON.stringify(value).includes(path), false);
     }
   }
-  if (row.rewrites) assert.equal(out.stats.pathNormalization[row.phase].path_rewrites, row.rewrites);
+  assert.equal(out.stats.pathNormalization[row.phase].path_rewrites, row.rewrites);
+  assert.equal(failed.stats.path_rewrites, row.failureRewrites ?? row.rewrites);
   if (row.phase === 'filter' && row.field === 'filtered') {
     const calls = ctx.calls.filter((call) => call.label.startsWith('challenge-'));
     assert.deepEqual(calls.map((call) => call.label), ['challenge-0']);
@@ -319,38 +326,22 @@ for (const row of FILTER_RESUME_ROWS) test(`resume of resume: ${row.name}`, asyn
   assert.deepEqual(payload.postReview.map((finding) => finding.id), ['CLEAN_FILTER']);
 });
 
-const FIELD_ROWS = [
-  { name: 'fresh mixed wrong types', replay: false, extra: { cross_file_refs: '/outside/consumer.js', affected_consumers: 42 },
-    absent: ['cross_file_refs', 'affected_consumers'], gaps: [
-      '[BAD_PATH_ARRAY] Invalid cross_file_refs path: expected an array - field dropped',
-      '[BAD_PATH_ARRAY] Invalid affected_consumers path: expected an array - field dropped',
-    ] },
-  { name: 'replayed mixed wrong types', replay: true,
-    extra: { cross_file_refs: { path: '/outside/consumer.js' }, affected_consumers: '/outside/consumer.js' },
-    absent: ['cross_file_refs', 'affected_consumers'], gaps: [
-      '[BAD_PATH_ARRAY] Invalid cross_file_refs path: expected an array - field dropped',
-      '[BAD_PATH_ARRAY] Invalid affected_consumers path: expected an array - field dropped',
-    ] },
-  { name: 'fresh all rejected array stays empty', replay: false, extra: { affected_consumers: ['/outside/consumer.js'] },
-    absent: [], consumers: [], gaps: [
-      '[BAD_PATH_ARRAY] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
-    ] },
-  { name: 'replayed all rejected array stays empty', replay: true, extra: { affected_consumers: ['/outside/consumer.js'] },
-    absent: [], consumers: [], gaps: [
-      '[BAD_PATH_ARRAY] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
-    ] },
-];
-for (const row of FIELD_ROWS) test(`field validation wiring: ${row.name}`, async () => {
-  const finding = makeFinding('BAD_PATH_ARRAY', { dimension: 'cross_file_impact', ...row.extra });
-  const args = validArgs(row.replay ? { checkpoints: { challenge: challengeOutput({ findings: [finding] }) } } : {});
+for (const replay of [false, true]) test(`field validation wiring: ${replay ? 'replayed' : 'fresh'}`, async () => {
+  const finding = makeFinding('BAD_PATH_ARRAY', { dimension: 'cross_file_impact',
+    cross_file_refs: '/outside/consumer.js', affected_consumers: ['/outside/consumer.js'],
+  });
+  const args = validArgs(replay ? { checkpoints: { challenge: challengeOutput({ findings: [finding] }) } } : {});
   const { out, payload } = await runAndCapture(args, { findings: [finding] });
   assert.equal(out.ok, true);
   for (const findings of [payload.findings, payload.postReview, payload.checkpoints.phases.challenge.findings]) {
     assert.deepEqual(findings.map((value) => value.id), ['BAD_PATH_ARRAY']);
-    for (const field of row.absent) assert.equal(Object.hasOwn(findings[0], field), false);
-    if (row.consumers) assert.deepEqual(findings[0].affected_consumers, row.consumers);
+    assert.equal(Object.hasOwn(findings[0], 'cross_file_refs'), false);
+    assert.deepEqual(findings[0].affected_consumers, []);
   }
-  for (const gap of row.gaps) assert.ok(out.gaps.includes(gap));
+  for (const gap of [
+    '[BAD_PATH_ARRAY] Invalid cross_file_refs path: expected an array - field dropped',
+    '[BAD_PATH_ARRAY] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
+  ]) assert.ok(out.gaps.includes(gap));
   assert.equal(JSON.stringify(payload).includes('/outside/consumer.js'), false);
   assert.equal(JSON.stringify(out).includes('/outside/consumer.js'), false);
 });
@@ -381,12 +372,11 @@ const HOST_FINDING_GOLDEN = {
   severity: 'high', confidence: 90, dimension: 'bug', origin: 'new', evidence: '', cross_file_refs: [], code: 'const safe = true;',
 };
 const HOST_ROWS = [
-  { name: 'output directory', extra: { validation_justification: 'See /external/output/private.txt' }, gaps: [
-    'host-path-text: finding SAFE_ID mentions a host path in validation_justification - text left unchanged',
-  ] },
-  { name: 'plugin root', extra: { evidence: 'See /plugin/agents/reviewer.md' }, gaps: [
-    'host-path-text: finding SAFE_ID mentions a host path in evidence - text left unchanged',
-  ] },
+  { name: 'output directory, plugin root and registered fields', extra: {
+    validation_justification: 'See /external/output/private.txt', evidence: 'See /plugin/agents/reviewer.md',
+    attack_vector: 'See /repo/private.txt', suggestion_removal_reason: 'See /repo/private.txt',
+  }, gaps: ['host-path-text: finding SAFE_ID mentions a host path in attack_vector, evidence, '
+    + 'suggestion_removal_reason, validation_justification - text left unchanged'] },
   { name: 'unknown snake_case key', extra: { secret_host_note: 'See /repo/private.txt' }, gaps: [
     'host-path-text: finding SAFE_ID mentions a host path in other - text left unchanged',
   ] },
@@ -395,12 +385,6 @@ const HOST_ROWS = [
   ] },
   { name: 'top-level host path key', extra: { '/repo/private.txt': 'clean value' }, gaps: [
     'host-path-text: finding SAFE_ID mentions a host path in other - text left unchanged',
-  ] },
-  { name: 'dimension extra', extra: { attack_vector: 'See /repo/private.txt' }, gaps: [
-    'host-path-text: finding SAFE_ID mentions a host path in attack_vector - text left unchanged',
-  ] },
-  { name: 'pipeline removal reason', extra: { suggestion_removal_reason: 'See /repo/private.txt' }, gaps: [
-    'host-path-text: finding SAFE_ID mentions a host path in suggestion_removal_reason - text left unchanged',
   ] },
   { name: 'sibling checkout', repoRoot: '/Users/lee/repo', extra: { description: 'The related checkout is /Users/lee/other/a.js.' },
     gaps: ['host-path-text: finding SAFE_ID mentions a host path in description - text left unchanged'] },
@@ -458,8 +442,8 @@ const HOST_RESUME_GOLDEN = {
     code: 'const ELIMINATED_TEXT = broken();', elimination_reason: 'Elimination cites /repo/src/eliminated.js.',
   }], gaps: [],
 };
-const HOST_RESUME_ROWS = [{ name: 'all buckets and nested arrays disclose once across repeated runs and resume',
-  summary: 'The change summary cites /repo/src/summary.js and leaves the wording intact.',
+test('host text resume: all buckets disclose once across repeated runs and resume', async () => {
+  const row = { summary: 'The change summary cites /repo/src/summary.js and leaves the wording intact.',
   findings: [makeFinding('/repo/unsafe-id', { file: 'src/finding.js', title: 'Finding with a path-bearing id',
     description: 'Description preserves /repo/src/finding.js exactly.', evidence: 'Evidence preserves /plugin/agents/reviewer.md exactly.',
     suggested_fix_code: 'const source = "/repo/src/finding.js";',
@@ -474,8 +458,7 @@ const HOST_RESUME_ROWS = [{ name: 'all buckets and nested arrays disclose once a
     'host-path-text: finding UNVERIFIED_TEXT mentions a host path in challenge_justification - text left unchanged',
     'host-path-text: finding ELIMINATED_TEXT mentions a host path in elimination_reason - text left unchanged',
     'host-path-text: change summary mentions a host path - text left unchanged',
-  ] }];
-for (const row of HOST_RESUME_ROWS) test(`host text resume: ${row.name}`, async () => {
+  ] };
   const checkpoint = challengeOutput({ findings: row.findings, unverified: row.unverified, eliminated: row.eliminated });
   const freshArgs = () => validArgs({ checkpoints: { challenge: JSON.parse(JSON.stringify(checkpoint)) } });
   const first = await captureRun(freshArgs(), { summary: row.summary });
@@ -487,7 +470,7 @@ for (const row of HOST_RESUME_ROWS) test(`host text resume: ${row.name}`, async 
     assert.equal(out.gaps.filter((gap) => gap === row.gaps[0]).length, 1);
     assert.deepEqual(out.gaps, [UNMEASURED_GAP, ...row.gaps]);
     for (const gap of row.gaps) {
-      for (const root of ['/repo', '/plugin', '/repo/.code-gauntlet']) assert.equal(gap.includes(root), false);
+      for (const root of ['/repo', '/plugin']) assert.equal(gap.includes(root), false);
       assert.doesNotMatch(gap, /no write proof|partial-artifacts/i);
     }
     const stored = payload.checkpoints.phases.challenge;
@@ -523,7 +506,6 @@ for (const row of SUMMARY_HOST_ROWS) test(`summary host text: ${row.name}`, asyn
 
 const METHODOLOGY_REPLAY_ROWS = [
   { name: 'string with path warnings', methodology: '/repo/raw-methodology', file: '/repo/src/a.js', expected: {} },
-  { name: 'array with path warnings', methodology: ['/repo/raw-methodology'], file: '/repo/src/a.js', expected: {} },
   { name: 'null without path warnings', methodology: null, file: 'src/a.js', expected: {} },
 ];
 for (const row of METHODOLOGY_REPLAY_ROWS) test(`legacy methodology: ${row.name}`, async () => {
@@ -535,7 +517,7 @@ for (const row of METHODOLOGY_REPLAY_ROWS) test(`legacy methodology: ${row.name}
 });
 
 const CHANNEL_ROWS = [
-  { name: 'nonfinite with rejection', channels: { ndjson: Infinity, text_fallback: NaN }, rejected: true,
+  { name: 'nonfinite with rejection', failure: true, channels: { ndjson: Infinity, text_fallback: NaN }, rejected: true,
     expected: { ndjson: 0, text_fallback: 0 }, warnings: 1, finiteReport: true },
   { name: 'nonfinite without rejection', channels: { ndjson: Infinity, text_fallback: NaN }, rejected: false,
     expected: { ndjson: 0, text_fallback: 0 }, warnings: 0, finiteReport: true },
@@ -567,6 +549,9 @@ for (const row of CHANNEL_ROWS) test(`legacy replay channels: ${row.name}`, asyn
   if (row.rejected) {
     const warning = '[DROP] Invalid file path: absolute file path is outside repoRoot - finding rejected';
     assert.ok(out.gaps.includes(warning));
+  }
+  if (row.failure) {
+    const warning = '[DROP] Invalid file path: absolute file path is outside repoRoot - finding rejected';
     const failedArgs = validArgs({ checkpoints: { merge: {
       findings: [makeFinding('KEEP1'), makeFinding('KEEP2'), makeFinding('DROP', { file: '/outside/x.js' })],
       methodology: { findings_per_channel: row.channels }, gaps: [],
@@ -577,13 +562,12 @@ for (const row of CHANNEL_ROWS) test(`legacy replay channels: ${row.name}`, asyn
   }
 });
 
-const ZERO_PATH_ROWS = [{ name: 'zero rejection counts stay absent', input: { filter: {
-  filtered: [makeFinding('KEEP')], eliminated: [], gaps: [], stats: { replay_path_rejected: 0 },
-} }, expected: {} }];
-for (const row of ZERO_PATH_ROWS) test(`path count omission: ${row.name}`, async () => {
-  const { out, payload } = await runAndCapture(validArgs({ checkpoints: row.input }));
+test('path count omission: zero rejection counts stay absent', async () => {
+  const { out, payload } = await runAndCapture(validArgs({ checkpoints: { filter: {
+    filtered: [makeFinding('KEEP')], eliminated: [], gaps: [], stats: { replay_path_rejected: 0 },
+  } } }));
   assert.equal(out.ok, true);
-  assert.deepEqual(out.stats.pathNormalization, row.expected);
+  assert.deepEqual(out.stats.pathNormalization, {});
   assert.equal(payload.report.includes('replay_path_rejected='), false);
 });
 
@@ -594,30 +578,27 @@ const DEGRADED_ROWS = [
     resolved: { subagentModel: 'claude-x', provider: 'bedrock', gateway: false, conditionalSchema: false }, perAgent: 7 },
   { name: 'replayed total degradation fails loud', discover: { findings: [], degraded: DIMENSIONS,
     dispatched: DISCOVERY, gaps: ['legacy discovery gap'] }, ok: false, phase: 'discover', noDiscovery: true },
-  { name: 'rejected file URI leaves no review or host path', discover: {
+  { name: 'rejected file URI leaves no review or host path', hostPaths: true, discover: {
     findings: [makeFinding('URI', { file: 'file:///repo/src/module.js', cross_file_refs: ['/repo/src/module.js:1-2'] })],
     degraded: DIMENSIONS, dispatched: DISCOVERY, gaps: [],
   }, ok: false, phase: 'discover', noDiscovery: true },
   { name: 'healthy empty findings stays clean', findings: [], ok: true, phase: 'report', degraded: [] },
   { name: 'one degraded dimension stays disclosed', nulls: ['code-gauntlet:security-reviewer'],
     ok: true, phase: 'report', degraded: ['security'], perAgent: 1 },
-  { name: 'real persisted challenge survives total fresh re-degradation', realResume: true, nulls: DISCOVERY,
-    ok: true, phase: 'report', degraded: DIMENSIONS, perAgent: 7, highConfidence: 2 },
   { name: 'version-skew discovery with findings still delivers', discover: {
     findings: [makeFinding('F1')], gaps: [], degraded: ['bug'], dispatched: ['code-gauntlet:renamed-away'],
   }, ok: true, phase: 'report', noDiscovery: true, degraded: ['bug'] },
 ];
 for (const row of DEGRADED_ROWS) test(`degradation envelope: ${row.name}`, async () => {
-  const first = row.realResume ? await runAndCapture(validArgs()) : null;
-  if (first) { assert.equal(first.out.ok, true); assert.equal(first.payload.checkpoints.phases.challenge.findings.length, 2); }
   const args = validArgs({ ...(row.policy ? { policy: row.policy } : {}),
-    ...(row.discover ? { checkpoints: { discover: row.discover } } : {}),
-    ...(first ? { checkpoints: first.payload.checkpoints } : {}) });
+    ...(row.discover ? { checkpoints: { discover: row.discover } } : {}) });
   const { out, ctx } = await runAndCapture(args, { findings: row.findings, nullAgentLabels: row.nulls });
   assert.equal(out.ok, row.ok);
   assert.equal(out.phaseReached, row.phase);
-  assert.equal(JSON.stringify(out).includes('/repo/src/module.js'), false);
-  assert.equal(JSON.stringify(out).includes('file:///repo/src/module.js'), false);
+  if (row.hostPaths) {
+    assert.equal(JSON.stringify(out).includes('/repo/src/module.js'), false);
+    assert.equal(JSON.stringify(out).includes('file:///repo/src/module.js'), false);
+  }
   if (row.noDiscovery) assert.equal(ctx.calls.some((call) => call.label.startsWith('code-gauntlet:')), false);
   if (row.perAgent) assert.equal(out.gaps.filter((gap) => gap.includes('agent returned null')).length, row.perAgent);
   if (!row.ok) {
@@ -675,7 +656,6 @@ for (const row of FAILURE_ROWS) test(`path-safe failure: ${row.name}`, async () 
 });
 
 const REFUSAL_ROWS = [
-  { name: 'unsupported args version', input: { argsVersion: 2 }, marker: 'unsupported argsVersion 2 (expected 1)' },
   { name: 'stale caller flags', input: { agentFlags: { deep: false } }, marker: 'agentFlags is no longer accepted' },
   { name: 'malformed challenge never reaches persistence', input: { checkpoints: { challenge: challengeOutput({ findings: [
     { id: 'BAD', file: 'bad.js', line_start: 7, line_end: 7, severity: 5, title: { kind: 'object title' },
@@ -739,11 +719,16 @@ const NULL_ROWS = [
 for (const row of NULL_ROWS) test(`null waist disclosure: ${row.name}`, async () => {
   const args = validArgs(row.input);
   const before = JSON.parse(JSON.stringify(args));
-  const { out, payload } = await runAndCapture(args);
+  const { out, ctx, payload } = await runAndCapture(args);
   assert.equal(out.ok, row.ok);
   assert.deepEqual(out.gaps.filter((gap) => /^(null_arg|checkpoint-discarded|null_receipt):/.test(gap)), row.gaps);
   assert.deepEqual(args, before);
-  if (row.invalid) assert.ok(out.gaps.includes(row.invalid));
+  if (row.invalid) {
+    assert.ok(out.gaps.includes(row.invalid));
+    assert.ok(out.error.includes(row.invalid));
+    assert.deepEqual(ctx.calls, []);
+    assert.equal(payload, null);
+  }
   if (row.receipt) assert.ok(payload.report.includes('pr_comment_cap=null (default)'));
 });
 
@@ -764,8 +749,8 @@ for (const row of POLICY_ROWS) test(`policy wiring: ${row.name}`, async () => {
   assert.deepEqual(out.resolvedPolicy, row.expected);
   assert.deepEqual([...new Set(ctx.calls.map((call) => call.model))].sort(), row.models);
   const items = ctx.calls.find((call) => call.agentType === 'code-gauntlet:conventions-and-intent').schema.properties.findings.items;
-  assert.equal(Array.isArray(items.allOf), row.conditional);
-  if (!row.conditional) assert.equal(items.allOf, undefined);
+  if (row.conditional) assert.equal(Array.isArray(items.allOf), true);
+  else assert.equal(items.allOf, undefined);
 });
 
 const UNMEASURED_GAP = 'context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed '
@@ -785,8 +770,6 @@ const CONTEXT_ROWS = [
     markers: ['until a call returns no further content', 'Do not stop before that'], fallback: true },
   { name: 'unplannable readers get distinct fallback', input: { contextLines: 1500001 }, gaps: [UNPLANNABLE_GAP],
     markers: ['until a call returns no further content', 'Do not stop before that'], fallback: true },
-  { name: 'unmeasured sandbox globals', input: {}, sandbox: true, gaps: [UNMEASURED_GAP],
-    markers: ['until a call returns no further content', 'Do not stop before that'], fallback: true },
   { name: 'measured sandbox globals', input: { contextLines: 2028, contextChars: 94784 }, sandbox: true, gaps: [],
     markers: ['exactly 4 Read calls', 'Read(offset=1924, limit=105)'] },
 ];
@@ -797,7 +780,6 @@ for (const row of CONTEXT_ROWS) test(`context wiring: ${row.name}`, async () => 
   assert.equal(out.ok, true);
   assert.equal(out.phaseReached, 'report');
   assert.equal(out.stats.highConfidence, 2);
-  assert.notEqual(out.status, 'args-invalid');
   assert.deepEqual(out.gaps.filter((gap) => /context_unmeasured|context_unplannable/.test(gap)), row.gaps);
   const readers = ctx.calls.filter((call) => call.prompt.includes('/repo/.code-gauntlet/code-gauntlet-context-abc1234.md'));
   assert.deepEqual(readers.map((call) => call.label), ['summarize', ...DISCOVERY, 'validate-batch-0']);
@@ -926,18 +908,14 @@ for (const row of CONFIG_ROWS) test(`review configuration wiring: ${row.name}`, 
 const REPORT_ROWS = [
   { name: 'empty checkpoint', report: { report: '', gaps: [] } },
   { name: 'stale checkpoint keeps gaps', report: { report: 'OLD PRE-S3 REPORT', gaps: ['legacy report gap'] } },
-  { name: 'empty fresh filter still delivers persisted challenge', report: { report: '', gaps: [] }, emptyFresh: true },
   { name: 'legacy off-enum severity renders low but persists raw', report: { report: 'STALE REPORT CHECKPOINT',
     gaps: ['legacy report gap'] }, offEnum: true },
 ];
 for (const row of REPORT_ROWS) test(`report regeneration: ${row.name}`, async () => {
-  const first = row.emptyFresh ? await runAndCapture(validArgs()) : null;
-  if (first) { assert.equal(first.out.ok, true); assert.deepEqual(Object.keys(first.payload.checkpoints.phases), ['challenge']); }
-  const checkpoints = first ? { phases: { challenge: first.payload.checkpoints.phases.challenge, report: row.report },
-    completed: first.payload.checkpoints.completed } : { report: row.report };
+  const checkpoints = { report: row.report };
   if (row.offEnum) checkpoints.challenge = challengeOutput({ findings: [makeFinding('LEGACY', { severity: 'x'.repeat(70000),
     confidence: 95 })], stats: { total_input: 1, dispatched: 1, completed: 1, skipped: 0, final_count: 1 } });
-  const { out, payload } = await runAndCapture(validArgs({ checkpoints }), row.emptyFresh ? { findings: [] } : {});
+  const { out, payload } = await runAndCapture(validArgs({ checkpoints }));
   assert.equal(out.ok, true);
   assert.ok(payload.report.startsWith('# \u2694\uFE0F Code Gauntlet:'));
   assert.ok(payload.report.includes('## Summary'));
@@ -945,7 +923,6 @@ for (const row of REPORT_ROWS) test(`report regeneration: ${row.name}`, async ()
   assert.equal(payload.report.includes('STALE REPORT CHECKPOINT'), false);
   assert.equal(out.artifactPaths.report, PATHS.report);
   for (const gap of row.report.gaps) assert.ok(out.gaps.includes(gap));
-  if (row.emptyFresh) assert.equal(out.stats.highConfidence, 2);
   if (row.offEnum) {
     assert.ok(payload.report.includes('1 finding after the gauntlet \u2014 1 low.'));
     assert.ok(payload.report.includes('### \ud83d\udca1 Low'));

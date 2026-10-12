@@ -441,26 +441,23 @@ test('oversize finding is disclosed without dispatch and leaves the next slice n
     + '; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped')]);
 });
 
-const DELTA_SCHEMA_ROWS = [{ name: 'failed executor and retry both carry only deltas', labels: [
-  'verify-slice-0', 'verify-slice-0-retry',
-], resultKeys: ['deltas'], receiptKeys: ['sha', 'n_in', 'nonce', 'deltas_checksum', 'input_checksum', 'inline_checksum'],
-  deltaKeys: ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'] }];
-for (const row of DELTA_SCHEMA_ROWS) test(`delta-only schema: ${row.name}`, async () => {
+test('delta-only schema: failed executor and retry both carry only deltas', async () => {
   const ctx = verifyCtx(() => null);
   await verifyStage(ctx, verifyInput([BASE[0]]));
-  assert.deepEqual(ctx.calls.map((call) => call.label), row.labels);
+  assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0', 'verify-slice-0-retry']);
   assert.deepEqual(ctx.calls[1].schema, ctx.calls[0].schema);
   for (const call of ctx.calls) {
     const schema = call.schema;
-    assert.deepEqual(Object.keys(schema.properties.result.properties), row.resultKeys);
-    assert.deepEqual(Object.keys(schema.properties.receipt.properties), row.receiptKeys);
+    assert.deepEqual(Object.keys(schema.properties.result.properties), ['deltas']);
+    assert.deepEqual(Object.keys(schema.properties.receipt.properties), [
+      'sha', 'n_in', 'nonce', 'deltas_checksum', 'input_checksum', 'inline_checksum',
+    ]);
     assert.deepEqual(schema.properties.receipt.properties.deltas_checksum, { type: 'string' });
     const delta = schema.properties.result.properties.deltas.items;
     assert.deepEqual(delta.required, ['id', 'verified']);
-    assert.deepEqual(Object.keys(delta.properties), row.deltaKeys);
+    assert.deepEqual(Object.keys(delta.properties), ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason']);
     assert.deepEqual(delta.properties, { id: { type: 'string' }, verified: { type: 'boolean' },
       origin: { type: 'string' }, severity: { type: 'string' }, confidence: { type: 'number' },
       elimination_reason: { type: 'string' } });
-    assert.equal(delta.properties.agent, undefined);
   }
 });

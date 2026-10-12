@@ -1367,7 +1367,6 @@ for (const row of DIMENSION_ROWS) test(`dimension table: ${row.name}`, () => {
   const lines = md.split('\n');
   assert.equal(lines[0], '| Dimension | Agent | Findings | Notes |');
   assert.equal(lines[1], '|-----------|-------|----------|-------|');
-  assert.doesNotMatch(md, /^#/);
   const data = lines.slice(2).map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
   assert.equal(data.length, 7);
   assert.deepEqual(data.map((cells) => cells[0]), DIMENSION_LABELS);

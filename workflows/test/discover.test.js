@@ -38,6 +38,9 @@ for (const row of SCOPE_ROWS) test(`derived scope: ${row.name}`, () => {
   assert.deepEqual(deriveAgentFlags(row.risks, row.lines, row.answer), row.expected ?? {});
 });
 const DEGRADED_ROWS = [
+  { name: 'one healthy single-dimension agent', dispatched: ROSTER,
+    degraded: ['security', 'cross_file_impact', 'test_coverage', 'convention', 'intent',
+      'comment_accuracy', 'type_design', 'simplification'], expected: false },
   { name: 'all active', dispatched: ROSTER, degraded: DIMENSION_NAMES, expected: true },
   { name: 'partial multidimension failure', dispatched: ROSTER,
     degraded: ['convention', 'intent', 'comment_accuracy'], expected: false },
@@ -114,26 +117,27 @@ const SCHEMA_ROWS = [
   { agent: 'code-gauntlet:code-simplifier', dimensions: ['simplification'], flags: ['deep'],
     extra: { behavior_preserved: { type: 'string' } }, required: ['behavior_preserved'] },
 ];
-for (const row of SCHEMA_ROWS) test(`finding schema: ${row.agent}`, async () => {
+test('finding schemas: one dispatch supplies the roster', async (t) => {
   const ctx = stageCtx();
   await discover(ctx, { policy: {} });
   assert.deepEqual(ctx.calls.map((call) => call.label), ROSTER);
-  assert.equal(new Set(ctx.calls.map((call) => call.label)).size, 7);
-  const schema = ctx.calls.find((call) => call.label === row.agent).schema;
-  assert.deepEqual(schema, { type: 'object', properties: {
-    findings: { type: 'array', items: { type: 'object', properties: { ...CANONICAL_PROPS, ...row.extra },
-      required: [...REQUIRED, ...(row.required ?? [])], additionalProperties: false,
-      ...(row.allOf ? { allOf: row.allOf } : {}) } },
-    complete: { type: 'boolean' }, total_seen: { type: 'number' },
-  }, required: ['findings', 'complete', 'total_seen'] });
-  const spec = agentSpecs().find((value) => value.agentType === row.agent);
-  assert.deepEqual(spec.dimensions, row.dimensions);
-  assert.deepEqual(spec.conditionalFlags, row.flags);
-  assert.deepEqual(spec.requiredExtra, row.required ?? []);
-  assert.deepEqual(spec.conditionalRequired, row.conditional ?? []);
-  assert.equal(Object.hasOwn(spec, 'rows'), false);
   assert.deepEqual(FINDING_REQUIRED, REQUIRED);
   assert.deepEqual(ctx.violations, []);
+  for (const row of SCHEMA_ROWS) await t.test(row.agent, () => {
+    const schema = ctx.calls.find((call) => call.label === row.agent).schema;
+    assert.deepEqual(schema, { type: 'object', properties: {
+      findings: { type: 'array', items: { type: 'object', properties: { ...CANONICAL_PROPS, ...row.extra },
+        required: [...REQUIRED, ...(row.required ?? [])], additionalProperties: false,
+        ...(row.allOf ? { allOf: row.allOf } : {}) } },
+      complete: { type: 'boolean' }, total_seen: { type: 'number' },
+    }, required: ['findings', 'complete', 'total_seen'] });
+    const spec = agentSpecs().find((value) => value.agentType === row.agent);
+    assert.deepEqual(spec.dimensions, row.dimensions);
+    assert.deepEqual(spec.conditionalFlags, row.flags);
+    assert.deepEqual(spec.requiredExtra, row.required ?? []);
+    assert.deepEqual(spec.conditionalRequired, row.conditional ?? []);
+    assert.equal(Object.hasOwn(spec, 'rows'), false);
+  });
 });
 const POLICY_ROWS = [
   { name: 'default', policy: {}, allOf: CONDITIONAL },
@@ -190,11 +194,14 @@ const OUTCOME_ROWS = [
     expected: { ...DISCOVER_GOLDEN, findings: [{ id: 'F1', agent: 'bug-detector' }], gaps: [
       'code-gauntlet:bug-detector: possibly incomplete (complete=true, total_seen=0) \u2014 dimensions bug',
     ] } },
-  { name: 'all failed', nulls: ROSTER, expected: { ...DISCOVER_GOLDEN, degraded: DIMENSION_NAMES, gaps: [
-    'code-gauntlet:bug-detector: agent returned null (dispatch failed) \u2014 dimensions bug not covered', NULL_SECURITY,
+  { name: 'remaining single-dimension agents fail', nulls: [
+    'code-gauntlet:bug-detector', 'code-gauntlet:cross-file-impact', 'code-gauntlet:test-analyzer',
+    'code-gauntlet:type-design-analyzer', 'code-gauntlet:code-simplifier',
+  ], expected: { ...DISCOVER_GOLDEN,
+    degraded: ['bug', 'cross_file_impact', 'test_coverage', 'type_design', 'simplification'], gaps: [
+    'code-gauntlet:bug-detector: agent returned null (dispatch failed) \u2014 dimensions bug not covered',
     'code-gauntlet:cross-file-impact: agent returned null (dispatch failed) \u2014 dimensions cross_file_impact not covered',
     'code-gauntlet:test-analyzer: agent returned null (dispatch failed) \u2014 dimensions test_coverage not covered',
-    NULL_CONVENTIONS + ' (dispatch carried the conditional per-dimension schema)',
     'code-gauntlet:type-design-analyzer: agent returned null (dispatch failed) \u2014 dimensions type_design not covered',
     'code-gauntlet:code-simplifier: agent returned null (dispatch failed) \u2014 dimensions simplification not covered',
   ] } },
@@ -289,6 +296,13 @@ for (const row of PROMPT_ROWS) test(`discovery prompt: ${row.agent}`, async () =
   assert.equal(spec.promptExtra, row.extra ? row.extra.slice(1) : null);
 });
 
+test('discovery prompt: absent context has no prefix', async () => {
+  const ctx = stageCtx();
+  await discover(ctx, {});
+  assert.equal(ctx.calls.find((call) => call.label === 'code-gauntlet:bug-detector').prompt,
+    PROMPT_HEAD + 'bug' + PROMPT_TAIL + TYPO_SWEEP);
+});
+
 const SUMMARY_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
 const SINGLE_PROMPT = 'Summarize the semantic intent of these changed files for downstream reviewers: a.js, b.js. '
   + 'Return { summary }.';
@@ -330,10 +344,9 @@ for (const row of SUMMARY_ROWS) test(`summarize: ${row.name}`, async () => {
   for (const call of ctx.calls) assert.deepEqual(call.schema, SUMMARY_SCHEMA);
   assert.deepEqual(ctx.violations, []);
 });
-const REGISTRY_SCOPE_ROWS = [{ core: ['bug', 'security'], deep: [
-  'comment_accuracy', 'convention', 'cross_file_impact', 'intent', 'simplification', 'test_coverage', 'type_design',
-] }];
-for (const row of REGISTRY_SCOPE_ROWS) test('registry scope: literal core and deep dimensions', () => {
-  assert.deepEqual(DIMENSIONS.filter((d) => d.conditionalFlag === null).map((d) => d.dimension).sort(), row.core);
-  assert.deepEqual(DIMENSIONS.filter((d) => d.conditionalFlag === 'deep').map((d) => d.dimension).sort(), row.deep);
+test('registry scope: literal core and deep dimensions', () => {
+  assert.deepEqual(DIMENSIONS.filter((d) => d.conditionalFlag === null).map((d) => d.dimension).sort(), ['bug', 'security']);
+  assert.deepEqual(DIMENSIONS.filter((d) => d.conditionalFlag === 'deep').map((d) => d.dimension).sort(), [
+    'comment_accuracy', 'convention', 'cross_file_impact', 'intent', 'simplification', 'test_coverage', 'type_design',
+  ]);
 });

@@ -544,11 +544,16 @@ for (const row of REPLAY_ROWS) {
 
 for (const [name, value] of [
   ['absent', undefined], ['null', null], ['number', 1], ['string', 'legacy'],
-  ['missing findings with stats', { stats: { final_count: 1 }, unverified: [], eliminated: [] }],
 ]) {
-  test(`replay helpers: ${name} output stays untouched`, () => {
+  test(`replay helpers: ${name} passes through`, () => {
     assert.equal(normalizePhaseFindings('challenge', value, true, { repoRoot: '/repo' }), undefined);
     assert.equal(applyChallengeReplayBelt(value), 0);
-    if (value && typeof value === 'object') assert.deepEqual(value.stats, { final_count: 1, replay_belt_eliminated: 0 });
   });
 }
+test('replay helpers: missing findings retain the count and stamp the empty belt', () => {
+  const value = { stats: { final_count: 1 }, unverified: [], eliminated: [] };
+  assert.equal(normalizePhaseFindings('challenge', value, true, { repoRoot: '/repo' }), undefined);
+  assert.equal(applyChallengeReplayBelt(value), 0);
+  assert.deepEqual(value, { stats: { final_count: 1, replay_belt_eliminated: 0 },
+    unverified: [], eliminated: [], findings: undefined });
+});

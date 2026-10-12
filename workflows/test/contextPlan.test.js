@@ -71,7 +71,7 @@ const TAIL = 'Make ALL of them \u2014 stopping early means you review only the p
 const WORDING_ROWS = [
   { name: 'missing measurement' },
   { name: 'characters alone', input: { contextChars: 95057 } },
-  { name: 'single line', input: { contextLines: 1 }, text: PREFIX
+  { name: 'single line', input: { contextLines: 1 }, setup: true, text: PREFIX
     + 'It is 1 lines: read it with Read(offset=1, limit=1), and if that call does not reach line 1, '
     + 'continue with offset set past the last line you received until it does. ' },
   { name: 'one call still checks the terminus', input: { contextLines: 300, contextChars: 9000 }, text: PREFIX
@@ -104,6 +104,11 @@ const WORDING_ROWS = [
 for (const row of WORDING_ROWS) test(`context wording: ${row.name}`, () => {
   const line = sharedContextLine({ contextPath: '/c.md', ...row.input });
   assert.equal(line, row.text ?? FALLBACK);
+  if (row.setup) {
+    const out = setupContext({ contextPath: '/c.md', ...row.input });
+    assert.deepEqual(Object.keys(out), ['contextLine', 'contextSizeGap']);
+    assert.deepEqual(out, { contextLine: row.text, contextSizeGap: [] });
+  }
   assert.doesNotMatch(line, /undefined|NaN|null|Infinity|\[object/);
   assert.ok(line.endsWith(' '));
   if (row.count) assert.equal(contextReadPlan(row.input.contextLines).length, row.count);
@@ -117,32 +122,9 @@ for (const [index, input] of NO_PATH_ROWS.entries()) test(`no context path: ${in
   assert.equal(sharedContextLine(input), '');
 });
 
-const UNMEASURED = 'context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed '
-  + '\u2014 every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
-  + 'Read calls covering the file. That restores the failure mode of issue #48: a Read returns part of a large file '
-  + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-  + '(and contextChars) from the Phase 2 step that writes the context file.';
-const UNPLANNABLE = 'context_unplannable: args.contextLines was stamped (1500001) but exceeds the read-plan chunk ceiling, '
-  + 'so the shared-context read plan could not be built \u2014 every agent got the count-free '
-  + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
-  + 'That restores the failure mode of issue #48 for an oversized context. Shrink the shared context '
-  + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.';
-const SETUP_ROWS = [
-  { name: 'unmeasured', gaps: [UNMEASURED] },
-  { name: 'unplannable', input: { contextLines: 1500001 }, gaps: [UNPLANNABLE] },
-  { name: 'measured', input: { contextLines: 1 }, gaps: [], line: PREFIX
-    + 'It is 1 lines: read it with Read(offset=1, limit=1), and if that call does not reach line 1, '
-    + 'continue with offset set past the last line you received until it does. ' },
-];
-for (const row of SETUP_ROWS) test(`context setup: ${row.name}`, () => {
-  const out = setupContext({ contextPath: '/c.md', ...row.input });
-  assert.deepEqual(Object.keys(out), ['contextLine', 'contextSizeGap']);
-  assert.deepEqual(out, { contextLine: row.line ?? FALLBACK, contextSizeGap: row.gaps });
-});
-
 const SOURCE_GUARDS = [
   { name: 'no stage input carries the context path', kind: 'capability', expected: [] },
-  { name: 'setupContext has one build point', kind: 'build point', expected: 2 },
+  { name: 'setupContext has one build point', kind: 'build point', expected: [1, 1] },
 ];
 for (const row of SOURCE_GUARDS) test(`source guard: ${row.name}`, () => {
   if (row.kind === 'capability') {
@@ -156,9 +138,16 @@ for (const row of SOURCE_GUARDS) test(`source guard: ${row.name}`, () => {
       .map(({ n, line }) => `${n}: ${line}`);
     assert.deepEqual(offenders, row.expected);
   } else {
-    const src = readFileSync(join(SRC, 'contextPlan.js'), 'utf8') + readFileSync(join(SRC, 'run.js'), 'utf8');
-    const calls = src.split('\n').filter((line) => !line.trim().startsWith('//'))
-      .filter((line) => /setupContext\(/.test(line)).length;
-    assert.equal(calls, row.expected);
+    const sources = readdirSync(SRC, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => ({ path: join(entry.parentPath, entry.name), text: readFileSync(join(entry.parentPath, entry.name), 'utf8') }));
+    const code = sources.map(({ path, text }) => {
+      const content = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      return path === join(SRC, 'contextPlan.js')
+        ? content.replace(/\bfunction\s+(setupContext|sharedContextLine)\s*\(/g, 'function (')
+        : content;
+    }).join('\n');
+    assert.deepEqual(['setupContext', 'sharedContextLine'].map((name) =>
+      (code.match(new RegExp(`\\b${name}\\s*\\(`, 'g')) ?? []).length), row.expected);
   }
 });
