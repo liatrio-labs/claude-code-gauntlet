@@ -50,15 +50,15 @@ export function persistInput(over = {}) {
 }
 
 // Plumbing receipts echo the dispatched plan; independent byte oracles live in persistPlan.test.js.
-export function receiptFor(plan, over = {}) {
+function receiptFor(plan) {
   return {
     ok: true, planVersion: 2, planChecksum: plan.planChecksum,
-    verified: (plan.expect || []).map((e) => ({
+    verified: plan.expect.map((e) => ({
       path: e.path, chars: e.chars, expected_chars: e.chars,
       checksum: e.checksum, expected_checksum: e.checksum, content_proof: 'match',
     })),
-    written: (plan.derive || []).map((e) => ({ path: e.path, chars: e.chars, checksum: e.checksum })),
-    errors: [], ...over,
+    written: plan.derive.map((e) => ({ path: e.path, chars: e.chars, checksum: e.checksum })),
+    errors: [],
   };
 }
 
