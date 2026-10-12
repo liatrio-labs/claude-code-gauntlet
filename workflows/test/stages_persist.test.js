@@ -18,6 +18,7 @@
 //      writerPayload(inp).postReview and .checkpoints EXACTLY.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { writeArtifacts, parseWriterPayload, provenPrimaryPaths } from '../src/persist.js';
 import { writerPayload, persistPlan, persistPrimaries, persistDerivable, hardenEscapeRuns } from '../src/persistPlan.js';
 import { plannedArtifactPaths, persistPlanPath } from '../src/outputPaths.js';
@@ -162,6 +163,27 @@ function persistCtx(opts = {}) {
 }
 
 const labels = (ctx) => ctx.calls.map((c) => c.label);
+
+// Exercise missing plan entries without changing the production module's exports.
+// Loading the whole module keeps its private grader's shared helpers in scope.
+const persistSourceUrl = new URL('../src/persist.js', import.meta.url);
+const persistTestSource = readFileSync(persistSourceUrl, 'utf8')
+  .replace(/from '(\.\/[^']+)'/g, (_, path) => `from '${new URL(path, persistSourceUrl).href}'`);
+const { trustAssembleReceipt } = await import(`data:text/javascript,${encodeURIComponent(
+  `${persistTestSource}\nexport { trustAssembleReceipt };`,
+)}`);
+
+const receiptPlan = {
+  planChecksum: 'this-plan',
+  expect: [
+    { path: PATHS.findings, chars: 10, checksum: 'findings-sum' },
+    { path: PATHS.report, chars: 12, checksum: 'report-sum' },
+  ],
+  derive: [
+    { path: PATHS.postReview, chars: 20, checksum: 'post-sum' },
+    { path: PATHS.checkpoints, chars: 30, checksum: 'checkpoint-sum' },
+  ],
+};
 
 // --- persistPlan (pure) -----------------------------------------------------
 
@@ -357,6 +379,52 @@ test('receipt gate: a written entry with NO content numbers at all degrades', as
   assert.equal(out.partial, true);
   assert.ok(out.gaps.some((g) => /does not match the pipeline's own derivation/.test(g)), out.gaps);
 });
+
+const receiptGradeRows = [
+  ['null receipt', () => null, 'assemble executor returned no receipt'],
+  ['primitive receipt', () => true, 'assemble executor returned no receipt'],
+  ['failure without errors', (r) => ({ ...r, ok: false, errors: null }), 'assemble script reported failure (no reason given)'],
+  ['failure with two errors', (r) => ({ ...r, ok: false, errors: ['first', 'second'] }), 'assemble script reported failure (first; second)'],
+  ['missing checksum', (r) => { delete r.planChecksum; return r; }, 'assemble receipt echoed plan checksum none but the pipeline computed this-plan \u2014 the executor did not run this persist plan'],
+  ['foreign checksum', (r) => ({ ...r, planChecksum: 'other-plan' }), 'assemble receipt echoed plan checksum other-plan but the pipeline computed this-plan \u2014 the executor did not run this persist plan'],
+  ['non-array verified', (r) => ({ ...r, verified: {} }), `assemble receipt did not verify ${PATHS.findings} (no content proof)`],
+  ['unverified report', (r) => ({ ...r, verified: r.verified.slice(0, 1) }), `assemble receipt did not verify ${PATHS.report} (no content proof)`],
+  ['non-array written', (r) => ({ ...r, written: {} }), `assemble receipt did not write ${PATHS.postReview} (no write proof)`],
+  ['unwritten checkpoint', (r) => ({ ...r, written: r.written.slice(0, 1) }), `assemble receipt did not write ${PATHS.checkpoints} (no write proof)`],
+  ['foreign expected chars', (r) => { r.verified[0].expected_chars = 9; return r; }, `assemble receipt checked ${PATHS.findings} against a foreign expectation (receipt says 9 chars/findings-sum, the pipeline handed the writer 10/findings-sum)`],
+  ['foreign expected checksum', (r) => { r.verified[0].expected_checksum = 'foreign'; return r; }, `assemble receipt checked ${PATHS.findings} against a foreign expectation (receipt says 10 chars/foreign, the pipeline handed the writer 10/findings-sum)`],
+  ['actual checksum contradicts match', (r) => { r.verified[0].checksum = 'foreign'; return r; }, `assemble receipt is incoherent for ${PATHS.findings}: content_proof:"match" contradicts its own chars/checksum (10/foreign vs expected 10/findings-sum)`],
+  ['non-numeric actual chars', (r) => { r.verified[0].chars = 'ten'; return r; }, `assemble receipt is incoherent for ${PATHS.findings}: content_proof:"match" contradicts its own chars/checksum (ten/findings-sum vs expected 10/findings-sum)`],
+  ['non-string actual checksum', (r) => { r.verified[0].checksum = 17; return r; }, `assemble receipt is incoherent for ${PATHS.findings}: content_proof:"match" contradicts its own chars/checksum (10/17 vs expected 10/findings-sum)`],
+  ['unknown proof with matching numbers', (r) => { r.verified[0].content_proof = 'pending'; return r; }, `assemble receipt is incoherent for ${PATHS.findings}: content_proof:"pending" contradicts its own chars/checksum (10/findings-sum vs expected 10/findings-sum)`],
+  ['duplicate verified last unknown wins', (r) => { r.verified.push({ ...r.verified[0], content_proof: 'pending' }); return r; }, `assemble receipt is incoherent for ${PATHS.findings}: content_proof:"pending" contradicts its own chars/checksum (10/findings-sum vs expected 10/findings-sum)`],
+  ['derived missing numbers', (r) => { r.written[0] = { path: PATHS.postReview }; return r; }, `derived document ${PATHS.postReview} does not match the pipeline's own derivation (receipt reports no chars/no checksum, the pipeline derived 20/post-sum) \u2014 the delivered payload is not what this run produced`],
+  ['derived foreign numbers', (r) => { r.written[0].chars = 19; r.written[0].checksum = 'foreign'; return r; }, `derived document ${PATHS.postReview} does not match the pipeline's own derivation (receipt reports 19 chars/foreign, the pipeline derived 20/post-sum) \u2014 the delivered payload is not what this run produced`],
+  ['missing primary expectation', (r) => r, `assemble receipt checked ${PATHS.findings} against a foreign expectation (receipt says 10 chars/findings-sum, the pipeline handed the writer none/none)`, { ...receiptPlan, expect: receiptPlan.expect.slice(1) }],
+  ['missing derived expectation', (r) => r, `persist plan carries no derived-content expectation for ${PATHS.postReview} (no content proof)`, { ...receiptPlan, derive: receiptPlan.derive.slice(1) }],
+  ['absent primary expectations', (r) => r, `assemble receipt checked ${PATHS.findings} against a foreign expectation (receipt says 10 chars/findings-sum, the pipeline handed the writer none/none)`, { planChecksum: 'this-plan', derive: receiptPlan.derive }],
+  ['absent derived expectations', (r) => r, `persist plan carries no derived-content expectation for ${PATHS.postReview} (no content proof)`, { planChecksum: 'this-plan', expect: receiptPlan.expect }],
+];
+for (const [name, patch, reason, plan = receiptPlan] of receiptGradeRows) {
+  test(`trustAssembleReceipt characterization: ${name}`, () => {
+    assert.deepEqual(trustAssembleReceipt(patch(receiptFor(receiptPlan)), PATHS, plan), { ok: false, reason });
+  });
+}
+
+for (const [name, patch, gaps] of [
+  ['unknown proof with different numbers', (r) => { r.verified[0].chars = 'ten'; r.verified[0].content_proof = 'pending'; return r; }, []],
+  ['mismatch with non-numeric numbers', (r) => { r.verified[0].chars = 'ten'; r.verified[0].checksum = 17; r.verified[0].content_proof = 'mismatch'; return r; }, [`artifact-content-proof: ${PATHS.findings} bytes on disk differ from the payload handed to the writer (expected 10 chars/checksum findings-sum, got ten/17)`]],
+  ['duplicate verified last match wins', (r) => { r.verified.unshift({ ...r.verified[0], chars: 9 }); return r; }, []],
+  ['null extra verified row', (r) => { r.verified.push(null); return r; }, []],
+  ['diverged source explains derived difference', (r) => { r.verified[0].chars = 9; r.verified[0].content_proof = 'mismatch'; r.written[0] = { path: PATHS.postReview }; return r; }, [
+    `artifact-content-proof: ${PATHS.findings} bytes on disk differ from the payload handed to the writer (expected 10 chars/checksum findings-sum, got 9/findings-sum)`,
+    `artifact-content-proof: derived document ${PATHS.postReview} does not match the pipeline's own derivation (receipt reports no chars/no checksum, the pipeline derived 20/post-sum) \u2014 expected, since ${PATHS.findings} it was derived from also diverged`,
+  ]],
+]) {
+  test(`trustAssembleReceipt characterization: ${name}`, () => {
+    assert.deepEqual(trustAssembleReceipt(patch(receiptFor(receiptPlan)), PATHS, receiptPlan), { ok: true, gaps });
+  });
+}
 
 test('persistPlanPath matches the Phase 2 stale-file glob code-gauntlet-*-<sha>.*', () => {
   assert.equal(persistPlanPath(OUT_DIR, SHA), PLAN_PATH);
@@ -687,6 +755,93 @@ test('writer gate: a writer throw degrades to partial-artifacts', async () => {
   assert.equal(out.artifactPaths.checkpoints, null);
 });
 
+for (const mode of ['derived', 'legacy']) {
+  for (const [name, thrown, detail] of [
+    ['message', { message: 'writer broke' }, 'writer broke'],
+    ['null', null, 'unknown'],
+    ['empty object', {}, 'unknown'],
+  ]) {
+    test(`writer exception characterization: ${mode} ${name}`, async () => {
+      const ctx = persistCtx();
+      ctx.agent = async (prompt, dispatch) => {
+        ctx.calls.push({ prompt, ...dispatch });
+        throw thrown;
+      };
+      const out = await writeArtifacts(ctx, persistInput(mode === 'legacy' ? { persist: {} } : {}));
+      assert.deepEqual(out, {
+        artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
+        gaps: [`writeArtifacts: writer agent threw (${detail}) \u2014 artifacts not persisted (partial-artifacts)`],
+        partial: true,
+      });
+      assert.deepEqual(labels(ctx), ['artifact-writer']);
+    });
+  }
+}
+
+for (const [name, thrown, detail] of [
+  ['message', { message: 'executor broke' }, 'executor broke'],
+  ['null', null, 'unknown'],
+  ['empty object', {}, 'unknown'],
+]) {
+  test(`executor exception characterization: ${name}`, async () => {
+    const ctx = persistCtx();
+    const inner = ctx.agent;
+    ctx.agent = async (prompt, dispatch) => {
+      if (dispatch.label !== 'assemble-artifacts') return inner(prompt, dispatch);
+      ctx.calls.push({ prompt, ...dispatch });
+      throw thrown;
+    };
+    assert.deepEqual(await writeArtifacts(ctx, persistInput()), {
+      artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
+      gaps: [`writeArtifacts: assemble executor threw (${detail}) \u2014 artifacts not persisted (partial-artifacts)`],
+      partial: true,
+    });
+    assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts']);
+  });
+}
+
+for (const [name, mode, writerResult, reason] of [
+  ['derived null', 'derived', null, 'writer returned null'],
+  ['derived non-array written', 'derived', { written: {} }, 'writer echo did not cover all three primary artifact paths (no write proof)'],
+  ['derived empty written', 'derived', { written: [] }, 'writer echo did not cover all three primary artifact paths (no write proof)'],
+  ['legacy null', 'legacy', null, 'writer returned null'],
+  ['legacy missing echo', 'legacy', {}, 'writer echo did not account for all four planned artifact paths (no write proof)'],
+  ['legacy empty echo', 'legacy', { artifactPaths: {} }, 'writer echo did not account for all four planned artifact paths (no write proof)'],
+]) {
+  test(`writer result characterization: ${name}`, async () => {
+    const ctx = persistCtx();
+    ctx.agent = async (prompt, dispatch) => { ctx.calls.push({ prompt, ...dispatch }); return writerResult; };
+    assert.deepEqual(await writeArtifacts(ctx, persistInput(mode === 'legacy' ? { persist: {} } : {})), {
+      artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
+      gaps: [`writeArtifacts: ${reason} \u2014 artifacts not persisted (partial-artifacts)`],
+      partial: true,
+    });
+    assert.deepEqual(labels(ctx), ['artifact-writer']);
+  });
+}
+
+for (const [name, opts, reason, retry, salvaged] of [
+  ['null receipt', { receipt: null }, 'assemble executor returned no receipt', true, false],
+  ['non-array verified', { receiptFrom: (r) => ({ ...r, verified: {} }) }, `assemble receipt did not verify ${PATHS.findings} (no content proof)`, true, false],
+  ['non-array written', { receiptFrom: (r) => ({ ...r, written: {} }) }, `assemble receipt did not write ${PATHS.postReview} (no write proof)`, true, true],
+  ['null verified row', { receiptFrom: (r) => ({ ...r, verified: [...r.verified, null] }) }, 'path-escape: writer-reported paths outside outputDir (verified[2]=null)', false, false],
+  ['null written row', { receiptFrom: (r) => ({ ...r, written: [...r.written, null] }) }, 'path-escape: writer-reported paths outside outputDir (receipt.written[2]=null)', false, false],
+  ['two escaping receipt paths', { receiptFrom: (r) => ({ ...r, verified: [{ ...r.verified[0], path: '/escape-a' }, r.verified[1]], written: [{ ...r.written[0], path: '/escape-b' }, r.written[1]] }) }, 'path-escape: writer-reported paths outside outputDir (verified[0]=/escape-a, receipt.written[0]=/escape-b)', false, false],
+  ['path fence precedes malformed failure text', { receiptFrom: (r) => ({ ...r, ok: false, errors: [{ toString: null }], verified: [{ ...r.verified[0], path: '/escape-a' }, r.verified[1]] }) }, 'path-escape: writer-reported paths outside outputDir (verified[0]=/escape-a)', false, false],
+]) {
+  test(`attemptDerivedPersist characterization: ${name}`, async () => {
+    const ctx = persistCtx(opts);
+    assert.deepEqual(await writeArtifacts(ctx, persistInput()), {
+      artifactPaths: { findings: salvaged ? PATHS.findings : null, report: salvaged ? PATHS.report : null, postReview: null, checkpoints: null },
+      gaps: [`writeArtifacts: ${reason}${retry ? ` \u2014 retried once after the first attempt failed (${reason})` : ''} \u2014 artifacts not persisted (partial-artifacts)${salvaged ? ` \u2014 content-proven on disk and still usable: ${PATHS.findings}, ${PATHS.report}` : ''}`],
+      partial: true,
+    });
+    assert.deepEqual(labels(ctx), retry
+      ? ['artifact-writer', 'assemble-artifacts', 'artifact-writer', 'assemble-artifacts']
+      : ['artifact-writer', 'assemble-artifacts']);
+  });
+}
+
 // --- ONE deterministic retry on a STRUCTURAL assemble failure ---------------
 //
 // Live smoke evidence (smoke-20260727-205454-f99d948): on discourse-graphite#6 the
@@ -759,6 +914,34 @@ test('retry: a second structural refusal degrades, naming BOTH attempts', async 
   assert.ok(gap, out.gaps);
   assert.ok(/duplicate id F1/.test(gap), `names the second failure: ${gap}`);
   assert.ok(/retr/i.test(gap) && /not valid JSON/.test(gap), `names the retry + the first failure: ${gap}`);
+});
+
+for (const [name, verified, artifactPaths, suffix] of [
+  ['nothing salvaged', [], { findings: null, report: null, postReview: null, checkpoints: null }, ''],
+  ['only findings salvaged', [0], { findings: PATHS.findings, report: null, postReview: null, checkpoints: null }, ` \u2014 content-proven on disk and still usable: ${PATHS.findings}`],
+  ['only report salvaged', [1], { findings: null, report: PATHS.report, postReview: null, checkpoints: null }, ` \u2014 content-proven on disk and still usable: ${PATHS.report}`],
+  ['both primaries salvaged', [0, 1], { findings: PATHS.findings, report: PATHS.report, postReview: null, checkpoints: null }, ` \u2014 content-proven on disk and still usable: ${PATHS.findings}, ${PATHS.report}`],
+]) {
+  test(`writeArtifactsDerived characterization: ${name}`, async () => {
+    const refusal = (r) => ({ ...r, ok: false, errors: ['refused'], verified: verified.map((i) => r.verified[i]) });
+    const ctx = retryCtx([refusal, refusal]);
+    assert.deepEqual(await writeArtifacts(ctx, persistInput()), {
+      artifactPaths,
+      gaps: [`writeArtifacts: assemble script reported failure (refused) \u2014 retried once after the first attempt failed (assemble script reported failure (refused)) \u2014 artifacts not persisted (partial-artifacts)${suffix}`],
+      partial: true,
+    });
+    assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts', 'artifact-writer', 'assemble-artifacts']);
+  });
+}
+
+test('writeArtifactsDerived characterization: successful retry disclosure', async () => {
+  const ctx = retryCtx([(r) => ({ ...r, ok: false, errors: ['refused'] }), (r) => r]);
+  assert.deepEqual(await writeArtifacts(ctx, persistInput()), {
+    artifactPaths: PATHS,
+    gaps: ['artifact-persist-retry: the first derived persist attempt failed (assemble script reported failure (refused)); a second artifact-writer dispatch succeeded and the artifacts below are from that attempt'],
+    partial: false,
+  });
+  assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts', 'artifact-writer', 'assemble-artifacts']);
 });
 
 test('retry: NEVER falls back to the legacy by-value writer', async () => {
@@ -984,6 +1167,73 @@ test('no persist waist: an empty persist object is treated as absent', async () 
   assert.deepEqual(labels(ctx), ['artifact-writer']);
 });
 
+test('writeArtifacts characterization: JSON string input', async () => {
+  const ctx = persistCtx();
+  assert.deepEqual(await writeArtifacts(ctx, JSON.stringify(persistInput({ persist: {} }))), {
+    artifactPaths: PATHS, gaps: [], partial: false,
+  });
+  assert.deepEqual(labels(ctx), ['artifact-writer']);
+});
+
+test('writeArtifacts characterization: null input rejects before dispatch', async () => {
+  const ctx = persistCtx();
+  await assert.rejects(writeArtifacts(ctx, null), {
+    name: 'Error',
+    message: 'outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got undefined',
+  });
+  assert.deepEqual(labels(ctx), []);
+});
+
+test('writeArtifacts characterization: missing head uses head paths', async () => {
+  const headPaths = {
+    findings: '/repo/.code-gauntlet/code-gauntlet-findings-head.json',
+    report: '/repo/.code-gauntlet/code-gauntlet-report-head.md',
+    postReview: '/repo/.code-gauntlet/code-gauntlet-post-review-head.json',
+    checkpoints: '/repo/.code-gauntlet/code-gauntlet-checkpoint-all-head.json',
+  };
+  const inp = persistInput({ persist: {} });
+  delete inp.headShaShort;
+  const ctx = persistCtx();
+  ctx.agent = async (prompt, dispatch) => { ctx.calls.push({ prompt, ...dispatch }); return { artifactPaths: headPaths }; };
+  assert.deepEqual(await writeArtifacts(ctx, inp), { artifactPaths: headPaths, gaps: [], partial: false });
+  assert.deepEqual(labels(ctx), ['artifact-writer']);
+});
+
+test('writeArtifacts characterization: numeric script uses legacy writer', async () => {
+  const ctx = persistCtx();
+  assert.deepEqual(await writeArtifacts(ctx, persistInput({ persist: { assembleScriptPath: 5 } })), {
+    artifactPaths: PATHS, gaps: [], partial: false,
+  });
+  assert.deepEqual(labels(ctx), ['artifact-writer']);
+});
+
+test('writeArtifacts characterization: malformed findings fails before dispatch', async () => {
+  const ctx = persistCtx();
+  assert.deepEqual(await writeArtifacts(ctx, persistInput({ findings: {} })), {
+    artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
+    gaps: ['writeArtifacts: persistence threw before any artifact was written (((inp || {}).findings || []).map is not a function) \u2014 artifacts not persisted (partial-artifacts)'],
+    partial: true,
+  });
+  assert.deepEqual(labels(ctx), []);
+});
+
+for (const [name, writerResult, partial, artifactPaths, failureGaps] of [
+  ['legacy fallback succeeds', { artifactPaths: PATHS }, false, PATHS, []],
+  ['legacy fallback fails', null, true, { findings: null, report: null, postReview: null, checkpoints: null }, ['writeArtifacts: writer returned null \u2014 artifacts not persisted (partial-artifacts)']],
+]) {
+  test(`writeArtifacts characterization: ${name}`, async () => {
+    const findings = [makeFinding('DUP'), makeFinding('DUP')];
+    const ctx = persistCtx();
+    ctx.agent = async (prompt, dispatch) => { ctx.calls.push({ prompt, ...dispatch }); return writerResult; };
+    assert.deepEqual(await writeArtifacts(ctx, persistInput({ findings, postReview: findings })), {
+      artifactPaths,
+      gaps: ['writeArtifacts: derived persistence unavailable (duplicate finding id DUP) \u2014 persisted the full by-value payload instead', ...failureGaps],
+      partial,
+    });
+    assert.deepEqual(labels(ctx), ['artifact-writer']);
+  });
+}
+
 // --- The args waist (D3.4) --------------------------------------------------
 
 test('args waist: persist is OPTIONAL — absence validates', () => {
@@ -1196,6 +1446,29 @@ test('provenPrimaryPaths returns the primaries a refused receipt still content-p
   assert.deepEqual(provenPrimaryPaths(provenReceipt(plan), PATHS, plan), [PATHS.findings, PATHS.report]);
 });
 
+for (const [name, patch, expected, plan = receiptPlan] of [
+  ['ok false proves report alone', (r) => { r.verified[0].chars = 9; return r; }, [PATHS.report]],
+  ['ok false proves findings alone', (r) => { r.verified[1].checksum = 'foreign'; return r; }, [PATHS.findings]],
+  ['foreign expected chars only', (r) => { r.verified[0].expected_chars = 9; return r; }, [PATHS.report]],
+  ['foreign expected checksum only', (r) => { r.verified[0].expected_checksum = 'foreign'; return r; }, [PATHS.report]],
+  ['non-numeric actual chars', (r) => { r.verified[0].chars = '10'; return r; }, [PATHS.report]],
+  ['non-string actual checksum', (r) => { r.verified[0].checksum = 17; return r; }, [PATHS.report]],
+  ['unknown proof', (r) => { r.verified[0].content_proof = 'pending'; return r; }, [PATHS.report]],
+  ['mismatch with matching numbers', (r) => { r.verified[0].content_proof = 'mismatch'; return r; }, [PATHS.report]],
+  ['duplicate last match wins', (r) => { r.verified.unshift({ ...r.verified[0], checksum: 'foreign' }); return r; }, [PATHS.findings, PATHS.report]],
+  ['duplicate last mismatch wins', (r) => { r.verified.push({ ...r.verified[0], content_proof: 'mismatch' }); return r; }, [PATHS.report]],
+  ['non-array verified', (r) => ({ ...r, verified: {} }), []],
+  ['null extra verified row', (r) => { r.verified.push(null); return r; }, [PATHS.findings, PATHS.report]],
+  ['missing primary expectation', (r) => r, [PATHS.report], { ...receiptPlan, expect: receiptPlan.expect.slice(1) }],
+  ['absent primary expectations', (r) => r, [], { planChecksum: 'this-plan' }],
+  ['null plan', (r) => r, [], null],
+  ['primitive receipt cannot inspect malformed plan', () => 7, [], { expect: {} }],
+]) {
+  test(`provenPrimaryPaths characterization: ${name}`, () => {
+    assert.deepEqual(provenPrimaryPaths(patch(provenReceipt(receiptPlan)), PATHS, plan), expected);
+  });
+}
+
 test('provenPrimaryPaths salvages NOTHING from a receipt that cannot be trusted', () => {
   const plan = provenPlan();
   const only = (over) => provenPrimaryPaths(provenReceipt(plan, over), PATHS, plan);
@@ -1229,6 +1502,102 @@ test('provenPrimaryPaths salvages NOTHING from a receipt that cannot be trusted'
 const returnInput = (over = {}) => persistInput({
   ...over,
   persist: { assembleScriptPath: SCRIPT, returnPrimaries: true },
+});
+
+test('persistEntries characterization: exact plan indentation and absent nonce', async () => {
+  const ctx = persistCtx();
+  const out = await writeArtifacts(ctx, returnInput({ findings: [], postReview: [], report: '', checkpoints: {} }));
+  assert.deepEqual(out, {
+    artifactPaths: PATHS,
+    gaps: [],
+    partial: false,
+    persistReturn: {
+      channel: 'return',
+      nonce: null,
+      planPath: PLAN_PATH,
+      entries: [
+        { path: PATHS.findings, text: '[]' },
+        { path: PATHS.report, text: '' },
+        { path: PLAN_PATH, text: `{
+  "planVersion": 2,
+  "expect": [
+    {
+      "path": "/repo/.code-gauntlet/code-gauntlet-findings-abc1234.json",
+      "chars": 2,
+      "checksum": "fnv1a32:0x741638a5"
+    },
+    {
+      "path": "/repo/.code-gauntlet/code-gauntlet-report-abc1234.md",
+      "chars": 0,
+      "checksum": "fnv1a32:0x811c9dc5"
+    }
+  ],
+  "derive": [
+    {
+      "path": "/repo/.code-gauntlet/code-gauntlet-post-review-abc1234.json",
+      "chars": 2,
+      "checksum": "fnv1a32:0x741638a5"
+    },
+    {
+      "path": "/repo/.code-gauntlet/code-gauntlet-checkpoint-all-abc1234.json",
+      "chars": 2,
+      "checksum": "fnv1a32:0x5465b825"
+    }
+  ],
+  "postReview": {
+    "path": "/repo/.code-gauntlet/code-gauntlet-post-review-abc1234.json",
+    "source": "/repo/.code-gauntlet/code-gauntlet-findings-abc1234.json",
+    "ids": [],
+    "wrapper": null
+  },
+  "checkpoint": {
+    "path": "/repo/.code-gauntlet/code-gauntlet-checkpoint-all-abc1234.json",
+    "source": "/repo/.code-gauntlet/code-gauntlet-findings-abc1234.json",
+    "challengeFindingIds": [],
+    "stripAliasFields": [
+      "line",
+      "end_line",
+      "body"
+    ],
+    "skeleton": {}
+  },
+  "planChecksum": "fnv1a32:0xd9b8627a"
+}` },
+      ],
+    },
+  });
+  assert.deepEqual(labels(ctx), []);
+});
+
+test('returnChannelPersist characterization: exactly at return budget', async () => {
+  const ctx = persistCtx();
+  const out = await writeArtifacts(ctx, returnInput({ findings: [], postReview: [], report: 'r'.repeat(998439), checkpoints: {} }));
+  assert.deepEqual({
+    ...out,
+    persistReturn: { ...out.persistReturn, entries: out.persistReturn.entries.map(({ path, text }) => ({ path, chars: text.length })) },
+  }, {
+    artifactPaths: PATHS,
+    gaps: [],
+    partial: false,
+    persistReturn: {
+      channel: 'return', nonce: null, planPath: PLAN_PATH,
+      entries: [{ path: PATHS.findings, chars: 2 }, { path: PATHS.report, chars: 998439 }, { path: PLAN_PATH, chars: 1194 }],
+    },
+  });
+  assert.deepEqual(labels(ctx), []);
+});
+
+test('returnChannelPersist characterization: oversized fallback keeps failure gap', async () => {
+  const ctx = persistCtx({ receiptFrom: (r) => ({ ...r, ok: false, errors: ['refused'], verified: [] }) });
+  assert.deepEqual(await writeArtifacts(ctx, returnInput({ findings: [], postReview: [], report: 'r'.repeat(1000000), checkpoints: {} })), {
+    artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
+    gaps: [
+      'writeArtifacts: the persisted primaries serialize to 1001562 chars, over the 1000000-char return budget \u2014 persisted through the artifact-writer instead, which transcribes the bytes',
+      'writeArtifacts: assemble script reported failure (refused) \u2014 retried once after the first attempt failed (assemble script reported failure (refused)) \u2014 artifacts not persisted (partial-artifacts)',
+    ],
+    partial: true,
+  });
+  assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts', 'artifact-writer', 'assemble-artifacts']);
 });
 
 test('the return channel dispatches NO agent and carries the three primaries home', async () => {

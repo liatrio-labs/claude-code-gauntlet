@@ -4,7 +4,7 @@
 // carry primitive entries for path normalization to drop. Only eliminated lists accept null.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkpointShapeErrors, readCheckpoints, CHECKPOINT_PHASE_SHAPE_TABLE, buildResumeCheckpoints, slimPersistedCheckpoints, CHECKPOINT_FINDING_LISTS } from '../src/checkpoints.js';
+import { checkpointShapeErrors, checkpointDiscardGap, makeCheckpointShapeRejectEnvelope, readCheckpoints, CHECKPOINT_PHASE_SHAPE_TABLE, buildResumeCheckpoints, slimPersistedCheckpoints, CHECKPOINT_FINDING_LISTS } from '../src/checkpoints.js';
 import { runWith } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
@@ -408,6 +408,25 @@ test('checkpointShapeErrors: an array top-level argument is still treated as ine
 });
 
 // --- checkpoint-discarded: disclosure (#268) ---------------------------------
+
+for (const [name, input, expected] of [
+  ['top-level array', [], ['checkpoint-discarded: checkpoints must be a plain object, got array -- the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as if no checkpoints had been supplied.']],
+  ['malformed phases', { phases: 'bad' }, ['checkpoint-discarded: checkpoints.phases must be a plain object, got string -- the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as if no checkpoints had been supplied.']],
+  ['truncated return', { completed: [], truncated: true }, ['checkpoint-discarded: the supplied checkpoints value is a truncated failure-path return (phase names only, no phase outputs) -- nothing in it is resumable; re-run without the checkpoints argument to start the review fresh.']],
+  ['compact return', { completed: ['summarize'] }, ['checkpoint-discarded: the supplied checkpoints value looks like a compact return rather than a checkpoint artifact -- it carries no phase outputs to resume from; the on-disk resume state from that run lives at artifactPaths.checkpoints.']],
+  ['reject return', { completed: [] }, ['checkpoint-discarded: the supplied checkpoints value looks like a return envelope rather than a checkpoint artifact -- it carries no phase outputs to resume from; re-run without the checkpoints argument to start the review fresh.']],
+  ['unknown keys', { foo: 1 }, ['checkpoint-discarded: the supplied checkpoints value contains none of the eight recognized phase names (summarize, discover, merge, verify, validate, filter, challenge, report) -- nothing was resumed, exactly as if no checkpoints had been supplied.']],
+  ['masked phase', { phases: {}, challenge: {} }, ["checkpoint-discarded: checkpoints.phases is empty and a value under a recognized phase name at the wrapper's top level was ignored -- re-supply it as the .phases map, or as a bare phase map, to attempt resuming from it."]],
+  ['empty bare map', {}, []],
+  ['empty phases', { phases: {} }, []],
+  ['recognized bare phase', { challenge: {} }, []],
+  ['recognized wrapped phase', { phases: { challenge: {} }, summarize: {} }, []],
+]) {
+  test(`checkpointDiscardGap characterization: ${name}`, () => {
+    assert.deepEqual(checkpointDiscardGap(input), expected);
+  });
+}
+
 //
 // readCheckpoints's fallback to {} on an unusable args.checkpoints is correct behavior
 // (never abort a resume-free review over a bad resume input) but was previously silent.
@@ -610,6 +629,25 @@ test('runWith: the error message names the first violation and the total count',
   assert.ok(out.error.includes(out.gaps[0]), 'error leads with the first violation verbatim');
   assert.match(out.error, /1 more/, 'error discloses the remaining violation count');
 });
+
+for (const [name, violations, error] of [
+  ['one violation', ['first'], 'first. Repair or delete the corrupt checkpoint artifact, or re-run without the `checkpoints` argument to start the review fresh.'],
+  ['two violations', ['first', 'second'], 'first (and 1 more checkpoint-shape violation). Repair or delete the corrupt checkpoint artifact, or re-run without the `checkpoints` argument to start the review fresh.'],
+  ['three violations', ['first', 'second', 'third'], 'first (and 2 more checkpoint-shape violations). Repair or delete the corrupt checkpoint artifact, or re-run without the `checkpoints` argument to start the review fresh.'],
+]) {
+  test(`makeCheckpointShapeRejectEnvelope characterization: ${name}`, () => {
+    assert.deepEqual(makeCheckpointShapeRejectEnvelope(violations, ['null-gap'], ['context-gap'], ['discard-gap']), {
+      ok: false,
+      error,
+      failingPhase: 'checkpoints',
+      phaseReached: 'checkpoints',
+      artifactPaths: {},
+      stats: {},
+      gaps: ['null-gap', 'context-gap', 'discard-gap', ...violations],
+      checkpoints: { completed: [] },
+    });
+  });
+}
 
 test('runWith: a well-formed replayed checkpoint set is never refused by the shape gate', async () => {
   const args = validArgs({ checkpoints: wellFormedCheckpoints() });
