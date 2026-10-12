@@ -20,10 +20,10 @@
 //  - A present checkpoint for a phase skips that phase's dispatch entirely.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  runWith, summarize, writeArtifacts, checkpointPath, readCheckpoints, buildResumeCheckpoints,
-  coarsenLimits, plannedArtifactPaths, deriveAgentFlags, compactMethodology, CHECKPOINT_FINDING_LISTS,
-} from '../src/stages.js';
+import { runWith, summarize, coarsenLimits, deriveAgentFlags, compactMethodology } from '../src/stages.js';
+import { writeArtifacts } from '../src/persist.js';
+import { checkpointPath, plannedArtifactPaths } from '../src/outputPaths.js';
+import { readCheckpoints, buildResumeCheckpoints, CHECKPOINT_FINDING_LISTS } from '../src/checkpoints.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { AGENTS, DIMENSIONS } from '../src/registry.js';
 import { dimensionsSummaryTable } from '../src/renderReport.js';

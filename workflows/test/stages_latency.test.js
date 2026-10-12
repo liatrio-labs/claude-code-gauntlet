@@ -1,5 +1,5 @@
 // stages_latency.test.js — issue #38 stream D2: the four output-preserving latency
-// changes to workflows/src/stages.js.
+// changes to workflows/src/{stages,checkpoints}.js.
 //
 //  D2.1  the persisted checkpoint drops `filter` (pure, agent-free, zero-cost re-run)
 //  D2.2  summarize runs CONCURRENTLY with discover (no data dependency)
@@ -18,7 +18,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { runWith, slimPersistedCheckpoints } from '../src/stages.js';
+import { runWith } from '../src/stages.js';
+import { slimPersistedCheckpoints } from '../src/checkpoints.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
 const STAGES_SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'stages.js'), 'utf8');

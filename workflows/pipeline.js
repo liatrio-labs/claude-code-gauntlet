@@ -778,6 +778,7 @@ function coerceInt(value, policy) {
   const n = Number(value);
   return Number.isInteger(n) ? n : null;
 }
+const RETURN_CHAR_BUDGET = 1000000;
 // --- verifyWire.js ---
 const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
 const VERIFY_INLINE_HEX = '0123456789ABCDEF';
@@ -4564,6 +4565,756 @@ function renderReport(input) {
   renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings);
   return builder.finish();
 }
+// --- outputPaths.js ---
+const PATH_ESCAPE_MARKER = 'path-escape';
+function requireAbsoluteOutputDir(outputDir) {
+  const root = normalizeAbsoluteRoot(outputDir);
+  if (root === null) {
+    throw new Error(
+      `outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
+    );
+  }
+  return root;
+}
+function assertPlannedPathUnderOutputDir(outputDir, path) {
+  if (!pathUnderRoot(outputDir, path)) {
+    throw new Error(`planned artifact path escapes outputDir: ${path}`);
+  }
+}
+function pathEscapeReason(outputDir, fields) {
+  const escaped = [];
+  for (const { name, path, present } of fields) {
+    if (!present) continue;
+    if (!pathUnderRoot(outputDir, path)) {
+      escaped.push(`${name}=${path == null ? String(path) : path}`);
+    }
+  }
+  if (!escaped.length) return null;
+  return `${PATH_ESCAPE_MARKER}: writer-reported paths outside outputDir (${escaped.join(', ')})`;
+}
+function plannedArtifactPaths(outputDir, sha) {
+  const root = requireAbsoluteOutputDir(outputDir);
+  const paths = {
+    findings: `${root}/code-gauntlet-findings-${sha}.json`,
+    report: `${root}/code-gauntlet-report-${sha}.md`,
+    postReview: `${root}/code-gauntlet-post-review-${sha}.json`,
+    checkpoints: `${root}/${checkpointPath('all', sha)}`,
+  };
+  for (const p of Object.values(paths)) assertPlannedPathUnderOutputDir(root, p);
+  return paths;
+}
+function persistPlanPath(outputDir, sha) {
+  const root = requireAbsoluteOutputDir(outputDir);
+  const path = `${root}/code-gauntlet-persist-plan-${sha}.json`;
+  assertPlannedPathUnderOutputDir(root, path);
+  return path;
+}
+function checkpointPath(phase, sha) {
+  return `code-gauntlet-checkpoint-${phase}-${sha}.json`;
+}
+// --- persistPlan.js ---
+function toV2Aliased(f) {
+  const out = { ...f };
+  if (out.line === undefined && out.line_start !== undefined) out.line = out.line_start;
+  if (out.end_line === undefined && out.line_end !== undefined) out.end_line = out.line_end;
+  if (out.body === undefined && out.description !== undefined) out.body = out.description;
+  return out;
+}
+function postReviewWrapper(id, reviewBody) {
+  return {
+    owner: id.owner,
+    repo: id.repo,
+    pr_number: id.pr_number,
+    sha: id.sha_full,
+    platform: id.platform,
+    review_body: typeof reviewBody === 'string' ? reviewBody : '',
+  };
+}
+function writerPayload(inp) {
+  const postReviewSet = (inp.postReview || []).map(toV2Aliased);
+  const id = inp.prIdentity;
+  return {
+    findings: (inp.findings || []).map(toV2Aliased),
+    postReview: id
+      ? { ...postReviewWrapper(id, inp.reviewBody), findings: postReviewSet }
+      : postReviewSet,
+    report: inp.report || '',
+    checkpoints: inp.checkpoints || {},
+  };
+}
+const PERSIST_ALIAS_FIELDS = ['line', 'end_line', 'body'];
+function stripPersistAliases(f) {
+  const out = {};
+  for (const [k, v] of Object.entries(f)) {
+    if (!PERSIST_ALIAS_FIELDS.includes(k)) out[k] = v;
+  }
+  return out;
+}
+function hardenEscapeRuns(json) {
+  return typeof json === 'string' ? json.replace(/\\\\/g, '\\u005c') : json;
+}
+function persistPrimaries(inp) {
+  return {
+    findingsJson: hardenEscapeRuns(JSON.stringify(((inp || {}).findings || []).map(toV2Aliased), null, 2)),
+    reportMd: (inp || {}).report || '',
+  };
+}
+function persistPlan(inp, paths) {
+  const { findingsJson, reportMd } = persistPrimaries(inp);
+  const id = inp.prIdentity;
+  const skeleton = deepClone(inp.checkpoints || {});
+  const challenge = (skeleton.phases || {}).challenge;
+  const challengeFindingIds = challenge && Array.isArray(challenge.findings)
+    ? challenge.findings.map((f) => f && f.id)
+    : [];
+  if (challenge && Array.isArray(challenge.findings)) challenge.findings = [];
+  const expectOf = (path, text) => {
+    const normalized = normalizeForChecksum(text);
+    return { path, chars: normalized.length, checksum: fnv1a32(normalized) };
+  };
+  const held = writerPayload(inp || {});
+  const plan = {
+    planVersion: 2,
+    expect: [expectOf(paths.findings, findingsJson), expectOf(paths.report, reportMd)],
+    derive: [
+      expectOf(paths.postReview, JSON.stringify(held.postReview, null, 2)),
+      expectOf(paths.checkpoints, JSON.stringify(held.checkpoints, null, 2)),
+    ],
+    postReview: {
+      path: paths.postReview,
+      source: paths.findings,
+      ids: (inp.postReview || []).map((f) => f && f.id),
+      wrapper: id ? postReviewWrapper(id, inp.reviewBody) : null,
+    },
+    checkpoint: {
+      path: paths.checkpoints,
+      source: paths.findings,
+      challengeFindingIds,
+      stripAliasFields: PERSIST_ALIAS_FIELDS,
+      skeleton,
+    },
+  };
+  plan.planChecksum = fnv1a32(JSON.stringify(plan, null, 2));
+  return plan;
+}
+function persistDerivable(inp) {
+  for (const [label, value] of [
+    ['findings', (inp || {}).findings],
+    ['postReview', (inp || {}).postReview],
+    ['checkpoints', (inp || {}).checkpoints],
+    ['prIdentity', (inp || {}).prIdentity],
+  ]) {
+    if (value === undefined || value === null) continue;
+    const bad = firstUnsafeNumber(value, label);
+    if (bad !== null) {
+      return { ok: false, reason: `${bad} is not a JS-safe integer — the Python assembler cannot spell it byte-identically, so the derived artifact would diverge` };
+    }
+  }
+  const findings = (inp || {}).findings || [];
+  const byId = new Map();
+  for (let i = 0; i < findings.length; i += 1) {
+    const f = findings[i];
+    const fid = f && f.id;
+    if (typeof fid !== 'string' || fid === '') {
+      return { ok: false, reason: `finding at index ${i} has no usable string id` };
+    }
+    if (byId.has(fid)) return { ok: false, reason: `duplicate finding id ${fid}` };
+    byId.set(fid, f);
+    if (JSON.stringify(stripPersistAliases(toV2Aliased(f))) !== JSON.stringify(f)) {
+      return { ok: false, reason: `finding ${fid} already carries a v2 alias field (${PERSIST_ALIAS_FIELDS.join('/')}) — the checkpoint alias strip is not reversible` };
+    }
+  }
+  const twinCheck = (list, label, project) => {
+    for (let i = 0; i < list.length; i += 1) {
+      const entry = list[i];
+      const fid = entry && entry.id;
+      if (typeof fid !== 'string' || !byId.has(fid)) {
+        return `${label} entry at index ${i} (id ${fid === undefined ? 'missing' : fid}) is not present in the findings set`;
+      }
+      if (JSON.stringify(project(entry)) !== JSON.stringify(project(byId.get(fid)))) {
+        return `${label} entry ${fid} differs from the findings entry with the same id`;
+      }
+    }
+    return null;
+  };
+  const postReviewBad = twinCheck(inp.postReview || [], 'postReview', toV2Aliased);
+  if (postReviewBad) return { ok: false, reason: postReviewBad };
+  const challenge = ((inp.checkpoints || {}).phases || {}).challenge;
+  const challengeFindings = challenge && Array.isArray(challenge.findings) ? challenge.findings : [];
+  const challengeBad = twinCheck(challengeFindings, 'checkpoint challenge', (f) => f);
+  if (challengeBad) return { ok: false, reason: challengeBad };
+  return { ok: true };
+}
+// --- persist.js ---
+const WRITER_SCHEMA = {
+  type: 'object',
+  properties: { artifactPaths: { type: 'object', properties: {} } },
+};
+const WRITTEN_SCHEMA = {
+  type: 'object',
+  properties: { written: { type: 'array', items: { type: 'string' } } },
+};
+const ARTIFACT_PATH_KEYS = ['findings', 'report', 'postReview', 'checkpoints'];
+function writerEchoCoversPaths(echoed, paths) {
+  if (!echoed || typeof echoed !== 'object') return false;
+  return ARTIFACT_PATH_KEYS.every((k) => echoed[k] === paths[k]);
+}
+async function writeArtifacts(ctx, input) {
+  const partial = (reason, extraGaps, salvaged) => ({
+    artifactPaths: {
+      findings: (salvaged && salvaged.findings) || null,
+      report: (salvaged && salvaged.report) || null,
+      postReview: null,
+      checkpoints: null,
+    },
+    gaps: (extraGaps || []).concat([
+      `writeArtifacts: ${reason} — artifacts not persisted (partial-artifacts)`
+      + (salvaged && (salvaged.findings || salvaged.report)
+        ? ` — content-proven on disk and still usable: ${[salvaged.findings, salvaged.report].filter(Boolean).join(', ')}`
+        : ''),
+    ]),
+    partial: true,
+  });
+  const c = ctx;
+  const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
+  const outputDir = requireAbsoluteOutputDir(inp.outputDir);
+  const sha = inp.headShaShort || 'head';
+  const policy = inp.policy || {};
+  const paths = plannedArtifactPaths(outputDir, sha);
+  try {
+    const persist = inp.persist || {};
+    const scriptPath = typeof persist.assembleScriptPath === 'string' && persist.assembleScriptPath !== ''
+      ? persist.assembleScriptPath
+      : null;
+    const wantsReturn = persist.returnPrimaries === true;
+    if (scriptPath || wantsReturn) {
+      const derivable = persistDerivable(inp);
+      if (derivable.ok) {
+        if (wantsReturn) {
+          const viaReturn = returnChannelPersist(inp, paths, outputDir, sha);
+          if (viaReturn.ok) return viaReturn.result;
+          const gap = `writeArtifacts: ${viaReturn.reason} — persisted through the artifact-writer instead, which transcribes the bytes`;
+          if (!scriptPath) return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, [gap]);
+          const fallback = await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
+          return { ...fallback, gaps: [gap].concat(fallback.gaps || []) };
+        }
+        return await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
+      }
+      return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, [
+        `writeArtifacts: derived persistence unavailable (${derivable.reason}) — persisted the full by-value payload instead`,
+      ]);
+    }
+    return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, []);
+  } catch (e) {
+    return partial(`persistence threw before any artifact was written (${(e && e.message) || 'unknown'})`, []);
+  }
+}
+async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, extraGaps) {
+  const model = modelFor('code-gauntlet:artifact-writer', policy);
+  try {
+    const result = await c.agent(writeArtifactsPrompt(inp, paths), {
+      label: 'artifact-writer',
+      agentType: 'code-gauntlet:artifact-writer',
+      model,
+      schema: WRITER_SCHEMA,
+    });
+    if (!result) return partial('writer returned null', extraGaps);
+    const echoed = result.artifactPaths;
+    const escape = pathEscapeReason(
+      outputDir,
+      ARTIFACT_PATH_KEYS.map((k) => ({
+        name: k,
+        path: echoed ? echoed[k] : undefined,
+        present: !!(echoed && Object.hasOwn(echoed, k)),
+      })),
+    );
+    if (escape) return partial(escape, extraGaps);
+    if (!writerEchoCoversPaths(echoed, paths)) {
+      return partial('writer echo did not account for all four planned artifact paths (no write proof)', extraGaps);
+    }
+    return { artifactPaths: paths, gaps: extraGaps, partial: false };
+  } catch (e) {
+    return partial(`writer agent threw (${(e && e.message) || 'unknown'})`, extraGaps);
+  }
+}
+function persistEntries(inp, paths, outputDir, sha) {
+  const planPath = persistPlanPath(outputDir, sha);
+  const { findingsJson, reportMd } = persistPrimaries(inp);
+  const plan = persistPlan(inp, paths);
+  return {
+    plan,
+    planPath,
+    entries: [
+      { path: paths.findings, text: findingsJson },
+      { path: paths.report, text: reportMd },
+      { path: planPath, text: hardenEscapeRuns(JSON.stringify(plan, null, 2)) },
+    ],
+  };
+}
+function returnChannelPersist(inp, paths, outputDir, sha) {
+  const { planPath, entries } = persistEntries(inp, paths, outputDir, sha);
+  const chars = JSON.stringify(entries).length;
+  if (chars > RETURN_CHAR_BUDGET) {
+    return {
+      ok: false,
+      reason: `the persisted primaries serialize to ${chars} chars, over the ${RETURN_CHAR_BUDGET}-char return budget`,
+    };
+  }
+  return {
+    ok: true,
+    result: {
+      artifactPaths: paths,
+      gaps: [],
+      partial: false,
+      persistReturn: { channel: 'return', nonce: inp.nonce || null, planPath, entries },
+    },
+  };
+}
+async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {
+  const { plan, planPath, entries } = persistEntries(inp, paths, outputDir, sha);
+  const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath);
+  const salvage = (att) => {
+    const proven = new Set(att.proven || []);
+    return {
+      findings: proven.has(paths.findings) ? paths.findings : null,
+      report: proven.has(paths.report) ? paths.report : null,
+    };
+  };
+  const first = await attempt();
+  if (first.ok) return { artifactPaths: paths, gaps: first.gaps, partial: false };
+  if (!first.retryable) return partial(first.reason, [], salvage(first));
+  const second = await attempt();
+  if (second.ok) {
+    return {
+      artifactPaths: paths,
+      gaps: [`artifact-persist-retry: the first derived persist attempt failed (${first.reason}); a second artifact-writer dispatch succeeded and the artifacts below are from that attempt`]
+        .concat(second.gaps),
+      partial: false,
+    };
+  }
+  return partial(`${second.reason} — retried once after the first attempt failed (${first.reason})`, [], salvage(second));
+}
+async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath) {
+  const fail = (reason, retryable) => ({ ok: false, retryable: !!retryable, reason });
+  let writerOut;
+  try {
+    writerOut = await c.agent(finalArtifactsWriterPrompt(entries), {
+      label: 'artifact-writer',
+      agentType: 'code-gauntlet:artifact-writer',
+      model: modelFor('code-gauntlet:artifact-writer', policy),
+      schema: WRITTEN_SCHEMA,
+    });
+  } catch (e) {
+    return fail(`writer agent threw (${(e && e.message) || 'unknown'})`);
+  }
+  if (!writerOut) return fail('writer returned null');
+  const writtenList = Array.isArray(writerOut.written) ? writerOut.written : [];
+  const writtenEscape = pathEscapeReason(
+    outputDir,
+    writtenList.map((p, i) => ({ name: `written[${i}]`, path: p, present: true })),
+  );
+  if (writtenEscape) return fail(writtenEscape);
+  const written = new Set(writtenList);
+  if (!entries.every((e) => written.has(e.path))) {
+    return fail('writer echo did not cover all three primary artifact paths (no write proof)');
+  }
+  let receipt;
+  try {
+    receipt = await c.agent(assemblePrompt(assembleScriptPath, planPath), {
+      label: 'assemble-artifacts',
+      agentType: 'code-gauntlet:executor',
+      model: modelFor('code-gauntlet:executor', policy),
+      schema: ASSEMBLE_RECEIPT_SCHEMA,
+    });
+  } catch (e) {
+    return fail(`assemble executor threw (${(e && e.message) || 'unknown'})`);
+  }
+  if (receipt && typeof receipt === 'object') {
+    const receiptFields = [];
+    const verified = Array.isArray(receipt.verified) ? receipt.verified : [];
+    const receiptWritten = Array.isArray(receipt.written) ? receipt.written : [];
+    verified.forEach((e, i) => receiptFields.push({ name: `verified[${i}]`, path: e && e.path, present: true }));
+    receiptWritten.forEach((e, i) => receiptFields.push({ name: `receipt.written[${i}]`, path: e && e.path, present: true }));
+    const receiptEscape = pathEscapeReason(outputDir, receiptFields);
+    if (receiptEscape) return fail(receiptEscape);
+  }
+  const trust = trustAssembleReceipt(receipt, paths, plan);
+  if (!trust.ok) return { ...fail(trust.reason, true), proven: provenPrimaryPaths(receipt, paths, plan) };
+  return { ok: true, gaps: trust.gaps };
+}
+function trustAssembleReceipt(receipt, paths, plan) {
+  if (!receipt || typeof receipt !== 'object') return { ok: false, reason: 'assemble executor returned no receipt' };
+  if (receipt.ok !== true) {
+    const errors = Array.isArray(receipt.errors) ? receipt.errors.join('; ') : '';
+    return { ok: false, reason: `assemble script reported failure (${errors || 'no reason given'})` };
+  }
+  if (receipt.planChecksum !== plan.planChecksum) {
+    return {
+      ok: false,
+      reason: `assemble receipt echoed plan checksum ${receipt.planChecksum === undefined ? 'none' : receipt.planChecksum} but the pipeline computed ${plan.planChecksum} — the executor did not run this persist plan`,
+    };
+  }
+  const verified = Array.isArray(receipt.verified) ? receipt.verified : [];
+  const written = Array.isArray(receipt.written) ? receipt.written : [];
+  const verifiedByPath = new Map(verified.map((e) => [(e && e.path), e]));
+  const expectByPath = new Map((plan.expect || []).map((e) => [e.path, e]));
+  const writtenPaths = new Set(written.map((e) => (e && e.path)));
+  for (const p of [paths.findings, paths.report]) {
+    const got = verifiedByPath.get(p);
+    if (!got) return { ok: false, reason: `assemble receipt did not verify ${p} (no content proof)` };
+    const want = expectByPath.get(p);
+    if (!want || got.expected_chars !== want.chars || got.expected_checksum !== want.checksum) {
+      return {
+        ok: false,
+        reason: `assemble receipt checked ${p} against a foreign expectation (receipt says ${got.expected_chars} chars/${got.expected_checksum}, the pipeline handed the writer ${want ? want.chars : 'none'}/${want ? want.checksum : 'none'})`,
+      };
+    }
+    const same = got.chars === want.chars && got.checksum === want.checksum;
+    if ((got.content_proof === 'match') !== same) {
+      return {
+        ok: false,
+        reason: `assemble receipt is incoherent for ${p}: content_proof:"${got.content_proof}" contradicts its own chars/checksum (${got.chars}/${got.checksum} vs expected ${want.chars}/${want.checksum})`,
+      };
+    }
+  }
+  const writtenByPath = new Map(written.map((e) => [(e && e.path), e]));
+  const deriveByPath = new Map((plan.derive || []).map((e) => [e.path, e]));
+  const findingsProof = verifiedByPath.get(paths.findings);
+  const sourceDiverged = !!(findingsProof && findingsProof.content_proof === 'mismatch');
+  const derivedGaps = [];
+  for (const p of [paths.postReview, paths.checkpoints]) {
+    if (!writtenPaths.has(p)) return { ok: false, reason: `assemble receipt did not write ${p} (no write proof)` };
+    const want = deriveByPath.get(p);
+    if (!want) return { ok: false, reason: `persist plan carries no derived-content expectation for ${p} (no content proof)` };
+    const got = writtenByPath.get(p);
+    if (got.chars === want.chars && got.checksum === want.checksum) continue;
+    const detail = `derived document ${p} does not match the pipeline's own derivation (receipt reports ${got.chars == null ? 'no' : got.chars} chars/${got.checksum == null ? 'no checksum' : got.checksum}, the pipeline derived ${want.chars}/${want.checksum})`;
+    if (sourceDiverged) {
+      derivedGaps.push(`artifact-content-proof: ${detail} — expected, since ${paths.findings} it was derived from also diverged`);
+      continue;
+    }
+    return { ok: false, reason: `${detail} — the delivered payload is not what this run produced` };
+  }
+  const gaps = [];
+  for (const e of verified) {
+    if (e && e.content_proof === 'mismatch') {
+      gaps.push(`artifact-content-proof: ${e.path} bytes on disk differ from the payload handed to the writer (expected ${e.expected_chars} chars/checksum ${e.expected_checksum}, got ${e.chars}/${e.checksum})`);
+    }
+  }
+  gaps.push(...derivedGaps);
+  return { ok: true, gaps };
+}
+function provenPrimaryPaths(receipt, paths, plan) {
+  if (!receipt || typeof receipt !== 'object') return [];
+  if (!plan || receipt.planChecksum !== plan.planChecksum) return [];
+  const byPath = new Map((Array.isArray(receipt.verified) ? receipt.verified : []).map((e) => [(e && e.path), e]));
+  const expectByPath = new Map((plan.expect || []).map((e) => [e.path, e]));
+  const proven = [];
+  for (const p of [paths.findings, paths.report]) {
+    const got = byPath.get(p);
+    const want = expectByPath.get(p);
+    if (!got || !want) continue;
+    if (got.expected_chars !== want.chars || got.expected_checksum !== want.checksum) continue;
+    if (got.chars !== want.chars || got.checksum !== want.checksum) continue;
+    if (got.content_proof !== 'match') continue;
+    proven.push(p);
+  }
+  return proven;
+}
+const WRITER_PAYLOAD_MARKER = 'PAYLOAD_JSON:';
+function parseWriterPayload(prompt) {
+  const idx = (prompt || '').lastIndexOf(WRITER_PAYLOAD_MARKER);
+  if (idx === -1) return null;
+  return JSON.parse(prompt.slice(idx + WRITER_PAYLOAD_MARKER.length));
+}
+function writeArtifactsPrompt(inp, paths) {
+  const payload = JSON.stringify(writerPayload(inp));
+  return `Persist these code-gauntlet artifacts to disk exactly as given (the workflow has no disk access). Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, the payload's postReview (the pre-selected delivery set, as pretty JSON) to ${paths.postReview}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+}
+function finalArtifactsWriterPrompt(entries) {
+  const payload = JSON.stringify(entries);
+  return `Persist these code-gauntlet artifacts to disk exactly as given (the workflow has no disk access). For every entry in the payload, write its "text" VERBATIM to its "path" — byte for byte, nothing before it and NOTHING AFTER THE FINAL BYTE (no trailing commentary, no tool-call markup). Do not reformat, re-indent, or re-serialize. Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+}
+const ASSEMBLE_RECEIPT_SCHEMA = {
+  type: 'object',
+  properties: {
+    ok: { type: 'boolean' },
+    planVersion: { type: 'number' },
+    planChecksum: { type: 'string' },
+    verified: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          chars: { type: 'number' },
+          expected_chars: { type: 'number' },
+          checksum: { type: 'string' },
+          expected_checksum: { type: 'string' },
+          content_proof: { type: 'string' },
+        },
+      },
+    },
+    written: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          chars: { type: 'number' },
+          checksum: { type: 'string' },
+        },
+      },
+    },
+    errors: { type: 'array', items: { type: 'string' } },
+  },
+};
+function assemblePrompt(scriptPath, planPath) {
+  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\npython3 ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
+}
+// --- checkpoints.js ---
+function unwrapCheckpointMap(cp) {
+  if (!isPlainCheckpointObject(cp)) return null;
+  if (cp.phases === undefined) return cp;
+  return isPlainCheckpointObject(cp.phases) ? cp.phases : null;
+}
+function readCheckpoints(ctx, args) {
+  const A = args || {};
+  return unwrapCheckpointMap(A.checkpoints) || (ctx && unwrapCheckpointMap(ctx.checkpoints)) || {};
+}
+function checkpointDiscardGap(topLevelCheckpoints) {
+  if (topLevelCheckpoints === undefined) return [];
+  const resolved = unwrapCheckpointMap(topLevelCheckpoints);
+  if (resolved === null) {
+    const atTopLevel = !isPlainCheckpointObject(topLevelCheckpoints);
+    const position = atTopLevel ? 'checkpoints' : 'checkpoints.phases';
+    const offending = atTopLevel ? topLevelCheckpoints : topLevelCheckpoints.phases;
+    return [`checkpoint-discarded: ${position} must be a plain object, got ${describeCheckpointShape(offending)} -- `
+      + 'the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as '
+      + 'if no checkpoints had been supplied.'];
+  }
+  const recognizedPhaseNames = Object.keys(CHECKPOINT_PHASE_SHAPE_TABLE);
+  const resolvedKeys = Object.keys(resolved);
+  const hasRecognizedKey = resolvedKeys.some((k) => recognizedPhaseNames.includes(k));
+  if (resolvedKeys.length > 0 && !hasRecognizedKey) {
+    if (resolved.truncated) {
+      return ['checkpoint-discarded: the supplied checkpoints value is a truncated failure-path return '
+        + '(phase names only, no phase outputs) -- nothing in it is resumable; re-run without the '
+        + 'checkpoints argument to start the review fresh.'];
+    }
+    if (resolvedKeys.includes('completed')) {
+      if (Array.isArray(resolved.completed) && resolved.completed.length > 0) {
+        return ['checkpoint-discarded: the supplied checkpoints value looks like a compact return rather '
+          + 'than a checkpoint artifact -- it carries no phase outputs to resume from; the on-disk resume '
+          + 'state from that run lives at artifactPaths.checkpoints.'];
+      }
+      return ['checkpoint-discarded: the supplied checkpoints value looks like a return envelope rather '
+        + 'than a checkpoint artifact -- it carries no phase outputs to resume from; re-run without the '
+        + 'checkpoints argument to start the review fresh.'];
+    }
+    return ['checkpoint-discarded: the supplied checkpoints value contains none of the eight recognized '
+      + 'phase names (summarize, discover, merge, verify, validate, filter, challenge, report) -- '
+      + 'nothing was resumed, exactly as if no checkpoints had been supplied.'];
+  }
+  const tookPhasesBranch = isPlainCheckpointObject(topLevelCheckpoints)
+    && topLevelCheckpoints.phases !== undefined
+    && isPlainCheckpointObject(topLevelCheckpoints.phases);
+  const wrapperHasRecognizedKey = isPlainCheckpointObject(topLevelCheckpoints)
+    && Object.keys(topLevelCheckpoints).some((k) => recognizedPhaseNames.includes(k));
+  if (tookPhasesBranch && resolvedKeys.length === 0 && wrapperHasRecognizedKey) {
+    return ['checkpoint-discarded: checkpoints.phases is empty and a value under a recognized phase name '
+      + "at the wrapper's top level was ignored -- re-supply it as the .phases map, or as a bare phase "
+      + 'map, to attempt resuming from it.'];
+  }
+  return [];
+}
+const CHECKPOINT_ARRAY_STRICT = 'strict';
+const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
+const CHECKPOINT_FINDING_LISTS = [
+  ['discover', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['merge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['verify', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['validate', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['filter', 'filtered', CHECKPOINT_ARRAY_STRICT, false],
+  ['filter', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
+  ['challenge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
+  ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
+  ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
+];
+const checkpointFindingListsForPhase = (phase) => CHECKPOINT_FINDING_LISTS.filter(([name]) => name === phase);
+const findingListShape = (phase) => Object.fromEntries(checkpointFindingListsForPhase(phase)
+  .map(([, field, mode]) => [field, mode]));
+const CHECKPOINT_PHASE_SHAPE_TABLE = {
+  summarize: { gaps: CHECKPOINT_ARRAY_TOLERANT },
+  discover: {
+    ...findingListShape('discover'),
+    gaps: CHECKPOINT_ARRAY_TOLERANT,
+    dispatched: CHECKPOINT_ARRAY_TOLERANT,
+    degraded: CHECKPOINT_ARRAY_TOLERANT,
+  },
+  merge: { ...findingListShape('merge'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  verify: { ...findingListShape('verify'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  validate: { ...findingListShape('validate'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  filter: { ...findingListShape('filter'), gaps: CHECKPOINT_ARRAY_TOLERANT },
+  challenge: {
+    ...findingListShape('challenge'),
+    gaps: CHECKPOINT_ARRAY_TOLERANT,
+  },
+  report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
+};
+const CHECKPOINT_REQUIRED_CONTENT_FIELD = Object.fromEntries(CHECKPOINT_FINDING_LISTS
+  .filter(([, , mode]) => mode === CHECKPOINT_ARRAY_STRICT).map(([phase, field]) => [phase, field]));
+const CHECKPOINT_NULLABLE_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS
+  .filter(([, , , nullable]) => nullable).map(([phase, field]) => `${phase}.${field}`));
+function isPlainCheckpointObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+function describeCheckpointShape(v) {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'array';
+  return typeof v;
+}
+const CHECKPOINT_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS.map(([, field]) => field));
+const CHECKPOINT_FINDING_STRING_FIELDS = ['severity', 'title', 'file'];
+const CHECKPOINT_FINDING_INTEGER_FIELDS = ['line', 'line_start', 'line_end', 'end_line'];
+function checkpointFindingShapeErrors(finding, path) {
+  const violations = [];
+  for (const field of CHECKPOINT_FINDING_STRING_FIELDS) {
+    if (typeof finding[field] !== 'string') {
+      violations.push(`checkpoint-shape: ${path}.${field} must be a string, got ${describeCheckpointShape(finding[field])}`);
+    }
+  }
+  const hasDescription = finding.description !== undefined;
+  const hasBody = finding.body !== undefined;
+  if (!hasDescription && !hasBody) {
+    violations.push(`checkpoint-shape: ${path} must contain a string description or body`);
+  }
+  for (const field of ['description', 'body']) {
+    if (finding[field] !== undefined && typeof finding[field] !== 'string') {
+      violations.push(`checkpoint-shape: ${path}.${field} must be a string, got ${describeCheckpointShape(finding[field])}`);
+    }
+  }
+  for (const field of CHECKPOINT_FINDING_INTEGER_FIELDS) {
+    if (finding[field] !== undefined && !Number.isInteger(finding[field])) {
+      violations.push(`checkpoint-shape: ${path}.${field} must be an integer, got ${describeCheckpointShape(finding[field])}`);
+    }
+  }
+  if (finding.confidence !== undefined && (typeof finding.confidence !== 'number' || !Number.isFinite(finding.confidence))) {
+    violations.push(`checkpoint-shape: ${path}.confidence must be a number, got ${describeCheckpointShape(finding.confidence)}`);
+  }
+  if (finding.corroborations !== undefined) {
+    if (!Array.isArray(finding.corroborations)) {
+      violations.push(`checkpoint-shape: ${path}.corroborations must be an array, got ${describeCheckpointShape(finding.corroborations)}`);
+    } else {
+      finding.corroborations.forEach((corroboration, idx) => {
+        if (!isPlainCheckpointObject(corroboration)) {
+          violations.push(`checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`);
+        }
+      });
+    }
+  }
+  return violations;
+}
+function checkpointShapeErrors(resolvedCheckpoints) {
+  const cp = isPlainCheckpointObject(resolvedCheckpoints) ? resolvedCheckpoints : {};
+  const violations = [];
+  for (const phase of Object.keys(CHECKPOINT_PHASE_SHAPE_TABLE)) {
+    const value = cp[phase];
+    if (value === undefined) continue;
+    if (!isPlainCheckpointObject(value)) {
+      violations.push(`checkpoint-shape: phases.${phase} must be a plain object, got ${describeCheckpointShape(value)}`);
+      continue; // container failed -- no field inside it can be checked
+    }
+    const requiredField = CHECKPOINT_REQUIRED_CONTENT_FIELD[phase];
+    if (requiredField && value[requiredField] === undefined) {
+      violations.push(`checkpoint-shape: phases.${phase} is missing required field ${requiredField}`);
+    }
+    const fields = CHECKPOINT_PHASE_SHAPE_TABLE[phase];
+    for (const field of Object.keys(fields)) {
+      const arrVal = value[field];
+      if (arrVal === undefined) continue;
+      if (arrVal === null && CHECKPOINT_NULLABLE_FINDING_FIELDS.has(`${phase}.${field}`)) continue;
+      if (!Array.isArray(arrVal)) {
+        violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
+        continue;
+      }
+      arrVal.forEach((el, idx) => {
+        if (!isPlainCheckpointObject(el)) {
+          if (fields[field] === CHECKPOINT_ARRAY_STRICT) {
+            violations.push(`checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`);
+          }
+          return;
+        }
+        if (CHECKPOINT_FINDING_FIELDS.has(field)) {
+          violations.push(...checkpointFindingShapeErrors(el, `phases.${phase}.${field}[${idx}]`));
+        }
+      });
+    }
+  }
+  return violations;
+}
+const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint artifact, or re-run without the '
+  + '`checkpoints` argument to start the review fresh.';
+function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], contextSizeGap = [], discardGap = []) {
+  const extra = violations.length - 1;
+  const error = extra > 0
+    ? `${violations[0]} (and ${extra} more checkpoint-shape violation${extra === 1 ? '' : 's'}). ${CHECKPOINT_SHAPE_RECOVERY_LINE}`
+    : `${violations[0]}. ${CHECKPOINT_SHAPE_RECOVERY_LINE}`;
+  return {
+    ok: false,
+    error,
+    failingPhase: 'checkpoints',
+    phaseReached: 'checkpoints',
+    artifactPaths: {},
+    stats: {},
+    gaps: [...nullArgGaps, ...contextSizeGap, ...discardGap, ...violations],
+    checkpoints: { completed: [] },
+  };
+}
+function buildResumeCheckpoints(phaseOutputs) {
+  const completed = Object.keys(phaseOutputs);
+  const withPhases = { phases: phaseOutputs, completed };
+  if (JSON.stringify(withPhases).length <= RETURN_CHAR_BUDGET) return withPhases;
+  return { completed, truncated: true };
+}
+const PERSISTED_RESUME_PHASES = ['challenge'];
+function phaseFindingCount(out) {
+  if (!out || typeof out !== 'object') return 0;
+  if (Array.isArray(out.findings)) return out.findings.length;
+  if (Array.isArray(out.filtered)) return out.filtered.length;
+  return 0;
+}
+function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) {
+  const outputs = phaseOutputs || {};
+  const phases = {};
+  for (const name of PERSISTED_RESUME_PHASES) {
+    if (outputs[name] !== undefined) phases[name] = outputs[name];
+  }
+  const counts = {};
+  for (const [name, out] of Object.entries(outputs)) counts[name] = phaseFindingCount(out);
+  return { phases, completed, phaseReached, counts };
+}
+const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
+function beltPartitionList(list) {
+  if (!Array.isArray(list) || list.length === 0) return { list, eliminated: [] };
+  const objectElements = list.map((el, idx) => ({ ...el, [REPLAY_BELT_INDEX_KEY]: idx }));
+  normalizeFieldNames(objectElements);
+  const { kept, eliminated } = applyReplayInjectionScan(objectElements);
+  const survivorByIdx = new Map();
+  for (const f of kept) {
+    const { [REPLAY_BELT_INDEX_KEY]: idx, ...clean } = f;
+    survivorByIdx.set(idx, clean);
+  }
+  const eliminatedOut = eliminated.map((f) => {
+    const { [REPLAY_BELT_INDEX_KEY]: _idx, ...clean } = f;
+    return { ...clean, replay_belt: true };
+  });
+  const splicedList = list.flatMap((_el, idx) => survivorByIdx.has(idx) ? [survivorByIdx.get(idx)] : []);
+  return { list: splicedList, eliminated: eliminatedOut };
+}
+function stripEliminatedList(list) {
+  return list.map(applyInjectedProseStrip);
+}
 // --- stages.js ---
 function defaultCtx() {
   return {
@@ -4613,7 +5364,6 @@ function hostPathTextGaps(challengeOut, summaryOut, roots) {
   }
   return gaps;
 }
-const RETURN_CHAR_BUDGET = 1000000;
 const READ_PLAN_MAX_LINES = 750;
 const READ_PLAN_MAX_CHARS = 30000;
 const READ_PLAN_MAX_ENUMERATED = 10;
@@ -5173,731 +5923,6 @@ function selectDelivery(survivors, cap, tier) {
   if (cap === undefined || cap === null) return ranked;
   return ranked.slice(0, Math.max(0, cap));
 }
-const WRITER_SCHEMA = {
-  type: 'object',
-  properties: { artifactPaths: { type: 'object', properties: {} } },
-};
-const WRITTEN_SCHEMA = {
-  type: 'object',
-  properties: { written: { type: 'array', items: { type: 'string' } } },
-};
-const PATH_ESCAPE_MARKER = 'path-escape';
-function requireAbsoluteOutputDir(outputDir) {
-  const root = normalizeAbsoluteRoot(outputDir);
-  if (root === null) {
-    throw new Error(
-      `outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
-    );
-  }
-  return root;
-}
-function assertPlannedPathUnderOutputDir(outputDir, path) {
-  if (!pathUnderRoot(outputDir, path)) {
-    throw new Error(`planned artifact path escapes outputDir: ${path}`);
-  }
-}
-function pathEscapeReason(outputDir, fields) {
-  const escaped = [];
-  for (const { name, path, present } of fields) {
-    if (!present) continue;
-    if (!pathUnderRoot(outputDir, path)) {
-      escaped.push(`${name}=${path == null ? String(path) : path}`);
-    }
-  }
-  if (!escaped.length) return null;
-  return `${PATH_ESCAPE_MARKER}: writer-reported paths outside outputDir (${escaped.join(', ')})`;
-}
-function plannedArtifactPaths(outputDir, sha) {
-  const root = requireAbsoluteOutputDir(outputDir);
-  const paths = {
-    findings: `${root}/code-gauntlet-findings-${sha}.json`,
-    report: `${root}/code-gauntlet-report-${sha}.md`,
-    postReview: `${root}/code-gauntlet-post-review-${sha}.json`,
-    checkpoints: `${root}/${checkpointPath('all', sha)}`,
-  };
-  for (const p of Object.values(paths)) assertPlannedPathUnderOutputDir(root, p);
-  return paths;
-}
-const ARTIFACT_PATH_KEYS = ['findings', 'report', 'postReview', 'checkpoints'];
-function writerEchoCoversPaths(echoed, paths) {
-  if (!echoed || typeof echoed !== 'object') return false;
-  return ARTIFACT_PATH_KEYS.every((k) => echoed[k] === paths[k]);
-}
-async function writeArtifacts(ctx, input) {
-  const partial = (reason, extraGaps, salvaged) => ({
-    artifactPaths: {
-      findings: (salvaged && salvaged.findings) || null,
-      report: (salvaged && salvaged.report) || null,
-      postReview: null,
-      checkpoints: null,
-    },
-    gaps: (extraGaps || []).concat([
-      `writeArtifacts: ${reason} — artifacts not persisted (partial-artifacts)`
-      + (salvaged && (salvaged.findings || salvaged.report)
-        ? ` — content-proven on disk and still usable: ${[salvaged.findings, salvaged.report].filter(Boolean).join(', ')}`
-        : ''),
-    ]),
-    partial: true,
-  });
-  const c = ctx || defaultCtx();
-  const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
-  const outputDir = requireAbsoluteOutputDir(inp.outputDir);
-  const sha = inp.headShaShort || 'head';
-  const policy = inp.policy || {};
-  const paths = plannedArtifactPaths(outputDir, sha);
-  try {
-    const persist = inp.persist || {};
-    const scriptPath = typeof persist.assembleScriptPath === 'string' && persist.assembleScriptPath !== ''
-      ? persist.assembleScriptPath
-      : null;
-    const wantsReturn = persist.returnPrimaries === true;
-    if (scriptPath || wantsReturn) {
-      const derivable = persistDerivable(inp);
-      if (derivable.ok) {
-        if (wantsReturn) {
-          const viaReturn = returnChannelPersist(inp, paths, outputDir, sha);
-          if (viaReturn.ok) return viaReturn.result;
-          const gap = `writeArtifacts: ${viaReturn.reason} — persisted through the artifact-writer instead, which transcribes the bytes`;
-          if (!scriptPath) return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, [gap]);
-          const fallback = await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
-          return { ...fallback, gaps: [gap].concat(fallback.gaps || []) };
-        }
-        return await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
-      }
-      return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, [
-        `writeArtifacts: derived persistence unavailable (${derivable.reason}) — persisted the full by-value payload instead`,
-      ]);
-    }
-    return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, []);
-  } catch (e) {
-    return partial(`persistence threw before any artifact was written (${(e && e.message) || 'unknown'})`, []);
-  }
-}
-async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, extraGaps) {
-  const model = modelFor('code-gauntlet:artifact-writer', policy);
-  try {
-    const result = await c.agent(writeArtifactsPrompt(inp, paths), {
-      label: 'artifact-writer',
-      agentType: 'code-gauntlet:artifact-writer',
-      model,
-      schema: WRITER_SCHEMA,
-    });
-    if (!result) return partial('writer returned null', extraGaps);
-    const echoed = result.artifactPaths;
-    const escape = pathEscapeReason(
-      outputDir,
-      ARTIFACT_PATH_KEYS.map((k) => ({
-        name: k,
-        path: echoed ? echoed[k] : undefined,
-        present: !!(echoed && Object.hasOwn(echoed, k)),
-      })),
-    );
-    if (escape) return partial(escape, extraGaps);
-    if (!writerEchoCoversPaths(echoed, paths)) {
-      return partial('writer echo did not account for all four planned artifact paths (no write proof)', extraGaps);
-    }
-    return { artifactPaths: paths, gaps: extraGaps, partial: false };
-  } catch (e) {
-    return partial(`writer agent threw (${(e && e.message) || 'unknown'})`, extraGaps);
-  }
-}
-function persistEntries(inp, paths, outputDir, sha) {
-  const planPath = persistPlanPath(outputDir, sha);
-  const { findingsJson, reportMd } = persistPrimaries(inp);
-  const plan = persistPlan(inp, paths);
-  return {
-    plan,
-    planPath,
-    entries: [
-      { path: paths.findings, text: findingsJson },
-      { path: paths.report, text: reportMd },
-      { path: planPath, text: hardenEscapeRuns(JSON.stringify(plan, null, 2)) },
-    ],
-  };
-}
-function returnChannelPersist(inp, paths, outputDir, sha) {
-  const { planPath, entries } = persistEntries(inp, paths, outputDir, sha);
-  const chars = JSON.stringify(entries).length;
-  if (chars > RETURN_CHAR_BUDGET) {
-    return {
-      ok: false,
-      reason: `the persisted primaries serialize to ${chars} chars, over the ${RETURN_CHAR_BUDGET}-char return budget`,
-    };
-  }
-  return {
-    ok: true,
-    result: {
-      artifactPaths: paths,
-      gaps: [],
-      partial: false,
-      persistReturn: { channel: 'return', nonce: inp.nonce || null, planPath, entries },
-    },
-  };
-}
-async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {
-  const { plan, planPath, entries } = persistEntries(inp, paths, outputDir, sha);
-  const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath);
-  const salvage = (att) => {
-    const proven = new Set(att.proven || []);
-    return {
-      findings: proven.has(paths.findings) ? paths.findings : null,
-      report: proven.has(paths.report) ? paths.report : null,
-    };
-  };
-  const first = await attempt();
-  if (first.ok) return { artifactPaths: paths, gaps: first.gaps, partial: false };
-  if (!first.retryable) return partial(first.reason, [], salvage(first));
-  const second = await attempt();
-  if (second.ok) {
-    return {
-      artifactPaths: paths,
-      gaps: [`artifact-persist-retry: the first derived persist attempt failed (${first.reason}); a second artifact-writer dispatch succeeded and the artifacts below are from that attempt`]
-        .concat(second.gaps),
-      partial: false,
-    };
-  }
-  return partial(`${second.reason} — retried once after the first attempt failed (${first.reason})`, [], salvage(second));
-}
-async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath) {
-  const fail = (reason, retryable) => ({ ok: false, retryable: !!retryable, reason });
-  let writerOut;
-  try {
-    writerOut = await c.agent(finalArtifactsWriterPrompt(entries), {
-      label: 'artifact-writer',
-      agentType: 'code-gauntlet:artifact-writer',
-      model: modelFor('code-gauntlet:artifact-writer', policy),
-      schema: WRITTEN_SCHEMA,
-    });
-  } catch (e) {
-    return fail(`writer agent threw (${(e && e.message) || 'unknown'})`);
-  }
-  if (!writerOut) return fail('writer returned null');
-  const writtenList = Array.isArray(writerOut.written) ? writerOut.written : [];
-  const writtenEscape = pathEscapeReason(
-    outputDir,
-    writtenList.map((p, i) => ({ name: `written[${i}]`, path: p, present: true })),
-  );
-  if (writtenEscape) return fail(writtenEscape);
-  const written = new Set(writtenList);
-  if (!entries.every((e) => written.has(e.path))) {
-    return fail('writer echo did not cover all three primary artifact paths (no write proof)');
-  }
-  let receipt;
-  try {
-    receipt = await c.agent(assemblePrompt(assembleScriptPath, planPath), {
-      label: 'assemble-artifacts',
-      agentType: 'code-gauntlet:executor',
-      model: modelFor('code-gauntlet:executor', policy),
-      schema: ASSEMBLE_RECEIPT_SCHEMA,
-    });
-  } catch (e) {
-    return fail(`assemble executor threw (${(e && e.message) || 'unknown'})`);
-  }
-  if (receipt && typeof receipt === 'object') {
-    const receiptFields = [];
-    const verified = Array.isArray(receipt.verified) ? receipt.verified : [];
-    const receiptWritten = Array.isArray(receipt.written) ? receipt.written : [];
-    verified.forEach((e, i) => receiptFields.push({ name: `verified[${i}]`, path: e && e.path, present: true }));
-    receiptWritten.forEach((e, i) => receiptFields.push({ name: `receipt.written[${i}]`, path: e && e.path, present: true }));
-    const receiptEscape = pathEscapeReason(outputDir, receiptFields);
-    if (receiptEscape) return fail(receiptEscape);
-  }
-  const trust = trustAssembleReceipt(receipt, paths, plan);
-  if (!trust.ok) return { ...fail(trust.reason, true), proven: provenPrimaryPaths(receipt, paths, plan) };
-  return { ok: true, gaps: trust.gaps };
-}
-function trustAssembleReceipt(receipt, paths, plan) {
-  if (!receipt || typeof receipt !== 'object') return { ok: false, reason: 'assemble executor returned no receipt' };
-  if (receipt.ok !== true) {
-    const errors = Array.isArray(receipt.errors) ? receipt.errors.join('; ') : '';
-    return { ok: false, reason: `assemble script reported failure (${errors || 'no reason given'})` };
-  }
-  if (receipt.planChecksum !== plan.planChecksum) {
-    return {
-      ok: false,
-      reason: `assemble receipt echoed plan checksum ${receipt.planChecksum === undefined ? 'none' : receipt.planChecksum} but the pipeline computed ${plan.planChecksum} — the executor did not run this persist plan`,
-    };
-  }
-  const verified = Array.isArray(receipt.verified) ? receipt.verified : [];
-  const written = Array.isArray(receipt.written) ? receipt.written : [];
-  const verifiedByPath = new Map(verified.map((e) => [(e && e.path), e]));
-  const expectByPath = new Map((plan.expect || []).map((e) => [e.path, e]));
-  const writtenPaths = new Set(written.map((e) => (e && e.path)));
-  for (const p of [paths.findings, paths.report]) {
-    const got = verifiedByPath.get(p);
-    if (!got) return { ok: false, reason: `assemble receipt did not verify ${p} (no content proof)` };
-    const want = expectByPath.get(p);
-    if (!want || got.expected_chars !== want.chars || got.expected_checksum !== want.checksum) {
-      return {
-        ok: false,
-        reason: `assemble receipt checked ${p} against a foreign expectation (receipt says ${got.expected_chars} chars/${got.expected_checksum}, the pipeline handed the writer ${want ? want.chars : 'none'}/${want ? want.checksum : 'none'})`,
-      };
-    }
-    const same = got.chars === want.chars && got.checksum === want.checksum;
-    if ((got.content_proof === 'match') !== same) {
-      return {
-        ok: false,
-        reason: `assemble receipt is incoherent for ${p}: content_proof:"${got.content_proof}" contradicts its own chars/checksum (${got.chars}/${got.checksum} vs expected ${want.chars}/${want.checksum})`,
-      };
-    }
-  }
-  const writtenByPath = new Map(written.map((e) => [(e && e.path), e]));
-  const deriveByPath = new Map((plan.derive || []).map((e) => [e.path, e]));
-  const findingsProof = verifiedByPath.get(paths.findings);
-  const sourceDiverged = !!(findingsProof && findingsProof.content_proof === 'mismatch');
-  const derivedGaps = [];
-  for (const p of [paths.postReview, paths.checkpoints]) {
-    if (!writtenPaths.has(p)) return { ok: false, reason: `assemble receipt did not write ${p} (no write proof)` };
-    const want = deriveByPath.get(p);
-    if (!want) return { ok: false, reason: `persist plan carries no derived-content expectation for ${p} (no content proof)` };
-    const got = writtenByPath.get(p);
-    if (got.chars === want.chars && got.checksum === want.checksum) continue;
-    const detail = `derived document ${p} does not match the pipeline's own derivation (receipt reports ${got.chars == null ? 'no' : got.chars} chars/${got.checksum == null ? 'no checksum' : got.checksum}, the pipeline derived ${want.chars}/${want.checksum})`;
-    if (sourceDiverged) {
-      derivedGaps.push(`artifact-content-proof: ${detail} — expected, since ${paths.findings} it was derived from also diverged`);
-      continue;
-    }
-    return { ok: false, reason: `${detail} — the delivered payload is not what this run produced` };
-  }
-  const gaps = [];
-  for (const e of verified) {
-    if (e && e.content_proof === 'mismatch') {
-      gaps.push(`artifact-content-proof: ${e.path} bytes on disk differ from the payload handed to the writer (expected ${e.expected_chars} chars/checksum ${e.expected_checksum}, got ${e.chars}/${e.checksum})`);
-    }
-  }
-  gaps.push(...derivedGaps);
-  return { ok: true, gaps };
-}
-function provenPrimaryPaths(receipt, paths, plan) {
-  if (!receipt || typeof receipt !== 'object') return [];
-  if (!plan || receipt.planChecksum !== plan.planChecksum) return [];
-  const byPath = new Map((Array.isArray(receipt.verified) ? receipt.verified : []).map((e) => [(e && e.path), e]));
-  const expectByPath = new Map((plan.expect || []).map((e) => [e.path, e]));
-  const proven = [];
-  for (const p of [paths.findings, paths.report]) {
-    const got = byPath.get(p);
-    const want = expectByPath.get(p);
-    if (!got || !want) continue;
-    if (got.expected_chars !== want.chars || got.expected_checksum !== want.checksum) continue;
-    if (got.chars !== want.chars || got.checksum !== want.checksum) continue;
-    if (got.content_proof !== 'match') continue;
-    proven.push(p);
-  }
-  return proven;
-}
-function toV2Aliased(f) {
-  const out = { ...f };
-  if (out.line === undefined && out.line_start !== undefined) out.line = out.line_start;
-  if (out.end_line === undefined && out.line_end !== undefined) out.end_line = out.line_end;
-  if (out.body === undefined && out.description !== undefined) out.body = out.description;
-  return out;
-}
-function postReviewWrapper(id, reviewBody) {
-  return {
-    owner: id.owner,
-    repo: id.repo,
-    pr_number: id.pr_number,
-    sha: id.sha_full,
-    platform: id.platform,
-    review_body: typeof reviewBody === 'string' ? reviewBody : '',
-  };
-}
-function writerPayload(inp) {
-  const postReviewSet = (inp.postReview || []).map(toV2Aliased);
-  const id = inp.prIdentity;
-  return {
-    findings: (inp.findings || []).map(toV2Aliased),
-    postReview: id
-      ? { ...postReviewWrapper(id, inp.reviewBody), findings: postReviewSet }
-      : postReviewSet,
-    report: inp.report || '',
-    checkpoints: inp.checkpoints || {},
-  };
-}
-const WRITER_PAYLOAD_MARKER = 'PAYLOAD_JSON:';
-function parseWriterPayload(prompt) {
-  const idx = (prompt || '').lastIndexOf(WRITER_PAYLOAD_MARKER);
-  if (idx === -1) return null;
-  return JSON.parse(prompt.slice(idx + WRITER_PAYLOAD_MARKER.length));
-}
-function writeArtifactsPrompt(inp, paths) {
-  const payload = JSON.stringify(writerPayload(inp));
-  return `Persist these code-gauntlet artifacts to disk exactly as given (the workflow has no disk access). Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, the payload's postReview (the pre-selected delivery set, as pretty JSON) to ${paths.postReview}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
-}
-const PERSIST_ALIAS_FIELDS = ['line', 'end_line', 'body'];
-function stripPersistAliases(f) {
-  const out = {};
-  for (const [k, v] of Object.entries(f)) {
-    if (!PERSIST_ALIAS_FIELDS.includes(k)) out[k] = v;
-  }
-  return out;
-}
-function persistPlanPath(outputDir, sha) {
-  const root = requireAbsoluteOutputDir(outputDir);
-  const path = `${root}/code-gauntlet-persist-plan-${sha}.json`;
-  assertPlannedPathUnderOutputDir(root, path);
-  return path;
-}
-function hardenEscapeRuns(json) {
-  return typeof json === 'string' ? json.replace(/\\\\/g, '\\u005c') : json;
-}
-function persistPrimaries(inp) {
-  return {
-    findingsJson: hardenEscapeRuns(JSON.stringify(((inp || {}).findings || []).map(toV2Aliased), null, 2)),
-    reportMd: (inp || {}).report || '',
-  };
-}
-function persistPlan(inp, paths) {
-  const { findingsJson, reportMd } = persistPrimaries(inp);
-  const id = inp.prIdentity;
-  const skeleton = deepClone(inp.checkpoints || {});
-  const challenge = (skeleton.phases || {}).challenge;
-  const challengeFindingIds = challenge && Array.isArray(challenge.findings)
-    ? challenge.findings.map((f) => f && f.id)
-    : [];
-  if (challenge && Array.isArray(challenge.findings)) challenge.findings = [];
-  const expectOf = (path, text) => {
-    const normalized = normalizeForChecksum(text);
-    return { path, chars: normalized.length, checksum: fnv1a32(normalized) };
-  };
-  const held = writerPayload(inp || {});
-  const plan = {
-    planVersion: 2,
-    expect: [expectOf(paths.findings, findingsJson), expectOf(paths.report, reportMd)],
-    derive: [
-      expectOf(paths.postReview, JSON.stringify(held.postReview, null, 2)),
-      expectOf(paths.checkpoints, JSON.stringify(held.checkpoints, null, 2)),
-    ],
-    postReview: {
-      path: paths.postReview,
-      source: paths.findings,
-      ids: (inp.postReview || []).map((f) => f && f.id),
-      wrapper: id ? postReviewWrapper(id, inp.reviewBody) : null,
-    },
-    checkpoint: {
-      path: paths.checkpoints,
-      source: paths.findings,
-      challengeFindingIds,
-      stripAliasFields: PERSIST_ALIAS_FIELDS,
-      skeleton,
-    },
-  };
-  plan.planChecksum = fnv1a32(JSON.stringify(plan, null, 2));
-  return plan;
-}
-function persistDerivable(inp) {
-  for (const [label, value] of [
-    ['findings', (inp || {}).findings],
-    ['postReview', (inp || {}).postReview],
-    ['checkpoints', (inp || {}).checkpoints],
-    ['prIdentity', (inp || {}).prIdentity],
-  ]) {
-    if (value === undefined || value === null) continue;
-    const bad = firstUnsafeNumber(value, label);
-    if (bad !== null) {
-      return { ok: false, reason: `${bad} is not a JS-safe integer — the Python assembler cannot spell it byte-identically, so the derived artifact would diverge` };
-    }
-  }
-  const findings = (inp || {}).findings || [];
-  const byId = new Map();
-  for (let i = 0; i < findings.length; i += 1) {
-    const f = findings[i];
-    const fid = f && f.id;
-    if (typeof fid !== 'string' || fid === '') {
-      return { ok: false, reason: `finding at index ${i} has no usable string id` };
-    }
-    if (byId.has(fid)) return { ok: false, reason: `duplicate finding id ${fid}` };
-    byId.set(fid, f);
-    if (JSON.stringify(stripPersistAliases(toV2Aliased(f))) !== JSON.stringify(f)) {
-      return { ok: false, reason: `finding ${fid} already carries a v2 alias field (${PERSIST_ALIAS_FIELDS.join('/')}) — the checkpoint alias strip is not reversible` };
-    }
-  }
-  const twinCheck = (list, label, project) => {
-    for (let i = 0; i < list.length; i += 1) {
-      const entry = list[i];
-      const fid = entry && entry.id;
-      if (typeof fid !== 'string' || !byId.has(fid)) {
-        return `${label} entry at index ${i} (id ${fid === undefined ? 'missing' : fid}) is not present in the findings set`;
-      }
-      if (JSON.stringify(project(entry)) !== JSON.stringify(project(byId.get(fid)))) {
-        return `${label} entry ${fid} differs from the findings entry with the same id`;
-      }
-    }
-    return null;
-  };
-  const postReviewBad = twinCheck(inp.postReview || [], 'postReview', toV2Aliased);
-  if (postReviewBad) return { ok: false, reason: postReviewBad };
-  const challenge = ((inp.checkpoints || {}).phases || {}).challenge;
-  const challengeFindings = challenge && Array.isArray(challenge.findings) ? challenge.findings : [];
-  const challengeBad = twinCheck(challengeFindings, 'checkpoint challenge', (f) => f);
-  if (challengeBad) return { ok: false, reason: challengeBad };
-  return { ok: true };
-}
-function finalArtifactsWriterPrompt(entries) {
-  const payload = JSON.stringify(entries);
-  return `Persist these code-gauntlet artifacts to disk exactly as given (the workflow has no disk access). For every entry in the payload, write its "text" VERBATIM to its "path" — byte for byte, nothing before it and NOTHING AFTER THE FINAL BYTE (no trailing commentary, no tool-call markup). Do not reformat, re-indent, or re-serialize. Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
-}
-const ASSEMBLE_RECEIPT_SCHEMA = {
-  type: 'object',
-  properties: {
-    ok: { type: 'boolean' },
-    planVersion: { type: 'number' },
-    planChecksum: { type: 'string' },
-    verified: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          path: { type: 'string' },
-          chars: { type: 'number' },
-          expected_chars: { type: 'number' },
-          checksum: { type: 'string' },
-          expected_checksum: { type: 'string' },
-          content_proof: { type: 'string' },
-        },
-      },
-    },
-    written: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          path: { type: 'string' },
-          chars: { type: 'number' },
-          checksum: { type: 'string' },
-        },
-      },
-    },
-    errors: { type: 'array', items: { type: 'string' } },
-  },
-};
-function assemblePrompt(scriptPath, planPath) {
-  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\npython3 ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
-}
-function checkpointPath(phase, sha) {
-  return `code-gauntlet-checkpoint-${phase}-${sha}.json`;
-}
-function unwrapCheckpointMap(cp) {
-  if (!isPlainCheckpointObject(cp)) return null;
-  if (cp.phases === undefined) return cp;
-  return isPlainCheckpointObject(cp.phases) ? cp.phases : null;
-}
-function readCheckpoints(ctx, args) {
-  const A = args || {};
-  return unwrapCheckpointMap(A.checkpoints) || (ctx && unwrapCheckpointMap(ctx.checkpoints)) || {};
-}
-function checkpointDiscardGap(topLevelCheckpoints) {
-  if (topLevelCheckpoints === undefined) return [];
-  const resolved = unwrapCheckpointMap(topLevelCheckpoints);
-  if (resolved === null) {
-    const atTopLevel = !isPlainCheckpointObject(topLevelCheckpoints);
-    const position = atTopLevel ? 'checkpoints' : 'checkpoints.phases';
-    const offending = atTopLevel ? topLevelCheckpoints : topLevelCheckpoints.phases;
-    return [`checkpoint-discarded: ${position} must be a plain object, got ${describeCheckpointShape(offending)} -- `
-      + 'the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as '
-      + 'if no checkpoints had been supplied.'];
-  }
-  const recognizedPhaseNames = Object.keys(CHECKPOINT_PHASE_SHAPE_TABLE);
-  const resolvedKeys = Object.keys(resolved);
-  const hasRecognizedKey = resolvedKeys.some((k) => recognizedPhaseNames.includes(k));
-  if (resolvedKeys.length > 0 && !hasRecognizedKey) {
-    if (resolved.truncated) {
-      return ['checkpoint-discarded: the supplied checkpoints value is a truncated failure-path return '
-        + '(phase names only, no phase outputs) -- nothing in it is resumable; re-run without the '
-        + 'checkpoints argument to start the review fresh.'];
-    }
-    if (resolvedKeys.includes('completed')) {
-      if (Array.isArray(resolved.completed) && resolved.completed.length > 0) {
-        return ['checkpoint-discarded: the supplied checkpoints value looks like a compact return rather '
-          + 'than a checkpoint artifact -- it carries no phase outputs to resume from; the on-disk resume '
-          + 'state from that run lives at artifactPaths.checkpoints.'];
-      }
-      return ['checkpoint-discarded: the supplied checkpoints value looks like a return envelope rather '
-        + 'than a checkpoint artifact -- it carries no phase outputs to resume from; re-run without the '
-        + 'checkpoints argument to start the review fresh.'];
-    }
-    return ['checkpoint-discarded: the supplied checkpoints value contains none of the eight recognized '
-      + 'phase names (summarize, discover, merge, verify, validate, filter, challenge, report) -- '
-      + 'nothing was resumed, exactly as if no checkpoints had been supplied.'];
-  }
-  const tookPhasesBranch = isPlainCheckpointObject(topLevelCheckpoints)
-    && topLevelCheckpoints.phases !== undefined
-    && isPlainCheckpointObject(topLevelCheckpoints.phases);
-  const wrapperHasRecognizedKey = isPlainCheckpointObject(topLevelCheckpoints)
-    && Object.keys(topLevelCheckpoints).some((k) => recognizedPhaseNames.includes(k));
-  if (tookPhasesBranch && resolvedKeys.length === 0 && wrapperHasRecognizedKey) {
-    return ['checkpoint-discarded: checkpoints.phases is empty and a value under a recognized phase name '
-      + "at the wrapper's top level was ignored -- re-supply it as the .phases map, or as a bare phase "
-      + 'map, to attempt resuming from it.'];
-  }
-  return [];
-}
-const CHECKPOINT_ARRAY_STRICT = 'strict';
-const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
-const CHECKPOINT_FINDING_LISTS = [
-  ['discover', 'findings', CHECKPOINT_ARRAY_STRICT, false],
-  ['merge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
-  ['verify', 'findings', CHECKPOINT_ARRAY_STRICT, false],
-  ['validate', 'findings', CHECKPOINT_ARRAY_STRICT, false],
-  ['filter', 'filtered', CHECKPOINT_ARRAY_STRICT, false],
-  ['filter', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
-  ['challenge', 'findings', CHECKPOINT_ARRAY_STRICT, false],
-  ['challenge', 'unverified', CHECKPOINT_ARRAY_TOLERANT, false],
-  ['challenge', 'eliminated', CHECKPOINT_ARRAY_TOLERANT, true],
-];
-const checkpointFindingListsForPhase = (phase) => CHECKPOINT_FINDING_LISTS.filter(([name]) => name === phase);
-const findingListShape = (phase) => Object.fromEntries(checkpointFindingListsForPhase(phase)
-  .map(([, field, mode]) => [field, mode]));
-const CHECKPOINT_PHASE_SHAPE_TABLE = {
-  summarize: { gaps: CHECKPOINT_ARRAY_TOLERANT },
-  discover: {
-    ...findingListShape('discover'),
-    gaps: CHECKPOINT_ARRAY_TOLERANT,
-    dispatched: CHECKPOINT_ARRAY_TOLERANT,
-    degraded: CHECKPOINT_ARRAY_TOLERANT,
-  },
-  merge: { ...findingListShape('merge'), gaps: CHECKPOINT_ARRAY_TOLERANT },
-  verify: { ...findingListShape('verify'), gaps: CHECKPOINT_ARRAY_TOLERANT },
-  validate: { ...findingListShape('validate'), gaps: CHECKPOINT_ARRAY_TOLERANT },
-  filter: { ...findingListShape('filter'), gaps: CHECKPOINT_ARRAY_TOLERANT },
-  challenge: {
-    ...findingListShape('challenge'),
-    gaps: CHECKPOINT_ARRAY_TOLERANT,
-  },
-  report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
-};
-const CHECKPOINT_REQUIRED_CONTENT_FIELD = Object.fromEntries(CHECKPOINT_FINDING_LISTS
-  .filter(([, , mode]) => mode === CHECKPOINT_ARRAY_STRICT).map(([phase, field]) => [phase, field]));
-const CHECKPOINT_NULLABLE_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS
-  .filter(([, , , nullable]) => nullable).map(([phase, field]) => `${phase}.${field}`));
-function isPlainCheckpointObject(v) {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
-}
-function describeCheckpointShape(v) {
-  if (v === null) return 'null';
-  if (Array.isArray(v)) return 'array';
-  return typeof v;
-}
-const CHECKPOINT_FINDING_FIELDS = new Set(CHECKPOINT_FINDING_LISTS.map(([, field]) => field));
-const CHECKPOINT_FINDING_STRING_FIELDS = ['severity', 'title', 'file'];
-const CHECKPOINT_FINDING_INTEGER_FIELDS = ['line', 'line_start', 'line_end', 'end_line'];
-function checkpointFindingShapeErrors(finding, path) {
-  const violations = [];
-  for (const field of CHECKPOINT_FINDING_STRING_FIELDS) {
-    if (typeof finding[field] !== 'string') {
-      violations.push(`checkpoint-shape: ${path}.${field} must be a string, got ${describeCheckpointShape(finding[field])}`);
-    }
-  }
-  const hasDescription = finding.description !== undefined;
-  const hasBody = finding.body !== undefined;
-  if (!hasDescription && !hasBody) {
-    violations.push(`checkpoint-shape: ${path} must contain a string description or body`);
-  }
-  for (const field of ['description', 'body']) {
-    if (finding[field] !== undefined && typeof finding[field] !== 'string') {
-      violations.push(`checkpoint-shape: ${path}.${field} must be a string, got ${describeCheckpointShape(finding[field])}`);
-    }
-  }
-  for (const field of CHECKPOINT_FINDING_INTEGER_FIELDS) {
-    if (finding[field] !== undefined && !Number.isInteger(finding[field])) {
-      violations.push(`checkpoint-shape: ${path}.${field} must be an integer, got ${describeCheckpointShape(finding[field])}`);
-    }
-  }
-  if (finding.confidence !== undefined && (typeof finding.confidence !== 'number' || !Number.isFinite(finding.confidence))) {
-    violations.push(`checkpoint-shape: ${path}.confidence must be a number, got ${describeCheckpointShape(finding.confidence)}`);
-  }
-  if (finding.corroborations !== undefined) {
-    if (!Array.isArray(finding.corroborations)) {
-      violations.push(`checkpoint-shape: ${path}.corroborations must be an array, got ${describeCheckpointShape(finding.corroborations)}`);
-    } else {
-      finding.corroborations.forEach((corroboration, idx) => {
-        if (!isPlainCheckpointObject(corroboration)) {
-          violations.push(`checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`);
-        }
-      });
-    }
-  }
-  return violations;
-}
-function checkpointShapeErrors(resolvedCheckpoints) {
-  const cp = isPlainCheckpointObject(resolvedCheckpoints) ? resolvedCheckpoints : {};
-  const violations = [];
-  for (const phase of Object.keys(CHECKPOINT_PHASE_SHAPE_TABLE)) {
-    const value = cp[phase];
-    if (value === undefined) continue;
-    if (!isPlainCheckpointObject(value)) {
-      violations.push(`checkpoint-shape: phases.${phase} must be a plain object, got ${describeCheckpointShape(value)}`);
-      continue; // container failed -- no field inside it can be checked
-    }
-    const requiredField = CHECKPOINT_REQUIRED_CONTENT_FIELD[phase];
-    if (requiredField && value[requiredField] === undefined) {
-      violations.push(`checkpoint-shape: phases.${phase} is missing required field ${requiredField}`);
-    }
-    const fields = CHECKPOINT_PHASE_SHAPE_TABLE[phase];
-    for (const field of Object.keys(fields)) {
-      const arrVal = value[field];
-      if (arrVal === undefined) continue;
-      if (arrVal === null && CHECKPOINT_NULLABLE_FINDING_FIELDS.has(`${phase}.${field}`)) continue;
-      if (!Array.isArray(arrVal)) {
-        violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
-        continue;
-      }
-      arrVal.forEach((el, idx) => {
-        if (!isPlainCheckpointObject(el)) {
-          if (fields[field] === CHECKPOINT_ARRAY_STRICT) {
-            violations.push(`checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`);
-          }
-          return;
-        }
-        if (CHECKPOINT_FINDING_FIELDS.has(field)) {
-          violations.push(...checkpointFindingShapeErrors(el, `phases.${phase}.${field}[${idx}]`));
-        }
-      });
-    }
-  }
-  return violations;
-}
-const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint artifact, or re-run without the '
-  + '`checkpoints` argument to start the review fresh.';
-function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], contextSizeGap = [], discardGap = []) {
-  const extra = violations.length - 1;
-  const error = extra > 0
-    ? `${violations[0]} (and ${extra} more checkpoint-shape violation${extra === 1 ? '' : 's'}). ${CHECKPOINT_SHAPE_RECOVERY_LINE}`
-    : `${violations[0]}. ${CHECKPOINT_SHAPE_RECOVERY_LINE}`;
-  return {
-    ok: false,
-    error,
-    failingPhase: 'checkpoints',
-    phaseReached: 'checkpoints',
-    artifactPaths: {},
-    stats: {},
-    gaps: [...nullArgGaps, ...contextSizeGap, ...discardGap, ...violations],
-    checkpoints: { completed: [] },
-  };
-}
-function buildResumeCheckpoints(phaseOutputs) {
-  const completed = Object.keys(phaseOutputs);
-  const withPhases = { phases: phaseOutputs, completed };
-  if (JSON.stringify(withPhases).length <= RETURN_CHAR_BUDGET) return withPhases;
-  return { completed, truncated: true };
-}
-const PERSISTED_RESUME_PHASES = ['challenge'];
-function phaseFindingCount(out) {
-  if (!out || typeof out !== 'object') return 0;
-  if (Array.isArray(out.findings)) return out.findings.length;
-  if (Array.isArray(out.filtered)) return out.filtered.length;
-  return 0;
-}
-function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) {
-  const outputs = phaseOutputs || {};
-  const phases = {};
-  for (const name of PERSISTED_RESUME_PHASES) {
-    if (outputs[name] !== undefined) phases[name] = outputs[name];
-  }
-  const counts = {};
-  for (const [name, out] of Object.entries(outputs)) counts[name] = phaseFindingCount(out);
-  return { phases, completed, phaseReached, counts };
-}
 function resolvedPolicyEnvelope(policy) {
   return {
     subagentModel: policy.subagentModel || null,
@@ -5905,27 +5930,6 @@ function resolvedPolicyEnvelope(policy) {
     gateway: !!policy.gateway,
     conditionalSchema: conditionalSchemaActive(policy),
   };
-}
-const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
-function beltPartitionList(list) {
-  if (!Array.isArray(list) || list.length === 0) return { list, eliminated: [] };
-  const objectElements = list.map((el, idx) => ({ ...el, [REPLAY_BELT_INDEX_KEY]: idx }));
-  normalizeFieldNames(objectElements);
-  const { kept, eliminated } = applyReplayInjectionScan(objectElements);
-  const survivorByIdx = new Map();
-  for (const f of kept) {
-    const { [REPLAY_BELT_INDEX_KEY]: idx, ...clean } = f;
-    survivorByIdx.set(idx, clean);
-  }
-  const eliminatedOut = eliminated.map((f) => {
-    const { [REPLAY_BELT_INDEX_KEY]: _idx, ...clean } = f;
-    return { ...clean, replay_belt: true };
-  });
-  const splicedList = list.flatMap((_el, idx) => survivorByIdx.has(idx) ? [survivorByIdx.get(idx)] : []);
-  return { list: splicedList, eliminated: eliminatedOut };
-}
-function stripEliminatedList(list) {
-  return list.map(applyInjectedProseStrip);
 }
 const METHODOLOGY_COUNT_ONLY_FIELDS = ['truncation_warnings', 'validation_warnings'];
 function compactMethodology(m) {

@@ -1,14 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import {
-  requireAbsoluteOutputDir,
-  plannedArtifactPaths,
-  persistPlanPath,
-  writeArtifacts,
-  PATH_ESCAPE_MARKER,
-  runWith,
-} from '../src/stages.js';
+import { requireAbsoluteOutputDir, plannedArtifactPaths, persistPlanPath, PATH_ESCAPE_MARKER } from '../src/outputPaths.js';
+import { writeArtifacts } from '../src/persist.js';
+import { runWith } from '../src/stages.js';
 import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, repoRelativeFindingPath, safeFindingLabel } from '../src/paths.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 

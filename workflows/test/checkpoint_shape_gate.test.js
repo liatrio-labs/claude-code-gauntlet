@@ -4,13 +4,11 @@
 // carry primitive entries for path normalization to drop. Only eliminated lists accept null.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  checkpointShapeErrors, runWith, readCheckpoints, CHECKPOINT_PHASE_SHAPE_TABLE, buildResumeCheckpoints,
-  slimPersistedCheckpoints, CHECKPOINT_FINDING_LISTS,
-} from '../src/stages.js';
+import { checkpointShapeErrors, readCheckpoints, CHECKPOINT_PHASE_SHAPE_TABLE, buildResumeCheckpoints, slimPersistedCheckpoints, CHECKPOINT_FINDING_LISTS } from '../src/checkpoints.js';
+import { runWith } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
-// The strict rows of the exported shape table, derived here (not in stages.js, where the
+// The strict rows of the exported shape table, derived here (not in checkpoints.js, where the
 // derived list would ship as dead code in the bundle). 'strict' is the table's sentinel.
 const CHECKPOINT_STRICT_FIELDS = Object.entries(CHECKPOINT_PHASE_SHAPE_TABLE).flatMap(
   ([phase, fields]) => Object.entries(fields)

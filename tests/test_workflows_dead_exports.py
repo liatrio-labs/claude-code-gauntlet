@@ -8,7 +8,7 @@ Parity-only exports owned by #24 stay allowlisted, not deleted here.
 literals are blanked before the search. A raw-text search made the guard unable
 to fail — every allowlisted name is discussed in a neighbouring comment, so
 deleting its allowlist entry still passed, and two genuinely dead exports
-(`stages.js:parseWriterPayload`, `args.js:normalizeArgs`) were invisible behind
+(`persist.js:parseWriterPayload`, `args.js:normalizeArgs`) were invisible behind
 their own comments.
 """
 
@@ -23,7 +23,7 @@ _EXPORT_FN = re.compile(r"^export\s+(?:async\s+)?function\s+(\w+)\s*\(", re.M)
 
 # key: "filterFindings.js:parseReviewMd" -> inventory ID + citation
 EXPORT_ALLOWLIST = {
-    "stages.js:parseWriterPayload": "R-044 intentional-and-documented (test-only)",
+    "persist.js:parseWriterPayload": "R-044 intentional-and-documented (test-only)",
     "args.js:normalizeArgs": "R-045 intentional-and-documented (test-only)",
 }
 

@@ -1,5 +1,5 @@
 // deriveFromPlan.js — an INDEPENDENT reimplementation of a persistPlan's derivation
-// rules, deliberately not shared with production code (workflows/src/stages.js), so a
+// rules, deliberately not shared with production code (workflows/src/persistPlan.js), so a
 // test using it proves the derivation RULES themselves, not that one function equals
 // itself. Mirrors scripts/gauntlet/artifacts.py's projection-by-id exactly: given the
 // bytes that actually landed in findings.json, reconstruct the post-review delivery

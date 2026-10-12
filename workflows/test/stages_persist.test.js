@@ -18,11 +18,10 @@
 //      writerPayload(inp).postReview and .checkpoints EXACTLY.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  writeArtifacts, writerPayload, plannedArtifactPaths, persistPlanPath,
-  persistPlan, persistPrimaries, persistDerivable,
-  parseWriterPayload, runWith, hardenEscapeRuns, provenPrimaryPaths,
-} from '../src/stages.js';
+import { writeArtifacts, parseWriterPayload, provenPrimaryPaths } from '../src/persist.js';
+import { writerPayload, persistPlan, persistPrimaries, persistDerivable, hardenEscapeRuns } from '../src/persistPlan.js';
+import { plannedArtifactPaths, persistPlanPath } from '../src/outputPaths.js';
+import { runWith } from '../src/stages.js';
 import { fnv1a32, normalizeForChecksum } from '../src/wire.js';
 import { validateArgs } from '../src/args.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
