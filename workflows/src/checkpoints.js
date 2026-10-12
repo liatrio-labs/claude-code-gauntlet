@@ -1,3 +1,4 @@
+import { normalizeFindingPaths } from './mergeFindings.js';
 import { RETURN_CHAR_BUDGET } from './wire.js';
 import { applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames } from './filterFindings.js';
 
@@ -300,4 +301,86 @@ export function beltPartitionList(list) {
 
 export function stripEliminatedList(list) {
   return list.map(applyInjectedProseStrip);
+}
+
+// Replayed findings need the same path validation as fresh output.
+export function normalizePhaseFindings(name, out, replayed, args) {
+  if (!out || typeof out !== 'object') return;
+  const warnings = [];
+  let rejected = 0;
+  let pathRewrites = 0;
+  for (const [, field] of checkpointFindingListsForPhase(name)) {
+    if (!Array.isArray(out[field])) continue;
+    const normalized = normalizeFindingPaths(out[field], args.repoRoot);
+    rejected += out[field].length - normalized.valid.length;
+    pathRewrites += normalized.path_rewrites;
+    out[field] = normalized.valid;
+    warnings.push(...normalized.warnings);
+  }
+  if (pathRewrites || (replayed && rejected)) {
+    const stats = isPlainCheckpointObject(out.stats) ? out.stats : {};
+    out.stats = { ...stats,
+      ...(pathRewrites ? { path_rewrites: (stats.path_rewrites || 0) + pathRewrites } : {}),
+      ...(replayed && rejected ? { replay_path_rejected: rejected } : {}),
+    }
+  }
+  if (name === 'merge') {
+    const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
+    out.methodology = methodology;
+    const channels = methodology.findings_per_channel;
+    const surviving = out.findings.length;
+    // Attribution is approximate because replayed findings carry no channel.
+    const ndjsonCount = Number.isFinite(channels?.ndjson) ? channels.ndjson : 0;
+    const textFallbackCount = Number.isFinite(channels?.text_fallback) ? channels.text_fallback : 0;
+    const ndjson = Math.min(Math.max(0, ndjsonCount), surviving);
+    const textFallback = Math.min(Math.max(0, textFallbackCount), surviving - ndjson);
+    if (channels && typeof channels === 'object') {
+      out.methodology = { ...methodology, findings_per_channel: {
+        ...channels, ndjson, text_fallback: textFallback,
+      } };
+    }
+    if (warnings.length) {
+      out.methodology = { ...out.methodology, validation_warnings: [
+        ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
+        ...warnings,
+      ] };
+    }
+  }
+  if (!warnings.length) return;
+  out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
+}
+
+
+// No finding reader may sit between runPhase('challenge') and this belt.
+// Replay skips the fresh filter stage, so re-scan challenge findings on both paths.
+// Exclude the confidence heuristic because later confidence adjustments can change its result.
+// Scan each list in order so the dedup heuristic sees the same sequence on replay.
+// Strip eliminated entries after combining them so no eliminated-only payload survives.
+// Replace the challenge arrays in place so reporting, delivery, and persistence share them.
+// Keep this guard for malformed fresh stage output; replay checkpoints are shape-gated.
+export function applyChallengeReplayBelt(challengeOut) {
+  if (!challengeOut || typeof challengeOut !== 'object') return;
+  const findingsResult = beltPartitionList(challengeOut.findings);
+  const unverifiedResult = beltPartitionList(challengeOut.unverified);
+  challengeOut.findings = findingsResult.list;
+  challengeOut.unverified = unverifiedResult.list;
+  const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
+
+  const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
+  challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
+
+  // Counts that mirror rewritten arrays come from their actual post-scan lengths.
+  // challenge_survived/contested/downgraded/unchallenged are pre-belt and need not sum to final_count.
+  // replay_belt_eliminated is this call's total, including zero.
+  if (challengeOut.stats && typeof challengeOut.stats === 'object') {
+    const k1 = findingsResult.eliminated.length;
+    const k2 = unverifiedResult.eliminated.length;
+    if (typeof challengeOut.stats.final_count === 'number') {
+      challengeOut.stats.final_count = challengeOut.findings.length;
+    }
+    if (typeof challengeOut.stats.skipped === 'number' && Array.isArray(challengeOut.unverified)) {
+      challengeOut.stats.skipped = challengeOut.unverified.length;
+    }
+    challengeOut.stats.replay_belt_eliminated = k1 + k2;
+  }
 }

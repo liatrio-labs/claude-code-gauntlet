@@ -6,7 +6,6 @@ import { applyValidations, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
-import { defaultCtx } from './discover.js';
 
 // --- Phase 5: Validate ------------------------------------------------------
 
@@ -56,7 +55,6 @@ function validateReturnDescriptor() {
 // (conservative — never dropped, confidence never touched) and marked validation='skipped'
 // with a loud gap. Every surviving finding ends marked validation='validated' or 'skipped'.
 export async function validateStage(ctx, input) {
-  const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
   const limits = inp.limits || {};
@@ -72,18 +70,18 @@ export async function validateStage(ctx, input) {
   const batches = [];
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
 
-  const thunks = batches.map((batch, idx) => () => c.agent(validatePrompt(inp, batch), {
+  const thunks = batches.map((batch, idx) => () => ctx.agent(validatePrompt(inp, batch), {
     label: `validate-batch-${idx}`,
     agentType: 'code-gauntlet:validator',
     model,
     schema: VALIDATE_SCHEMA,
   }));
 
-  const results = await c.parallel(thunks);
+  const results = await ctx.parallel(thunks);
 
   const gaps = [];
   const validations = [];
-  const skippedSet = new Set(); // finding REFERENCES (immune to a missing/duplicate id)
+  const skippedSet = new Set();
   let completed = 0;
 
   results.forEach((res, idx) => {
@@ -220,7 +218,6 @@ function challengePrompt(finding) {
 // flow into applyChallenges, so its `unchallenged` pass-through (which would land a finding
 // in the high-confidence set) can never fire here. Records dispatched-vs-completed counts.
 export async function challengeStage(ctx, input) {
-  const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
   const limits = inp.limits || {};
@@ -247,14 +244,14 @@ export async function challengeStage(ctx, input) {
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
 
-  const thunks = candidates.map((finding, idx) => () => c.agent(challengePrompt(finding), {
+  const thunks = candidates.map((finding, idx) => () => ctx.agent(challengePrompt(finding), {
     label: `challenge-${idx}`,
     agentType: 'code-gauntlet:challenger',
     model,
     schema: CHALLENGE_SCHEMA,
   }));
 
-  const results = thunks.length ? await c.parallel(thunks) : [];
+  const results = thunks.length ? await ctx.parallel(thunks) : [];
 
   const gaps = [];
   const challenged = [];

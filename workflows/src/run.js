@@ -12,11 +12,11 @@
 // bucket members without per-bucket gaps, and emits one generic gap if no partial
 // survives, the merge or single-call result is null, or any summarize dispatch throws.
 // No wall-clock, no import at runtime.
-import { contextReadPlan, sharedContextLine } from './contextPlan.js';
+import { setupContext } from './contextPlan.js';
 import { coarsenLimits } from './capacity.js';
-import { defaultCtx, summarize, deriveAgentFlags, discover, allActiveDimensionsDegraded } from './discover.js';
+import { summarize, deriveAgentFlags, discover, allActiveDimensionsDegraded } from './discover.js';
 import { validateStage, filterStage, challengeStage, selectDelivery } from './reviewStages.js';
-import { mergeStage, normalizeFindingPaths } from './mergeFindings.js';
+import { mergeStage } from './mergeFindings.js';
 import { verifyStage } from './verifyStage.js';
 import { FINDING_TEXT_FIELD_NAMES, conditionalSchemaActive } from './registry.js';
 import { mentionsPreparedHostRoot, prepareHostRootPatterns, safeFindingLabel } from './paths.js';
@@ -24,7 +24,18 @@ import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRej
 import { scopeMatchesFile } from './filterFindings.js';
 import { renderReport, renderSummaryBody } from './renderReport.js';
 import { writeArtifacts } from './persist.js';
-import { beltPartitionList, buildResumeCheckpoints, checkpointDiscardGap, checkpointFindingListsForPhase, checkpointShapeErrors, isPlainCheckpointObject, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints, stripEliminatedList } from './checkpoints.js';
+import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
+
+// Runtime globals are injected by the workflow host; under node:test they are absent,
+// so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
+function defaultCtx() {
+  return {
+    agent: typeof agent === 'function' ? agent : undefined,
+    parallel: typeof parallel === 'function' ? parallel : undefined,
+    pipeline: typeof pipeline === 'function' ? pipeline : undefined,
+    pipelineVersion: null,
+  };
+}
 
 function hostPathTextFields(value, patterns) {
   const fields = new Set();
@@ -155,24 +166,7 @@ export async function runWith(ctx, rawArgs) {
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
   // The host measures this file. Its line and character counts form the read plan; agents
   // receive the resulting sentence, not the path or measurements.
-  const contextPlan = contextReadPlan(A.contextLines, A.contextChars);
-  const contextLine = sharedContextLine({
-    contextPath, contextLines: A.contextLines, contextChars: A.contextChars,
-  });
-  // Missing and unplannable counts use the same count-free fallback, and both need disclosure.
-  const contextSizeGap = A.contextLines === undefined
-    ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
-      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
-      + 'Read calls covering the file. That restores the failure mode of issue #48: a Read returns part of a large file '
-      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-      + '(and contextChars) from the Phase 2 step that writes the context file.']
-    : (contextPlan.length === 0
-      ? ['context_unplannable: args.contextLines was stamped (' + A.contextLines + ') but exceeds the read-plan chunk '
-        + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '
-        + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
-        + 'That restores the failure mode of issue #48 for an oversized context. Shrink the shared context '
-        + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
-      : []);
+  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars });
   // Inspect the stamped checkpoint waist before readCheckpoints can discard its shape.
   const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(c, A);
@@ -189,53 +183,6 @@ export async function runWith(ctx, rawArgs) {
   // Track the attempted phase separately so a failure names the phase that threw.
   let phaseAttempting = null;
 
-  // Replayed findings need the same path validation as fresh output.
-  const normalizePhaseFindings = (name, out, replayed) => {
-    if (!out || typeof out !== 'object') return;
-    const warnings = [];
-    let rejected = 0;
-    let pathRewrites = 0;
-    for (const [, field] of checkpointFindingListsForPhase(name)) {
-      if (!Array.isArray(out[field])) continue;
-      const normalized = normalizeFindingPaths(out[field], A.repoRoot);
-      rejected += out[field].length - normalized.valid.length;
-      pathRewrites += normalized.path_rewrites;
-      out[field] = normalized.valid;
-      warnings.push(...normalized.warnings);
-    }
-    if (pathRewrites || (replayed && rejected)) {
-      const stats = isPlainCheckpointObject(out.stats) ? out.stats : {};
-      out.stats = { ...stats,
-        ...(pathRewrites ? { path_rewrites: (stats.path_rewrites || 0) + pathRewrites } : {}),
-        ...(replayed && rejected ? { replay_path_rejected: rejected } : {}),
-      };
-    }
-    if (name === 'merge') {
-      const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
-      out.methodology = methodology;
-      const channels = methodology.findings_per_channel;
-      const surviving = out.findings.length;
-      // Attribution is approximate because replayed findings carry no channel.
-      const ndjsonCount = Number.isFinite(channels?.ndjson) ? channels.ndjson : 0;
-      const textFallbackCount = Number.isFinite(channels?.text_fallback) ? channels.text_fallback : 0;
-      const ndjson = Math.min(Math.max(0, ndjsonCount), surviving);
-      const textFallback = Math.min(Math.max(0, textFallbackCount), surviving - ndjson);
-      if (channels && typeof channels === 'object') {
-        out.methodology = { ...methodology, findings_per_channel: {
-          ...channels, ndjson, text_fallback: textFallback,
-        } };
-      }
-      if (warnings.length) {
-        out.methodology = { ...out.methodology, validation_warnings: [
-          ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
-          ...warnings,
-        ] };
-      }
-    }
-    if (!warnings.length) return;
-    out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
-  };
-
   // Reuse checkpoint outputs without dispatching, while recording each reached phase.
   // Only undefined dispatches; null means replay and is refused by the shape gate.
   const runPhase = async (name, thunk) => {
@@ -243,7 +190,7 @@ export async function runWith(ctx, rawArgs) {
     const replayed = checkpoints[name] !== undefined;
     const out = replayed ? checkpoints[name] : await thunk();
     // Discover is the entry to every downstream finding-bearing phase.
-    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed);
+    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A);
     phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -282,7 +229,7 @@ export async function runWith(ctx, rawArgs) {
       gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
       const resumable = { ...phaseOutputs };
       // Drop discover only from returned checkpoints, never from phaseOutputs.
-      delete resumable.discover; // a degraded-to-nothing discover output must never replay on resume — a retry re-dispatches discovery under (possibly corrected) policy
+      delete resumable.discover;
       return {
         ok: false,
         error: 'all-degraded: every active discovery dimension degraded — no review was performed',
@@ -338,38 +285,8 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(challengeOut.gaps || []));
 
-    // No finding reader may sit between runPhase('challenge') and this belt.
-    // Replay skips the fresh filter stage, so re-scan challenge findings on both paths.
-    // Exclude the confidence heuristic because later confidence adjustments can change its result.
-    // Scan each list in order so the dedup heuristic sees the same sequence on replay.
-    // Strip eliminated entries after combining them so no eliminated-only payload survives.
-    // Replace the challenge arrays in place so reporting, delivery, and persistence share them.
-    // Keep this guard for malformed fresh stage output; replay checkpoints are shape-gated.
+    applyChallengeReplayBelt(challengeOut);
     if (challengeOut && typeof challengeOut === 'object') {
-      const findingsResult = beltPartitionList(challengeOut.findings);
-      const unverifiedResult = beltPartitionList(challengeOut.unverified);
-      challengeOut.findings = findingsResult.list;
-      challengeOut.unverified = unverifiedResult.list;
-      const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
-
-      const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
-      challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
-
-      // Counts that mirror rewritten arrays come from their actual post-scan lengths.
-      // challenge_survived/contested/downgraded/unchallenged are pre-belt and need not sum to final_count.
-      // replay_belt_eliminated is this call's total, including zero.
-      if (challengeOut.stats && typeof challengeOut.stats === 'object') {
-        const k1 = findingsResult.eliminated.length;
-        const k2 = unverifiedResult.eliminated.length;
-        if (typeof challengeOut.stats.final_count === 'number' && Array.isArray(challengeOut.findings)) {
-          challengeOut.stats.final_count = challengeOut.findings.length;
-        }
-        if (typeof challengeOut.stats.skipped === 'number' && Array.isArray(challengeOut.unverified)) {
-          challengeOut.stats.skipped = challengeOut.unverified.length;
-        }
-        challengeOut.stats.replay_belt_eliminated = k1 + k2;
-      }
-
       // Derive from the carried eliminated entries so resumes disclose the same loss.
       // Keep this gap outside challengeOut because that object is persisted and re-scanned.
       const markedCount = challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
@@ -457,7 +374,7 @@ export async function runWith(ctx, rawArgs) {
     const writeOut = await writeArtifacts(c, {
       findings: challengeOut.findings,
       postReview,
-      prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
+      prIdentity: (A.delivery || {}).prIdentity,
       reviewBody,
       report: reportOut.report,
       // Only the resume-consumed challenge phase needs its full output persisted.

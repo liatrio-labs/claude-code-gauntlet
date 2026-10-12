@@ -63,7 +63,7 @@ export function contextReadPlan(lines, chars) {
 // context-read instruction of its own — the property that used to be defended by scanning
 // this file's source text for hand-rolled copies. Capability removed rather than guarded:
 // an adversarial review defeated the text-scan version in one edit by rewording.
-export function sharedContextLine(inp) {
+function formatSharedContextLine(inp, plan) {
   const path = inp && inp.contextPath;
   if (!path) return '';
   const head = `Read the shared context at ${path} first — it has the diff, project rules, and risk classification.`;
@@ -71,7 +71,7 @@ export function sharedContextLine(inp) {
   // like a complete file. Stated on every path, plan or no plan.
   const warn = 'A single Read of this file returns only PART of it and gives NO truncation notice, so one Read is never the whole file.';
   const prefix = `${head} ${warn}`;
-  const plan = contextReadPlan(inp.contextLines, inp.contextChars);
+  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars);
   if (plan.length === 0) {
     // No measurement (or one too large to plan): the terminus is unknown, so end-detection
     // is unavoidable here. The STEPPING still is not — spelling out fixed-size steps keeps
@@ -91,4 +91,28 @@ export function sharedContextLine(inp) {
   }
   const span = plan[0].limit;
   return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
+}
+
+export function sharedContextLine(inp, plan = undefined) {
+  return formatSharedContextLine(inp, plan);
+}
+
+export function setupContext(inp) {
+  const plan = contextReadPlan(inp.contextLines, inp.contextChars);
+  const contextLine = sharedContextLine(inp, plan);
+  // Missing and unplannable counts use the same count-free fallback, and both need disclosure.
+  const contextSizeGap = inp.contextLines === undefined
+    ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
+      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
+      + 'Read calls covering the file. That restores the failure mode of issue #48: a Read returns part of a large file '
+      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
+      + '(and contextChars) from the Phase 2 step that writes the context file.']
+    : (plan.length === 0
+      ? ['context_unplannable: args.contextLines was stamped (' + inp.contextLines + ') but exceeds the read-plan chunk '
+        + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '
+        + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
+        + 'That restores the failure mode of issue #48 for an oversized context. Shrink the shared context '
+        + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
+      : []);
+  return { contextLine, contextSizeGap };
 }

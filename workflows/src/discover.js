@@ -3,17 +3,6 @@ import { DIMENSIONS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, conditional
 import { computeLightEligible, LIMIT_DEFAULTS } from './args.js';
 import { effectiveBucketSize } from './capacity.js';
 
-// Runtime globals are injected by the workflow host; under node:test they are absent,
-// so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
-export function defaultCtx() {
-  return {
-    agent: typeof agent === 'function' ? agent : undefined,
-    parallel: typeof parallel === 'function' ? parallel : undefined,
-    pipeline: typeof pipeline === 'function' ? pipeline : undefined,
-    pipelineVersion: null,
-  };
-}
-
 // --- Phase 1: Summarize -----------------------------------------------------
 
 // The change-summarizer returns its prose wrapped as { summary } (StructuredOutput).
@@ -25,7 +14,6 @@ const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'strin
 // limits.summarizeBucketSize through parallel(), then a single merge agent() call to
 // stitch the partials. Any throw / total null-out degrades to { summary:'', gaps:[...] }.
 export async function summarize(ctx, input) {
-  const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const changedFiles = inp.changedFiles || [];
   const changedLines = inp.changedLines || 0;
@@ -40,15 +28,15 @@ export async function summarize(ctx, input) {
       const buckets = [];
       for (let i = 0; i < changedFiles.length; i += bucketSize) buckets.push(changedFiles.slice(i, i + bucketSize));
       // parallel() takes thunks; each calls agent(promptString, opts).
-      const thunks = buckets.map((files, idx) => () => c.agent(summarizePrompt(inp, files), {
+      const thunks = buckets.map((files, idx) => () => ctx.agent(summarizePrompt(inp, files), {
         label: `summarize-bucket-${idx}`,
         agentType: 'code-gauntlet:change-summarizer',
         model,
         schema: SUMMARIZE_SCHEMA,
       }));
-      const partials = (await c.parallel(thunks)).filter(Boolean);
+      const partials = (await ctx.parallel(thunks)).filter(Boolean);
       if (partials.length === 0) return { summary: '', gaps: ['summarize failed'] };
-      const mergeResult = await c.agent(summarizeMergePrompt(inp, partials), {
+      const mergeResult = await ctx.agent(summarizeMergePrompt(inp, partials), {
         label: 'summarize-merge',
         agentType: 'code-gauntlet:change-summarizer',
         model,
@@ -57,7 +45,7 @@ export async function summarize(ctx, input) {
       if (!mergeResult) return { summary: '', gaps: ['summarize failed'] };
       return { summary: mergeResult.summary || '', gaps: [] };
     }
-    const result = await c.agent(summarizePrompt(inp, changedFiles), {
+    const result = await ctx.agent(summarizePrompt(inp, changedFiles), {
       label: 'summarize',
       agentType: 'code-gauntlet:change-summarizer',
       model,
@@ -70,6 +58,12 @@ export async function summarize(ctx, input) {
   }
 }
 
+function summaryCountLine(inp, suffix) {
+  return typeof inp.changedLines === 'number' && inp.changedLines > 0
+    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it${suffix}`
+    : '';
+}
+
 function summarizePrompt(inp, files) {
   // Prebuilt by runWith: the summarizer opens the SAME file the discovery
   // agents do, so it gets the same read plan. This stage cannot construct one — it never
@@ -78,9 +72,7 @@ function summarizePrompt(inp, files) {
   // Single-source the size number (live-run L7): triage said 1211 changed lines, the
   // report said ~1218 because the summarizer re-derived it from the diff. The waist's
   // changedLines is the one authoritative count.
-  const countLine = typeof inp.changedLines === 'number' && inp.changedLines > 0
-    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it from the diff.`
-    : '';
+  const countLine = summaryCountLine(inp, ' from the diff.');
   return `${ctxLine}Summarize the semantic intent of these changed files for downstream reviewers: ${files.join(', ')}.${countLine} Return { summary }.`;
 }
 
@@ -89,9 +81,7 @@ function summarizePrompt(inp, files) {
 // number the per-bucket prompts were pinned to.
 function summarizeMergePrompt(inp, partials) {
   const joined = partials.map((p) => p.summary || '').filter(Boolean).join('\n---\n');
-  const countLine = typeof inp.changedLines === 'number' && inp.changedLines > 0
-    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it.`
-    : '';
+  const countLine = summaryCountLine(inp, '.');
   return `Combine these per-bucket change summaries into one concise semantic summary.${countLine} Partials:\n${joined}\nReturn { summary }.`;
 }
 
@@ -355,12 +345,11 @@ function dropSuggestedFixCode(f) {
 // this output's empty findings as a clean review when EVERY active dimension degrades —
 // see allActiveDimensionsDegraded and its guard in runWith.
 export async function discover(ctx, input) {
-  const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const agentFlags = inp.agentFlags || {};
   const limits = inp.limits || {};
   const policy = inp.policy || {};
-  const discoveryCap = limits.discoveryCap; // optional per-agent finding ceiling
+  const discoveryCap = limits.discoveryCap;
 
   const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
   // Platform contract: parallel() takes an array of ZERO-ARG THUNKS, each calling
@@ -368,7 +357,7 @@ export async function discover(ctx, input) {
   // already names the dimensions, so no non-standard opts field is passed.
   const thunks = specs.map((spec) => {
     const model = modelFor(spec.agentType, policy);
-    return () => c.agent(discoverPrompt(inp, spec), {
+    return () => ctx.agent(discoverPrompt(inp, spec), {
       label: spec.agentType,
       agentType: spec.agentType,
       model,
@@ -376,7 +365,7 @@ export async function discover(ctx, input) {
     });
   });
 
-  const results = await c.parallel(thunks);
+  const results = await ctx.parallel(thunks);
 
   const gaps = [];
   const findings = [];
@@ -400,7 +389,7 @@ export async function discover(ctx, input) {
         ? ' (dispatch carried the conditional per-dimension schema)'
         : '';
       gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
-      degradedDims.push(...spec.dimensions); // terminal agent failure -> its dimensions degraded
+      degradedDims.push(...spec.dimensions);
       return;
     }
     const list = Array.isArray(res.findings) ? res.findings : null;

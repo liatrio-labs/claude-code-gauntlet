@@ -19,13 +19,13 @@ function contextReadPlan(lines, chars) {
   }
   return plan;
 }
-function sharedContextLine(inp) {
+function formatSharedContextLine(inp, plan) {
   const path = inp && inp.contextPath;
   if (!path) return '';
   const head = `Read the shared context at ${path} first — it has the diff, project rules, and risk classification.`;
   const warn = 'A single Read of this file returns only PART of it and gives NO truncation notice, so one Read is never the whole file.';
   const prefix = `${head} ${warn}`;
-  const plan = contextReadPlan(inp.contextLines, inp.contextChars);
+  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars);
   if (plan.length === 0) {
     const s = READ_PLAN_MAX_LINES;
     return `${prefix} Read it in ${s}-line steps — Read(offset=1, limit=${s}), then Read(offset=${1 + s}, limit=${s}), then Read(offset=${1 + 2 * s}, limit=${s}), continuing to step by ${s} until a call returns no further content. Do not stop before that. `;
@@ -41,6 +41,27 @@ function sharedContextLine(inp) {
   }
   const span = plan[0].limit;
   return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
+}
+function sharedContextLine(inp, plan = undefined) {
+  return formatSharedContextLine(inp, plan);
+}
+function setupContext(inp) {
+  const plan = contextReadPlan(inp.contextLines, inp.contextChars);
+  const contextLine = sharedContextLine(inp, plan);
+  const contextSizeGap = inp.contextLines === undefined
+    ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
+      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
+      + 'Read calls covering the file. That restores the failure mode of issue #48: a Read returns part of a large file '
+      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
+      + '(and contextChars) from the Phase 2 step that writes the context file.']
+    : (plan.length === 0
+      ? ['context_unplannable: args.contextLines was stamped (' + inp.contextLines + ') but exceeds the read-plan chunk '
+        + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '
+        + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
+        + 'That restores the failure mode of issue #48 for an oversized context. Shrink the shared context '
+        + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
+      : []);
+  return { contextLine, contextSizeGap };
 }
 // --- registry.js ---
 const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs reaching http/request/fetch clients without allowlist validation); frame and embedding policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); postMessage handlers that do not validate event.origin or check it with weak substring matching; and string-matching bypass patterns where a security decision uses containment checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains "trusted.com").';
@@ -2585,9 +2606,9 @@ function planVerifySlices(findings, sliceSize, budget, baseBranch) {
 }
 const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 const VERIFY_ATTEMPTS_PER_SLICE = 2;
-const AGENT_COUNT_GUARD = 900;   // stay strictly under the platform fan-out ceiling
-const SUMMARIZE_TERM_BOUND = 300; // widen the summarize bucket once its term alone exceeds this
-const CHALLENGE_CAP_FLOOR = 5;    // never challenge fewer than this many findings
+const AGENT_COUNT_GUARD = 900;
+const SUMMARIZE_TERM_BOUND = 300;
+const CHALLENGE_CAP_FLOOR = 5;
 const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
 const effectiveChallengeCap = (L, findings) =>
   Math.max(0, L.challengeCap != null ? L.challengeCap : findings);
@@ -2652,17 +2673,8 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
   return L;
 }
 // --- discover.js ---
-function defaultCtx() {
-  return {
-    agent: typeof agent === 'function' ? agent : undefined,
-    parallel: typeof parallel === 'function' ? parallel : undefined,
-    pipeline: typeof pipeline === 'function' ? pipeline : undefined,
-    pipelineVersion: null,
-  };
-}
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
 async function summarize(ctx, input) {
-  const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const changedFiles = inp.changedFiles || [];
   const changedLines = inp.changedLines || 0;
@@ -2675,15 +2687,15 @@ async function summarize(ctx, input) {
     if (bucketed) {
       const buckets = [];
       for (let i = 0; i < changedFiles.length; i += bucketSize) buckets.push(changedFiles.slice(i, i + bucketSize));
-      const thunks = buckets.map((files, idx) => () => c.agent(summarizePrompt(inp, files), {
+      const thunks = buckets.map((files, idx) => () => ctx.agent(summarizePrompt(inp, files), {
         label: `summarize-bucket-${idx}`,
         agentType: 'code-gauntlet:change-summarizer',
         model,
         schema: SUMMARIZE_SCHEMA,
       }));
-      const partials = (await c.parallel(thunks)).filter(Boolean);
+      const partials = (await ctx.parallel(thunks)).filter(Boolean);
       if (partials.length === 0) return { summary: '', gaps: ['summarize failed'] };
-      const mergeResult = await c.agent(summarizeMergePrompt(inp, partials), {
+      const mergeResult = await ctx.agent(summarizeMergePrompt(inp, partials), {
         label: 'summarize-merge',
         agentType: 'code-gauntlet:change-summarizer',
         model,
@@ -2692,7 +2704,7 @@ async function summarize(ctx, input) {
       if (!mergeResult) return { summary: '', gaps: ['summarize failed'] };
       return { summary: mergeResult.summary || '', gaps: [] };
     }
-    const result = await c.agent(summarizePrompt(inp, changedFiles), {
+    const result = await ctx.agent(summarizePrompt(inp, changedFiles), {
       label: 'summarize',
       agentType: 'code-gauntlet:change-summarizer',
       model,
@@ -2704,18 +2716,19 @@ async function summarize(ctx, input) {
     return { summary: '', gaps: ['summarize failed'] };
   }
 }
+function summaryCountLine(inp, suffix) {
+  return typeof inp.changedLines === 'number' && inp.changedLines > 0
+    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it${suffix}`
+    : '';
+}
 function summarizePrompt(inp, files) {
   const ctxLine = inp.contextLine || '';
-  const countLine = typeof inp.changedLines === 'number' && inp.changedLines > 0
-    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it from the diff.`
-    : '';
+  const countLine = summaryCountLine(inp, ' from the diff.');
   return `${ctxLine}Summarize the semantic intent of these changed files for downstream reviewers: ${files.join(', ')}.${countLine} Return { summary }.`;
 }
 function summarizeMergePrompt(inp, partials) {
   const joined = partials.map((p) => p.summary || '').filter(Boolean).join('\n---\n');
-  const countLine = typeof inp.changedLines === 'number' && inp.changedLines > 0
-    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it.`
-    : '';
+  const countLine = summaryCountLine(inp, '.');
   return `Combine these per-bucket change summaries into one concise semantic summary.${countLine} Partials:\n${joined}\nReturn { summary }.`;
 }
 function intersectRequiredExtra(rows) {
@@ -2803,23 +2816,22 @@ function dropSuggestedFixCode(f) {
   return true;
 }
 async function discover(ctx, input) {
-  const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const agentFlags = inp.agentFlags || {};
   const limits = inp.limits || {};
   const policy = inp.policy || {};
-  const discoveryCap = limits.discoveryCap; // optional per-agent finding ceiling
+  const discoveryCap = limits.discoveryCap;
   const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
   const thunks = specs.map((spec) => {
     const model = modelFor(spec.agentType, policy);
-    return () => c.agent(discoverPrompt(inp, spec), {
+    return () => ctx.agent(discoverPrompt(inp, spec), {
       label: spec.agentType,
       agentType: spec.agentType,
       model,
       schema: findingSchema(spec, policy),
     });
   });
-  const results = await c.parallel(thunks);
+  const results = await ctx.parallel(thunks);
   const gaps = [];
   const findings = [];
   const degradedDims = [];
@@ -2831,7 +2843,7 @@ async function discover(ctx, input) {
         ? ' (dispatch carried the conditional per-dimension schema)'
         : '';
       gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
-      degradedDims.push(...spec.dimensions); // terminal agent failure -> its dimensions degraded
+      degradedDims.push(...spec.dimensions);
       return;
     }
     const list = Array.isArray(res.findings) ? res.findings : null;
@@ -4317,7 +4329,6 @@ function validateReturnDescriptor() {
     .join(', ');
 }
 async function validateStage(ctx, input) {
-  const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
   const limits = inp.limits || {};
@@ -4329,16 +4340,16 @@ async function validateStage(ctx, input) {
   const model = modelFor('code-gauntlet:validator', policy);
   const batches = [];
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
-  const thunks = batches.map((batch, idx) => () => c.agent(validatePrompt(inp, batch), {
+  const thunks = batches.map((batch, idx) => () => ctx.agent(validatePrompt(inp, batch), {
     label: `validate-batch-${idx}`,
     agentType: 'code-gauntlet:validator',
     model,
     schema: VALIDATE_SCHEMA,
   }));
-  const results = await c.parallel(thunks);
+  const results = await ctx.parallel(thunks);
   const gaps = [];
   const validations = [];
-  const skippedSet = new Set(); // finding REFERENCES (immune to a missing/duplicate id)
+  const skippedSet = new Set();
   let completed = 0;
   results.forEach((res, idx) => {
     const batch = batches[idx];
@@ -4414,7 +4425,6 @@ function challengePrompt(finding) {
   return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code: the claim concerns ${b.file}:${range} — open that location and enough surrounding context yourself (Read/Grep/LSP), find the specific lines the claim rests on, and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct 0-100 (higher = the claim holds).`;
 }
 async function challengeStage(ctx, input) {
-  const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
   const limits = inp.limits || {};
@@ -4435,13 +4445,13 @@ async function challengeStage(ctx, input) {
   const ranked = rankFindings(findings);
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
-  const thunks = candidates.map((finding, idx) => () => c.agent(challengePrompt(finding), {
+  const thunks = candidates.map((finding, idx) => () => ctx.agent(challengePrompt(finding), {
     label: `challenge-${idx}`,
     agentType: 'code-gauntlet:challenger',
     model,
     schema: CHALLENGE_SCHEMA,
   }));
-  const results = thunks.length ? await c.parallel(thunks) : [];
+  const results = thunks.length ? await ctx.parallel(thunks) : [];
   const gaps = [];
   const challenged = [];
   const challenges = [];
@@ -4495,17 +4505,7 @@ function selectDelivery(survivors, cap, tier) {
   return ranked.slice(0, Math.max(0, cap));
 }
 // --- mergeFindings.js ---
-const KNOWN_DIMENSIONS = new Set([
-  'bug',
-  'security',
-  'cross_file_impact',
-  'test_coverage',
-  'convention',
-  'intent',
-  'comment_accuracy',
-  'type_design',
-  'simplification',
-]);
+const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));
 const REQUIRED_FIELDS = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence'];
 function jsonTypeName(v) {
   if (v === null) return 'null';
@@ -4599,41 +4599,6 @@ function validateFindings(findings) {
   }
   return { valid, warnings };
 }
-function assembleOutput(
-  findings,
-  agents,
-  ndjsonCount,
-  textFallbackCount,
-  duplicatesResolved,
-  droppedNoId,
-  truncationWarnings,
-  validationWarnings,
-  baseBranch,
-  headSha,
-  prNumber,
-  owner,
-  repo,
-) {
-  return {
-    findings,
-    base_branch: baseBranch,
-    head_sha: headSha,
-    pr_number: prNumber,
-    owner,
-    repo,
-    methodology: {
-      agents_dispatched: agents,
-      findings_per_channel: {
-        ndjson: ndjsonCount,
-        text_fallback: textFallbackCount,
-      },
-      duplicates_resolved: duplicatesResolved,
-      dropped_no_id: droppedNoId,
-      truncation_warnings: truncationWarnings,
-      validation_warnings: validationWarnings,
-    },
-  };
-}
 function merge(findingsByAgent, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
@@ -4664,33 +4629,33 @@ function merge(findingsByAgent, meta) {
   }
   for (const [agent, findings] of Object.entries(selected)) injectAgentField(findings, agent);
   const allFlat = Object.values(selected).flat();
-  const { warnings: preValWarnings } = validateFindings(allFlat);
+  const { valid, warnings: preValWarnings } = validateFindings(allFlat);
   let droppedNoId = 0;
   for (const f of allFlat) {
     const fid = f.id;
     if (fid === undefined || fid === null || fid === '') droppedNoId += 1;
   }
-  const validGroups = {};
-  for (const [agent, findings] of Object.entries(selected)) {
-    validGroups[agent] = validateFindings(findings).valid;
-  }
-  const { merged, duplicatesResolved } = dedupById(Object.values(validGroups).flat());
+  const { merged, duplicatesResolved } = dedupById(valid);
   const validationWarnings = allWarnings.concat(preValWarnings);
-  return assembleOutput(
-    merged,
-    agents,
-    merged.length,
-    0,
-    duplicatesResolved,
-    droppedNoId,
-    [],
-    validationWarnings,
-    M.base_branch,
-    M.head_sha,
-    M.pr_number,
-    M.owner,
-    M.repo,
-  );
+  return {
+    findings: merged,
+    base_branch: M.base_branch,
+    head_sha: M.head_sha,
+    pr_number: M.pr_number,
+    owner: M.owner,
+    repo: M.repo,
+    methodology: {
+      agents_dispatched: agents,
+      findings_per_channel: {
+        ndjson: merged.length,
+        text_fallback: 0,
+      },
+      duplicates_resolved: duplicatesResolved,
+      dropped_no_id: droppedNoId,
+      truncation_warnings: [],
+      validation_warnings: validationWarnings,
+    },
+  };
 }
 function mergeStage(discoverOut, meta) {
   const out = discoverOut || { findings: [] };
@@ -5732,7 +5697,80 @@ function beltPartitionList(list) {
 function stripEliminatedList(list) {
   return list.map(applyInjectedProseStrip);
 }
+function normalizePhaseFindings(name, out, replayed, args) {
+  if (!out || typeof out !== 'object') return;
+  const warnings = [];
+  let rejected = 0;
+  let pathRewrites = 0;
+  for (const [, field] of checkpointFindingListsForPhase(name)) {
+    if (!Array.isArray(out[field])) continue;
+    const normalized = normalizeFindingPaths(out[field], args.repoRoot);
+    rejected += out[field].length - normalized.valid.length;
+    pathRewrites += normalized.path_rewrites;
+    out[field] = normalized.valid;
+    warnings.push(...normalized.warnings);
+  }
+  if (pathRewrites || (replayed && rejected)) {
+    const stats = isPlainCheckpointObject(out.stats) ? out.stats : {};
+    out.stats = { ...stats,
+      ...(pathRewrites ? { path_rewrites: (stats.path_rewrites || 0) + pathRewrites } : {}),
+      ...(replayed && rejected ? { replay_path_rejected: rejected } : {}),
+    }
+  }
+  if (name === 'merge') {
+    const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
+    out.methodology = methodology;
+    const channels = methodology.findings_per_channel;
+    const surviving = out.findings.length;
+    const ndjsonCount = Number.isFinite(channels?.ndjson) ? channels.ndjson : 0;
+    const textFallbackCount = Number.isFinite(channels?.text_fallback) ? channels.text_fallback : 0;
+    const ndjson = Math.min(Math.max(0, ndjsonCount), surviving);
+    const textFallback = Math.min(Math.max(0, textFallbackCount), surviving - ndjson);
+    if (channels && typeof channels === 'object') {
+      out.methodology = { ...methodology, findings_per_channel: {
+        ...channels, ndjson, text_fallback: textFallback,
+      } };
+    }
+    if (warnings.length) {
+      out.methodology = { ...out.methodology, validation_warnings: [
+        ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
+        ...warnings,
+      ] };
+    }
+  }
+  if (!warnings.length) return;
+  out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
+}
+function applyChallengeReplayBelt(challengeOut) {
+  if (!challengeOut || typeof challengeOut !== 'object') return;
+  const findingsResult = beltPartitionList(challengeOut.findings);
+  const unverifiedResult = beltPartitionList(challengeOut.unverified);
+  challengeOut.findings = findingsResult.list;
+  challengeOut.unverified = unverifiedResult.list;
+  const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
+  const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
+  challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
+  if (challengeOut.stats && typeof challengeOut.stats === 'object') {
+    const k1 = findingsResult.eliminated.length;
+    const k2 = unverifiedResult.eliminated.length;
+    if (typeof challengeOut.stats.final_count === 'number') {
+      challengeOut.stats.final_count = challengeOut.findings.length;
+    }
+    if (typeof challengeOut.stats.skipped === 'number' && Array.isArray(challengeOut.unverified)) {
+      challengeOut.stats.skipped = challengeOut.unverified.length;
+    }
+    challengeOut.stats.replay_belt_eliminated = k1 + k2;
+  }
+}
 // --- run.js ---
+function defaultCtx() {
+  return {
+    agent: typeof agent === 'function' ? agent : undefined,
+    parallel: typeof parallel === 'function' ? parallel : undefined,
+    pipeline: typeof pipeline === 'function' ? pipeline : undefined,
+    pipelineVersion: null,
+  };
+}
 function hostPathTextFields(value, patterns) {
   const fields = new Set();
   const visit = (value, field) => {
@@ -5815,23 +5853,7 @@ async function runWith(ctx, rawArgs) {
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
-  const contextPlan = contextReadPlan(A.contextLines, A.contextChars);
-  const contextLine = sharedContextLine({
-    contextPath, contextLines: A.contextLines, contextChars: A.contextChars,
-  });
-  const contextSizeGap = A.contextLines === undefined
-    ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
-      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
-      + 'Read calls covering the file. That restores the failure mode of issue #48: a Read returns part of a large file '
-      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-      + '(and contextChars) from the Phase 2 step that writes the context file.']
-    : (contextPlan.length === 0
-      ? ['context_unplannable: args.contextLines was stamped (' + A.contextLines + ') but exceeds the read-plan chunk '
-        + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '
-        + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
-        + 'That restores the failure mode of issue #48 for an oversized context. Shrink the shared context '
-        + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
-      : []);
+  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars });
   const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(c, A);
   const checkpointShapeViolations = checkpointShapeErrors(checkpoints);
@@ -5843,55 +5865,11 @@ async function runWith(ctx, rawArgs) {
   const phaseOutputs = {};
   let phaseReached = 'start';
   let phaseAttempting = null;
-  const normalizePhaseFindings = (name, out, replayed) => {
-    if (!out || typeof out !== 'object') return;
-    const warnings = [];
-    let rejected = 0;
-    let pathRewrites = 0;
-    for (const [, field] of checkpointFindingListsForPhase(name)) {
-      if (!Array.isArray(out[field])) continue;
-      const normalized = normalizeFindingPaths(out[field], A.repoRoot);
-      rejected += out[field].length - normalized.valid.length;
-      pathRewrites += normalized.path_rewrites;
-      out[field] = normalized.valid;
-      warnings.push(...normalized.warnings);
-    }
-    if (pathRewrites || (replayed && rejected)) {
-      const stats = isPlainCheckpointObject(out.stats) ? out.stats : {};
-      out.stats = { ...stats,
-        ...(pathRewrites ? { path_rewrites: (stats.path_rewrites || 0) + pathRewrites } : {}),
-        ...(replayed && rejected ? { replay_path_rejected: rejected } : {}),
-      };
-    }
-    if (name === 'merge') {
-      const methodology = isPlainCheckpointObject(out.methodology) ? out.methodology : {};
-      out.methodology = methodology;
-      const channels = methodology.findings_per_channel;
-      const surviving = out.findings.length;
-      const ndjsonCount = Number.isFinite(channels?.ndjson) ? channels.ndjson : 0;
-      const textFallbackCount = Number.isFinite(channels?.text_fallback) ? channels.text_fallback : 0;
-      const ndjson = Math.min(Math.max(0, ndjsonCount), surviving);
-      const textFallback = Math.min(Math.max(0, textFallbackCount), surviving - ndjson);
-      if (channels && typeof channels === 'object') {
-        out.methodology = { ...methodology, findings_per_channel: {
-          ...channels, ndjson, text_fallback: textFallback,
-        } };
-      }
-      if (warnings.length) {
-        out.methodology = { ...out.methodology, validation_warnings: [
-          ...(Array.isArray(methodology.validation_warnings) ? methodology.validation_warnings : []),
-          ...warnings,
-        ] };
-      }
-    }
-    if (!warnings.length) return;
-    out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
-  };
   const runPhase = async (name, thunk) => {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;
     const out = replayed ? checkpoints[name] : await thunk();
-    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed);
+    if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A);
     phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
@@ -5916,7 +5894,7 @@ async function runWith(ctx, rawArgs) {
       && checkpoints.challenge === undefined) {
       gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
       const resumable = { ...phaseOutputs };
-      delete resumable.discover; // a degraded-to-nothing discover output must never replay on resume — a retry re-dispatches discovery under (possibly corrected) policy
+      delete resumable.discover;
       return {
         ok: false,
         error: 'all-degraded: every active discovery dimension degraded — no review was performed',
@@ -5960,25 +5938,8 @@ async function runWith(ctx, rawArgs) {
       findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
     }));
     gaps.push(...(challengeOut.gaps || []));
+    applyChallengeReplayBelt(challengeOut);
     if (challengeOut && typeof challengeOut === 'object') {
-      const findingsResult = beltPartitionList(challengeOut.findings);
-      const unverifiedResult = beltPartitionList(challengeOut.unverified);
-      challengeOut.findings = findingsResult.list;
-      challengeOut.unverified = unverifiedResult.list;
-      const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
-      const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
-      challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
-      if (challengeOut.stats && typeof challengeOut.stats === 'object') {
-        const k1 = findingsResult.eliminated.length;
-        const k2 = unverifiedResult.eliminated.length;
-        if (typeof challengeOut.stats.final_count === 'number' && Array.isArray(challengeOut.findings)) {
-          challengeOut.stats.final_count = challengeOut.findings.length;
-        }
-        if (typeof challengeOut.stats.skipped === 'number' && Array.isArray(challengeOut.unverified)) {
-          challengeOut.stats.skipped = challengeOut.unverified.length;
-        }
-        challengeOut.stats.replay_belt_eliminated = k1 + k2;
-      }
       const markedCount = challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
       if (markedCount > 0) {
         gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
@@ -6039,7 +6000,7 @@ async function runWith(ctx, rawArgs) {
     const writeOut = await writeArtifacts(c, {
       findings: challengeOut.findings,
       postReview,
-      prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
+      prIdentity: (A.delivery || {}).prIdentity,
       reviewBody,
       report: reportOut.report,
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),

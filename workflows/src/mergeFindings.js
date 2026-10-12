@@ -1,21 +1,11 @@
 // Merge structured findings into the Phase 4 envelope.
 import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
-import { AGENTS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
+import { AGENTS, DIMENSIONS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 import { deepClone } from './wire.js';
 
-const KNOWN_DIMENSIONS = new Set([
-  'bug',
-  'security',
-  'cross_file_impact',
-  'test_coverage',
-  'convention',
-  'intent',
-  'comment_accuracy',
-  'type_design',
-  'simplification',
-]);
+const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));
 
-export const REQUIRED_FIELDS = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence'];
+const REQUIRED_FIELDS = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence'];
 
 function jsonTypeName(v) {
   if (v === null) return 'null';
@@ -25,7 +15,7 @@ function jsonTypeName(v) {
 
 // --- Agent field injection --------------------------------------------------
 
-export function injectAgentField(findings, agent) {
+function injectAgentField(findings, agent) {
   for (const f of findings) f.agent = agent;
 }
 
@@ -128,42 +118,6 @@ export function validateFindings(findings) {
 
 // --- Output assembly --------------------------------------------------------
 
-function assembleOutput(
-  findings,
-  agents,
-  ndjsonCount,
-  textFallbackCount,
-  duplicatesResolved,
-  droppedNoId,
-  truncationWarnings,
-  validationWarnings,
-  baseBranch,
-  headSha,
-  prNumber,
-  owner,
-  repo,
-) {
-  return {
-    findings,
-    base_branch: baseBranch,
-    head_sha: headSha,
-    pr_number: prNumber,
-    owner,
-    repo,
-    methodology: {
-      agents_dispatched: agents,
-      findings_per_channel: {
-        ndjson: ndjsonCount,
-        text_fallback: textFallbackCount,
-      },
-      duplicates_resolved: duplicatesResolved,
-      dropped_no_id: droppedNoId,
-      truncation_warnings: truncationWarnings,
-      validation_warnings: validationWarnings,
-    },
-  };
-}
-
 // --- Main merge pipeline ----------------------------------------------------
 
 export function merge(findingsByAgent, meta) {
@@ -202,7 +156,7 @@ export function merge(findingsByAgent, meta) {
 
   // Validate the combined flat list (pre-dedup) so warnings cover all raw findings.
   const allFlat = Object.values(selected).flat();
-  const { warnings: preValWarnings } = validateFindings(allFlat);
+  const { valid, warnings: preValWarnings } = validateFindings(allFlat);
 
   let droppedNoId = 0;
   for (const f of allFlat) {
@@ -210,28 +164,28 @@ export function merge(findingsByAgent, meta) {
     if (fid === undefined || fid === null || fid === '') droppedNoId += 1;
   }
 
-  const validGroups = {};
-  for (const [agent, findings] of Object.entries(selected)) {
-    validGroups[agent] = validateFindings(findings).valid;
-  }
-  const { merged, duplicatesResolved } = dedupById(Object.values(validGroups).flat());
+  const { merged, duplicatesResolved } = dedupById(valid);
   const validationWarnings = allWarnings.concat(preValWarnings);
 
-  return assembleOutput(
-    merged,
-    agents,
-    merged.length,
-    0,
-    duplicatesResolved,
-    droppedNoId,
-    [],
-    validationWarnings,
-    M.base_branch,
-    M.head_sha,
-    M.pr_number,
-    M.owner,
-    M.repo,
-  );
+  return {
+    findings: merged,
+    base_branch: M.base_branch,
+    head_sha: M.head_sha,
+    pr_number: M.pr_number,
+    owner: M.owner,
+    repo: M.repo,
+    methodology: {
+      agents_dispatched: agents,
+      findings_per_channel: {
+        ndjson: merged.length,
+        text_fallback: 0,
+      },
+      duplicates_resolved: duplicatesResolved,
+      dropped_no_id: droppedNoId,
+      truncation_warnings: [],
+      validation_warnings: validationWarnings,
+    },
+  };
 }
 
 // --- Phase 3: Merge ---------------------------------------------------------

@@ -668,6 +668,24 @@ test('summarize: the bucketed path pins changedLines in EVERY prompt including t
   for (const p of prompts) assert.match(p, /authoritative changed-line count is 1211/);
 });
 
+for (const [name, changedLines] of [
+  ['absent', undefined], ['zero', 0], ['negative', -1], ['string', '601'],
+]) {
+  test(`summarize: ${name} count omits the authoritative-count sentence`, async () => {
+    const prompts = [];
+    const ctx = summarizeCtx({ agentImpl: async (prompt) => { prompts.push(prompt); return { summary: 's' }; } });
+    await summarize(ctx, { changedFiles: ['a.js', 'b.js'], changedLines, limits: { summarizeBucketSize: 1 } });
+    const expected = changedLines === '601' ? [
+      'Summarize the semantic intent of these changed files for downstream reviewers: a.js. Return { summary }.',
+      'Summarize the semantic intent of these changed files for downstream reviewers: b.js. Return { summary }.',
+      'Combine these per-bucket change summaries into one concise semantic summary. Partials:\ns\n---\ns\nReturn { summary }.',
+    ] : [
+      'Summarize the semantic intent of these changed files for downstream reviewers: a.js, b.js. Return { summary }.',
+    ];
+    assert.deepEqual(prompts, expected);
+  });
+}
+
 test('summarize: an agent() throw degrades to empty summary + a gap', async () => {
   const ctx = summarizeCtx({ agentImpl: async () => { throw new Error('schema exhausted'); } });
   const out = await summarize(ctx, { changedFiles: ['a.js'], changedLines: 10, limits: { summarizeBucketSize: 20 }, policy: {} });

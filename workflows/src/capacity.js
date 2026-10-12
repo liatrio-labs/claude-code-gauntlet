@@ -80,9 +80,9 @@ export const VERIFY_ATTEMPTS_PER_SLICE = 2;
 
 // --- Agent-count coarsening -------------------------------------------------
 
-const AGENT_COUNT_GUARD = 900;   // stay strictly under the platform fan-out ceiling
-const SUMMARIZE_TERM_BOUND = 300; // widen the summarize bucket once its term alone exceeds this
-const CHALLENGE_CAP_FLOOR = 5;    // never challenge fewer than this many findings
+const AGENT_COUNT_GUARD = 900;
+const SUMMARIZE_TERM_BOUND = 300;
+const CHALLENGE_CAP_FLOOR = 5;
 
 const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
 

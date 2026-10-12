@@ -352,12 +352,12 @@ test('GUARD (source): no stage input carries the context path — the capability
     + 'Stages receive the prebuilt contextLine string instead.');
 });
 
-test('GUARD (source): sharedContextLine is called exactly once — the single build point', () => {
+test('GUARD (source): setupContext is called exactly once — the single build point', () => {
   const src = readFileSync(join(SRC, 'contextPlan.js'), 'utf8')
     + readFileSync(join(SRC, 'run.js'), 'utf8');
   const calls = src.split('\n')
     .filter((line) => !line.trim().startsWith('//'))
-    .filter((line) => /sharedContextLine\(/.test(line)).length;
+    .filter((line) => /setupContext\(/.test(line)).length;
   // One definition + one call site (runWith). A second call site means a stage is building
   // its own line again, from a path it should not have.
   assert.equal(calls, 2, `expected the definition plus exactly one call site, found ${calls}`);

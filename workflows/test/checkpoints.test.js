@@ -11,7 +11,9 @@ import {
   stripEliminatedList,
   CHECKPOINT_FINDING_LISTS,
   checkpointFindingListsForPhase,
-  isPlainCheckpointObject
+  isPlainCheckpointObject,
+  normalizePhaseFindings,
+  applyChallengeReplayBelt
 } from '../src/checkpoints.js';
 import { runWith } from '../src/run.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
@@ -537,5 +539,12 @@ for (const row of REPLAY_ROWS) {
       assert.ok(survivor);
       assert.deepEqual(survivor, snapshot.findings.find((finding) => finding.id === 'M1'));
     }
+  });
+}
+
+for (const [name, value] of [['absent', undefined], ['null', null], ['number', 1], ['string', 'legacy']]) {
+  test(`replay helpers: ${name} output stays untouched`, () => {
+    assert.equal(normalizePhaseFindings('challenge', value, true, { repoRoot: '/repo' }), undefined);
+    assert.equal(applyChallengeReplayBelt(value), undefined);
   });
 }
