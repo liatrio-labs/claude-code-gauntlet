@@ -126,7 +126,7 @@ def _stage_rules():
     return [(rule["name"], _stage_predicate(rule)) for rule in STAGE_RULES]
 
 
-# Non-agent transform phases that sit between agent stages in the pipeline (workflows/src/stages.js
+# Non-agent transform phases that sit between agent stages in the pipeline (workflows/src/run.js
 # runPhase('merge', ...) / runPhase('filter', ...)) — no agent dispatch, so they can only be
 # observed as the orchestration gap between the previous stage's last completion and the next
 # stage's first dispatch.
@@ -456,7 +456,7 @@ def build_stage_profile(agents, workflow_start_ms, workflow_duration_ms):
             # Purely observational: the gap between this stage's last completion and
             # the *next* agent-bearing stage's first dispatch includes the named
             # transform phase (a pure-JS runPhase() call, no agent — see
-            # workflows/src/stages.js) plus any orchestration overhead. We cannot
+            # workflows/src/run.js) plus any orchestration overhead. We cannot
             # separate the two without instrumenting the sandbox itself.
             stages_out.append(
                 {

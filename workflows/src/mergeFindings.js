@@ -1,7 +1,6 @@
 // Merge structured and text-channel findings into the Phase 4 envelope.
-import { dedupById } from './findingDedup.js';
 import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
-import { FINDING_PATH_ARRAY_FIELDS } from './registry.js';
+import { AGENTS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 
 const KNOWN_DIMENSIONS = new Set([
   'bug',
@@ -411,4 +410,60 @@ export function merge(ndjsonContents, textContents, meta) {
     M.owner,
     M.repo,
   );
+}
+
+// --- Phase 3: Merge ---------------------------------------------------------
+
+// mergeStage(discoverOut, meta) -> envelope
+// Consumes merge() from mergeFindings.js as-is. Since merge() ingests raw per-agent
+// NDJSON strings, regroup the discovered findings by their injected `agent` field and
+// re-serialize each group to one JSON object per line. No text-fallback channel exists
+// in v3 (parallel() returns structured findings), so textContents is empty.
+export function mergeStage(discoverOut, meta) {
+  const out = discoverOut || { findings: [] };
+  const M = typeof meta === 'string' ? JSON.parse(meta) : (meta || {});
+  const findings = out.findings || [];
+
+  const byAgent = {};
+  for (const f of findings) {
+    const a = f.agent || 'unknown';
+    (byAgent[a] = byAgent[a] || []).push(f);
+  }
+
+  const ndjsonContents = {};
+  for (const [a, group] of Object.entries(byAgent)) {
+    ndjsonContents[a] = group.map((f) => JSON.stringify(f)).join('\n');
+  }
+
+  // Merge uses the short agent names stamped on findings, while dispatched carries the
+  // full agent types. Keep the roster so zero-finding agents remain visible in methodology.
+  const shortAgentName = (a) => (typeof a === 'string' ? a.split(':').pop() : a);
+  const agents = Array.isArray(out.dispatched)
+    ? out.dispatched.map(shortAgentName)
+    : (Object.keys(ndjsonContents).length ? Object.keys(ndjsonContents) : AGENTS.map(shortAgentName));
+  return merge(ndjsonContents, {}, { ...M, agents });
+}
+
+// mergeFindings.js — canonical dedup by id. NDJSON (priority 2) beats text (1).
+// Single source of truth: reused by mergeFindings and filterFindings.
+export function dedupById(ndjsonFindings, textFindings) {
+  const seen = new Map(); // id -> { finding, priority }
+  let duplicatesResolved = 0;
+  let droppedNoId = 0;
+
+  const add = (finding, priority) => {
+    const fid = finding.id;
+    if (fid === undefined || fid === null) { droppedNoId += 1; return; }
+    if (seen.has(fid)) {
+      if (priority > seen.get(fid).priority) seen.set(fid, { finding, priority });
+      duplicatesResolved += 1;
+    } else {
+      seen.set(fid, { finding, priority });
+    }
+  };
+
+  for (const findings of Object.values(textFindings || {})) for (const f of findings) add(f, 1);
+  for (const findings of Object.values(ndjsonFindings || {})) for (const f of findings) add(f, 2);
+
+  return { merged: [...seen.values()].map((v) => v.finding), duplicatesResolved, droppedNoId };
 }

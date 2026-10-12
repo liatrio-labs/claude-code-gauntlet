@@ -39,7 +39,7 @@ Nothing in the run distinguished that from a clean empty result. The report, the
 artifacts, and the transcript all looked normal.
 
 The primary fix is arithmetic, not instruction: the skill measures the context file and
-`contextReadPlan` (`workflows/src/stages.js`) turns the measurement into the exact
+`contextReadPlan` (`workflows/src/contextPlan.js`) turns the measurement into the exact
 `Read` calls that cover it, which the dispatch prompt enumerates. **This block is the
 backstop** — it covers the agent's reads of every *other* file, and the case where a
 dispatch prompt carries no measurement.

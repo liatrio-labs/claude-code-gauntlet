@@ -18,7 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DIMENSIONS, FINDING_PROP_TYPES, FINDING_REQUIRED } from '../src/registry.js';
-import { agentSpecs, discover } from '../src/stages.js';
+import { agentSpecs, discover } from '../src/discover.js';
 import { verifyStage } from '../src/verifyStage.js';
 
 // The property NAME set findingItemSchema must produce for one agent: the canonical map

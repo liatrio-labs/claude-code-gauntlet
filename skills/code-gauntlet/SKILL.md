@@ -487,7 +487,7 @@ Headless config:
 Invoke the workflow in **one** `Workflow` tool call. This single call runs the eight review stages — Summarize → Discover → Merge → Verify → Validate → Filter → Challenge → Report — and persists artifacts. Read `references/phase3-dispatch.md` for the internal stage map and the executor/writer agent roles.
 
 No pre-dispatch scope check is needed here: `deriveAgentFlags` (`workflows/src/args.js` /
-`workflows/src/stages.js`) computes the dimension flags from `riskTable`/`changedLines`/
+`workflows/src/discover.js`) computes the dimension flags from `riskTable`/`changedLines`/
 `scopeAnswer` inside the workflow itself, and `validateArgs` refuses a `scopeAnswer` on a
 riskTable/changedLines that is not light-eligible, a light-eligible waist with no
 `scopeAnswer`, or any derived waist field that disagrees with its receipt before any agent is

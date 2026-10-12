@@ -20,7 +20,9 @@
 //  - A present checkpoint for a phase skips that phase's dispatch entirely.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runWith, summarize, coarsenLimits, deriveAgentFlags, compactMethodology } from '../src/stages.js';
+import { runWith, compactMethodology } from '../src/run.js';
+import { summarize, deriveAgentFlags } from '../src/discover.js';
+import { coarsenLimits } from '../src/capacity.js';
 import { parseWriterPayload } from '../src/persist.js';
 import { persistCtx, runAndCapture } from './helpers/persistFixtures.js';
 import { CHECKPOINT_FINDING_LISTS } from '../src/checkpoints.js';
@@ -1336,7 +1338,7 @@ test('F4-3: every non-derived nullable key still discloses (the filter is not a 
   const out = await runWith(makeCtx(args), args);
   assert.equal(out.ok, true);
   const named = out.gaps.filter((g) => /^null_arg: /.test(g));
-  // Mutation: pass no derivedPaths through stages.js, which would disclose delivery.tier too.
+  // Mutation: pass no derivedPaths through run.js, which would disclose delivery.tier too.
   assert.equal(named.length, 1, `got: ${named}`);
   assert.ok(named.some((g) => g.includes('delivery.prIdentity')));
 });
@@ -1354,7 +1356,7 @@ test('R7: a derived headless scopeAnswer null is normalized and not disclosed', 
   });
   const out = await runWith(makeCtx(args), args);
   assert.equal(out.ok, true, `a derived null must not reject the run; gaps: ${out.gaps}`);
-  // Mutation: omit derivedPaths from the stages.js differential probe.
+  // Mutation: omit derivedPaths from the run.js differential probe.
   assert.deepEqual(out.gaps.filter((g) => /^(null_arg|checkpoint-discarded):/.test(g)), []);
 });
 
@@ -1622,7 +1624,7 @@ test('report methodology Gaps row carries the pre-report gap count end to end', 
 
 // --- Issue #24 req 1/3/4/5 (PR3): deterministic agentFlags derivation ------------------
 
-// deriveAgentFlags itself (stages.js): the ONE call site that turns riskTable/changedLines/
+// deriveAgentFlags itself (discover.js): the ONE call site that turns riskTable/changedLines/
 // scopeAnswer into the scope-gating map agentActive consumes.
 test('deriveAgentFlags: light-eligible + scopeAnswer "light" -> { deep: false }', () => {
   assert.deepEqual(

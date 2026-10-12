@@ -21,7 +21,10 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { contextReadPlan, sharedContextLine, discover, validateStage, runWith } from '../src/stages.js';
+import { contextReadPlan, sharedContextLine } from '../src/contextPlan.js';
+import { discover } from '../src/discover.js';
+import { validateStage } from '../src/reviewStages.js';
+import { runWith } from '../src/run.js';
 import { makeCtx, validArgs } from './helpers/pipelineMock.js';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -232,7 +235,7 @@ test('sharedContextLine: no prompt variant leaks undefined/NaN', () => {
 // stage which builds the sentence but is not reached by the end-to-end fixture.
 //
 // An earlier draft of this guard counted occurrences of the literal
-// "Read the shared context at " in stages.js. That was theatre: an adversarial review of
+// "Read the shared context at " in contextPlan.js. That was theatre: an adversarial review of
 // this very change added a `crossCheckPrompt` saying "Open the shared context at <path>"
 // with no plan and no truncation warning, wired it into runWith as a real dispatched
 // phase, and the whole suite stayed green. A phrase count cannot enforce a structural
@@ -329,10 +332,10 @@ test('GUARD (source): no stage input carries the context path — the capability
   // What replaced two brittle source-text scans. The stages are threaded a prebuilt
   // `contextLine` STRING; none of them receives the path or the size, so none of them is
   // ABLE to construct a context-read instruction that skips the plan. The previous version
-  // asserted the literal "Read the shared context at " appeared once in stages.js — an
+  // asserted the literal "Read the shared context at " appeared once in contextPlan.js — an
   // adversarial review defeated that in one edit by rewording to "Open the shared context
   // at ...", whole suite green. A capability you removed needs no phrase policing.
-  // Every src module, so a stage that lives outside stages.js stays inside the guard.
+  // Every src module, so a stage that lives outside run.js stays inside the guard.
   const offenders = readdirSync(SRC).filter((name) => name.endsWith('.js')).sort()
     .flatMap((name) => readFileSync(join(SRC, name), 'utf8').split('\n')
       .map((line, i) => ({ line: line.trim(), n: `${name}:${i + 1}` })))
@@ -350,7 +353,8 @@ test('GUARD (source): no stage input carries the context path — the capability
 });
 
 test('GUARD (source): sharedContextLine is called exactly once — the single build point', () => {
-  const src = readFileSync(join(SRC, 'stages.js'), 'utf8');
+  const src = readFileSync(join(SRC, 'contextPlan.js'), 'utf8')
+    + readFileSync(join(SRC, 'run.js'), 'utf8');
   const calls = src.split('\n')
     .filter((line) => !line.trim().startsWith('//'))
     .filter((line) => /sharedContextLine\(/.test(line)).length;

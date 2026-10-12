@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { merge, validateFindings, normalizeFindingPaths } from '../src/mergeFindings.js';
-import { dedupById } from '../src/findingDedup.js';
+import { dedupById } from '../src/mergeFindings.js';
 import { finding } from './helpers/findings.js';
 
 const META = { agents: ['bug-detector'], base_branch: 'main', head_sha: 'abc123full', pr_number: 42, owner: 'org', repo: 'myrepo' };

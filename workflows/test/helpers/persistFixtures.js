@@ -1,5 +1,5 @@
 import { parseWriterPayload } from '../../src/persist.js';
-import { runWith } from '../../src/stages.js';
+import { runWith } from '../../src/run.js';
 import { makeFinding, makeCtx } from './pipelineMock.js';
 
 export const PATHS = {

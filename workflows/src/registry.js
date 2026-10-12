@@ -1,7 +1,7 @@
 // registry.js — single point of extension. Adding a dimension = one entry here + one agent .md.
 //
 // `promptExtra` is an optional per-agent prompt-extension string appended verbatim to that
-// agent's discoverPrompt (see stages.js). It is scoped by agentType, not by dimension —
+// agent's discoverPrompt (see discover.js). It is scoped by agentType, not by dimension —
 // every DIMENSIONS row for a multi-dimension agent (conventions-and-intent) must carry the
 // SAME value (agentSpecs() unions them; a mismatch would make the dispatched prompt depend
 // on dimension iteration order). Hill-climb iter 5 uses it for two discovery-breadth
@@ -11,7 +11,7 @@ const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and
 const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in user-facing strings, messages, and log output; case-sensitivity mistakes in string comparisons (comparing mixed-case values without normalizing case); and copy-paste plural/singular or off-by-one naming mismatches (a field, key, or variable named for one thing but holding another).';
 
 // `conditionalFlag` is the SCOPE-GATING key for a dimension (consumed by agentActive in
-// stages.js). Semantics are OPT-OUT, never opt-in, so the default full-scope run is
+// discover.js). Semantics are OPT-OUT, never opt-in, so the default full-scope run is
 // unchanged when the caller stamps no flags:
 //   - null   => UNGATEABLE. The dimension is always on and cannot be disabled by any
 //               agentFlags entry. The two CORE dimensions (bug, security) carry null so a
@@ -78,7 +78,7 @@ export const CODE_OWNED_HEADINGS = [
 //
 // FINDING_PROP_TYPES + FINDING_REQUIRED + each DIMENSIONS row's `schemaExtra` are, together,
 // the WHOLE declaration of what a finding may carry. They live in this one file on purpose
-// (issue #47): the canonical half used to sit in stages.js, the per-dimension half here, and
+// (issue #47): the canonical half used to sit in discover.js, the per-dimension half here, and
 // `cross_file_refs` was a third hardcoded special case inside findingItemSchema — three places
 // to add a finding field, which is how `suggestion`/`claude_md_rule` (instructed by all 7
 // discovery contracts) and `spec_text`/`criticality`/`failure_scenario` (one contract each)
@@ -151,7 +151,7 @@ export const FINDING_PATH_ARRAY_FIELDS = ['cross_file_refs', 'affected_consumers
 export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
 
 // `schemaExtra` declares the per-dimension finding fields BEYOND the canonical schema above —
-// the extras each agent's .md output contract actually emits (findingItemSchema in stages.js
+// the extras each agent's .md output contract actually emits (findingItemSchema in discover.js
 // unions them onto that agent's discovery item schema — the only boundary that carries finding
 // items by value; the verify executor echoes per-id deltas, never findings). Each row MUST
 // match its contract (agents/<agent>.md output block): the item schema is CLOSED
@@ -170,7 +170,7 @@ export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'descripti
 // not-applicable extra must be OMITTED, never emitted as null — the agent contracts say
 // "OMIT this field", and a null here is the same retry-storm class as string confidence.
 // A multi-dimension agent (conventions-and-intent) dispatches ONCE with the UNION of its
-// rows' extras (agentSpecs in stages.js), so scoping spec_text to the `intent` row and
+// rows' extras (agentSpecs in discover.js), so scoping spec_text to the `intent` row and
 // rule_source to the `convention` row still makes both fields declarable on that agent's
 // convention and comment_accuracy findings — the
 // per-dimension scoping is documentation of ownership, not an emission restriction.
@@ -189,8 +189,8 @@ export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'descripti
 // and optional rule_source, and type_design's invalid_state_example stay contract-enforced;
 // claude_md_rule, spec_text, and invalid_state_example all carry an explicit OMIT branch in their contract
 // (conventions-and-intent additionally can't promote a single-dimension field at all — see the
-// agentSpecs comment in stages.js), so they stay contract-enforced. findingItemSchema
-// (stages.js) appends a spec's effective requiredExtra onto FINDING_REQUIRED per dispatch.
+// agentSpecs comment in discover.js), so they stay contract-enforced. findingItemSchema
+// (discover.js) appends a spec's effective requiredExtra onto FINDING_REQUIRED per dispatch.
 // `requiredWhenDimension` (issue #218) names fields the owning contract emits
 // UNCONDITIONALLY within THIS row's dimension while every sibling dimension on the same
 // agentType is told to OMIT them — the exact shape `requiredExtra` cannot hold (its
@@ -208,10 +208,10 @@ export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'descripti
 // TOP-LEVEL oneOf/allOf/anyOf in input_schema is rejected outright (API 400, measured
 // 2026-08-18), but the same if/then nested inside `items` was accepted AND enforced on that
 // same measurement — first-party only, unmeasured on Bedrock/Vertex/Foundry. So
-// findingItemSchema (stages.js) emits the nested allOf/if/then construct ONLY when
+// findingItemSchema (discover.js) emits the nested allOf/if/then construct ONLY when
 // conditionalSchemaActive(policy) is true (first-party-direct, no gateway) — third-party
 // providers and gateway sessions keep today's flat schema, contract prose is the floor
-// everywhere. See agentSpecs' conditionalRequired derivation in stages.js.
+// everywhere. See agentSpecs' conditionalRequired derivation in discover.js.
 export const DIMENSIONS = [
   { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
@@ -338,7 +338,7 @@ const pinsModelIds = (provider) => provider === undefined || provider === null |
 const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
 
 // conditionalSchemaActive(policy) -> whether the nested allOf/if/then conditional-required
-// block (findingItemSchema, stages.js) may ride the conventions-and-intent dispatch (issue
+// block (findingItemSchema, discover.js) may ride the conventions-and-intent dispatch (issue
 // #218). NOT an alias for pinsModelIds: a gateway (policy.gateway, stamped from
 // ANTHROPIC_BASE_URL) still gets the first-party model-ID pin — a gateway proxies the
 // Anthropic API and expects standard Claude model names — but forwards input_schema verbatim

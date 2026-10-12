@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyValidations } from '../src/applyValidations.js';
-import { validateStage } from '../src/stages.js';
+import { validateStage } from '../src/reviewStages.js';
 import { finding } from './helpers/findings.js';
 
 const VALIDATION_CASES = [

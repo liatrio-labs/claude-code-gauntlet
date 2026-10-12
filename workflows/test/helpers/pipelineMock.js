@@ -27,7 +27,7 @@ export function assertPrompt(prompt) {
 
 // A single allOf entry of the conditional-required construct (issue #218): { if, then }, NOT
 // a full JSON Schema — `if`/`then` here carry only `properties`/`required`, no `type` (the
-// measured-accepted spelling stages.js emits). Local validity coverage only: this pins the
+// measured-accepted spelling discover.js emits). Local validity coverage only: this pins the
 // SHAPE (if.properties.dimension.const, if.required, then.required), not that it is
 // semantically the right dimension/field pair — that is finding_schema.test.js's job.
 function assertValidConditional(clause, path) {

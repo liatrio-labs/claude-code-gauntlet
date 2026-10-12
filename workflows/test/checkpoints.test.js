@@ -13,7 +13,7 @@ import {
   checkpointFindingListsForPhase,
   isPlainCheckpointObject
 } from '../src/checkpoints.js';
-import { runWith } from '../src/stages.js';
+import { runWith } from '../src/run.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { expectedWith, challengeOutput, runAndCapture, replaySurvivor, wellFormedCheckpoints } from './helpers/persistFixtures.js';
 

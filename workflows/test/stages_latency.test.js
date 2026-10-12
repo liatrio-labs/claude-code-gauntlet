@@ -2,7 +2,7 @@
 // Output order and failure attribution still follow phase order.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runWith } from '../src/stages.js';
+import { runWith } from '../src/run.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
 // Drain the microtask queue far enough that a SEQUENTIAL implementation has provably

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyChallenges, downgradeSeverity, rankFindings } from '../src/applyChallenges.js';
 import { finding } from './helpers/findings.js';
-import { challengeStage } from '../src/stages.js';
+import { challengeStage } from '../src/reviewStages.js';
 
 const DOWNGRADE_CASES = [
   { name: 'critical becomes high', input: 'critical', expected: 'high' },

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_PATH_ARRAY_FIELDS, FINDING_REQUIRED, STAGE_DEFAULTS, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, SHA_FULL_RE, WEB_ORIGIN_RE, resolvePolicy, conditionalSchemaActive } from '../src/registry.js';
-import { intersectRequiredExtra, agentSpecs } from '../src/stages.js';
+import { intersectRequiredExtra, agentSpecs } from '../src/discover.js';
 
 test('every structural path array field is declared as a string array in the registry schema', () => {
   const properties = Object.assign({}, FINDING_PROP_TYPES, ...DIMENSIONS.map((row) => row.schemaExtra));

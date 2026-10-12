@@ -12,7 +12,8 @@
 //    challenge-skipped findings stay excluded exactly as before.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectDelivery, runWith } from '../src/stages.js';
+import { selectDelivery } from '../src/reviewStages.js';
+import { runWith } from '../src/run.js';
 import { normalizeForChecksum, fnv1a32 } from '../src/wire.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { deriveFromPlan } from './helpers/deriveFromPlan.js';

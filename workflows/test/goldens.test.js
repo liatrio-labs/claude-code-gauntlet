@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dedupById } from '../src/findingDedup.js';
+import { dedupById } from '../src/mergeFindings.js';
 import { merge } from '../src/mergeFindings.js';
 import { applyValidations } from '../src/applyValidations.js';
 import {

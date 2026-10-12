@@ -9,7 +9,7 @@
 //
 // usage: node emit_task_output.mjs <out.output> <outputDir> [nonce]
 import { writeFileSync } from 'node:fs';
-import { runWith } from '../../src/stages.js';
+import { runWith } from '../../src/run.js';
 import { validArgs, makeCtx, makeFinding } from '../helpers/pipelineMock.js';
 
 const [outPath, outputDir, nonce] = process.argv.slice(2);

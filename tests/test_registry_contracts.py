@@ -817,7 +817,7 @@ def test_agent_mirrors(mirror):
             ("contextLines", "contextChars", "policy.gateway"),
         ),
         ("workflows/src/args.js", ("contextLines", "policy.gateway")),
-        ("workflows/src/stages.js", ("contextReadPlan",)),
+        ("workflows/src/contextPlan.js", ("contextReadPlan",)),
         ("workflows/pipeline.js", ("contextReadPlan",)),
         ("workflows/src/registry.js", ("conditionalSchemaActive",)),
     ],

@@ -1708,7 +1708,7 @@ test('validateArgs strips a stamped scopeAnswer: null the same way as its NULLAB
 });
 
 // computeLightEligible — the ONE eligibility rule, shared by validateArgs's coherence guard
-// and stages.js's deriveAgentFlags.
+// and discover.js's deriveAgentFlags.
 test('computeLightEligible: true iff every entry is low AND changedLines < 50', () => {
   assert.equal(computeLightEligible([{ path: 'a', risk: 'low' }], 49), true);
   assert.equal(computeLightEligible([{ path: 'a', risk: 'low' }], 50), false);

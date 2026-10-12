@@ -12,9 +12,7 @@
 //    bucket.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  validateStage, filterStage, challengeStage, blindChallengeFields,
-} from '../src/stages.js';
+import { validateStage, filterStage, challengeStage, blindChallengeFields } from '../src/reviewStages.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
 // --- Phase 5: Validate ------------------------------------------------------
