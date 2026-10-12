@@ -27,6 +27,22 @@ function writerEchoCoversPaths(echoed, paths) {
   return ARTIFACT_PATH_KEYS.every((k) => echoed[k] === paths[k]);
 }
 
+function verifiedRows(receipt) {
+  return Array.isArray(receipt.verified) ? receipt.verified : [];
+}
+
+function persistErrorMessage(e) {
+  return (e && e.message) || 'unknown';
+}
+
+function gradePrimaryRow(row, expect) {
+  if (!row) return 'missing';
+  if (!expect || row.expected_chars !== expect.chars || row.expected_checksum !== expect.checksum) return 'foreign';
+  const same = row.chars === expect.chars && row.checksum === expect.checksum;
+  if ((row.content_proof === 'match') !== same) return 'incoherent';
+  return same ? 'match' : 'differs';
+}
+
 // writeArtifacts(ctx, { findings, postReview, report, checkpoints, outputDir,
 // headShaShort, policy, persist }) -> { artifactPaths, gaps, partial }
 // The workflow script has NO disk access, so agents persist findings.json + report.md
@@ -77,7 +93,7 @@ export async function writeArtifacts(ctx, input) {
       postReview: null,
       checkpoints: null,
     },
-    gaps: (extraGaps || []).concat([
+    gaps: extraGaps.concat([
       `writeArtifacts: ${reason} — artifacts not persisted (partial-artifacts)`
       // Never silently imply more landed than did: the salvaged paths are named, and a
       // run with nothing salvaged reads exactly as it did before.
@@ -92,7 +108,6 @@ export async function writeArtifacts(ctx, input) {
   // programming-error / stamp regression throws to runWith ({ ok:false }) instead of
   // being softened into a partial-artifacts gap. No relative fallback — omitting or
   // passing a relative outputDir is the same class of failure as a stamp escape.
-  const c = ctx;
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const outputDir = requireAbsoluteOutputDir(inp.outputDir);
   const sha = inp.headShaShort || 'head';
@@ -130,21 +145,21 @@ export async function writeArtifacts(ctx, input) {
           const viaReturn = returnChannelPersist(inp, paths, outputDir, sha);
           if (viaReturn.ok) return viaReturn.result;
           const gap = `writeArtifacts: ${viaReturn.reason} — persisted through the artifact-writer instead, which transcribes the bytes`;
-          if (!scriptPath) return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, [gap]);
-          const fallback = await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
-          return { ...fallback, gaps: [gap].concat(fallback.gaps || []) };
+          if (!scriptPath) return await writeArtifactsLegacy(ctx, inp, paths, outputDir, policy, partial, [gap]);
+          const fallback = await writeArtifactsDerived(ctx, inp, paths, outputDir, sha, policy, partial, scriptPath);
+          return { ...fallback, gaps: [gap].concat(fallback.gaps) };
         }
-        return await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
+        return await writeArtifactsDerived(ctx, inp, paths, outputDir, sha, policy, partial, scriptPath);
       }
-      return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, [
+      return await writeArtifactsLegacy(ctx, inp, paths, outputDir, policy, partial, [
         `writeArtifacts: derived persistence unavailable (${derivable.reason}) — persisted the full by-value payload instead`,
       ]);
     }
     // No persist waist: the documented clean degradation for older callers (bench
     // included). Legacy path, no gap — nothing was lost, only latency.
-    return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, []);
+    return await writeArtifactsLegacy(ctx, inp, paths, outputDir, policy, partial, []);
   } catch (e) {
-    return partial(`persistence threw before any artifact was written (${(e && e.message) || 'unknown'})`, []);
+    return partial(`persistence threw before any artifact was written (${persistErrorMessage(e)})`, []);
   }
 }
 
@@ -178,7 +193,7 @@ async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, e
     }
     return { artifactPaths: paths, gaps: extraGaps, partial: false };
   } catch (e) {
-    return partial(`writer agent threw (${(e && e.message) || 'unknown'})`, extraGaps);
+    return partial(`writer agent threw (${persistErrorMessage(e)})`, extraGaps);
   }
 }
 
@@ -359,7 +374,7 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
       schema: WRITTEN_SCHEMA,
     });
   } catch (e) {
-    return fail(`writer agent threw (${(e && e.message) || 'unknown'})`);
+    return fail(`writer agent threw (${persistErrorMessage(e)})`);
   }
   if (!writerOut) return fail('writer returned null');
   // Write-proof, same threat model as the persist boundary: WRITTEN_SCHEMA declares
@@ -387,12 +402,12 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
       schema: ASSEMBLE_RECEIPT_SCHEMA,
     });
   } catch (e) {
-    return fail(`assemble executor threw (${(e && e.message) || 'unknown'})`);
+    return fail(`assemble executor threw (${persistErrorMessage(e)})`);
   }
   // every receipt-reported path field (verified + written).
   if (receipt && typeof receipt === 'object') {
     const receiptFields = [];
-    const verified = Array.isArray(receipt.verified) ? receipt.verified : [];
+    const verified = verifiedRows(receipt);
     const receiptWritten = Array.isArray(receipt.written) ? receipt.written : [];
     verified.forEach((e, i) => receiptFields.push({ name: `verified[${i}]`, path: e && e.path, present: true }));
     receiptWritten.forEach((e, i) => receiptFields.push({ name: `receipt.written[${i}]`, path: e && e.path, present: true }));
@@ -445,23 +460,22 @@ function trustAssembleReceipt(receipt, paths, plan) {
       reason: `assemble receipt echoed plan checksum ${receipt.planChecksum === undefined ? 'none' : receipt.planChecksum} but the pipeline computed ${plan.planChecksum} — the executor did not run this persist plan`,
     };
   }
-  const verified = Array.isArray(receipt.verified) ? receipt.verified : [];
+  const verified = verifiedRows(receipt);
   const written = Array.isArray(receipt.written) ? receipt.written : [];
   const verifiedByPath = new Map(verified.map((e) => [(e && e.path), e]));
   const expectByPath = new Map((plan.expect || []).map((e) => [e.path, e]));
-  const writtenPaths = new Set(written.map((e) => (e && e.path)));
   for (const p of [paths.findings, paths.report]) {
     const got = verifiedByPath.get(p);
-    if (!got) return { ok: false, reason: `assemble receipt did not verify ${p} (no content proof)` };
     const want = expectByPath.get(p);
-    if (!want || got.expected_chars !== want.chars || got.expected_checksum !== want.checksum) {
+    const grade = gradePrimaryRow(got, want);
+    if (grade === 'missing') return { ok: false, reason: `assemble receipt did not verify ${p} (no content proof)` };
+    if (grade === 'foreign') {
       return {
         ok: false,
         reason: `assemble receipt checked ${p} against a foreign expectation (receipt says ${got.expected_chars} chars/${got.expected_checksum}, the pipeline handed the writer ${want ? want.chars : 'none'}/${want ? want.checksum : 'none'})`,
       };
     }
-    const same = got.chars === want.chars && got.checksum === want.checksum;
-    if ((got.content_proof === 'match') !== same) {
+    if (grade === 'incoherent') {
       return {
         ok: false,
         reason: `assemble receipt is incoherent for ${p}: content_proof:"${got.content_proof}" contradicts its own chars/checksum (${got.chars}/${got.checksum} vs expected ${want.chars}/${want.checksum})`,
@@ -492,10 +506,10 @@ function trustAssembleReceipt(receipt, paths, plan) {
   const writtenByPath = new Map(written.map((e) => [(e && e.path), e]));
   const deriveByPath = new Map((plan.derive || []).map((e) => [e.path, e]));
   const findingsProof = verifiedByPath.get(paths.findings);
-  const sourceDiverged = !!(findingsProof && findingsProof.content_proof === 'mismatch');
+  const sourceDiverged = findingsProof.content_proof === 'mismatch';
   const derivedGaps = [];
   for (const p of [paths.postReview, paths.checkpoints]) {
-    if (!writtenPaths.has(p)) return { ok: false, reason: `assemble receipt did not write ${p} (no write proof)` };
+    if (!writtenByPath.has(p)) return { ok: false, reason: `assemble receipt did not write ${p} (no write proof)` };
     const want = deriveByPath.get(p);
     if (!want) return { ok: false, reason: `persist plan carries no derived-content expectation for ${p} (no content proof)` };
     const got = writtenByPath.get(p);
@@ -542,17 +556,13 @@ function trustAssembleReceipt(receipt, paths, plan) {
 export function provenPrimaryPaths(receipt, paths, plan) {
   if (!receipt || typeof receipt !== 'object') return [];
   if (!plan || receipt.planChecksum !== plan.planChecksum) return [];
-  const byPath = new Map((Array.isArray(receipt.verified) ? receipt.verified : []).map((e) => [(e && e.path), e]));
+  const byPath = new Map(verifiedRows(receipt).map((e) => [(e && e.path), e]));
   const expectByPath = new Map((plan.expect || []).map((e) => [e.path, e]));
   const proven = [];
   for (const p of [paths.findings, paths.report]) {
     const got = byPath.get(p);
     const want = expectByPath.get(p);
-    if (!got || !want) continue;
-    if (got.expected_chars !== want.chars || got.expected_checksum !== want.checksum) continue;
-    if (got.chars !== want.chars || got.checksum !== want.checksum) continue;
-    if (got.content_proof !== 'match') continue;
-    proven.push(p);
+    if (gradePrimaryRow(got, want) === 'match') proven.push(p);
   }
   return proven;
 }

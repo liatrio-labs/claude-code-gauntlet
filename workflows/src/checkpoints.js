@@ -159,11 +159,8 @@ export function checkpointDiscardGap(topLevelCheckpoints) {
   // emits a real `.phases` resume plus a stray top-level phase key, and the phase(s) inside
   // `.phases` are genuinely being resumed, not silently dropped, so there is nothing to
   // disclose about them.
-  const tookPhasesBranch = isPlainCheckpointObject(topLevelCheckpoints)
-    && topLevelCheckpoints.phases !== undefined
-    && isPlainCheckpointObject(topLevelCheckpoints.phases);
-  const wrapperHasRecognizedKey = isPlainCheckpointObject(topLevelCheckpoints)
-    && Object.keys(topLevelCheckpoints).some((k) => recognizedPhaseNames.includes(k));
+  const tookPhasesBranch = topLevelCheckpoints.phases !== undefined;
+  const wrapperHasRecognizedKey = Object.keys(topLevelCheckpoints).some((k) => recognizedPhaseNames.includes(k));
   if (tookPhasesBranch && resolvedKeys.length === 0 && wrapperHasRecognizedKey) {
     return ['checkpoint-discarded: checkpoints.phases is empty and a value under a recognized phase name '
       + "at the wrapper's top level was ignored -- re-supply it as the .phases map, or as a bare phase "
@@ -394,7 +391,7 @@ const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint 
 // keys checkpointShapeErrors -- which runs immediately after, on that same resolved map --
 // never inspects (unrecognized names, or nothing at the top level of `.phases`), so a
 // disclosure and a shape violation are always mutually exclusive on the SAME resolved map.
-export function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], contextSizeGap = [], discardGap = []) {
+export function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps, contextSizeGap, discardGap) {
   const extra = violations.length - 1;
   const error = extra > 0
     ? `${violations[0]} (and ${extra} more checkpoint-shape violation${extra === 1 ? '' : 's'}). ${CHECKPOINT_SHAPE_RECOVERY_LINE}`

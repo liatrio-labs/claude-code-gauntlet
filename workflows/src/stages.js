@@ -1208,7 +1208,7 @@ function resolvedPolicyEnvelope(policy) {
 // FREE-TEXT one is two — that entry plus one name here. Stated plainly rather than made
 // clever: a heuristic that guessed at array-of-strings would silently truncate a future
 // count array.
-export const METHODOLOGY_COUNT_ONLY_FIELDS = ['truncation_warnings', 'validation_warnings'];
+const METHODOLOGY_COUNT_ONLY_FIELDS = ['truncation_warnings', 'validation_warnings'];
 export function compactMethodology(m) {
   if (!m || typeof m !== 'object' || Array.isArray(m)) return {};
   const out = {};

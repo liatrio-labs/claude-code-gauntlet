@@ -198,10 +198,11 @@ export function persistPlan(inp, paths) {
   const id = inp.prIdentity;
   const skeleton = deepClone(inp.checkpoints || {});
   const challenge = (skeleton.phases || {}).challenge;
-  const challengeFindingIds = challenge && Array.isArray(challenge.findings)
-    ? challenge.findings.map((f) => f && f.id)
-    : [];
-  if (challenge && Array.isArray(challenge.findings)) challenge.findings = [];
+  let challengeFindingIds = [];
+  if (challenge && Array.isArray(challenge.findings)) {
+    challengeFindingIds = challenge.findings.map((f) => f && f.id);
+    challenge.findings = [];
+  }
   const expectOf = (path, text) => {
     const normalized = normalizeForChecksum(text);
     return { path, chars: normalized.length, checksum: fnv1a32(normalized) };
