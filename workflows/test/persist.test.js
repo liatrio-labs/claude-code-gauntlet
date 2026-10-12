@@ -363,6 +363,10 @@ const LEGACY_WRITER_LINE = 'Persist these code-gauntlet artifacts to disk exactl
 const LEGACY_ROWS = [
   ['absent persist', { persist: undefined }, []], ['empty persist', { persist: {} }, []],
   ['numeric script', { persist: { assembleScriptPath: 5 } }, []],
+  ['omitted findings and policy', {
+    outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234', report: 'No findings.',
+    postReview: [], checkpoints: { persisted: true }, persist: {},
+  }, [], true],
   ['duplicate ids', { findings: [makeFinding('DUP'), makeFinding('DUP')] }, [
     'writeArtifacts: derived persistence unavailable (duplicate finding id DUP) \u2014 ' + 'persisted the full by-value payload instead'
     ]],
@@ -378,10 +382,10 @@ const LEGACY_ROWS = [
     'writeArtifacts: derived persistence unavailable (duplicate finding id DUP) \u2014 ' + 'persisted the full by-value payload instead'
     ]],
 ];
-for (const [name, patch, gaps] of LEGACY_ROWS) {
+for (const [name, patch, gaps, directInput = false] of LEGACY_ROWS) {
   test(`legacy channel: ${name}`, async () => {
     const ctx = persistCtx();
-    const input = persistInput(patch);
+    const input = directInput ? patch : persistInput(patch);
     const out = await writeArtifacts(ctx, input);
     assert.deepEqual(out, expectedWith(SUCCESS_GOLDEN, { gaps }));
     assert.deepEqual(labels(ctx), ['artifact-writer']);
@@ -389,6 +393,11 @@ for (const [name, patch, gaps] of LEGACY_ROWS) {
     assert.equal(ctx.calls[0].prompt.split('\n')[0], LEGACY_WRITER_LINE);
     assert.ok(!Array.isArray(payload));
     assert.deepEqual(payload, writerPayload(input));
+    if (directInput) {
+      assert.deepEqual(payload, {
+        findings: [], postReview: [], report: 'No findings.', checkpoints: { persisted: true },
+      });
+    }
     assert.equal(out.persistReturn, undefined);
   });
 }
@@ -475,6 +484,10 @@ const ASSEMBLE_LINE = 'Run exactly this command, then return its single line of 
 const COMMAND_WORDS = ['python3', SCRIPT, '--plan', PLAN_PATH];
 const PROMPT_ROWS = [
   ['plain command', {}, undefined, undefined, { plainCommand: true }],
+  ['omitted findings and policy', {
+    outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234', report: 'No findings.',
+    postReview: [], checkpoints: {}, persist: { assembleScriptPath: SCRIPT },
+  }, undefined, undefined, { explicitInput: true, omittedDefaults: true }],
   ['space and apostrophe paths', {
     outputDir: '/My Repo/.code-gauntlet',
     persist: { assembleScriptPath: "/plug in/scripts/o'brien/assemble_artifacts.py" }
@@ -499,7 +512,7 @@ const PROMPT_ROWS = [
 for (const [name, input, commandWords = COMMAND_WORDS, expectedPaths = PATHS, checks = {}] of PROMPT_ROWS) {
   test(`derived prompt: ${name}`, async () => {
     const ctx = persistCtx();
-    const inp = persistInput(input);
+    const inp = checks.explicitInput ? input : persistInput(input);
     const out = await writeArtifacts(ctx, inp);
     assert.equal(out.partial, false);
     assert.equal(out.persistReturn, undefined);
@@ -516,6 +529,11 @@ for (const [name, input, commandWords = COMMAND_WORDS, expectedPaths = PATHS, ch
     const primaries = persistPrimaries(inp);
     assert.equal(entries[0].text, primaries.findingsJson);
     assert.equal(entries[1].text, primaries.reportMd);
+    if (checks.omittedDefaults) {
+      assert.deepEqual(out, { artifactPaths: expectedPaths, gaps: [], partial: false });
+      assert.equal(entries[0].text, '[]');
+      assert.equal(primaries.findingsJson, '[]');
+    }
     const plan = JSON.parse(entries[2].text);
     assert.deepEqual(plan, persistPlan(inp, expectedPaths));
     const { planChecksum, ...body } = plan;

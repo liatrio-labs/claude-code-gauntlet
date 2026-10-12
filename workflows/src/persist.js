@@ -322,7 +322,7 @@ function trustAssembleReceipt(receipt, paths, plan) {
 // Returns primary paths independently proven against this plan, even when the receipt is refused.
 // Salvage preserves usable bytes without declaring the overall persist successful.
 function provenPrimaryPaths(receipt, paths, plan) {
-  if (!receipt || typeof receipt !== 'object') return [];
+  if (!receipt) return [];
   if (receipt.planChecksum !== plan.planChecksum) return [];
   const byPath = new Map(receiptRows(receipt, 'verified').map((e) => [(e && e.path), e]));
   const expectByPath = new Map(plan.expect.map((e) => [e.path, e]));

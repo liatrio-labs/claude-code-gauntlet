@@ -5016,7 +5016,7 @@ function trustAssembleReceipt(receipt, paths, plan) {
   return { ok: true, gaps };
 }
 function provenPrimaryPaths(receipt, paths, plan) {
-  if (!receipt || typeof receipt !== 'object') return [];
+  if (!receipt) return [];
   if (receipt.planChecksum !== plan.planChecksum) return [];
   const byPath = new Map(receiptRows(receipt, 'verified').map((e) => [(e && e.path), e]));
   const expectByPath = new Map(plan.expect.map((e) => [e.path, e]));
