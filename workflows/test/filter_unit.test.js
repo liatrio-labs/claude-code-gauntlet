@@ -1029,7 +1029,7 @@ test('applyFilterPipeline emits a correct {field}s_removed stat for EVERY scanne
 
 // applyInjectedProseStrip (round-1 review item 8): the single-finding composition
 // exported for the replay belt (checkpoints.js). Direct unit coverage beyond the
-// runWith-level replay-belt test in stages_delivery.test.js, which exercises it only
+// runWith-level replay-belt test in run.test.js, which exercises it only
 // through the full pipeline.
 
 test('applyInjectedProseStrip is idempotent: stripping an already-stripped finding is a no-op', () => {

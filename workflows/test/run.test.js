@@ -496,12 +496,13 @@ const SUMMARY_HOST_ROWS = [
 ];
 for (const row of SUMMARY_HOST_ROWS) test(`summary host text: ${row.name}`, async () => {
   const args = validArgs({ checkpoints: { summarize: row.summary } });
+  const before = structuredClone(row.summary);
   const { out, payload } = await runAndCapture(args);
   assert.equal(out.ok, true);
   assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('host-path-text:')), row.expected);
   for (const gap of row.summary.gaps) assert.ok(out.gaps.includes(gap));
   assert.ok(payload.report.includes(row.rendered));
-  assert.deepEqual(args.checkpoints.summarize, row.summary);
+  assert.deepEqual(args.checkpoints.summarize, before);
 });
 
 const METHODOLOGY_REPLAY_ROWS = [
