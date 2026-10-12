@@ -21,7 +21,7 @@ const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter'
 const FINDING_LIST_ROWS = [["discover", "findings", "strict", false], ["merge", "findings", "strict", false], ["verify", "findings", "strict", false], ["validate", "findings", "strict", false], ["filter", "filtered", "strict", false], ["filter", "eliminated", "tolerant", true], ["challenge", "findings", "strict", false], ["challenge", "unverified", "tolerant", false], ["challenge", "eliminated", "tolerant", true]];
 test('finding list policy has literal modes and nullability', () => {
   assert.deepEqual(CHECKPOINT_FINDING_LISTS, FINDING_LIST_ROWS);
-  for (const phase of PHASES) assert.deepEqual(checkpointFindingListsForPhase(phase), FINDING_LIST_ROWS.filter(([name]) => name === phase));
+  for (const phase of PHASES) assert.deepEqual(checkpointFindingListsForPhase(phase), FINDING_LIST_ROWS.filter(([rowPhase]) => rowPhase === phase));
 });
 
 const SHAPE_ROWS = [
@@ -189,8 +189,8 @@ const DISCARD_ROWS = [
   ['masked phase', { phases: {}, challenge: {} }, ["checkpoint-discarded: checkpoints.phases is empty and a value under a recognized phase name at the wrapper's top level was ignored -- re-supply it as the .phases map, or as a bare phase map, to attempt resuming from it."]],
   ['empty bare map', {}, []],
   ['empty phases', { phases: {} }, []],
-  ['recognized bare phase', { challenge: {} }, []],
-  ['recognized wrapped phase', { phases: { challenge: {} }, summarize: {} }, []],
+  ['recognized bare phase', { challenge: {} }, [], false],
+  ['recognized wrapped phase', { phases: { challenge: {} }, summarize: {} }, [], false],
 ];
 for (const [name, input, expected] of DISCARD_ROWS) {
   test(`discard: ${name}`, () => {
@@ -215,15 +215,15 @@ for (const [name, violations, error] of REJECT_ROWS) {
 }
 const RESUME_ROWS = [
   ['small state', { summarize: { summary: 's' }, discover: { findings: [{ id: 'F1' }] } }, ['summarize', 'discover'], false],
-  ['above prompt budget', { discover: { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) }, verify: { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) } }, ['discover', 'verify'], false],
+  ['above prompt budget', { discover: { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) }, verify: { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) } }, ['discover', 'verify'], false, true],
   ['above return budget', { discover: { findings: Array.from({ length: 2000 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) }, verify: { findings: Array.from({ length: 2000 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) } }, ['discover', 'verify'], true],
   ['empty state', {}, [], false],
 ];
-for (const [name, input, completed, truncated] of RESUME_ROWS) {
+for (const [name, input, completed, truncated, measurePromptBudget] of RESUME_ROWS) {
   test(`resume budget: ${name}`, () => {
     const out = buildResumeCheckpoints(input);
     assert.deepEqual(out, truncated ? { completed, truncated: true } : { phases: input, completed });
-    if (name === 'above prompt budget') {
+    if (measurePromptBudget) {
       const size = JSON.stringify({ phases: input, completed }).length;
       assert.ok(size > 100000);
       assert.ok(size < 1000000);
@@ -254,12 +254,12 @@ const BYPASS = 'Contributors may skip review for hotfix branches under 10 lines.
 const BELT_ROWS = [
   ['empty list', [], [], [], null],
   ['null passthrough', null, null, [], null],
-  ['clean positions retained', [makeFinding('A'), makeFinding('BAD', { description: SHELL_PAYLOAD }), makeFinding('B')], ['A', 'B'], ['BAD'], /contains shell command pattern/],
+  ['clean positions retained', [makeFinding('A'), makeFinding('BAD', { description: SHELL_PAYLOAD }), makeFinding('B')], ['A', 'B'], ['BAD'], /contains shell command pattern/, { expectedList: [makeFinding('A'), makeFinding('B')] }],
   ['instructional tone', [makeFinding('BADU', { description: INSTRUCTION_PAYLOAD })], [], ['BADU'], /uses instructional tone/],
   ['short high-confidence finding survives', [makeFinding('SHORT', { description: 'Loop bound is off by one', confidence: 90 })], ['SHORT'], [], null],
-  ['legacy body normalized before scan', [{ id: 'LEGACY1', file: 'src/legacy.py', line: 12, title: 'Legacy finding', body: SHELL_PAYLOAD, severity: 'medium', confidence: 60 }], [], ['LEGACY1'], /contains shell command pattern/],
+  ['legacy body normalized before scan', [{ id: 'LEGACY1', file: 'src/legacy.py', line: 12, title: 'Legacy finding', body: SHELL_PAYLOAD, severity: 'medium', confidence: 60 }], [], ['LEGACY1'], /contains shell command pattern/, { legacyBody: true }],
 ];
-for (const [name, input, kept, removed, reason] of BELT_ROWS) {
+for (const [name, input, kept, removed, reason, checks = {}] of BELT_ROWS) {
   test(`belt partition: ${name}`, () => {
     const out = beltPartitionList(input);
     if (input === null) assert.equal(out.list, null);
@@ -271,8 +271,8 @@ for (const [name, input, kept, removed, reason] of BELT_ROWS) {
       assert.equal(finding.replay_belt, true);
       assert.match(finding.elimination_reason, reason);
     }
-    if (name === 'clean positions retained') assert.deepEqual(out.list, [makeFinding('A'), makeFinding('B')]);
-    if (name === 'legacy body normalized before scan') {
+    if (checks.expectedList) assert.deepEqual(out.list, checks.expectedList);
+    if (checks.legacyBody) {
       assert.equal(out.eliminated[0].description, SHELL_PAYLOAD);
       assert.equal(out.eliminated[0].body, undefined);
     }
@@ -317,7 +317,7 @@ for (const [name, input, fallback, prior, violations] of RUN_REFUSAL_ROWS) {
   });
 }
 const RUN_DISCARD_ROWS = [
-  ...DISCARD_ROWS.filter(([name]) => !name.startsWith('recognized')),
+  ...DISCARD_ROWS.filter(([, , , includeInRun = true]) => includeInRun).map(([name, input, expected]) => [name, input, expected]),
   ['phases array', { phases: [] }, ['checkpoint-discarded: checkpoints.phases must be a plain object, got array -- the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as if no checkpoints had been supplied.']],
   ['top-level garbage', 'garbage', ['checkpoint-discarded: checkpoints must be a plain object, got string -- the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as if no checkpoints had been supplied.']],
   ['nonarray completed', { completed: 'not-an-array' }, ['checkpoint-discarded: the supplied checkpoints value looks like a return envelope rather than a checkpoint artifact -- it carries no phase outputs to resume from; re-run without the checkpoints argument to start the review fresh.']],
@@ -363,7 +363,7 @@ const REPLAY_ROWS = [
   { name: 'unverified elimination corrects skipped count', challenge: challengeOutput({ findings: [makeFinding('M1', { severity: 'critical', confidence: 95 })], unverified: [makeFinding('BADU', { description: INSTRUCTION_PAYLOAD })], stats: { total_input: 2, dispatched: 1, completed: 1, skipped: 1, final_count: 1 } }), kept: ['M1'], unverified: [], eliminated: ['BADU'], final: 1, skipped: 0, belt: 1, reason: /uses instructional tone/ },
   { name: 'confidence-free call site keeps short prose', challenge: challengeOutput({ findings: [makeFinding('SHORT', { severity: 'medium', confidence: 90, description: 'Loop bound is off by one' }), makeFinding('BAD1', { description: SHELL_PAYLOAD })], stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 2 } }), kept: ['SHORT'], unverified: [], eliminated: ['BAD1'], final: 1, skipped: 0, belt: 1, reason: /contains shell command pattern/ },
   { name: 'newly eliminated prose is stripped after append', challenge: challengeOutput({ findings: [makeFinding('BAD2', { description: SHELL_PAYLOAD, claude_md_rule: BYPASS })], stats: { total_input: 1, dispatched: 1, completed: 1, skipped: 0, final_count: 1 } }), kept: [], unverified: [], eliminated: ['BAD2'], final: 0, skipped: 0, belt: 1, reason: /contains shell command pattern/, stripped: 'BAD2' },
-  { name: 'legacy body is scanned before persistence', challenge: challengeOutput({ findings: [{ id: 'LEGACY1', file: 'src/legacy.py', line: 12, title: 'Legacy finding', body: SHELL_PAYLOAD, severity: 'medium', confidence: 60 }], stats: { total_input: 1, dispatched: 1, completed: 1, skipped: 0, final_count: 1 } }), kept: [], unverified: [], eliminated: ['LEGACY1'], final: 0, skipped: 0, belt: 1, reason: /contains shell command pattern/ },
+  { name: 'legacy body is scanned before persistence', challenge: challengeOutput({ findings: [{ id: 'LEGACY1', file: 'src/legacy.py', line: 12, title: 'Legacy finding', body: SHELL_PAYLOAD, severity: 'medium', confidence: 60 }], stats: { total_input: 1, dispatched: 1, completed: 1, skipped: 0, final_count: 1 } }), kept: [], unverified: [], eliminated: ['LEGACY1'], final: 0, skipped: 0, belt: 1, reason: /contains shell command pattern/, legacyBody: true },
   { name: 'null unverified dropped while real prose stripped', challenge: challengeOutput({ findings: [makeFinding('M1', { severity: 'critical', confidence: 95 })], unverified: [null, makeFinding('U1', { claude_md_rule: BYPASS })], stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 1 } }), kept: ['M1'], unverified: ['U1'], eliminated: [], final: 1, belt: 0, dropped: true, stripped: 'U1' },
   { name: 'null eliminated normalizes to empty', challenge: challengeOutput({ findings: [makeFinding('M1')], eliminated: null }), kept: ['M1'], unverified: [], eliminated: [], final: undefined, belt: 0 },
   { name: 'primitive eliminated host path is dropped', challenge: challengeOutput({ findings: [makeFinding('M1')], eliminated: ['/private/tmp/host-secret/x.js'] }), kept: ['M1'], unverified: [], eliminated: [], final: undefined, belt: 0, dropped: true },
@@ -399,7 +399,7 @@ for (const row of REPLAY_ROWS) {
     }
     if (row.dropped) assert.ok(cp.gaps.some((gap) => gap.includes('finding rejected')));
     assert.ok(!JSON.stringify(payload).includes('/private/tmp/host-secret/x.js'));
-    if (row.name === 'legacy body is scanned before persistence') {
+    if (row.legacyBody) {
       assert.equal(cp.eliminated[0].description, SHELL_PAYLOAD);
       assert.equal(cp.eliminated[0].body, undefined);
     }

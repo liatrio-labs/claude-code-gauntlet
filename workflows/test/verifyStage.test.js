@@ -123,6 +123,10 @@ const UNTRUSTED_ROWS = [
       '/out/phase4-input-abc123.slice0.json', '/out/phase4-input-abc123.slice1.json',
       '/out/phase4-input-abc123.slice1.json', '/out/phase4-input-abc123.slice2.json',
     ],
+    outputs: [
+      '/out/phase4-output-abc123.slice0.json', '/out/phase4-output-abc123.slice1.json',
+      '/out/phase4-output-abc123.slice1.json', '/out/phase4-output-abc123.slice2.json',
+    ],
     gap: 'verify: UNVERIFIED \u2014 slice 1: receipt nonce mismatch (got WRONG, expected n-1.1.r1) \u2014 retried once after the first attempt failed (receipt nonce mismatch (got WRONG, expected n-1.1)); 2 of 5 finding(s) marked origin=unknown, surfaced-classification skipped' },
 ];
 for (const row of UNTRUSTED_ROWS) {
@@ -142,8 +146,9 @@ for (const row of UNTRUSTED_ROWS) {
     assert.deepEqual(out.inputProof, row.ledger || { ...ZERO, slices: 1 });
     if (row.nonces) assert.deepEqual(ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--nonce') + 1]; }), row.nonces);
     if (row.inputs) assert.deepEqual(ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--input') + 1]; }), row.inputs);
-    if (row.inputs) {
+    if (row.outputs) {
       const outputs = ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--output') + 1]; });
+      assert.deepEqual(outputs, row.outputs);
       assert.equal(outputs[2], outputs[1], 'retry reuses the first attempt output path');
     }
     assert.deepEqual(out.gaps, [row.gap]);

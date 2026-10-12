@@ -4970,7 +4970,7 @@ function trustAssembleReceipt(receipt, paths, plan) {
   const verified = verifiedRows(receipt);
   const written = Array.isArray(receipt.written) ? receipt.written : [];
   const verifiedByPath = new Map(verified.map((e) => [(e && e.path), e]));
-  const expectByPath = new Map((plan.expect || []).map((e) => [e.path, e]));
+  const expectByPath = new Map(plan.expect.map((e) => [e.path, e]));
   for (const p of [paths.findings, paths.report]) {
     const got = verifiedByPath.get(p);
     const want = expectByPath.get(p);
@@ -4979,7 +4979,7 @@ function trustAssembleReceipt(receipt, paths, plan) {
     if (grade === 'foreign') {
       return {
         ok: false,
-        reason: `assemble receipt checked ${p} against a foreign expectation (receipt says ${got.expected_chars} chars/${got.expected_checksum}, the pipeline handed the writer ${want ? want.chars : 'none'}/${want ? want.checksum : 'none'})`,
+        reason: `assemble receipt checked ${p} against a foreign expectation (receipt says ${got.expected_chars} chars/${got.expected_checksum}, the pipeline handed the writer ${want.chars}/${want.checksum})`,
       };
     }
     if (grade === 'incoherent') {
@@ -4990,14 +4990,13 @@ function trustAssembleReceipt(receipt, paths, plan) {
     }
   }
   const writtenByPath = new Map(written.map((e) => [(e && e.path), e]));
-  const deriveByPath = new Map((plan.derive || []).map((e) => [e.path, e]));
+  const deriveByPath = new Map(plan.derive.map((e) => [e.path, e]));
   const findingsProof = verifiedByPath.get(paths.findings);
   const sourceDiverged = findingsProof.content_proof === 'mismatch';
   const derivedGaps = [];
   for (const p of [paths.postReview, paths.checkpoints]) {
     if (!writtenByPath.has(p)) return { ok: false, reason: `assemble receipt did not write ${p} (no write proof)` };
     const want = deriveByPath.get(p);
-    if (!want) return { ok: false, reason: `persist plan carries no derived-content expectation for ${p} (no content proof)` };
     const got = writtenByPath.get(p);
     if (got.chars === want.chars && got.checksum === want.checksum) continue;
     const detail = `derived document ${p} does not match the pipeline's own derivation (receipt reports ${got.chars == null ? 'no' : got.chars} chars/${got.checksum == null ? 'no checksum' : got.checksum}, the pipeline derived ${want.chars}/${want.checksum})`;

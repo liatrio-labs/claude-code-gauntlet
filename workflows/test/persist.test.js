@@ -239,6 +239,7 @@ for (const [name, writer, reason] of [
   });
 }
 const OUTER_FAILURE_ROWS = [
+  ['id-integrity guard', { findings: [makeFinding('F1', { confidence: 2n })] }, /BigInt/, 'writeArtifacts: persistence threw before any artifact was written (Do not know how to serialize a BigInt) \u2014 artifacts not persisted (partial-artifacts)'],
   ['plan serialization', { checkpoints: { counts: { challenge: 2n } } }, /partial-artifacts/],
   ['malformed findings', { findings: {} }, /\(\(inp \|\| \{\}\)\.findings \|\| \[\]\)\.map is not a function/, 'writeArtifacts: persistence threw before any artifact was written (((inp || {}).findings || []).map is not a function) \u2014 artifacts not persisted (partial-artifacts)'],
 ];
@@ -284,15 +285,15 @@ for (const [name, input, paths] of [
   });
 }
 const PROMPT_ROWS = [
-  ['plain command', {}, ['python3', SCRIPT, '--plan', PLAN_PATH]],
+  ['plain command', {}, ['python3', SCRIPT, '--plan', PLAN_PATH], PATHS, { plainCommand: true }],
   ['space and apostrophe paths', { outputDir: '/My Repo/.code-gauntlet', persist: { assembleScriptPath: "/plug in/scripts/o'brien/assemble_artifacts.py" } }, ['python3', "/plug in/scripts/o'brien/assemble_artifacts.py", '--plan', '/My Repo/.code-gauntlet/code-gauntlet-persist-plan-abc1234.json'], {
     findings: '/My Repo/.code-gauntlet/code-gauntlet-findings-abc1234.json', report: '/My Repo/.code-gauntlet/code-gauntlet-report-abc1234.md',
     postReview: '/My Repo/.code-gauntlet/code-gauntlet-post-review-abc1234.json', checkpoints: '/My Repo/.code-gauntlet/code-gauntlet-checkpoint-all-abc1234.json',
   }],
-  ['escaped finding prose', { findings: [makeFinding('F1', { description: 'gradeInputProof produces \\"the executor\'s receipt carried no input_checksum\\" here' })] }, ['python3', SCRIPT, '--plan', PLAN_PATH]],
-  ['escaped checkpoint prose', { checkpoints: { phases: { verify: { gaps: ['verify: the executor wrote \\"receipt\\" to C:\\tmp and stopped'] } } } }, ['python3', SCRIPT, '--plan', PLAN_PATH]],
+  ['escaped finding prose', { findings: [makeFinding('F1', { description: 'gradeInputProof produces \\"the executor\'s receipt carried no input_checksum\\" here' })] }, ['python3', SCRIPT, '--plan', PLAN_PATH], PATHS, { escapedEntry: 0 }],
+  ['escaped checkpoint prose', { checkpoints: { phases: { verify: { gaps: ['verify: the executor wrote \\"receipt\\" to C:\\tmp and stopped'] } } } }, ['python3', SCRIPT, '--plan', PLAN_PATH], PATHS, { escapedEntry: 2 }],
 ];
-for (const [name, input, commandWords, expectedPaths = PATHS] of PROMPT_ROWS) {
+for (const [name, input, commandWords, expectedPaths = PATHS, checks = {}] of PROMPT_ROWS) {
   test(`derived prompt: ${name}`, async () => {
     const ctx = persistCtx();
     const inp = persistInput(input);
@@ -300,6 +301,7 @@ for (const [name, input, commandWords, expectedPaths = PATHS] of PROMPT_ROWS) {
     assert.equal(out.partial, false);
     assert.equal(out.persistReturn, undefined);
     assert.deepEqual(out.artifactPaths, expectedPaths);
+    assert.deepEqual(Object.keys(out.artifactPaths), ['findings', 'report', 'postReview', 'checkpoints']);
     assert.deepEqual(out.gaps, []);
     assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts']);
     assert.equal(ctx.calls[0].agentType, 'code-gauntlet:artifact-writer');
@@ -314,18 +316,18 @@ for (const [name, input, commandWords, expectedPaths = PATHS] of PROMPT_ROWS) {
     const { planChecksum, ...body } = plan;
     assert.equal(fnv1a32(JSON.stringify(body, null, 2)), planChecksum);
     assert.deepEqual(shellSplit(ctx.calls[1].prompt.split('\n').at(-1)), commandWords);
-    if (name === 'plain command') {
+    if (checks.plainCommand) {
       assert.ok(ctx.calls[1].prompt.includes(`python3 ${SCRIPT} --plan ${PLAN_PATH}`));
       assert.equal(ctx.calls[1].prompt.split('\n').at(-1).split(' ').length, 4);
       assert.doesNotMatch(ctx.calls[1].prompt.split('\n').at(-1), /[$`;|&><(){}]/);
       assert.equal(ctx.calls[0].prompt.split('finding F1').length - 1, 1);
       assert.equal(JSON.stringify(writerPayload(inp)).split('finding F1').length - 1, 3);
     }
-    if (name.startsWith('escaped')) {
+    if (checks.escapedEntry !== undefined) {
       assert.ok(Math.max(...ctx.calls[0].prompt.match(/\\+/g).map((run) => run.length)) <= 3);
-      const text = name === 'escaped finding prose' ? entries[0].text : entries[2].text;
+      const text = entries[checks.escapedEntry].text;
       assert.equal(Math.max(...text.match(/\\+/g).map((run) => run.length)), 1);
-      if (name === 'escaped finding prose') {
+      if (checks.escapedEntry === 0) {
         const finding = JSON.parse(entries[0].text)[0];
         assert.equal(finding.description, inp.findings[0].description);
         assert.equal(finding.body, inp.findings[0].description);
@@ -393,13 +395,13 @@ const EMPTY_PLAN_TEXT = `{
 }`;
 const EMPTY_RETURN_INPUT = { findings: [], postReview: [], report: '', checkpoints: {}, persist: { returnPrimaries: true } };
 const RETURN_ROWS = [
-  ['empty literal bytes and absent nonce', EMPTY_RETURN_INPUT, null],
+  ['empty literal bytes and absent nonce', EMPTY_RETURN_INPUT, null, { literalBytes: true }],
   ['supplied nonce', { persist: { assembleScriptPath: SCRIPT, returnPrimaries: true }, nonce: 'nonce-xyz' }, 'nonce-xyz'],
   ['scriptless return', { persist: { returnPrimaries: true } }, null],
-  ['escaped plan bytes shared by both channels', { persist: { returnPrimaries: true }, checkpoints: { ...persistInput().checkpoints, phases: { challenge: { ...persistInput().checkpoints.phases.challenge, gaps: ['verify: the executor wrote \\"receipt\\" to C:\\tmp and stopped'] } } } }, null],
-  ['exact return budget', { ...EMPTY_RETURN_INPUT, report: 'r'.repeat(998439) }, null],
+  ['escaped plan bytes shared by both channels', { persist: { returnPrimaries: true }, checkpoints: { ...persistInput().checkpoints, phases: { challenge: { ...persistInput().checkpoints.phases.challenge, gaps: ['verify: the executor wrote \\"receipt\\" to C:\\tmp and stopped'] } } } }, null, { escapedPlan: true }],
+  ['exact return budget', { ...EMPTY_RETURN_INPUT, report: 'r'.repeat(998439) }, null, { exactBudget: true }],
 ];
-for (const [name, patch, nonce] of RETURN_ROWS) {
+for (const [name, patch, nonce, checks = {}] of RETURN_ROWS) {
   test(`return channel: ${name}`, async () => {
     const ctx = persistCtx();
     const input = persistInput(patch);
@@ -413,9 +415,9 @@ for (const [name, patch, nonce] of RETURN_ROWS) {
     assert.equal(out.persistReturn.nonce, nonce);
     assert.equal(out.persistReturn.planPath, PLAN_PATH);
     assert.deepEqual(out.persistReturn.entries.map((e) => e.path), [PATHS.findings, PATHS.report, PLAN_PATH]);
-    if (name === 'empty literal bytes and absent nonce') {
+    if (checks.literalBytes) {
       assert.deepEqual(out, { artifactPaths: PATHS, gaps: [], partial: false, persistReturn: { channel: 'return', nonce: null, planPath: PLAN_PATH, entries: [{ path: PATHS.findings, text: '[]' }, { path: PATHS.report, text: '' }, { path: PLAN_PATH, text: EMPTY_PLAN_TEXT }] } });
-    } else if (name === 'exact return budget') {
+    } else if (checks.exactBudget) {
       assert.deepEqual({ ...out, persistReturn: { ...out.persistReturn, entries: out.persistReturn.entries.map(({ path, text }) => ({ path, chars: text.length })) } }, { artifactPaths: PATHS, gaps: [], partial: false, persistReturn: { channel: 'return', nonce: null, planPath: PLAN_PATH, entries: [{ path: PATHS.findings, chars: 2 }, { path: PATHS.report, chars: 998439 }, { path: PLAN_PATH, chars: 1194 }] } });
     } else {
       const writer = persistCtx();
@@ -425,7 +427,7 @@ for (const [name, patch, nonce] of RETURN_ROWS) {
       assert.equal(out.persistReturn.entries[0].text, findingsJson);
       assert.equal(out.persistReturn.entries[1].text, reportMd);
       assert.equal(JSON.parse(out.persistReturn.entries[2].text).expect[0].checksum, fnv1a32(findingsJson));
-      if (name.startsWith('escaped')) assert.match(JSON.stringify(persistPlan(input, PATHS)), /\\\\/);
+      if (checks.escapedPlan) assert.match(JSON.stringify(persistPlan(input, PATHS)), /\\\\/);
     }
   });
 }
