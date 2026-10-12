@@ -288,7 +288,7 @@ The workflow's **summarize, discovery, and validate** agents Read a shared conte
 
 Use the command in `SKILL.md` under "Write the shared agent context file" and `scripts/write_shared_context.py`; pass the 2e risk classification and 2k AI-generated-code status as Markdown on stdin.
 
-The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to `renderReport()` for its Change Context section. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record. (The emission machinery still ships — its removal is the deferred S8 migration.)
+The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to `renderReport()` for its Change Context section. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record.
 
 ### Measure it (issue #48)
 

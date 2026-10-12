@@ -26,8 +26,8 @@
     },
     "truncation_warnings": [],
     "validation_warnings": [
-      "[<no id>] Missing required field 'id' \u2014 finding rejected",
-      "[] Missing required field 'id' \u2014 finding rejected"
+      "[] Missing required field 'id' \u2014 finding rejected",
+      "[<no id>] Missing required field 'id' \u2014 finding rejected"
     ]
   },
   "owner": "o",

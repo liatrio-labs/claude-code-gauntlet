@@ -710,7 +710,7 @@ test('mergeStage: consumes merge() as-is and produces the Phase-4 envelope', () 
   assert.equal(env.head_sha, 'abc123');
   assert.ok(env.methodology);
   assert.ok(env.methodology.agents_dispatched.includes('code-gauntlet:bug-detector'));
-  // agent field survives the round-trip (re-injected by merge()).
+  // merge() stamps the cloned finding from its group key.
   assert.ok(env.findings.every((f) => typeof f.agent === 'string'));
 });
 
@@ -734,3 +734,17 @@ test('mergeStage: agents_dispatched counts a zero-finding agent, distinct from n
   assert.deepEqual([...env.methodology.agents_dispatched].sort(), ['bug-detector', 'code-simplifier']);
   assert.ok(!env.methodology.agents_dispatched.includes('type-design-analyzer'));
 });
+
+for (const [name, entry, type] of [['array', [], 'array'], ['function', () => {}, 'undefined']]) {
+  test(`discover through mergeStage: ${name} finding is dropped by the shape guard`, async () => {
+    const ctx = fakeCtx({ byAgent: {
+      'code-gauntlet:bug-detector': { findings: [entry], complete: true, total_seen: 1 },
+    } });
+    const discovered = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+    assert.equal(discovered.findings.length, 1);
+    const out = mergeStage(discovered, {});
+    assert.deepEqual(out.findings, []);
+    assert.equal(out.methodology.dropped_no_id, 0);
+    assert.deepEqual(out.methodology.validation_warnings, [`[bug-detector] finding 1: expected object, got ${type}`]);
+  });
+}

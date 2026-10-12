@@ -1,13 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { merge, validateFindings, normalizeFindingPaths } from '../src/mergeFindings.js';
+import { merge, mergeStage, validateFindings, normalizeFindingPaths } from '../src/mergeFindings.js';
 import { dedupById } from '../src/mergeFindings.js';
 import { finding } from './helpers/findings.js';
 
 const META = { agents: ['bug-detector'], base_branch: 'main', head_sha: 'abc123full', pr_number: 42, owner: 'org', repo: 'myrepo' };
 function mergeStructured(byAgent, agents = ['bug-detector']) {
-  const ndjson = Object.fromEntries(Object.entries(byAgent).map(([agent, rows]) => [agent, rows.map((f) => JSON.stringify(f)).join('\n')]));
-  return merge(ndjson, {}, { ...META, agents });
+  return merge(byAgent, { ...META, agents });
 }
 
 const VALIDATION_CASES = [
@@ -28,7 +27,7 @@ const DEDUP_CASES = [
   { name: 'duplicate id resolves once', rows: [finding({ id: 'B' }), finding({ id: 'B', title: 'second' })], expected: ['B'], dropped: 0, duplicates: 1 },
 ];
 for (const c of DEDUP_CASES) test(`merge id dedup: ${c.name}`, () => {
-  const out = dedupById({ 'bug-detector': c.rows }, {});
+  const out = dedupById(c.rows);
   assert.deepEqual(out.merged.map((f) => f.id), c.expected);
   assert.equal(out.droppedNoId, c.dropped);
   assert.equal(out.duplicatesResolved, c.duplicates ?? 0);
@@ -42,6 +41,15 @@ const MERGE_CASES = [
   { name: 'unknown dimension warns but keeps finding', input: { 'bug-detector': [finding({ dimension: 'new_dimension' })] }, agents: ['bug-detector'], ids: ['f1'], ndjson: 1, dropped: 0, warnings: 1 },
   { name: 'idless structured finding counted as dropped', input: { 'bug-detector': [finding({ id: undefined })] }, agents: ['bug-detector'], ids: [], ndjson: 0, dropped: 1, warnings: 1 },
   { name: 'extra fields survive structured merge', input: { 'bug-detector': [finding({ risk_level: 8, custom_receipt: { x: 2 } })] }, agents: ['bug-detector'], ids: ['f1'], ndjson: 1, dropped: 0, warnings: 0, pass: { risk_level: 8, custom_receipt: { x: 2 } } },
+  { name: 'missing title rejects with the literal warning', input: { 'bug-detector': [finding({ title: undefined })] }, agents: ['bug-detector'], ids: [], ndjson: 0, dropped: 0, warnings: 1, warningText: ["[f1] Missing required field 'title' \u2014 finding rejected"] },
+  { name: 'earlier invalid duplicate loses to later valid duplicate', input: { 'bug-detector': [finding({ id: 'F1', title: undefined }), finding({ id: 'F1', title: 'valid winner' })] }, agents: ['bug-detector'], ids: ['F1'], ndjson: 1, dropped: 0, warnings: 1, warningText: ["[F1] Missing required field 'title' \u2014 finding rejected"], pass: { title: 'valid winner' } },
+  { name: 'cross-agent duplicate follows roster order', input: { 'security-reviewer': [finding({ id: 'F1', title: 'later group' })], 'bug-detector': [finding({ id: 'F1', title: 'roster winner' })] }, agents: ['bug-detector', 'security-reviewer'], ids: ['F1'], ndjson: 1, dropped: 0, warnings: 0, duplicates: 1, stamped: ['bug-detector'], pass: { title: 'roster winner' } },
+  { name: 'agent absent from roster is ignored', input: { 'outside-agent': [finding({ title: undefined })], 'bug-detector': [finding()] }, agents: ['bug-detector'], ids: ['f1'], ndjson: 1, dropped: 0, warnings: 0 },
+  { name: 'empty roster ignores supplied findings', input: { 'bug-detector': [finding({ id: undefined })] }, agents: [], ids: [], ndjson: 0, dropped: 0, warnings: 0 },
+  ...[
+    ['array', []], ['number', 42], ['function', () => {}], ['null', null],
+    ['undefined', undefined], ['toJSON returns undefined', { toJSON: () => undefined }],
+  ].map(([name, value]) => ({ name: `${name} entry is dropped without counting a missing id`, input: { 'bug-detector': [finding(), value] }, agents: ['bug-detector'], ids: ['f1'], ndjson: 1, dropped: 0, warnings: 1, warningText: [`[bug-detector] finding 2: expected object, got ${['function', 'toJSON returns undefined'].includes(name) ? 'undefined' : name}`] })),
 ];
 for (const c of MERGE_CASES) test(`merge structured: ${c.name}`, () => {
   const out = mergeStructured(c.input, c.agents);
@@ -50,12 +58,55 @@ for (const c of MERGE_CASES) test(`merge structured: ${c.name}`, () => {
   assert.deepEqual([out.base_branch, out.head_sha, out.pr_number, out.owner, out.repo], ['main', 'abc123full', 42, 'org', 'myrepo']);
   assert.deepEqual(out.methodology.agents_dispatched, c.agents);
   assert.deepEqual(out.methodology.findings_per_channel, { ndjson: c.ndjson, text_fallback: 0 });
-  assert.equal(out.methodology.duplicates_resolved, 0);
+  assert.equal(out.methodology.duplicates_resolved, c.duplicates ?? 0);
   assert.equal(out.methodology.dropped_no_id, c.dropped);
   assert.equal(out.methodology.validation_warnings.length, c.warnings);
   assert.deepEqual(out.methodology.truncation_warnings, []);
+  if (c.warningText) assert.deepEqual(out.methodology.validation_warnings, c.warningText);
   if (c.stamped) assert.deepEqual(out.findings.map((f) => f.agent), c.stamped);
   if (c.pass) for (const [key, value] of Object.entries(c.pass)) assert.deepEqual(out.findings[0][key], value);
+});
+
+test('merge structured: findings and nested values are neither mutated nor aliased', () => {
+  const input = finding({ agent: 'original-agent', nested: { items: [{ value: 1 }] } });
+  const snapshot = structuredClone(input);
+  const out = mergeStructured({ 'bug-detector': [input] });
+  assert.deepEqual(input, snapshot);
+  assert.notEqual(out.findings[0], input);
+  assert.notEqual(out.findings[0].nested, input.nested);
+  assert.notEqual(out.findings[0].nested.items[0], input.nested.items[0]);
+  out.findings[0].nested.items[0].value = 2;
+  assert.deepEqual(input, snapshot);
+  input.nested.items.push({ value: 3 });
+  assert.deepEqual(out.findings[0].nested.items, [{ value: 2 }]);
+});
+
+test('merge structured: cloning retains JSON effects on properties and array entries', () => {
+  const input = finding();
+  input.omitted = undefined;
+  input.nested = { omitted: undefined, infinity: Infinity, nan: NaN, minusZero: -0 };
+  input.entries = [undefined, , -Infinity];
+  const out = mergeStructured({ 'bug-detector': [input] });
+  assert.equal(Object.hasOwn(out.findings[0], 'omitted'), false);
+  assert.deepEqual(out.findings[0].nested, { infinity: null, nan: null, minusZero: 0 });
+  assert.deepEqual(out.findings[0].entries, [null, null, null]);
+  assert.equal(Object.hasOwn(input, 'omitted'), true);
+  assert.equal(input.nested.infinity, Infinity);
+  assert.equal(input.entries[0], undefined);
+});
+
+test('merge structured: JSON metadata keeps envelope key order and all five fields', () => {
+  const out = merge({ 'bug-detector': [finding()] }, JSON.stringify(META));
+  assert.deepEqual(Object.keys(out), ['findings', 'base_branch', 'head_sha', 'pr_number', 'owner', 'repo', 'methodology']);
+  assert.deepEqual(Object.keys(out.methodology), ['agents_dispatched', 'findings_per_channel', 'duplicates_resolved', 'dropped_no_id', 'truncation_warnings', 'validation_warnings']);
+  assert.deepEqual([out.base_branch, out.head_sha, out.pr_number, out.owner, out.repo], ['main', 'abc123full', 42, 'org', 'myrepo']);
+});
+
+test('mergeStage: non-object discovery entry is dropped with the shape warning', () => {
+  const out = mergeStage({ findings: [42], dispatched: ['unknown'] }, META);
+  assert.deepEqual(out.findings, []);
+  assert.equal(out.methodology.dropped_no_id, 0);
+  assert.deepEqual(out.methodology.validation_warnings, ['[unknown] finding 1: expected object, got number']);
 });
 
 test('normalizeFindingPaths: absolute finding paths are rewritten under repoRoot and outside paths are rejected', () => {
