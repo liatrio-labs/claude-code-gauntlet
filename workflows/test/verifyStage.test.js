@@ -142,6 +142,10 @@ for (const row of UNTRUSTED_ROWS) {
     assert.deepEqual(out.inputProof, row.ledger || { ...ZERO, slices: 1 });
     if (row.nonces) assert.deepEqual(ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--nonce') + 1]; }), row.nonces);
     if (row.inputs) assert.deepEqual(ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--input') + 1]; }), row.inputs);
+    if (row.inputs) {
+      const outputs = ctx.calls.map((call) => { const argv = argvOf(call); return argv[argv.indexOf('--output') + 1]; });
+      assert.equal(outputs[2], outputs[1], 'retry reuses the first attempt output path');
+    }
     assert.deepEqual(out.gaps, [row.gap]);
   });
 }

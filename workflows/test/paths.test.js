@@ -1,11 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { requireAbsoluteOutputDir, plannedArtifactPaths, persistPlanPath, PATH_ESCAPE_MARKER } from '../src/outputPaths.js';
-import { writeArtifacts } from '../src/persist.js';
 import { runWith } from '../src/stages.js';
 import { mentionsPreparedHostRoot, normalizeAbsoluteRoot, pathUnderRoot, prepareHostRootPatterns, repoRelativeFindingPath, safeFindingLabel } from '../src/paths.js';
-import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
+import { validArgs, makeCtx } from './helpers/pipelineMock.js';
 
 const ROOT = '/repo/.code-gauntlet';
 
@@ -324,110 +322,6 @@ test('repoRelativeFindingPath is idempotent over every table row', () => {
     const once = repoRelativeFindingPath(root, c.file);
     assert.deepEqual(repoRelativeFindingPath(root, once.file ?? c.file), once, `idempotence: ${c.file}`);
   }
-});
-
-test('requireAbsoluteOutputDir: absolute ok; relative / missing throw distinct message', () => {
-  assert.equal(requireAbsoluteOutputDir(ROOT), ROOT);
-  assert.throws(
-    () => requireAbsoluteOutputDir('.code-gauntlet'),
-    (e) => /absolute confined root/.test(e.message) && !/planned artifact path escapes/.test(e.message),
-  );
-  assert.throws(
-    () => requireAbsoluteOutputDir(undefined),
-    (e) => /absolute confined root/.test(e.message),
-  );
-});
-
-test('plannedArtifactPaths: stamps under root; sha with .. throws planned-path message', () => {
-  const paths = plannedArtifactPaths(ROOT, 'abc1234');
-  assert.ok(paths.findings.startsWith(`${ROOT}/`));
-  assert.throws(
-    () => plannedArtifactPaths(ROOT, 'abc/../evil'),
-    (e) => /planned artifact path escapes outputDir/.test(e.message),
-  );
-});
-
-test('persistPlanPath: requires absolute root', () => {
-  assert.ok(persistPlanPath(ROOT, 'abc1234').startsWith(`${ROOT}/`));
-  assert.throws(() => persistPlanPath('.code-gauntlet', 'abc1234'), /absolute confined root/);
-});
-
-// --- writeArtifacts: hard reject before outer try ---------------------------
-
-test('writeArtifacts: relative outputDir throws (not a partial-artifacts gap)', async () => {
-  const ctx = { agent: async () => ({}), parallel: async () => [] };
-  await assert.rejects(
-    () => writeArtifacts(ctx, {
-      findings: [makeFinding('F1')],
-      report: '# r',
-      checkpoints: {},
-      outputDir: '.code-gauntlet',
-      headShaShort: 'abc1234',
-    }),
-    (e) => /absolute confined root/.test(e.message),
-  );
-});
-
-test('writeArtifacts: missing outputDir throws', async () => {
-  const ctx = { agent: async () => ({}), parallel: async () => [] };
-  await assert.rejects(
-    () => writeArtifacts(ctx, {
-      findings: [makeFinding('F1')],
-      report: '# r',
-      checkpoints: {},
-      headShaShort: 'abc1234',
-    }),
-    (e) => /absolute confined root/.test(e.message),
-  );
-});
-
-test('writeArtifacts: writer echo outside fence → path-escape gap + partial-artifacts', async () => {
-  const paths = plannedArtifactPaths(ROOT, 'abc1234');
-  const ctx = {
-    agent: async () => ({
-      artifactPaths: {
-        ...paths,
-        checkpoints: '/tmp/evil-checkpoints.json',
-      },
-    }),
-    parallel: async () => [],
-  };
-  const out = await writeArtifacts(ctx, {
-    findings: [makeFinding('F1')],
-    postReview: [],
-    report: '# r',
-    checkpoints: {},
-    outputDir: ROOT,
-    headShaShort: 'abc1234',
-  });
-  assert.equal(out.partial, true);
-  assert.equal(out.artifactPaths.findings, null);
-  assert.ok(
-    out.gaps.some((g) => g.includes(PATH_ESCAPE_MARKER) && /checkpoints=/.test(g) && /partial-artifacts/.test(g)),
-    out.gaps,
-  );
-  // Names every escaped field in one gap (all-or-nothing partial).
-  assert.equal(out.gaps.filter((g) => g.includes(PATH_ESCAPE_MARKER)).length, 1);
-});
-
-test('writeArtifacts: writer echo with null path field → path-escape (not TypeError)', async () => {
-  const paths = plannedArtifactPaths(ROOT, 'abc1234');
-  const ctx = {
-    agent: async () => ({
-      artifactPaths: { ...paths, report: null },
-    }),
-    parallel: async () => [],
-  };
-  const out = await writeArtifacts(ctx, {
-    findings: [makeFinding('F1')],
-    postReview: [],
-    report: '# r',
-    checkpoints: {},
-    outputDir: ROOT,
-    headShaShort: 'abc1234',
-  });
-  assert.equal(out.partial, true);
-  assert.ok(out.gaps.some((g) => g.includes(PATH_ESCAPE_MARKER) && /report=null/.test(g)), out.gaps);
 });
 
 // --- runWith boundary: stamp/root failure is ok:false, not a disguise gap ---

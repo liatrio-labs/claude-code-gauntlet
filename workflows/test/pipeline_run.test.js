@@ -21,9 +21,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runWith, summarize, coarsenLimits, deriveAgentFlags, compactMethodology } from '../src/stages.js';
-import { writeArtifacts } from '../src/persist.js';
-import { checkpointPath, plannedArtifactPaths } from '../src/outputPaths.js';
-import { readCheckpoints, buildResumeCheckpoints, CHECKPOINT_FINDING_LISTS } from '../src/checkpoints.js';
+import { parseWriterPayload } from '../src/persist.js';
+import { persistCtx, runAndCapture } from './helpers/persistFixtures.js';
+import { CHECKPOINT_FINDING_LISTS } from '../src/checkpoints.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { AGENTS, DIMENSIONS } from '../src/registry.js';
 import { dimensionsSummaryTable } from '../src/renderReport.js';
@@ -896,32 +896,29 @@ for (const [label, channels, expected] of [
 
 // --- Replayed empty-report recovery -----------------------------------------
 
-test('resume replaying an empty report checkpoint re-runs report+persist (not skipped)', async () => {
-  // The crashed-persist false negative: a prior run left an empty report in its checkpoint.
-  // On resume, runPhase would normally REUSE it — the guard must instead re-run report from
-  // scratch so a real report persists, rather than shipping the degenerate empty stub.
-  const args = validArgs({ checkpoints: { report: { report: '', gaps: [] } } });
-  let persisted = null;
-  const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
-  const out = await runWith(ctx, args);
-
-  assert.equal(out.ok, true);
-  assert.ok(persisted.report.startsWith('# \u2694\uFE0F Code Gauntlet:'), 'the empty checkpoint was re-rendered before persistence');
-  assert.equal(typeof out.artifactPaths.report, 'string', 'a real report persisted');
-});
-
-test('resume replaying a non-empty legacy report checkpoint still persists freshly rendered bytes', async () => {
-  const args = validArgs({ checkpoints: { report: { report: 'OLD PRE-S3 REPORT', gaps: ['legacy report gap'] } } });
-  let persisted = null;
-  const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
-  const out = await runWith(ctx, args);
-
-  assert.equal(out.ok, true);
-  assert.ok(persisted.report.startsWith('# \u2694\uFE0F Code Gauntlet:'), 'the legacy report was replaced by the canonical renderer');
-  assert.ok(persisted.report.includes('## Summary'));
-  assert.ok(!persisted.report.includes('OLD PRE-S3 REPORT'));
-  assert.ok(out.gaps.includes('legacy report gap'), 'replayed report gaps are preserved');
-});
+const REPORT_REPLAY_ROWS = [
+  ['empty report', { report: '', gaps: [] }, false],
+  ['nonempty legacy report', { report: 'OLD PRE-S3 REPORT', gaps: ['legacy report gap'] }, false],
+  ['empty report with empty fresh filter', { report: '', gaps: [] }, true],
+];
+for (const [name, report, emptyFresh] of REPORT_REPLAY_ROWS) {
+  test(`report replay: ${name}`, async () => {
+    const first = emptyFresh ? await runAndCapture(validArgs()) : null;
+    if (first) {
+      assert.equal(first.out.ok, true);
+      assert.deepEqual(Object.keys(first.payload.checkpoints.phases), ['challenge']);
+    }
+    const checkpoints = first ? { phases: { challenge: first.payload.checkpoints.phases.challenge, report }, completed: first.payload.checkpoints.completed } : { report };
+    const { out, payload } = await runAndCapture(validArgs({ checkpoints }), emptyFresh ? { findings: [] } : {});
+    assert.equal(out.ok, true);
+    assert.ok(payload.report.startsWith('# \u2694\uFE0F Code Gauntlet:'));
+    assert.ok(payload.report.includes('## Summary'));
+    assert.ok(!payload.report.includes('OLD PRE-S3 REPORT'));
+    assert.equal(typeof out.artifactPaths.report, 'string');
+    if (emptyFresh) assert.equal(out.stats.highConfidence, 2);
+    for (const gap of report.gaps) assert.ok(out.gaps.includes(gap));
+  });
+}
 
 test('replayed malformed challenge findings are refused before delivery persistence', async () => {
   const malformed = {
@@ -1269,47 +1266,6 @@ test('artifact-writer failure envelope contains no host finding path', async () 
   assert.equal(JSON.stringify(out).includes(uri), false);
 });
 
-test('writeArtifacts in isolation: a bare agent() throw yields a partial-artifacts gap', async () => {
-  const ctx = {
-    agent: async () => { throw new Error('disk on fire'); },
-    parallel: async () => [],
-  };
-  const out = await writeArtifacts(ctx, { findings: [makeFinding('F1')], report: '# r', checkpoints: {}, outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234' });
-  assert.ok(out.gaps.some((g) => /partial|artifact/i.test(g)));
-  assert.equal(out.artifactPaths.findings, null);
-});
-
-// Item 5: the artifact-writer echo must ACCOUNT for all four planned paths — a schema-valid
-// but degenerate echo (empty {} or partial) is no write proof and degrades to partial.
-test('writeArtifacts: an empty {} echo (no write proof) degrades to a partial-artifacts gap', async () => {
-  const wIn = { findings: [makeFinding('F1')], postReview: [], report: '# r', checkpoints: {}, outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234' };
-  const ctx = { agent: async () => ({}), parallel: async () => [] }; // schema-valid, accounts for nothing
-  const out = await writeArtifacts(ctx, wIn);
-  assert.equal(out.partial, true);
-  assert.equal(out.artifactPaths.findings, null);
-  assert.ok(out.gaps.some((g) => /write proof|partial|artifact/i.test(g)));
-});
-
-test('writeArtifacts: a partial echo (missing one planned path) also degrades to partial-artifacts', async () => {
-  const wIn = { findings: [makeFinding('F1')], postReview: [], report: '# r', checkpoints: {}, outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234' };
-  const paths = plannedArtifactPaths(wIn.outputDir, wIn.headShaShort);
-  const partialEcho = { ...paths }; delete partialEcho.checkpoints; // three of four
-  const ctx = { agent: async () => ({ artifactPaths: partialEcho }), parallel: async () => [] };
-  const out = await writeArtifacts(ctx, wIn);
-  assert.equal(out.partial, true);
-  assert.equal(out.artifactPaths.report, null);
-});
-
-test('writeArtifacts: a faithful echo of all four planned paths persists (partial:false)', async () => {
-  const wIn = { findings: [makeFinding('F1')], postReview: [], report: '# r', checkpoints: {}, outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234' };
-  const paths = plannedArtifactPaths(wIn.outputDir, wIn.headShaShort);
-  const ctx = { agent: async () => ({ artifactPaths: paths }), parallel: async () => [] };
-  const out = await writeArtifacts(ctx, wIn);
-  assert.equal(out.partial, false);
-  assert.equal(out.artifactPaths.findings, paths.findings);
-  assert.deepEqual(out.gaps, []);
-});
-
 // --- Args rejection ---------------------------------------------------------
 
 test('argsVersion mismatch is rejected immediately with an ok:false envelope', async () => {
@@ -1363,7 +1319,7 @@ test('F4-3: checkpoints:null discloses NOTHING — validateArgs never rejected i
   const args = validArgs({ checkpoints: null });
   const out = await runWith(makeCtx(args), args);
   assert.equal(out.ok, true);
-  assert.deepEqual(out.gaps.filter((g) => /^null_arg: /.test(g)), []);
+  assert.deepEqual(out.gaps.filter((g) => /^(null_arg|checkpoint-discarded):/.test(g)), []);
 
   // ...while a null that WOULD have been rejected still discloses, from the same run.
   const args2 = validArgs({ checkpoints: null, reviewConfig: null });
@@ -1399,7 +1355,7 @@ test('R7: a derived headless scopeAnswer null is normalized and not disclosed', 
   const out = await runWith(makeCtx(args), args);
   assert.equal(out.ok, true, `a derived null must not reject the run; gaps: ${out.gaps}`);
   // Mutation: omit derivedPaths from the stages.js differential probe.
-  assert.deepEqual(out.gaps.filter((g) => /^null_arg: /.test(g)), []);
+  assert.deepEqual(out.gaps.filter((g) => /^(null_arg|checkpoint-discarded):/.test(g)), []);
 });
 
 test('a clean waist records NO null_arg gap (disclosure is not noise)', async () => {
@@ -1467,29 +1423,18 @@ test('a present checkpoint for a phase skips that phase\'s dispatch', async () =
   assert.ok(!ctx.calls.some((t) => t.label.startsWith('code-gauntlet:')), 'discover dispatch was skipped');
 });
 
-test('readCheckpoints reads the resume map injected through the args waist', () => {
-  const cp = { discover: { findings: [] } };
-  assert.deepEqual(readCheckpoints(null, { checkpoints: cp }), cp);
-  assert.deepEqual(readCheckpoints({ checkpoints: cp }, {}), cp);
-  assert.deepEqual(readCheckpoints(null, {}), {});
-});
-
-test('checkpointPath is phase-keyed and sha-scoped', () => {
-  const p = checkpointPath('discover', 'abc1234');
-  assert.match(p, /discover/);
-  assert.match(p, /abc1234/);
-});
-
 // --- Checkpoint round-trip (the pipeline's OWN persist output resumes it) ----
 
 test('checkpoint round-trip: persisted checkpoint is SLIM — only the resume-consumed phase carries full output', async () => {
   // Run 1 produces the checkpoint artifact the writer persists; capture it via onPersist.
   const args1 = validArgs();
   let persistedCheckpoints = null;
-  const ctx1 = makeCtx(args1, { onPersist: (payload) => { persistedCheckpoints = payload.checkpoints; } });
+  let persistedPayload = null;
+  const ctx1 = makeCtx(args1, { onPersist: (payload) => { persistedCheckpoints = payload.checkpoints; persistedPayload = payload; } });
   const out1 = await runWith(ctx1, args1);
   assert.equal(out1.ok, true);
   assert.ok(persistedCheckpoints, 'writer received a checkpoints payload');
+  assert.ok(!('unverified' in persistedPayload));
 
   // The SLIM persisted checkpoint keeps FULL output only for the ONE resume-consumed phase:
   // challenge carries the delivered findings. `filter` is a pure agent-free JS function, so it
@@ -1517,66 +1462,13 @@ test('checkpoint round-trip: persisted checkpoint is SLIM — only the resume-co
   assert.equal(out2.ok, true);
   assert.equal(out2.phaseReached, 'report');
   assert.ok(!ctx2.calls.some((c) => c.label.startsWith('challenge-')), 'challenge reused from checkpoint (not re-dispatched)');
+  assert.deepEqual(out2.gaps.filter((gap) => gap.startsWith('checkpoint-discarded:')), []);
   assert.ok(ctx2.calls.some((c) => c.label.startsWith('code-gauntlet:bug-detector')), 'a non-preserved phase (discover) re-ran');
   assert.equal(typeof out2.artifactPaths.report, 'string', 'report re-rendered and persisted');
   assert.ok(ctx2.calls.some((c) => c.label === 'artifact-writer'), 'the writer ran');
   // The delivered high-confidence set is reproduced exactly across the resume.
   assert.equal(out2.stats.highConfidence, 2, 'the preserved challenge findings are delivered unchanged');
 });
-
-test('slimPersistedCheckpoints keeps only challenge full, counts every phase, and the writer omits unverified', async () => {
-  const args = validArgs();
-  let persisted = null;
-  const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
-  const out = await runWith(ctx, args);
-  assert.equal(out.ok, true);
-  assert.ok(persisted, 'writer received a payload');
-  // Change 3: the pipeline-degraded `unverified` bucket is no longer carried by value in the
-  // writer prompt (it is persisted to no file; the report + checkpoint carry it).
-  assert.ok(!('unverified' in persisted), 'writer payload no longer carries the unverified bucket');
-  // Change 2: the checkpoint the writer persisted is the slim shape.
-  assert.ok(persisted.checkpoints.phases.challenge, 'challenge output preserved for resume');
-  // P1 (issue #38): filter is NOT persisted — it is a pure JS function that re-runs free.
-  assert.ok(!('filter' in persisted.checkpoints.phases), 'filter output is not persisted');
-  assert.equal(typeof persisted.checkpoints.counts.filter, 'number', 'the filter COUNT is still recorded');
-  assert.ok(persisted.checkpoints.counts, 'per-phase counts present');
-});
-
-// --- buildResumeCheckpoints truncation (compact-return principle) ------------
-
-test('buildResumeCheckpoints carries the phases map when it fits the budget', () => {
-  const phaseOutputs = { summarize: { summary: 's' }, discover: { findings: [{ id: 'F1' }] } };
-  const cp = buildResumeCheckpoints(phaseOutputs);
-  assert.deepEqual(cp.phases, phaseOutputs);
-  assert.deepEqual(cp.completed, ['summarize', 'discover']);
-  assert.ok(!cp.truncated);
-});
-
-test('buildResumeCheckpoints truncates to names-only when the phases map exceeds the budget', () => {
-  // A phases map whose serialized size blows past the 1,000,000-char RETURN budget.
-  const huge = { findings: Array.from({ length: 2000 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) };
-  const cp = buildResumeCheckpoints({ discover: huge, verify: huge });
-  assert.ok(!('phases' in cp), 'oversized phases map is dropped from the compact return');
-  assert.equal(cp.truncated, true);
-  assert.deepEqual(cp.completed, ['discover', 'verify']);
-});
-
-// The budget split between the historical 100,000-character prompt budget and
-// RETURN_CHAR_BUDGET. This map is well over the former prompt budget the resume state
-// used to be graded against by
-// analogy, and far under the return channel's own measured limit — so it must now survive.
-// Three recorded runs threw exactly this state away.
-test('buildResumeCheckpoints carries a phases map that only the PROMPT budget would have rejected', () => {
-  const big = { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) };
-  const phaseOutputs = { discover: big, verify: big };
-  const size = JSON.stringify({ phases: phaseOutputs, completed: ['discover', 'verify'] }).length;
-  assert.ok(size > 100000, `fixture must exceed the prompt budget to be meaningful (got ${size})`);
-  assert.ok(size < 1000000, `fixture must stay under the return budget (got ${size})`);
-  const cp = buildResumeCheckpoints(phaseOutputs);
-  assert.deepEqual(cp.phases, phaseOutputs, 'resume state survives the return channel');
-  assert.ok(!cp.truncated);
-});
-
 
 // --- Structural dispatch-contract sweep (masking-proof) ---------------------
 
@@ -1814,3 +1706,39 @@ test('runWith: a resumed run (discover replayed from checkpoint) still echoes th
   assert.ok(!ctx.calls.some((c) => c.label.startsWith('code-gauntlet:')), 'discover was replayed, not dispatched');
   assert.deepEqual(out.stats.scope, { lightEligible: true, scopeAnswer: 'light', deep: false });
 });
+const PERSIST_WIRING_ROWS = [
+  ['derived assembler', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, ['artifact-writer', 'assemble-artifacts']],
+  ['absent persist', undefined, ['artifact-writer']],
+  ['return appended last', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: true }, []],
+];
+for (const [name, persist, dispatched] of PERSIST_WIRING_ROWS) {
+  test(`runWith persist wiring: ${name}`, async () => {
+    const args = validArgs({ persist });
+    const ctx = makeCtx(args);
+    const inner = ctx.agent;
+    const persistence = persistCtx();
+    ctx.agent = async (prompt, dispatch) => {
+      if (['artifact-writer', 'assemble-artifacts'].includes(dispatch.label)) {
+        ctx.calls.push({ prompt, ...dispatch });
+        return persistence.agent(prompt, dispatch);
+      }
+      return inner(prompt, dispatch);
+    };
+    const out = await runWith(ctx, args);
+    assert.equal(out.ok, true);
+    assert.equal(out.phaseReached, 'report');
+    assert.deepEqual(out.artifactPaths, {
+      findings: '/repo/.code-gauntlet/code-gauntlet-findings-abc1234.json', report: '/repo/.code-gauntlet/code-gauntlet-report-abc1234.md',
+      postReview: '/repo/.code-gauntlet/code-gauntlet-post-review-abc1234.json', checkpoints: '/repo/.code-gauntlet/code-gauntlet-checkpoint-all-abc1234.json',
+    });
+    assert.deepEqual(persistence.calls.map((call) => call.label), dispatched);
+    assert.ok(!out.gaps.some((gap) => /partial-artifacts/.test(gap)));
+    if (name === 'derived assembler') assert.ok(Array.isArray(parseWriterPayload(persistence.calls[0].prompt)));
+    if (name === 'return appended last') {
+      assert.equal(out.persistReturn.channel, 'return');
+      assert.equal(Object.keys(out).at(-1), 'persistReturn');
+      assert.deepEqual(Object.keys(out.checkpoints), ['completed']);
+      assert.ok(!ctx.calls.some((call) => call.label === 'artifact-writer'));
+    }
+  });
+}

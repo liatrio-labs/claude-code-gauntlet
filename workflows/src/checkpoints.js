@@ -91,7 +91,7 @@ export const CHECKPOINT_FINDING_LISTS = [
 export const checkpointFindingListsForPhase = (phase) => CHECKPOINT_FINDING_LISTS.filter(([name]) => name === phase);
 const findingListShape = (phase) => Object.fromEntries(checkpointFindingListsForPhase(phase)
   .map(([, field, mode]) => [field, mode]));
-export const CHECKPOINT_PHASE_SHAPE_TABLE = {
+const CHECKPOINT_PHASE_SHAPE_TABLE = {
   summarize: { gaps: CHECKPOINT_ARRAY_TOLERANT },
   discover: {
     ...findingListShape('discover'),

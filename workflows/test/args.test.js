@@ -2695,3 +2695,24 @@ for (const repoRoot of ['/work/../repo', String.raw`/a\b`]) {
     assert.ok(out.errors.includes('repoRoot must be an absolute path without .. segments or backslashes'));
   });
 }
+const PERSIST_VALIDATION_ROWS = [
+  ['absent', undefined, true, null],
+  ['script', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, true, null],
+  ['return true', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: true }, true, null],
+  ['return false', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: false }, true, null],
+  ['return string rejected', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: 'false' }, false, /returnPrimaries must be a boolean/],
+  ['null persist', null, false, /persist must be an object/], ['string persist', 'scripts/assemble_artifacts.py', false, /persist must be an object/],
+  ['array persist', [], false, /persist must be an object/], ['numeric persist', 3, false, /persist must be an object/],
+  ['empty script', { assembleScriptPath: '' }, false, /persist.assembleScriptPath/],
+  ['numeric script', { assembleScriptPath: 42 }, false, /persist.assembleScriptPath/],
+  ['object script', { assembleScriptPath: {} }, false, /persist.assembleScriptPath/],
+  ['null script', { assembleScriptPath: null }, false, /persist.assembleScriptPath/],
+];
+for (const [name, persist, ok, error] of PERSIST_VALIDATION_ROWS) {
+  test(`persist args: ${name}`, () => {
+    const out = validateArgs({ ...good, persist });
+    assert.equal(out.ok, ok);
+    if (error) assert.ok(out.errors.some((message) => error.test(message)));
+    else assert.deepEqual(out.errors, []);
+  });
+}
