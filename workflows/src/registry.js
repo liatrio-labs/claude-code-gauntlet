@@ -189,7 +189,7 @@ export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'descripti
 // and optional rule_source, and type_design's invalid_state_example stay contract-enforced;
 // claude_md_rule, spec_text, and invalid_state_example all carry an explicit OMIT branch in their contract
 // (conventions-and-intent additionally can't promote a single-dimension field at all — see the
-// agentSpecs comment in discover.js), so they stay contract-enforced. findingItemSchema
+// intersectRequiredExtra comment in discover.js), so they stay contract-enforced. findingItemSchema
 // (discover.js) appends a spec's effective requiredExtra onto FINDING_REQUIRED per dispatch.
 // `requiredWhenDimension` (issue #218) names fields the owning contract emits
 // UNCONDITIONALLY within THIS row's dimension while every sibling dimension on the same

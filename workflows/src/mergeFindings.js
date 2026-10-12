@@ -1,4 +1,4 @@
-// Merge structured findings into the Phase 4 envelope.
+// Finding path normalization, validation, deduplication, and merge envelopes.
 import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
 import { AGENTS, DIMENSIONS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 import { deepClone } from './wire.js';
@@ -13,13 +13,9 @@ function jsonTypeName(v) {
   return typeof v;
 }
 
-// --- Agent field injection --------------------------------------------------
-
 function injectAgentField(findings, agent) {
   for (const f of findings) f.agent = agent;
 }
-
-// --- Validation -------------------------------------------------------------
 
 function invalidFindingPathWarning(finding, field, reason, action) {
   const label = finding.id == null
@@ -116,16 +112,12 @@ export function validateFindings(findings) {
   return { valid, warnings };
 }
 
-// --- Output assembly --------------------------------------------------------
-
-// --- Main merge pipeline ----------------------------------------------------
-
 export function merge(findingsByAgent, meta) {
   const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
   const agents = M.agents;
   const allWarnings = [];
 
-  // Clone every supplied group before roster selection, preserving JSON ownership effects.
+  // Clone all groups before roster selection so even unselected inputs retain JSON ownership effects.
   const clonedGroups = Object.fromEntries(Object.entries(findingsByAgent || {}).map(([agent, group]) => {
     const findings = [];
     const warnings = [];
@@ -154,7 +146,7 @@ export function merge(findingsByAgent, meta) {
   }
   for (const [agent, findings] of Object.entries(selected)) injectAgentField(findings, agent);
 
-  // Validate the combined flat list (pre-dedup) so warnings cover all raw findings.
+  // Validate before deduplication so warnings cover every raw finding.
   const allFlat = Object.values(selected).flat();
   const { valid, warnings: preValWarnings } = validateFindings(allFlat);
 
@@ -188,8 +180,6 @@ export function merge(findingsByAgent, meta) {
   };
 }
 
-// --- Phase 3: Merge ---------------------------------------------------------
-
 export function mergeStage(discoverOut, meta) {
   const out = discoverOut || { findings: [] };
   const M = typeof meta === 'string' ? JSON.parse(meta) : (meta || {});
@@ -201,8 +191,7 @@ export function mergeStage(discoverOut, meta) {
     (byAgent[a] = byAgent[a] || []).push(f);
   }
 
-  // Merge uses the short agent names stamped on findings, while dispatched carries the
-  // full agent types. Keep the roster so zero-finding agents remain visible in methodology.
+  // Discovery uses short finding names and full dispatch types; merge needs a consistent roster to retain zero-finding agents in methodology.
   const shortAgentName = (a) => (typeof a === 'string' ? a.split(':').pop() : a);
   const agents = Array.isArray(out.dispatched)
     ? out.dispatched.map(shortAgentName)

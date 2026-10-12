@@ -350,16 +350,12 @@ export function normalizePhaseFindings(name, out, replayed, args) {
   out.gaps = [...(Array.isArray(out.gaps) ? out.gaps : []), ...warnings];
 }
 
-
-// No finding reader may sit between runPhase('challenge') and this belt.
-// Replay skips the fresh filter stage, so re-scan challenge findings on both paths.
-// Exclude the confidence heuristic because later confidence adjustments can change its result.
-// Scan each list in order so the dedup heuristic sees the same sequence on replay.
-// Strip eliminated entries after combining them so no eliminated-only payload survives.
-// Replace the challenge arrays in place so reporting, delivery, and persistence share them.
-// Keep this guard for malformed fresh stage output; replay checkpoints are shape-gated.
+// Replay bypasses filtering, so this belt must run immediately after challenge before any finding reader.
+// Confidence heuristics are excluded because later adjustments can change their result.
 export function applyChallengeReplayBelt(challengeOut) {
+  // Fresh outputs can be malformed even though replay checkpoints are shape-gated.
   if (!challengeOut || typeof challengeOut !== 'object') return;
+  // Preserve list order so replay deduplication sees the same sequence; mutate in place for reporting, delivery, and persistence.
   const findingsResult = beltPartitionList(challengeOut.findings);
   const unverifiedResult = beltPartitionList(challengeOut.unverified);
   challengeOut.findings = findingsResult.list;
@@ -367,11 +363,10 @@ export function applyChallengeReplayBelt(challengeOut) {
   const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
 
   const carriedEliminated = Array.isArray(challengeOut.eliminated) ? challengeOut.eliminated : [];
+  // Strip after combining lists so eliminated-only payloads cannot survive.
   challengeOut.eliminated = stripEliminatedList([...carriedEliminated, ...newlyEliminated]);
 
-  // Counts that mirror rewritten arrays come from their actual post-scan lengths.
-  // challenge_survived/contested/downgraded/unchallenged are pre-belt and need not sum to final_count.
-  // replay_belt_eliminated is this call's total, including zero.
+  // Challenge outcome counts precede this belt and need not sum to final_count; array counts must reflect the scan.
   if (challengeOut.stats && typeof challengeOut.stats === 'object') {
     const k1 = findingsResult.eliminated.length;
     const k2 = unverifiedResult.eliminated.length;
