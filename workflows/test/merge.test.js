@@ -1,240 +1,275 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { merge, mergeStage, validateFindings, normalizeFindingPaths } from '../src/mergeFindings.js';
-import { dedupById } from '../src/mergeFindings.js';
+import { merge, mergeStage, validateFindings, normalizeFindingPaths, dedupById } from '../src/mergeFindings.js';
 import { finding } from './helpers/findings.js';
+import { discover } from '../src/discover.js';
+import { stageCtx } from './helpers/stageFixtures.js';
 
 const META = { agents: ['bug-detector'], base_branch: 'main', head_sha: 'abc123full', pr_number: 42, owner: 'org', repo: 'myrepo' };
-function mergeStructured(byAgent, agents = ['bug-detector']) {
-  return merge(byAgent, { ...META, agents });
-}
-
-const VALIDATION_CASES = [
-  ...['bug', 'security', 'cross_file_impact', 'test_coverage', 'convention', 'intent', 'comment_accuracy', 'type_design', 'simplification'].map((dimension) => ({ name: `known ${dimension} dimension kept`, input: finding({ dimension }), kept: 1, warning: null })),
-  { name: 'missing dimension warns and stays', input: (() => { const f = finding(); delete f.dimension; return f; })(), kept: 1, warning: "Missing 'dimension'" },
-  { name: 'unknown dimension warns and stays', input: finding({ dimension: 'new_dimension' }), kept: 1, warning: "Unknown dimension 'new_dimension'" },
-  ...['file', 'line_start', 'description', 'confidence'].map((field) => ({ name: `missing ${field} rejects`, input: (() => { const f = finding(); delete f[field]; return f; })(), kept: 0, warning: `Missing required field '${field}'` })),
+const KNOWN_DIMENSIONS = ['bug', 'security', 'cross_file_impact', 'test_coverage', 'convention',
+  'intent', 'comment_accuracy', 'type_design', 'simplification'];
+for (const dimension of KNOWN_DIMENSIONS) test(`known dimension: ${dimension}`, () => {
+  const out = validateFindings([finding({ dimension })]);
+  assert.equal(out.valid.length, 1);
+  assert.deepEqual(out.warnings, []);
+});
+const VALIDATION_ROWS = [
+  { name: 'unknown dimension stays with its own label', fields: { dimension: 'new_dimension' }, kept: 1,
+    warning: "[f1] Unknown dimension 'new_dimension' \u2014 finding kept with warning" },
+  { name: 'missing dimension stays', fields: { dimension: undefined }, kept: 1,
+    warning: "[f1] Missing 'dimension' field \u2014 finding kept with warning" },
+  { name: 'missing file rejects', fields: { file: undefined }, kept: 0,
+    warning: "[f1] Missing required field 'file' \u2014 finding rejected" },
+  { name: 'missing line_start rejects', fields: { line_start: undefined }, kept: 0,
+    warning: "[f1] Missing required field 'line_start' \u2014 finding rejected" },
+  { name: 'missing description rejects', fields: { description: undefined }, kept: 0,
+    warning: "[f1] Missing required field 'description' \u2014 finding rejected" },
+  { name: 'missing confidence rejects', fields: { confidence: undefined }, kept: 0,
+    warning: "[f1] Missing required field 'confidence' \u2014 finding rejected" },
 ];
-for (const c of VALIDATION_CASES) test(`merge validation: ${c.name}`, () => {
-  const out = validateFindings([c.input]);
-  assert.equal(out.valid.length, c.kept);
-  assert.equal(out.warnings.length, c.warning === null ? 0 : 1);
-  if (c.warning) assert.ok(out.warnings[0].includes(c.warning));
+for (const row of VALIDATION_ROWS) test(`finding validation: ${row.name}`, () => {
+  const out = validateFindings([finding(row.fields)]);
+  assert.equal(out.valid.length, row.kept);
+  assert.deepEqual(out.warnings, [row.warning]);
+});
+const DEDUP_GOLDEN = { ids: ['B'], dropped: 0, duplicates: 1 };
+const DEDUP_ROWS = [
+  { name: 'idless dropped', input: [{ file: 'x.py', title: 'no id' }, finding({ id: 'B' })],
+    expected: { ids: ['B'], dropped: 1, duplicates: 0 } },
+  { name: 'duplicate retains first', input: [finding({ id: 'B' }), finding({ id: 'B', title: 'second' })] },
+];
+for (const row of DEDUP_ROWS) test(`id dedup: ${row.name}`, () => {
+  const out = dedupById(row.input);
+  assert.deepEqual({ ids: out.merged.map((f) => f.id), dropped: out.droppedNoId, duplicates: out.duplicatesResolved },
+    row.expected ?? DEDUP_GOLDEN);
 });
 
-const DEDUP_CASES = [
-  { name: 'idless structured finding dropped', rows: [{ file: 'x.py', title: 'no id' }, finding({ id: 'B' })], expected: ['B'], dropped: 1 },
-  { name: 'duplicate id resolves once', rows: [finding({ id: 'B' }), finding({ id: 'B', title: 'second' })], expected: ['B'], dropped: 0, duplicates: 1 },
+const MERGE_GOLDEN = { ids: ['f1'], count: 1, dropped: 0, duplicates: 0, warnings: [] };
+const MERGE_ROWS = [
+  { name: 'three structured findings keep order and count', input: { 'bug-detector': [
+    finding({ id: 'bug-0' }), finding({ id: 'bug-1' }), finding({ id: 'bug-2' }),
+  ] }, expected: { ...MERGE_GOLDEN, ids: ['bug-0', 'bug-1', 'bug-2'], count: 3 } },
+  { name: 'empty structured run has valid envelope', input: {}, expected: { ...MERGE_GOLDEN, ids: [], count: 0 } },
+  { name: 'structured finding stamps its dispatched agent', input: { 'bug-detector': [finding({ id: 'bug-1', agent: 'wrong-agent' })] },
+    expected: { ...MERGE_GOLDEN, ids: ['bug-1'] }, stamped: ['bug-detector'] },
+  { name: 'multiple structured agents combine', agents: ['bug-detector', 'security-reviewer'], input: {
+    'bug-detector': [finding({ id: 'b' })], 'security-reviewer': [finding({ id: 's', dimension: 'security' })],
+  }, expected: { ...MERGE_GOLDEN, ids: ['b', 's'], count: 2 }, stamped: ['bug-detector', 'security-reviewer'] },
+  { name: 'idless structured finding counted as dropped', input: { 'bug-detector': [finding({ id: undefined })] },
+    expected: { ...MERGE_GOLDEN, ids: [], count: 0, dropped: 1,
+      warnings: ["[<no id>] Missing required field 'id' \u2014 finding rejected"] } },
+  { name: 'extra fields survive structured merge', input: { 'bug-detector': [finding({ risk_level: 8, custom_receipt: { x: 2 } })] },
+    pass: { risk_level: 8, custom_receipt: { x: 2 } } },
+  { name: 'missing title rejects with the literal warning', input: { 'bug-detector': [finding({ title: undefined })] },
+    expected: { ...MERGE_GOLDEN, ids: [], count: 0,
+      warnings: ["[f1] Missing required field 'title' \u2014 finding rejected"] } },
+  { name: 'earlier invalid duplicate loses to later valid duplicate', input: { 'bug-detector': [
+    finding({ id: 'F1', title: undefined }), finding({ id: 'F1', title: 'valid winner' }),
+  ] }, expected: { ...MERGE_GOLDEN, ids: ['F1'], warnings: ["[F1] Missing required field 'title' \u2014 finding rejected"] },
+    pass: { title: 'valid winner' } },
+  { name: 'cross-agent duplicate follows roster order', agents: ['bug-detector', 'security-reviewer'], input: {
+    'security-reviewer': [finding({ id: 'F1', title: 'later group' })],
+    'bug-detector': [finding({ id: 'F1', title: 'roster winner' })],
+  }, expected: { ...MERGE_GOLDEN, ids: ['F1'], duplicates: 1 }, stamped: ['bug-detector'], pass: { title: 'roster winner' } },
+  { name: 'agent absent from roster is ignored', input: {
+    'outside-agent': [finding({ title: undefined })], 'bug-detector': [finding()],
+  } },
+  { name: 'empty roster ignores supplied findings', agents: [], input: { 'bug-detector': [finding({ id: undefined })] },
+    expected: { ...MERGE_GOLDEN, ids: [], count: 0 } },
+  { name: 'nested ownership', input: { 'bug-detector': [finding({ agent: 'original-agent', nested: { items: [{ value: 1 }] } })] },
+    ownership: true, pass: { nested: { items: [{ value: 1 }] } } },
+  { name: 'JSON cloning effects', input: { 'bug-detector': [{ ...finding(), omitted: undefined,
+    nested: { omitted: undefined, infinity: Infinity, nan: NaN, minusZero: -0 }, entries: [undefined, , -Infinity] }] },
+    jsonEffects: true, pass: { nested: { infinity: null, nan: null, minusZero: 0 }, entries: [null, null, null] } },
+  { name: 'JSON metadata and envelope order', input: { 'bug-detector': [finding()] }, jsonMeta: true },
 ];
-for (const c of DEDUP_CASES) test(`merge id dedup: ${c.name}`, () => {
-  const out = dedupById(c.rows);
-  assert.deepEqual(out.merged.map((f) => f.id), c.expected);
-  assert.equal(out.droppedNoId, c.dropped);
-  assert.equal(out.duplicatesResolved, c.duplicates ?? 0);
-});
-
-const MERGE_CASES = [
-  { name: 'three structured findings keep order and count', input: { 'bug-detector': [finding({ id: 'bug-0' }), finding({ id: 'bug-1' }), finding({ id: 'bug-2' })] }, agents: ['bug-detector'], ids: ['bug-0', 'bug-1', 'bug-2'], ndjson: 3, dropped: 0, warnings: 0 },
-  { name: 'empty structured run has valid envelope', input: {}, agents: ['bug-detector'], ids: [], ndjson: 0, dropped: 0, warnings: 0 },
-  { name: 'structured finding stamps its dispatched agent', input: { 'bug-detector': [finding({ id: 'bug-1', agent: 'wrong-agent' })] }, agents: ['bug-detector'], ids: ['bug-1'], ndjson: 1, dropped: 0, warnings: 0, stamped: ['bug-detector'] },
-  { name: 'multiple structured agents combine', input: { 'bug-detector': [finding({ id: 'b' })], 'security-reviewer': [finding({ id: 's', dimension: 'security' })] }, agents: ['bug-detector', 'security-reviewer'], ids: ['b', 's'], ndjson: 2, dropped: 0, warnings: 0, stamped: ['bug-detector', 'security-reviewer'] },
-  { name: 'unknown dimension warns but keeps finding', input: { 'bug-detector': [finding({ dimension: 'new_dimension' })] }, agents: ['bug-detector'], ids: ['f1'], ndjson: 1, dropped: 0, warnings: 1 },
-  { name: 'idless structured finding counted as dropped', input: { 'bug-detector': [finding({ id: undefined })] }, agents: ['bug-detector'], ids: [], ndjson: 0, dropped: 1, warnings: 1 },
-  { name: 'extra fields survive structured merge', input: { 'bug-detector': [finding({ risk_level: 8, custom_receipt: { x: 2 } })] }, agents: ['bug-detector'], ids: ['f1'], ndjson: 1, dropped: 0, warnings: 0, pass: { risk_level: 8, custom_receipt: { x: 2 } } },
-  { name: 'missing title rejects with the literal warning', input: { 'bug-detector': [finding({ title: undefined })] }, agents: ['bug-detector'], ids: [], ndjson: 0, dropped: 0, warnings: 1, warningText: ["[f1] Missing required field 'title' \u2014 finding rejected"] },
-  { name: 'earlier invalid duplicate loses to later valid duplicate', input: { 'bug-detector': [finding({ id: 'F1', title: undefined }), finding({ id: 'F1', title: 'valid winner' })] }, agents: ['bug-detector'], ids: ['F1'], ndjson: 1, dropped: 0, warnings: 1, warningText: ["[F1] Missing required field 'title' \u2014 finding rejected"], pass: { title: 'valid winner' } },
-  { name: 'cross-agent duplicate follows roster order', input: { 'security-reviewer': [finding({ id: 'F1', title: 'later group' })], 'bug-detector': [finding({ id: 'F1', title: 'roster winner' })] }, agents: ['bug-detector', 'security-reviewer'], ids: ['F1'], ndjson: 1, dropped: 0, warnings: 0, duplicates: 1, stamped: ['bug-detector'], pass: { title: 'roster winner' } },
-  { name: 'agent absent from roster is ignored', input: { 'outside-agent': [finding({ title: undefined })], 'bug-detector': [finding()] }, agents: ['bug-detector'], ids: ['f1'], ndjson: 1, dropped: 0, warnings: 0 },
-  { name: 'empty roster ignores supplied findings', input: { 'bug-detector': [finding({ id: undefined })] }, agents: [], ids: [], ndjson: 0, dropped: 0, warnings: 0 },
-  ...[
-    ['array', []], ['number', 42], ['function', () => {}], ['null', null],
-    ['undefined', undefined], ['toJSON returns undefined', { toJSON: () => undefined }],
-  ].map(([name, value]) => ({ name: `${name} entry is dropped without counting a missing id`, input: { 'bug-detector': [finding(), value] }, agents: ['bug-detector'], ids: ['f1'], ndjson: 1, dropped: 0, warnings: 1, warningText: [`[bug-detector] finding 2: expected object, got ${['function', 'toJSON returns undefined'].includes(name) ? 'undefined' : name}`] })),
-];
-for (const c of MERGE_CASES) test(`merge structured: ${c.name}`, () => {
-  const out = mergeStructured(c.input, c.agents);
-  assert.deepEqual(Object.keys(out).sort(), ['base_branch', 'findings', 'head_sha', 'methodology', 'owner', 'pr_number', 'repo']);
-  assert.deepEqual(out.findings.map((f) => f.id), c.ids);
-  assert.deepEqual([out.base_branch, out.head_sha, out.pr_number, out.owner, out.repo], ['main', 'abc123full', 42, 'org', 'myrepo']);
-  assert.deepEqual(out.methodology.agents_dispatched, c.agents);
-  assert.deepEqual(out.methodology.findings_per_channel, { ndjson: c.ndjson, text_fallback: 0 });
-  assert.equal(out.methodology.duplicates_resolved, c.duplicates ?? 0);
-  assert.equal(out.methodology.dropped_no_id, c.dropped);
-  assert.equal(out.methodology.validation_warnings.length, c.warnings);
-  assert.deepEqual(out.methodology.truncation_warnings, []);
-  if (c.warningText) assert.deepEqual(out.methodology.validation_warnings, c.warningText);
-  if (c.stamped) assert.deepEqual(out.findings.map((f) => f.agent), c.stamped);
-  if (c.pass) for (const [key, value] of Object.entries(c.pass)) assert.deepEqual(out.findings[0][key], value);
-});
-
-test('merge structured: findings and nested values are neither mutated nor aliased', () => {
-  const input = finding({ agent: 'original-agent', nested: { items: [{ value: 1 }] } });
+for (const row of MERGE_ROWS) test(`structured merge: ${row.name}`, () => {
+  const agents = row.agents ?? ['bug-detector'];
+  const input = structuredClone(row.input);
   const snapshot = structuredClone(input);
-  const out = mergeStructured({ 'bug-detector': [input] });
-  assert.deepEqual(input, snapshot);
-  assert.notEqual(out.findings[0], input);
-  assert.notEqual(out.findings[0].nested, input.nested);
-  assert.notEqual(out.findings[0].nested.items[0], input.nested.items[0]);
-  out.findings[0].nested.items[0].value = 2;
-  assert.deepEqual(input, snapshot);
-  input.nested.items.push({ value: 3 });
-  assert.deepEqual(out.findings[0].nested.items, [{ value: 2 }]);
-});
-
-test('merge structured: cloning retains JSON effects on properties and array entries', () => {
-  const input = finding();
-  input.omitted = undefined;
-  input.nested = { omitted: undefined, infinity: Infinity, nan: NaN, minusZero: -0 };
-  input.entries = [undefined, , -Infinity];
-  const out = mergeStructured({ 'bug-detector': [input] });
-  assert.equal(Object.hasOwn(out.findings[0], 'omitted'), false);
-  assert.deepEqual(out.findings[0].nested, { infinity: null, nan: null, minusZero: 0 });
-  assert.deepEqual(out.findings[0].entries, [null, null, null]);
-  assert.equal(Object.hasOwn(input, 'omitted'), true);
-  assert.equal(input.nested.infinity, Infinity);
-  assert.equal(input.entries[0], undefined);
-});
-
-test('merge structured: JSON metadata keeps envelope key order and all five fields', () => {
-  const out = merge({ 'bug-detector': [finding()] }, JSON.stringify(META));
+  const out = merge(input, row.jsonMeta ? JSON.stringify(META) : { ...META, agents });
+  const expected = row.expected ?? MERGE_GOLDEN;
   assert.deepEqual(Object.keys(out), ['findings', 'base_branch', 'head_sha', 'pr_number', 'owner', 'repo', 'methodology']);
-  assert.deepEqual(Object.keys(out.methodology), ['agents_dispatched', 'findings_per_channel', 'duplicates_resolved', 'dropped_no_id', 'truncation_warnings', 'validation_warnings']);
+  assert.deepEqual(Object.keys(out.methodology), ['agents_dispatched', 'findings_per_channel', 'duplicates_resolved',
+    'dropped_no_id', 'truncation_warnings', 'validation_warnings']);
   assert.deepEqual([out.base_branch, out.head_sha, out.pr_number, out.owner, out.repo], ['main', 'abc123full', 42, 'org', 'myrepo']);
+  assert.deepEqual(out.findings.map((f) => f.id), expected.ids);
+  assert.deepEqual(out.methodology, { agents_dispatched: agents,
+    findings_per_channel: { ndjson: expected.count, text_fallback: 0 }, duplicates_resolved: expected.duplicates,
+    dropped_no_id: expected.dropped, truncation_warnings: [], validation_warnings: expected.warnings });
+  if (row.stamped) assert.deepEqual(out.findings.map((f) => f.agent), row.stamped);
+  for (const [key, value] of Object.entries(row.pass ?? {})) assert.deepEqual(out.findings[0][key], value);
+  assert.deepEqual(input, snapshot);
+  if (row.ownership) {
+    assert.notEqual(out.findings[0], input['bug-detector'][0]);
+    assert.notEqual(out.findings[0].nested, input['bug-detector'][0].nested);
+    assert.notEqual(out.findings[0].nested.items[0], input['bug-detector'][0].nested.items[0]);
+    out.findings[0].nested.items[0].value = 2;
+    assert.deepEqual(input, snapshot);
+    input['bug-detector'][0].nested.items.push({ value: 3 });
+    assert.deepEqual(out.findings[0].nested.items, [{ value: 2 }]);
+  }
+  if (row.jsonEffects) {
+    assert.equal(Object.hasOwn(out.findings[0], 'omitted'), false);
+    assert.equal(Object.hasOwn(input['bug-detector'][0], 'omitted'), true);
+    assert.equal(input['bug-detector'][0].nested.infinity, Infinity);
+    assert.equal(input['bug-detector'][0].entries[0], undefined);
+  }
 });
-
-test('mergeStage: non-object discovery entry is dropped with the shape warning', () => {
-  const out = mergeStage({ findings: [42], dispatched: ['unknown'] }, META);
-  assert.deepEqual(out.findings, []);
+const SHAPE_ROWS = [
+  { name: 'array', value: [], warning: '[bug-detector] finding 2: expected object, got array' },
+  { name: 'number', value: 42, warning: '[bug-detector] finding 2: expected object, got number' },
+  { name: 'function', value: () => {}, warning: '[bug-detector] finding 2: expected object, got undefined' },
+  { name: 'null', value: null, warning: '[bug-detector] finding 2: expected object, got null' },
+  { name: 'undefined', value: undefined, warning: '[bug-detector] finding 2: expected object, got undefined' },
+  { name: 'toJSON returns undefined', value: { toJSON: () => undefined },
+    warning: '[bug-detector] finding 2: expected object, got undefined' },
+];
+for (const row of SHAPE_ROWS) test(`merge shape: ${row.name}`, () => {
+  const out = merge({ 'bug-detector': [finding(), row.value] }, META);
+  assert.deepEqual(out.findings.map((f) => f.id), ['f1']);
+  assert.deepEqual(out.methodology, { agents_dispatched: ['bug-detector'], findings_per_channel: { ndjson: 1, text_fallback: 0 },
+    duplicates_resolved: 0, dropped_no_id: 0, truncation_warnings: [], validation_warnings: [row.warning] });
+});
+const FULL_AGENTS = ['bug-detector', 'security-reviewer', 'cross-file-impact', 'test-analyzer',
+  'conventions-and-intent', 'type-design-analyzer', 'code-simplifier'];
+const STAGE_ROWS = [
+  { name: 'non-object discovery entry', input: { findings: [42], dispatched: ['unknown'] }, ids: [],
+    agents: ['unknown'], warnings: ['[unknown] finding 1: expected object, got number'] },
+  { name: 'legacy finding agents without dispatched', input: { findings: [
+    finding({ id: 'F1', agent: 'code-gauntlet:bug-detector', confidence: 'high' }),
+    finding({ id: 'F2', agent: 'code-gauntlet:security-reviewer', confidence: 'low', dimension: 'security' }),
+  ], gaps: [], degraded: [] }, ids: ['F1', 'F2'], agents: ['code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer'] },
+  { name: 'zero-finding agent remains in roster', input: { findings: [finding({ id: 'F1', agent: 'bug-detector' })],
+    gaps: [], degraded: [], dispatched: ['code-gauntlet:bug-detector', 'code-gauntlet:code-simplifier'] },
+    ids: ['F1'], agents: ['bug-detector', 'code-simplifier'] },
+  { name: 'array survives discovery and is rejected at merge', value: [], discovery: true, ids: [], agents: FULL_AGENTS,
+    warnings: ['[bug-detector] finding 1: expected object, got array'] },
+  { name: 'function survives discovery and is rejected at merge', value: () => {}, discovery: true, ids: [], agents: FULL_AGENTS,
+    warnings: ['[bug-detector] finding 1: expected object, got undefined'] },
+];
+for (const row of STAGE_ROWS) test(`merge stage: ${row.name}`, async () => {
+  let input = row.input;
+  if (row.discovery) {
+    input = await discover(stageCtx({ replies: { 'code-gauntlet:bug-detector': {
+      findings: [row.value], complete: true, total_seen: 1,
+    } } }), {});
+    assert.equal(input.findings.length, 1);
+  }
+  const out = mergeStage(input, META);
+  assert.deepEqual(out.findings.map((f) => f.id), row.ids);
+  assert.deepEqual(out.methodology.agents_dispatched, row.agents);
+  assert.deepEqual(out.methodology.validation_warnings, row.warnings ?? []);
   assert.equal(out.methodology.dropped_no_id, 0);
-  assert.deepEqual(out.methodology.validation_warnings, ['[unknown] finding 1: expected object, got number']);
+  assert.equal(out.base_branch, 'main');
+  assert.equal(out.head_sha, 'abc123full');
+  assert.ok(out.findings.every((f) => typeof f.agent === 'string'));
 });
 
-test('normalizeFindingPaths: absolute finding paths are rewritten under repoRoot and outside paths are rejected', () => {
-  const repoRoot = '/private/tmp/wt-410';
-  const out = normalizeFindingPaths([
-    finding({ id: 'UNDER_ROOT', file: `${repoRoot}/scripts/gauntlet/proc.py` }),
+const PATH_GOLDEN = { files: ['src/a.js'], refs: undefined, consumers: undefined, warnings: [], rewrites: 1 };
+const PATH_ROWS = [
+  { name: 'file confinement', root: '/private/tmp/wt-410', input: [
+    finding({ id: 'UNDER_ROOT', file: '/private/tmp/wt-410/scripts/gauntlet/proc.py' }),
     finding({ id: 'OUTSIDE_ROOT', file: '/private/tmp/wt-411/scripts/gauntlet/proc.py' }),
-  ], repoRoot);
-
-  assert.deepEqual(out.valid.map((item) => [item.id, item.file]), [
-    ['UNDER_ROOT', 'scripts/gauntlet/proc.py'],
-  ]);
-  assert.equal(out.path_rewrites, 1);
-  assert.ok(!out.warnings.some((warning) => warning.includes('rewritten')));
-  assert.ok(out.warnings.some((warning) =>
-    warning.includes('[OUTSIDE_ROOT]') && warning.includes('outside repoRoot') && warning.includes('rejected')));
-});
-
-test('normalizeFindingPaths: cross_file_refs normalize paths, preserve line suffixes and disclose rejected references', () => {
-  const out = normalizeFindingPaths([finding({
-    id: 'REFS', file: '/app/app/models/user.rb',
-    cross_file_refs: [
-      '/app/app/[id]/page.tsx:12', '/app/src/a:b.js:12-20',
-      '/app/src/index.js', './src/./index.js:4', 'app/models/user.rb:5',
-      '/outside/host-secret.js:9', '../host-secret.js:1-3', 42,
-    ],
-  })], '/app');
-  assert.equal(out.valid[0].file, 'app/models/user.rb');
-  assert.deepEqual(out.valid[0].cross_file_refs, [
-    'app/[id]/page.tsx:12', 'src/a:b.js:12-20',
-    'src/index.js', 'src/index.js:4', 'app/models/user.rb:5',
-  ]);
-  assert.equal(out.path_rewrites, 5);
-  assert.deepEqual(out.warnings, [
+  ], expected: { ...PATH_GOLDEN, files: ['scripts/gauntlet/proc.py'], warnings: [
+    '[OUTSIDE_ROOT] Invalid file path: absolute file path is outside repoRoot - finding rejected',
+  ] }, ids: ['UNDER_ROOT'] },
+  { name: 'reference paths and suffixes', root: '/app', input: [finding({ id: 'REFS', file: '/app/app/models/user.rb',
+    cross_file_refs: ['/app/app/[id]/page.tsx:12', '/app/src/a:b.js:12-20', '/app/src/index.js',
+      './src/./index.js:4', 'app/models/user.rb:5', '/outside/host-secret.js:9', '../host-secret.js:1-3', 42],
+  })], expected: { ...PATH_GOLDEN, files: ['app/models/user.rb'], refs: [
+    'app/[id]/page.tsx:12', 'src/a:b.js:12-20', 'src/index.js', 'src/index.js:4', 'app/models/user.rb:5',
+  ], rewrites: 5, warnings: [
     '[REFS] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped',
     '[REFS] Invalid cross_file_refs path: file path contains a .. segment - reference dropped',
     '[REFS] Invalid cross_file_refs path: file must be a non-empty string - reference dropped',
-  ]);
-  const snapshot = JSON.parse(JSON.stringify(out.valid));
-  const twice = normalizeFindingPaths(out.valid, '/app');
+  ] } },
+  { name: 'affected consumers confinement', root: '/repo', input: [finding({ id: 'CONSUMERS', file: 'src/a.js',
+    dimension: 'cross_file_impact', affected_consumers: ['/outside/consumer.js:10:5', '/repo/src/consumer.js:L3-L9', './/src/other.js'],
+  })], expected: { ...PATH_GOLDEN, consumers: ['src/consumer.js:L3-L9', 'src/other.js'], rewrites: 2, warnings: [
+    '[CONSUMERS] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
+  ] } },
+  { name: 'all consumers rejected leaves empty array', root: '/repo', input: [finding({ id: 'EMPTY_CONSUMERS', file: 'src/a.js',
+    dimension: 'cross_file_impact', affected_consumers: ['/outside/consumer.js', 42],
+  })], expected: { ...PATH_GOLDEN, consumers: [], rewrites: 0, warnings: [
+    '[EMPTY_CONSUMERS] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
+    '[EMPTY_CONSUMERS] Invalid affected_consumers path: file must be a non-empty string - reference dropped',
+  ] } },
+];
+for (const row of PATH_ROWS) test(`finding paths: ${row.name}`, () => {
+  const out = normalizeFindingPaths(structuredClone(row.input), row.root);
+  const expected = row.expected ?? PATH_GOLDEN;
+  assert.deepEqual(out.valid.map((f) => f.file), expected.files);
+  if (row.ids) assert.deepEqual(out.valid.map((f) => f.id), row.ids);
+  assert.deepEqual(out.valid[0]?.cross_file_refs, expected.refs);
+  assert.deepEqual(out.valid[0]?.affected_consumers, expected.consumers);
+  assert.deepEqual(out.warnings, expected.warnings);
+  assert.equal(out.path_rewrites, expected.rewrites);
+  const snapshot = structuredClone(out.valid);
+  const twice = normalizeFindingPaths(out.valid, row.root);
   assert.deepEqual(twice.valid, snapshot);
   assert.deepEqual(twice.warnings, []);
   assert.equal(twice.path_rewrites, 0);
-  const merged = mergeStructured({ 'bug-detector': twice.valid });
-  assert.deepEqual(merged.findings[0].cross_file_refs, snapshot[0].cross_file_refs);
+  const merged = merge({ 'bug-detector': twice.valid }, META);
+  assert.deepEqual(merged.findings[0].cross_file_refs, expected.refs);
+  assert.deepEqual(merged.findings[0].affected_consumers, expected.consumers);
   assert.deepEqual(merged.methodology.validation_warnings, []);
 });
-
-for (const field of ['cross_file_refs', 'affected_consumers']) {
-  for (const [label, value] of [['string', '/repo/src/a.js'], ['object', { path: '/repo/src/a.js' }], ['number', 42], ['null', null], ['undefined', undefined]]) {
-    test(`normalizeFindingPaths: ${field} ${label} value is removed with a warning`, () => {
-      const input = finding({ id: 'BAD_ARRAY' });
-      input[field] = value;
-      const out = normalizeFindingPaths([input], '/repo');
-      assert.equal(out.valid.length, 1);
-      assert.equal(Object.hasOwn(out.valid[0], field), false);
-      assert.deepEqual(out.warnings, [`[BAD_ARRAY] Invalid ${field} path: expected an array - field dropped`]);
-    });
-  }
-  test(`normalizeFindingPaths: ${field} preserves every location suffix`, () => {
-    const refs = ['README.md:10', 'README.md:10-20', 'README.md:10:5', 'README.md:L10', 'src/a.js:L3-L9', 'README.md:x'];
-    const out = normalizeFindingPaths([finding({ [field]: refs.map((ref) => `/repo/${ref}`) })], '/repo');
-    assert.deepEqual(out.valid[0][field], refs);
-    assert.deepEqual(out.warnings, []);
-  });
-}
-
-test('normalizeFindingPaths: affected_consumers drops outside paths and keeps normalized under-root paths', () => {
-  const out = normalizeFindingPaths([finding({
-    id: 'CONSUMERS', dimension: 'cross_file_impact',
-    affected_consumers: ['/outside/consumer.js:10:5', '/repo/src/consumer.js:L3-L9', './/src/other.js'],
-  })], '/repo');
-  assert.deepEqual(out.valid[0].affected_consumers, ['src/consumer.js:L3-L9', 'src/other.js']);
-  assert.deepEqual(out.warnings, ['[CONSUMERS] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped']);
-  const twice = normalizeFindingPaths(out.valid, '/repo');
-  assert.deepEqual(twice.valid[0].affected_consumers, ['src/consumer.js:L3-L9', 'src/other.js']);
-  assert.deepEqual(twice.warnings, []);
-  assert.equal(twice.path_rewrites, 0);
+const ARRAY_FIELDS = [
+  { field: 'cross_file_refs', warning: '[BAD_ARRAY] Invalid cross_file_refs path: expected an array - field dropped' },
+  { field: 'affected_consumers', warning: '[BAD_ARRAY] Invalid affected_consumers path: expected an array - field dropped' },
+];
+const BAD_ARRAYS = [{ name: 'string', value: '/repo/src/a.js' }, { name: 'object', value: { path: '/repo/src/a.js' } },
+  { name: 'number', value: 42 }, { name: 'null', value: null }, { name: 'undefined', value: undefined }];
+for (const axis of ARRAY_FIELDS) for (const row of BAD_ARRAYS) test(`path array type: ${axis.field} ${row.name}`, () => {
+  const input = finding({ id: 'BAD_ARRAY' });
+  input[axis.field] = row.value;
+  const out = normalizeFindingPaths([input], '/repo');
+  assert.equal(out.valid.length, 1);
+  assert.equal(Object.hasOwn(out.valid[0], axis.field), false);
+  assert.deepEqual(out.warnings, [axis.warning]);
 });
-
-test('normalizeFindingPaths: affected_consumers remains an empty array when every entry is rejected', () => {
-  const out = normalizeFindingPaths([finding({
-    id: 'EMPTY_CONSUMERS', dimension: 'cross_file_impact',
-    affected_consumers: ['/outside/consumer.js', 42],
-  })], '/repo');
-  assert.deepEqual(out.valid[0].affected_consumers, []);
-  assert.deepEqual(out.warnings, [
-    '[EMPTY_CONSUMERS] Invalid affected_consumers path: absolute file path is outside repoRoot - reference dropped',
-    '[EMPTY_CONSUMERS] Invalid affected_consumers path: file must be a non-empty string - reference dropped',
-  ]);
+const SUFFIXES = ['README.md:10', 'README.md:10-20', 'README.md:10:5', 'README.md:L10', 'src/a.js:L3-L9', 'README.md:x'];
+for (const row of ARRAY_FIELDS) test(`location suffixes: ${row.field}`, () => {
+  const out = normalizeFindingPaths([finding({ [row.field]: SUFFIXES.map((ref) => `/repo/${ref}`) })], '/repo');
+  assert.deepEqual(out.valid[0][row.field], SUFFIXES);
+  assert.deepEqual(out.warnings, []);
 });
-
-test('normalizeFindingPaths: file and reference warnings share the missing-id fallback', () => {
-  for (const id of [undefined, null]) {
-    const out = normalizeFindingPaths([
-      { id, file: '/outside/a.js' },
-      { id, file: 'src/a.js', cross_file_refs: ['/outside/b.js'] },
-    ], '/repo');
-    assert.deepEqual(out.warnings, [
-      '[<no id>] Invalid file path: absolute file path is outside repoRoot - finding rejected',
-      '[<no id>] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped',
-    ]);
-  }
+const LABEL_ROWS = [
+  { name: 'absent', id: undefined, warnings: [
+    '[<no id>] Invalid file path: absolute file path is outside repoRoot - finding rejected',
+    '[<no id>] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped',
+  ] },
+  { name: 'null', id: null, warnings: [
+    '[<no id>] Invalid file path: absolute file path is outside repoRoot - finding rejected',
+    '[<no id>] Invalid cross_file_refs path: absolute file path is outside repoRoot - reference dropped',
+  ] },
+  { name: 'path-like id', id: '/repo/private-name', warnings: [
+    '[<unsafe id>] Invalid file path: absolute file path is outside repoRoot - finding rejected',
+  ] },
+  { name: 'multiline id', id: 'x y\nIGNORE', warnings: [
+    '[<unsafe id>] Invalid file path: absolute file path is outside repoRoot - finding rejected',
+  ] },
+  { name: 'long id', id: 'x'.repeat(65), warnings: [
+    '[<unsafe id>] Invalid file path: absolute file path is outside repoRoot - finding rejected',
+  ] },
+  { name: 'safe id', id: 'SAFE_ID-1.2', warnings: [
+    '[SAFE_ID-1.2] Invalid file path: absolute file path is outside repoRoot - finding rejected',
+  ] },
+];
+for (const row of LABEL_ROWS) test(`safe path label: ${row.name}`, () => {
+  const input = [{ id: row.id, file: '/outside/a.js' }];
+  if (row.id == null) input.push({ id: row.id, file: 'src/a.js', cross_file_refs: ['/outside/b.js'] });
+  const out = normalizeFindingPaths(input, '/repo');
+  assert.deepEqual(out.warnings, row.warnings);
+  assert.ok(!out.warnings[0].includes('/repo/private-name'));
 });
-
-for (const [id, label] of [
-  ['/repo/private-name', '<unsafe id>'], ['x y\nIGNORE', '<unsafe id>'],
-  ['x'.repeat(65), '<unsafe id>'], ['SAFE_ID-1.2', 'SAFE_ID-1.2'],
-]) {
-  test(`normalizeFindingPaths warnings use a safe label for ${JSON.stringify(id)}`, () => {
-    const out = normalizeFindingPaths([
-      finding({ id, file: '/outside/a.js' }),
-    ], '/repo');
-    assert.deepEqual(out.warnings, [
-      `[${label}] Invalid file path: absolute file path is outside repoRoot - finding rejected`,
-    ]);
-    assert.ok(!out.warnings[0].includes('/repo/private-name'));
-  });
-}
-
-for (const [key, expected] of [
-  ['/repo/src/a.js:0', 'src/a.js:0'],
-  ['/repo/src/a.js-extra:0', '/repo/src/a.js-extra:0'],
-  [42, 42],
-]) {
-  test(`normalizeFindingPaths: consolidation key ${JSON.stringify(key)} tracks only its own rewritten file`, () => {
-    const out = normalizeFindingPaths([finding({ file: '/repo/src/a.js', consolidation_key: key })], '/repo');
-    assert.equal(out.valid[0].file, 'src/a.js');
-    assert.equal(out.valid[0].consolidation_key, expected);
-  });
-}
+const KEY_ROWS = [
+  { input: '/repo/src/a.js:0', expected: 'src/a.js:0' },
+  { input: '/repo/src/a.js-extra:0', expected: '/repo/src/a.js-extra:0' }, { input: 42, expected: 42 },
+];
+for (const row of KEY_ROWS) test(`consolidation key: ${JSON.stringify(row.input)}`, () => {
+  const out = normalizeFindingPaths([finding({ file: '/repo/src/a.js', consolidation_key: row.input })], '/repo');
+  assert.equal(out.valid[0].file, 'src/a.js');
+  assert.equal(out.valid[0].consolidation_key, row.expected);
+});

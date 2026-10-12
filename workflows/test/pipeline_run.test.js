@@ -21,7 +21,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runWith, compactMethodology } from '../src/run.js';
-import { summarize, deriveAgentFlags } from '../src/discover.js';
 import { coarsenLimits } from '../src/capacity.js';
 import { parseWriterPayload } from '../src/persist.js';
 import { persistCtx, runAndCapture } from './helpers/persistFixtures.js';
@@ -1554,16 +1553,6 @@ test('non-firstParty provider: resolvedPolicy reports conditionalSchema:false re
   assert.equal(out.resolvedPolicy.conditionalSchema, false);
 });
 
-test('sweep: bucketed summarize emits only contract-valid dispatches', async () => {
-  const args = validArgs();
-  // Bucketed summarize (parallel thunks + merge): >500 lines AND more files than the bucket.
-  const files = Array.from({ length: 50 }, (_, i) => `f${i}.js`);
-  const sctx = makeCtx(args);
-  await summarize(sctx, { changedFiles: files, changedLines: 600, limits: { summarizeBucketSize: 20 }, policy: {} });
-  assert.deepEqual(sctx.violations, [], `summarize violations: ${sctx.violations.join('; ')}`);
-  assert.ok(sctx.calls.some((c) => c.label.startsWith('summarize-bucket-')));
-  assert.ok(sctx.calls.some((c) => c.label === 'summarize-merge'));
-});
 
 // Issue #89: discover()'s own dispatched/degraded lists flow through reportInput
 // into the dimensionsSummaryTable appended by the pure renderer.
@@ -1620,32 +1609,6 @@ test('report methodology Gaps row carries the pre-report gap count end to end', 
   const row = persisted.report.match(/^\| Gaps \| (\d+) \|$/m);
   assert.ok(row, 'persisted report has a numeric Gaps row');
   assert.equal(Number(row[1]), out.gaps.length);
-});
-
-// --- Issue #24 req 1/3/4/5 (PR3): deterministic agentFlags derivation ------------------
-
-// deriveAgentFlags itself (discover.js): the ONE call site that turns riskTable/changedLines/
-// scopeAnswer into the scope-gating map agentActive consumes.
-test('deriveAgentFlags: light-eligible + scopeAnswer "light" -> { deep: false }', () => {
-  assert.deepEqual(
-    deriveAgentFlags([{ path: 'a.js', risk: 'low' }], 10, 'light'),
-    { deep: false },
-  );
-});
-test('deriveAgentFlags: light-eligible + scopeAnswer "full" -> {}', () => {
-  assert.deepEqual(deriveAgentFlags([{ path: 'a.js', risk: 'low' }], 10, 'full'), {});
-});
-test('deriveAgentFlags: any medium/high entry -> {} regardless of scopeAnswer', () => {
-  assert.deepEqual(
-    deriveAgentFlags([{ path: 'a.js', risk: 'low' }, { path: 'b.js', risk: 'medium' }], 10, 'light'),
-    {},
-  );
-});
-test('deriveAgentFlags: changedLines >= 50 -> {} even with an all-low table and "light" answer', () => {
-  assert.deepEqual(deriveAgentFlags([{ path: 'a.js', risk: 'low' }], 50, 'light'), {});
-});
-test('deriveAgentFlags: not eligible + no scopeAnswer -> {} (the common full-scope case)', () => {
-  assert.deepEqual(deriveAgentFlags([{ path: 'a.js', risk: 'medium' }], 10, undefined), {});
 });
 
 // runWith-level: the derived flags actually gate discover()'s dispatch, and the resolved

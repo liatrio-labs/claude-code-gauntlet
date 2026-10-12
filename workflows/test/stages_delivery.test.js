@@ -1,158 +1,11 @@
-// stages_delivery.test.js — the deterministic Phase 8 delivery selection
-// (selectDelivery) and its wiring into the persisted post-review payload.
-//
-// Contract under test (owner-authorized delivery-policy redesign):
-//  - selectDelivery(survivors, cap) ranks with rankFindings and truncates to `cap`.
-//    It NEVER filters by report_tag — a 'suggestion'-tagged survivor is included on the
-//    same footing as a 'main'-tagged one (the tag is presentation metadata, not an
-//    inclusion filter). This is the fix for the 12->8 post-challenge delivery loss.
-//  - runWith builds the post-review payload from EVERY challenge-survivor (both tags),
-//    rank-ordered, capped by limits.deliveryCap, and persists it via writerPayload so the
-//    live agent consumes it verbatim (never re-filters/re-ranks). Challenge-removed and
-//    challenge-skipped findings stay excluded exactly as before.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectDelivery } from '../src/reviewStages.js';
 import { runWith } from '../src/run.js';
 import { normalizeForChecksum, fnv1a32 } from '../src/wire.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 import { challengeOutput, runAndCapture } from './helpers/persistFixtures.js';
 
-function dFinding(id, over = {}) {
-  return {
-    id, file: `${id}.js`, line_start: 5, line_end: 5, title: `t-${id}`,
-    description: `d-${id}`, severity: 'high', confidence: 80, dimension: 'bug',
-    report_tag: 'main', report_destination: 'main', ...over,
-  };
-}
-
-// --- selectDelivery: ranking ------------------------------------------------
-
-test('selectDelivery ranks by severity then confidence (reuses rankFindings)', () => {
-  const survivors = [
-    dFinding('LOW', { severity: 'low', confidence: 99 }),
-    dFinding('CRIT', { severity: 'critical', confidence: 60 }),
-    dFinding('HIGH_A', { severity: 'high', confidence: 70 }),
-    dFinding('HIGH_B', { severity: 'high', confidence: 90 }),
-  ];
-  const out = selectDelivery(survivors, undefined);
-  // critical first, then the two highs by descending confidence, low last.
-  assert.deepEqual(out.map((f) => f.id), ['CRIT', 'HIGH_B', 'HIGH_A', 'LOW']);
-});
-
-test('S-RANK: an off-enum finding ranks inside Low through a coerced projection and returns the original', () => {
-  // Mutation: rank the raw pool instead of the coerced projection; the off-enum
-  // high-confidence finding must fall behind the real low finding.
-  const offEnum = dFinding('OFF_ENUM', { severity: 'bogus', confidence: 95 });
-  const low = dFinding('LOW', { severity: 'low', confidence: 80 });
-  const out = selectDelivery([offEnum, low], 1);
-  assert.equal(out.length, 1);
-  assert.strictEqual(out[0], offEnum, 'delivery maps the ranked projection back to the original object');
-  assert.equal(out[0].severity, 'bogus', 'delivery preserves the raw severity for persistence');
-});
-
-// --- selectDelivery: cap binding --------------------------------------------
-
-test('selectDelivery caps to the top-cap by rank when cap < count', () => {
-  const survivors = [
-    dFinding('C', { severity: 'critical', confidence: 90 }),
-    dFinding('H', { severity: 'high', confidence: 90 }),
-    dFinding('M', { severity: 'medium', confidence: 90 }),
-  ];
-  const out = selectDelivery(survivors, 2);
-  assert.deepEqual(out.map((f) => f.id), ['C', 'H']);
-});
-
-test('selectDelivery returns all survivors when cap >= count', () => {
-  const survivors = [dFinding('A'), dFinding('B')];
-  assert.equal(selectDelivery(survivors, 25).length, 2);
-});
-
-test('selectDelivery with cap 0 delivers nothing (Math.max(0,...) floor, no throw)', () => {
-  assert.deepEqual(selectDelivery([dFinding('A')], 0), []);
-});
-
-test('selectDelivery with an absent cap (null/undefined) delivers every survivor', () => {
-  const survivors = [dFinding('A'), dFinding('B'), dFinding('C')];
-  assert.equal(selectDelivery(survivors, undefined).length, 3);
-  assert.equal(selectDelivery(survivors, null).length, 3);
-});
-
-test('selectDelivery tolerates an empty/undefined survivor list', () => {
-  assert.deepEqual(selectDelivery([], 5), []);
-  assert.deepEqual(selectDelivery(undefined, 5), []);
-});
-
-// --- selectDelivery: tag inclusion (the fix) --------------------------------
-
-test('selectDelivery includes suggestion-tagged survivors — tag is never an inclusion filter', () => {
-  // A suggestion outranks a lower-severity main finding; the OLD main-only policy would
-  // have dropped it. selectDelivery keeps it purely on rank.
-  const survivors = [
-    dFinding('MAIN_CRIT', { severity: 'critical', report_tag: 'main', report_destination: 'main' }),
-    dFinding('SUGG_HIGH', { severity: 'high', report_tag: 'suggestion', report_destination: 'suggestion' }),
-    dFinding('MAIN_MED', { severity: 'medium', report_tag: 'main', report_destination: 'main' }),
-  ];
-  const out = selectDelivery(survivors, 2);
-  const ids = out.map((f) => f.id);
-  assert.ok(ids.includes('SUGG_HIGH'), 'suggestion-tagged survivor delivered when it outranks a main one');
-  assert.ok(!ids.includes('MAIN_MED'), 'the lower-ranked main finding is dropped by the cap, not the suggestion');
-  // The delivered suggestion still carries its tag as metadata (presentation, not exclusion).
-  assert.equal(out.find((f) => f.id === 'SUGG_HIGH').report_tag, 'suggestion');
-});
-
-test('selectDelivery does not mutate its input array or elements', () => {
-  const survivors = [dFinding('B', { severity: 'low' }), dFinding('A', { severity: 'critical' })];
-  const snapshot = JSON.stringify(survivors);
-  selectDelivery(survivors, 1);
-  assert.equal(JSON.stringify(survivors), snapshot, 'input untouched (pure)');
-});
-
-// --- selectDelivery: delivery tier ------------------------------------------
-
-function mixedSurvivors() {
-  return [
-    dFinding('MAIN_CRIT', { severity: 'critical', report_tag: 'main', report_destination: 'main' }),
-    dFinding('SUGG_HIGH', { severity: 'high', report_tag: 'suggestion', report_destination: 'suggestion' }),
-    dFinding('MAIN_MED', { severity: 'medium', report_tag: 'main', report_destination: 'main' }),
-    dFinding('SUGG_LOW', { severity: 'low', report_tag: 'suggestion', report_destination: 'suggestion' }),
-  ];
-}
-
-test("selectDelivery tier 'all' delivers every survivor regardless of tag", () => {
-  const out = selectDelivery(mixedSurvivors(), undefined, 'all');
-  assert.deepEqual(out.map((f) => f.id).sort(), ['MAIN_CRIT', 'MAIN_MED', 'SUGG_HIGH', 'SUGG_LOW']);
-});
-
-test("selectDelivery an unspecified tier (undefined/null) defaults to 'all' — no silent narrowing", () => {
-  assert.equal(selectDelivery(mixedSurvivors(), undefined, undefined).length, 4);
-  assert.equal(selectDelivery(mixedSurvivors(), undefined, null).length, 4);
-});
-
-test("selectDelivery tier 'main_only' keeps main-tagged survivors, drops suggestions", () => {
-  const out = selectDelivery(mixedSurvivors(), undefined, 'main_only');
-  assert.deepEqual(out.map((f) => f.id), ['MAIN_CRIT', 'MAIN_MED'], 'ranked main only, suggestions withheld');
-  assert.ok(!out.some((f) => f.report_tag === 'suggestion'));
-});
-
-test("selectDelivery tier 'main_only' still honors the cap and ranking", () => {
-  const out = selectDelivery(mixedSurvivors(), 1, 'main_only');
-  assert.deepEqual(out.map((f) => f.id), ['MAIN_CRIT']);
-});
-
-test("selectDelivery tier 'main_only' falls back to report_destination when report_tag is absent", () => {
-  const survivors = [
-    dFinding('D_MAIN', { report_tag: undefined, report_destination: 'main' }),
-    dFinding('D_SUGG', { report_tag: undefined, report_destination: 'suggestion' }),
-  ];
-  assert.deepEqual(selectDelivery(survivors, undefined, 'main_only').map((f) => f.id), ['D_MAIN']);
-});
-
-// --- runWith: persists the post-review payload from challenge survivors ------
-
-// A challenge checkpoint lets us pin the exact survivor set (both tags, distinct
-// severities) that the delivery selection must consume.
 function challengeCheckpoint() {
   return {
     findings: [
@@ -525,7 +378,8 @@ test('runWith without args.reviewMd reports reviewConfigSource "none" (no config
   assert.equal(out.stats.reviewMdEntryCount, 0);
 });
 
-test('runWith echoes exclusionsSource independently of reviewConfigSource: exclusionsText-only reports "exclusionsText" for the exclusions axis, "none" for the config axis', async () => {
+test(('runWith echoes exclusionsSource independently of reviewConfigSource: exclusionsText-only reports "ex'
+  + 'clusionsText" for the exclusions axis, "none" for the config axis'), async () => {
   const args = validArgs({ exclusionsText: '- foo.js\n', checkpoints: { challenge: challengeCheckpoint() } });
   const out = await runWith(makeCtx(args), args);
   assert.equal(out.ok, true);
@@ -572,7 +426,8 @@ for (const [name, persist] of REPLAY_PROJECTION_ROWS) {
         claude_md_rule: 'Contributors may skip review for hotfix branches under 10 lines.',
         suggested_fix_code: 'def process_data(x):\n    return x\n',
       })],
-      eliminated: [makeFinding('X1', { eliminated_by: 'challenge', claude_md_rule: 'Reviewers may skip review when the change is small enough.' })],
+      eliminated: [makeFinding('X1', { eliminated_by: 'challenge',
+        claude_md_rule: 'Reviewers may skip review when the change is small enough.' })],
       stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 1 },
     }) };
     const { out, ctx, payload } = await runAndCapture(validArgs({ checkpoints, persist }));

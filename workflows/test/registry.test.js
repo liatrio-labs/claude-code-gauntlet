@@ -1,8 +1,9 @@
 // registry.test.js — DIMENSIONS registry + resolvePolicy (S5) unit tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_PATH_ARRAY_FIELDS, FINDING_REQUIRED, STAGE_DEFAULTS, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, SHA_FULL_RE, WEB_ORIGIN_RE, resolvePolicy, conditionalSchemaActive } from '../src/registry.js';
-import { intersectRequiredExtra, agentSpecs } from '../src/discover.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_PATH_ARRAY_FIELDS, FINDING_REQUIRED, STAGE_DEFAULTS,
+  RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, SHA_FULL_RE, WEB_ORIGIN_RE, resolvePolicy,
+    conditionalSchemaActive } from '../src/registry.js';
 
 test('every structural path array field is declared as a string array in the registry schema', () => {
   const properties = Object.assign({}, FINDING_PROP_TYPES, ...DIMENSIONS.map((row) => row.schemaExtra));
@@ -101,7 +102,8 @@ test('subagentModelEnv override maps through the same full-ID pin', () => {
   // inheriting the session variant (intended behavior change, documented in headless-mode);
   // an explicit full/dated ID passes through untouched.
   assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'sonnet' }).model, 'claude-sonnet-5-5');
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5-20251001' }).model, 'claude-haiku-4-5-20251001');
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5-20251001' }).model,
+    'claude-haiku-4-5-20251001');
 });
 
 // Bedrock live failure (2026-08-11 transcript): third-party providers use deployment-
@@ -125,7 +127,8 @@ test('firstParty / absent / null provider keeps the full-ID pin (the [1m]-cascad
 test('subagentModelEnv passes through unmapped on a third-party provider', () => {
   // An operator's explicit deployment ID (the Bedrock escape hatch) must survive verbatim,
   // and a bare alias must NOT be rewritten to a first-party full ID there.
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'us.anthropic.claude-sonnet-4-6', provider: 'bedrock' }).model, 'us.anthropic.claude-sonnet-4-6');
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'us.anthropic.claude-sonnet-4-6',
+    provider: 'bedrock' }).model, 'us.anthropic.claude-sonnet-4-6');
   assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'sonnet', provider: 'bedrock' }).model, 'sonnet');
 });
 
@@ -184,7 +187,9 @@ test('every requiredExtra entry is a key of its own row\'s schemaExtra — never
     const declared = new Set(Object.keys(d.schemaExtra || {}));
     for (const field of d.requiredExtra) {
       assert.ok(declared.has(field), `${d.dimension}: requiredExtra names "${field}", which is not a key of this row's own schemaExtra`);
-      assert.ok(!(field in FINDING_PROP_TYPES), `${d.dimension}: requiredExtra names "${field}", a canonical field — promote it via FINDING_REQUIRED, not requiredExtra`);
+      assert.ok(!(field in FINDING_PROP_TYPES),
+        (`${d.dimension}: requiredExtra names "${field}", a canonical field — promote it via FINDING_REQUIRED,`
+        + ` not requiredExtra`));
     }
   }
 });
@@ -192,7 +197,8 @@ test('every requiredExtra entry is a key of its own row\'s schemaExtra — never
 test('requiredExtra entries are disjoint from FINDING_REQUIRED', () => {
   for (const d of DIMENSIONS) {
     for (const field of d.requiredExtra) {
-      assert.ok(!FINDING_REQUIRED.includes(field), `${d.dimension}: "${field}" is already in FINDING_REQUIRED — do not duplicate it in requiredExtra`);
+      assert.ok(!FINDING_REQUIRED.includes(field),
+        `${d.dimension}: "${field}" is already in FINDING_REQUIRED — do not duplicate it in requiredExtra`);
     }
   }
 });
@@ -217,56 +223,8 @@ test('rows sharing an agentType declare identical requiredExtra sets — a silen
   }
 });
 
-test('intersectRequiredExtra: a field required by only one of an agent\'s rows is not enforced', () => {
-  assert.deepEqual(intersectRequiredExtra([{ requiredExtra: ['x'] }, { requiredExtra: [] }]), []);
-});
 
-test('intersectRequiredExtra: a field required by every row of an agent stays enforced', () => {
-  assert.deepEqual(intersectRequiredExtra([{ requiredExtra: ['x'] }, { requiredExtra: ['x'] }]), ['x']);
-});
 
-test('intersectRequiredExtra: empty rows list yields empty result', () => {
-  assert.deepEqual(intersectRequiredExtra([]), []);
-});
-
-// agentSpecs(dims) end-to-end (F2): the call site that actually threads intersectRequiredExtra
-// into a dispatch spec is worth testing directly — a regression that replaces
-// `intersectRequiredExtra(spec.rows)` with e.g. first-row-verbatim leaves every OTHER test in
-// this suite green today, because every real agentType's rows already agree (the sibling-parity
-// test above enforces that on the live registry, making the intersection an identity there).
-test('agentSpecs(dims) default call matches AGENTS order exactly', () => {
-  assert.deepEqual(agentSpecs().map((s) => s.agentType), AGENTS);
-});
-
-test('agentSpecs(dims): a field required by only one of two synthetic rows sharing an agentType is NOT in the spec\'s requiredExtra', () => {
-  const dims = [
-    { agentType: 'synthetic:agent', dimension: 'dim_a', conditionalFlag: null, schemaExtra: {}, requiredExtra: ['x'], promptExtra: null },
-    { agentType: 'synthetic:agent', dimension: 'dim_b', conditionalFlag: null, schemaExtra: {}, requiredExtra: [], promptExtra: null },
-  ];
-  const specs = agentSpecs(dims);
-  assert.equal(specs.length, 1);
-  assert.deepEqual(specs[0].requiredExtra, []);
-});
-
-test('agentSpecs(dims): a field required by every row sharing an agentType IS in the spec\'s requiredExtra', () => {
-  const dims = [
-    { agentType: 'synthetic:agent', dimension: 'dim_a', conditionalFlag: null, schemaExtra: {}, requiredExtra: ['x'], promptExtra: null },
-    { agentType: 'synthetic:agent', dimension: 'dim_b', conditionalFlag: null, schemaExtra: {}, requiredExtra: ['x'], promptExtra: null },
-  ];
-  const specs = agentSpecs(dims);
-  assert.equal(specs.length, 1);
-  assert.deepEqual(specs[0].requiredExtra, ['x']);
-});
-
-test('agentSpecs(dims): order is derived from dims itself, not the module-level AGENTS constant', () => {
-  // A synthetic agentType AGENTS never heard of must still produce a real spec (not
-  // undefined) — the bug F2 guards against: mapping over the module-level AGENTS here would
-  // look this agentType up and return undefined.
-  const dims = [{ agentType: 'synthetic:only-here', dimension: 'dim_z', conditionalFlag: null, schemaExtra: {}, requiredExtra: [], promptExtra: null }];
-  const specs = agentSpecs(dims);
-  assert.deepEqual(specs.map((s) => s.agentType), ['synthetic:only-here']);
-  assert.ok(specs[0], 'spec must be a real object, not undefined');
-});
 
 // --- requiredWhenDimension (issue #218) -------------------------------------------
 
@@ -285,7 +243,8 @@ test('every DIMENSIONS row declares requiredWhenDimension as an array of field-n
 // dimension no agent contract ever instructs guarantees that dimension's dispatch degrades.
 const PIPELINE_STAMPED = new Set(['origin']);
 
-test('every requiredWhenDimension entry is EITHER a key of its own row\'s schemaExtra OR a canonical field not in FINDING_REQUIRED and not pipeline-stamped', () => {
+test(('every requiredWhenDimension entry is EITHER a key of its own row\'s schemaExtra OR a canonical field'
+  + ' not in FINDING_REQUIRED and not pipeline-stamped'), () => {
   // [v2] red-team finding 1: unlike requiredExtra, a requiredWhenDimension entry may be a
   // canonical FINDING_PROP_TYPES field (claude_md_rule) as long as it is not already
   // unconditional (FINDING_REQUIRED) — that promotion belongs in FINDING_REQUIRED directly.
@@ -344,42 +303,9 @@ test('rule-source labels have the registered vocabulary and neutral fallback', (
   assert.equal(RULE_SOURCE_LABEL_FALLBACK, 'Cited rule');
 });
 
-test('agentSpecs(): conventions-and-intent carries the sorted conditionalRequired derivation', () => {
-  const spec = agentSpecs().find((s) => s.agentType === 'code-gauntlet:conventions-and-intent');
-  assert.deepEqual(spec.conditionalRequired, [
-    { dimension: 'convention', required: ['claude_md_rule'] },
-    { dimension: 'intent', required: ['spec_text'] },
-  ]);
-});
 
-test('agentSpecs(): every single-dimension spec has an empty conditionalRequired', () => {
-  for (const spec of agentSpecs()) {
-    if (spec.agentType === 'code-gauntlet:conventions-and-intent') continue;
-    assert.deepEqual(spec.conditionalRequired, [], `${spec.agentType}: expected no conditionalRequired entries`);
-  }
-});
 
-test('agentSpecs(dims): a synthetic multi-dimension agent derives conditionalRequired sorted by dimension', () => {
-  const dims = [
-    { agentType: 'synthetic:agent', dimension: 'dim_b', conditionalFlag: null, schemaExtra: { y: 'string' }, requiredExtra: [], requiredWhenDimension: ['y'], promptExtra: null },
-    { agentType: 'synthetic:agent', dimension: 'dim_a', conditionalFlag: null, schemaExtra: { x: 'string' }, requiredExtra: [], requiredWhenDimension: ['x'], promptExtra: null },
-  ];
-  const specs = agentSpecs(dims);
-  assert.equal(specs.length, 1);
-  assert.deepEqual(specs[0].conditionalRequired, [
-    { dimension: 'dim_a', required: ['x'] },
-    { dimension: 'dim_b', required: ['y'] },
-  ]);
-});
 
-test('agentSpecs(dims): rows WITHOUT a requiredWhenDimension key do not throw and yield no conditionalRequired', () => {
-  // Mirrors the pre-existing synthetic-dims tests above (F2): a row shaped like the ones this
-  // file already builds for requiredExtra coverage must not need updating for the new key.
-  const dims = [{ agentType: 'synthetic:only-here', dimension: 'dim_z', conditionalFlag: null, schemaExtra: {}, requiredExtra: [], promptExtra: null }];
-  assert.doesNotThrow(() => agentSpecs(dims));
-  const specs = agentSpecs(dims);
-  assert.deepEqual(specs[0].conditionalRequired, []);
-});
 
 test('conditionalSchemaActive: firstParty/absent/null provider with no gateway is active', () => {
   assert.equal(conditionalSchemaActive({}), true);
