@@ -4613,11 +4613,12 @@ function checkpointPath(phase, sha) {
   return `code-gauntlet-checkpoint-${phase}-${sha}.json`;
 }
 // --- persistPlan.js ---
+const PERSIST_ALIASES = [['line', 'line_start'], ['end_line', 'line_end'], ['body', 'description']];
 function toV2Aliased(f) {
   const out = { ...f };
-  if (out.line === undefined && out.line_start !== undefined) out.line = out.line_start;
-  if (out.end_line === undefined && out.line_end !== undefined) out.end_line = out.line_end;
-  if (out.body === undefined && out.description !== undefined) out.body = out.description;
+  for (const [alias, canonical] of PERSIST_ALIASES) {
+    if (out[alias] === undefined && out[canonical] !== undefined) out[alias] = out[canonical];
+  }
   return out;
 }
 function postReviewWrapper(id, reviewBody) {
@@ -4642,7 +4643,7 @@ function writerPayload(inp) {
     checkpoints: inp.checkpoints || {},
   };
 }
-const PERSIST_ALIAS_FIELDS = ['line', 'end_line', 'body'];
+const PERSIST_ALIAS_FIELDS = PERSIST_ALIASES.map(([alias]) => alias);
 function stripPersistAliases(f) {
   const out = {};
   for (const [k, v] of Object.entries(f)) {
@@ -4673,7 +4674,7 @@ function persistPlan(inp, paths) {
     const normalized = normalizeForChecksum(text);
     return { path, chars: normalized.length, checksum: fnv1a32(normalized) };
   };
-  const held = writerPayload(inp || {});
+  const held = writerPayload(inp);
   const plan = {
     planVersion: 2,
     expect: [expectOf(paths.findings, findingsJson), expectOf(paths.report, reportMd)],
@@ -4755,20 +4756,19 @@ const WRITTEN_SCHEMA = {
   type: 'object',
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
-const ARTIFACT_PATH_KEYS = ['findings', 'report', 'postReview', 'checkpoints'];
 function writerEchoCoversPaths(echoed, paths) {
   if (!echoed || typeof echoed !== 'object') return false;
-  return ARTIFACT_PATH_KEYS.every((k) => echoed[k] === paths[k]);
+  return Object.keys(paths).every((k) => echoed[k] === paths[k]);
 }
-function verifiedRows(receipt) {
-  return Array.isArray(receipt.verified) ? receipt.verified : [];
+function receiptRows(receipt, key) {
+  return Array.isArray(receipt[key]) ? receipt[key] : [];
 }
 function persistErrorMessage(e) {
   return (e && e.message) || 'unknown';
 }
 function gradePrimaryRow(row, expect) {
   if (!row) return 'missing';
-  if (!expect || row.expected_chars !== expect.chars || row.expected_checksum !== expect.checksum) return 'foreign';
+  if (row.expected_chars !== expect.chars || row.expected_checksum !== expect.checksum) return 'foreign';
   const same = row.chars === expect.chars && row.checksum === expect.checksum;
   if ((row.content_proof === 'match') !== same) return 'incoherent';
   return same ? 'match' : 'differs';
@@ -4835,7 +4835,7 @@ async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, e
     const echoed = result.artifactPaths;
     const escape = pathEscapeReason(
       outputDir,
-      ARTIFACT_PATH_KEYS.map((k) => ({
+      Object.keys(paths).map((k) => ({
         name: k,
         path: echoed ? echoed[k] : undefined,
         present: !!(echoed && Object.hasOwn(echoed, k)),
@@ -4944,8 +4944,8 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
   }
   if (receipt && typeof receipt === 'object') {
     const receiptFields = [];
-    const verified = verifiedRows(receipt);
-    const receiptWritten = Array.isArray(receipt.written) ? receipt.written : [];
+    const verified = receiptRows(receipt, 'verified');
+    const receiptWritten = receiptRows(receipt, 'written');
     verified.forEach((e, i) => receiptFields.push({ name: `verified[${i}]`, path: e && e.path, present: true }));
     receiptWritten.forEach((e, i) => receiptFields.push({ name: `receipt.written[${i}]`, path: e && e.path, present: true }));
     const receiptEscape = pathEscapeReason(outputDir, receiptFields);
@@ -4967,8 +4967,8 @@ function trustAssembleReceipt(receipt, paths, plan) {
       reason: `assemble receipt echoed plan checksum ${receipt.planChecksum === undefined ? 'none' : receipt.planChecksum} but the pipeline computed ${plan.planChecksum} — the executor did not run this persist plan`,
     };
   }
-  const verified = verifiedRows(receipt);
-  const written = Array.isArray(receipt.written) ? receipt.written : [];
+  const verified = receiptRows(receipt, 'verified');
+  const written = receiptRows(receipt, 'written');
   const verifiedByPath = new Map(verified.map((e) => [(e && e.path), e]));
   const expectByPath = new Map(plan.expect.map((e) => [e.path, e]));
   for (const p of [paths.findings, paths.report]) {
@@ -5017,9 +5017,9 @@ function trustAssembleReceipt(receipt, paths, plan) {
 }
 function provenPrimaryPaths(receipt, paths, plan) {
   if (!receipt || typeof receipt !== 'object') return [];
-  if (!plan || receipt.planChecksum !== plan.planChecksum) return [];
-  const byPath = new Map(verifiedRows(receipt).map((e) => [(e && e.path), e]));
-  const expectByPath = new Map((plan.expect || []).map((e) => [e.path, e]));
+  if (receipt.planChecksum !== plan.planChecksum) return [];
+  const byPath = new Map(receiptRows(receipt, 'verified').map((e) => [(e && e.path), e]));
+  const expectByPath = new Map(plan.expect.map((e) => [e.path, e]));
   const proven = [];
   for (const p of [paths.findings, paths.report]) {
     const got = byPath.get(p);
@@ -6199,7 +6199,6 @@ async function runWith(ctx, rawArgs) {
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
-      generatedAt: A.generatedAt,
       nonce: A.nonce,
       persist: A.persist,
       policy,

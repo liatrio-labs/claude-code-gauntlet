@@ -48,6 +48,7 @@ export function plannedArtifactPaths(outputDir, sha) {
 
 // Returns the confined plan path; throws for an invalid root or a path escape.
 // The plan is separate from the four public artifact paths.
+// Its name still matches the `code-gauntlet-*-<sha>.*` sweep in scripts/gauntlet/stale.py.
 export function persistPlanPath(outputDir, sha) {
   const root = requireAbsoluteOutputDir(outputDir);
   const path = `${root}/code-gauntlet-persist-plan-${sha}.json`;

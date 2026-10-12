@@ -1,11 +1,13 @@
 import { deepClone, firstUnsafeNumber, fnv1a32, normalizeForChecksum } from './wire.js';
 
 // Aliases let persisted findings serve consumers of both field vocabularies.
+const PERSIST_ALIASES = [['line', 'line_start'], ['end_line', 'line_end'], ['body', 'description']];
+
 function toV2Aliased(f) {
   const out = { ...f };
-  if (out.line === undefined && out.line_start !== undefined) out.line = out.line_start;
-  if (out.end_line === undefined && out.line_end !== undefined) out.end_line = out.line_end;
-  if (out.body === undefined && out.description !== undefined) out.body = out.description;
+  for (const [alias, canonical] of PERSIST_ALIASES) {
+    if (out[alias] === undefined && out[canonical] !== undefined) out[alias] = out[canonical];
+  }
   return out;
 }
 
@@ -37,7 +39,7 @@ export function writerPayload(inp) {
 }
 
 // Stripping appended aliases restores canonical values and key order for checkpoint derivation.
-const PERSIST_ALIAS_FIELDS = ['line', 'end_line', 'body'];
+const PERSIST_ALIAS_FIELDS = PERSIST_ALIASES.map(([alias]) => alias);
 
 function stripPersistAliases(f) {
   const out = {};
@@ -82,7 +84,8 @@ export function persistPlan(inp, paths) {
     return { path, chars: normalized.length, checksum: fnv1a32(normalized) };
   };
   // Derived-content expectations come from the held payload so path presence cannot stand in for content.
-  const held = writerPayload(inp || {});
+  // They stay unhardened: the assembler writes these documents with its own serializer, not through the writer.
+  const held = writerPayload(inp);
   const plan = {
     planVersion: 2,
     expect: [expectOf(paths.findings, findingsJson), expectOf(paths.report, reportMd)],

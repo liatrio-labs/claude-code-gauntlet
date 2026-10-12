@@ -11,17 +11,16 @@ const WRITTEN_SCHEMA = {
   type: 'object',
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
-const ARTIFACT_PATH_KEYS = ['findings', 'report', 'postReview', 'checkpoints'];
 
 // The schema accepts empty or partial echoes, so all planned paths need independent coverage.
 // A self-reported echo checks consistency and liveness; it cannot prove a disk write.
 function writerEchoCoversPaths(echoed, paths) {
   if (!echoed || typeof echoed !== 'object') return false;
-  return ARTIFACT_PATH_KEYS.every((k) => echoed[k] === paths[k]);
+  return Object.keys(paths).every((k) => echoed[k] === paths[k]);
 }
 
-function verifiedRows(receipt) {
-  return Array.isArray(receipt.verified) ? receipt.verified : [];
+function receiptRows(receipt, key) {
+  return Array.isArray(receipt[key]) ? receipt[key] : [];
 }
 
 function persistErrorMessage(e) {
@@ -30,16 +29,18 @@ function persistErrorMessage(e) {
 
 function gradePrimaryRow(row, expect) {
   if (!row) return 'missing';
-  if (!expect || row.expected_chars !== expect.chars || row.expected_checksum !== expect.checksum) return 'foreign';
+  if (row.expected_chars !== expect.chars || row.expected_checksum !== expect.checksum) return 'foreign';
   const same = row.chars === expect.chars && row.checksum === expect.checksum;
   if ((row.content_proof === 'match') !== same) return 'incoherent';
   return same ? 'match' : 'differs';
 }
 
-// Returns { artifactPaths, gaps, partial }, with persistence failures disclosed as partial artifacts.
+// Returns { artifactPaths, gaps, partial }, plus persistReturn on the return channel.
+// Persistence failures are disclosed as partial artifacts.
 // Requires an absolute confined outputDir; invalid roots or stamped paths throw.
 // Serialization stays inside the persistence guard because it can fail before any dispatch.
 export async function writeArtifacts(ctx, input) {
+  // bench/runner/check.py keys on `partial-artifacts` and `no write proof` in these gaps.
   const partial = (reason, extraGaps, salvaged) => ({
     artifactPaths: {
       findings: (salvaged && salvaged.findings) || null,
@@ -109,7 +110,7 @@ async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, e
     const echoed = result.artifactPaths;
     const escape = pathEscapeReason(
       outputDir,
-      ARTIFACT_PATH_KEYS.map((k) => ({
+      Object.keys(paths).map((k) => ({
         name: k,
         path: echoed ? echoed[k] : undefined,
         present: !!(echoed && Object.hasOwn(echoed, k)),
@@ -239,8 +240,8 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
   }
   if (receipt && typeof receipt === 'object') {
     const receiptFields = [];
-    const verified = verifiedRows(receipt);
-    const receiptWritten = Array.isArray(receipt.written) ? receipt.written : [];
+    const verified = receiptRows(receipt, 'verified');
+    const receiptWritten = receiptRows(receipt, 'written');
     verified.forEach((e, i) => receiptFields.push({ name: `verified[${i}]`, path: e && e.path, present: true }));
     receiptWritten.forEach((e, i) => receiptFields.push({ name: `receipt.written[${i}]`, path: e && e.path, present: true }));
     const receiptEscape = pathEscapeReason(outputDir, receiptFields);
@@ -265,8 +266,8 @@ function trustAssembleReceipt(receipt, paths, plan) {
       reason: `assemble receipt echoed plan checksum ${receipt.planChecksum === undefined ? 'none' : receipt.planChecksum} but the pipeline computed ${plan.planChecksum} — the executor did not run this persist plan`,
     };
   }
-  const verified = verifiedRows(receipt);
-  const written = Array.isArray(receipt.written) ? receipt.written : [];
+  const verified = receiptRows(receipt, 'verified');
+  const written = receiptRows(receipt, 'written');
   const verifiedByPath = new Map(verified.map((e) => [(e && e.path), e]));
   const expectByPath = new Map(plan.expect.map((e) => [e.path, e]));
   for (const p of [paths.findings, paths.report]) {
@@ -320,11 +321,11 @@ function trustAssembleReceipt(receipt, paths, plan) {
 
 // Returns primary paths independently proven against this plan, even when the receipt is refused.
 // Salvage preserves usable bytes without declaring the overall persist successful.
-export function provenPrimaryPaths(receipt, paths, plan) {
+function provenPrimaryPaths(receipt, paths, plan) {
   if (!receipt || typeof receipt !== 'object') return [];
-  if (!plan || receipt.planChecksum !== plan.planChecksum) return [];
-  const byPath = new Map(verifiedRows(receipt).map((e) => [(e && e.path), e]));
-  const expectByPath = new Map((plan.expect || []).map((e) => [e.path, e]));
+  if (receipt.planChecksum !== plan.planChecksum) return [];
+  const byPath = new Map(receiptRows(receipt, 'verified').map((e) => [(e && e.path), e]));
+  const expectByPath = new Map(plan.expect.map((e) => [e.path, e]));
   const proven = [];
   for (const p of [paths.findings, paths.report]) {
     const got = byPath.get(p);

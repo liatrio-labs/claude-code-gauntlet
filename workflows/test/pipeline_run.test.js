@@ -1707,11 +1707,25 @@ test('runWith: a resumed run (discover replayed from checkpoint) still echoes th
   assert.deepEqual(out.stats.scope, { lightEligible: true, scopeAnswer: 'light', deep: false });
 });
 const PERSIST_WIRING_ROWS = [
-  ['derived assembler', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, ['artifact-writer', 'assemble-artifacts']],
-  ['absent persist', undefined, ['artifact-writer']],
-  ['return appended last', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: true }, []],
+  {
+    name: 'derived assembler',
+    persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' },
+    dispatched: ['artifact-writer', 'assemble-artifacts'],
+    arrayPayload: true,
+  },
+  {
+    name: 'absent persist',
+    persist: undefined,
+    dispatched: ['artifact-writer'],
+  },
+  {
+    name: 'return appended last',
+    persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: true },
+    dispatched: [],
+    returnAppended: true,
+  },
 ];
-for (const [name, persist, dispatched] of PERSIST_WIRING_ROWS) {
+for (const { name, persist, dispatched, arrayPayload, returnAppended } of PERSIST_WIRING_ROWS) {
   test(`runWith persist wiring: ${name}`, async () => {
     const args = validArgs({ persist });
     const ctx = makeCtx(args);
@@ -1733,8 +1747,8 @@ for (const [name, persist, dispatched] of PERSIST_WIRING_ROWS) {
     });
     assert.deepEqual(persistence.calls.map((call) => call.label), dispatched);
     assert.ok(!out.gaps.some((gap) => /partial-artifacts/.test(gap)));
-    if (name === 'derived assembler') assert.ok(Array.isArray(parseWriterPayload(persistence.calls[0].prompt)));
-    if (name === 'return appended last') {
+    if (arrayPayload) assert.ok(Array.isArray(parseWriterPayload(persistence.calls[0].prompt)));
+    if (returnAppended) {
       assert.equal(out.persistReturn.channel, 'return');
       assert.equal(Object.keys(out).at(-1), 'persistReturn');
       assert.deepEqual(Object.keys(out.checkpoints), ['completed']);

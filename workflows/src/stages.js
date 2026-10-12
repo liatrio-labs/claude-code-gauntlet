@@ -1,8 +1,9 @@
 // stages.js — orchestration stage functions for the code-gauntlet v3 pipeline: the stages
 // (Summarize -> Discover -> Merge -> Verify -> Validate -> Filter -> Challenge -> Report;
-// Verify lives in verifyStage.js over verifyWire.js and capacity.js), persistence,
-// checkpoints and the runWith orchestrator, plus the agent-count coarsening formula that
-// keeps the whole run's worst-case fan-out under the platform guard.
+// Verify lives in verifyStage.js over verifyWire.js and capacity.js) and the runWith
+// orchestrator, plus the agent-count coarsening formula that keeps the whole run's
+// worst-case fan-out under the platform guard. Persistence lives in persist.js and
+// checkpoints in checkpoints.js.
 //
 // Every stage takes an injected `ctx` ({ agent, parallel }) so unit tests can drive
 // it with a mock (the runtime globals do not exist under node:test). Defaults fall
@@ -1571,15 +1572,10 @@ export async function runWith(ctx, rawArgs) {
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
       reviewBody,
       report: reportOut.report,
-      // Persist a SLIM checkpoint: only the resume-consumed phase (challenge) carries full
-      // output; every other phase is reduced to a count, so the single artifact-writer
-      // prompt no longer duplicates every phase's findings bulk by value. readCheckpoints
-      // unwraps .phases, so a resume skips exactly the preserved phase and re-runs the rest.
-      // The in-memory failure-path return below still carries the full phaseOutputs map.
+      // Only the resume-consumed challenge phase needs its full output persisted.
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
-      generatedAt: A.generatedAt,
       // The run's own id, echoed in persistReturn so the materializer can find this
       // run's task output file by content when no task id is in hand.
       nonce: A.nonce,
