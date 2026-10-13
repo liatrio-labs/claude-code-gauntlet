@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runWith, compactMethodology } from '../src/run.js';
-import { makeCtx, makeFinding, validArgs } from './helpers/pipelineMock.js';
+import { validArgs } from './helpers/argsFixtures.js';
+import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { PATHS, challengeOutput, runAndCapture } from './helpers/persistFixtures.js';
 import { captureRun, mixedSurvivors, withSandboxGlobals, drainMicrotasks } from './helpers/runFixtures.js';
 import { deriveFromPlan } from './helpers/deriveFromPlan.js';

@@ -1392,6 +1392,8 @@ def _copy_tracked_tree(destination: Path) -> None:
     relatives = {path for path in result.stdout.decode().split("\0") if path}
     for relative in sorted(relatives):
         source = REPO / relative
+        if not source.is_file():
+            continue
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
@@ -1492,7 +1494,7 @@ class TestContractFenceHook(unittest.TestCase):
         self.assertTrue(
             {
                 "workflows/src/registry.js",
-                "workflows/src/args.js",
+                "workflows/src/knobs.js",
                 "workflows/src/renderReport.js",
             }.issubset(declared_inputs),
             declared_inputs,

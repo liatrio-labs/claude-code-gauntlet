@@ -17,9 +17,7 @@ MIGRATING_PYTHON = {
     "shared_context.py",
 }
 MIGRATING_JS = {
-    "args.js",
     "pipeline_entry.js",
-    "registry.js",
 }
 
 

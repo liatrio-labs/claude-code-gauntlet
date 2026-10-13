@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   summarize, discover, agentActive, agentSpecs, intersectRequiredExtra, deriveAgentFlags, allActiveDimensionsDegraded,
 } from '../src/discover.js';
-import { DIMENSIONS, FINDING_REQUIRED } from '../src/registry.js';
+import { DIMENSIONS, FINDING_REQUIRED, FINDING_PROP_TYPES } from '../src/registry.js';
 import { finding } from './helpers/findings.js';
 import { stageCtx } from './helpers/stageFixtures.js';
 
@@ -166,6 +166,7 @@ const NULL_CONVENTIONS = 'code-gauntlet:conventions-and-intent: agent returned n
 const DISCOVER_GOLDEN = { findings: [], gaps: [], degraded: [], dispatched: ROSTER };
 const OUTCOME_ROWS = [
   { name: 'full empty' },
+  { name: 'host can mutate schema copies without changing registry fragments', mutateSchema: true },
   { name: 'light empty', input: { agentFlags: { deep: false } }, expected: { ...DISCOVER_GOLDEN, dispatched: CORE } },
   { name: 'null security preserves sibling and short agent name', nulls: ['code-gauntlet:security-reviewer'],
     replies: { 'code-gauntlet:bug-detector': { findings: [{ id: 'F1' }], complete: true, total_seen: 1 } },
@@ -207,11 +208,22 @@ const OUTCOME_ROWS = [
   ] } },
 ];
 for (const row of OUTCOME_ROWS) test(`discover outcome: ${row.name}`, async () => {
-  const ctx = stageCtx({ replies: structuredClone(row.replies ?? {}), nulls: row.nulls });
+  const registrySnapshot = structuredClone({ DIMENSIONS, FINDING_REQUIRED, FINDING_PROP_TYPES });
+  const ctx = stageCtx({ replies: structuredClone(row.replies ?? {}), nulls: row.nulls,
+    reply: row.mutateSchema ? (_, { schema }) => {
+      const item = schema.properties.findings.items;
+      item.required.push('host_added');
+      item.properties.cross_file_refs.items.type = 'number';
+      if (item.properties.affected_consumers) item.properties.affected_consumers.items.type = 'number';
+      if (item.properties.criticality) item.properties.criticality.minimum = 0;
+      for (const condition of item.allOf ?? []) condition.then.required.push('host_added');
+      return { findings: [], complete: true, total_seen: 0 };
+    } : undefined });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {}, ...row.input });
   assert.deepEqual(out, row.expected ?? DISCOVER_GOLDEN);
   assert.deepEqual(ctx.calls.map((call) => call.label), (row.expected ?? DISCOVER_GOLDEN).dispatched);
   assert.deepEqual(ctx.violations, []);
+  if (row.mutateSchema) assert.deepEqual({ DIMENSIONS, FINDING_REQUIRED, FINDING_PROP_TYPES }, registrySnapshot);
 });
 
 const SPAN_GAP = 'discover: 1 finding(s) had an implausible line_end (non-integer, before line_start, '

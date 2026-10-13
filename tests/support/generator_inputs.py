@@ -8,10 +8,10 @@ from gauntlet.fs import read_text
 
 _NODE_PROGRAM_ROOTS = (
     "workflows/src/registry.js",
-    "workflows/src/args.js",
+    "workflows/src/knobs.js",
     "workflows/src/renderReport.js",
     "workflows/src/applyValidations.js",
-    "workflows/src/filterFindings.js",
+    "workflows/src/injection.js",
     "workflows/src/outputPaths.js",
     "workflows/src/verifyWire.js",
 )

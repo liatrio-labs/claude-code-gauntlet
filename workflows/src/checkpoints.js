@@ -1,6 +1,7 @@
 import { normalizeFindingPaths } from './mergeFindings.js';
 import { RETURN_CHAR_BUDGET } from './wire.js';
-import { applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames } from './filterFindings.js';
+import { applyInjectedProseStrip, applyReplayInjectionScan } from './injection.js';
+import { normalizeFieldNames } from './filterFindings.js';
 
 // Arrays are unusable phase maps: indexing a phase name can otherwise replay an Array prototype method.
 function unwrapCheckpointMap(cp) {
@@ -165,7 +166,9 @@ function checkpointFindingShapeErrors(finding, path) {
     } else {
       finding.corroborations.forEach((corroboration, idx) => {
         if (!isPlainCheckpointObject(corroboration)) {
-          violations.push(`checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`);
+          violations.push(
+            `checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`,
+          );
         }
       });
     }
@@ -202,7 +205,9 @@ export function checkpointShapeErrors(resolvedCheckpoints) {
       arrVal.forEach((el, idx) => {
         if (!isPlainCheckpointObject(el)) {
           if (fields[field] === CHECKPOINT_ARRAY_STRICT) {
-            violations.push(`checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`);
+            violations.push(
+              `checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`,
+            );
           }
           return;
         }
@@ -300,7 +305,7 @@ export function beltPartitionList(list) {
 }
 
 export function stripEliminatedList(list) {
-  return list.map(applyInjectedProseStrip);
+  return list.map((finding) => applyInjectedProseStrip(finding));
 }
 
 // Replayed findings need the same path validation as fresh output.

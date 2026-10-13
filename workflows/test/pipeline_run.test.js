@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { runWith } from '../src/run.js';
 import { parseWriterPayload } from '../src/persist.js';
 import { PATHS, persistCtx, runAndCapture } from './helpers/persistFixtures.js';
-import { makeCtx, makeFinding, validArgs } from './helpers/pipelineMock.js';
+import { validArgs } from './helpers/argsFixtures.js';
+import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { captureRun, withSandboxGlobals } from './helpers/runFixtures.js';
 
 const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'];

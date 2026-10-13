@@ -21,7 +21,7 @@ SRC = REPO / "workflows" / "src"
 
 _EXPORT_FN = re.compile(r"^export\s+(?:async\s+)?function\s+(\w+)\s*\(", re.M)
 
-# key: "filterFindings.js:parseReviewMd" -> inventory ID + citation
+# key: "reviewConfig.js:parseReviewMd" -> inventory ID + citation
 EXPORT_ALLOWLIST = {
     "persist.js:parseWriterPayload": "R-044 intentional-and-documented (test-only)",
     "args.js:normalizeArgs": "R-045 intentional-and-documented (test-only)",
@@ -30,7 +30,7 @@ EXPORT_ALLOWLIST = {
 
 # A `/` opening a regex literal can only follow one of these, or a keyword, or
 # nothing. After anything else (an identifier, `)`, `]`, a digit) it is division.
-# Getting this wrong desynchronises the scan: `!/["\\]/.test(x)` in args.js would
+# Getting this wrong desynchronises the scan: `!/["\\]/.test(x)` in entry.js would
 # otherwise open a double-quoted string that swallows the rest of the file.
 _REGEX_PRECEDERS = set("(,=:[!&|?{};+-*%~^<>")
 _REGEX_KEYWORDS = {

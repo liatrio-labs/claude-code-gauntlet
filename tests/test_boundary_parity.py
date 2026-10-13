@@ -880,7 +880,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
     def _validate_resolver_waist(self, payload, *, light_eligible=False):
         script = (
             "import { normalizeArgsReport, validateArgs } from './workflows/src/args.js';"
-            "import { validArgs } from './workflows/test/helpers/pipelineMock.js';"
+            "import { validArgs } from './workflows/test/helpers/argsFixtures.js';"
             "const payload = "
             + json.dumps(payload)
             + ";"
@@ -1118,7 +1118,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
                 }
                 script = (
                     "import { normalizeArgsReport, validateArgs } from './workflows/src/args.js';"
-                    "import { validArgs } from './workflows/test/helpers/pipelineMock.js';"
+                    "import { validArgs } from './workflows/test/helpers/argsFixtures.js';"
                     "const spec = "
                     + json.dumps(spec)
                     + ";"
@@ -1340,7 +1340,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
         ]
         node_cases = json.dumps(cases, ensure_ascii=False)
         script = (
-            "import('./workflows/src/args.js').then(m => { const cases = "
+            "import('./workflows/src/knobs.js').then(m => { const cases = "
             + node_cases
             + "; process.stdout.write(JSON.stringify(cases.map(c => Object.hasOwn(c, 'mode')"
             + " ? m.matchesRule(c.rule, c.value, c.mode) : m.matchesRule(c.rule, c.value)))); })"
@@ -1399,7 +1399,7 @@ class TestPrIdentityProducerParity(unittest.TestCase):
                 identity = json.loads(produced.stdout)
                 node = (
                     "import { validateArgs } from './workflows/src/args.js';"
-                    "import { validArgs } from './workflows/test/helpers/pipelineMock.js';"
+                    "import { validArgs } from './workflows/test/helpers/argsFixtures.js';"
                     "const identity = "
                     + json.dumps(identity)
                     + "; const args = validArgs({delivery:{tier:'all',prIdentity:identity}});"

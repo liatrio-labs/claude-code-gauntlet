@@ -60,141 +60,6 @@ function setupContext(inp) {
       : []);
   return { contextLine, contextSizeGap };
 }
-// --- registry.js ---
-const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs reaching http/request/fetch clients without allowlist validation); frame and embedding policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); postMessage handlers that do not validate event.origin or check it with weak substring matching; and string-matching bypass patterns where a security decision uses containment checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains "trusted.com").';
-const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in user-facing strings, messages, and log output; case-sensitivity mistakes in string comparisons (comparing mixed-case values without normalizing case); and copy-paste plural/singular or off-by-one naming mismatches (a field, key, or variable named for one thing but holding another).';
-const DEEP = 'deep';
-const SHA_FULL_RE = /^[0-9a-f]{40}$/;
-const WEB_ORIGIN_RE = /^https?:\/\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\[[0-9A-Fa-f:.]{2,45}\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$/;
-const PERMALINK_TEMPLATES = {
-  github: {
-    blob: '{origin}/{owner}/{repo}/blob/{sha}/{path}',
-    line: '#L{start}',
-    range: '#L{start}-L{end}',
-    ref: '#{number}',
-    refUrl: '{origin}/{owner}/{repo}/pull/{number}',
-  },
-  gitlab: {
-    blob: '{origin}/{owner}/{repo}/-/blob/{sha}/{path}',
-    line: '#L{start}',
-    range: '#L{start}-{end}',
-    ref: '!{number}',
-    refUrl: '{origin}/{owner}/{repo}/-/merge_requests/{number}',
-  },
-};
-const validWebOrigin = (value) => {
-  if (typeof value !== 'string') return false;
-  const match = WEB_ORIGIN_RE.exec(value);
-  if (!match) return false;
-  return match[1].startsWith('[') || match[1].length <= 253;
-};
-const PR_IDENTITY_FIELDS = [
-  { name: 'owner', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string' },
-  { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string', extraChecks: [{ check: (value) => !value.includes('/'), message: 'must not contain "/"' }] },
-  { name: 'pr_number', required: true, check: (value) => Number.isSafeInteger(value) && value > 0, describe: 'a positive safe integer' },
-  { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value), describe: 'a 40-character lowercase hex commit id' },
-  { name: 'platform', required: true, check: (value) => Object.hasOwn(PERMALINK_TEMPLATES, value), describe: 'one of github, gitlab' },
-  { name: 'web_origin', required: true, check: validWebOrigin, describe: 'an http(s) origin: scheme, host and optional port only' },
-  { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0, describe: 'a non-empty string when present' },
-];
-const CODE_OWNED_HEADINGS = [
-  '## Summary',
-  '## Change Context',
-  '## Findings',
-  '## Unverified / pipeline-degraded findings',
-  '## Review Dimensions Summary',
-  '## Review Methodology',
-];
-const FINDING_PROP_TYPES = {
-  id: 'string', file: 'string', line_start: 'number', line_end: 'number',
-  title: 'string', description: 'string', severity: 'string', confidence: 'number',
-  dimension: 'string', origin: 'string', evidence: 'string',
-  suggestion: 'string', claude_md_rule: 'string',
-  suggested_fix_code: 'string',
-  cross_file_refs: { type: 'array', items: { type: 'string' } },
-};
-const FINDING_PATH_ARRAY_FIELDS = ['cross_file_refs', 'affected_consumers'];
-const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
-const DIMENSIONS = [
-  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
-  { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
-    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
-    schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
-    requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: { rule_source: 'string' }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
-    schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
-    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
-    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-];
-const PIPELINE_FINDING_FIELDS = new Set([
-  'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
-  'validation_justification', 'challenge_justification', 'elimination_reason',
-  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
-  'challenge_contested', 'severity_downgraded', 'original_severity',
-  'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
-  'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
-  'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',
-  'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note',
-  'consolidation_key', 'consolidation_primary', 'routed_by', 'promoted_from', 'promotion_reason',
-  ...['suggestion', 'claude_md_rule', 'spec_text', 'suggested_fix_code'].flatMap((field) =>
-    [`${field}_removed_by`, `${field}_removal_reason`]),
-]);
-const FINDING_TEXT_FIELD_NAMES = new Set([
-  ...Object.keys(FINDING_PROP_TYPES),
-  ...DIMENSIONS.flatMap((dimension) => Object.keys(dimension.schemaExtra || {})),
-  ...PIPELINE_FINDING_FIELDS,
-]);
-const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
-const AGENT_LABELS = {
-  'code-gauntlet:bug-detector': 'Correctness & Error Handling',
-  'code-gauntlet:security-reviewer': 'Security',
-  'code-gauntlet:cross-file-impact': 'Cross-file Impact',
-  'code-gauntlet:test-analyzer': 'Test Coverage',
-  'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
-  'code-gauntlet:type-design-analyzer': 'Type Design',
-  'code-gauntlet:code-simplifier': 'Code Simplification',
-};
-const BRAND_MARK = '\u2694\uFE0F';   // CROSSED SWORDS U+2694 + VS16 U+FE0F
-const BRAND_NAME = 'Code Gauntlet';
-const SEVERITY_EMOJI = {
-  critical: '\u{1F534}', high: '\u{1F7E0}', medium: '\u{1F7E1}', low: '\u{1F4A1}',
-};
-const SEVERITY_EMOJI_FALLBACK = SEVERITY_EMOJI.low;
-const RULE_SOURCE_LABELS = {
-  documented_rule: 'Cited rule',
-  code_comment: 'Cited comment',
-  repo_precedent: 'Repo precedent',
-  self_inconsistency: 'Inconsistency',
-};
-const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
-const STAGE_DEFAULTS = {
-  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
-  'artifact-writer': 'sonnet',
-};
-const MODEL_IDS = { sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' };
-const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
-const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
-const conditionalSchemaActive = (policy) => {
-  const p = policy || {};
-  return pinsModelIds(p.provider) && !p.gateway;
-};
-function resolvePolicy(agentType, opts = {}) {
-  if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
-    return { model: toModelId(opts.subagentModelEnv, opts.provider) };
-  }
-  const dim = DIMENSIONS.find((d) => d.agentType === agentType);
-  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider);
-  return { model };
-}
-function modelFor(agentType, policy) {
-  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
-}
 // --- wire.js ---
 function fnv1a32(s) {
   let h = 0x811c9dc5;
@@ -243,7 +108,8 @@ function shellWord(tok) {
   if (s === '' || SHELL_SAFE_RE.test(s)) return s;
   return `'${s.replaceAll("'", `'\\''`)}'`;
 }
-const WS_TRIM_RE = /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g;
+const WIRE_TRIM_CLASS = String.raw`\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff`;
+const WS_TRIM_RE = new RegExp(`^[${WIRE_TRIM_CLASS}]+|[${WIRE_TRIM_CLASS}]+$`, 'g');
 const INT_POLICY = Object.freeze({
   validation: Object.freeze({ trim: null, mode: 'pyInt' }),
   filter: Object.freeze({ trim: WS_TRIM_RE, mode: 'pyInt' }),
@@ -267,655 +133,17 @@ function coerceInt(value, policy) {
   return Number.isInteger(n) ? n : null;
 }
 const RETURN_CHAR_BUDGET = 1000000;
-// --- filterFindings.js ---
-const FIELD_RENAMES = { body: 'description', line: 'line_start', blame_tag: 'origin' };
-function normalizeFieldNames(findings) {
-  let normalizedCount = 0;
-  for (const finding of findings) {
-    let renamed = false;
-    for (const [legacy, canonical] of Object.entries(FIELD_RENAMES)) {
-      if (legacy in finding && !(canonical in finding)) {
-        finding[canonical] = finding[legacy];
-        delete finding[legacy];
-        renamed = true;
-      }
-    }
-    if (renamed) normalizedCount += 1;
+function dottedValue(object, path) {
+  let current = object;
+  for (const part of path.split('.')) {
+    if (!isPlainObject(current)) return undefined;
+    current = current[part];
   }
-  return normalizedCount;
+  return current;
 }
-const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
-const REVIEW_SETTING_KEYS = [
-  'confidence_threshold',
-  'security_min_confidence',
-  'severity_threshold',
-];
-const DEFAULT_CONFIDENCE_THRESHOLD = 70;
-const DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55;
-const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
-const DEFAULT_SEVERITY_THRESHOLD = 'low';
-const CONTESTATION_DROP_THRESHOLD = 25;
-function cfgGet(config, key, fallback) {
-  const v = config ? config[key] : undefined;
-  return v === undefined || v === null ? fallback : v;
-}
-function stripMatchingQuotes(item) {
-  if (item.length >= 2) {
-    const first = item[0];
-    const last = item[item.length - 1];
-    if ((first === '"' || first === "'") && first === last) {
-      return item.slice(1, -1);
-    }
-  }
-  return item;
-}
-function splitReviewLines(text) {
-  return text.split(/\r\n|\r|\n/);
-}
-const REVIEW_BLOCK_PATTERNS = [
-  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet(?:[^\n]*)?\n([^\x00]*?)```/i,
-  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
-  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review(?:[^\n]*)?\n([^\x00]*?)```/i,
-  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
-];
-const REVIEW_CONFIDENCE_RE =
-  /(?:^|\n)[ \t]*confidence_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
-const REVIEW_SECURITY_RE =
-  /(?:^|\n)[ \t]*security_min_confidence[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
-const REVIEW_SEVERITY_RE =
-  /(?:^|\n)[ \t]*severity_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(critical|high|medium|low)/i;
-const REVIEW_IGNORE_RE =
-  /(?:^|\n)[ \t]*ignore[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n((?:[ \t]*-[^\n]*\n?)+)/i;
-const REVIEW_IGNORE_ITEM_RE =
-  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*-[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*/;
-const REVIEW_EXCL_BLOCK_RE =
-  /```[^\n]*\n([^\x00]*?)```/;
-const REVIEW_EXCL_BULLET_RE =
-  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[-*][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+([^\n]+)$/;
-function parseReviewMd(text) {
-  const config = { ignore: [] };
-  if (text === undefined || text === null) return config;
-  let blockText = '';
-  for (const pattern of REVIEW_BLOCK_PATTERNS) {
-    const m = pattern.exec(text);
-    if (m) {
-      blockText = m[1];
-      break;
-    }
-  }
-  if (!blockText) blockText = text;
-  let m = REVIEW_CONFIDENCE_RE.exec(blockText);
-  if (m) {
-    const value = parseInt(m[1], 10);
-    if (value <= 100) config.confidence_threshold = value;
-  }
-  m = REVIEW_SECURITY_RE.exec(blockText);
-  if (m) {
-    const value = parseInt(m[1], 10);
-    if (value <= 100) config.security_min_confidence = value;
-  }
-  m = REVIEW_SEVERITY_RE.exec(blockText);
-  if (m) config.severity_threshold = m[1].toLowerCase();
-  const ignoreSection = REVIEW_IGNORE_RE.exec(blockText);
-  if (ignoreSection) {
-    for (const line of splitReviewLines(ignoreSection[1])) {
-      const item = line.replace(REVIEW_IGNORE_ITEM_RE, '').replace(WS_TRIM_RE, '');
-      if (item) config.ignore.push(stripMatchingQuotes(item));
-    }
-  }
-  return config;
-}
-function reviewScopeDir(path) {
-  const slash = path.lastIndexOf('/');
-  return slash < 0 ? '' : path.slice(0, slash);
-}
-function reviewScopeDepth(dir) {
-  return dir.split('/').length;
-}
-function mergeReviewLayer(layer, parsed) {
-  for (const key of REVIEW_SETTING_KEYS) {
-    if (parsed[key] !== undefined) layer[key] = parsed[key];
-  }
-  layer.ignore.push(...parsed.ignore);
-}
-function buildReviewConfig(entries) {
-  const root = { ignore: [] };
-  const scopes = [];
-  for (let index = 0; index < entries.length; index++) {
-    const entry = entries[index];
-    const dir = reviewScopeDir(entry.path);
-    const parsed = parseReviewMd(entry.text);
-    if (dir === '') {
-      mergeReviewLayer(root, parsed);
-      continue;
-    }
-    let scope = scopes.find((candidate) => candidate.dir === dir);
-    if (!scope) {
-      scope = { dir, ignore: [], _index: index };
-      scopes.push(scope);
-    }
-    mergeReviewLayer(scope, parsed);
-  }
-  scopes.sort((a, b) =>
-    (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (a._index - b._index));
-  for (const scope of scopes) delete scope._index;
-  if (scopes.length > 0) root.scopes = scopes;
-  return root;
-}
-function scopeMatchesFile(scope, file) {
-  return typeof file === 'string'
-    && scope && typeof scope.dir === 'string'
-    && scope.dir !== ''
-    && file.startsWith(`${scope.dir}/`);
-}
-function configForFile(config, file) {
-  const source = config || {};
-  const view = { ignore: [...(source.ignore === undefined ? [] : source.ignore)] };
-  for (const key of REVIEW_SETTING_KEYS) {
-    if (key in source) view[key] = source[key];
-  }
-  if (!Array.isArray(source.scopes) || typeof file !== 'string') return view;
-  const matching = source.scopes
-    .map((scope, index) => ({ scope, index }))
-    .filter(({ scope }) => scopeMatchesFile(scope, file))
-    .sort(({ scope: a, index: ai }, { scope: b, index: bi }) =>
-      (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (ai - bi));
-  for (const { scope } of matching) {
-    for (const key of REVIEW_SETTING_KEYS) {
-      if (key in scope) view[key] = scope[key];
-    }
-    view.ignore.push(...(scope.ignore === undefined ? [] : scope.ignore));
-  }
-  return view;
-}
-function applyThresholdFilter(findings, config) {
-  const kept = [];
-  const eliminated = [];
-  let contestedCount = 0;
-  for (const finding of findings) {
-    const fileConfig = configForFile(config, finding.file);
-    const confidence = asConfidence(pyGet(finding, 'confidence', 0));
-    let severity = (asText(pyGet(finding, 'severity', 'low')) || 'low').toLowerCase();
-    const dimensions = finding.dimension ? [String(finding.dimension).toLowerCase()] : [];
-    const isSecurity = dimensions.includes('security');
-    let effectiveThreshold;
-    if (isSecurity) {
-      const minConf = cfgGet(fileConfig, 'security_min_confidence', DEFAULT_SECURITY_MIN_CONFIDENCE);
-      effectiveThreshold = Math.min(cfgGet(fileConfig, 'confidence_threshold', DEFAULT_CONFIDENCE_THRESHOLD), minConf);
-    } else {
-      effectiveThreshold = cfgGet(fileConfig, 'confidence_threshold', DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD);
-    }
-    let isContested = false;
-    const originalConfidence = 'original_confidence' in finding ? finding.original_confidence : undefined;
-    if (originalConfidence !== undefined && originalConfidence !== null) {
-      const drop = originalConfidence - confidence;
-      if (drop > CONTESTATION_DROP_THRESHOLD) {
-        isContested = true;
-        contestedCount += 1;
-        finding.contested = true;
-        finding.contestation_drop = drop;
-        finding.contestation_reason =
-          `validator dropped confidence by ${drop} points (original: ${originalConfidence}, current: ${confidence})`;
-      }
-    }
-    if (!isContested && confidence < effectiveThreshold) {
-      eliminated.push({
-        ...finding,
-        eliminated_by: 'threshold',
-        elimination_reason: `confidence ${confidence} < threshold ${effectiveThreshold}`,
-      });
-      continue;
-    }
-    if (!isContested) {
-      const severityThreshold = cfgGet(fileConfig, 'severity_threshold', DEFAULT_SEVERITY_THRESHOLD);
-      const sevThresholdIdx = SEVERITY_ORDER.indexOf(severityThreshold);
-      if (!SEVERITY_ORDER.includes(severity)) severity = 'low';
-      const sevIdx = SEVERITY_ORDER.indexOf(severity);
-      if (sevIdx > sevThresholdIdx) {
-        eliminated.push({
-          ...finding,
-          eliminated_by: 'threshold',
-          elimination_reason: `severity '${severity}' is below threshold '${SEVERITY_ORDER[sevThresholdIdx]}'`,
-        });
-        continue;
-      }
-    }
-    kept.push(finding);
-  }
-  return { kept, eliminated, contestedCount };
-}
-const REACHABILITY_DEMOTION_REASON =
-  'validator found no code path that reaches this issue without a future change';
-function applyReachabilityDemotion(findings) {
-  let demotedCount = 0;
-  for (const finding of findings) {
-    if (finding.reachability !== 'future_change_only') continue;
-    if (finding.severity !== 'low') {
-      if ('severity' in finding) finding.original_severity = finding.severity;
-      finding.severity = 'low';
-    }
-    finding.demoted_by = 'reachability';
-    finding.demotion_reason = REACHABILITY_DEMOTION_REASON;
-    demotedCount += 1;
-  }
-  return { findings, demotedCount };
-}
-const INJECTION_TITLE_PATTERNS = [
-  /\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
-  /\bSample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
-  /\bdemo[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
-  /\bPlaceholder[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
-];
-const INJECTION_BODY_PATTERNS = [
-  /<finding(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
-  /<example(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
-  /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\]/i,
-  /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT\b[^\]]*\b(?:FINDING|TITLE|TEXT|PLACEHOLDER|HERE)\b[^\]]*\]/i,
-  /lorem[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+ipsum/i,
-];
-const INJECTION_SHELL_PATTERNS = [
-  /\brm[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-[rf]/i,
-  /\bcurl[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
-  /\bwget[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
-  /\bgit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+push\b/i,
-  /\bgh[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+api\b/i,
-];
-const INJECTION_URL_PATTERNS = [
-  /\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
-  /\bdownload[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
-];
-const INJECTION_ENCODED_PATTERNS = [
-  /\b(?:decode|base64|atob|b64decode)\b[^\x00]{0,40}[A-Za-z0-9+\/]{40,}={0,2}\b/i,
-  /\b[A-Za-z0-9+\/]{40,}={0,2}\b[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:sh|bash|zsh)\b|base64[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-d\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b)/i,
-  /\b(?:decode|unhex|xxd|fromhex|unhexlify)\b[^\x00]{0,40}(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)/i,
-  /(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:xxd|sh|bash)\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b|-r[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-p\b)/i,
-];
-const INJECTION_BYPASS_PATTERNS = [
-  /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+review\b/i,
-  /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|these|the|it|my|your)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:pr|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|mr|merge[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|changes?|commit)\b/i,
-  /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:merge|skip|bypass|push|deploy|proceed|continue)\b/i,
-  /\bbypass[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?controls?\b/i,
-  /\bbypass[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:auth|authentication|authorization)\b/i,
-  /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:auth|authentication|authorization)\b/i,
-  /\bmark[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:finding[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?as[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+safe\b/i,
-  /\bapprove[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:PR|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|change)\b/i,
-];
-const INJECTION_INSTRUCTIONAL_PATTERNS = [
-  /\byou[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+should[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b/i,
-  /\bexecute[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b/i,
-  /\brun[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+command\b/i,
-  /\bplease[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b/i,
-  /\bpaste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+into[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:your[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?terminal/i,
-  /\bcopy[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+paste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b/i,
-];
-const INJECTION_VULN_INTRO_PATTERNS = [
-  /\badd[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(/i,
-  /\buse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(/i,
-  /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:CORS|CSP|content[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]security[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]policy)\b/i,
-  /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:CSRF|csrf)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:protection|check|token)\b/i,
-  /\ballow[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+all[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+origins\b/i,
-  /\bset[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+secure[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+false\b/i,
-  /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:TLS|SSL|HTTPS)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b/i,
-  /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:certificate|cert)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b/i,
-  /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:check|feature|control)\b/i,
-];
-const MIN_BODY_WORDS = 10;
-const HIGH_CONFIDENCE_THRESHOLD = 85;
-const WORD_SPLIT_RE = /[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/;
-function countWords(text) {
-  return (text || '').split(WORD_SPLIT_RE).filter(Boolean).length;
-}
-const CONFUSABLE_FOLD_PACKED =
-  '\u00aaa\u00bao\u00d7x\u00fep\u0130i\u0131i\u017fs\u0184b\u018dg\u0192f\u0196l\u01a6R' +
-  '\u01bds\u01bfp\u01c0l\u0251a\u0261g\u0263y\u0269i\u026ai\u026fw\u028bu\u028fy\u02b0h' +
-  '\u02b2j\u02b3r\u02b7w\u02b8y\u02dbi\u02e1l\u02e2s\u02e3x\u037ai\u037fJ\u0391A\u0392B' +
-  '\u0395E\u0396Z\u0397H\u0399l\u039aK\u039cM\u039dN\u039fO\u03a1P\u03a4T\u03a5Y\u03a7X' +
-  '\u03b1a\u03b3y\u03b9i\u03bdv\u03bfo\u03c1p\u03c3o\u03c5u\u03d2Y\u03dcF\u03edo\u03f1p' +
-  '\u03f2c\u03f3j\u03f8p\u03f9C\u03faM\u0405S\u0406l\u0408J\u0410A\u0412B\u0415E\u041aK' +
-  '\u041cM\u041dH\u041eO\u0420P\u0421C\u0422T\u0423Y\u0425X\u042cb\u0430a\u0433r\u0435e' +
-  '\u043eo\u0440p\u0441c\u0443y\u0445x\u0448w\u0455s\u0456i\u0458j\u0461w\u0474V\u0475v' +
-  '\u04aeY\u04afy\u04bbh\u04bde\u04c0l\u04cfl\u0501d\u050cG\u051bq\u051cW\u051dw\u054dU' +
-  '\u054fS\u0555O\u0561w\u0563q\u0566q\u0570h\u0578n\u057cn\u057du\u0581g\u0582i\u0584f' +
-  '\u0585o\u05c0l\u05d5l\u05d8v\u05dfl\u05e1o\u0627l\u0647o\u0661l\u0665o\u0667V\u06beo' +
-  '\u06c1o\u06d5o\u06f1l\u06f5o\u06f7V\u07c0O\u07cal\u0966o\u09e6o\u0a66o\u0ae6o\u0b20O' +
-  '\u0b66o\u0be6o\u0c02o\u0c66o\u0c82o\u0ce6O\u0d02o\u0d1fs\u0d20o\u0d66o\u0d82o\u0e50o' +
-  '\u0ed0o\u1004c\u101do\u1040o\u105ac\u10e7y\u10ffo\u1200U\u12d0O\u13a0D\u13a1R\u13a2T' +
-  '\u13a5i\u13a9Y\u13aaA\u13abJ\u13acE\u13b3W\u13b7M\u13bbH\u13bdY\u13c0G\u13c2h\u13c3Z' +
-  '\u13cfb\u13d2R\u13d4W\u13d5S\u13d9V\u13daS\u13deL\u13dfC\u13e2P\u13e6K\u13e7d\u13f3G' +
-  '\u13f4B\u142fV\u144cU\u146dP\u146fd\u1472b\u148dJ\u14aaL\u1541x\u157cH\u157dx\u1587R' +
-  '\u15afb\u15b4F\u15c5A\u15deD\u15eaD\u15f0M\u15f7B\u166dX\u166ex\u16b7X\u16c1l\u16d5K' +
-  '\u16d6M\u17e0o\u1d04c\u1d0fo\u1d11o\u1d1cu\u1d20v\u1d21w\u1d22z\u1d26r\u1d2cA\u1d2eB' +
-  '\u1d30D\u1d31E\u1d33G\u1d34H\u1d35I\u1d36J\u1d37K\u1d38L\u1d39M\u1d3aN\u1d3cO\u1d3eP' +
-  '\u1d3fR\u1d40T\u1d41U\u1d42W\u1d43a\u1d47b\u1d48d\u1d49e\u1d4dg\u1d4fk\u1d50m\u1d52o' +
-  '\u1d56p\u1d57t\u1d58u\u1d5bv\u1d62i\u1d63r\u1d64u\u1d65v\u1d83g\u1d8cy\u1d9cc\u1da0f' +
-  '\u1dbbz\u1e9df\u1effy\u1fbei\u2071i\u207fn\u2090a\u2091e\u2092o\u2093x\u2095h\u2096k' +
-  '\u2097l\u2098m\u2099n\u209ap\u209bs\u209ct\u2102C\u210ag\u210bH\u210cH\u210dH\u210eh' +
-  '\u2110I\u2111I\u2112L\u2113l\u2115N\u2119P\u211aQ\u211bR\u211cR\u211dR\u2124Z\u2128Z' +
-  '\u212ak\u212cB\u212dC\u212ee\u212fe\u2130E\u2131F\u2133M\u2134o\u2139i\u213dy\u2145D' +
-  '\u2146d\u2147e\u2148i\u2149j\u2160I\u2164V\u2169X\u216cL\u216dC\u216eD\u216fM\u2170i' +
-  '\u2174v\u2179x\u217cl\u217dc\u217ed\u217fm\u2223l\u2228v\u222aU\u22a4T\u22c1v\u22c3U' +
-  '\u22ffE\u2373i\u2374p\u237aa\u23fdl\u24b6A\u24b7B\u24b8C\u24b9D\u24baE\u24bbF\u24bcG' +
-  '\u24bdH\u24beI\u24bfJ\u24c0K\u24c1L\u24c2M\u24c3N\u24c4O\u24c5P\u24c6Q\u24c7R\u24c8S' +
-  '\u24c9T\u24caU\u24cbV\u24ccW\u24cdX\u24ceY\u24cfZ\u24d0a\u24d1b\u24d2c\u24d3d\u24d4e' +
-  '\u24d5f\u24d6g\u24d7h\u24d8i\u24d9j\u24dak\u24dbl\u24dcm\u24ddn\u24deo\u24dfp\u24e0q' +
-  '\u24e1r\u24e2s\u24e3t\u24e4u\u24e5v\u24e6w\u24e7x\u24e8y\u24e9z\u2573X\u27d9T\u292bx' +
-  '\u292cx\u2a2fx\u2c7cj\u2c7dV\u2c82B\u2c85r\u2c8eH\u2c92l\u2c93i\u2c94K\u2c98M\u2c9aN' +
-  '\u2c9eO\u2c9fo\u2ca2P\u2ca3p\u2ca4C\u2ca5c\u2ca6T\u2ca8Y\u2ca9y\u2cacX\u2cbdw\u2cceP' +
-  '\u2ccfp\u2cd0L\u2d38V\u2d39E\u2d4fl\u2d54O\u2d55Q\u2d5dX\u3007O\ua4d0B\ua4d1P\ua4d2d' +
-  '\ua4d3D\ua4d4T\ua4d6G\ua4d7K\ua4d9J\ua4daC\ua4dcZ\ua4ddF\ua4dfM\ua4e0N\ua4e1L\ua4e2S' +
-  '\ua4e3R\ua4e6V\ua4e7H\ua4eaW\ua4ebX\ua4ecY\ua4eeA\ua4f0E\ua4f2l\ua4f3O\ua4f4U\ua647i' +
-  '\ua6dfV\ua731s\ua798F\ua799f\ua79fu\ua7b2J\ua7b3X\ua7b4B\ua7f2C\ua7f3F\ua7f4Q\uab32e' +
-  '\uab35f\uab3do\uab47r\uab48r\uab4eu\uab52u\uab5ay\uab75i\uab81r\uab83w\uab93z\uaba9v' +
-  '\uabaas\uabafc\ufba6o\ufba7o\ufba8o\ufba9o\ufbaao\ufbabo\ufbaco\ufbado\ufe8dl\ufe8el' +
-  '\ufee9o\ufeeao\ufeebo\ufeeco\uff21A\uff22B\uff23C\uff24D\uff25E\uff26F\uff27G\uff28H' +
-  '\uff29I\uff2aJ\uff2bK\uff2cL\uff2dM\uff2eN\uff2fO\uff30P\uff31Q\uff32R\uff33S\uff34T' +
-  '\uff35U\uff36V\uff37W\uff38X\uff39Y\uff3aZ\uff41a\uff42b\uff43c\uff44d\uff45e\uff46f' +
-  '\uff47g\uff48h\uff49i\uff4aj\uff4bk\uff4cl\uff4dm\uff4en\uff4fo\uff50p\uff51q\uff52r' +
-  '\uff53s\uff54t\uff55u\uff56v\uff57w\uff58x\uff59y\uff5az\uffe8l\u{10282}B\u{10286}E\u{10287}F' +
-  '\u{1028a}l\u{10290}X\u{10292}O\u{10295}P\u{10296}S\u{10297}T\u{102a0}A\u{102a1}B\u{102a2}C\u{102a5}F\u{102ab}O\u{102b0}M' +
-  '\u{102b1}T\u{102b2}Y\u{102b4}X\u{102cf}H\u{102f5}Z\u{10301}B\u{10302}C\u{10309}l\u{10311}M\u{10315}T\u{10317}X\u{10320}l' +
-  '\u{10322}X\u{10404}O\u{10415}C\u{1041b}L\u{10420}S\u{1042c}o\u{1043d}c\u{10448}s\u{104b4}R\u{104c2}O\u{104ce}U\u{104ea}o' +
-  '\u{104f6}u\u{10513}N\u{10516}O\u{10518}K\u{1051c}C\u{1051d}V\u{10525}F\u{10526}L\u{10527}X\u{107a5}q\u{114d0}o\u{11706}v' +
-  '\u{1170a}w\u{1170e}w\u{1170f}w\u{118a0}V\u{118a2}F\u{118a3}L\u{118a4}Y\u{118a6}E\u{118a9}Z\u{118ae}E\u{118b2}L\u{118b5}O' +
-  '\u{118b8}U\u{118bc}T\u{118c0}v\u{118c1}s\u{118c2}F\u{118c3}i\u{118c4}z\u{118c8}o\u{118d7}o\u{118d8}u\u{118dc}y\u{118e0}O' +
-  '\u{118e5}Z\u{118e6}W\u{118e9}C\u{118ec}X\u{118ef}W\u{118f2}C\u{11dda}l\u{11de0}O\u{11de1}l\u{16eaa}l\u{16eb6}b\u{16f08}V' +
-  '\u{16f0a}T\u{16f16}L\u{16f28}l\u{16f35}R\u{16f3a}S\u{16f40}A\u{16f42}U\u{16f43}Y\u{1ccde}l\u{1ccf0}O\u{1ccf1}l\u{1d20d}V' +
-  '\u{1d213}F\u{1d216}R\u{1d22a}L\u{1d400}A\u{1d401}B\u{1d402}C\u{1d403}D\u{1d404}E\u{1d405}F\u{1d406}G\u{1d407}H\u{1d408}I' +
-  '\u{1d409}J\u{1d40a}K\u{1d40b}L\u{1d40c}M\u{1d40d}N\u{1d40e}O\u{1d40f}P\u{1d410}Q\u{1d411}R\u{1d412}S\u{1d413}T\u{1d414}U' +
-  '\u{1d415}V\u{1d416}W\u{1d417}X\u{1d418}Y\u{1d419}Z\u{1d41a}a\u{1d41b}b\u{1d41c}c\u{1d41d}d\u{1d41e}e\u{1d41f}f\u{1d420}g' +
-  '\u{1d421}h\u{1d422}i\u{1d423}j\u{1d424}k\u{1d425}l\u{1d426}m\u{1d427}n\u{1d428}o\u{1d429}p\u{1d42a}q\u{1d42b}r\u{1d42c}s' +
-  '\u{1d42d}t\u{1d42e}u\u{1d42f}v\u{1d430}w\u{1d431}x\u{1d432}y\u{1d433}z\u{1d434}A\u{1d435}B\u{1d436}C\u{1d437}D\u{1d438}E' +
-  '\u{1d439}F\u{1d43a}G\u{1d43b}H\u{1d43c}I\u{1d43d}J\u{1d43e}K\u{1d43f}L\u{1d440}M\u{1d441}N\u{1d442}O\u{1d443}P\u{1d444}Q' +
-  '\u{1d445}R\u{1d446}S\u{1d447}T\u{1d448}U\u{1d449}V\u{1d44a}W\u{1d44b}X\u{1d44c}Y\u{1d44d}Z\u{1d44e}a\u{1d44f}b\u{1d450}c' +
-  '\u{1d451}d\u{1d452}e\u{1d453}f\u{1d454}g\u{1d456}i\u{1d457}j\u{1d458}k\u{1d459}l\u{1d45a}m\u{1d45b}n\u{1d45c}o\u{1d45d}p' +
-  '\u{1d45e}q\u{1d45f}r\u{1d460}s\u{1d461}t\u{1d462}u\u{1d463}v\u{1d464}w\u{1d465}x\u{1d466}y\u{1d467}z\u{1d468}A\u{1d469}B' +
-  '\u{1d46a}C\u{1d46b}D\u{1d46c}E\u{1d46d}F\u{1d46e}G\u{1d46f}H\u{1d470}I\u{1d471}J\u{1d472}K\u{1d473}L\u{1d474}M\u{1d475}N' +
-  '\u{1d476}O\u{1d477}P\u{1d478}Q\u{1d479}R\u{1d47a}S\u{1d47b}T\u{1d47c}U\u{1d47d}V\u{1d47e}W\u{1d47f}X\u{1d480}Y\u{1d481}Z' +
-  '\u{1d482}a\u{1d483}b\u{1d484}c\u{1d485}d\u{1d486}e\u{1d487}f\u{1d488}g\u{1d489}h\u{1d48a}i\u{1d48b}j\u{1d48c}k\u{1d48d}l' +
-  '\u{1d48e}m\u{1d48f}n\u{1d490}o\u{1d491}p\u{1d492}q\u{1d493}r\u{1d494}s\u{1d495}t\u{1d496}u\u{1d497}v\u{1d498}w\u{1d499}x' +
-  '\u{1d49a}y\u{1d49b}z\u{1d49c}A\u{1d49e}C\u{1d49f}D\u{1d4a2}G\u{1d4a5}J\u{1d4a6}K\u{1d4a9}N\u{1d4aa}O\u{1d4ab}P\u{1d4ac}Q' +
-  '\u{1d4ae}S\u{1d4af}T\u{1d4b0}U\u{1d4b1}V\u{1d4b2}W\u{1d4b3}X\u{1d4b4}Y\u{1d4b5}Z\u{1d4b6}a\u{1d4b7}b\u{1d4b8}c\u{1d4b9}d' +
-  '\u{1d4bb}f\u{1d4bd}h\u{1d4be}i\u{1d4bf}j\u{1d4c0}k\u{1d4c1}l\u{1d4c2}m\u{1d4c3}n\u{1d4c5}p\u{1d4c6}q\u{1d4c7}r\u{1d4c8}s' +
-  '\u{1d4c9}t\u{1d4ca}u\u{1d4cb}v\u{1d4cc}w\u{1d4cd}x\u{1d4ce}y\u{1d4cf}z\u{1d4d0}A\u{1d4d1}B\u{1d4d2}C\u{1d4d3}D\u{1d4d4}E' +
-  '\u{1d4d5}F\u{1d4d6}G\u{1d4d7}H\u{1d4d8}I\u{1d4d9}J\u{1d4da}K\u{1d4db}L\u{1d4dc}M\u{1d4dd}N\u{1d4de}O\u{1d4df}P\u{1d4e0}Q' +
-  '\u{1d4e1}R\u{1d4e2}S\u{1d4e3}T\u{1d4e4}U\u{1d4e5}V\u{1d4e6}W\u{1d4e7}X\u{1d4e8}Y\u{1d4e9}Z\u{1d4ea}a\u{1d4eb}b\u{1d4ec}c' +
-  '\u{1d4ed}d\u{1d4ee}e\u{1d4ef}f\u{1d4f0}g\u{1d4f1}h\u{1d4f2}i\u{1d4f3}j\u{1d4f4}k\u{1d4f5}l\u{1d4f6}m\u{1d4f7}n\u{1d4f8}o' +
-  '\u{1d4f9}p\u{1d4fa}q\u{1d4fb}r\u{1d4fc}s\u{1d4fd}t\u{1d4fe}u\u{1d4ff}v\u{1d500}w\u{1d501}x\u{1d502}y\u{1d503}z\u{1d504}A' +
-  '\u{1d505}B\u{1d507}D\u{1d508}E\u{1d509}F\u{1d50a}G\u{1d50d}J\u{1d50e}K\u{1d50f}L\u{1d510}M\u{1d511}N\u{1d512}O\u{1d513}P' +
-  '\u{1d514}Q\u{1d516}S\u{1d517}T\u{1d518}U\u{1d519}V\u{1d51a}W\u{1d51b}X\u{1d51c}Y\u{1d51e}a\u{1d51f}b\u{1d520}c\u{1d521}d' +
-  '\u{1d522}e\u{1d523}f\u{1d524}g\u{1d525}h\u{1d526}i\u{1d527}j\u{1d528}k\u{1d529}l\u{1d52a}m\u{1d52b}n\u{1d52c}o\u{1d52d}p' +
-  '\u{1d52e}q\u{1d52f}r\u{1d530}s\u{1d531}t\u{1d532}u\u{1d533}v\u{1d534}w\u{1d535}x\u{1d536}y\u{1d537}z\u{1d538}A\u{1d539}B' +
-  '\u{1d53b}D\u{1d53c}E\u{1d53d}F\u{1d53e}G\u{1d540}I\u{1d541}J\u{1d542}K\u{1d543}L\u{1d544}M\u{1d546}O\u{1d54a}S\u{1d54b}T' +
-  '\u{1d54c}U\u{1d54d}V\u{1d54e}W\u{1d54f}X\u{1d550}Y\u{1d552}a\u{1d553}b\u{1d554}c\u{1d555}d\u{1d556}e\u{1d557}f\u{1d558}g' +
-  '\u{1d559}h\u{1d55a}i\u{1d55b}j\u{1d55c}k\u{1d55d}l\u{1d55e}m\u{1d55f}n\u{1d560}o\u{1d561}p\u{1d562}q\u{1d563}r\u{1d564}s' +
-  '\u{1d565}t\u{1d566}u\u{1d567}v\u{1d568}w\u{1d569}x\u{1d56a}y\u{1d56b}z\u{1d56c}A\u{1d56d}B\u{1d56e}C\u{1d56f}D\u{1d570}E' +
-  '\u{1d571}F\u{1d572}G\u{1d573}H\u{1d574}I\u{1d575}J\u{1d576}K\u{1d577}L\u{1d578}M\u{1d579}N\u{1d57a}O\u{1d57b}P\u{1d57c}Q' +
-  '\u{1d57d}R\u{1d57e}S\u{1d57f}T\u{1d580}U\u{1d581}V\u{1d582}W\u{1d583}X\u{1d584}Y\u{1d585}Z\u{1d586}a\u{1d587}b\u{1d588}c' +
-  '\u{1d589}d\u{1d58a}e\u{1d58b}f\u{1d58c}g\u{1d58d}h\u{1d58e}i\u{1d58f}j\u{1d590}k\u{1d591}l\u{1d592}m\u{1d593}n\u{1d594}o' +
-  '\u{1d595}p\u{1d596}q\u{1d597}r\u{1d598}s\u{1d599}t\u{1d59a}u\u{1d59b}v\u{1d59c}w\u{1d59d}x\u{1d59e}y\u{1d59f}z\u{1d5a0}A' +
-  '\u{1d5a1}B\u{1d5a2}C\u{1d5a3}D\u{1d5a4}E\u{1d5a5}F\u{1d5a6}G\u{1d5a7}H\u{1d5a8}I\u{1d5a9}J\u{1d5aa}K\u{1d5ab}L\u{1d5ac}M' +
-  '\u{1d5ad}N\u{1d5ae}O\u{1d5af}P\u{1d5b0}Q\u{1d5b1}R\u{1d5b2}S\u{1d5b3}T\u{1d5b4}U\u{1d5b5}V\u{1d5b6}W\u{1d5b7}X\u{1d5b8}Y' +
-  '\u{1d5b9}Z\u{1d5ba}a\u{1d5bb}b\u{1d5bc}c\u{1d5bd}d\u{1d5be}e\u{1d5bf}f\u{1d5c0}g\u{1d5c1}h\u{1d5c2}i\u{1d5c3}j\u{1d5c4}k' +
-  '\u{1d5c5}l\u{1d5c6}m\u{1d5c7}n\u{1d5c8}o\u{1d5c9}p\u{1d5ca}q\u{1d5cb}r\u{1d5cc}s\u{1d5cd}t\u{1d5ce}u\u{1d5cf}v\u{1d5d0}w' +
-  '\u{1d5d1}x\u{1d5d2}y\u{1d5d3}z\u{1d5d4}A\u{1d5d5}B\u{1d5d6}C\u{1d5d7}D\u{1d5d8}E\u{1d5d9}F\u{1d5da}G\u{1d5db}H\u{1d5dc}I' +
-  '\u{1d5dd}J\u{1d5de}K\u{1d5df}L\u{1d5e0}M\u{1d5e1}N\u{1d5e2}O\u{1d5e3}P\u{1d5e4}Q\u{1d5e5}R\u{1d5e6}S\u{1d5e7}T\u{1d5e8}U' +
-  '\u{1d5e9}V\u{1d5ea}W\u{1d5eb}X\u{1d5ec}Y\u{1d5ed}Z\u{1d5ee}a\u{1d5ef}b\u{1d5f0}c\u{1d5f1}d\u{1d5f2}e\u{1d5f3}f\u{1d5f4}g' +
-  '\u{1d5f5}h\u{1d5f6}i\u{1d5f7}j\u{1d5f8}k\u{1d5f9}l\u{1d5fa}m\u{1d5fb}n\u{1d5fc}o\u{1d5fd}p\u{1d5fe}q\u{1d5ff}r\u{1d600}s' +
-  '\u{1d601}t\u{1d602}u\u{1d603}v\u{1d604}w\u{1d605}x\u{1d606}y\u{1d607}z\u{1d608}A\u{1d609}B\u{1d60a}C\u{1d60b}D\u{1d60c}E' +
-  '\u{1d60d}F\u{1d60e}G\u{1d60f}H\u{1d610}I\u{1d611}J\u{1d612}K\u{1d613}L\u{1d614}M\u{1d615}N\u{1d616}O\u{1d617}P\u{1d618}Q' +
-  '\u{1d619}R\u{1d61a}S\u{1d61b}T\u{1d61c}U\u{1d61d}V\u{1d61e}W\u{1d61f}X\u{1d620}Y\u{1d621}Z\u{1d622}a\u{1d623}b\u{1d624}c' +
-  '\u{1d625}d\u{1d626}e\u{1d627}f\u{1d628}g\u{1d629}h\u{1d62a}i\u{1d62b}j\u{1d62c}k\u{1d62d}l\u{1d62e}m\u{1d62f}n\u{1d630}o' +
-  '\u{1d631}p\u{1d632}q\u{1d633}r\u{1d634}s\u{1d635}t\u{1d636}u\u{1d637}v\u{1d638}w\u{1d639}x\u{1d63a}y\u{1d63b}z\u{1d63c}A' +
-  '\u{1d63d}B\u{1d63e}C\u{1d63f}D\u{1d640}E\u{1d641}F\u{1d642}G\u{1d643}H\u{1d644}I\u{1d645}J\u{1d646}K\u{1d647}L\u{1d648}M' +
-  '\u{1d649}N\u{1d64a}O\u{1d64b}P\u{1d64c}Q\u{1d64d}R\u{1d64e}S\u{1d64f}T\u{1d650}U\u{1d651}V\u{1d652}W\u{1d653}X\u{1d654}Y' +
-  '\u{1d655}Z\u{1d656}a\u{1d657}b\u{1d658}c\u{1d659}d\u{1d65a}e\u{1d65b}f\u{1d65c}g\u{1d65d}h\u{1d65e}i\u{1d65f}j\u{1d660}k' +
-  '\u{1d661}l\u{1d662}m\u{1d663}n\u{1d664}o\u{1d665}p\u{1d666}q\u{1d667}r\u{1d668}s\u{1d669}t\u{1d66a}u\u{1d66b}v\u{1d66c}w' +
-  '\u{1d66d}x\u{1d66e}y\u{1d66f}z\u{1d670}A\u{1d671}B\u{1d672}C\u{1d673}D\u{1d674}E\u{1d675}F\u{1d676}G\u{1d677}H\u{1d678}I' +
-  '\u{1d679}J\u{1d67a}K\u{1d67b}L\u{1d67c}M\u{1d67d}N\u{1d67e}O\u{1d67f}P\u{1d680}Q\u{1d681}R\u{1d682}S\u{1d683}T\u{1d684}U' +
-  '\u{1d685}V\u{1d686}W\u{1d687}X\u{1d688}Y\u{1d689}Z\u{1d68a}a\u{1d68b}b\u{1d68c}c\u{1d68d}d\u{1d68e}e\u{1d68f}f\u{1d690}g' +
-  '\u{1d691}h\u{1d692}i\u{1d693}j\u{1d694}k\u{1d695}l\u{1d696}m\u{1d697}n\u{1d698}o\u{1d699}p\u{1d69a}q\u{1d69b}r\u{1d69c}s' +
-  '\u{1d69d}t\u{1d69e}u\u{1d69f}v\u{1d6a0}w\u{1d6a1}x\u{1d6a2}y\u{1d6a3}z\u{1d6a4}i\u{1d6a8}A\u{1d6a9}B\u{1d6ac}E\u{1d6ad}Z' +
-  '\u{1d6ae}H\u{1d6b0}l\u{1d6b1}K\u{1d6b3}M\u{1d6b4}N\u{1d6b6}O\u{1d6b8}P\u{1d6bb}T\u{1d6bc}Y\u{1d6be}X\u{1d6c2}a\u{1d6c4}y' +
-  '\u{1d6ca}i\u{1d6ce}v\u{1d6d0}o\u{1d6d2}p\u{1d6d4}o\u{1d6d6}u\u{1d6e0}p\u{1d6e2}A\u{1d6e3}B\u{1d6e6}E\u{1d6e7}Z\u{1d6e8}H' +
-  '\u{1d6ea}l\u{1d6eb}K\u{1d6ed}M\u{1d6ee}N\u{1d6f0}O\u{1d6f2}P\u{1d6f5}T\u{1d6f6}Y\u{1d6f8}X\u{1d6fc}a\u{1d6fe}y\u{1d704}i' +
-  '\u{1d708}v\u{1d70a}o\u{1d70c}p\u{1d70e}o\u{1d710}u\u{1d71a}p\u{1d71c}A\u{1d71d}B\u{1d720}E\u{1d721}Z\u{1d722}H\u{1d724}l' +
-  '\u{1d725}K\u{1d727}M\u{1d728}N\u{1d72a}O\u{1d72c}P\u{1d72f}T\u{1d730}Y\u{1d732}X\u{1d736}a\u{1d738}y\u{1d73e}i\u{1d742}v' +
-  '\u{1d744}o\u{1d746}p\u{1d748}o\u{1d74a}u\u{1d754}p\u{1d756}A\u{1d757}B\u{1d75a}E\u{1d75b}Z\u{1d75c}H\u{1d75e}l\u{1d75f}K' +
-  '\u{1d761}M\u{1d762}N\u{1d764}O\u{1d766}P\u{1d769}T\u{1d76a}Y\u{1d76c}X\u{1d770}a\u{1d772}y\u{1d778}i\u{1d77c}v\u{1d77e}o' +
-  '\u{1d780}p\u{1d782}o\u{1d784}u\u{1d78e}p\u{1d790}A\u{1d791}B\u{1d794}E\u{1d795}Z\u{1d796}H\u{1d798}l\u{1d799}K\u{1d79b}M' +
-  '\u{1d79c}N\u{1d79e}O\u{1d7a0}P\u{1d7a3}T\u{1d7a4}Y\u{1d7a6}X\u{1d7aa}a\u{1d7ac}y\u{1d7b2}i\u{1d7b6}v\u{1d7b8}o\u{1d7ba}p' +
-  '\u{1d7bc}o\u{1d7be}u\u{1d7c8}p\u{1d7ca}F\u{1d7ce}O\u{1d7cf}l\u{1d7d8}O\u{1d7d9}l\u{1d7e2}O\u{1d7e3}l\u{1d7ec}O\u{1d7ed}l' +
-  '\u{1d7f6}O\u{1d7f7}l\u{1e8c7}l\u{1ee00}l\u{1ee24}o\u{1ee64}o\u{1ee80}l\u{1ee84}o\u{1f12b}C\u{1f12c}R\u{1f130}A\u{1f131}B' +
-  '\u{1f132}C\u{1f133}D\u{1f134}E\u{1f135}F\u{1f136}G\u{1f137}H\u{1f138}I\u{1f139}J\u{1f13a}K\u{1f13b}L\u{1f13c}M\u{1f13d}N' +
-  '\u{1f13e}O\u{1f13f}P\u{1f140}Q\u{1f141}R\u{1f142}S\u{1f143}T\u{1f144}U\u{1f145}V\u{1f146}W\u{1f147}X\u{1f148}Y\u{1f149}Z' +
-  '\u{1f74c}C\u{1f768}T\u{1fbf0}O\u{1fbf1}l';
-const INVISIBLE_STRIP_PACKED =
-  '\u00ad\u0300\u0301\u0302\u0303\u0304\u0305\u0306\u0307\u0308\u0309\u030a\u030b\u030c\u030d\u030e' +
-  '\u030f\u0310\u0311\u0312\u0313\u0314\u0315\u0316\u0317\u0318\u0319\u031a\u031b\u031c\u031d\u031e' +
-  '\u031f\u0320\u0321\u0322\u0323\u0324\u0325\u0326\u0327\u0328\u0329\u032a\u032b\u032c\u032d\u032e' +
-  '\u032f\u0330\u0331\u0332\u0333\u0334\u0335\u0336\u0337\u0338\u0339\u033a\u033b\u033c\u033d\u033e' +
-  '\u033f\u0340\u0341\u0342\u0343\u0344\u0345\u0346\u0347\u0348\u0349\u034a\u034b\u034c\u034d\u034e' +
-  '\u034f\u0350\u0351\u0352\u0353\u0354\u0355\u0356\u0357\u0358\u0359\u035a\u035b\u035c\u035d\u035e' +
-  '\u035f\u0360\u0361\u0362\u0363\u0364\u0365\u0366\u0367\u0368\u0369\u036a\u036b\u036c\u036d\u036e' +
-  '\u036f\u061c\u180e\u1ab0\u1ab1\u1ab2\u1ab3\u1ab4\u1ab5\u1ab6\u1ab7\u1ab8\u1ab9\u1aba\u1abb\u1abc' +
-  '\u1abd\u1abe\u1abf\u1ac0\u1ac1\u1ac2\u1ac3\u1ac4\u1ac5\u1ac6\u1ac7\u1ac8\u1ac9\u1aca\u1acb\u1acc' +
-  '\u1acd\u1ace\u1acf\u1ad0\u1ad1\u1ad2\u1ad3\u1ad4\u1ad5\u1ad6\u1ad7\u1ad8\u1ad9\u1ada\u1adb\u1adc' +
-  '\u1add\u1ade\u1adf\u1ae0\u1ae1\u1ae2\u1ae3\u1ae4\u1ae5\u1ae6\u1ae7\u1ae8\u1ae9\u1aea\u1aeb\u1aec' +
-  '\u1aed\u1aee\u1aef\u1af0\u1af1\u1af2\u1af3\u1af4\u1af5\u1af6\u1af7\u1af8\u1af9\u1afa\u1afb\u1afc' +
-  '\u1afd\u1afe\u1aff\u1dc0\u1dc1\u1dc2\u1dc3\u1dc4\u1dc5\u1dc6\u1dc7\u1dc8\u1dc9\u1dca\u1dcb\u1dcc' +
-  '\u1dcd\u1dce\u1dcf\u1dd0\u1dd1\u1dd2\u1dd3\u1dd4\u1dd5\u1dd6\u1dd7\u1dd8\u1dd9\u1dda\u1ddb\u1ddc' +
-  '\u1ddd\u1dde\u1ddf\u1de0\u1de1\u1de2\u1de3\u1de4\u1de5\u1de6\u1de7\u1de8\u1de9\u1dea\u1deb\u1dec' +
-  '\u1ded\u1dee\u1def\u1df0\u1df1\u1df2\u1df3\u1df4\u1df5\u1df6\u1df7\u1df8\u1df9\u1dfa\u1dfb\u1dfc' +
-  '\u1dfd\u1dfe\u1dff\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2060\u2061\u2062' +
-  '\u2063\u2064\u2066\u2067\u2068\u2069\u20d0\u20d1\u20d2\u20d3\u20d4\u20d5\u20d6\u20d7\u20d8\u20d9' +
-  '\u20da\u20db\u20dc\u20dd\u20de\u20df\u20e0\u20e1\u20e2\u20e3\u20e4\u20e5\u20e6\u20e7\u20e8\u20e9' +
-  '\u20ea\u20eb\u20ec\u20ed\u20ee\u20ef\u20f0\u20f1\u20f2\u20f3\u20f4\u20f5\u20f6\u20f7\u20f8\u20f9' +
-  '\u20fa\u20fb\u20fc\u20fd\u20fe\u20ff\ufe00\ufe01\ufe02\ufe03\ufe04\ufe05\ufe06\ufe07\ufe08\ufe09' +
-  '\ufe0a\ufe0b\ufe0c\ufe0d\ufe0e\ufe0f\ufe20\ufe21\ufe22\ufe23\ufe24\ufe25\ufe26\ufe27\ufe28\ufe29' +
-  '\ufe2a\ufe2b\ufe2c\ufe2d\ufe2e\ufe2f\ufeff\u{e0100}\u{e0101}\u{e0102}\u{e0103}\u{e0104}\u{e0105}\u{e0106}\u{e0107}\u{e0108}' +
-  '\u{e0109}\u{e010a}\u{e010b}\u{e010c}\u{e010d}\u{e010e}\u{e010f}\u{e0110}\u{e0111}\u{e0112}\u{e0113}\u{e0114}\u{e0115}\u{e0116}\u{e0117}\u{e0118}' +
-  '\u{e0119}\u{e011a}\u{e011b}\u{e011c}\u{e011d}\u{e011e}\u{e011f}\u{e0120}\u{e0121}\u{e0122}\u{e0123}\u{e0124}\u{e0125}\u{e0126}\u{e0127}\u{e0128}' +
-  '\u{e0129}\u{e012a}\u{e012b}\u{e012c}\u{e012d}\u{e012e}\u{e012f}\u{e0130}\u{e0131}\u{e0132}\u{e0133}\u{e0134}\u{e0135}\u{e0136}\u{e0137}\u{e0138}' +
-  '\u{e0139}\u{e013a}\u{e013b}\u{e013c}\u{e013d}\u{e013e}\u{e013f}\u{e0140}\u{e0141}\u{e0142}\u{e0143}\u{e0144}\u{e0145}\u{e0146}\u{e0147}\u{e0148}' +
-  '\u{e0149}\u{e014a}\u{e014b}\u{e014c}\u{e014d}\u{e014e}\u{e014f}\u{e0150}\u{e0151}\u{e0152}\u{e0153}\u{e0154}\u{e0155}\u{e0156}\u{e0157}\u{e0158}' +
-  '\u{e0159}\u{e015a}\u{e015b}\u{e015c}\u{e015d}\u{e015e}\u{e015f}\u{e0160}\u{e0161}\u{e0162}\u{e0163}\u{e0164}\u{e0165}\u{e0166}\u{e0167}\u{e0168}' +
-  '\u{e0169}\u{e016a}\u{e016b}\u{e016c}\u{e016d}\u{e016e}\u{e016f}\u{e0170}\u{e0171}\u{e0172}\u{e0173}\u{e0174}\u{e0175}\u{e0176}\u{e0177}\u{e0178}' +
-  '\u{e0179}\u{e017a}\u{e017b}\u{e017c}\u{e017d}\u{e017e}\u{e017f}\u{e0180}\u{e0181}\u{e0182}\u{e0183}\u{e0184}\u{e0185}\u{e0186}\u{e0187}\u{e0188}' +
-  '\u{e0189}\u{e018a}\u{e018b}\u{e018c}\u{e018d}\u{e018e}\u{e018f}\u{e0190}\u{e0191}\u{e0192}\u{e0193}\u{e0194}\u{e0195}\u{e0196}\u{e0197}\u{e0198}' +
-  '\u{e0199}\u{e019a}\u{e019b}\u{e019c}\u{e019d}\u{e019e}\u{e019f}\u{e01a0}\u{e01a1}\u{e01a2}\u{e01a3}\u{e01a4}\u{e01a5}\u{e01a6}\u{e01a7}\u{e01a8}' +
-  '\u{e01a9}\u{e01aa}\u{e01ab}\u{e01ac}\u{e01ad}\u{e01ae}\u{e01af}\u{e01b0}\u{e01b1}\u{e01b2}\u{e01b3}\u{e01b4}\u{e01b5}\u{e01b6}\u{e01b7}\u{e01b8}' +
-  '\u{e01b9}\u{e01ba}\u{e01bb}\u{e01bc}\u{e01bd}\u{e01be}\u{e01bf}\u{e01c0}\u{e01c1}\u{e01c2}\u{e01c3}\u{e01c4}\u{e01c5}\u{e01c6}\u{e01c7}\u{e01c8}' +
-  '\u{e01c9}\u{e01ca}\u{e01cb}\u{e01cc}\u{e01cd}\u{e01ce}\u{e01cf}\u{e01d0}\u{e01d1}\u{e01d2}\u{e01d3}\u{e01d4}\u{e01d5}\u{e01d6}\u{e01d7}\u{e01d8}' +
-  '\u{e01d9}\u{e01da}\u{e01db}\u{e01dc}\u{e01dd}\u{e01de}\u{e01df}\u{e01e0}\u{e01e1}\u{e01e2}\u{e01e3}\u{e01e4}\u{e01e5}\u{e01e6}\u{e01e7}\u{e01e8}' +
-  '\u{e01e9}\u{e01ea}\u{e01eb}\u{e01ec}\u{e01ed}\u{e01ee}\u{e01ef}';
-const CONFUSABLE_FOLD = new Map();
-{
-  const cps = [...CONFUSABLE_FOLD_PACKED];
-  for (let i = 0; i < cps.length; i += 2) {
-    CONFUSABLE_FOLD.set(cps[i].codePointAt(0), cps[i + 1]);
-  }
-}
-const INVISIBLE_STRIP = new Set(
-  [...INVISIBLE_STRIP_PACKED].map((c) => c.codePointAt(0)),
-);
-function foldConfusables(text) {
-  let out = '';
-  for (const ch of text) {
-    const cp = ch.codePointAt(0);
-    if (INVISIBLE_STRIP.has(cp)) continue;
-    out += CONFUSABLE_FOLD.get(cp) ?? ch;
-  }
-  return out;
-}
-function firstMatch(patterns, text, folded) {
-  for (const rx of patterns) {
-    if (rx.test(text)) return rx.source;
-  }
-  if (folded !== undefined && folded !== text) {
-    for (const rx of patterns) {
-      if (rx.test(folded)) return rx.source;
-    }
-  }
-  return null;
-}
-const SUGGESTION_SETS = [
-  ['contains shell command pattern', INJECTION_SHELL_PATTERNS],
-  ['contains visit-URL pattern', INJECTION_URL_PATTERNS],
-  ['contains encoded payload pattern', INJECTION_ENCODED_PATTERNS],
-  ['contains bypass/auto-approve instruction', INJECTION_BYPASS_PATTERNS],
-  ['uses instructional tone', INJECTION_INSTRUCTIONAL_PATTERNS],
-  ['recommends introducing vulnerability', INJECTION_VULN_INTRO_PATTERNS],
-  ['matches injection marker', INJECTION_BODY_PATTERNS],
-];
-const INJECTION_STRIPPED_PROSE_FIELDS = ['suggestion', 'claude_md_rule', 'spec_text'];
-const FIX_MAX_LINES = 100;
-const FIX_MAX_CHARS = 8000;
-function normalizeFixCodeForBound(code) {
-  return code.endsWith('\n') ? code.slice(0, -1) : code;
-}
-function stripInjectedProseFields(finding) {
-  let kept = finding;
-  let firstPatternStrip = null;
-  for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
-    if (field in kept && typeof kept[field] !== 'string') {
-      kept = { ...kept };
-      delete kept[field];
-      kept[`${field}_removed_by`] = 'injection';
-      kept[`${field}_removal_reason`] = `${field} is not a string`;
-      continue;
-    }
-    const value = typeof kept[field] === 'string' ? kept[field] : '';
-    if (!value) continue;
-    const valueFolded = foldConfusables(value);
-    for (const [phrase, patterns] of SUGGESTION_SETS) {
-      const m = firstMatch(patterns, value, valueFolded);
-      if (m) {
-        kept = { ...kept };
-        delete kept[field];
-        kept[`${field}_removed_by`] = 'injection';
-        kept[`${field}_removal_reason`] = `${field} ${phrase}: ${JSON.stringify(m)}`;
-        if (firstPatternStrip === null) firstPatternStrip = [field, phrase];
-        break;
-      }
-    }
-  }
-  return [kept, firstPatternStrip];
-}
-function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
-  if (!('suggested_fix_code' in finding)) return finding;
-  const code = finding.suggested_fix_code;
-  if (typeof code !== 'string') {
-    const kept = { ...finding };
-    delete kept.suggested_fix_code;
-    kept.suggested_fix_code_removed_by = 'injection';
-    kept.suggested_fix_code_removal_reason = 'suggested_fix_code is not a string';
-    return kept;
-  }
-  const normalized = normalizeFixCodeForBound(code);
-  if (normalized.split('\n').length > FIX_MAX_LINES || [...normalized].length > FIX_MAX_CHARS) {
-    const kept = { ...finding };
-    delete kept.suggested_fix_code;
-    kept.suggested_fix_code_removed_by = 'injection';
-    kept.suggested_fix_code_removal_reason = 'suggested_fix_code exceeds the delivery bound';
-    return kept;
-  }
-  if (firstPatternStrip !== null) {
-    const [propField, propPhrase] = firstPatternStrip;
-    const kept = { ...finding };
-    delete kept.suggested_fix_code;
-    kept.suggested_fix_code_removed_by = 'injection';
-    kept.suggested_fix_code_removal_reason = `${propField} carried ${propPhrase}`;
-    return kept;
-  }
-  return finding;
-}
-function applyInjectedProseStrip(finding) {
-  const [stripped, firstPatternStrip] = stripInjectedProseFields(finding);
-  return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
-}
-function injectionScanCore(findings, includeH4) {
-  const kept = [];
-  const eliminated = [];
-  const seenSignatures = new Map();
-  for (const finding of findings) {
-    const title = asText(finding.title);
-    const description = asText(finding.description);
-    const filepath = asText(finding.file);
-    const confidence = asConfidence(finding.confidence);
-    const combined = `${title}\n${description}`;
-    const combinedFolded = foldConfusables(combined);
-    const titleFolded = foldConfusables(title);
-    const reasons = [];
-    let m = firstMatch(INJECTION_SHELL_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains shell command pattern: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_URL_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains visit-URL pattern: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_ENCODED_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains encoded payload pattern: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_BYPASS_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains bypass/auto-approve instruction: ${JSON.stringify(m)}`);
-    if (includeH4) {
-      const wordCount = countWords(description);
-      if (wordCount < MIN_BODY_WORDS && confidence >= HIGH_CONFIDENCE_THRESHOLD) {
-        reasons.push(`suspiciously short description (${wordCount} words) with high confidence (${confidence})`);
-      }
-    }
-    m = firstMatch(INJECTION_INSTRUCTIONAL_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`uses instructional tone: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_VULN_INTRO_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`recommends introducing vulnerability: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_TITLE_PATTERNS, title, titleFolded);
-    if (m) reasons.push(`title matches placeholder pattern: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_BODY_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`matches injection marker: ${JSON.stringify(m)}`);
-    if (!filepath || /<[^\n]*?>|\{[^\n]*?\}/.test(filepath)) {
-      reasons.push(`file path is empty or contains template markers: ${JSON.stringify(filepath)}`);
-    }
-    const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, finding.line_start]);
-    if (seenSignatures.has(sig)) {
-      reasons.push(`duplicate of finding ${JSON.stringify(seenSignatures.get(sig))}`);
-    } else {
-      seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : title);
-    }
-    if (reasons.length) {
-      const elim = { ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') };
-      eliminated.push(elim);
-    } else {
-      const [strippedFinding, firstPatternStrip] = stripInjectedProseFields(finding);
-      kept.push(stripSuggestedFixCodeIfNeeded(strippedFinding, firstPatternStrip));
-    }
-  }
-  return { kept, eliminated };
-}
-function applyInjectionFilter(findings) {
-  return injectionScanCore(findings, true);
-}
-function applyReplayInjectionScan(findings) {
-  return injectionScanCore(findings, false);
-}
-function loadExclusions(text) {
-  if (text === undefined || text === null) return [];
-  const patterns = [];
-  const blockMatch = REVIEW_EXCL_BLOCK_RE.exec(text);
-  if (blockMatch) {
-    for (const rawLine of splitReviewLines(blockMatch[1])) {
-      const line = rawLine.replace(WS_TRIM_RE, '');
-      if (line && !line.startsWith('#')) patterns.push(line);
-    }
-    return patterns;
-  }
-  for (const line of splitReviewLines(text)) {
-    const m = REVIEW_EXCL_BULLET_RE.exec(line);
-    if (m) patterns.push(m[1].replace(WS_TRIM_RE, ''));
-  }
-  return patterns;
-}
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-function pyGet(obj, key, dflt) {
-  return key in obj ? obj[key] : dflt;
 }
 function asText(value) {
   return typeof value === 'string' ? value : '';
@@ -923,1506 +151,263 @@ function asText(value) {
 function asConfidence(value) {
   return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
 }
-function pyRound(x) {
-  const floor = Math.floor(x);
-  const diff = x - floor;
-  if (diff < 0.5) return floor;
-  if (diff > 0.5) return floor + 1;
-  return floor % 2 === 0 ? floor : floor + 1; // exact .5 -> nearest even
-}
-function lineBucket(line, proximity) {
-  const n = coerceInt(line, INT_POLICY.filter);
-  if (n === null) return 0;
-  return pyRound(n / proximity) * proximity;
-}
-const AGENT_BUG_DETECTOR = 'bug-detector';
-const AGENT_CONVENTIONS = 'conventions-and-intent';
-const AGENT_TEST_ANALYZER = 'test-analyzer';
-const AGENT_SECURITY_REVIEWER = 'security-reviewer';
-const CONSENSUS_BOOST = 10;
-const SINGLETON_PENALTY = 15;
-const CORE_DIMENSIONS = new Set(['bug', 'security', 'cross_file_impact', 'intent']);
-function detectDisagreement(findings) {
-  const locationGroups = new Map();
-  for (const finding of findings) {
-    const key = JSON.stringify([pyGet(finding, 'file', ''), lineBucket(pyGet(finding, 'line_start', 0), 10)]);
-    if (!locationGroups.has(key)) locationGroups.set(key, []);
-    locationGroups.get(key).push(finding);
-  }
-  const suppressedIds = new Set();
-  const suppressed = [];
-  const idKey = (f) => (('id' in f) ? f.id : f);
-  for (const group of locationGroups.values()) {
-    if (group.length < 2) continue;
-    const agentMap = new Map();
-    for (const f of group) {
-      const agent = pyGet(f, 'agent', '').toLowerCase();
-      if (!agentMap.has(agent)) agentMap.set(agent, []);
-      agentMap.get(agent).push(f);
-    }
-    if (agentMap.has(AGENT_BUG_DETECTOR) && agentMap.has(AGENT_CONVENTIONS)) {
-      for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${asText(pyGet(convFinding, 'description', ''))} ${asText(pyGet(convFinding, 'title', ''))}`.toLowerCase();
-        if (/\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/.test(convText)) {
-          for (const bugFinding of agentMap.get(AGENT_BUG_DETECTOR)) {
-            const fid = idKey(bugFinding);
-            if (!suppressedIds.has(fid)) {
-              suppressedIds.add(fid);
-              suppressed.push({
-                ...bugFinding,
-                eliminated_by: 'suppressed:intentional',
-                elimination_reason:
-                  `conventions-and-intent confirms behaviour at ${pyGet(bugFinding, 'file', '?')}:` +
-                  `${pyGet(bugFinding, 'line_start', '?')} is intentional`,
-              });
-            }
-          }
-          break;
+const rejectFrozenCollectionMutation = () => { throw new TypeError('Cannot modify a frozen collection'); };
+function deepFreeze(value) {
+  const visited = new Set();
+  function freeze(node) {
+    if (node === null || typeof node !== 'object' || node instanceof RegExp || visited.has(node)) return node;
+    visited.add(node);
+    if (node instanceof Map || node instanceof Set) {
+      if (node instanceof Map) for (const key of node.keys()) freeze(key);
+      for (const child of node.values()) freeze(child);
+      if (!Object.isFrozen(node)) {
+        for (const method of ['delete', 'clear', node instanceof Map ? 'set' : 'add']) {
+          Object.defineProperty(node, method, { value: rejectFrozenCollectionMutation });
         }
       }
     }
-    if (agentMap.has(AGENT_TEST_ANALYZER) && agentMap.has(AGENT_CONVENTIONS)) {
-      for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${asText(pyGet(convFinding, 'description', ''))} ${asText(pyGet(convFinding, 'title', ''))}`.toLowerCase();
-        if (/\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/.test(convText)) {
-          for (const testFinding of agentMap.get(AGENT_TEST_ANALYZER)) {
-            const fid = idKey(testFinding);
-            if (!suppressedIds.has(fid)) {
-              suppressedIds.add(fid);
-              suppressed.push({
-                ...testFinding,
-                eliminated_by: 'suppressed:generated',
-                elimination_reason:
-                  `conventions-and-intent confirms code at ${pyGet(testFinding, 'file', '?')}:` +
-                  `${pyGet(testFinding, 'line_start', '?')} is generated/scaffolding`,
-              });
-            }
-          }
-          break;
-        }
-      }
-    }
+    for (const child of Object.values(node)) freeze(child);
+    return Object.freeze(node);
   }
-  const active = findings.filter((f) => !suppressedIds.has(idKey(f)));
-  const consensusGroups = new Map();
-  for (const finding of active) {
-    const degraded = pyGet(finding, 'origin', '') === 'unknown';
-    const key = JSON.stringify([pyGet(finding, 'file', ''), lineBucket(pyGet(finding, 'line_start', 0), 10), degraded]);
-    if (!consensusGroups.has(key)) consensusGroups.set(key, []);
-    consensusGroups.get(key).push(finding);
+  return freeze(value);
+}
+function longestBacktickRun(text) {
+  let longest = 0;
+  for (const match of text.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
+  return longest;
+}
+// --- registry.js ---
+const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs ' +
+  'reaching http/request/fetch clients without allowlist validation); frame and embedding ' +
+  'policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); ' +
+  'postMessage handlers that do not validate event.origin or check it with weak substring ' +
+  'matching; and string-matching bypass patterns where a security decision uses containment ' +
+  'checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of ' +
+  'exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains ' +
+  '"trusted.com").';
+const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in ' +
+  'user-facing strings, messages, and log output; case-sensitivity mistakes in string ' +
+  'comparisons (comparing mixed-case values without normalizing case); and copy-paste ' +
+  'plural/singular or off-by-one naming mismatches (a field, key, or variable named for one ' +
+  'thing but holding another).';
+const DEEP = 'deep';
+const SHA_FULL_RE = /^[0-9a-f]{40}$/;
+const WEB_ORIGIN_RE = new RegExp(
+  "^https?:\\/\\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:" +
+  "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\\[[0-9A-Fa-f:.]{2,45}" +
+  "\\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}" +
+  "|655[0-2][0-9]|6553[0-5]))?$"
+);
+const PERMALINK_TEMPLATES = deepFreeze({
+  github: {
+    blob: '{origin}/{owner}/{repo}/blob/{sha}/{path}',
+    line: '#L{start}',
+    range: '#L{start}-L{end}',
+    ref: '#{number}',
+    refUrl: '{origin}/{owner}/{repo}/pull/{number}',
+  },
+  gitlab: {
+    blob: '{origin}/{owner}/{repo}/-/blob/{sha}/{path}',
+    line: '#L{start}',
+    range: '#L{start}-{end}',
+    ref: '!{number}',
+    refUrl: '{origin}/{owner}/{repo}/-/merge_requests/{number}',
+  },
+});
+const validWebOrigin = (value) => {
+  if (typeof value !== 'string') return false;
+  const match = WEB_ORIGIN_RE.exec(value);
+  if (!match) return false;
+  return match[1].startsWith('[') || match[1].length <= 253;
+};
+const PR_IDENTITY_FIELDS = deepFreeze([
+  { name: 'owner', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string' },
+  { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string',
+    extraChecks: [{ check: (value) => !value.includes('/'), message: 'must not contain "/"' }] },
+  { name: 'pr_number', required: true, check: (value) => Number.isSafeInteger(value) && value > 0, describe: 'a positive safe integer' },
+  { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value),
+    describe: 'a 40-character lowercase hex commit id' },
+  { name: 'platform', required: true, check: (value) => Object.hasOwn(PERMALINK_TEMPLATES, value), describe: 'one of github, gitlab' },
+  { name: 'web_origin', required: true, check: validWebOrigin, describe: 'an http(s) origin: scheme, host and optional port only' },
+  { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0,
+    describe: 'a non-empty string when present' },
+]);
+const CODE_OWNED_HEADINGS = deepFreeze([
+  '## Summary',
+  '## Change Context',
+  '## Findings',
+  '## Unverified / pipeline-degraded findings',
+  '## Review Dimensions Summary',
+  '## Review Methodology',
+]);
+const FINDING_PROP_TYPES = deepFreeze({
+  id: 'string', file: 'string', line_start: 'number', line_end: 'number',
+  title: 'string', description: 'string', severity: 'string', confidence: 'number',
+  dimension: 'string', origin: 'string', evidence: 'string',
+  suggestion: 'string', claude_md_rule: 'string',
+  suggested_fix_code: 'string',
+  cross_file_refs: { type: 'array', items: { type: 'string' } },
+});
+const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
+const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
+const DIMENSIONS = deepFreeze([
+  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' },
+    requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' },
+    requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
+  { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
+    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'],
+      requiredWhenDimension: [], modelOverride: null, promptExtra: null },
+  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
+    schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
+    requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
+  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
+    schemaExtra: { rule_source: 'string' }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null,
+    promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
+    schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null,
+      promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {},
+    requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
+    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
+      promptExtra: null },
+  { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
+    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null,
+      promptExtra: null },
+]);
+const PIPELINE_FINDING_FIELDS = deepFreeze([
+  'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
+  'validation_justification', 'challenge_justification', 'elimination_reason',
+  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
+  'challenge_contested', 'severity_downgraded', 'original_severity',
+  'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
+  'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
+  'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',
+  'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note',
+  'consolidation_key', 'consolidation_primary', 'routed_by', 'promoted_from', 'promotion_reason',
+  ...['suggestion', 'claude_md_rule', 'spec_text', 'suggested_fix_code'].flatMap((field) =>
+    [`${field}_removed_by`, `${field}_removal_reason`]),
+]);
+const FINDING_TEXT_FIELD_NAMES = deepFreeze([...new Set([
+  ...Object.keys(FINDING_PROP_TYPES),
+  ...DIMENSIONS.flatMap((dimension) => Object.keys(dimension.schemaExtra || {})),
+  ...PIPELINE_FINDING_FIELDS,
+])]);
+const AGENTS = deepFreeze([...new Set(DIMENSIONS.map((d) => d.agentType))]);
+const AGENT_LABELS = deepFreeze({
+  'code-gauntlet:bug-detector': 'Correctness & Error Handling',
+  'code-gauntlet:security-reviewer': 'Security',
+  'code-gauntlet:cross-file-impact': 'Cross-file Impact',
+  'code-gauntlet:test-analyzer': 'Test Coverage',
+  'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
+  'code-gauntlet:type-design-analyzer': 'Type Design',
+  'code-gauntlet:code-simplifier': 'Code Simplification',
+});
+const BRAND_MARK = '\u2694\uFE0F';
+const BRAND_NAME = 'Code Gauntlet';
+const SEVERITY_EMOJI = deepFreeze({
+  critical: '\u{1F534}', high: '\u{1F7E0}', medium: '\u{1F7E1}', low: '\u{1F4A1}',
+});
+const SEVERITY_EMOJI_FALLBACK = SEVERITY_EMOJI.low;
+const RULE_SOURCE_LABELS = deepFreeze({
+  documented_rule: 'Cited rule',
+  code_comment: 'Cited comment',
+  repo_precedent: 'Repo precedent',
+  self_inconsistency: 'Inconsistency',
+});
+const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
+const STAGE_DEFAULTS = deepFreeze({
+  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  'artifact-writer': 'sonnet',
+});
+const MODEL_IDS = deepFreeze({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' });
+const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
+const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
+const conditionalSchemaActive = (policy) => {
+  const p = policy || {};
+  return pinsModelIds(p.provider) && !p.gateway;
+};
+function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
+  if (opts.subagentModelEnv) {
+    return { model: toModelId(opts.subagentModelEnv, opts.provider) };
   }
-  let boostedCount = 0;
-  for (const group of consensusGroups.values()) {
-    const count = group.length;
-    const agentsInGroup = group.filter((f) => f.agent).map((f) => f.agent);
-    if (count > 1) {
-      boostedCount += count;
-      for (const finding of group) {
-        const thisAgent = pyGet(finding, 'agent', '');
-        const otherAgents = agentsInGroup.filter((a) => a !== thisAgent);
-        finding.consensus_count = count;
-        finding.consensus_boost = CONSENSUS_BOOST;
-        finding.corroborated_by = otherAgents;
-        const originalConf = asConfidence(pyGet(finding, 'confidence', 0));
-        finding.confidence = Math.min(originalConf + CONSENSUS_BOOST, 100);
-      }
-    } else {
-      const finding = group[0];
-      finding.consensus_count = 1;
-      finding.consensus_boost = 0;
-      if (!('corroborated_by' in finding)) finding.corroborated_by = [];
-      const dimension = pyGet(finding, 'dimension', '').toLowerCase();
-      if (dimension && !CORE_DIMENSIONS.has(dimension)) {
-        const originalConf = asConfidence(pyGet(finding, 'confidence', 0));
-        finding.confidence = Math.max(0, originalConf - SINGLETON_PENALTY);
-        finding.singleton_penalty = true;
-      }
-    }
-  }
-  const locationGroupsActive = new Map();
-  for (const finding of active) {
-    const key = JSON.stringify([pyGet(finding, 'file', ''), pyGet(finding, 'line_start', 0)]);
-    if (!locationGroupsActive.has(key)) locationGroupsActive.set(key, []);
-    locationGroupsActive.get(key).push(finding);
-  }
-  for (const group of locationGroupsActive.values()) {
-    if (group.length < 2) {
-      if (!('contradiction' in group[0])) group[0].contradiction = false;
-      if (!('security_escalation' in group[0])) group[0].security_escalation = false;
-      continue;
-    }
-    const severities = new Set(group.map((f) => (asText(pyGet(f, 'severity', 'low')) || 'low').toLowerCase()));
-    const agentsHere = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
-    const hasContradiction = severities.has('critical') && severities.has('low');
-    const hasSecurityEscalation =
-      agentsHere.has(AGENT_SECURITY_REVIEWER) && agentsHere.size > 1 && severities.has('low');
-    for (const finding of group) {
-      finding.contradiction = hasContradiction;
-      finding.security_escalation = hasSecurityEscalation;
-      if (hasSecurityEscalation && pyGet(finding, 'agent', '').toLowerCase() === AGENT_SECURITY_REVIEWER) {
-        finding.escalation_note =
-          'Kept: security-reviewer finding retained despite conflicting low-severity ' +
-          'signal from another agent (security escalation rule)';
-      }
-    }
-  }
-  for (const finding of active) {
-    if (!('consensus_count' in finding)) finding.consensus_count = 1;
-    if (!('consensus_boost' in finding)) finding.consensus_boost = 0;
-    if (!('corroborated_by' in finding)) finding.corroborated_by = [];
-    if (!('contradiction' in finding)) finding.contradiction = false;
-    if (!('security_escalation' in finding)) finding.security_escalation = false;
-  }
-  return { active, suppressed, boostedCount };
+  const dim = dimensions.find((d) => d.agentType === agentType);
+  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider);
+  return { model };
 }
-const SUGGESTION_DIMENSIONS = new Set(['comment_accuracy', 'comment-accuracy']);
-const MAIN_DIMENSIONS = new Set(['bug', 'security', 'cross_file_impact', 'intent']);
-const CONDITIONAL_SUGGESTION_DIMENSIONS = new Set(['test_coverage', 'convention', 'type_design']);
-const FUNCTIONAL_VIOLATION_KEYWORDS =
-  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
-const TYPE_SAFETY_BUG_KEYWORDS =
-  /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
-const TEST_CORRECTNESS_PATTERNS = [
-  /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
-  /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
-  /\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b/i,
-  /\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b/i,
-  /\bvacuous(?:ly)?\b/i,
-  /\btautolog(?:y|ical)\b/i,
-  /\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b/i,
-  /\bdeadlock\b/i,
-  /\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b/i,
-  /\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b/i,
-  /\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b/i,
-  /\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b/i,
-  /\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b/i,
-  /\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b/i,
-  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b/i,
-  /\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b/i,
-  /\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b/i,
-  /\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b/i,
-  /\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b/i,
-  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
-  /\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b/i,
-  /\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b/i,
-];
-function routeByDimension(finding) {
-  const dimension = pyGet(finding, 'dimension', '').toLowerCase();
-  if (!dimension) return null;
-  if (MAIN_DIMENSIONS.has(dimension)) return 'main';
-  if (SUGGESTION_DIMENSIONS.has(dimension)) return 'suggestion';
-  if (CONDITIONAL_SUGGESTION_DIMENSIONS.has(dimension)) {
-    const combined = `${asText(pyGet(finding, 'title', ''))}\n${asText(pyGet(finding, 'description', ''))}`;
-    if (dimension === 'test_coverage') {
-      return TEST_CORRECTNESS_PATTERNS.some((rx) => rx.test(combined)) ? 'main' : 'suggestion';
-    }
-    if (dimension === 'convention') {
-      return FUNCTIONAL_VIOLATION_KEYWORDS.test(combined) ? 'main' : 'suggestion';
-    }
-    if (dimension === 'type_design') {
-      return TYPE_SAFETY_BUG_KEYWORDS.test(combined) ? 'main' : 'suggestion';
-    }
-  }
-  return null;
+function modelFor(agentType, policy, dimensions = DIMENSIONS) {
+  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }, dimensions).model;
 }
-function isTestCorrectnessFinding(finding) {
-  const combined = `${asText(pyGet(finding, 'title', ''))}\n${asText(pyGet(finding, 'description', ''))}`;
-  return TEST_CORRECTNESS_PATTERNS.some((rx) => rx.test(combined));
-}
-function groupByProximity(findings, lineProximity = 5) {
-  const groups = new Map();
-  for (const finding of findings) {
-    const key = JSON.stringify([pyGet(finding, 'file', ''), lineBucket(pyGet(finding, 'line_start', 0), lineProximity)]);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(finding);
-  }
-  return groups;
-}
-function consolidateCrossAgent(findings) {
-  const LINE_PROXIMITY = 5;
-  for (const f of findings) {
-    if (f && typeof f === 'object') {
-      delete f.consolidation_key;
-      delete f.consolidation_primary;
-    }
-  }
-  const winnerKey = (f) => {
-    const dim = pyGet(f, 'dimension', '').toLowerCase();
-    const isCore = CORE_DIMENSIONS.has(dim) ? 1 : 0;
-    const conf = asConfidence(pyGet(f, 'confidence', 0));
-    const descLen = asText(pyGet(f, 'description', '')).length;
-    return [isCore, conf, descLen];
-  };
-  const compareWinnerDesc = (a, b) => {
-    const ka = winnerKey(a);
-    const kb = winnerKey(b);
-    for (let i = 0; i < ka.length; i += 1) {
-      if (ka[i] !== kb[i]) return kb[i] - ka[i];
-    }
-    return 0; // tie -> preserve original order (stable sort)
-  };
-  const groups = groupByProximity(findings, LINE_PROXIMITY);
-  let consolidatedCount = 0;
-  for (const group of groups.values()) {
-    const agentsInGroup = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
-    if (group.length < 2 || agentsInGroup.size < 2) continue; // no stamps
-    const file = pyGet(group[0], 'file', '');
-    const bucket = lineBucket(pyGet(group[0], 'line_start', 0), LINE_PROXIMITY);
-    const consolidationKey = `${file}:${bucket}`;
-    const ranked = [...group].sort(compareWinnerDesc);
-    const primary = ranked.find((f) => pyGet(f, 'id', ''));
-    for (const f of group) {
-      if (!pyGet(f, 'id', '')) continue; // id-less findings stay unstamped
-      f.consolidation_key = consolidationKey;
-      f.consolidation_primary = f === primary;
-      consolidatedCount += 1;
-    }
-  }
-  return { findings, consolidatedCount };
-}
-const MAIN_REPORT_AGENTS = new Set(['bug-detector', 'security-reviewer', 'cross-file-impact', 'type-design-analyzer']);
-const SUGGESTION_AGENTS = new Set(['test-analyzer', 'code-simplifier']);
-const CONVENTIONS_AGENT = 'conventions-and-intent';
-const COMMENT_ACCURACY_DIMENSIONS = new Set(['comment-accuracy', 'documentation', 'doc-accuracy']);
-function tagFindings(findings) {
-  const { findings: tagged, consolidatedCount } = consolidateCrossAgent(findings);
-  let mainCount = 0;
-  let suggestionCount = 0;
-  for (const finding of tagged) {
-    const agent = pyGet(finding, 'agent', '').toLowerCase();
-    const dimensions = finding.dimension ? new Set([String(finding.dimension).toLowerCase()]) : new Set();
-    let destination;
-    if (finding.demoted_by === 'reachability') {
-      destination = 'suggestion';
-      finding.routed_by = 'reachability';
-    } else {
-      const dimRoute = routeByDimension(finding);
-      if (dimRoute !== null) {
-        destination = dimRoute;
-        if (dimRoute === 'suggestion') finding.routed_by = 'dimension';
-      } else if (MAIN_REPORT_AGENTS.has(agent)) {
-        destination = 'main';
-      } else if (agent === CONVENTIONS_AGENT) {
-        destination = [...dimensions].some((d) => COMMENT_ACCURACY_DIMENSIONS.has(d)) ? 'suggestion' : 'main';
-      } else if (SUGGESTION_AGENTS.has(agent)) {
-        if (agent === AGENT_TEST_ANALYZER && isTestCorrectnessFinding(finding)) {
-          destination = 'main';
-          finding.promoted_from = 'test-analyzer';
-          finding.promotion_reason =
-            'test-analyzer finding describes a functional correctness issue that exists today ' +
-            '(not a missing-coverage gap)';
-        } else {
-          destination = 'suggestion';
-        }
-      } else {
-        destination = 'main';
-      }
-    }
-    finding.report_destination = destination;
-    finding.report_tag = destination; // backward-compat alias
-    if (destination === 'main') mainCount += 1;
-    else suggestionCount += 1;
-  }
-  return { tagged, consolidatedCount, mainCount, suggestionCount };
-}
-function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
-  const total = findings.length;
-  normalizeFieldNames(findings);
-  applyReachabilityDemotion(findings);
-  const allEliminated = [];
-  const { kept: afterThreshold, eliminated: elimThreshold, contestedCount } = applyThresholdFilter(findings, config);
-  allEliminated.push(...elimThreshold);
-  const passedThreshold = afterThreshold.length;
-  const { kept: afterExclusions, eliminated: elimExclusions } = applyExclusions(
-    afterThreshold, exclusionPatterns, config,
-  );
-  allEliminated.push(...elimExclusions);
-  const exclusionsRemoved = elimExclusions.length;
-  const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
-  allEliminated.push(...elimInjection);
-  const injectionsRemoved = elimInjection.length;
-  const proseFieldsRemoved = Object.fromEntries(
-    INJECTION_STRIPPED_PROSE_FIELDS.map((field) => [
-      `${field}s_removed`,
-      afterInjection.filter((f) => f[`${field}_removed_by`] === 'injection').length,
-    ]),
-  );
-  const suggestedFixCodesRemoved = afterInjection.filter(
-    (f) => f.suggested_fix_code_removed_by === 'injection',
-  ).length;
-  const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
-  allEliminated.push(...elimSuppressed);
-  const { tagged, consolidatedCount, mainCount, suggestionCount } = tagFindings(active);
-  const promotedCount = tagged.filter((f) => f.promoted_from === 'test-analyzer').length;
-  const dimensionRouted = tagged.filter((f) => f.routed_by === 'dimension').length;
-  const reachabilityDemoted = [...tagged, ...allEliminated]
-    .filter((f) => f.demoted_by === 'reachability').length;
-  const singletonPenalized = [...tagged, ...allEliminated].filter((f) => f.singleton_penalty).length;
-  return {
-    filtered: tagged,
-    eliminated: allEliminated,
-    stats: {
-      total,
-      passed_threshold: passedThreshold,
-      contested_count: contestedCount,
-      exclusions_removed: exclusionsRemoved,
-      injections_removed: injectionsRemoved,
-      ...proseFieldsRemoved,
-      suggested_fix_codes_removed: suggestedFixCodesRemoved,
-      consensus_boosted: consensusBoosted,
-      singleton_penalized: singletonPenalized,
-      dimension_routed: dimensionRouted,
-      reachability_demoted: reachabilityDemoted,
-      cross_agent_consolidated: consolidatedCount,
-      test_analyzer_promoted: promotedCount,
-      tagged_main: mainCount,
-      tagged_suggestion: suggestionCount,
-    },
-    generated_at: generatedAt,
-  };
-}
-function applyExclusions(findings, exclusionPatterns, config = null) {
-  const hasConfig = config !== null && config !== undefined;
-  if (!hasConfig && (!exclusionPatterns || !exclusionPatterns.length)) {
-    return { kept: findings, eliminated: [] };
-  }
-  const kept = [];
-  const eliminated = [];
-  for (const finding of findings) {
-    const patterns = hasConfig
-      ? [...configForFile(config, finding.file).ignore, ...(exclusionPatterns || [])]
-      : (exclusionPatterns || []);
-    const title = asText(finding.title);
-    const description = asText(finding.description);
-    const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
-    const combined = `${title}\n${description}\n${suggestion}`;
-    let matchedPattern = null;
-    for (const pattern of patterns) {
-      const rx = new RegExp(escapeRegExp(pattern), 'i');
-      if (rx.test(combined)) {
-        matchedPattern = pattern;
-        break;
-      }
-    }
-    if (matchedPattern) {
-      eliminated.push({
-        ...finding,
-        eliminated_by: 'exclusion',
-        elimination_reason: `matched exclusion pattern: ${JSON.stringify(matchedPattern)}`,
-      });
-    } else {
-      kept.push(finding);
-    }
-  }
-  return { kept, eliminated };
-}
-// --- paths.js ---
-function collapseDotSlash(path) {
-  let out = path;
-  for (;;) {
-    const next = out.replace(/\/\.\//g, '/');
-    if (next === out) return out;
-    out = next;
-  }
-}
-function stripTrailingSlashes(path) {
-  let out = path;
-  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
-  return out;
-}
-function normalizePathString(path) {
-  let out = path;
-  for (;;) {
-    let next = stripTrailingSlashes(collapseDotSlash(out.replace(/\/{2,}/g, '/')));
-    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
-    next = stripTrailingSlashes(next);
-    if (next === out) return next;
-    out = next;
-  }
-}
-function hasBackslash(path) {
-  return path.includes('\\');
-}
-function hasDotDotSegment(path) {
-  return path.split('/').includes('..');
-}
-function isSafeAbsolutePath(path) {
-  return path.startsWith('/') && !hasBackslash(path) && !hasDotDotSegment(path);
-}
-function rootPrefix(root) {
-  return root === '/' ? '/' : `${root}/`;
-}
-const LOCATION_SUFFIX_RE = /:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/;
-function splitLocationSuffix(path) {
-  const suffix = path.match(LOCATION_SUFFIX_RE)?.[0] || '';
-  return { path: suffix ? path.slice(0, -suffix.length) : path, suffix };
-}
-function normalizeAbsoluteRoot(root) {
-  if (typeof root !== 'string' || root === '') return null;
-  const normalized = normalizePathString(root);
-  if (!isSafeAbsolutePath(normalized)) return null;
-  return normalized;
-}
-const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
-const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
-const HOST_PATH_HEX_RE = /^[0-9A-Fa-f]{2}$/;
-const HOST_PATH_HOME_RE = /^\/(?:Users|home)\/([^/]+)\//;
-function hostPathSpellings(root) {
-  const hasPrivatePrefix = root.slice(0, '/private/'.length).toLowerCase() === '/private/';
-  const alias = hasPrivatePrefix
-    ? root.slice('/private'.length)
-    : `/private${root}`;
-  return [root, alias];
-}
-function hostPathRegexEscape(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-function hostPathPattern(root, caseInsensitive) {
-  const source = root.slice(1).split('/').map(hostPathRegexEscape).join('/(?:/|\\./)*');
-  return new RegExp(`/${source}`, caseInsensitive ? 'iy' : 'y');
-}
-function prepareHostRootPatterns(roots) {
-  const patterns = [];
-  const derivedHomes = new Set();
-  if (!Array.isArray(roots)) return patterns;
-  for (const root of roots) {
-    const normalized = normalizeAbsoluteRoot(root);
-    if (normalized === null || normalized === '/') continue;
-    for (const spelling of hostPathSpellings(normalized)) {
-      const caseInsensitive = spelling.slice(1).split('/').length > 1;
-      patterns.push(hostPathPattern(spelling, caseInsensitive));
-    }
-    const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
-    const home = unaliased.match(HOST_PATH_HOME_RE);
-    if (home) derivedHomes.add(home[0].slice(0, -1));
-  }
-  for (const home of derivedHomes) patterns.push(hostPathPattern(home, false));
-  return patterns;
-}
-function decodeAsciiEscapes(text) {
-  const chars = [];
-  const escaped = [];
-  for (let index = 0; index < text.length;) {
-    const digits = text.slice(index + 1, index + 3);
-    const byte = text[index] === '%' && HOST_PATH_HEX_RE.test(digits) ? parseInt(digits, 16) : -1;
-    if (byte >= 0 && byte < 0x80) {
-      chars.push(String.fromCharCode(byte));
-      escaped.push(true);
-      index += 3;
-    } else {
-      chars.push(text[index]);
-      escaped.push(false);
-      index += 1;
-    }
-  }
-  return { text: chars.join(''), escaped };
-}
-function isPathContinuation(view, index) {
-  const char = view.text[index];
-  return char !== '/' && (view.escaped[index] === true || HOST_PATH_RIGHT_CONTINUATION_RE.test(char));
-}
-function hostPathFileSchemePrefix(view, slashRunEnd) {
-  let prefixEnd = slashRunEnd;
-  while (view.text[prefixEnd - 1] === '/') prefixEnd -= 1;
-  const prefixStart = prefixEnd - 5;
-  if (prefixStart < 0 || view.text.slice(prefixStart, prefixEnd).toLowerCase() !== 'file:') return false;
-  for (let index = prefixStart; index < prefixEnd; index += 1) {
-    if (view.escaped[index] === true) return false;
-  }
-  return prefixStart === 0
-    || (view.escaped[prefixStart - 1] !== true && !/[A-Za-z0-9+.-]/.test(view.text[prefixStart - 1]));
-}
-function hostPathOptionFlag(view, start) {
-  const letter = start - 1;
-  const dash = start - 2;
-  if (view.text[dash] !== '-' || !/[A-Za-z]/.test(view.text[letter])
-    || view.escaped[dash] === true || view.escaped[letter] === true) return false;
-  return dash === 0 || (view.escaped[dash - 1] !== true
-    && view.text[dash - 1] !== '/' && !HOST_PATH_RIGHT_CONTINUATION_RE.test(view.text[dash - 1]));
-}
-function hostPathLeftBoundary(view, start) {
-  const previous = view.text[start - 1];
-  if (isPathContinuation(view, start - 1)) return hostPathOptionFlag(view, start);
-  if (previous !== '/') return true;
-  return hostPathFileSchemePrefix(view, start);
-}
-function hostPathRightBoundary(view, end) {
-  while (view.text[end] === '.' && view.escaped[end] !== true) end += 1;
-  return !isPathContinuation(view, end);
-}
-function mentionsInView(view, patterns) {
-  for (let start = view.text.indexOf('/'); start !== -1; start = view.text.indexOf('/', start + 1)) {
-    for (const matcher of patterns) {
-      matcher.lastIndex = start;
-      if (matcher.exec(view.text) && hostPathLeftBoundary(view, start)
-        && hostPathRightBoundary(view, matcher.lastIndex)) return true;
-    }
-  }
-  return false;
-}
-function mentionsPreparedHostRoot(text, patterns) {
-  if (typeof text !== 'string') return false;
-  const raw = { text, escaped: [] };
-  if (mentionsInView(raw, patterns)) return true;
-  return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), patterns);
-}
-function safeFindingLabel(value, fallback = null) {
-  if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value)) {
-    return fallback;
-  }
-  return value;
-}
-function pathUnderRoot(root, path) {
-  const normalizedRoot = normalizeAbsoluteRoot(root);
-  if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
-  const normalizedPath = normalizePathString(path);
-  if (!isSafeAbsolutePath(normalizedPath)) return false;
-  const prefix = rootPrefix(normalizedRoot);
-  return normalizedPath === normalizedRoot || normalizedPath.startsWith(prefix);
-}
-function repoRelativeFindingPath(repoRoot, file) {
-  if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
-  let normalized = file;
-  let location;
-  for (let remaining = file.length; remaining >= 0; remaining -= 1) {
-    const slashes = normalizePathString(normalized);
-    const split = splitLocationSuffix(slashes);
-    const path = normalizePathString(split.path);
-    const next = `${path}${split.suffix}`;
-    if (next === normalized) {
-      location = { path, suffix: split.suffix };
-      break;
-    }
-    normalized = next;
-  }
-  const { path, suffix } = location;
-  if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
-  let relative;
-  if (!path.startsWith('/')) {
-    relative = normalizePathString(path);
-    while (relative.startsWith('./')) relative = relative.slice(2);
-  } else {
-    const root = normalizeAbsoluteRoot(repoRoot);
-    if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
-    const absolute = normalizePathString(path);
-    if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
-    const prefix = rootPrefix(root);
-    if (!absolute.startsWith(prefix)) return { reason: 'absolute file path is outside repoRoot' };
-    relative = absolute.slice(prefix.length);
-  }
-  if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
-  if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
-  if (relative.startsWith('\\')) return { reason: 'file path starts with a backslash' };
-  if (relative.split('/')[0] === '~') return { reason: 'file path starts with a home anchor' };
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:\//.test(relative) || /^[A-Za-z]:([/\\]|$)/.test(relative)) {
-    return { reason: 'file path starts with a URI scheme or drive letter' };
-  }
-  if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(file)
-    || file.split('/').some((segment) => /^[\p{Cf}\p{Mn}\p{Me}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
-    return { reason: 'file path contains a disallowed character' };
-  }
-  if (relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
-  return { file: `${relative}${suffix}` };
-}
-// --- args.js ---
-const ARGS_VERSION = 1;
-const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope'];
-const NONCE_RE = /^[A-Za-z0-9._-]+$/;
-const DELIVERY_TIERS = ['all', 'main_only'];
-const SCOPE_ANSWERS = ['light', 'full'];
-const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
+const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',
+  'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope']);
+const DELIVERY_TIERS = deepFreeze(['all', 'main_only']);
+const SCOPE_ANSWERS = deepFreeze(['light', 'full']);
+const POLICY_PROVIDERS = deepFreeze(['firstParty', 'bedrock', 'vertex', 'foundry']);
 const CONTROL_RE = /[\u0000-\u001F\u007F]/;
-const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
-const KNOB_REGISTRY = [
-  { key: 'model_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['fixed'] }, rule: { kind: 'enum', values: ['optimized'] }, env: 'CODE_GAUNTLET_MODEL_TIER', reviewMdKey: null, defaults: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'delivery', modes: ['headless'], allowedSources: { headless: ['env', 'review_md', 'default'] }, rule: { kind: 'csv_subset', values: ['chat', 'pr_comments', 'markdown'] }, env: 'CODE_GAUNTLET_DELIVERY', reviewMdKey: 'default_delivery', defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'post_mode', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['dry-run', 'live'] }, env: 'CODE_GAUNTLET_POST_MODE', reviewMdKey: null, defaults: { headless: ['dry-run', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'pr_comment_cap', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, rule: { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, env: 'CODE_GAUNTLET_PR_COMMENT_CAP', reviewMdKey: null, defaults: { headless: ['6', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null', waistPath: 'limits.deliveryCap', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: ['interactive'], resolvedKey: false },
-  { key: 'delivery_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', reviewMdKey: null, defaults: { headless: ['all', 'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: false },
-  { key: 'draft_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['review', 'skip'] }, env: 'CODE_GAUNTLET_DRAFT_POLICY', reviewMdKey: null, defaults: { headless: ['review', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['incremental', 'full', 'skip'] }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' }, derivedFrom: null, deriveWhen: 'priorReviewDetector', nullReceipt: [], resolvedKey: true },
-  { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['local', 'error'] }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'scopeAnswer', waistMap: null, derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [], resolvedKey: false },
-  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [], resolvedKey: false },
-];
-function matchesRule(rule, value, mode) {
-  if (typeof value !== 'string' || rule === null || typeof rule !== 'object' || Array.isArray(rule)) return false;
-  const selected = typeof rule.kind === 'string' ? rule : rule[mode];
-  if (selected === null || typeof selected !== 'object' || Array.isArray(selected)) return false;
-  if (selected.kind === 'enum') return Array.isArray(selected.values) && selected.values.includes(value);
-  if (selected.kind === 'csv_subset') {
-    if (!Array.isArray(selected.values) || value === '') return false;
-    const parts = value.split(',');
-    return parts.every((part) => selected.values.includes(part)) && new Set(parts).size === parts.length;
-  }
-  if (selected.kind === 'positive_digits') {
-    return /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
-  }
-  if (selected.kind === 'digits_or_null') {
-    return value === 'null' || (/^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value)));
-  }
-  return false;
-}
-const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
-function validatePathSegments(value, label, { separateSlashErrors = false, requireBasename = false } = {}) {
-  const errors = [];
-  if (separateSlashErrors) {
-    if (value.startsWith('/')) errors.push(`${label} must be repo-relative (must not start with /)`);
-    if (value.endsWith('/')) errors.push(`${label} must not have a trailing /`);
-  } else if (value.startsWith('/') || value.endsWith('/')) {
-    errors.push(`${label} must not have a leading or trailing /`);
-  }
-  if (value.includes('\\')) errors.push(`${label} must use / separators, not backslashes`);
-  if (REVIEW_MD_PATH_CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
-  const segments = value.split('/');
-  if (segments.some((segment) => segment === '')) errors.push(`${label} must not contain an empty path segment`);
-  if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label} must not contain . or .. path segments`);
-  if (requireBasename && segments[segments.length - 1] !== 'REVIEW.md') {
-    errors.push(`${label} must end with exactly REVIEW.md`);
-  }
-  return errors;
-}
-const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist', 'scopeAnswer'];
-const RISK_LEVELS = ['low', 'medium', 'high'];
-const LIMIT_DEFAULTS = {
+const LIMIT_DEFAULTS = deepFreeze({
   summarizeBucketSize: 20,
   validateBatch: 25,
   challengeCap: 40,
   verifySliceSize: 25,
   maxLineSpan: 100,
-};
-function computeLightEligible(riskTable, changedLines) {
-  if (!Array.isArray(riskTable)) return false;
-  if (typeof changedLines !== 'number' || !(changedLines < LIGHT_SCOPE_MAX_CHANGED_LINES)) return false;
-  return riskTable.every((entry) => entry && entry.risk === 'low');
-}
-const NULL_TOLERANCE_CONSEQUENCE = {
-  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
-  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
-  delivery: 'delivery falls back to tier "all" with no PR identity',
-  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
-  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
-  'delivery.prIdentity.title': 'the report title falls back to owner/repo#N (or "local changes")',
-  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
-  persist: 'the artifact-writer takes the legacy full by-value persist path',
-  scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
-};
-function nullToleranceGap(key) {
-  const why = NULL_TOLERANCE_CONSEQUENCE[key] || 'the run proceeds as if the field had not been supplied';
-  return `null_arg: args.${key} arrived as a literal null and was treated as ABSENT — ${why}. Omit ${key} entirely (or stamp a well-formed value); do not stamp null.`;
-}
-function nullRespellGap(key) {
-  return `null_receipt: args.${key} arrived as a literal null and was spelled as the printed token "null"; the receipt and the configuration are unchanged; stamp the string "null".`;
-}
-function nullToleranceRejectedKeys(cleanArgs, dropped, derivedPaths = []) {
-  if (!Array.isArray(dropped) || dropped.length === 0) return [];
-  const derived = new Set(Array.isArray(derivedPaths) ? derivedPaths : []);
-  const baseline = validateArgs(cleanArgs).errors.length;
-  return dropped
-    .filter((key) => !derived.has(key))
-    .filter((key) => validateArgs(withNullAt(cleanArgs, key)).errors.length > baseline);
-}
-function withNullAt(args, key) {
-  const base = (args && typeof args === 'object' && !Array.isArray(args)) ? args : {};
-  const parts = key.split('.');
-  const out = { ...base };
-  let source = base;
-  let target = out;
-  for (const part of parts.slice(0, -1)) {
-    const value = source && typeof source === 'object' && !Array.isArray(source)
-      ? source[part]
-      : undefined;
-    const copy = value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {};
-    target[part] = copy;
-    target = copy;
-    source = value;
-  }
-  target[parts.at(-1)] = null;
-  return out;
-}
-function stripNullOptionalsReport(args) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return { args, dropped: [], respelled: [] };
-  const dropped = [];
-  const respelled = [];
-  const out = { ...args };
-  for (const k of NULLABLE_TOP_LEVEL) {
-    if (out[k] === null) { delete out[k]; dropped.push(k); }
-  }
-  if (out.delivery && typeof out.delivery === 'object' && !Array.isArray(out.delivery)) {
-    const delivery = { ...out.delivery };
-    if (delivery.prIdentity === null) { delete delivery.prIdentity; dropped.push('delivery.prIdentity'); }
-    if (
-      delivery.prIdentity
-      && typeof delivery.prIdentity === 'object'
-      && !Array.isArray(delivery.prIdentity)
-      && delivery.prIdentity.title === null
-    ) {
-      const id = { ...delivery.prIdentity };
-      delete id.title;
-      delivery.prIdentity = id;
-      dropped.push('delivery.prIdentity.title');
-    }
-    if (delivery.tier === null) { delete delivery.tier; dropped.push('delivery.tier'); }
-    out.delivery = delivery;
-  }
-  if (out.limits && typeof out.limits === 'object' && !Array.isArray(out.limits)) {
-    const limits = { ...out.limits };
-    for (const [k, v] of Object.entries(LIMIT_DEFAULTS)) {
-      if (limits[k] === undefined) limits[k] = v;
-    }
-    out.limits = limits;
-  }
-  if (isPlainObject(out.configEcho) && typeof out.mode === 'string') {
-    const configEcho = { ...out.configEcho };
-    for (const descriptor of KNOB_REGISTRY) {
-      if (!descriptor.nullReceipt || !descriptor.nullReceipt.includes(out.mode)) continue;
-      const entry = configEcho[descriptor.key];
-      if (isPlainObject(entry) && entry.value === null) {
-        configEcho[descriptor.key] = { ...entry, value: 'null' };
-        respelled.push(`configEcho.${descriptor.key}.value`);
-      }
-    }
-    out.configEcho = configEcho;
-  }
-  return { args: out, dropped, respelled };
-}
-function receiptEntryFor(args, descriptor) {
-  const mode = args.mode;
-  const entry = args.configEcho[descriptor.key];
-  if (!isPlainObject(entry) || typeof entry.value !== 'string' || typeof entry.source !== 'string') return null;
-  if (!safeReceiptValue(entry.value) || !matchesRule(descriptor.rule, entry.value, mode)) return null;
-  if (!descriptor.allowedSources[mode] || !descriptor.allowedSources[mode].includes(entry.source)) return null;
-  return entry;
-}
-function receiptEntryForKey(args, key) {
-  const descriptor = KNOB_REGISTRY.find((candidate) => candidate.key === key);
-  return descriptor ? receiptEntryFor(args, descriptor) : null;
-}
-function dottedValue(object, path) {
-  let current = object;
-  for (const part of path.split('.')) {
-    if (current === null || typeof current !== 'object' || Array.isArray(current)) return undefined;
-    current = current[part];
-  }
-  return current;
-}
-function setDottedValue(object, path, value) {
-  const parts = path.split('.');
-  let current = object;
-  for (const part of parts.slice(0, -1)) {
-    if (current[part] === undefined) current[part] = {};
-    else if (!isPlainObject(current[part])) return false;
-    current[part] = { ...current[part] };
-    current = current[part];
-  }
-  const leaf = parts.at(-1);
-  current[leaf] = value;
-  return true;
-}
-function typedReceiptValue(descriptor, value) {
-  if (descriptor.type === 'string') return value;
-  if (descriptor.type === 'csv_list') return value.split(',');
-  if (descriptor.type === 'int_or_null') return value === 'null' ? null : Number(value);
-  return undefined;
-}
-function mappedReceiptValue(descriptor, value) {
-  const mapped = descriptor.waistMap !== null
-    && Object.hasOwn(descriptor.waistMap, value)
-    ? descriptor.waistMap[value]
-    : value;
-  return typedReceiptValue(descriptor, mapped);
-}
-function isPriorReviewDetector(args) {
-  return isPlainObject(args?.reviewScope?.detector);
-}
+});
 const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
-const DERIVE_WHEN = {
-  lightEligible: {
-    holds: (args) => computeLightEligible(args.riskTable, args.changedLines),
-    describe: `every changed file is low risk and fewer than ${LIGHT_SCOPE_MAX_CHANGED_LINES} lines changed`,
-  },
-  priorReviewDetector: {
-    holds: isPriorReviewDetector,
-    describe: '`reviewScope.detector` is an object',
-  },
-};
-const DERIVED_FROM = {
-  reviewMd: {
-    fill: (args) => {
-      if (Array.isArray(args.reviewMd)) {
-        return args.reviewMd.length > 0 ? 'present' : 'absent';
-      }
-      return args.reviewConfigPath != null ? 'present' : 'absent';
-    },
-    source: 'discovery',
-    describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`',
-  },
-};
-function deriveWhenHolds(descriptor, args) {
-  return descriptor.deriveWhen === null
-    || (Object.hasOwn(DERIVE_WHEN, descriptor.deriveWhen) && DERIVE_WHEN[descriptor.deriveWhen].holds(args));
-}
-function deriveConfigWaist(args) {
-  if (!isPlainObject(args) || !isPlainObject(args.configEcho) || typeof args.mode !== 'string') {
-    return { args, derivedPaths: [] };
-  }
-  const out = { ...args };
-  const configEcho = { ...args.configEcho };
-  const derivedPaths = [];
-  let configEchoChanged = false;
-  for (const descriptor of KNOB_REGISTRY) {
-    if (!descriptor.modes.includes(args.mode)) continue;
-    if (descriptor.derivedFrom !== null
-      && Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)
-      && !Object.hasOwn(configEcho, descriptor.key)) {
-      const derivation = DERIVED_FROM[descriptor.derivedFrom];
-      configEcho[descriptor.key] = {
-        value: derivation.fill(args),
-        source: derivation.source,
-      };
-      configEchoChanged = true;
-      continue;
-    }
-    if (!descriptor.waistPath || dottedValue(out, descriptor.waistPath) !== undefined) continue;
-    const root = descriptor.waistPath.split('.')[0];
-    if (out[root] === undefined && REQUIRED.includes(root)) continue;
-    const entry = receiptEntryFor(args, descriptor);
-    if (!entry) continue;
-    if (!deriveWhenHolds(descriptor, args)) continue;
-    const value = mappedReceiptValue(descriptor, entry.value);
-    if (value !== undefined && setDottedValue(out, descriptor.waistPath, value)) {
-      derivedPaths.push(descriptor.waistPath);
-    }
-  }
-  if (configEchoChanged) out.configEcho = configEcho;
-  return { args: out, derivedPaths };
-}
-function normalizeArgsReport(raw) {
-  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  const report = stripNullOptionalsReport(parsed);
-  const { args, derivedPaths } = deriveConfigWaist(report.args);
-  report.args = args;
-  report.derivedPaths = derivedPaths;
-  return report;
-}
-function normalizeArgs(raw) {
-  return normalizeArgsReport(raw).args;
-}
-const REVIEW_TARGET_N = '[1-9]\\d{0,6}';
-const PR_URL_RE = new RegExp(`^(?:https?://)?[\\w.-]+/[^\\s/]+/[^\\s/]+/pull/(${REVIEW_TARGET_N})(?:/[^\\s?#]*)?(?:\\?[^\\s#]*)?(?:#\\S*)?$`);
-const MR_URL_RE = new RegExp(`^(?:https?://)?[\\w.-]+/\\S+?/-/merge_requests/(${REVIEW_TARGET_N})(?:/[^\\s?#]*)?(?:\\?[^\\s#]*)?(?:#\\S*)?$`);
-const REPO_REF_RE = new RegExp(`^[^\\s/]+/[^\\s/]+#(${REVIEW_TARGET_N})$`);
-const PR_NUMBER_RE = new RegExp(`^(${REVIEW_TARGET_N})$`);
-const PR_SHORTHAND_HASH_RE = new RegExp(`^[#!](${REVIEW_TARGET_N})$`);
-const PR_SHORTHAND_WORD_RE = new RegExp(`^(?:pull request|merge request|PR|MR|pull)[ ]?[#!]?(${REVIEW_TARGET_N})$`, 'i');
-function classifyReviewTarget(raw) {
-  if (typeof raw === 'number') {
-    if (Number.isSafeInteger(raw) && raw >= 1 && raw <= 9999999) {
-      return { kind: 'pr_number', number: String(raw), ref: String(raw) };
-    }
-    return null;
-  }
-  if (typeof raw !== 'string') return null;
-  const s = raw.trim();
-  if (s === '' || s.length > 200) return null;
-  let m;
-  if ((m = PR_URL_RE.exec(s))) return { kind: 'pr_url', number: m[1], ref: s };
-  if ((m = MR_URL_RE.exec(s))) return { kind: 'mr_url', number: m[1], ref: s };
-  if ((m = REPO_REF_RE.exec(s))) return { kind: 'repo_ref', number: m[1], ref: s };
-  if ((m = PR_NUMBER_RE.exec(s))) return { kind: 'pr_number', number: m[1], ref: s };
-  if ((m = PR_SHORTHAND_HASH_RE.exec(s))) return { kind: 'pr_shorthand', number: m[1], ref: s };
-  if ((m = PR_SHORTHAND_WORD_RE.exec(s))) return { kind: 'pr_shorthand', number: m[1], ref: s };
-  return null;
-}
-const REVIEW_TARGET_LABEL = {
-  pr_url: 'a GitHub PR URL',
-  mr_url: 'a GitLab MR URL',
-  repo_ref: 'an owner/repo PR reference',
-  pr_number: 'a bare PR/MR number',
-  pr_shorthand: 'a PR/MR reference',
-};
-const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const TRUSTED_SCRIPT_BASENAMES = {
+const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
   assemble: 'assemble_artifacts.py',
   verify: 'verify_findings.py',
-};
-function configEchoValue(args, key) {
-  const entry = args && isPlainObject(args.configEcho) ? args.configEcho[key] : undefined;
-  return isPlainObject(entry) && typeof entry.value === 'string' ? entry.value : undefined;
+});
+const FIELD_RENAMES = deepFreeze({ body: 'description', line: 'line_start', blame_tag: 'origin' });
+const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
+const REVIEW_SETTING_KEYS = deepFreeze([
+  'confidence_threshold',
+  'security_min_confidence',
+  'severity_threshold',
+]);
+const INJECTION_STRIPPED_PROSE_FIELDS = deepFreeze(['suggestion', 'claude_md_rule', 'spec_text']);
+const AGENT_BUG_DETECTOR = 'bug-detector';
+const AGENT_TEST_ANALYZER = 'test-analyzer';
+const AGENT_SECURITY_REVIEWER = 'security-reviewer';
+const AGENT_CONVENTIONS = 'conventions-and-intent';
+const REPORT_FOLD_LIMITS = deepFreeze({
+  proseChars: 4000,
+  summaryChars: 12000,
+  summaryIndexChars: 12000,
+  evidenceLines: 40,
+  evidenceChars: 8000,
+  inlineChars: 512,
+});
+const KNOB_VOCAB = deepFreeze({
+  modes: ['headless', 'interactive'],
+  headless: ['headless'],
+  interactive: ['interactive'],
+  envDefault: ['env', 'default'],
+  fixed: ['fixed'],
+  envReviewMdDefault: ['env', 'review_md', 'default'],
+  discovery: ['discovery'],
+  modelTiers: ['optimized'],
+  deliveryChannels: ['chat', 'pr_comments', 'markdown'],
+  postModes: ['dry-run', 'live'],
+  draftPolicies: ['review', 'skip'],
+  reviewedPolicies: ['incremental', 'full', 'skip'],
+  prNotFoundPolicies: ['local', 'error'],
+  reviewMdValues: ['present', 'absent'],
+  receiptEntryKeys: ['value', 'source'],
+});
+function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
+  const field = fields.find((entry) => entry.name === name);
+  return Boolean(field && field.check(identity[name]));
 }
-function validateConfigEcho(args, errors) {
-  if (args.configEcho === undefined) return;
-  if (!isPlainObject(args.configEcho)) {
-    errors.push('configEcho must be an object keyed by methodology knob');
-    return;
-  }
-  const mode = args.mode;
-  const descriptors = KNOB_REGISTRY.filter((descriptor) => descriptor.modes.includes(mode));
-  const expected = descriptors.map((descriptor) => descriptor.key);
-  const actual = Object.keys(args.configEcho);
-  const extra = actual.filter((key) => !expected.includes(key));
-  const missing = expected.filter((key) => !actual.includes(key));
-  if (extra.length) errors.push(`configEcho has unexpected key(s): ${extra.join(', ')}`);
-  if (missing.length) errors.push(`configEcho is missing key(s): ${missing.join(', ')}`);
-  for (const descriptor of descriptors) {
-    const entry = args.configEcho[descriptor.key];
-    if (!isPlainObject(entry)) {
-      errors.push(`configEcho.${descriptor.key} must be { value, source }`);
-      continue;
-    }
-    const entryKeys = Object.keys(entry);
-    const entryExtra = entryKeys.filter((key) => key !== 'value' && key !== 'source');
-    if (entryExtra.length) errors.push(`configEcho.${descriptor.key} has unexpected key(s): ${entryExtra.join(', ')}`);
-    if (typeof entry.value !== 'string') {
-      errors.push(`configEcho.${descriptor.key}.value must be a string`);
-    } else {
-      if (!safeReceiptValue(entry.value)) errors.push(`configEcho.${descriptor.key}.value must be single-line and contain no controls or backticks`);
-      if (!matchesRule(descriptor.rule, entry.value, mode)) errors.push(`configEcho.${descriptor.key}.value is invalid for ${mode}`);
-    }
-    if (typeof entry.source !== 'string' || !descriptor.allowedSources[mode].includes(entry.source)) {
-      errors.push(`configEcho.${descriptor.key}.source is invalid for ${mode}`);
-    }
-  }
-}
-const MAX_JSON_UNWRAP = 4;
-function unwrapWaist(raw) {
-  let value = raw;
-  for (let depth = 0; depth <= MAX_JSON_UNWRAP; depth++) {
-    if (isPlainObject(value)) return { waist: value, terminal: value };
-    if (typeof value !== 'string' || depth === MAX_JSON_UNWRAP) break;
-    let next;
-    try { next = JSON.parse(value); } catch { break; }
-    value = next;
-  }
-  return { waist: null, terminal: value };
-}
-function describeShape(raw) {
-  if (typeof raw === 'string') {
-    const s = raw.length > 80 ? `${raw.slice(0, 80)}…` : raw;
-    return `a raw string: ${JSON.stringify(s)}`;
-  }
-  if (Array.isArray(raw)) return 'an array';
-  if (typeof raw === 'boolean') return `a boolean: ${raw}`;
-  if (typeof raw === 'number') return `a number: ${raw}`;
-  return 'an unrecognized value';
-}
-function refusalFrom(raw, unwrapped) {
-  if (raw === undefined || raw === null) {
-    const got = raw === undefined ? 'undefined' : 'null';
-    return `args never arrived: the code-gauntlet workflow was invoked with no args at all (got ${got}). `
-      + 'This workflow builds nothing itself — Phases 1-2 of the code-gauntlet skill resolve and check '
-      + 'out the target, write the diff and shared context, and assemble the argsVersion:1 waist object '
-      + 'it consumes. Run the skill instead: Skill("code-gauntlet:code-gauntlet", args="<PR number or URL '
-      + '— omit to auto-detect this branch\'s PR, else local changes>"). To resume an interrupted run, '
-      + 're-invoke with the SAME args object plus resumeFromRunId.';
-  }
-  const { waist, terminal } = unwrapped;
-  if (waist !== null) return null;
-  const target = classifyReviewTarget(raw) || classifyReviewTarget(terminal);
-  if (target && !/["\\]/.test(target.ref)) {
-    return `args was ${REVIEW_TARGET_LABEL[target.kind]} (${target.ref}), not the assembled argsVersion:1 `
-      + 'waist object — do not invoke this workflow directly; run the code-gauntlet skill (Phases 1-2 '
-      + `build the args). Run this instead: Skill("code-gauntlet:code-gauntlet", args="${target.ref}")`;
-  }
-  return `args was ${describeShape(raw)}, not the assembled argsVersion:1 waist object — do not invoke `
-    + 'this workflow directly; run the code-gauntlet skill (Phases 1-2 build the args). Run this '
-    + 'instead: Skill("code-gauntlet:code-gauntlet", args="<your PR number or URL>")';
-}
-const SKILL_RECOVERY_LINE = 'The code-gauntlet skill assembles this object in Phases 1-2 — '
-  + 'run it instead of invoking the workflow directly: '
-  + 'Skill("code-gauntlet:code-gauntlet", args="<PR number or URL>")';
-function makeArgsRejectEnvelope(message, gaps) {
-  return {
-    ok: false,
-    error: message,
-    phaseReached: 'args',
-    failingPhase: 'args',
-    artifactPaths: {},
-    stats: {},
-    gaps,
-  };
-}
-function entryArgs(raw) {
-  const unwrapped = unwrapWaist(raw);
-  const message = refusalFrom(raw, unwrapped);
-  if (message === null) return { ok: true, waist: unwrapped.waist };
-  return { ok: false, envelope: makeArgsRejectEnvelope(message, [message]) };
-}
-function parseEntryArgs(raw) {
-  const entry = entryArgs(raw);
-  if (!entry.ok) throw new Error(entry.envelope.error);
-  return entry.waist;
-}
-function validateArgs(args) {
-  const errors = [];
-  if (!args || typeof args !== 'object') return { ok: false, errors: ['args is not an object'] };
-  if (args.argsVersion !== ARGS_VERSION) errors.push(`unsupported argsVersion ${args.argsVersion} (expected ${ARGS_VERSION})`);
-  for (const k of REQUIRED) if (args[k] === undefined) errors.push(`missing required field: ${k}`);
-  if (args.mode && !['interactive', 'headless'].includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
-  validateConfigEcho(args, errors);
-  if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
-    errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
-  }
-  const PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
-  for (const field of ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot']) {
-    const v = args[field];
-    if (v === undefined) continue;
-    if (typeof v !== 'string' || v.trim() === '') {
-      errors.push(`${field} must be a non-empty string when present`);
-      continue;
-    }
-    if (PATH_CONTROL_RE.test(v)) {
-      errors.push(`${field} must not contain a control character`);
-      continue;
-    }
-    if (field === 'pluginRoot' && v.includes('`')) {
-      errors.push('pluginRoot must not contain a backtick');
-      continue;
-    }
-    if (field === 'pluginRoot' && v.split('/').includes('..')) {
-      errors.push('pluginRoot must not contain a .. path segment');
-      continue;
-    }
-    if (field === 'headShaShort' && !NONCE_RE.test(v)) {
-      errors.push(`headShaShort must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv)`);
-    }
-    if (field === 'repoRoot' && normalizeAbsoluteRoot(v) === null) {
-      errors.push('repoRoot must be an absolute path without .. segments or backslashes');
-    }
-    if ((field === 'outputDir' || field === 'pluginRoot') && !v.startsWith('/')) {
-      errors.push(`${field} must be an absolute path (POSIX /-prefix)`);
-    }
-  }
-  if (args.agentFlags !== undefined) {
-    errors.push('agentFlags is no longer accepted — the pipeline derives dimension flags itself from riskTable/scopeAnswer (issue #24). Stamp riskTable (the Phase 2e per-file risk classification) and, only when the light/full gate asked, scopeAnswer; do not stamp agentFlags.');
-  }
-  if (args.riskTable !== undefined) {
-    if (!Array.isArray(args.riskTable)) {
-      errors.push('riskTable must be an array of {path, risk} objects');
-    } else {
-      const seenPaths = new Set();
-      for (let i = 0; i < args.riskTable.length; i++) {
-        const entry = args.riskTable[i];
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-          errors.push(`riskTable[${i}] must be an object of the form {path, risk}`);
-          continue;
-        }
-        const keys = Object.keys(entry).sort();
-        const extra = keys.filter((k) => k !== 'path' && k !== 'risk');
-        if (extra.length > 0) {
-          errors.push(`riskTable[${i}] has unexpected key(s): ${extra.join(', ')} (only path and risk are allowed)`);
-        }
-        if (typeof entry.path !== 'string' || entry.path === '') {
-          errors.push(`riskTable[${i}].path must be a non-empty string`);
-        } else {
-          seenPaths.add(entry.path);
-        }
-        if (!RISK_LEVELS.includes(entry.risk)) {
-          errors.push(`riskTable[${i}].risk must be one of ${RISK_LEVELS.join(', ')} (got ${JSON.stringify(entry.risk)})`);
-        }
-      }
-      if (Array.isArray(args.changedFiles)) {
-        const changedSet = new Set(args.changedFiles);
-        const missing = args.changedFiles.filter((p) => !seenPaths.has(p));
-        const extraPaths = [...seenPaths].filter((p) => !changedSet.has(p));
-        if (missing.length > 0) {
-          errors.push(`riskTable is missing risk classification for changed file(s): ${missing.join(', ')}`);
-        }
-        if (extraPaths.length > 0) {
-          errors.push(`riskTable classifies file(s) not present in changedFiles: ${extraPaths.join(', ')}`);
-        }
-      }
-    }
-  }
-  if (args.scopeAnswer !== undefined && !SCOPE_ANSWERS.includes(args.scopeAnswer)) {
-    errors.push(`invalid scopeAnswer: ${args.scopeAnswer} (expected one of ${SCOPE_ANSWERS.join(', ')})`);
-  }
-  const riskTableWellFormed = Array.isArray(args.riskTable)
-    && args.riskTable.every((e) => e && typeof e === 'object' && RISK_LEVELS.includes(e.risk) && typeof e.path === 'string' && e.path !== '');
-  const scopeAnswerWellFormed = args.scopeAnswer === undefined || SCOPE_ANSWERS.includes(args.scopeAnswer);
-  if (riskTableWellFormed && scopeAnswerWellFormed && typeof args.changedLines === 'number') {
-    const lightEligible = computeLightEligible(args.riskTable, args.changedLines);
-    if ((args.scopeAnswer !== undefined) !== lightEligible) {
-      if (args.scopeAnswer !== undefined) {
-        errors.push(`scopeAnswer is "${args.scopeAnswer}" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked; omit scopeAnswer`);
-      } else {
-        errors.push('riskTable/changedLines are light-eligible but scopeAnswer is missing — the light/full gate must have asked, and its answer must be stamped as scopeAnswer');
-      }
-    }
-  }
-  if (args.policy && typeof args.policy === 'object' && !Array.isArray(args.policy)
-    && args.policy.provider !== undefined && args.policy.provider !== null
-    && !POLICY_PROVIDERS.includes(args.policy.provider)) {
-    errors.push(`invalid policy.provider: ${args.policy.provider} (expected one of ${POLICY_PROVIDERS.join(', ')})`);
-  }
-  if (isPlainObject(args.policy) && args.policy.tier !== undefined && args.policy.tier !== 'optimized') {
-    errors.push(`invalid policy.tier: ${args.policy.tier} (expected optimized)`);
-  }
-  if (isPlainObject(args.policy)
-    && args.policy.gateway !== undefined && args.policy.gateway !== null
-    && typeof args.policy.gateway !== 'boolean') {
-    errors.push(`invalid policy.gateway: ${args.policy.gateway} (expected a boolean)`);
-  }
-  if (args.changedFiles !== undefined && !Array.isArray(args.changedFiles))
-    errors.push('changedFiles must be an array of repo-relative paths');
-  if (args.changedLines !== undefined && typeof args.changedLines !== 'number')
-    errors.push('changedLines must be a number');
-  const CONTEXT_SIZE_MAX = { contextLines: 5000000, contextChars: 500000000 };
-  for (const k of ['contextLines', 'contextChars']) {
-    if (args[k] === undefined) continue;
-    if (!Number.isSafeInteger(args[k]) || args[k] <= 0) {
-      errors.push(`${k} must be a positive safe integer (the measured size of the shared context file) when present`);
-    } else if (args[k] > CONTEXT_SIZE_MAX[k]) {
-      errors.push(`${k} is ${args[k]}, above the ${CONTEXT_SIZE_MAX[k]} ceiling — that is not a review context, it is a mis-measurement`);
-    }
-  }
-  if (args.contextChars !== undefined && args.contextLines === undefined) {
-    errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
-  }
-  if (args.reviewConfig !== undefined) {
-    if (args.reviewConfig === null || typeof args.reviewConfig !== 'object' || Array.isArray(args.reviewConfig)) {
-      errors.push('reviewConfig must be an object (the parseReviewMd output shape) when present');
-    } else {
-      const validateLayer = (layer, label, allowDir) => {
-        for (const key of REVIEW_SETTING_KEYS) {
-          if (!(key in layer)) continue;
-          if (key === 'severity_threshold') {
-            if (!['critical', 'high', 'medium', 'low'].includes(layer[key])) {
-              errors.push(`${label}.${key} must be one of critical|high|medium|low when present (pre-parsed REVIEW.md enum)`);
-            }
-          } else if (!Number.isInteger(layer[key]) || layer[key] < 0 || layer[key] > 100) {
-            errors.push(`${label}.${key} must be an integer from 0 through 100 when present`);
-          }
-        }
-        if (layer.ignore !== undefined) {
-          if (!Array.isArray(layer.ignore)) {
-            errors.push(`${label}.ignore must be an array of flat pattern strings`);
-          } else {
-            for (let i = 0; i < layer.ignore.length; i++) {
-              if (typeof layer.ignore[i] !== 'string') {
-                errors.push(`${label}.ignore[${i}] must be a flat pattern string (got ${typeof layer.ignore[i]}) — parseReviewMd emits strings, never objects`);
-              }
-            }
-          }
-        }
-        if (!allowDir) return;
-        if (typeof layer.dir !== 'string' || layer.dir === '') {
-          errors.push(`${label}.dir must be a non-empty string`);
-          return;
-        }
-        errors.push(...validatePathSegments(`${layer.dir}`, `${label}.dir`));
-      };
-      validateLayer(args.reviewConfig, 'reviewConfig', false);
-      if (args.reviewConfig.scopes !== undefined) {
-        if (!Array.isArray(args.reviewConfig.scopes)) {
-          errors.push('reviewConfig.scopes must be an array when present');
-        } else {
-          const seenDirs = new Set();
-          for (let i = 0; i < args.reviewConfig.scopes.length; i++) {
-            const label = `reviewConfig.scopes[${i}]`;
-            const scope = args.reviewConfig.scopes[i];
-            if (!isPlainObject(scope)) {
-              errors.push(`${label} must be a plain object`);
-              continue;
-            }
-            const allowed = new Set(['dir', 'ignore', ...REVIEW_SETTING_KEYS]);
-            const extra = Object.keys(scope).filter((key) => !allowed.has(key)).sort();
-            if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
-            validateLayer(scope, label, true);
-            if (typeof scope.dir === 'string' && scope.dir !== '') {
-              if (seenDirs.has(scope.dir)) errors.push(`${label}.dir duplicates another scope dir: ${scope.dir}`);
-              seenDirs.add(scope.dir);
-            }
-          }
-        }
-      }
-    }
-  }
-  if (args.exclusionPatterns !== undefined) {
-    if (!Array.isArray(args.exclusionPatterns)) {
-      errors.push('exclusionPatterns must be an array of flat pattern strings');
-    } else {
-      for (let i = 0; i < args.exclusionPatterns.length; i++) {
-        if (typeof args.exclusionPatterns[i] !== 'string') {
-          errors.push(`exclusionPatterns[${i}] must be a flat pattern string (got ${typeof args.exclusionPatterns[i]})`);
-        }
-      }
-    }
-  }
-  if (args.reviewMd !== undefined) {
-    if (!Array.isArray(args.reviewMd)) {
-      errors.push('reviewMd must be an array of {path, text} objects when present');
-    } else {
-      for (let i = 0; i < args.reviewMd.length; i++) {
-        const entry = args.reviewMd[i];
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-          errors.push(`reviewMd[${i}] must be an object of the form {path, text}`);
-          continue;
-        }
-        const keys = Object.keys(entry).sort();
-        const extra = keys.filter((k) => k !== 'path' && k !== 'text');
-        if (extra.length > 0) {
-          errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path and text are allowed)`);
-        }
-        if (typeof entry.path !== 'string' || entry.path === '') {
-          errors.push(`reviewMd[${i}].path must be a non-empty string`);
-        } else {
-          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, {
-            separateSlashErrors: true,
-            requireBasename: true,
-          }));
-        }
-        if (typeof entry.text !== 'string') {
-          errors.push(`reviewMd[${i}].text must be a string`);
-        }
-      }
-      const hasRootReviewMd = args.reviewMd.some((entry) => (
-        isPlainObject(entry) && entry.path === 'REVIEW.md'
-      ));
-      const hasReviewConfigPath = args.reviewConfigPath != null;
-      if (hasRootReviewMd !== hasReviewConfigPath) {
-        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd contains an entry with path exactly REVIEW.md');
-      }
-    }
-  }
-  if (args.exclusionsText !== undefined && typeof args.exclusionsText !== 'string') {
-    errors.push('exclusionsText must be a string when present');
-  }
-  if (args.reviewMd !== undefined && args.reviewConfig !== undefined) {
-    errors.push('reviewMd and reviewConfig are both present — pass raw reviewMd or pre-parsed reviewConfig, not both (single authority)');
-  }
-  if (args.exclusionsText !== undefined && args.exclusionPatterns !== undefined) {
-    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or pre-parsed exclusionPatterns, not both (single authority)');
-  }
-  if (args.delivery !== undefined) {
-    if (args.delivery === null || typeof args.delivery !== 'object' || Array.isArray(args.delivery)) {
-      errors.push('delivery must be an object of the form { tier } when present');
-    } else {
-      if (args.delivery.tier !== undefined && !DELIVERY_TIERS.includes(args.delivery.tier)) {
-        errors.push(`invalid delivery.tier: ${args.delivery.tier} (expected one of ${DELIVERY_TIERS.join(', ')})`);
-      }
-      const id = args.delivery.prIdentity;
-      if (id !== undefined) {
-        if (id === null || typeof id !== 'object' || Array.isArray(id)) {
-          const requiredNames = PR_IDENTITY_FIELDS.filter((field) => field.required).map((field) => field.name);
-          const optionalNames = PR_IDENTITY_FIELDS.filter((field) => !field.required).map((field) => field.name);
-          errors.push(`delivery.prIdentity must be an object { ${requiredNames.join(', ')}[, ${optionalNames.join(', ')}] } when present`);
-        } else {
-          for (const field of PR_IDENTITY_FIELDS) {
-            const value = id[field.name];
-            const valid = value !== undefined && field.check(value);
-            if ((value === undefined && field.required) || (value !== undefined && !valid)) {
-              errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
-            }
-            if (valid) {
-              for (const extra of field.extraChecks || []) {
-                if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  if (args.persist !== undefined) {
-    if (args.persist === null || typeof args.persist !== 'object' || Array.isArray(args.persist)) {
-      errors.push('persist must be an object of the form { assembleScriptPath, returnPrimaries } when present');
-    } else {
-      if (args.persist.assembleScriptPath !== undefined
-        && (typeof args.persist.assembleScriptPath !== 'string' || !args.persist.assembleScriptPath)) {
-        errors.push('persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py');
-      }
-      if (args.persist.returnPrimaries !== undefined && typeof args.persist.returnPrimaries !== 'boolean') {
-        errors.push('persist.returnPrimaries must be a boolean when present');
-      }
-    }
-  }
-  if (typeof args.pluginRoot === 'string' && args.pluginRoot.startsWith('/')) {
-    const root = args.pluginRoot.replace(/\/+$/, '') || '/';
-    const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
-    const expectedPaths = {
-      assemble: `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES.assemble}`,
-      verify: `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES.verify}`,
-    };
-    if (isPlainObject(args.persist) && typeof args.persist.assembleScriptPath === 'string'
-      && args.persist.assembleScriptPath !== expectedPaths.assemble) {
-      errors.push(`persist.assembleScriptPath must equal ${expectedPaths.assemble}`);
-    }
-    if (isPlainObject(args.verify) && typeof args.verify.scriptPath === 'string'
-      && args.verify.scriptPath !== expectedPaths.verify) {
-      errors.push(`verify.scriptPath must equal ${expectedPaths.verify}`);
-    }
-  }
-  const LIMIT_KEYS = ['summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize', 'deliveryCap', 'discoveryCap', 'maxLineSpan'];
-  if (args.limits !== undefined) {
-    if (args.limits === null || typeof args.limits !== 'object' || Array.isArray(args.limits)) {
-      errors.push('limits must be an object when present');
-    } else {
-      for (const k of Object.keys(args.limits)) {
-        if (!LIMIT_KEYS.includes(k)) errors.push(`unknown limits key: ${k} (expected one of ${LIMIT_KEYS.join(', ')})`);
-      }
-      for (const k of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan']) {
-        const v = args.limits[k];
-        if (v !== undefined && (!Number.isSafeInteger(v) || v <= 0)) {
-          errors.push(`limits.${k} must be a positive safe integer when present`);
-        }
-      }
-      if (args.limits.challengeCap !== undefined
-        && (!Number.isSafeInteger(args.limits.challengeCap) || args.limits.challengeCap < 0)) {
-        errors.push('limits.challengeCap must be a non-negative safe integer when present');
-      }
-      if (args.limits.deliveryCap !== undefined && args.limits.deliveryCap !== null
-        && (!Number.isSafeInteger(args.limits.deliveryCap) || args.limits.deliveryCap < 0)) {
-        errors.push('limits.deliveryCap must be null, absent, or a non-negative safe integer when present');
-      }
-      if (args.limits.discoveryCap !== undefined
-        && (!Number.isSafeInteger(args.limits.discoveryCap) || args.limits.discoveryCap <= 0)) {
-        errors.push('limits.discoveryCap must be a positive safe integer when present');
-      }
-    }
-  }
-  if (args.reviewScope !== undefined) {
-    if (!isPlainObject(args.reviewScope)) {
-      errors.push('reviewScope must be { requested, kind, since, commits, detector }');
-    } else {
-      const scopeKeys = Object.keys(args.reviewScope);
-      const scopeKeysExpected = ['requested', 'kind', 'since', 'commits', 'detector'];
-      const scopeExtra = scopeKeys.filter((key) => !scopeKeysExpected.includes(key));
-      if (scopeExtra.length) errors.push(`reviewScope has unexpected key(s): ${scopeExtra.join(', ')}`);
-      const { requested, kind, since, commits, detector } = args.reviewScope;
-      if (!['full', 'incremental'].includes(requested)) {
-        errors.push('reviewScope.requested must be full or incremental');
-      }
-      if (!['full', 'incremental'].includes(kind)) errors.push(`reviewScope.kind must be full or incremental`);
-      if (kind === 'incremental') {
-        if (requested !== 'incremental') errors.push('reviewScope.kind incremental requires requested incremental');
-        if (typeof since !== 'string' || !NONCE_RE.test(since)) errors.push('reviewScope.since must be a NONCE_RE-safe string for incremental scope');
-        if (commits !== null && (!Number.isSafeInteger(commits) || commits < 0)) errors.push('reviewScope.commits must be a non-negative safe integer or null');
-      } else if (kind === 'full') {
-        if (since !== null) errors.push('reviewScope.since must be null for full scope');
-        if (commits !== null) errors.push('reviewScope.commits must be null for full scope');
-      }
-      if (detector !== null) {
-        if (!isPlainObject(detector)) {
-          errors.push('reviewScope.detector must be null or an object copied from detect_prior_review.py');
-        } else {
-          const detectorKeys = ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'];
-          const detectorExtra = Object.keys(detector).filter((key) => !detectorKeys.includes(key));
-          const detectorMissing = detectorKeys.filter((key) => !Object.hasOwn(detector, key));
-          if (detectorExtra.length) errors.push(`reviewScope.detector has unexpected key(s): ${detectorExtra.join(', ')}`);
-          if (detectorMissing.length) errors.push(`reviewScope.detector is missing key(s): ${detectorMissing.join(', ')}`);
-          for (const key of detectorKeys.slice(0, -1)) {
-            if (typeof detector[key] !== 'boolean') errors.push(`reviewScope.detector.${key} must be a boolean`);
-          }
-          if (detector.error !== null && typeof detector.error !== 'string') {
-            errors.push('reviewScope.detector.error must be a string or null');
-          } else if (typeof detector.error === 'string' && CONTROL_RE.test(detector.error)) {
-            errors.push('reviewScope.detector.error must be single-line without control characters');
-          }
-        }
-      }
-      if (kind === 'incremental' && (!isPlainObject(detector) || detector.incremental_safe !== true)) {
-        errors.push('reviewScope.kind incremental requires detector.incremental_safe true');
-      }
-      if (kind === 'full' && requested === 'incremental' && detector === null) {
-        errors.push('reviewScope full fallback requires detector facts when incremental was requested');
-      }
-    }
-  }
-  const reported = new Set();
-  if (isPlainObject(args.configEcho)) {
-    const capEntry = receiptEntryForKey(args, 'pr_comment_cap');
-    if (isPlainObject(args.limits) && capEntry !== null) {
-      const capValue = args.limits.deliveryCap;
-      const capShapeInvalid = capValue !== undefined && capValue !== null
-        && (!Number.isSafeInteger(capValue) || capValue < 0);
-      if (capShapeInvalid) {
-        reported.add('limits.deliveryCap');
-      } else if (args.mode === 'headless' && (capValue === undefined || capValue === null)) {
-        errors.push('headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap');
-        reported.add('limits.deliveryCap');
-      } else if (args.mode === 'interactive'
-        && (capValue === null || capValue === undefined)
-        && capEntry.value !== 'null') {
-        errors.push('configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null');
-        reported.add('limits.deliveryCap');
-      }
-    }
-    const tierEntry = receiptEntryForKey(args, 'delivery_tier');
-    const stampedTier = dottedValue(args, 'delivery.tier');
-    if (tierEntry !== null
-      && (args.delivery === undefined || args.delivery === null || isPlainObject(args.delivery))
-      && (stampedTier === undefined || stampedTier === null)) {
-      reported.add('delivery.tier');
-      if (tierEntry.value !== 'all') errors.push('configEcho.delivery_tier does not match delivery.tier');
-    }
-    if (args.mode === 'headless') {
-      const trivialEntry = receiptEntryForKey(args, 'trivial_scope');
-      if (trivialEntry !== null && trivialEntry.value === 'light'
-        && !computeLightEligible(args.riskTable, args.changedLines)) {
-        errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked`);
-        reported.add('scopeAnswer');
-      }
-      const deliveryEcho = configEchoValue(args, 'delivery');
-      if (deliveryEcho && deliveryEcho.split(',').includes('pr_comments')
-        && (!isPlainObject(args.delivery) || args.delivery.prIdentity === undefined || args.delivery.prIdentity === null)) {
-        errors.push('delivery.prIdentity is required when configEcho.delivery contains pr_comments');
-      }
-    }
-  }
-  if (isPlainObject(args.configEcho)) {
-    for (const descriptor of KNOB_REGISTRY) {
-      if (!descriptor.modes.includes(args.mode) || descriptor.waistPath === null) continue;
-      if (reported.has(descriptor.waistPath)) continue;
-      const entry = receiptEntryFor(args, descriptor);
-      if (entry === null) continue;
-      if (!deriveWhenHolds(descriptor, args)) continue;
-      const stamped = dottedValue(args, descriptor.waistPath);
-      if (stamped === undefined) continue;
-      const expected = mappedReceiptValue(descriptor, entry.value);
-      if (expected === undefined) continue;
-      const matches = descriptor.type === 'csv_list'
-        ? Array.isArray(stamped)
-          && stamped.length === expected.length
-          && stamped.every((value, index) => value === expected[index])
-        : stamped === expected;
-      if (!matches) errors.push(`${descriptor.waistPath} does not match configEcho.${descriptor.key}`);
-    }
-    for (const descriptor of KNOB_REGISTRY) {
-      if (!descriptor.modes.includes(args.mode)
-        || descriptor.derivedFrom === null
-        || !Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)) continue;
-      const entry = receiptEntryFor(args, descriptor);
-      if (entry !== null && entry.value !== DERIVED_FROM[descriptor.derivedFrom].fill(args)) {
-        errors.push(`configEcho.${descriptor.key} does not match ${descriptor.derivedFrom}`);
-      }
-    }
-  }
-  return { ok: errors.length === 0, errors };
-}
-function resolveReviewConfig(A) {
-  const a = A || {};
-  const reviewConfigSource = a.reviewMd !== undefined ? 'reviewMd'
-    : (a.reviewConfig !== undefined ? 'preParsed' : 'none');
-  const exclusionsSource = a.exclusionsText !== undefined ? 'exclusionsText'
-    : (a.exclusionPatterns !== undefined ? 'preParsed' : 'none');
-  let reviewConfig;
-  let reviewMdEntryCount = 0;
-  if (a.reviewMd !== undefined) {
-    reviewConfig = buildReviewConfig(a.reviewMd);
-    reviewMdEntryCount = a.reviewMd.length;
-  } else {
-    reviewConfig = a.reviewConfig || {};
-  }
-  const exclusionPatterns = a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText)
-    : (a.exclusionPatterns || []);
-  return { reviewConfig, exclusionPatterns, reviewConfigSource, exclusionsSource, reviewMdEntryCount };
-}
+const CORE_DIMENSIONS = deepFreeze(['bug', 'security', 'cross_file_impact', 'intent']);
+const SUGGESTION_DIMENSIONS = deepFreeze(['comment_accuracy', 'comment-accuracy']);
+const MAIN_REPORT_AGENTS = deepFreeze([AGENT_BUG_DETECTOR, AGENT_SECURITY_REVIEWER, 'cross-file-impact', 'type-design-analyzer']);
+const SUGGESTION_AGENTS = deepFreeze([AGENT_TEST_ANALYZER, 'code-simplifier']);
+const COMMENT_ACCURACY_DIMENSIONS = deepFreeze(['comment-accuracy', 'documentation', 'doc-accuracy']);
+const REPORT_PLACED_FIELDS = deepFreeze([
+  'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
+  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
+  'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
+]);
 // --- verifyWire.js ---
 const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
 const VERIFY_INLINE_HEX = '0123456789ABCDEF';
@@ -2669,6 +654,214 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
   }
   return L;
 }
+// --- knobs.js ---
+const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
+const KNOB_REGISTRY = deepFreeze([
+  { key: 'model_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.fixed },
+    rule: { kind: 'enum', values: KNOB_VOCAB.modelTiers }, env: 'CODE_GAUNTLET_MODEL_TIER', reviewMdKey: null,
+    defaults: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, type: 'string', waistPath: null, waistMap: null,
+    derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'delivery', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envReviewMdDefault }, rule: { kind: 'csv_subset',
+    values: KNOB_VOCAB.deliveryChannels }, env: 'CODE_GAUNTLET_DELIVERY', reviewMdKey: 'default_delivery',
+    defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null,
+    nullReceipt: [], resolvedKey: true },
+  { key: 'post_mode', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.postModes }, env: 'CODE_GAUNTLET_POST_MODE', reviewMdKey: null, defaults: { headless: ['dry-run', 'default'] },
+    type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'pr_comment_cap', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
+    rule: { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, env: 'CODE_GAUNTLET_PR_COMMENT_CAP',
+    reviewMdKey: null, defaults: { headless: ['6', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null',
+    waistPath: 'limits.deliveryCap', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: KNOB_VOCAB.interactive,
+    resolvedKey: false },
+  { key: 'delivery_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
+    rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', reviewMdKey: null, defaults: { headless: ['all',
+    'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', waistMap: null, derivedFrom: null,
+    deriveWhen: null, nullReceipt: [], resolvedKey: false },
+  { key: 'draft_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.draftPolicies }, env: 'CODE_GAUNTLET_DRAFT_POLICY', reviewMdKey: null, defaults: { headless: ['review', 'default'] },
+    type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'reviewed_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.reviewedPolicies }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full',
+    'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' }, derivedFrom: null,
+    deriveWhen: 'priorReviewDetector', nullReceipt: [], resolvedKey: true },
+  { key: 'pr_not_found_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.prNotFoundPolicies }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error',
+    'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [],
+    resolvedKey: true },
+  { key: 'trivial_scope', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] },
+    type: 'string', waistPath: 'scopeAnswer', waistMap: null, derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [],
+    resolvedKey: false },
+  { key: 'review_md', modes: KNOB_VOCAB.interactive, allowedSources: { interactive: KNOB_VOCAB.discovery }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.reviewMdValues }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string',
+    waistPath: null, waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [], resolvedKey: false },
+]);
+function matchesRule(rule, value, mode) {
+  if (typeof value !== 'string' || !isPlainObject(rule)) return false;
+  const selected = typeof rule.kind === 'string' ? rule : rule[mode];
+  if (!isPlainObject(selected)) return false;
+  if (selected.kind === 'enum') return Array.isArray(selected.values) && selected.values.includes(value);
+  if (selected.kind === 'csv_subset') {
+    if (!Array.isArray(selected.values) || value === '') return false;
+    const parts = value.split(',');
+    return parts.every((part) => selected.values.includes(part)) && new Set(parts).size === parts.length;
+  }
+  if (selected.kind === 'positive_digits') {
+    return /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
+  }
+  if (selected.kind === 'digits_or_null') {
+    return value === 'null' || (/^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value)));
+  }
+  return false;
+}
+function computeLightEligible(riskTable, changedLines) {
+  if (!Array.isArray(riskTable)) return false;
+  if (typeof changedLines !== 'number' || !(changedLines < LIGHT_SCOPE_MAX_CHANGED_LINES)) return false;
+  return riskTable.every((entry) => entry && entry.risk === 'low');
+}
+function receiptEntryFor(args, descriptor) {
+  const mode = args.mode;
+  const entry = args.configEcho[descriptor.key];
+  if (!isPlainObject(entry) || typeof entry.value !== 'string' || typeof entry.source !== 'string') return null;
+  if (!safeReceiptValue(entry.value) || !matchesRule(descriptor.rule, entry.value, mode)) return null;
+  if (!descriptor.allowedSources[mode] || !descriptor.allowedSources[mode].includes(entry.source)) return null;
+  return entry;
+}
+function receiptEntryForKey(args, key, descriptors = KNOB_REGISTRY) {
+  const descriptor = descriptors.find((candidate) => candidate.key === key);
+  return descriptor ? receiptEntryFor(args, descriptor) : null;
+}
+function setDottedValue(object, path, value) {
+  const parts = path.split('.');
+  let current = object;
+  for (const part of parts.slice(0, -1)) {
+    if (current[part] === undefined) current[part] = {};
+    else if (!isPlainObject(current[part])) return false;
+    current[part] = { ...current[part] };
+    current = current[part];
+  }
+  const leaf = parts.at(-1);
+  current[leaf] = value;
+  return true;
+}
+function typedReceiptValue(descriptor, value) {
+  if (descriptor.type === 'string') return value;
+  if (descriptor.type === 'csv_list') return value.split(',');
+  if (descriptor.type === 'int_or_null') return value === 'null' ? null : Number(value);
+  return undefined;
+}
+function mappedReceiptValue(descriptor, value) {
+  const mapped = descriptor.waistMap !== null
+    && Object.hasOwn(descriptor.waistMap, value)
+    ? descriptor.waistMap[value]
+    : value;
+  return typedReceiptValue(descriptor, mapped);
+}
+function isPriorReviewDetector(args) {
+  return isPlainObject(args?.reviewScope?.detector);
+}
+const DERIVE_WHEN = deepFreeze({
+  lightEligible: {
+    holds: (args) => computeLightEligible(args.riskTable, args.changedLines),
+    describe: `every changed file is low risk and fewer than ${LIGHT_SCOPE_MAX_CHANGED_LINES} lines changed`,
+  },
+  priorReviewDetector: {
+    holds: isPriorReviewDetector,
+    describe: '`reviewScope.detector` is an object',
+  },
+});
+const DERIVED_FROM = deepFreeze({
+  reviewMd: {
+    fill: (args) => {
+      if (Array.isArray(args.reviewMd)) {
+        return args.reviewMd.length > 0 ? 'present' : 'absent';
+      }
+      return args.reviewConfigPath != null ? 'present' : 'absent';
+    },
+    source: 'discovery',
+    describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, ' +
+      '`present` when `reviewConfigPath` is set, else `absent`',
+  },
+});
+function deriveWhenHolds(descriptor, args, gates = DERIVE_WHEN) {
+  return descriptor.deriveWhen === null
+    || (Object.hasOwn(gates, descriptor.deriveWhen) && gates[descriptor.deriveWhen].holds(args));
+}
+function deriveConfigWaist(args, descriptors = KNOB_REGISTRY) {
+  if (!isPlainObject(args) || !isPlainObject(args.configEcho) || typeof args.mode !== 'string') {
+    return { args, derivedPaths: [] };
+  }
+  const out = { ...args };
+  const configEcho = { ...args.configEcho };
+  const derivedPaths = [];
+  let configEchoChanged = false;
+  for (const descriptor of descriptors) {
+    if (!descriptor.modes.includes(args.mode)) continue;
+    if (descriptor.derivedFrom !== null
+      && Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)
+      && !Object.hasOwn(configEcho, descriptor.key)) {
+      const derivation = DERIVED_FROM[descriptor.derivedFrom];
+      configEcho[descriptor.key] = {
+        value: derivation.fill(args),
+        source: derivation.source,
+      };
+      configEchoChanged = true;
+      continue;
+    }
+    if (!descriptor.waistPath || dottedValue(out, descriptor.waistPath) !== undefined) continue;
+    const root = descriptor.waistPath.split('.')[0];
+    if (out[root] === undefined && REQUIRED.includes(root)) continue;
+    const entry = receiptEntryFor(args, descriptor);
+    if (!entry) continue;
+    if (!deriveWhenHolds(descriptor, args)) continue;
+    const value = mappedReceiptValue(descriptor, entry.value);
+    if (value !== undefined && setDottedValue(out, descriptor.waistPath, value)) {
+      derivedPaths.push(descriptor.waistPath);
+    }
+  }
+  if (configEchoChanged) out.configEcho = configEcho;
+  return { args: out, derivedPaths };
+}
+function configEchoValue(args, key) {
+  const entry = args && isPlainObject(args.configEcho) ? args.configEcho[key] : undefined;
+  return isPlainObject(entry) && typeof entry.value === 'string' ? entry.value : undefined;
+}
+function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
+  if (args.configEcho === undefined) return;
+  if (!isPlainObject(args.configEcho)) {
+    errors.push('configEcho must be an object keyed by methodology knob');
+    return;
+  }
+  const mode = args.mode;
+  const descriptors = table.filter((descriptor) => descriptor.modes.includes(mode));
+  const expected = descriptors.map((descriptor) => descriptor.key);
+  const actual = Object.keys(args.configEcho);
+  const extra = actual.filter((key) => !expected.includes(key));
+  const missing = expected.filter((key) => !actual.includes(key));
+  if (extra.length) errors.push(`configEcho has unexpected key(s): ${extra.join(', ')}`);
+  if (missing.length) errors.push(`configEcho is missing key(s): ${missing.join(', ')}`);
+  for (const descriptor of descriptors) {
+    const entry = args.configEcho[descriptor.key];
+    if (!isPlainObject(entry)) {
+      errors.push(`configEcho.${descriptor.key} must be { value, source }`);
+      continue;
+    }
+    const entryKeys = Object.keys(entry);
+    const entryExtra = entryKeys.filter((key) => !KNOB_VOCAB.receiptEntryKeys.includes(key));
+    if (entryExtra.length) errors.push(`configEcho.${descriptor.key} has unexpected key(s): ${entryExtra.join(', ')}`);
+    if (typeof entry.value !== 'string') {
+      errors.push(`configEcho.${descriptor.key}.value must be a string`);
+    } else {
+      if (!safeReceiptValue(entry.value)) {
+        errors.push(`configEcho.${descriptor.key}.value must be single-line and contain no controls or backticks`);
+      }
+      if (!matchesRule(descriptor.rule, entry.value, mode)) errors.push(`configEcho.${descriptor.key}.value is invalid for ${mode}`);
+    }
+    if (typeof entry.source !== 'string' || !descriptor.allowedSources[mode].includes(entry.source)) {
+      errors.push(`configEcho.${descriptor.key}.source is invalid for ${mode}`);
+    }
+  }
+}
 // --- discover.js ---
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
 async function summarize(ctx, input) {
@@ -2780,14 +973,14 @@ function allActiveDimensionsDegraded(dispatched, degraded) {
 function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   const props = {};
   for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
-    props[k] = typeof t === 'string' ? { type: t } : t;
+    props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
   }
-  const required = requiredExtra && requiredExtra.length ? [...FINDING_REQUIRED, ...requiredExtra] : FINDING_REQUIRED;
+  const required = [...FINDING_REQUIRED, ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
   if (conditionalRequired && conditionalRequired.length) {
     itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({
       if: { properties: { dimension: { const: dimension } }, required: ['dimension'] },
-      then: { required: dimRequired },
+      then: { required: [...dimRequired] },
     }));
   }
   return itemSchema;
@@ -2934,6 +1127,994 @@ function applyValidations(findings, validations) {
   }
   return { adjustedCount, unmatchedIds };
 }
+// --- reviewConfig.js ---
+function cfgGet(config, key, fallback) {
+  const v = config ? config[key] : undefined;
+  return v === undefined || v === null ? fallback : v;
+}
+function stripMatchingQuotes(item) {
+  if (item.length >= 2) {
+    const first = item[0];
+    const last = item[item.length - 1];
+    if ((first === '"' || first === "'") && first === last) {
+      return item.slice(1, -1);
+    }
+  }
+  return item;
+}
+function splitReviewLines(text) {
+  return text.split(/\r\n|\r|\n/);
+}
+const REVIEW_BLOCK_PATTERNS = deepFreeze([
+  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet(?:[^\n]*)?\n([^\x00]*?)```/i,
+  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
+  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review(?:[^\n]*)?\n([^\x00]*?)```/i,
+  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
+]);
+const REVIEW_CONFIDENCE_RE =
+  /(?:^|\n)[ \t]*confidence_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
+const REVIEW_SECURITY_RE =
+  /(?:^|\n)[ \t]*security_min_confidence[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
+const REVIEW_SEVERITY_RE =
+  /(?:^|\n)[ \t]*severity_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(critical|high|medium|low)/i;
+const REVIEW_IGNORE_RE =
+  /(?:^|\n)[ \t]*ignore[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n((?:[ \t]*-[^\n]*\n?)+)/i;
+const REVIEW_IGNORE_ITEM_RE =
+  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*-[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*/;
+const REVIEW_EXCL_BLOCK_RE =
+  /```[^\n]*\n([^\x00]*?)```/;
+const REVIEW_EXCL_BULLET_RE =
+  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[-*][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+([^\n]+)$/;
+const REVIEW_CONFIG_RULES = deepFreeze([
+  ...REVIEW_BLOCK_PATTERNS.map((pattern) => ({ kind: 'block', pattern })),
+  { kind: 'numeric', key: 'confidence_threshold', pattern: REVIEW_CONFIDENCE_RE },
+  { kind: 'numeric', key: 'security_min_confidence', pattern: REVIEW_SECURITY_RE },
+  { kind: 'severity', key: 'severity_threshold', pattern: REVIEW_SEVERITY_RE },
+  { kind: 'ignore', pattern: REVIEW_IGNORE_RE, itemPattern: REVIEW_IGNORE_ITEM_RE },
+]);
+function parseReviewMd(text, rules = REVIEW_CONFIG_RULES) {
+  const config = { ignore: [] };
+  if (text === undefined || text === null) return config;
+  let blockText = '';
+  for (const row of rules) {
+    if (row.kind !== 'block') continue;
+    const m = row.pattern.exec(text);
+    if (m) {
+      blockText = m[1];
+      break;
+    }
+  }
+  if (!blockText) blockText = text;
+  for (const row of rules) {
+    if (row.kind === 'block') continue;
+    const m = row.pattern.exec(blockText);
+    if (!m) continue;
+    if (row.kind === 'numeric') {
+      const value = parseInt(m[1], 10);
+      if (value <= 100) config[row.key] = value;
+    } else if (row.kind === 'severity') {
+      config[row.key] = m[1].toLowerCase();
+    } else if (row.kind === 'ignore') {
+      for (const line of splitReviewLines(m[1])) {
+        const item = line.replace(row.itemPattern, '').replace(WS_TRIM_RE, '');
+        if (item) config.ignore.push(stripMatchingQuotes(item));
+      }
+    }
+  }
+  return config;
+}
+function reviewScopeDir(path) {
+  const slash = path.lastIndexOf('/');
+  return slash < 0 ? '' : path.slice(0, slash);
+}
+function reviewScopeDepth(dir) {
+  return dir.split('/').length;
+}
+function mergeReviewLayer(layer, parsed, rules) {
+  for (const row of rules) {
+    if (row.key !== undefined && parsed[row.key] !== undefined) layer[row.key] = parsed[row.key];
+  }
+  layer.ignore.push(...parsed.ignore);
+}
+function buildReviewConfig(entries, rules = REVIEW_CONFIG_RULES) {
+  const root = { ignore: [] };
+  const scopes = [];
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    const dir = reviewScopeDir(entry.path);
+    const parsed = parseReviewMd(entry.text, rules);
+    if (dir === '') {
+      mergeReviewLayer(root, parsed, rules);
+      continue;
+    }
+    let scope = scopes.find((candidate) => candidate.dir === dir);
+    if (!scope) {
+      scope = { dir, ignore: [], _index: index };
+      scopes.push(scope);
+    }
+    mergeReviewLayer(scope, parsed, rules);
+  }
+  scopes.sort((a, b) =>
+    (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (a._index - b._index));
+  for (const scope of scopes) delete scope._index;
+  if (scopes.length > 0) root.scopes = scopes;
+  return root;
+}
+function scopeMatchesFile(scope, file) {
+  return typeof file === 'string'
+    && scope && typeof scope.dir === 'string'
+    && scope.dir !== ''
+    && file.startsWith(`${scope.dir}/`);
+}
+function configForFile(config, file, keys = REVIEW_SETTING_KEYS) {
+  const source = config || {};
+  const view = { ignore: [...(source.ignore === undefined ? [] : source.ignore)] };
+  for (const key of keys) {
+    if (key in source) view[key] = source[key];
+  }
+  if (!Array.isArray(source.scopes) || typeof file !== 'string') return view;
+  const matching = source.scopes
+    .map((scope, index) => ({ scope, index }))
+    .filter(({ scope }) => scopeMatchesFile(scope, file))
+    .sort(({ scope: a, index: ai }, { scope: b, index: bi }) =>
+      (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (ai - bi));
+  for (const { scope } of matching) {
+    for (const key of keys) {
+      if (key in scope) view[key] = scope[key];
+    }
+    view.ignore.push(...(scope.ignore === undefined ? [] : scope.ignore));
+  }
+  return view;
+}
+function loadExclusions(text) {
+  if (text === undefined || text === null) return [];
+  const patterns = [];
+  const blockMatch = REVIEW_EXCL_BLOCK_RE.exec(text);
+  if (blockMatch) {
+    for (const rawLine of splitReviewLines(blockMatch[1])) {
+      const line = rawLine.replace(WS_TRIM_RE, '');
+      if (line && !line.startsWith('#')) patterns.push(line);
+    }
+    return patterns;
+  }
+  for (const line of splitReviewLines(text)) {
+    const m = REVIEW_EXCL_BULLET_RE.exec(line);
+    if (m) patterns.push(m[1].replace(WS_TRIM_RE, ''));
+  }
+  return patterns;
+}
+function applyExclusions(findings, exclusionPatterns, config = null, keys = REVIEW_SETTING_KEYS) {
+  const hasConfig = config !== null && config !== undefined;
+  if (!hasConfig && (!exclusionPatterns || !exclusionPatterns.length)) {
+    return { kept: findings, eliminated: [] };
+  }
+  const kept = [];
+  const eliminated = [];
+  for (const finding of findings) {
+    const patterns = hasConfig
+      ? [...configForFile(config, finding.file, keys).ignore, ...(exclusionPatterns || [])]
+      : (exclusionPatterns || []);
+    const title = asText(finding.title);
+    const description = asText(finding.description);
+    const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
+    const combined = `${title}\n${description}\n${suggestion}`;
+    let matchedPattern = null;
+    for (const pattern of patterns) {
+      const rx = new RegExp(escapeRegExp(pattern), 'i');
+      if (rx.test(combined)) {
+        matchedPattern = pattern;
+        break;
+      }
+    }
+    if (matchedPattern) {
+      eliminated.push({
+        ...finding,
+        eliminated_by: 'exclusion',
+        elimination_reason: `matched exclusion pattern: ${JSON.stringify(matchedPattern)}`,
+      });
+    } else {
+      kept.push(finding);
+    }
+  }
+  return { kept, eliminated };
+}
+// --- injection.js ---
+const INJECTION_TITLE_PATTERNS = deepFreeze([
+  /\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
+  /\bSample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
+  /\bdemo[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
+  /\bPlaceholder[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
+]);
+const INJECTION_BODY_PATTERNS = deepFreeze([
+  /<finding(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
+  /<example(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
+  /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\]/i,
+  /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT\b[^\]]*\b(?:FINDING|TITLE|TEXT|PLACEHOLDER|HERE)\b[^\]]*\]/i,
+  /lorem[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+ipsum/i,
+]);
+const INJECTION_SHELL_PATTERNS = deepFreeze([
+  /\brm[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-[rf]/i,
+  /\bcurl[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
+  /\bwget[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
+  /\bgit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+push\b/i,
+  /\bgh[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+api\b/i,
+]);
+const INJECTION_URL_PATTERNS = deepFreeze([
+  /\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
+  /\bdownload[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
+]);
+const INJECTION_ENCODED_PATTERNS = deepFreeze([
+  /\b(?:decode|base64|atob|b64decode)\b[^\x00]{0,40}[A-Za-z0-9+\/]{40,}={0,2}\b/i,
+  /\b[A-Za-z0-9+\/]{40,}={0,2}\b[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:sh|bash|zsh)\b|base64[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-d\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b)/i,
+  /\b(?:decode|unhex|xxd|fromhex|unhexlify)\b[^\x00]{0,40}(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)/i,
+  /(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:xxd|sh|bash)\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b|-r[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-p\b)/i,
+]);
+const INJECTION_BYPASS_PATTERNS = deepFreeze([
+  /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+review\b/i,
+  /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|these|the|it|my|your)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:pr|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|mr|merge[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|changes?|commit)\b/i,
+  /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:merge|skip|bypass|push|deploy|proceed|continue)\b/i,
+  /\bbypass[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?controls?\b/i,
+  /\bbypass[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:auth|authentication|authorization)\b/i,
+  /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:auth|authentication|authorization)\b/i,
+  /\bmark[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:finding[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?as[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+safe\b/i,
+  /\bapprove[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:PR|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|change)\b/i,
+]);
+const INJECTION_INSTRUCTIONAL_PATTERNS = deepFreeze([
+  /\byou[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+should[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b/i,
+  /\bexecute[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b/i,
+  /\brun[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+command\b/i,
+  /\bplease[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b/i,
+  /\bpaste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+into[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:your[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?terminal/i,
+  /\bcopy[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+paste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b/i,
+]);
+const INJECTION_VULN_INTRO_PATTERNS = deepFreeze([
+  /\badd[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(/i,
+  /\buse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(/i,
+  /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:CORS|CSP|content[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]security[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]policy)\b/i,
+  /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:CSRF|csrf)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:protection|check|token)\b/i,
+  /\ballow[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+all[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+origins\b/i,
+  /\bset[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+secure[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+false\b/i,
+  /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:TLS|SSL|HTTPS)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b/i,
+  /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:certificate|cert)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b/i,
+  /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:check|feature|control)\b/i,
+]);
+const MIN_BODY_WORDS = 10;
+const HIGH_CONFIDENCE_THRESHOLD = 85;
+const WORD_SPLIT_RE = /[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/;
+function countWords(text) {
+  return (text || '').split(WORD_SPLIT_RE).filter(Boolean).length;
+}
+const CONFUSABLE_FOLD_PACKED =
+  '\u00aaa\u00bao\u00d7x\u00fep\u0130i\u0131i\u017fs\u0184b\u018dg\u0192f\u0196l\u01a6R' +
+  '\u01bds\u01bfp\u01c0l\u0251a\u0261g\u0263y\u0269i\u026ai\u026fw\u028bu\u028fy\u02b0h' +
+  '\u02b2j\u02b3r\u02b7w\u02b8y\u02dbi\u02e1l\u02e2s\u02e3x\u037ai\u037fJ\u0391A\u0392B' +
+  '\u0395E\u0396Z\u0397H\u0399l\u039aK\u039cM\u039dN\u039fO\u03a1P\u03a4T\u03a5Y\u03a7X' +
+  '\u03b1a\u03b3y\u03b9i\u03bdv\u03bfo\u03c1p\u03c3o\u03c5u\u03d2Y\u03dcF\u03edo\u03f1p' +
+  '\u03f2c\u03f3j\u03f8p\u03f9C\u03faM\u0405S\u0406l\u0408J\u0410A\u0412B\u0415E\u041aK' +
+  '\u041cM\u041dH\u041eO\u0420P\u0421C\u0422T\u0423Y\u0425X\u042cb\u0430a\u0433r\u0435e' +
+  '\u043eo\u0440p\u0441c\u0443y\u0445x\u0448w\u0455s\u0456i\u0458j\u0461w\u0474V\u0475v' +
+  '\u04aeY\u04afy\u04bbh\u04bde\u04c0l\u04cfl\u0501d\u050cG\u051bq\u051cW\u051dw\u054dU' +
+  '\u054fS\u0555O\u0561w\u0563q\u0566q\u0570h\u0578n\u057cn\u057du\u0581g\u0582i\u0584f' +
+  '\u0585o\u05c0l\u05d5l\u05d8v\u05dfl\u05e1o\u0627l\u0647o\u0661l\u0665o\u0667V\u06beo' +
+  '\u06c1o\u06d5o\u06f1l\u06f5o\u06f7V\u07c0O\u07cal\u0966o\u09e6o\u0a66o\u0ae6o\u0b20O' +
+  '\u0b66o\u0be6o\u0c02o\u0c66o\u0c82o\u0ce6O\u0d02o\u0d1fs\u0d20o\u0d66o\u0d82o\u0e50o' +
+  '\u0ed0o\u1004c\u101do\u1040o\u105ac\u10e7y\u10ffo\u1200U\u12d0O\u13a0D\u13a1R\u13a2T' +
+  '\u13a5i\u13a9Y\u13aaA\u13abJ\u13acE\u13b3W\u13b7M\u13bbH\u13bdY\u13c0G\u13c2h\u13c3Z' +
+  '\u13cfb\u13d2R\u13d4W\u13d5S\u13d9V\u13daS\u13deL\u13dfC\u13e2P\u13e6K\u13e7d\u13f3G' +
+  '\u13f4B\u142fV\u144cU\u146dP\u146fd\u1472b\u148dJ\u14aaL\u1541x\u157cH\u157dx\u1587R' +
+  '\u15afb\u15b4F\u15c5A\u15deD\u15eaD\u15f0M\u15f7B\u166dX\u166ex\u16b7X\u16c1l\u16d5K' +
+  '\u16d6M\u17e0o\u1d04c\u1d0fo\u1d11o\u1d1cu\u1d20v\u1d21w\u1d22z\u1d26r\u1d2cA\u1d2eB' +
+  '\u1d30D\u1d31E\u1d33G\u1d34H\u1d35I\u1d36J\u1d37K\u1d38L\u1d39M\u1d3aN\u1d3cO\u1d3eP' +
+  '\u1d3fR\u1d40T\u1d41U\u1d42W\u1d43a\u1d47b\u1d48d\u1d49e\u1d4dg\u1d4fk\u1d50m\u1d52o' +
+  '\u1d56p\u1d57t\u1d58u\u1d5bv\u1d62i\u1d63r\u1d64u\u1d65v\u1d83g\u1d8cy\u1d9cc\u1da0f' +
+  '\u1dbbz\u1e9df\u1effy\u1fbei\u2071i\u207fn\u2090a\u2091e\u2092o\u2093x\u2095h\u2096k' +
+  '\u2097l\u2098m\u2099n\u209ap\u209bs\u209ct\u2102C\u210ag\u210bH\u210cH\u210dH\u210eh' +
+  '\u2110I\u2111I\u2112L\u2113l\u2115N\u2119P\u211aQ\u211bR\u211cR\u211dR\u2124Z\u2128Z' +
+  '\u212ak\u212cB\u212dC\u212ee\u212fe\u2130E\u2131F\u2133M\u2134o\u2139i\u213dy\u2145D' +
+  '\u2146d\u2147e\u2148i\u2149j\u2160I\u2164V\u2169X\u216cL\u216dC\u216eD\u216fM\u2170i' +
+  '\u2174v\u2179x\u217cl\u217dc\u217ed\u217fm\u2223l\u2228v\u222aU\u22a4T\u22c1v\u22c3U' +
+  '\u22ffE\u2373i\u2374p\u237aa\u23fdl\u24b6A\u24b7B\u24b8C\u24b9D\u24baE\u24bbF\u24bcG' +
+  '\u24bdH\u24beI\u24bfJ\u24c0K\u24c1L\u24c2M\u24c3N\u24c4O\u24c5P\u24c6Q\u24c7R\u24c8S' +
+  '\u24c9T\u24caU\u24cbV\u24ccW\u24cdX\u24ceY\u24cfZ\u24d0a\u24d1b\u24d2c\u24d3d\u24d4e' +
+  '\u24d5f\u24d6g\u24d7h\u24d8i\u24d9j\u24dak\u24dbl\u24dcm\u24ddn\u24deo\u24dfp\u24e0q' +
+  '\u24e1r\u24e2s\u24e3t\u24e4u\u24e5v\u24e6w\u24e7x\u24e8y\u24e9z\u2573X\u27d9T\u292bx' +
+  '\u292cx\u2a2fx\u2c7cj\u2c7dV\u2c82B\u2c85r\u2c8eH\u2c92l\u2c93i\u2c94K\u2c98M\u2c9aN' +
+  '\u2c9eO\u2c9fo\u2ca2P\u2ca3p\u2ca4C\u2ca5c\u2ca6T\u2ca8Y\u2ca9y\u2cacX\u2cbdw\u2cceP' +
+  '\u2ccfp\u2cd0L\u2d38V\u2d39E\u2d4fl\u2d54O\u2d55Q\u2d5dX\u3007O\ua4d0B\ua4d1P\ua4d2d' +
+  '\ua4d3D\ua4d4T\ua4d6G\ua4d7K\ua4d9J\ua4daC\ua4dcZ\ua4ddF\ua4dfM\ua4e0N\ua4e1L\ua4e2S' +
+  '\ua4e3R\ua4e6V\ua4e7H\ua4eaW\ua4ebX\ua4ecY\ua4eeA\ua4f0E\ua4f2l\ua4f3O\ua4f4U\ua647i' +
+  '\ua6dfV\ua731s\ua798F\ua799f\ua79fu\ua7b2J\ua7b3X\ua7b4B\ua7f2C\ua7f3F\ua7f4Q\uab32e' +
+  '\uab35f\uab3do\uab47r\uab48r\uab4eu\uab52u\uab5ay\uab75i\uab81r\uab83w\uab93z\uaba9v' +
+  '\uabaas\uabafc\ufba6o\ufba7o\ufba8o\ufba9o\ufbaao\ufbabo\ufbaco\ufbado\ufe8dl\ufe8el' +
+  '\ufee9o\ufeeao\ufeebo\ufeeco\uff21A\uff22B\uff23C\uff24D\uff25E\uff26F\uff27G\uff28H' +
+  '\uff29I\uff2aJ\uff2bK\uff2cL\uff2dM\uff2eN\uff2fO\uff30P\uff31Q\uff32R\uff33S\uff34T' +
+  '\uff35U\uff36V\uff37W\uff38X\uff39Y\uff3aZ\uff41a\uff42b\uff43c\uff44d\uff45e\uff46f' +
+  '\uff47g\uff48h\uff49i\uff4aj\uff4bk\uff4cl\uff4dm\uff4en\uff4fo\uff50p\uff51q\uff52r' +
+  '\uff53s\uff54t\uff55u\uff56v\uff57w\uff58x\uff59y\uff5az\uffe8l\u{10282}B\u{10286}E\u{10287}F' +
+  '\u{1028a}l\u{10290}X\u{10292}O\u{10295}P\u{10296}S\u{10297}T\u{102a0}A\u{102a1}B\u{102a2}C\u{102a5}F\u{102ab}O\u{102b0}M' +
+  '\u{102b1}T\u{102b2}Y\u{102b4}X\u{102cf}H\u{102f5}Z\u{10301}B\u{10302}C\u{10309}l\u{10311}M\u{10315}T\u{10317}X\u{10320}l' +
+  '\u{10322}X\u{10404}O\u{10415}C\u{1041b}L\u{10420}S\u{1042c}o\u{1043d}c\u{10448}s\u{104b4}R\u{104c2}O\u{104ce}U\u{104ea}o' +
+  '\u{104f6}u\u{10513}N\u{10516}O\u{10518}K\u{1051c}C\u{1051d}V\u{10525}F\u{10526}L\u{10527}X\u{107a5}q\u{114d0}o\u{11706}v' +
+  '\u{1170a}w\u{1170e}w\u{1170f}w\u{118a0}V\u{118a2}F\u{118a3}L\u{118a4}Y\u{118a6}E\u{118a9}Z\u{118ae}E\u{118b2}L\u{118b5}O' +
+  '\u{118b8}U\u{118bc}T\u{118c0}v\u{118c1}s\u{118c2}F\u{118c3}i\u{118c4}z\u{118c8}o\u{118d7}o\u{118d8}u\u{118dc}y\u{118e0}O' +
+  '\u{118e5}Z\u{118e6}W\u{118e9}C\u{118ec}X\u{118ef}W\u{118f2}C\u{11dda}l\u{11de0}O\u{11de1}l\u{16eaa}l\u{16eb6}b\u{16f08}V' +
+  '\u{16f0a}T\u{16f16}L\u{16f28}l\u{16f35}R\u{16f3a}S\u{16f40}A\u{16f42}U\u{16f43}Y\u{1ccde}l\u{1ccf0}O\u{1ccf1}l\u{1d20d}V' +
+  '\u{1d213}F\u{1d216}R\u{1d22a}L\u{1d400}A\u{1d401}B\u{1d402}C\u{1d403}D\u{1d404}E\u{1d405}F\u{1d406}G\u{1d407}H\u{1d408}I' +
+  '\u{1d409}J\u{1d40a}K\u{1d40b}L\u{1d40c}M\u{1d40d}N\u{1d40e}O\u{1d40f}P\u{1d410}Q\u{1d411}R\u{1d412}S\u{1d413}T\u{1d414}U' +
+  '\u{1d415}V\u{1d416}W\u{1d417}X\u{1d418}Y\u{1d419}Z\u{1d41a}a\u{1d41b}b\u{1d41c}c\u{1d41d}d\u{1d41e}e\u{1d41f}f\u{1d420}g' +
+  '\u{1d421}h\u{1d422}i\u{1d423}j\u{1d424}k\u{1d425}l\u{1d426}m\u{1d427}n\u{1d428}o\u{1d429}p\u{1d42a}q\u{1d42b}r\u{1d42c}s' +
+  '\u{1d42d}t\u{1d42e}u\u{1d42f}v\u{1d430}w\u{1d431}x\u{1d432}y\u{1d433}z\u{1d434}A\u{1d435}B\u{1d436}C\u{1d437}D\u{1d438}E' +
+  '\u{1d439}F\u{1d43a}G\u{1d43b}H\u{1d43c}I\u{1d43d}J\u{1d43e}K\u{1d43f}L\u{1d440}M\u{1d441}N\u{1d442}O\u{1d443}P\u{1d444}Q' +
+  '\u{1d445}R\u{1d446}S\u{1d447}T\u{1d448}U\u{1d449}V\u{1d44a}W\u{1d44b}X\u{1d44c}Y\u{1d44d}Z\u{1d44e}a\u{1d44f}b\u{1d450}c' +
+  '\u{1d451}d\u{1d452}e\u{1d453}f\u{1d454}g\u{1d456}i\u{1d457}j\u{1d458}k\u{1d459}l\u{1d45a}m\u{1d45b}n\u{1d45c}o\u{1d45d}p' +
+  '\u{1d45e}q\u{1d45f}r\u{1d460}s\u{1d461}t\u{1d462}u\u{1d463}v\u{1d464}w\u{1d465}x\u{1d466}y\u{1d467}z\u{1d468}A\u{1d469}B' +
+  '\u{1d46a}C\u{1d46b}D\u{1d46c}E\u{1d46d}F\u{1d46e}G\u{1d46f}H\u{1d470}I\u{1d471}J\u{1d472}K\u{1d473}L\u{1d474}M\u{1d475}N' +
+  '\u{1d476}O\u{1d477}P\u{1d478}Q\u{1d479}R\u{1d47a}S\u{1d47b}T\u{1d47c}U\u{1d47d}V\u{1d47e}W\u{1d47f}X\u{1d480}Y\u{1d481}Z' +
+  '\u{1d482}a\u{1d483}b\u{1d484}c\u{1d485}d\u{1d486}e\u{1d487}f\u{1d488}g\u{1d489}h\u{1d48a}i\u{1d48b}j\u{1d48c}k\u{1d48d}l' +
+  '\u{1d48e}m\u{1d48f}n\u{1d490}o\u{1d491}p\u{1d492}q\u{1d493}r\u{1d494}s\u{1d495}t\u{1d496}u\u{1d497}v\u{1d498}w\u{1d499}x' +
+  '\u{1d49a}y\u{1d49b}z\u{1d49c}A\u{1d49e}C\u{1d49f}D\u{1d4a2}G\u{1d4a5}J\u{1d4a6}K\u{1d4a9}N\u{1d4aa}O\u{1d4ab}P\u{1d4ac}Q' +
+  '\u{1d4ae}S\u{1d4af}T\u{1d4b0}U\u{1d4b1}V\u{1d4b2}W\u{1d4b3}X\u{1d4b4}Y\u{1d4b5}Z\u{1d4b6}a\u{1d4b7}b\u{1d4b8}c\u{1d4b9}d' +
+  '\u{1d4bb}f\u{1d4bd}h\u{1d4be}i\u{1d4bf}j\u{1d4c0}k\u{1d4c1}l\u{1d4c2}m\u{1d4c3}n\u{1d4c5}p\u{1d4c6}q\u{1d4c7}r\u{1d4c8}s' +
+  '\u{1d4c9}t\u{1d4ca}u\u{1d4cb}v\u{1d4cc}w\u{1d4cd}x\u{1d4ce}y\u{1d4cf}z\u{1d4d0}A\u{1d4d1}B\u{1d4d2}C\u{1d4d3}D\u{1d4d4}E' +
+  '\u{1d4d5}F\u{1d4d6}G\u{1d4d7}H\u{1d4d8}I\u{1d4d9}J\u{1d4da}K\u{1d4db}L\u{1d4dc}M\u{1d4dd}N\u{1d4de}O\u{1d4df}P\u{1d4e0}Q' +
+  '\u{1d4e1}R\u{1d4e2}S\u{1d4e3}T\u{1d4e4}U\u{1d4e5}V\u{1d4e6}W\u{1d4e7}X\u{1d4e8}Y\u{1d4e9}Z\u{1d4ea}a\u{1d4eb}b\u{1d4ec}c' +
+  '\u{1d4ed}d\u{1d4ee}e\u{1d4ef}f\u{1d4f0}g\u{1d4f1}h\u{1d4f2}i\u{1d4f3}j\u{1d4f4}k\u{1d4f5}l\u{1d4f6}m\u{1d4f7}n\u{1d4f8}o' +
+  '\u{1d4f9}p\u{1d4fa}q\u{1d4fb}r\u{1d4fc}s\u{1d4fd}t\u{1d4fe}u\u{1d4ff}v\u{1d500}w\u{1d501}x\u{1d502}y\u{1d503}z\u{1d504}A' +
+  '\u{1d505}B\u{1d507}D\u{1d508}E\u{1d509}F\u{1d50a}G\u{1d50d}J\u{1d50e}K\u{1d50f}L\u{1d510}M\u{1d511}N\u{1d512}O\u{1d513}P' +
+  '\u{1d514}Q\u{1d516}S\u{1d517}T\u{1d518}U\u{1d519}V\u{1d51a}W\u{1d51b}X\u{1d51c}Y\u{1d51e}a\u{1d51f}b\u{1d520}c\u{1d521}d' +
+  '\u{1d522}e\u{1d523}f\u{1d524}g\u{1d525}h\u{1d526}i\u{1d527}j\u{1d528}k\u{1d529}l\u{1d52a}m\u{1d52b}n\u{1d52c}o\u{1d52d}p' +
+  '\u{1d52e}q\u{1d52f}r\u{1d530}s\u{1d531}t\u{1d532}u\u{1d533}v\u{1d534}w\u{1d535}x\u{1d536}y\u{1d537}z\u{1d538}A\u{1d539}B' +
+  '\u{1d53b}D\u{1d53c}E\u{1d53d}F\u{1d53e}G\u{1d540}I\u{1d541}J\u{1d542}K\u{1d543}L\u{1d544}M\u{1d546}O\u{1d54a}S\u{1d54b}T' +
+  '\u{1d54c}U\u{1d54d}V\u{1d54e}W\u{1d54f}X\u{1d550}Y\u{1d552}a\u{1d553}b\u{1d554}c\u{1d555}d\u{1d556}e\u{1d557}f\u{1d558}g' +
+  '\u{1d559}h\u{1d55a}i\u{1d55b}j\u{1d55c}k\u{1d55d}l\u{1d55e}m\u{1d55f}n\u{1d560}o\u{1d561}p\u{1d562}q\u{1d563}r\u{1d564}s' +
+  '\u{1d565}t\u{1d566}u\u{1d567}v\u{1d568}w\u{1d569}x\u{1d56a}y\u{1d56b}z\u{1d56c}A\u{1d56d}B\u{1d56e}C\u{1d56f}D\u{1d570}E' +
+  '\u{1d571}F\u{1d572}G\u{1d573}H\u{1d574}I\u{1d575}J\u{1d576}K\u{1d577}L\u{1d578}M\u{1d579}N\u{1d57a}O\u{1d57b}P\u{1d57c}Q' +
+  '\u{1d57d}R\u{1d57e}S\u{1d57f}T\u{1d580}U\u{1d581}V\u{1d582}W\u{1d583}X\u{1d584}Y\u{1d585}Z\u{1d586}a\u{1d587}b\u{1d588}c' +
+  '\u{1d589}d\u{1d58a}e\u{1d58b}f\u{1d58c}g\u{1d58d}h\u{1d58e}i\u{1d58f}j\u{1d590}k\u{1d591}l\u{1d592}m\u{1d593}n\u{1d594}o' +
+  '\u{1d595}p\u{1d596}q\u{1d597}r\u{1d598}s\u{1d599}t\u{1d59a}u\u{1d59b}v\u{1d59c}w\u{1d59d}x\u{1d59e}y\u{1d59f}z\u{1d5a0}A' +
+  '\u{1d5a1}B\u{1d5a2}C\u{1d5a3}D\u{1d5a4}E\u{1d5a5}F\u{1d5a6}G\u{1d5a7}H\u{1d5a8}I\u{1d5a9}J\u{1d5aa}K\u{1d5ab}L\u{1d5ac}M' +
+  '\u{1d5ad}N\u{1d5ae}O\u{1d5af}P\u{1d5b0}Q\u{1d5b1}R\u{1d5b2}S\u{1d5b3}T\u{1d5b4}U\u{1d5b5}V\u{1d5b6}W\u{1d5b7}X\u{1d5b8}Y' +
+  '\u{1d5b9}Z\u{1d5ba}a\u{1d5bb}b\u{1d5bc}c\u{1d5bd}d\u{1d5be}e\u{1d5bf}f\u{1d5c0}g\u{1d5c1}h\u{1d5c2}i\u{1d5c3}j\u{1d5c4}k' +
+  '\u{1d5c5}l\u{1d5c6}m\u{1d5c7}n\u{1d5c8}o\u{1d5c9}p\u{1d5ca}q\u{1d5cb}r\u{1d5cc}s\u{1d5cd}t\u{1d5ce}u\u{1d5cf}v\u{1d5d0}w' +
+  '\u{1d5d1}x\u{1d5d2}y\u{1d5d3}z\u{1d5d4}A\u{1d5d5}B\u{1d5d6}C\u{1d5d7}D\u{1d5d8}E\u{1d5d9}F\u{1d5da}G\u{1d5db}H\u{1d5dc}I' +
+  '\u{1d5dd}J\u{1d5de}K\u{1d5df}L\u{1d5e0}M\u{1d5e1}N\u{1d5e2}O\u{1d5e3}P\u{1d5e4}Q\u{1d5e5}R\u{1d5e6}S\u{1d5e7}T\u{1d5e8}U' +
+  '\u{1d5e9}V\u{1d5ea}W\u{1d5eb}X\u{1d5ec}Y\u{1d5ed}Z\u{1d5ee}a\u{1d5ef}b\u{1d5f0}c\u{1d5f1}d\u{1d5f2}e\u{1d5f3}f\u{1d5f4}g' +
+  '\u{1d5f5}h\u{1d5f6}i\u{1d5f7}j\u{1d5f8}k\u{1d5f9}l\u{1d5fa}m\u{1d5fb}n\u{1d5fc}o\u{1d5fd}p\u{1d5fe}q\u{1d5ff}r\u{1d600}s' +
+  '\u{1d601}t\u{1d602}u\u{1d603}v\u{1d604}w\u{1d605}x\u{1d606}y\u{1d607}z\u{1d608}A\u{1d609}B\u{1d60a}C\u{1d60b}D\u{1d60c}E' +
+  '\u{1d60d}F\u{1d60e}G\u{1d60f}H\u{1d610}I\u{1d611}J\u{1d612}K\u{1d613}L\u{1d614}M\u{1d615}N\u{1d616}O\u{1d617}P\u{1d618}Q' +
+  '\u{1d619}R\u{1d61a}S\u{1d61b}T\u{1d61c}U\u{1d61d}V\u{1d61e}W\u{1d61f}X\u{1d620}Y\u{1d621}Z\u{1d622}a\u{1d623}b\u{1d624}c' +
+  '\u{1d625}d\u{1d626}e\u{1d627}f\u{1d628}g\u{1d629}h\u{1d62a}i\u{1d62b}j\u{1d62c}k\u{1d62d}l\u{1d62e}m\u{1d62f}n\u{1d630}o' +
+  '\u{1d631}p\u{1d632}q\u{1d633}r\u{1d634}s\u{1d635}t\u{1d636}u\u{1d637}v\u{1d638}w\u{1d639}x\u{1d63a}y\u{1d63b}z\u{1d63c}A' +
+  '\u{1d63d}B\u{1d63e}C\u{1d63f}D\u{1d640}E\u{1d641}F\u{1d642}G\u{1d643}H\u{1d644}I\u{1d645}J\u{1d646}K\u{1d647}L\u{1d648}M' +
+  '\u{1d649}N\u{1d64a}O\u{1d64b}P\u{1d64c}Q\u{1d64d}R\u{1d64e}S\u{1d64f}T\u{1d650}U\u{1d651}V\u{1d652}W\u{1d653}X\u{1d654}Y' +
+  '\u{1d655}Z\u{1d656}a\u{1d657}b\u{1d658}c\u{1d659}d\u{1d65a}e\u{1d65b}f\u{1d65c}g\u{1d65d}h\u{1d65e}i\u{1d65f}j\u{1d660}k' +
+  '\u{1d661}l\u{1d662}m\u{1d663}n\u{1d664}o\u{1d665}p\u{1d666}q\u{1d667}r\u{1d668}s\u{1d669}t\u{1d66a}u\u{1d66b}v\u{1d66c}w' +
+  '\u{1d66d}x\u{1d66e}y\u{1d66f}z\u{1d670}A\u{1d671}B\u{1d672}C\u{1d673}D\u{1d674}E\u{1d675}F\u{1d676}G\u{1d677}H\u{1d678}I' +
+  '\u{1d679}J\u{1d67a}K\u{1d67b}L\u{1d67c}M\u{1d67d}N\u{1d67e}O\u{1d67f}P\u{1d680}Q\u{1d681}R\u{1d682}S\u{1d683}T\u{1d684}U' +
+  '\u{1d685}V\u{1d686}W\u{1d687}X\u{1d688}Y\u{1d689}Z\u{1d68a}a\u{1d68b}b\u{1d68c}c\u{1d68d}d\u{1d68e}e\u{1d68f}f\u{1d690}g' +
+  '\u{1d691}h\u{1d692}i\u{1d693}j\u{1d694}k\u{1d695}l\u{1d696}m\u{1d697}n\u{1d698}o\u{1d699}p\u{1d69a}q\u{1d69b}r\u{1d69c}s' +
+  '\u{1d69d}t\u{1d69e}u\u{1d69f}v\u{1d6a0}w\u{1d6a1}x\u{1d6a2}y\u{1d6a3}z\u{1d6a4}i\u{1d6a8}A\u{1d6a9}B\u{1d6ac}E\u{1d6ad}Z' +
+  '\u{1d6ae}H\u{1d6b0}l\u{1d6b1}K\u{1d6b3}M\u{1d6b4}N\u{1d6b6}O\u{1d6b8}P\u{1d6bb}T\u{1d6bc}Y\u{1d6be}X\u{1d6c2}a\u{1d6c4}y' +
+  '\u{1d6ca}i\u{1d6ce}v\u{1d6d0}o\u{1d6d2}p\u{1d6d4}o\u{1d6d6}u\u{1d6e0}p\u{1d6e2}A\u{1d6e3}B\u{1d6e6}E\u{1d6e7}Z\u{1d6e8}H' +
+  '\u{1d6ea}l\u{1d6eb}K\u{1d6ed}M\u{1d6ee}N\u{1d6f0}O\u{1d6f2}P\u{1d6f5}T\u{1d6f6}Y\u{1d6f8}X\u{1d6fc}a\u{1d6fe}y\u{1d704}i' +
+  '\u{1d708}v\u{1d70a}o\u{1d70c}p\u{1d70e}o\u{1d710}u\u{1d71a}p\u{1d71c}A\u{1d71d}B\u{1d720}E\u{1d721}Z\u{1d722}H\u{1d724}l' +
+  '\u{1d725}K\u{1d727}M\u{1d728}N\u{1d72a}O\u{1d72c}P\u{1d72f}T\u{1d730}Y\u{1d732}X\u{1d736}a\u{1d738}y\u{1d73e}i\u{1d742}v' +
+  '\u{1d744}o\u{1d746}p\u{1d748}o\u{1d74a}u\u{1d754}p\u{1d756}A\u{1d757}B\u{1d75a}E\u{1d75b}Z\u{1d75c}H\u{1d75e}l\u{1d75f}K' +
+  '\u{1d761}M\u{1d762}N\u{1d764}O\u{1d766}P\u{1d769}T\u{1d76a}Y\u{1d76c}X\u{1d770}a\u{1d772}y\u{1d778}i\u{1d77c}v\u{1d77e}o' +
+  '\u{1d780}p\u{1d782}o\u{1d784}u\u{1d78e}p\u{1d790}A\u{1d791}B\u{1d794}E\u{1d795}Z\u{1d796}H\u{1d798}l\u{1d799}K\u{1d79b}M' +
+  '\u{1d79c}N\u{1d79e}O\u{1d7a0}P\u{1d7a3}T\u{1d7a4}Y\u{1d7a6}X\u{1d7aa}a\u{1d7ac}y\u{1d7b2}i\u{1d7b6}v\u{1d7b8}o\u{1d7ba}p' +
+  '\u{1d7bc}o\u{1d7be}u\u{1d7c8}p\u{1d7ca}F\u{1d7ce}O\u{1d7cf}l\u{1d7d8}O\u{1d7d9}l\u{1d7e2}O\u{1d7e3}l\u{1d7ec}O\u{1d7ed}l' +
+  '\u{1d7f6}O\u{1d7f7}l\u{1e8c7}l\u{1ee00}l\u{1ee24}o\u{1ee64}o\u{1ee80}l\u{1ee84}o\u{1f12b}C\u{1f12c}R\u{1f130}A\u{1f131}B' +
+  '\u{1f132}C\u{1f133}D\u{1f134}E\u{1f135}F\u{1f136}G\u{1f137}H\u{1f138}I\u{1f139}J\u{1f13a}K\u{1f13b}L\u{1f13c}M\u{1f13d}N' +
+  '\u{1f13e}O\u{1f13f}P\u{1f140}Q\u{1f141}R\u{1f142}S\u{1f143}T\u{1f144}U\u{1f145}V\u{1f146}W\u{1f147}X\u{1f148}Y\u{1f149}Z' +
+  '\u{1f74c}C\u{1f768}T\u{1fbf0}O\u{1fbf1}l';
+const INVISIBLE_STRIP_PACKED =
+  '\u00ad\u0300\u0301\u0302\u0303\u0304\u0305\u0306\u0307\u0308\u0309\u030a\u030b\u030c\u030d\u030e' +
+  '\u030f\u0310\u0311\u0312\u0313\u0314\u0315\u0316\u0317\u0318\u0319\u031a\u031b\u031c\u031d\u031e' +
+  '\u031f\u0320\u0321\u0322\u0323\u0324\u0325\u0326\u0327\u0328\u0329\u032a\u032b\u032c\u032d\u032e' +
+  '\u032f\u0330\u0331\u0332\u0333\u0334\u0335\u0336\u0337\u0338\u0339\u033a\u033b\u033c\u033d\u033e' +
+  '\u033f\u0340\u0341\u0342\u0343\u0344\u0345\u0346\u0347\u0348\u0349\u034a\u034b\u034c\u034d\u034e' +
+  '\u034f\u0350\u0351\u0352\u0353\u0354\u0355\u0356\u0357\u0358\u0359\u035a\u035b\u035c\u035d\u035e' +
+  '\u035f\u0360\u0361\u0362\u0363\u0364\u0365\u0366\u0367\u0368\u0369\u036a\u036b\u036c\u036d\u036e' +
+  '\u036f\u061c\u180e\u1ab0\u1ab1\u1ab2\u1ab3\u1ab4\u1ab5\u1ab6\u1ab7\u1ab8\u1ab9\u1aba\u1abb\u1abc' +
+  '\u1abd\u1abe\u1abf\u1ac0\u1ac1\u1ac2\u1ac3\u1ac4\u1ac5\u1ac6\u1ac7\u1ac8\u1ac9\u1aca\u1acb\u1acc' +
+  '\u1acd\u1ace\u1acf\u1ad0\u1ad1\u1ad2\u1ad3\u1ad4\u1ad5\u1ad6\u1ad7\u1ad8\u1ad9\u1ada\u1adb\u1adc' +
+  '\u1add\u1ade\u1adf\u1ae0\u1ae1\u1ae2\u1ae3\u1ae4\u1ae5\u1ae6\u1ae7\u1ae8\u1ae9\u1aea\u1aeb\u1aec' +
+  '\u1aed\u1aee\u1aef\u1af0\u1af1\u1af2\u1af3\u1af4\u1af5\u1af6\u1af7\u1af8\u1af9\u1afa\u1afb\u1afc' +
+  '\u1afd\u1afe\u1aff\u1dc0\u1dc1\u1dc2\u1dc3\u1dc4\u1dc5\u1dc6\u1dc7\u1dc8\u1dc9\u1dca\u1dcb\u1dcc' +
+  '\u1dcd\u1dce\u1dcf\u1dd0\u1dd1\u1dd2\u1dd3\u1dd4\u1dd5\u1dd6\u1dd7\u1dd8\u1dd9\u1dda\u1ddb\u1ddc' +
+  '\u1ddd\u1dde\u1ddf\u1de0\u1de1\u1de2\u1de3\u1de4\u1de5\u1de6\u1de7\u1de8\u1de9\u1dea\u1deb\u1dec' +
+  '\u1ded\u1dee\u1def\u1df0\u1df1\u1df2\u1df3\u1df4\u1df5\u1df6\u1df7\u1df8\u1df9\u1dfa\u1dfb\u1dfc' +
+  '\u1dfd\u1dfe\u1dff\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2060\u2061\u2062' +
+  '\u2063\u2064\u2066\u2067\u2068\u2069\u20d0\u20d1\u20d2\u20d3\u20d4\u20d5\u20d6\u20d7\u20d8\u20d9' +
+  '\u20da\u20db\u20dc\u20dd\u20de\u20df\u20e0\u20e1\u20e2\u20e3\u20e4\u20e5\u20e6\u20e7\u20e8\u20e9' +
+  '\u20ea\u20eb\u20ec\u20ed\u20ee\u20ef\u20f0\u20f1\u20f2\u20f3\u20f4\u20f5\u20f6\u20f7\u20f8\u20f9' +
+  '\u20fa\u20fb\u20fc\u20fd\u20fe\u20ff\ufe00\ufe01\ufe02\ufe03\ufe04\ufe05\ufe06\ufe07\ufe08\ufe09' +
+  '\ufe0a\ufe0b\ufe0c\ufe0d\ufe0e\ufe0f\ufe20\ufe21\ufe22\ufe23\ufe24\ufe25\ufe26\ufe27\ufe28\ufe29' +
+  '\ufe2a\ufe2b\ufe2c\ufe2d\ufe2e\ufe2f\ufeff\u{e0100}\u{e0101}\u{e0102}\u{e0103}\u{e0104}\u{e0105}\u{e0106}\u{e0107}\u{e0108}' +
+  '\u{e0109}\u{e010a}\u{e010b}\u{e010c}\u{e010d}\u{e010e}\u{e010f}\u{e0110}\u{e0111}\u{e0112}\u{e0113}\u{e0114}\u{e0115}\u{e0116}\u{e0117}\u{e0118}' +
+  '\u{e0119}\u{e011a}\u{e011b}\u{e011c}\u{e011d}\u{e011e}\u{e011f}\u{e0120}\u{e0121}\u{e0122}\u{e0123}\u{e0124}\u{e0125}\u{e0126}\u{e0127}\u{e0128}' +
+  '\u{e0129}\u{e012a}\u{e012b}\u{e012c}\u{e012d}\u{e012e}\u{e012f}\u{e0130}\u{e0131}\u{e0132}\u{e0133}\u{e0134}\u{e0135}\u{e0136}\u{e0137}\u{e0138}' +
+  '\u{e0139}\u{e013a}\u{e013b}\u{e013c}\u{e013d}\u{e013e}\u{e013f}\u{e0140}\u{e0141}\u{e0142}\u{e0143}\u{e0144}\u{e0145}\u{e0146}\u{e0147}\u{e0148}' +
+  '\u{e0149}\u{e014a}\u{e014b}\u{e014c}\u{e014d}\u{e014e}\u{e014f}\u{e0150}\u{e0151}\u{e0152}\u{e0153}\u{e0154}\u{e0155}\u{e0156}\u{e0157}\u{e0158}' +
+  '\u{e0159}\u{e015a}\u{e015b}\u{e015c}\u{e015d}\u{e015e}\u{e015f}\u{e0160}\u{e0161}\u{e0162}\u{e0163}\u{e0164}\u{e0165}\u{e0166}\u{e0167}\u{e0168}' +
+  '\u{e0169}\u{e016a}\u{e016b}\u{e016c}\u{e016d}\u{e016e}\u{e016f}\u{e0170}\u{e0171}\u{e0172}\u{e0173}\u{e0174}\u{e0175}\u{e0176}\u{e0177}\u{e0178}' +
+  '\u{e0179}\u{e017a}\u{e017b}\u{e017c}\u{e017d}\u{e017e}\u{e017f}\u{e0180}\u{e0181}\u{e0182}\u{e0183}\u{e0184}\u{e0185}\u{e0186}\u{e0187}\u{e0188}' +
+  '\u{e0189}\u{e018a}\u{e018b}\u{e018c}\u{e018d}\u{e018e}\u{e018f}\u{e0190}\u{e0191}\u{e0192}\u{e0193}\u{e0194}\u{e0195}\u{e0196}\u{e0197}\u{e0198}' +
+  '\u{e0199}\u{e019a}\u{e019b}\u{e019c}\u{e019d}\u{e019e}\u{e019f}\u{e01a0}\u{e01a1}\u{e01a2}\u{e01a3}\u{e01a4}\u{e01a5}\u{e01a6}\u{e01a7}\u{e01a8}' +
+  '\u{e01a9}\u{e01aa}\u{e01ab}\u{e01ac}\u{e01ad}\u{e01ae}\u{e01af}\u{e01b0}\u{e01b1}\u{e01b2}\u{e01b3}\u{e01b4}\u{e01b5}\u{e01b6}\u{e01b7}\u{e01b8}' +
+  '\u{e01b9}\u{e01ba}\u{e01bb}\u{e01bc}\u{e01bd}\u{e01be}\u{e01bf}\u{e01c0}\u{e01c1}\u{e01c2}\u{e01c3}\u{e01c4}\u{e01c5}\u{e01c6}\u{e01c7}\u{e01c8}' +
+  '\u{e01c9}\u{e01ca}\u{e01cb}\u{e01cc}\u{e01cd}\u{e01ce}\u{e01cf}\u{e01d0}\u{e01d1}\u{e01d2}\u{e01d3}\u{e01d4}\u{e01d5}\u{e01d6}\u{e01d7}\u{e01d8}' +
+  '\u{e01d9}\u{e01da}\u{e01db}\u{e01dc}\u{e01dd}\u{e01de}\u{e01df}\u{e01e0}\u{e01e1}\u{e01e2}\u{e01e3}\u{e01e4}\u{e01e5}\u{e01e6}\u{e01e7}\u{e01e8}' +
+  '\u{e01e9}\u{e01ea}\u{e01eb}\u{e01ec}\u{e01ed}\u{e01ee}\u{e01ef}';
+const CONFUSABLE_FOLD = new Map();
+{
+  const cps = [...CONFUSABLE_FOLD_PACKED];
+  for (let i = 0; i < cps.length; i += 2) {
+    CONFUSABLE_FOLD.set(cps[i].codePointAt(0), cps[i + 1]);
+  }
+}
+deepFreeze(CONFUSABLE_FOLD);
+const INVISIBLE_STRIP = deepFreeze(new Set(
+  [...INVISIBLE_STRIP_PACKED].map((c) => c.codePointAt(0)),
+));
+function foldConfusables(text) {
+  let out = '';
+  for (const ch of text) {
+    const cp = ch.codePointAt(0);
+    if (INVISIBLE_STRIP.has(cp)) continue;
+    out += CONFUSABLE_FOLD.get(cp) ?? ch;
+  }
+  return out;
+}
+function firstMatch(text, folded, patterns) {
+  for (const rx of patterns) {
+    if (rx.test(text)) return rx.source;
+  }
+  if (folded !== text) {
+    for (const rx of patterns) {
+      if (rx.test(folded)) return rx.source;
+    }
+  }
+  return null;
+}
+const INJECTION_RULES = deepFreeze([
+  { kind: 'pattern', domain: 'combined', label: 'contains shell command pattern',
+    patterns: INJECTION_SHELL_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'contains visit-URL pattern',
+    patterns: INJECTION_URL_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'contains encoded payload pattern',
+    patterns: INJECTION_ENCODED_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'contains bypass/auto-approve instruction',
+    patterns: INJECTION_BYPASS_PATTERNS, prose: true },
+  { kind: 'shortBody', minimumWords: MIN_BODY_WORDS, confidence: HIGH_CONFIDENCE_THRESHOLD,
+    label: 'suspiciously short description ({words} words) with high confidence ({confidence})' },
+  { kind: 'pattern', domain: 'combined', label: 'uses instructional tone',
+    patterns: INJECTION_INSTRUCTIONAL_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'recommends introducing vulnerability',
+    patterns: INJECTION_VULN_INTRO_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'title', label: 'title matches placeholder pattern', patterns: INJECTION_TITLE_PATTERNS },
+  { kind: 'pattern', domain: 'combined', label: 'matches injection marker', patterns: INJECTION_BODY_PATTERNS, prose: true },
+  { kind: 'path', pattern: /<[^\n]*?>|\{[^\n]*?\}/, label: 'file path is empty or contains template markers' },
+  { kind: 'duplicate', label: 'duplicate of finding' },
+]);
+const FIX_MAX_LINES = 100;
+const FIX_MAX_CHARS = 8000;
+function normalizeFixCodeForBound(code) {
+  return code.endsWith('\n') ? code.slice(0, -1) : code;
+}
+function stripInjectionField(finding, field, reason) {
+  const kept = { ...finding };
+  delete kept[field];
+  kept[`${field}_removed_by`] = 'injection';
+  kept[`${field}_removal_reason`] = reason;
+  return kept;
+}
+function stripInjectedProseFields(finding, rules) {
+  let kept = finding;
+  let firstPatternStrip = null;
+  for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
+    if (field in kept && typeof kept[field] !== 'string') {
+      kept = stripInjectionField(kept, field, `${field} is not a string`);
+      continue;
+    }
+    const value = typeof kept[field] === 'string' ? kept[field] : '';
+    if (!value) continue;
+    const valueFolded = foldConfusables(value);
+    for (const row of rules) {
+      if (!row.prose) continue;
+      const m = firstMatch(value, valueFolded, row.patterns);
+      if (m) {
+        kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(m)}`);
+        if (firstPatternStrip === null) firstPatternStrip = [field, row.label];
+        break;
+      }
+    }
+  }
+  return [kept, firstPatternStrip];
+}
+function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
+  if (!('suggested_fix_code' in finding)) return finding;
+  const code = finding.suggested_fix_code;
+  if (typeof code !== 'string') {
+    return stripInjectionField(finding, 'suggested_fix_code', 'suggested_fix_code is not a string');
+  }
+  const normalized = normalizeFixCodeForBound(code);
+  if (normalized.split('\n').length > FIX_MAX_LINES || [...normalized].length > FIX_MAX_CHARS) {
+    return stripInjectionField(finding, 'suggested_fix_code', 'suggested_fix_code exceeds the delivery bound');
+  }
+  if (firstPatternStrip !== null) {
+    const [propField, propPhrase] = firstPatternStrip;
+    return stripInjectionField(finding, 'suggested_fix_code', `${propField} carried ${propPhrase}`);
+  }
+  return finding;
+}
+function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
+  const [stripped, firstPatternStrip] = stripInjectedProseFields(finding, rules);
+  return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
+}
+function injectionScanCore(findings, includeH4, rules) {
+  const kept = [];
+  const eliminated = [];
+  const seenSignatures = new Map();
+  for (const finding of findings) {
+    const title = asText(finding.title);
+    const description = asText(finding.description);
+    const filepath = asText(finding.file);
+    const confidence = asConfidence(finding.confidence);
+    const combined = `${title}\n${description}`;
+    const combinedFolded = foldConfusables(combined);
+    const titleFolded = foldConfusables(title);
+    const reasons = [];
+    for (const row of rules) {
+      if (row.kind === 'pattern') {
+        const raw = row.domain === 'title' ? title : combined;
+        const folded = row.domain === 'title' ? titleFolded : combinedFolded;
+        const m = firstMatch(raw, folded, row.patterns);
+        if (m) reasons.push(`${row.label}: ${JSON.stringify(m)}`);
+      } else if (row.kind === 'shortBody' && includeH4) {
+        const wordCount = countWords(description);
+        if (wordCount < row.minimumWords && confidence >= row.confidence) {
+          reasons.push(row.label.replace('{words}', wordCount).replace('{confidence}', confidence));
+        }
+      } else if (row.kind === 'path') {
+        if (!filepath || row.pattern.test(filepath)) {
+          reasons.push(`${row.label}: ${JSON.stringify(filepath)}`);
+        }
+      } else if (row.kind === 'duplicate') {
+        const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, finding.line_start]);
+        if (seenSignatures.has(sig)) {
+          reasons.push(`${row.label} ${JSON.stringify(seenSignatures.get(sig))}`);
+        } else {
+          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : title);
+        }
+      }
+    }
+    if (reasons.length) {
+      const elim = { ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') };
+      eliminated.push(elim);
+    } else {
+      kept.push(applyInjectedProseStrip(finding, rules));
+    }
+  }
+  return { kept, eliminated };
+}
+function applyInjectionFilter(findings, rules = INJECTION_RULES) {
+  return injectionScanCore(findings, true, rules);
+}
+function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
+  return injectionScanCore(findings, false, rules);
+}
+// --- filterFindings.js ---
+const FUNCTIONAL_VIOLATION_KEYWORDS =
+  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
+const TYPE_SAFETY_BUG_KEYWORDS =
+  /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
+const TEST_CORRECTNESS_PATTERNS = deepFreeze([
+  /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
+  /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
+  /\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b/i,
+  /\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b/i,
+  /\bvacuous(?:ly)?\b/i,
+  /\btautolog(?:y|ical)\b/i,
+  /\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b/i,
+  /\bdeadlock\b/i,
+  /\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b/i,
+  /\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b/i,
+  /\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b/i,
+  /\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b/i,
+  /\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b/i,
+  /\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b/i,
+  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b/i,
+  /\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b/i,
+  /\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b/i,
+  /\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b/i,
+  /\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b/i,
+  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
+  /\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b/i,
+  /\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b/i,
+]);
+const FILTER_DIMENSION_ROUTES = deepFreeze({
+  test_coverage: { patterns: TEST_CORRECTNESS_PATTERNS },
+  convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] },
+  type_design: { patterns: [TYPE_SAFETY_BUG_KEYWORDS] },
+});
+const FILTER_SUPPRESSION_RULES = deepFreeze([
+  { agent: AGENT_BUG_DETECTOR, pattern: /\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/,
+    eliminatedBy: 'suppressed:intentional', subject: 'behaviour', conclusion: 'intentional' },
+  { agent: AGENT_TEST_ANALYZER, pattern: /\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/,
+    eliminatedBy: 'suppressed:generated', subject: 'code', conclusion: 'generated/scaffolding' },
+]);
+function normalizeFieldNames(findings, renames = FIELD_RENAMES) {
+  let normalizedCount = 0;
+  for (const finding of findings) {
+    let renamed = false;
+    for (const [legacy, canonical] of Object.entries(renames)) {
+      if (legacy in finding && !(canonical in finding)) {
+        finding[canonical] = finding[legacy];
+        delete finding[legacy];
+        renamed = true;
+      }
+    }
+    if (renamed) normalizedCount += 1;
+  }
+  return normalizedCount;
+}
+const FILTER_DEFAULTS = deepFreeze({
+  confidenceThreshold: 70,
+  nonsecurityConfidenceThreshold: 55,
+  securityMinConfidence: 70,
+  severityThreshold: 'low',
+});
+const CONTESTATION_DROP_THRESHOLD = 25;
+function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER) {
+  const kept = [];
+  const eliminated = [];
+  let contestedCount = 0;
+  for (const finding of findings) {
+    const fileConfig = configForFile(config, finding.file);
+    const confidence = asConfidence(pyGet(finding, 'confidence', 0));
+    let severity = (asText(finding.severity) || 'low').toLowerCase();
+    const dimensions = finding.dimension ? [String(finding.dimension).toLowerCase()] : [];
+    const isSecurity = dimensions.includes('security');
+    let effectiveThreshold;
+    if (isSecurity) {
+      const minConf = cfgGet(fileConfig, 'security_min_confidence', FILTER_DEFAULTS.securityMinConfidence);
+      effectiveThreshold = Math.min(cfgGet(fileConfig, 'confidence_threshold', FILTER_DEFAULTS.confidenceThreshold), minConf);
+    } else {
+      effectiveThreshold = cfgGet(fileConfig, 'confidence_threshold', FILTER_DEFAULTS.nonsecurityConfidenceThreshold);
+    }
+    let isContested = false;
+    const originalConfidence = 'original_confidence' in finding ? finding.original_confidence : undefined;
+    if (originalConfidence !== undefined && originalConfidence !== null) {
+      const drop = originalConfidence - confidence;
+      if (drop > CONTESTATION_DROP_THRESHOLD) {
+        isContested = true;
+        contestedCount += 1;
+        finding.contested = true;
+        finding.contestation_drop = drop;
+        finding.contestation_reason =
+          `validator dropped confidence by ${drop} points (original: ${originalConfidence}, current: ${confidence})`;
+      }
+    }
+    if (!isContested && confidence < effectiveThreshold) {
+      eliminated.push({
+        ...finding,
+        eliminated_by: 'threshold',
+        elimination_reason: `confidence ${confidence} < threshold ${effectiveThreshold}`,
+      });
+      continue;
+    }
+    if (!isContested) {
+      const severityThreshold = cfgGet(fileConfig, 'severity_threshold', FILTER_DEFAULTS.severityThreshold);
+      const sevThresholdIdx = severityOrder.indexOf(severityThreshold);
+      if (!severityOrder.includes(severity)) severity = 'low';
+      const sevIdx = severityOrder.indexOf(severity);
+      if (sevIdx > sevThresholdIdx) {
+        eliminated.push({
+          ...finding,
+          eliminated_by: 'threshold',
+          elimination_reason: `severity '${severity}' is below threshold '${severityOrder[sevThresholdIdx]}'`,
+        });
+        continue;
+      }
+    }
+    kept.push(finding);
+  }
+  return { kept, eliminated, contestedCount };
+}
+const REACHABILITY_DEMOTION_REASON =
+  'validator found no code path that reaches this issue without a future change';
+function applyReachabilityDemotion(findings) {
+  let demotedCount = 0;
+  for (const finding of findings) {
+    if (finding.reachability !== 'future_change_only') continue;
+    if (finding.severity !== 'low') {
+      if ('severity' in finding) finding.original_severity = finding.severity;
+      finding.severity = 'low';
+    }
+    finding.demoted_by = 'reachability';
+    finding.demotion_reason = REACHABILITY_DEMOTION_REASON;
+    demotedCount += 1;
+  }
+  return { findings, demotedCount };
+}
+function pyGet(obj, key, dflt) {
+  return key in obj ? obj[key] : dflt;
+}
+function pyRound(x) {
+  const floor = Math.floor(x);
+  const diff = x - floor;
+  if (diff < 0.5) return floor;
+  if (diff > 0.5) return floor + 1;
+  return floor % 2 === 0 ? floor : floor + 1; // exact .5 -> nearest even
+}
+function lineBucket(line, proximity) {
+  const n = coerceInt(line, INT_POLICY.filter);
+  if (n === null) return 0;
+  return pyRound(n / proximity) * proximity;
+}
+const CONSENSUS_BOOST = 10;
+const SINGLETON_PENALTY = 15;
+function groupFilterFindings(findings, keyFor) {
+  const groups = new Map();
+  for (const finding of findings) {
+    const key = keyFor(finding);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(finding);
+  }
+  return groups;
+}
+function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
+  const locationGroups = groupFilterFindings(findings, (finding) => JSON.stringify([
+    pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10),
+  ]));
+  const suppressedIds = new Set();
+  const suppressed = [];
+  const idKey = (f) => (('id' in f) ? f.id : f);
+  for (const group of locationGroups.values()) {
+    if (group.length < 2) continue;
+    const agentMap = groupFilterFindings(group, (f) => pyGet(f, 'agent', '').toLowerCase());
+    for (const row of rules) {
+      if (!agentMap.has(row.agent) || !agentMap.has(AGENT_CONVENTIONS)) continue;
+      for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
+        const convText = `${asText(convFinding.description)} ${asText(convFinding.title)}`.toLowerCase();
+        if (!row.pattern.test(convText)) continue;
+        for (const target of agentMap.get(row.agent)) {
+          const fid = idKey(target);
+          if (suppressedIds.has(fid)) continue;
+          suppressedIds.add(fid);
+          suppressed.push({
+            ...target,
+            eliminated_by: row.eliminatedBy,
+            elimination_reason:
+              `conventions-and-intent confirms ${row.subject} at ${pyGet(target, 'file', '?')}:` +
+              `${pyGet(target, 'line_start', '?')} is ${row.conclusion}`,
+          });
+        }
+        break;
+      }
+    }
+  }
+  const active = findings.filter((f) => !suppressedIds.has(idKey(f)));
+  const consensusGroups = groupFilterFindings(active, (finding) => JSON.stringify([
+    pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10), pyGet(finding, 'origin', '') === 'unknown',
+  ]));
+  let boostedCount = 0;
+  for (const group of consensusGroups.values()) {
+    const count = group.length;
+    const agentsInGroup = group.filter((f) => f.agent).map((f) => f.agent);
+    if (count > 1) {
+      boostedCount += count;
+      for (const finding of group) {
+        const thisAgent = pyGet(finding, 'agent', '');
+        const otherAgents = agentsInGroup.filter((a) => a !== thisAgent);
+        finding.consensus_count = count;
+        finding.consensus_boost = CONSENSUS_BOOST;
+        finding.corroborated_by = otherAgents;
+        const originalConf = asConfidence(finding.confidence);
+        finding.confidence = Math.min(originalConf + CONSENSUS_BOOST, 100);
+      }
+    } else {
+      const finding = group[0];
+      finding.consensus_count = 1;
+      finding.consensus_boost = 0;
+      if (!('corroborated_by' in finding)) finding.corroborated_by = [];
+      const dimension = pyGet(finding, 'dimension', '').toLowerCase();
+      if (dimension && !CORE_DIMENSIONS.includes(dimension)) {
+        const originalConf = asConfidence(finding.confidence);
+        finding.confidence = Math.max(0, originalConf - SINGLETON_PENALTY);
+        finding.singleton_penalty = true;
+      }
+    }
+  }
+  const locationGroupsActive = groupFilterFindings(active, (finding) => JSON.stringify([
+    pyGet(finding, 'file', ''), pyGet(finding, 'line_start', 0),
+  ]));
+  for (const group of locationGroupsActive.values()) {
+    if (group.length < 2) {
+      if (!('contradiction' in group[0])) group[0].contradiction = false;
+      if (!('security_escalation' in group[0])) group[0].security_escalation = false;
+      continue;
+    }
+    const severities = new Set(group.map((f) => (asText(f.severity) || 'low').toLowerCase()));
+    const agentsHere = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
+    const hasContradiction = severities.has('critical') && severities.has('low');
+    const hasSecurityEscalation =
+      agentsHere.has(AGENT_SECURITY_REVIEWER) && agentsHere.size > 1 && severities.has('low');
+    for (const finding of group) {
+      finding.contradiction = hasContradiction;
+      finding.security_escalation = hasSecurityEscalation;
+      if (hasSecurityEscalation && pyGet(finding, 'agent', '').toLowerCase() === AGENT_SECURITY_REVIEWER) {
+        finding.escalation_note =
+          'Kept: security-reviewer finding retained despite conflicting low-severity ' +
+          'signal from another agent (security escalation rule)';
+      }
+    }
+  }
+  return { active, suppressed, boostedCount };
+}
+function routeByDimension(finding, routes = FILTER_DIMENSION_ROUTES) {
+  const dimension = pyGet(finding, 'dimension', '').toLowerCase();
+  if (!dimension) return null;
+  if (CORE_DIMENSIONS.includes(dimension)) return 'main';
+  if (SUGGESTION_DIMENSIONS.includes(dimension)) return 'suggestion';
+  if (!Object.hasOwn(routes, dimension)) return null;
+  return findingMatchesPatterns(finding, routes[dimension].patterns) ? 'main' : 'suggestion';
+}
+function findingMatchesPatterns(finding, patterns) {
+  const combined = `${asText(finding.title)}\n${asText(finding.description)}`;
+  return patterns.some((rx) => rx.test(combined));
+}
+function groupByProximity(findings, lineProximity) {
+  return groupFilterFindings(findings, (finding) => JSON.stringify([
+    pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
+  ]));
+}
+function consolidateCrossAgent(findings) {
+  const LINE_PROXIMITY = 5;
+  for (const f of findings) {
+    if (f && typeof f === 'object') {
+      delete f.consolidation_key;
+      delete f.consolidation_primary;
+    }
+  }
+  const winnerKey = (f) => {
+    const dim = pyGet(f, 'dimension', '').toLowerCase();
+    const isCore = CORE_DIMENSIONS.includes(dim) ? 1 : 0;
+    const conf = asConfidence(f.confidence);
+    const descLen = asText(f.description).length;
+    return [isCore, conf, descLen];
+  };
+  const compareWinnerDesc = (a, b) => {
+    const ka = winnerKey(a);
+    const kb = winnerKey(b);
+    for (let i = 0; i < ka.length; i += 1) {
+      if (ka[i] !== kb[i]) return kb[i] - ka[i];
+    }
+    return 0; // tie -> preserve original order (stable sort)
+  };
+  const groups = groupByProximity(findings, LINE_PROXIMITY);
+  let consolidatedCount = 0;
+  for (const group of groups.values()) {
+    const agentsInGroup = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
+    if (group.length < 2 || agentsInGroup.size < 2) continue;
+    const file = pyGet(group[0], 'file', '');
+    const bucket = lineBucket(group[0].line_start, LINE_PROXIMITY);
+    const consolidationKey = `${file}:${bucket}`;
+    const ranked = [...group].sort(compareWinnerDesc);
+    const primary = ranked.find((f) => pyGet(f, 'id', ''));
+    for (const f of group) {
+      if (!pyGet(f, 'id', '')) continue; // id-less findings stay unstamped
+      f.consolidation_key = consolidationKey;
+      f.consolidation_primary = f === primary;
+      consolidatedCount += 1;
+    }
+  }
+  return { findings, consolidatedCount };
+}
+function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
+  const { findings: tagged, consolidatedCount } = consolidateCrossAgent(findings);
+  let mainCount = 0;
+  let suggestionCount = 0;
+  for (const finding of tagged) {
+    const agent = pyGet(finding, 'agent', '').toLowerCase();
+    const dimension = finding.dimension ? String(finding.dimension).toLowerCase() : '';
+    let destination;
+    if (finding.demoted_by === 'reachability') {
+      destination = 'suggestion';
+      finding.routed_by = 'reachability';
+    } else {
+      const dimRoute = routeByDimension(finding, routes);
+      if (dimRoute !== null) {
+        destination = dimRoute;
+        if (dimRoute === 'suggestion') finding.routed_by = 'dimension';
+      } else if (MAIN_REPORT_AGENTS.includes(agent)) {
+        destination = 'main';
+      } else if (agent === AGENT_CONVENTIONS) {
+        destination = COMMENT_ACCURACY_DIMENSIONS.includes(dimension) ? 'suggestion' : 'main';
+      } else if (SUGGESTION_AGENTS.includes(agent)) {
+        if (agent === AGENT_TEST_ANALYZER && routes.test_coverage
+          && findingMatchesPatterns(finding, routes.test_coverage.patterns)) {
+          destination = 'main';
+          finding.promoted_from = 'test-analyzer';
+          finding.promotion_reason =
+            'test-analyzer finding describes a functional correctness issue that exists today ' +
+            '(not a missing-coverage gap)';
+        } else {
+          destination = 'suggestion';
+        }
+      } else {
+        destination = 'main';
+      }
+    }
+    finding.report_destination = destination;
+    finding.report_tag = destination; // Artifact readers consume both routing names.
+    if (destination === 'main') mainCount += 1;
+    else suggestionCount += 1;
+  }
+  return { tagged, consolidatedCount, mainCount, suggestionCount };
+}
+function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
+  const total = findings.length;
+  normalizeFieldNames(findings);
+  applyReachabilityDemotion(findings);
+  const allEliminated = [];
+  const { kept: afterThreshold, eliminated: elimThreshold, contestedCount } = applyThresholdFilter(findings, config);
+  allEliminated.push(...elimThreshold);
+  const passedThreshold = afterThreshold.length;
+  const { kept: afterExclusions, eliminated: elimExclusions } = applyExclusions(
+    afterThreshold, exclusionPatterns, config,
+  );
+  allEliminated.push(...elimExclusions);
+  const exclusionsRemoved = elimExclusions.length;
+  const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
+  allEliminated.push(...elimInjection);
+  const injectionsRemoved = elimInjection.length;
+  const proseFieldsRemoved = Object.fromEntries(
+    INJECTION_STRIPPED_PROSE_FIELDS.map((field) => [
+      `${field}s_removed`,
+      afterInjection.filter((f) => f[`${field}_removed_by`] === 'injection').length,
+    ]),
+  );
+  const suggestedFixCodesRemoved = afterInjection.filter(
+    (f) => f.suggested_fix_code_removed_by === 'injection',
+  ).length;
+  const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
+  allEliminated.push(...elimSuppressed);
+  const { tagged, consolidatedCount, mainCount, suggestionCount } = tagFindings(active);
+  const promotedCount = tagged.filter((f) => f.promoted_from === 'test-analyzer').length;
+  const dimensionRouted = tagged.filter((f) => f.routed_by === 'dimension').length;
+  const reachabilityDemoted = [...tagged, ...allEliminated]
+    .filter((f) => f.demoted_by === 'reachability').length;
+  const singletonPenalized = [...tagged, ...allEliminated].filter((f) => f.singleton_penalty).length;
+  return {
+    filtered: tagged,
+    eliminated: allEliminated,
+    stats: {
+      total,
+      passed_threshold: passedThreshold,
+      contested_count: contestedCount,
+      exclusions_removed: exclusionsRemoved,
+      injections_removed: injectionsRemoved,
+      ...proseFieldsRemoved,
+      suggested_fix_codes_removed: suggestedFixCodesRemoved,
+      consensus_boosted: consensusBoosted,
+      singleton_penalized: singletonPenalized,
+      dimension_routed: dimensionRouted,
+      reachability_demoted: reachabilityDemoted,
+      cross_agent_consolidated: consolidatedCount,
+      test_analyzer_promoted: promotedCount,
+      tagged_main: mainCount,
+      tagged_suggestion: suggestionCount,
+    },
+    generated_at: generatedAt,
+  };
+}
 // --- applyChallenges.js ---
 function downgradeSeverity(severity) {
   const idx = typeof severity === 'string' ? SEVERITY_ORDER.indexOf(severity.toLowerCase()) : -1;
@@ -3079,154 +2260,22 @@ function applyChallenges(findings, challenges) {
     },
   };
 }
-// --- renderReport.js ---
-const REPORT_EXCLUDED_FIELDS = [
-  'suggested_fix_code',
-  'suggested_fix_code_removed_by',
-  'suggested_fix_code_removal_reason',
-];
-const REPORT_FOLD_LIMITS = {
-  proseChars: 4000,
-  summaryChars: 12000,
-  summaryIndexChars: 12000,
-  evidenceLines: 40,
-  evidenceChars: 8000,
-  inlineChars: 512,
-};
-function dimensionOwnerMap() {
-  const owner = {};
-  for (const d of DIMENSIONS) owner[d.dimension] = d.agentType;
-  return owner;
-}
-function severityBreakdown(rowFindings) {
-  const counts = new Map();
-  for (const f of rowFindings) {
-    let raw;
-    try {
-      raw = f ? f.severity : undefined;
-    } catch {
-      continue;
-    }
-    if (raw === undefined || raw === null || raw === '') continue;
-    const severity = normalizeReportSeverity(raw);
-    counts.set(severity, (counts.get(severity) || 0) + 1);
-  }
-  if (counts.size === 0) return '';
-  const known = SEVERITY_ORDER.filter((s) => counts.has(s));
-  return known.map((s) => `${counts.get(s)} ${s}`).join(', ');
-}
-function dimensionsSummaryTable(input) {
-  const inp = input || {};
-  const dispatchedSet = new Set((Array.isArray(inp.dispatched) ? inp.dispatched : []).map(reportAsText));
-  const degradedSet = new Set((Array.isArray(inp.degraded) ? inp.degraded : []).map(reportAsText));
-  const owner = dimensionOwnerMap();
-  const byAgent = new Map(AGENTS.map((a) => [a, []]));
-  const unverifiedByAgent = new Map(AGENTS.map((a) => [a, []]));
-  for (const f of (inp.findings || [])) {
-    let dimension;
-    try {
-      dimension = f ? f.dimension : undefined;
-    } catch {
-      dimension = undefined;
-    }
-    const agentType = owner[dimension];
-    if (agentType && byAgent.has(agentType)) byAgent.get(agentType).push(f);
-  }
-  for (const f of (inp.unverified || [])) {
-    let dimension;
-    try {
-      dimension = f ? f.dimension : undefined;
-    } catch {
-      dimension = undefined;
-    }
-    const agentType = owner[dimension];
-    if (agentType && unverifiedByAgent.has(agentType)) unverifiedByAgent.get(agentType).push(f);
-  }
-  const rows = AGENTS.map((agentType) => {
-    const rowFindings = byAgent.get(agentType);
-    const rowUnverified = unverifiedByAgent.get(agentType);
-    const n = rowFindings.length;
-    const m = rowUnverified.length;
-    const dims = DIMENSIONS.filter((d) => d.agentType === agentType).map((d) => d.dimension);
-    const isDegraded = dims.some((d) => degradedSet.has(d));
-    const isDispatched = dispatchedSet.has(agentType);
-    const label = AGENT_LABELS[agentType] || agentType;
-    const agentShort = agentType.split(':').pop();
-    let findingsCell;
-    let notes;
-    if (!isDispatched) {
-      findingsCell = '—';
-      notes = 'Skipped — not dispatched in this run';
-    } else if (isDegraded && n + m === 0) {
-      findingsCell = '—';
-      notes = 'No results — agent did not complete';
-    } else if (isDegraded) {
-      findingsCell = m > 0 ? `${n} (+${m} unverified)` : `${n}`;
-      notes = 'Partial — agent may not have completed';
-    } else if (n + m === 0) {
-      findingsCell = '0';
-      notes = 'Clean — no findings returned';
-    } else if (n > 0) {
-      findingsCell = m > 0 ? `${n} (+${m} unverified)` : `${n}`;
-      notes = severityBreakdown(rowFindings);
-    } else {
-      findingsCell = `0 (+${m} unverified)`;
-      notes = 'Unverified findings only — see secondary section';
-    }
-    return `| ${label} | ${agentShort} | ${findingsCell} | ${notes} |`;
-  });
-  return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
-}
-function consolidateForReport(findings) {
-  const list = findings || [];
-  const groups = [];
-  const keyToGroup = new Map();
-  for (const f of list) {
-    const key = f && f.consolidation_key;
-    if (!key) {
-      groups.push({ primary: f, corroborators: [] });
-      continue;
-    }
-    let group = keyToGroup.get(key);
-    if (!group) {
-      group = { primary: null, corroborators: [] };
-      keyToGroup.set(key, group);
-      groups.push(group);
-    }
-    if (f.consolidation_primary) {
-      if (!group.primary) group.primary = f;
-      else group.corroborators.push(f);
-    } else group.corroborators.push(f);
-  }
-  return groups.map((group) => {
-    const primary = group.primary || group.corroborators.shift();
-    if (!group.corroborators.length) return primary;
-    return {
-      ...primary,
-      corroborations: group.corroborators.map((c) => ({
-        agent: c.agent,
-        dimension: c.dimension,
-        confidence: c.confidence,
-        title: c.title,
-        description: c.description,
-      })),
-    };
-  });
-}
-const REPORT_PLACED_FIELDS = new Set([
-  'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
-  'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
-]);
-function reportExtraFields() {
-  const declared = new Set(Object.keys(FINDING_PROP_TYPES));
-  for (const dimension of DIMENSIONS) {
-    for (const key of Object.keys(dimension.schemaExtra || {})) declared.add(key);
-  }
-  return [...declared]
-    .filter((key) => !REPORT_PLACED_FIELDS.has(key) && !REPORT_EXCLUDED_FIELDS.includes(key))
-    .sort();
-}
+// --- outboundText.js ---
+const OUTBOUND_NAMED_ENTITIES = deepFreeze({
+  commat: '@',
+  excl: '!',
+  lbrack: '[',
+  lsqb: '[',
+  rsqb: ']',
+  rbrack: ']',
+  Hat: '^',
+  colon: ':',
+  lpar: '(',
+  rpar: ')',
+  bsol: '\\',
+  nbsp: ' ',
+  NonBreakingSpace: ' ',
+});
 function reportAsText(value) {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value;
@@ -3236,19 +2285,14 @@ function reportAsText(value) {
     return '';
   }
 }
-function reportOptionalText(value) {
-  return value === undefined || value === null ? undefined : reportAsText(value);
-}
-function reportAsConfidence(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
 function codePointLength(value) {
   return Array.from(reportAsText(value)).length;
 }
 function codePointPrefix(value, limit) {
   return Array.from(reportAsText(value)).slice(0, limit).join('');
 }
-function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
+function foldInline(text, limit, limits = REPORT_FOLD_LIMITS) {
+  if (limit === undefined) limit = limits.inlineChars;
   const value = reportAsText(text);
   const length = codePointLength(value);
   if (length <= limit) return value;
@@ -3300,149 +2344,63 @@ function foldProse(text, limit) {
   const length = codePointLength(value);
   if (length <= limit) return value;
   let prefix = '';
+  let prefixLength = 0;
   const lines = value.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
     const next = `${index ? '\n' : ''}${lines[index]}`;
-    const remaining = limit - codePointLength(prefix);
-    if (codePointLength(next) <= remaining) {
+    const remaining = limit - prefixLength;
+    const nextLength = codePointLength(next);
+    if (nextLength <= remaining) {
       prefix += next;
+      prefixLength += nextLength;
       continue;
     }
-    if (codePointLength(lines[index]) > limit) prefix += codePointPrefix(next, remaining);
+    if (codePointLength(lines[index]) > limit) {
+      const partial = codePointPrefix(next, remaining);
+      prefix += partial;
+      prefixLength += codePointLength(partial);
+    }
     break;
   }
-  const omitted = length - codePointLength(prefix);
+  const omitted = length - prefixLength;
   const closer = proseFenceCloser(prefix);
   if (closer) prefix += `${prefix.endsWith('\n') || prefix.endsWith('\r') ? '' : '\n'}${closer}`;
   return `${prefix}\n\n_[folded: ${omitted} more characters]_`;
 }
-function foldEvidence(text) {
+function foldEvidence(text, limits = REPORT_FOLD_LIMITS) {
   const value = reportAsText(text);
   const length = codePointLength(value);
   const separators = [...value.matchAll(/\r\n|\r|\n/g)];
   const lineCount = separators.length + 1;
-  const lineFolded = lineCount > REPORT_FOLD_LIMITS.evidenceLines;
+  const lineFolded = lineCount > limits.evidenceLines;
   const linePrefix = lineFolded
-    ? value.slice(0, separators[REPORT_FOLD_LIMITS.evidenceLines - 1].index)
+    ? value.slice(0, separators[limits.evidenceLines - 1].index)
     : value;
   const linePrefixLength = codePointLength(linePrefix);
-  const charFolded = length > REPORT_FOLD_LIMITS.evidenceChars;
-  if (charFolded && (!lineFolded || REPORT_FOLD_LIMITS.evidenceChars <= linePrefixLength)) {
-    const prefix = codePointPrefix(value, REPORT_FOLD_LIMITS.evidenceChars);
-    return `${prefix}\n... [folded: ${length - REPORT_FOLD_LIMITS.evidenceChars} more characters]`;
+  const charFolded = length > limits.evidenceChars;
+  if (charFolded && (!lineFolded || limits.evidenceChars <= linePrefixLength)) {
+    const prefix = codePointPrefix(value, limits.evidenceChars);
+    return `${prefix}\n... [folded: ${length - limits.evidenceChars} more characters]`;
   }
   if (lineFolded) {
-    return `${linePrefix}\n... [folded: ${lineCount - REPORT_FOLD_LIMITS.evidenceLines} more lines]`;
+    return `${linePrefix}\n... [folded: ${lineCount - limits.evidenceLines} more lines]`;
   }
   return value;
-}
-function reportRiskLevel(value) {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === 'number' || typeof value === 'string') return value;
-  const text = reportAsText(value);
-  return text || undefined;
-}
-function reportCorroboration(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const out = {};
-  for (const key of ['agent', 'dimension', 'title', 'description']) {
-    let raw;
-    try {
-      raw = value[key];
-    } catch {
-      continue;
-    }
-    const text = reportOptionalText(raw);
-    if (text !== undefined) out[key] = text;
-  }
-  let confidence;
-  try {
-    confidence = reportAsConfidence(value.confidence);
-  } catch {
-    confidence = undefined;
-  }
-  if (confidence !== undefined) out.confidence = confidence;
-  return out;
-}
-function coerceReportFinding(finding) {
-  const out = {};
-  let keys;
-  try {
-    keys = Object.keys(finding);
-  } catch {
-    return out;
-  }
-  for (const key of keys) {
-    let raw;
-    try {
-      raw = finding[key];
-    } catch {
-      continue;
-    }
-    let value;
-    if (key === 'severity') {
-      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw);
-    } else if (key === 'confidence') {
-      value = reportAsConfidence(raw);
-    } else if (key === 'corroborations') {
-      value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
-    } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
-      value = raw;
-    } else if (key === 'risk_level') {
-      value = reportRiskLevel(raw);
-    } else {
-      value = reportOptionalText(raw);
-    }
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-function coerceReportFindings(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((finding) => (
-    finding && typeof finding === 'object' && !Array.isArray(finding)
-      ? coerceReportFinding(finding)
-      : {}
-  ));
-}
-function normalizeReportSeverity(raw) {
-  if (typeof raw !== 'string') return 'low';
-  const normalized = raw.trim().toLowerCase();
-  return SEVERITY_ORDER.includes(normalized) ? normalized : 'low';
-}
-function fieldLabel(key) {
-  const words = String(key).replaceAll('_', ' ');
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-function fenceFor(text) {
-  let longest = 0;
-  for (const match of reportAsText(text).matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
-  return '`'.repeat(Math.max(3, longest + 1));
 }
 function oneLine(value) {
   return reportAsText(value).replace(/[\r\n]+/g, ' ').replace(/ +/g, ' ').trim();
 }
-const OUTBOUND_INVISIBLES = /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/;
-const OUTBOUND_NAMED_ENTITIES = {
-  commat: '@',
-  excl: '!',
-  lbrack: '[',
-  lsqb: '[',
-  rsqb: ']',
-  rbrack: ']',
-  Hat: '^',
-  colon: ':',
-  lpar: '(',
-  rpar: ')',
-  bsol: '\\',
-  nbsp: ' ',
-  NonBreakingSpace: ' ',
-};
-const OUTBOUND_NAMED_ENTITY_PREFIXES = new Set(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
-  Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
-)));
+const OUTBOUND_INVISIBLES =
+  /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/;
+function entityPrefixSet(entities) {
+  return new Set(Object.keys(entities).flatMap((name) => (
+    Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
+  )));
+}
+const OUTBOUND_NAMED_ENTITY_PREFIXES = deepFreeze(entityPrefixSet(OUTBOUND_NAMED_ENTITIES));
 const entityAt = (start, kind, fields = {}) => ({ start, kind, value: 0, hasDigit: false, name: '', ...fields });
-function normalizeOutboundText(value) {
+function normalizeOutboundText(value, entities = OUTBOUND_NAMED_ENTITIES) {
+  const namedPrefixes = entities === OUTBOUND_NAMED_ENTITIES ? OUTBOUND_NAMED_ENTITY_PREFIXES : entityPrefixSet(entities);
   let text = reportAsText(value);
   const output = [];
   const push = (character) => {
@@ -3459,7 +2417,7 @@ function normalizeOutboundText(value) {
           entity = entityAt(entity.start, 'numeric');
         } else if (/[A-Za-z]/.test(character)) {
           const name = entity.name + character;
-          entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
+          entity = namedPrefixes.has(name)
             ? entityAt(entity.start, 'named', { name })
             : null;
         } else {
@@ -3497,14 +2455,14 @@ function normalizeOutboundText(value) {
         }
       } else if (entity.kind === 'named') {
         if (character === ';') {
-          if (Object.hasOwn(OUTBOUND_NAMED_ENTITIES, entity.name)) {
-            replacement = OUTBOUND_NAMED_ENTITIES[entity.name];
+          if (Object.hasOwn(entities, entity.name)) {
+            replacement = entities[entity.name];
           } else {
             entity = null;
           }
         } else if (/[A-Za-z]/.test(character)) {
           const name = entity.name + character;
-          entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
+          entity = namedPrefixes.has(name)
             ? entityAt(entity.start, 'named', { name })
             : null;
         } else {
@@ -3543,8 +2501,8 @@ function normalizeOutboundText(value) {
   }
   return output.map((entry) => entry.character).join('');
 }
-function outboundBase(value) {
-  const text = normalizeOutboundText(value);
+function outboundBase(value, entities = OUTBOUND_NAMED_ENTITIES) {
+  const text = normalizeOutboundText(value, entities);
   if (text.trim() === '') return '';
   return text.replace(/(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}/g, '[REDACTED]')
     .replace(/(?:glpat-|glrt-)[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
@@ -3670,12 +2628,25 @@ function outboundContain(line, forceColon = false) {
   output.push(outboundVisible(line.slice(cursor)));
   return outboundDefinitions(output.join(''), forceColon);
 }
-function prepareLine(value, forceColon = false) {
-  const text = outboundBase(value);
+function prepareLine(value, forceColon = false, entities = OUTBOUND_NAMED_ENTITIES) {
+  const text = outboundBase(value, entities);
   return text.trim() === '' ? '' : outboundContain(text, forceColon === true);
 }
-function prepareSummaryTitle(value) {
-  return prepareLine(foldInline(oneLine(outboundBase(value))), true);
+function prepareSummaryTitle(value, entities = OUTBOUND_NAMED_ENTITIES) {
+  return prepareLine(foldInline(oneLine(outboundBase(value, entities))), true, entities);
+}
+function preparedCodeSpan(value, substituteVisible = false, entities = OUTBOUND_NAMED_ENTITIES, foldLimit) {
+  const display = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' '), entities));
+  return codeSpan(foldLimit === undefined ? display : foldInline(display, foldLimit), substituteVisible);
+}
+function codeSpan(display, substituteVisible = false) {
+  if (substituteVisible) {
+    display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
+    display = outboundDefinitions(display, true);
+  }
+  const delimiter = '`'.repeat(longestBacktickRun(display) + 1);
+  if (/^[` ]|[` ]$/.test(display)) display = ` ${display} `;
+  return `${delimiter}${display}${delimiter}`;
 }
 function outboundTildeRuns(line) {
   const spans = outboundCodeSpans(line);
@@ -3710,8 +2681,237 @@ function outboundTildeRuns(line) {
   }
   return parts.join('');
 }
-function inline(value) {
-  return foldInline(oneLine(value));
+// --- renderReport.js ---
+const REPORT_EXCLUDED_FIELDS = deepFreeze([
+  'suggested_fix_code',
+  'suggested_fix_code_removed_by',
+  'suggested_fix_code_removal_reason',
+]);
+const REVIEW_SCOPE_FALLBACK_RULES = deepFreeze([
+  { error: true },
+  { facts: { previously_reviewed: false }, reason: 'no prior review recorded' },
+  { facts: { previously_reviewed: true, sha_resolvable: false }, reason: 'recorded SHA not resolvable' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: false },
+    reason: 'head has not advanced' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: false },
+    reason: 'history rewritten (recorded SHA is not an ancestor)' },
+]);
+function dimensionOwnerMap(dimensions) {
+  const owner = {};
+  for (const d of dimensions) owner[d.dimension] = d.agentType;
+  return owner;
+}
+function severityBreakdown(rowFindings) {
+  const counts = new Map();
+  for (const f of rowFindings) {
+    let raw;
+    try {
+      raw = f ? f.severity : undefined;
+    } catch {
+      continue;
+    }
+    if (raw === undefined || raw === null || raw === '') continue;
+    const severity = normalizeReportSeverity(raw);
+    counts.set(severity, (counts.get(severity) || 0) + 1);
+  }
+  if (counts.size === 0) return '';
+  const known = SEVERITY_ORDER.filter((s) => counts.has(s));
+  return known.map((s) => `${counts.get(s)} ${s}`).join(', ');
+}
+function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
+  const inp = input || {};
+  const dispatchedSet = new Set((Array.isArray(inp.dispatched) ? inp.dispatched : []).map(reportAsText));
+  const degradedSet = new Set((Array.isArray(inp.degraded) ? inp.degraded : []).map(reportAsText));
+  const owner = dimensionOwnerMap(dimensions);
+  const agents = [...new Set(dimensions.map((dimension) => dimension.agentType))];
+  const byAgent = new Map(agents.map((agent) => [agent, []]));
+  const unverifiedByAgent = new Map(agents.map((agent) => [agent, []]));
+  const bucketFinding = (buckets, finding) => {
+    let dimension;
+    try {
+      dimension = finding ? finding.dimension : undefined;
+    } catch {
+      dimension = undefined;
+    }
+    const agentType = owner[dimension];
+    if (agentType && buckets.has(agentType)) buckets.get(agentType).push(finding);
+  };
+  for (const finding of (inp.findings || [])) bucketFinding(byAgent, finding);
+  for (const finding of (inp.unverified || [])) bucketFinding(unverifiedByAgent, finding);
+  const rows = agents.map((agentType) => {
+    const rowFindings = byAgent.get(agentType);
+    const rowUnverified = unverifiedByAgent.get(agentType);
+    const n = rowFindings.length;
+    const m = rowUnverified.length;
+    const dims = dimensions.filter((d) => d.agentType === agentType).map((d) => d.dimension);
+    const isDegraded = dims.some((d) => degradedSet.has(d));
+    const isDispatched = dispatchedSet.has(agentType);
+    const label = AGENT_LABELS[agentType] || agentType;
+    const agentShort = agentType.split(':').pop();
+    let findingsCell;
+    let notes;
+    if (!isDispatched) {
+      findingsCell = '—';
+      notes = 'Skipped — not dispatched in this run';
+    } else if (isDegraded && n + m === 0) {
+      findingsCell = '—';
+      notes = 'No results — agent did not complete';
+    } else if (isDegraded) {
+      findingsCell = m > 0 ? `${n} (+${m} unverified)` : `${n}`;
+      notes = 'Partial — agent may not have completed';
+    } else if (n + m === 0) {
+      findingsCell = '0';
+      notes = 'Clean — no findings returned';
+    } else if (n > 0) {
+      findingsCell = m > 0 ? `${n} (+${m} unverified)` : `${n}`;
+      notes = severityBreakdown(rowFindings);
+    } else {
+      findingsCell = `0 (+${m} unverified)`;
+      notes = 'Unverified findings only — see secondary section';
+    }
+    return `| ${label} | ${agentShort} | ${findingsCell} | ${notes} |`;
+  });
+  return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
+}
+function consolidateForReport(findings) {
+  const list = findings || [];
+  const groups = [];
+  const keyToGroup = new Map();
+  for (const f of list) {
+    const key = f && f.consolidation_key;
+    if (!key) {
+      groups.push({ primary: f, corroborators: [] });
+      continue;
+    }
+    let group = keyToGroup.get(key);
+    if (!group) {
+      group = { primary: null, corroborators: [] };
+      keyToGroup.set(key, group);
+      groups.push(group);
+    }
+    if (f.consolidation_primary) {
+      if (!group.primary) group.primary = f;
+      else group.corroborators.push(f);
+    } else group.corroborators.push(f);
+  }
+  return groups.map((group) => {
+    const primary = group.primary || group.corroborators.shift();
+    if (!group.corroborators.length) return primary;
+    return {
+      ...primary,
+      corroborations: group.corroborators.map((c) => ({
+        agent: c.agent,
+        dimension: c.dimension,
+        confidence: c.confidence,
+        title: c.title,
+        description: c.description,
+      })),
+    };
+  });
+}
+function reportExtraFields(dimensions = DIMENSIONS) {
+  const declared = new Set(Object.keys(FINDING_PROP_TYPES));
+  for (const dimension of dimensions) {
+    for (const key of Object.keys(dimension.schemaExtra || {})) declared.add(key);
+  }
+  return [...declared]
+    .filter((key) => !REPORT_PLACED_FIELDS.includes(key) && !REPORT_EXCLUDED_FIELDS.includes(key))
+    .sort();
+}
+function reportOptionalText(value) {
+  return value === undefined || value === null ? undefined : reportAsText(value);
+}
+function reportAsConfidence(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+function reportRiskLevel(value) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'number' || typeof value === 'string') return value;
+  const text = reportAsText(value);
+  return text || undefined;
+}
+function reportCorroboration(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  for (const key of ['agent', 'dimension', 'title', 'description']) {
+    let raw;
+    try {
+      raw = value[key];
+    } catch {
+      continue;
+    }
+    const text = reportOptionalText(raw);
+    if (text !== undefined) out[key] = text;
+  }
+  let confidence;
+  try {
+    confidence = reportAsConfidence(value.confidence);
+  } catch {
+    confidence = undefined;
+  }
+  if (confidence !== undefined) out.confidence = confidence;
+  return out;
+}
+function coerceReportFinding(finding, severities) {
+  const out = {};
+  let keys;
+  try {
+    keys = Object.keys(finding);
+  } catch {
+    return out;
+  }
+  for (const key of keys) {
+    let raw;
+    try {
+      raw = finding[key];
+    } catch {
+      continue;
+    }
+    let value;
+    if (key === 'severity') {
+      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw, severities);
+    } else if (key === 'confidence') {
+      value = reportAsConfidence(raw);
+    } else if (key === 'corroborations') {
+      value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
+    } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
+      value = raw;
+    } else if (key === 'risk_level') {
+      value = reportRiskLevel(raw);
+    } else if (FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(raw)) {
+      value = raw.map(reportAsText);
+    } else {
+      value = reportOptionalText(raw);
+    }
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
+function coerceReportFindings(value, severities = SEVERITY_ORDER) {
+  if (!Array.isArray(value)) return [];
+  return value.map((finding) => (
+    finding && typeof finding === 'object' && !Array.isArray(finding)
+      ? coerceReportFinding(finding, severities)
+      : {}
+  ));
+}
+function normalizeReportSeverity(raw, severities = SEVERITY_ORDER) {
+  if (typeof raw !== 'string') return 'low';
+  const normalized = raw.trim().toLowerCase();
+  return severities.includes(normalized) ? normalized : 'low';
+}
+function fieldLabel(key) {
+  const words = String(key).replaceAll('_', ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+function fenceFor(text) {
+  return '`'.repeat(Math.max(3, longestBacktickRun(reportAsText(text)) + 1));
+}
+function inline(value, prefixLimit) {
+  const text = reportAsText(value).replace(/\r/g, ' ');
+  if (prefixLimit === undefined) return prepareSummaryTitle(text);
+  const sliced = oneLine(outboundBase(text)).slice(0, prefixLimit);
+  return prepareLine(foldInline(sliced), true);
 }
 function safeProse(value) {
   const parts = reportAsText(value).split(/(\r\n|\r|\n)/);
@@ -3719,8 +2919,7 @@ function safeProse(value) {
   for (let index = 0; index < parts.length; index += 2) {
     const line = parts[index];
     const boundary = parts[index + 1] || '';
-    const withoutTerminalCR = line.endsWith('\r') ? line.slice(0, -1) : line;
-    const comparable = withoutTerminalCR.replace(/[ \t]+$/, '');
+    const comparable = line.replace(/[ \t]+$/, '');
     if (CODE_OWNED_HEADINGS.includes(comparable)) {
       const renamedBoundary = boundary === '\r\n' || boundary === '\r' ? '\n' : boundary;
       output += `${comparable} (finding text)${renamedBoundary}`;
@@ -3733,8 +2932,12 @@ function safeProse(value) {
 function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
   return safeProse(foldProse(value, limit));
 }
+function findingFieldText(key, value) {
+  return FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(value)
+    ? foldedProse(value.map((path) => inline(path)).join(',')) : foldedProse(value);
+}
 function tableCell(value) {
-  return oneLine(value).replaceAll('|', '\\|');
+  return reportAsText(value).replaceAll('|', '\\|');
 }
 function isPresent(value) {
   if (value == null) return false;
@@ -3743,15 +2946,24 @@ function isPresent(value) {
   return true;
 }
 const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)];
-function normalizeFindings(value) {
-  return coerceReportFindings(value);
-}
 function reportBuilder() {
   let text = '';
-  const evidenceRanges = [];
+  const protectedRanges = [];
   const add = (line = '') => {
     if (text.length) text += '\n';
     text += reportAsText(line);
+  };
+  const addSpans = (line, spans) => {
+    const start = text.length + (text.length ? 1 : 0);
+    add(line);
+    let cursor = 0;
+    for (const span of spans) {
+      if (!span) continue;
+      const index = line.indexOf(span, cursor);
+      if (index < 0) continue;
+      protectedRanges.push([start + index, start + index + span.length]);
+      cursor = index + span.length;
+    }
   };
   const addEvidence = (evidence) => {
     const folded = foldEvidence(evidence);
@@ -3760,7 +2972,7 @@ function reportBuilder() {
     add(fence);
     add(folded);
     add(fence);
-    evidenceRanges.push([start, text.length]);
+    protectedRanges.push([start, text.length]);
   };
   const finish = () => {
     let out = '';
@@ -3769,42 +2981,33 @@ function reportBuilder() {
       const index = text.indexOf('<!--', cursor);
       if (index < 0) break;
       out += text.slice(cursor, index);
-      const protectedEvidence = evidenceRanges.some(([start, end]) => index >= start && index < end);
-      out += protectedEvidence ? '<!--' : '&lt;!--';
+      const protectedLiteral = protectedRanges.some(([start, end]) => index >= start && index < end);
+      out += protectedLiteral ? '<!--' : '&lt;!--';
       cursor = index + 4;
     }
     return out + text.slice(cursor);
   };
-  return { add, addEvidence, finish };
+  return { add, addSpans, addEvidence, finish };
 }
-function location(finding) {
-  if (!isPresent(finding.file)) return '';
-  const file = inline(finding.file);
+function joinLocation(finding, preparePart, file = preparePart(finding.file)) {
   if (!isPresent(finding.line_start)) return file;
-  const start = oneLine(finding.line_start);
+  const start = preparePart(finding.line_start);
   if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
     return `${file}:${start}`;
   }
-  return `${file}:${start}-${oneLine(finding.line_end)}`;
+  return `${file}:${start}-${preparePart(finding.line_end)}`;
+}
+function location(finding) {
+  if (!isPresent(finding.file)) return '';
+  const file = oneLine(outboundBase(oneLine(finding.file)));
+  const foldedFile = foldInline(file);
+  if (foldedFile === file) return preparedCodeSpan(joinLocation(finding, oneLine));
+  return codeSpan(joinLocation(finding, (part) => oneLine(outboundBase(oneLine(part))), foldedFile));
 }
 function quotedSummaryLocation(finding) {
   if (!isPresent(finding.file)) return '';
-  const file = oneLine(outboundBase(finding.file));
-  let display = file;
-  if (isPresent(finding.line_start)) {
-    const start = oneLine(outboundBase(finding.line_start));
-    display += `:${start}`;
-    if (isPresent(finding.line_end) && String(finding.line_end) !== String(finding.line_start)) {
-      display += `-${oneLine(outboundBase(finding.line_end))}`;
-    }
-  }
-  display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
-  display = outboundDefinitions(display, true);
-  let longest = 0;
-  for (const match of display.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
-  const delimiter = '`'.repeat(longest + 1);
-  if (/^[` ]|[` ]$/.test(display)) display = ` ${display} `;
-  return `${delimiter}${display}${delimiter}`;
+  const display = joinLocation(finding, (part) => oneLine(outboundBase(part)));
+  return codeSpan(display, true);
 }
 function encodeUrlSegment(segment) {
   const repaired = reportAsText(segment)
@@ -3816,10 +3019,6 @@ function templateValue(template, values) {
   let output = template;
   for (const [name, value] of Object.entries(values)) output = output.replaceAll(`{${name}}`, value);
   return output;
-}
-function identityCheck(identity, name) {
-  const field = PR_IDENTITY_FIELDS.find((entry) => entry.name === name);
-  return Boolean(field && field.check(identity[name]));
 }
 function permalinkContext(identity) {
   if (!identity) return { repositoryBase: null, blobBase: null, template: null };
@@ -3842,11 +3041,12 @@ function positiveLine(value) {
   const number = Number(value);
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
-function locationUrl(finding, permalinks) {
+function locationUrl(finding, permalinks, displayedLocation) {
   if (!permalinks.blobBase || !isPresent(finding.file)) return null;
   const rawFile = reportAsText(finding.file);
   if (outboundBase(rawFile) !== rawFile) return null;
   if (oneLine(rawFile) !== rawFile) return null;
+  if (displayedLocation !== undefined && displayedLocation !== preparedCodeSpan(joinLocation(finding, oneLine))) return null;
   const segments = rawFile.split('/');
   if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
   const path = segments.map(encodeUrlSegment).join('/');
@@ -3876,8 +3076,8 @@ function renderFinding(builder, finding, unverified, permalinks) {
   blocks.push(() => builder.add(`#### ${inline(finding.title)}`));
   const bullets = [];
   const where = location(finding);
-  const url = locationUrl(finding, permalinks);
-  if (where) bullets.push(url ? `- **Location:** [\`${where}\`](${url})` : `- **Location:** \`${where}\``);
+  const url = locationUrl(finding, permalinks, where);
+  if (where) bullets.push(url ? `- **Location:** [${where}](${url})` : `- **Location:** ${where}`);
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
   if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);
@@ -3895,7 +3095,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   if (finding.challenge_contested === true) {
     bullets.push('- **Contested:** the challenger could not confirm the cited location');
   }
-  if (bullets.length) blocks.push(() => bullets.forEach(builder.add));
+  if (bullets.length) blocks.push(() => bullets.forEach((line) => builder.addSpans(line, [where])));
   if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
   if (isPresent(finding.evidence)) {
     blocks.push(() => {
@@ -3905,8 +3105,9 @@ function renderFinding(builder, finding, unverified, permalinks) {
     });
   }
   const extras = reportExtraFields()
-    .filter((key) => isPresent(finding[key]))
-    .map((key) => `- **${fieldLabel(key)}:** ${foldedProse(finding[key])}`);
+    .map((key) => ({ key, text: findingFieldText(key, finding[key]) }))
+    .filter(({ text }) => isPresent(text))
+    .map(({ key, text }) => `- **${fieldLabel(key)}:** ${text}`);
   if (extras.length) blocks.push(() => extras.forEach(builder.add));
   if (isPresent(finding.suggestion)) {
     blocks.push(() => {
@@ -3928,17 +3129,18 @@ function renderFinding(builder, finding, unverified, permalinks) {
       builder.add(foldedProse(citedRule).split(/\r?\n/).map((line) => `> ${line}`).join('\n'));
     });
   }
-  if (isPresent(finding.cross_file_refs)) {
-    blocks.push(() => builder.add(`- **Cross-file refs:** ${foldedProse(finding.cross_file_refs)}`));
+  const crossFileRefs = findingFieldText('cross_file_refs', finding.cross_file_refs);
+  if (isPresent(crossFileRefs)) {
+    blocks.push(() => builder.add(`- **Cross-file refs:** ${crossFileRefs}`));
   }
   if (Array.isArray(finding.corroborations) && finding.corroborations.length) {
     blocks.push(() => {
       for (const corroboration of finding.corroborations) {
-        const agent = inline(corroboration.agent);
-        const dimension = inline(corroboration.dimension);
+        const agent = preparedCodeSpan(corroboration.agent, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
+        const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
-        builder.add(`- **Corroborated by** \`${agent}\` (\`${dimension}\`, confidence ${confidence}) — ${title}`);
+        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, confidence ${confidence}) — ${title}`, [agent, dimension]);
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -3950,14 +3152,11 @@ function renderFinding(builder, finding, unverified, permalinks) {
     block();
   });
 }
-function severityKey(finding) {
-  return normalizeReportSeverity(finding.severity);
-}
 function severityView(findings) {
   const ranked = rankFindings(findings);
   const buckets = new Map();
   for (const finding of ranked) {
-    const key = severityKey(finding);
+    const key = normalizeReportSeverity(finding.severity);
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(finding);
   }
@@ -4053,8 +3252,8 @@ function summaryIndex(rawFindings, findingsView, input) {
 }
 function summaryBlock(builder, input) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = normalizeFindings(inp.findings);
-  const rawUnverified = normalizeFindings(inp.unverified);
+  const rawFindings = coerceReportFindings(inp.findings);
+  const rawUnverified = coerceReportFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -4070,7 +3269,9 @@ function summaryBlock(builder, input) {
     const url = locationUrl(finding, permalinks);
     const link = url ? `[${where}](${url})` : where;
     const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
-    const bullet = outboundTildeRuns(`- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`);
+    const bullet = outboundTildeRuns(
+      `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`,
+    );
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
     if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
       cutForLength = true;
@@ -4096,18 +3297,18 @@ function renderSummaryBody(input) {
   summaryBlock(builder, input);
   return builder.finish();
 }
-function receiptSafe(value, fallback = 'unknown') {
-  if (value === undefined || value === null) return fallback;
+function receiptSafe(value) {
+  if (value === undefined || value === null) return 'unknown';
   const cleaned = oneLine(value).replaceAll('`', '');
-  return cleaned || fallback;
+  return cleaned || 'unknown';
 }
-function receiptLines(input) {
+function receiptLines(input, knobs) {
   const mode = input.mode === 'headless' ? 'headless' : 'interactive';
   const echo = input.configEcho && typeof input.configEcho === 'object' && !Array.isArray(input.configEcho)
     ? input.configEcho
     : {};
   const lines = [mode === 'headless' ? 'Headless config:' : 'Resolved config:'];
-  for (const descriptor of KNOB_REGISTRY) {
+  for (const descriptor of knobs) {
     if (!descriptor.modes.includes(mode)) continue;
     const entry = echo[descriptor.key];
     const validEntry = entry && typeof entry === 'object' && !Array.isArray(entry)
@@ -4124,25 +3325,25 @@ function countSummary(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'none';
   const entries = Object.entries(value).filter(([key, item]) => key !== 'replay_path_rejected' || item > 0).map(([key, item]) => {
     const count = Array.isArray(item) ? item.length : item;
-    return `${key}=${tableCell(count)}`;
+    return `${inline(key)}=${inline(count)}`;
   });
   return entries.length ? entries.join(', ') : 'none';
 }
-const REVIEW_SCOPE_FALLBACK_RULES = [
-  { when: (detector) => typeof detector.error === 'string' && detector.error !== '', reason: (detector) => `detection failed: ${oneLine(detector.error).slice(0, 120)}` },
-  { when: (detector) => detector.previously_reviewed === false, reason: () => 'no prior review recorded' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === false, reason: () => 'recorded SHA not resolvable' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === true && detector.head_advanced === false, reason: () => 'head has not advanced' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === false, reason: () => 'history rewritten (recorded SHA is not an ancestor)' },
-];
-function reviewScopeFallbackReason(scope) {
+function reviewScopeFallbackReason(scope, rules = REVIEW_SCOPE_FALLBACK_RULES) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)
     || scope.kind !== 'full' || scope.requested !== 'incremental'
     || !scope.detector || typeof scope.detector !== 'object' || Array.isArray(scope.detector)) {
     return null;
   }
-  for (const rule of REVIEW_SCOPE_FALLBACK_RULES) {
-    if (rule.when(scope.detector)) return rule.reason(scope.detector);
+  for (const rule of rules) {
+    const detector = scope.detector;
+    if (rule.error) {
+      if (typeof detector.error === 'string' && detector.error !== '') {
+        return `detection failed: ${inline(detector.error, 120)}`;
+      }
+    } else if (Object.entries(rule.facts).every(([key, value]) => detector[key] === value)) {
+      return rule.reason;
+    }
   }
   return 'detection failed: unavailable';
 }
@@ -4154,31 +3355,31 @@ function methodologyRows(input, rawFindings) {
   const gateway = policy.gateway === true;
   const conditional = conditionalSchemaActive({ ...policy, provider });
   const rows = [];
-  const version = receiptSafe(input.pipelineVersion);
+  const version = inline(input.pipelineVersion) || 'unknown';
   rows.push(['Version', `${version} (plugin and pipeline)`]);
-  rows.push(['Provider', `provider=${provider}; gateway=${gateway}; conditional schema active=${conditional}`]);
+  rows.push(['Provider', `provider=${inline(provider)}; gateway=${gateway}; conditional schema active=${conditional}`]);
   if (policy.subagentModel) {
-    rows.push(['Subagent model override', `EVERY stage uses ${receiptSafe(policy.subagentModel)}`]);
+    rows.push(['Subagent model override', `EVERY stage uses ${inline(policy.subagentModel)}`]);
   }
   const stageTypes = [
     'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
-    'validator', 'challenger', 'executor', 'artifact-writer',
+    ...Object.keys(STAGE_DEFAULTS),
   ];
   const models = stageTypes.map((agentType) => {
     const model = resolvePolicy(`code-gauntlet:${agentType}`, {
       subagentModelEnv: policy.subagentModel,
       provider,
     }).model;
-    return `${agentType}=${model}`;
+    return `${agentType}=${inline(model)}`;
   }).join(', ');
   rows.push(['Per-stage models', models]);
   const tier = input.deliveryTier ?? 'all';
   const cap = typeof input.deliveryCap === 'number' ? String(input.deliveryCap) : 'uncapped';
-  rows.push(['Delivery selection', `selection policy: tier=${tier}, cap=${cap}`]);
+  rows.push(['Delivery selection', `selection policy: tier=${inline(tier)}, cap=${inline(cap)}`]);
   const scope = input.reviewScope && typeof input.reviewScope === 'object' ? input.reviewScope : { kind: 'full' };
   if (scope.kind === 'incremental') {
-    const commits = scope.commits === null || scope.commits === undefined ? 'commits unknown' : `${scope.commits} commits`;
-    rows.push(['Review scope', `Incremental since ${scope.since || 'unknown'} (${commits})`]);
+    const commits = scope.commits === null || scope.commits === undefined ? 'commits unknown' : `${inline(scope.commits)} commits`;
+    rows.push(['Review scope', `Incremental since ${inline(scope.since || 'unknown')} (${commits})`]);
   } else {
     const reason = reviewScopeFallbackReason(scope);
     rows.push(['Review scope', reason ? `Full (incremental requested; ${reason})` : 'Full']);
@@ -4186,14 +3387,17 @@ function methodologyRows(input, rawFindings) {
   const stats = input.stats && typeof input.stats === 'object' ? input.stats : {};
   const merge = stats.merge && typeof stats.merge === 'object' ? stats.merge : {};
   const channels = merge.findings_per_channel && typeof merge.findings_per_channel === 'object'
-    ? `ndjson=${merge.findings_per_channel.ndjson ?? 0}, text_fallback=${merge.findings_per_channel.text_fallback ?? 0}`
+    ? `ndjson=${inline(merge.findings_per_channel.ndjson ?? 0)}, text_fallback=${inline(merge.findings_per_channel.text_fallback ?? 0)}`
     : 'ndjson=0, text_fallback=0';
-  const mergeCounts = `per-channel: ${channels}; duplicates resolved=${merge.duplicates_resolved ?? 0}; dropped-no-id=${merge.dropped_no_id ?? 0}; truncation warnings=${merge.truncation_warnings ?? 0}; validation warnings=${merge.validation_warnings ?? 0}`;
+  const mergeCounts = `per-channel: ${channels}; duplicates resolved=${inline(merge.duplicates_resolved ?? 0)}; `
+    + `dropped-no-id=${inline(merge.dropped_no_id ?? 0)}; truncation warnings=${inline(merge.truncation_warnings ?? 0)}; `
+    + `validation warnings=${inline(merge.validation_warnings ?? 0)}`;
   const pathCounts = Object.entries(stats.pathNormalization || {})
-    .map(([phase, counts]) => `; ${tableCell(phase)} paths: ${countSummary(counts)}`).join('');
+    .map(([phase, counts]) => `; ${inline(phase)} paths: ${countSummary(counts)}`).join('');
   rows.push([
     'Findings pipeline',
-    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}${pathCounts}`,
+    `discovered=${inline(stats.discovered ?? rawFindings.length)}; validate: ${countSummary(stats.validate)}; `
+      + `filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}${pathCounts}`,
   ]);
   const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;
   rows.push(['Gaps', String(gapCount)]);
@@ -4202,11 +3406,11 @@ function methodologyRows(input, rawFindings) {
   rows.push(['Dimensions', `dispatched=${dispatched}; degraded=${degraded}`]);
   return rows;
 }
-function renderMethodology(builder, input, rawFindings) {
+function renderMethodology(builder, input, rawFindings, knobs) {
   builder.add();
   builder.add('## Review Methodology');
   builder.add();
-  const receipt = receiptLines(input);
+  const receipt = receiptLines(input, knobs);
   const receiptText = receipt.join('\n');
   const fence = fenceFor(receiptText);
   builder.add(`${fence}text`);
@@ -4219,12 +3423,13 @@ function renderMethodology(builder, input, rawFindings) {
     builder.add(`| ${tableCell(aspect)} | ${tableCell(details)} |`);
   }
   builder.add();
-  builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported by the orchestrator at delivery.');
+  builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported '
+    + 'by the orchestrator at delivery.');
 }
-function renderReport(input) {
+function renderReport(input, knobs = KNOB_REGISTRY) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = normalizeFindings(inp.findings);
-  const rawUnverified = normalizeFindings(inp.unverified);
+  const rawFindings = coerceReportFindings(inp.findings);
+  const rawUnverified = coerceReportFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -4238,27 +3443,37 @@ function renderReport(input) {
       ? templateValue(PERMALINK_TEMPLATES[identity.platform].ref, { number: oneLine(identity.pr_number) })
       : `#${oneLine(identity.pr_number)}`}`
     : null;
+  const referenceSpan = reference ? preparedCodeSpan(reference) : '';
   let subject = 'local changes';
+  const subjectSpans = [];
   if (identity && typeof identity.title === 'string' && identity.title.trim()) {
     subject = inline(identity.title);
   } else if (reference) {
-    subject = `\`${reference}\``;
+    subject = referenceSpan;
+    subjectSpans.push(referenceSpan);
   }
   const identityParts = ['Reviewed'];
-  if (isPresent(inp.headShaShort)) identityParts.push(`head \`${oneLine(inp.headShaShort)}\``);
-  if (isPresent(inp.generatedAt)) identityParts.push(`at ${oneLine(inp.generatedAt)}`);
+  const identitySpans = [];
+  if (isPresent(inp.headShaShort)) {
+    const head = preparedCodeSpan(inp.headShaShort);
+    identityParts.push(`head ${head}`);
+    identitySpans.push(head);
+  }
+  if (isPresent(inp.generatedAt)) identityParts.push(`at ${inline(inp.generatedAt)}`);
   if (permalinks.repositoryBase && identityCheck(identity, 'pr_number')) {
     const refUrl = templateValue(permalinks.template.refUrl, {
       ...permalinks.values,
       number: String(identity.pr_number),
     });
-    identityParts.push(`for [\`${reference}\`](${refUrl})`);
+    identityParts.push(oneLine(outboundBase(reference)) === reference
+      ? `for [${referenceSpan}](${refUrl})` : `for ${referenceSpan}`);
+    identitySpans.push(referenceSpan);
   }
   identityParts.push(`by ${BRAND_NAME}.`);
   const builder = reportBuilder();
-  builder.add(`# ${BRAND_MARK} ${BRAND_NAME}: ${subject}`);
+  builder.addSpans(`# ${BRAND_MARK} ${BRAND_NAME}: ${subject}`, subjectSpans);
   builder.add();
-  builder.add(identityParts.join(' '));
+  builder.addSpans(identityParts.join(' '), identitySpans);
   builder.add();
   builder.add('## Summary');
   builder.add();
@@ -4282,7 +3497,8 @@ function renderReport(input) {
     builder.add();
     builder.add('## Unverified / pipeline-degraded findings');
     builder.add();
-    builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. They are not confirmed findings.');
+    builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. '
+      + 'They are not confirmed findings.');
     renderSeverityBuckets(builder, unverifiedView, true, permalinks);
   }
   const dimensionsTable = dimensionsSummaryTable({
@@ -4294,7 +3510,7 @@ function renderReport(input) {
   builder.add('## Review Dimensions Summary');
   builder.add();
   builder.add(dimensionsTable);
-  renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings);
+  renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings, knobs);
   return builder.finish();
 }
 // --- reviewStages.js ---
@@ -4500,6 +3716,212 @@ function selectDelivery(survivors, cap, tier) {
   const ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
   if (cap === undefined || cap === null) return ranked;
   return ranked.slice(0, Math.max(0, cap));
+}
+// --- paths.js ---
+function collapseDotSlash(path) {
+  let out = path;
+  for (;;) {
+    const next = out.replace(/\/\.\//g, '/');
+    if (next === out) return out;
+    out = next;
+  }
+}
+function stripTrailingSlashes(path) {
+  let out = path;
+  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
+  return out;
+}
+function normalizePathString(path) {
+  let out = path;
+  for (;;) {
+    let next = stripTrailingSlashes(collapseDotSlash(out.replace(/\/{2,}/g, '/')));
+    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
+    next = stripTrailingSlashes(next);
+    if (next === out) return next;
+    out = next;
+  }
+}
+function hasBackslash(path) {
+  return path.includes('\\');
+}
+function hasDotDotSegment(path) {
+  return path.split('/').includes('..');
+}
+function isSafeAbsolutePath(path) {
+  return path.startsWith('/') && !hasBackslash(path) && !hasDotDotSegment(path);
+}
+function rootPrefix(root) {
+  return root === '/' ? '/' : `${root}/`;
+}
+const LOCATION_SUFFIX_RE = /:(?:L?\d+)(?::\d+)?(?:-L?\d+)?$/;
+function splitLocationSuffix(path) {
+  const suffix = path.match(LOCATION_SUFFIX_RE)?.[0] || '';
+  return { path: suffix ? path.slice(0, -suffix.length) : path, suffix };
+}
+function normalizeAbsoluteRoot(root) {
+  if (typeof root !== 'string' || root === '') return null;
+  const normalized = normalizePathString(root);
+  if (!isSafeAbsolutePath(normalized)) return null;
+  return normalized;
+}
+const HOST_PATH_RIGHT_CONTINUATION_RE = /^[A-Za-z0-9._~+%@-]$/;
+const SAFE_FINDING_LABEL_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+const HOST_PATH_HEX_RE = /^[0-9A-Fa-f]{2}$/;
+const HOST_PATH_HOME_RE = /^\/(?:Users|home)\/([^/]+)\//;
+function hostPathSpellings(root) {
+  const hasPrivatePrefix = root.slice(0, '/private/'.length).toLowerCase() === '/private/';
+  const alias = hasPrivatePrefix
+    ? root.slice('/private'.length)
+    : `/private${root}`;
+  return [root, alias];
+}
+function hostPathPattern(root, caseInsensitive) {
+  const source = root.slice(1).split('/').map(escapeRegExp).join('/(?:/|\\./)*');
+  return new RegExp(`/${source}`, caseInsensitive ? 'iy' : 'y');
+}
+function prepareHostRootPatterns(roots) {
+  const patterns = [];
+  const derivedHomes = new Set();
+  if (!Array.isArray(roots)) return patterns;
+  for (const root of roots) {
+    const normalized = normalizeAbsoluteRoot(root);
+    if (normalized === null || normalized === '/') continue;
+    for (const spelling of hostPathSpellings(normalized)) {
+      const caseInsensitive = spelling.slice(1).split('/').length > 1;
+      patterns.push(hostPathPattern(spelling, caseInsensitive));
+    }
+    const unaliased = normalized.startsWith('/private/') ? normalized.slice('/private'.length) : normalized;
+    const home = unaliased.match(HOST_PATH_HOME_RE);
+    if (home) derivedHomes.add(home[0].slice(0, -1));
+  }
+  for (const home of derivedHomes) patterns.push(hostPathPattern(home, false));
+  return patterns;
+}
+function decodeAsciiEscapes(text) {
+  const chars = [];
+  const escaped = [];
+  for (let index = 0; index < text.length;) {
+    const digits = text.slice(index + 1, index + 3);
+    const byte = text[index] === '%' && HOST_PATH_HEX_RE.test(digits) ? parseInt(digits, 16) : -1;
+    if (byte >= 0 && byte < 0x80) {
+      chars.push(String.fromCharCode(byte));
+      escaped.push(true);
+      index += 3;
+    } else {
+      chars.push(text[index]);
+      escaped.push(false);
+      index += 1;
+    }
+  }
+  return { text: chars.join(''), escaped };
+}
+function isPathContinuation(view, index) {
+  const char = view.text[index];
+  return char !== '/' && (view.escaped[index] === true || HOST_PATH_RIGHT_CONTINUATION_RE.test(char));
+}
+function hostPathFileSchemePrefix(view, slashRunEnd) {
+  let prefixEnd = slashRunEnd;
+  while (view.text[prefixEnd - 1] === '/') prefixEnd -= 1;
+  const prefixStart = prefixEnd - 5;
+  if (prefixStart < 0 || view.text.slice(prefixStart, prefixEnd).toLowerCase() !== 'file:') return false;
+  for (let index = prefixStart; index < prefixEnd; index += 1) {
+    if (view.escaped[index] === true) return false;
+  }
+  return prefixStart === 0
+    || (view.escaped[prefixStart - 1] !== true && !/[A-Za-z0-9+.-]/.test(view.text[prefixStart - 1]));
+}
+function hostPathOptionFlag(view, start) {
+  const letter = start - 1;
+  const dash = start - 2;
+  if (view.text[dash] !== '-' || !/[A-Za-z]/.test(view.text[letter])
+    || view.escaped[dash] === true || view.escaped[letter] === true) return false;
+  return dash === 0 || (view.escaped[dash - 1] !== true
+    && view.text[dash - 1] !== '/' && !HOST_PATH_RIGHT_CONTINUATION_RE.test(view.text[dash - 1]));
+}
+function hostPathLeftBoundary(view, start) {
+  const previous = view.text[start - 1];
+  if (isPathContinuation(view, start - 1)) return hostPathOptionFlag(view, start);
+  if (previous !== '/') return true;
+  return hostPathFileSchemePrefix(view, start);
+}
+function hostPathRightBoundary(view, end) {
+  while (view.text[end] === '.' && view.escaped[end] !== true) end += 1;
+  return !isPathContinuation(view, end);
+}
+function mentionsInView(view, patterns) {
+  for (let start = view.text.indexOf('/'); start !== -1; start = view.text.indexOf('/', start + 1)) {
+    for (const matcher of patterns) {
+      matcher.lastIndex = start;
+      if (matcher.exec(view.text) && hostPathLeftBoundary(view, start)
+        && hostPathRightBoundary(view, matcher.lastIndex)) return true;
+    }
+  }
+  return false;
+}
+function mentionsPreparedHostRoot(text, patterns) {
+  if (typeof text !== 'string') return false;
+  const raw = { text, escaped: [] };
+  if (mentionsInView(raw, patterns)) return true;
+  return text.includes('%') && mentionsInView(decodeAsciiEscapes(text), patterns);
+}
+function safeFindingLabel(value, fallback = null) {
+  if (typeof value !== 'string' || !SAFE_FINDING_LABEL_RE.test(value)) {
+    return fallback;
+  }
+  return value;
+}
+function pathUnderRoot(root, path) {
+  const normalizedRoot = normalizeAbsoluteRoot(root);
+  if (normalizedRoot === null || typeof path !== 'string' || path === '') return false;
+  const normalizedPath = normalizePathString(path);
+  if (!isSafeAbsolutePath(normalizedPath)) return false;
+  const prefix = rootPrefix(normalizedRoot);
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(prefix);
+}
+function repoRelativeFindingPath(repoRoot, file) {
+  if (typeof file !== 'string' || file === '') return { reason: 'file must be a non-empty string' };
+  let normalized = file;
+  let location;
+  for (let remaining = file.length; remaining >= 0; remaining -= 1) {
+    const slashes = normalizePathString(normalized);
+    const split = splitLocationSuffix(slashes);
+    const path = normalizePathString(split.path);
+    const next = `${path}${split.suffix}`;
+    if (next === normalized) {
+      location = { path, suffix: split.suffix };
+      break;
+    }
+    normalized = next;
+  }
+  const { path, suffix } = location;
+  if (path.startsWith('/') && hasDotDotSegment(path)) return { reason: 'file path contains a .. segment' };
+  let relative;
+  if (!path.startsWith('/')) {
+    relative = normalizePathString(path);
+    while (relative.startsWith('./')) relative = relative.slice(2);
+  } else {
+    const root = normalizeAbsoluteRoot(repoRoot);
+    if (root === null) return { reason: 'repoRoot must be an absolute path without .. segments or backslashes' };
+    const absolute = normalizePathString(path);
+    if (absolute === root) return { reason: 'absolute file path resolves to repoRoot' };
+    const prefix = rootPrefix(root);
+    if (!absolute.startsWith(prefix)) return { reason: 'absolute file path is outside repoRoot' };
+    relative = absolute.slice(prefix.length);
+  }
+  if (relative === '' || relative === '.') return { reason: 'file path does not name a repository file' };
+  if (hasDotDotSegment(relative)) return { reason: 'file path contains a .. segment' };
+  if (relative.startsWith('\\')) return { reason: 'file path starts with a backslash' };
+  if (relative.split('/')[0] === '~') return { reason: 'file path starts with a home anchor' };
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\//.test(relative) || /^[A-Za-z]:([/\\]|$)/.test(relative)) {
+    return { reason: 'file path starts with a URI scheme or drive letter' };
+  }
+  if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(file)
+    || file.split('/').some((segment) =>
+      /^[\p{Cf}\p{Mn}\p{Me}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
+    return { reason: 'file path contains a disallowed character' };
+  }
+  if (relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
+  return { file: `${relative}${suffix}` };
 }
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));
@@ -4934,6 +4356,735 @@ function verifyCommand(inp, i, sliceNonce, inlinePayload) {
 }
 function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
   return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, inline_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
+}
+// --- args.js ---
+const ARGS_VERSION = 1;
+const NONCE_RE = /^[A-Za-z0-9._-]+$/;
+const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
+  'persist', 'scopeAnswer']);
+const RISK_LEVELS = deepFreeze(['low', 'medium', 'high']);
+const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
+  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
+    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
+  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
+    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
+  delivery: 'delivery falls back to tier "all" with no PR identity',
+  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
+  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
+  'delivery.prIdentity.title': 'the report title falls back to owner/repo#N (or "local changes")',
+  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
+  persist: 'the artifact-writer takes the legacy full by-value persist path',
+  scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
+});
+const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000 });
+const LIMIT_KEYS = deepFreeze([
+  'summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize',
+  'deliveryCap', 'discoveryCap', 'maxLineSpan',
+]);
+const ARGS_SHAPES = deepFreeze({
+  pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
+  riskFields: ['path', 'risk'],
+  reviewMdFields: ['path', 'text'],
+  scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
+  scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
+  scopeKinds: ['full', 'incremental'],
+  detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
+  scriptFields: [
+    { root: 'persist', key: 'assembleScriptPath', script: 'assemble' },
+    { root: 'verify', key: 'scriptPath', script: 'verify' },
+  ],
+});
+const ARGS_FIELD_CHECKS = deepFreeze({
+  policy: [
+    { key: 'provider', presence: 'nonnull', values: POLICY_PROVIDERS,
+      message: 'invalid {label}: {value} (expected one of {values})' },
+    { key: 'tier', values: KNOB_VOCAB.modelTiers, message: 'invalid {label}: {value} (expected optimized)' },
+    { key: 'gateway', presence: 'nonnull', domain: 'boolean', message: 'invalid {label}: {value} (expected a boolean)' },
+  ],
+  changed: [
+    { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
+    { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
+  ],
+  context: ['contextLines', 'contextChars'].map((key) => ({
+    key, domain: 'safeInteger', minimum: 1, maximum: CONTEXT_SIZE_MAX[key],
+    message: '{label} must be a positive safe integer (the measured size of the shared context file) when present',
+    boundMessage: '{label} is {value}, above the {maximum} ceiling '
+      + '\u2014 that is not a review context, it is a mis-measurement',
+  })),
+  review: REVIEW_SETTING_KEYS.map((key) => key === 'severity_threshold'
+    ? { key, presence: 'in', values: SEVERITY_ORDER, separator: '|',
+      message: '{label} must be one of {values} when present (pre-parsed REVIEW.md enum)' }
+    : { key, presence: 'in', domain: 'integer', minimum: 0, maximum: 100,
+      message: '{label} must be an integer from 0 through 100 when present' }),
+  exclusions: [
+    { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
+  ],
+  persist: [
+    { key: 'assembleScriptPath', domain: 'nonEmptyString',
+      message: 'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py' },
+    { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
+  ],
+  limits: [
+    ...['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan'].map((key) => ({
+      key, domain: 'safeInteger', minimum: 1, message: 'limits.{key} must be a positive safe integer when present',
+    })),
+    { key: 'challengeCap', domain: 'safeInteger', minimum: 0,
+      message: 'limits.challengeCap must be a non-negative safe integer when present' },
+    { key: 'deliveryCap', presence: 'nonnull', domain: 'safeInteger', minimum: 0,
+      message: 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present' },
+    { key: 'discoveryCap', domain: 'safeInteger', minimum: 1,
+      message: 'limits.discoveryCap must be a positive safe integer when present' },
+  ],
+});
+const FIELD_DOMAINS = deepFreeze({
+  array: Array.isArray,
+  number: (value) => typeof value === 'number',
+  boolean: (value) => typeof value === 'boolean',
+  string: (value) => typeof value === 'string',
+  nonEmptyString: (value) => typeof value === 'string' && value !== '',
+  integer: Number.isInteger,
+  safeInteger: Number.isSafeInteger,
+});
+function validateArgsFields(value, group, errors, label = '') {
+  const prefix = label ? `${label}.` : '';
+  for (const row of ARGS_FIELD_CHECKS[group]) {
+    if (row.presence === 'in' && !(row.key in value)) continue;
+    const field = value[row.key];
+    if (row.presence !== 'in' && field === undefined) continue;
+    if (row.presence === 'nonnull' && field === null) continue;
+    const domainInvalid = row.domain && !FIELD_DOMAINS[row.domain](field);
+    const valuesInvalid = row.values && !row.values.includes(field);
+    const minimumInvalid = !domainInvalid && row.minimum !== undefined && field < row.minimum;
+    const maximumInvalid = !domainInvalid && row.maximum !== undefined && field > row.maximum;
+    if (!domainInvalid && !valuesInvalid && !minimumInvalid && !maximumInvalid) continue;
+    const message = maximumInvalid && row.boundMessage
+      ? row.boundMessage : row.message;
+    const params = {
+      key: row.key, label: `${prefix}${row.key}`, value: field, maximum: row.maximum,
+      values: row.values?.join(row.separator || ', '),
+    };
+    errors.push(message.replace(/\{(\w+)\}/g, (_, key) => `${params[key]}`));
+  }
+}
+function validatePrIdentity(id, errors) {
+  if (!isPlainObject(id)) {
+    const required = PR_IDENTITY_FIELDS.filter((field) => field.required).map((field) => field.name);
+    const optional = PR_IDENTITY_FIELDS.filter((field) => !field.required).map((field) => field.name);
+    errors.push(`delivery.prIdentity must be an object { ${required.join(', ')}[, ${optional.join(', ')}] } when present`);
+    return;
+  }
+  for (const field of PR_IDENTITY_FIELDS) {
+    const value = id[field.name];
+    const valid = value !== undefined && field.check(value);
+    if ((value === undefined && field.required) || (value !== undefined && !valid)) {
+      errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
+    }
+    if (valid) {
+      for (const extra of field.extraChecks || []) {
+        if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
+      }
+    }
+  }
+}
+function validateScriptPaths(args) {
+  const errors = [];
+  if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
+  const root = args.pluginRoot.replace(/\/+$/, '') || '/';
+  const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
+  for (const row of ARGS_SHAPES.scriptFields) {
+    const member = args[row.root];
+    const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
+    if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
+      errors.push(`${row.root}.${row.key} must equal ${expected}`);
+    }
+  }
+  return errors;
+}
+function validatePathSegments(value, label, reviewFile = false) {
+  const errors = [];
+  if (reviewFile) {
+    if (value.startsWith('/')) errors.push(`${label} must be repo-relative (must not start with /)`);
+    if (value.endsWith('/')) errors.push(`${label} must not have a trailing /`);
+  } else if (value.startsWith('/') || value.endsWith('/')) {
+    errors.push(`${label} must not have a leading or trailing /`);
+  }
+  if (value.includes('\\')) errors.push(`${label} must use / separators, not backslashes`);
+  if (CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
+  const segments = value.split('/');
+  if (segments.some((segment) => segment === '')) errors.push(`${label} must not contain an empty path segment`);
+  if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label} must not contain . or .. path segments`);
+  if (reviewFile && segments[segments.length - 1] !== 'REVIEW.md') {
+    errors.push(`${label} must end with exactly REVIEW.md`);
+  }
+  return errors;
+}
+function validateFlatPatterns(value, label, errors, ignore = false) {
+  if (!Array.isArray(value)) {
+    errors.push(`${label} must be an array of flat pattern strings`);
+    return;
+  }
+  for (let i = 0; i < value.length; i++) {
+    if (typeof value[i] !== 'string') {
+      const suffix = ignore ? ' \u2014 parseReviewMd emits strings, never objects' : '';
+      errors.push(`${label}[${i}] must be a flat pattern string (got ${typeof value[i]})${suffix}`);
+    }
+  }
+}
+function nullToleranceGap(key, consequences = NULL_TOLERANCE_CONSEQUENCE) {
+  const why = consequences[key] || 'the run proceeds as if the field had not been supplied';
+  return `null_arg: args.${key} arrived as a literal null and was treated as ABSENT — ${why}. Omit ` +
+    `${key} entirely (or stamp a well-formed value); do not stamp null.`;
+}
+function nullRespellGap(key) {
+  return `null_receipt: args.${key} arrived as a literal null and was spelled as the printed token ` +
+    `"null"; the receipt and the configuration are unchanged; stamp the string "null".`;
+}
+function nullToleranceRejectedKeys(cleanArgs, dropped, derivedPaths = [], descriptors = KNOB_REGISTRY) {
+  if (!Array.isArray(dropped) || dropped.length === 0) return [];
+  const derived = new Set(Array.isArray(derivedPaths) ? derivedPaths : []);
+  const baseline = validateArgs(cleanArgs, descriptors).errors.length;
+  return dropped
+    .filter((key) => !derived.has(key))
+    .filter((key) => validateArgs(withNullAt(cleanArgs, key), descriptors).errors.length > baseline);
+}
+function withNullAt(args, key) {
+  const base = isPlainObject(args) ? args : {};
+  const parts = key.split('.');
+  const out = { ...base };
+  let source = base;
+  let target = out;
+  for (const part of parts.slice(0, -1)) {
+    const value = isPlainObject(source)
+      ? source[part]
+      : undefined;
+    const copy = isPlainObject(value) ? { ...value } : {};
+    target[part] = copy;
+    target = copy;
+    source = value;
+  }
+  target[parts.at(-1)] = null;
+  return out;
+}
+function stripNullOptionalsReport(args, descriptors = KNOB_REGISTRY) {
+  if (!isPlainObject(args)) return { args, dropped: [], respelled: [] };
+  const dropped = [];
+  const respelled = [];
+  const out = { ...args };
+  for (const k of NULLABLE_TOP_LEVEL) {
+    if (out[k] === null) { delete out[k]; dropped.push(k); }
+  }
+  if (isPlainObject(out.delivery)) {
+    const delivery = { ...out.delivery };
+    if (delivery.prIdentity === null) { delete delivery.prIdentity; dropped.push('delivery.prIdentity'); }
+    if (
+      isPlainObject(delivery.prIdentity)
+      && delivery.prIdentity.title === null
+    ) {
+      const id = { ...delivery.prIdentity };
+      delete id.title;
+      delivery.prIdentity = id;
+      dropped.push('delivery.prIdentity.title');
+    }
+    if (delivery.tier === null) { delete delivery.tier; dropped.push('delivery.tier'); }
+    out.delivery = delivery;
+  }
+  if (isPlainObject(out.limits)) {
+    const limits = { ...out.limits };
+    for (const [k, v] of Object.entries(LIMIT_DEFAULTS)) {
+      if (limits[k] === undefined) limits[k] = v;
+    }
+    out.limits = limits;
+  }
+  if (isPlainObject(out.configEcho) && typeof out.mode === 'string') {
+    const configEcho = { ...out.configEcho };
+    for (const descriptor of descriptors) {
+      if (!descriptor.nullReceipt || !descriptor.nullReceipt.includes(out.mode)) continue;
+      const entry = configEcho[descriptor.key];
+      if (isPlainObject(entry) && entry.value === null) {
+        configEcho[descriptor.key] = { ...entry, value: 'null' };
+        respelled.push(`configEcho.${descriptor.key}.value`);
+      }
+    }
+    out.configEcho = configEcho;
+  }
+  return { args: out, dropped, respelled };
+}
+function normalizeArgsReport(raw, descriptors = KNOB_REGISTRY) {
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  const report = stripNullOptionalsReport(parsed, descriptors);
+  const { args, derivedPaths } = deriveConfigWaist(report.args, descriptors);
+  report.args = args;
+  report.derivedPaths = derivedPaths;
+  return report;
+}
+function normalizeArgs(raw, descriptors = KNOB_REGISTRY) {
+  return normalizeArgsReport(raw, descriptors).args;
+}
+function validateArgs(args, descriptors = KNOB_REGISTRY) {
+  const errors = [];
+  if (!args || typeof args !== 'object') return { ok: false, errors: ['args is not an object'] };
+  if (args.argsVersion !== ARGS_VERSION) errors.push(`unsupported argsVersion ${args.argsVersion} (expected ${ARGS_VERSION})`);
+  for (const k of REQUIRED) if (args[k] === undefined) errors.push(`missing required field: ${k}`);
+  if (args.mode && !KNOB_VOCAB.modes.includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
+  validateConfigEcho(args, errors, descriptors);
+  if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
+    errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
+  }
+  for (const field of ARGS_SHAPES.pathFields) {
+    const v = args[field];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || v.trim() === '') {
+      errors.push(`${field} must be a non-empty string when present`);
+      continue;
+    }
+    if (CONTROL_RE.test(v)) {
+      errors.push(`${field} must not contain a control character`);
+      continue;
+    }
+    if (field === 'pluginRoot' && v.includes('`')) {
+      errors.push('pluginRoot must not contain a backtick');
+      continue;
+    }
+    if (field === 'pluginRoot' && v.split('/').includes('..')) {
+      errors.push('pluginRoot must not contain a .. path segment');
+      continue;
+    }
+    if (field === 'headShaShort' && !NONCE_RE.test(v)) {
+      errors.push(`headShaShort must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv)`);
+    }
+    if (field === 'repoRoot' && normalizeAbsoluteRoot(v) === null) {
+      errors.push('repoRoot must be an absolute path without .. segments or backslashes');
+    }
+    if ((field === 'outputDir' || field === 'pluginRoot') && !v.startsWith('/')) {
+      errors.push(`${field} must be an absolute path (POSIX /-prefix)`);
+    }
+  }
+  if (args.agentFlags !== undefined) {
+    errors.push('agentFlags is no longer accepted — the pipeline derives dimension flags itself from ' +
+      'riskTable/scopeAnswer (issue #24). Stamp riskTable (the Phase 2e per-file risk ' +
+      'classification) and, only when the light/full gate asked, scopeAnswer; do not stamp ' +
+      'agentFlags.');
+  }
+  if (args.riskTable !== undefined) {
+    if (!Array.isArray(args.riskTable)) {
+      errors.push('riskTable must be an array of {path, risk} objects');
+    } else {
+      const seenPaths = new Set();
+      for (let i = 0; i < args.riskTable.length; i++) {
+        const entry = args.riskTable[i];
+        if (!isPlainObject(entry)) {
+          errors.push(`riskTable[${i}] must be an object of the form {path, risk}`);
+          continue;
+        }
+        const keys = Object.keys(entry).sort();
+        const extra = keys.filter((k) => !ARGS_SHAPES.riskFields.includes(k));
+        if (extra.length > 0) {
+          errors.push(`riskTable[${i}] has unexpected key(s): ${extra.join(', ')} (only path and risk are allowed)`);
+        }
+        if (typeof entry.path !== 'string' || entry.path === '') {
+          errors.push(`riskTable[${i}].path must be a non-empty string`);
+        } else {
+          seenPaths.add(entry.path);
+        }
+        if (!RISK_LEVELS.includes(entry.risk)) {
+          errors.push(`riskTable[${i}].risk must be one of ${RISK_LEVELS.join(', ')} (got ${JSON.stringify(entry.risk)})`);
+        }
+      }
+      if (Array.isArray(args.changedFiles)) {
+        const changedSet = new Set(args.changedFiles);
+        const missing = args.changedFiles.filter((p) => !seenPaths.has(p));
+        const extraPaths = [...seenPaths].filter((p) => !changedSet.has(p));
+        if (missing.length > 0) {
+          errors.push(`riskTable is missing risk classification for changed file(s): ${missing.join(', ')}`);
+        }
+        if (extraPaths.length > 0) {
+          errors.push(`riskTable classifies file(s) not present in changedFiles: ${extraPaths.join(', ')}`);
+        }
+      }
+    }
+  }
+  if (args.scopeAnswer !== undefined && !SCOPE_ANSWERS.includes(args.scopeAnswer)) {
+    errors.push(`invalid scopeAnswer: ${args.scopeAnswer} (expected one of ${SCOPE_ANSWERS.join(', ')})`);
+  }
+  const riskTableWellFormed = Array.isArray(args.riskTable)
+    && args.riskTable.every((e) => e && typeof e === 'object' && RISK_LEVELS.includes(e.risk) && typeof e.path === 'string' &&
+      e.path !== '');
+  const scopeAnswerWellFormed = args.scopeAnswer === undefined || SCOPE_ANSWERS.includes(args.scopeAnswer);
+  if (riskTableWellFormed && scopeAnswerWellFormed && typeof args.changedLines === 'number') {
+    const lightEligible = computeLightEligible(args.riskTable, args.changedLines);
+    if ((args.scopeAnswer !== undefined) !== lightEligible) {
+      if (args.scopeAnswer !== undefined) {
+        errors.push(`scopeAnswer is "${args.scopeAnswer}" but the riskTable/changedLines are not light-eligible ` +
+          `(not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the ` +
+          `orchestrator answered a light/full question the gate never asked; omit scopeAnswer`);
+      } else {
+        errors.push('riskTable/changedLines are light-eligible but scopeAnswer is missing — the light/full gate ' +
+          'must have asked, and its answer must be stamped as scopeAnswer');
+      }
+    }
+  }
+  if (isPlainObject(args.policy)) validateArgsFields(args.policy, 'policy', errors, 'policy');
+  validateArgsFields(args, 'changed', errors);
+  validateArgsFields(args, 'context', errors);
+  if (args.contextChars !== undefined && args.contextLines === undefined) {
+    errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
+  }
+  if (args.reviewConfig !== undefined) {
+    if (!isPlainObject(args.reviewConfig)) {
+      errors.push('reviewConfig must be an object (the parseReviewMd output shape) when present');
+    } else {
+      const validateLayer = (layer, label, allowDir) => {
+        validateArgsFields(layer, 'review', errors, label);
+        if (layer.ignore !== undefined) validateFlatPatterns(layer.ignore, `${label}.ignore`, errors, true);
+        if (!allowDir) return;
+        if (typeof layer.dir !== 'string' || layer.dir === '') {
+          errors.push(`${label}.dir must be a non-empty string`);
+          return;
+        }
+        errors.push(...validatePathSegments(`${layer.dir}`, `${label}.dir`));
+      };
+      validateLayer(args.reviewConfig, 'reviewConfig', false);
+      if (args.reviewConfig.scopes !== undefined) {
+        if (!Array.isArray(args.reviewConfig.scopes)) {
+          errors.push('reviewConfig.scopes must be an array when present');
+        } else {
+          const seenDirs = new Set();
+          for (let i = 0; i < args.reviewConfig.scopes.length; i++) {
+            const label = `reviewConfig.scopes[${i}]`;
+            const scope = args.reviewConfig.scopes[i];
+            if (!isPlainObject(scope)) {
+              errors.push(`${label} must be a plain object`);
+              continue;
+            }
+            const extra = Object.keys(scope).filter((key) => !ARGS_SHAPES.scopeLayerFields.includes(key)).sort();
+            if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
+            validateLayer(scope, label, true);
+            if (typeof scope.dir === 'string' && scope.dir !== '') {
+              if (seenDirs.has(scope.dir)) errors.push(`${label}.dir duplicates another scope dir: ${scope.dir}`);
+              seenDirs.add(scope.dir);
+            }
+          }
+        }
+      }
+    }
+  }
+  if (args.exclusionPatterns !== undefined) validateFlatPatterns(args.exclusionPatterns, 'exclusionPatterns', errors);
+  if (args.reviewMd !== undefined) {
+    if (!Array.isArray(args.reviewMd)) {
+      errors.push('reviewMd must be an array of {path, text} objects when present');
+    } else {
+      for (let i = 0; i < args.reviewMd.length; i++) {
+        const entry = args.reviewMd[i];
+        if (!isPlainObject(entry)) {
+          errors.push(`reviewMd[${i}] must be an object of the form {path, text}`);
+          continue;
+        }
+        const keys = Object.keys(entry).sort();
+        const extra = keys.filter((k) => !ARGS_SHAPES.reviewMdFields.includes(k));
+        if (extra.length > 0) {
+          errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path and text are allowed)`);
+        }
+        if (typeof entry.path !== 'string' || entry.path === '') {
+          errors.push(`reviewMd[${i}].path must be a non-empty string`);
+        } else {
+          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, true));
+        }
+        if (typeof entry.text !== 'string') {
+          errors.push(`reviewMd[${i}].text must be a string`);
+        }
+      }
+      const hasRootReviewMd = args.reviewMd.some((entry) => (
+        isPlainObject(entry) && entry.path === 'REVIEW.md'
+      ));
+      const hasReviewConfigPath = args.reviewConfigPath != null;
+      if (hasRootReviewMd !== hasReviewConfigPath) {
+        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd ' +
+          'contains an entry with path exactly REVIEW.md');
+      }
+    }
+  }
+  validateArgsFields(args, 'exclusions', errors);
+  if (args.reviewMd !== undefined && args.reviewConfig !== undefined) {
+    errors.push('reviewMd and reviewConfig are both present — pass raw reviewMd or pre-parsed reviewConfig, not both (single authority)');
+  }
+  if (args.exclusionsText !== undefined && args.exclusionPatterns !== undefined) {
+    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or ' +
+      'pre-parsed exclusionPatterns, not both (single authority)');
+  }
+  if (args.delivery !== undefined) {
+    if (!isPlainObject(args.delivery)) {
+      errors.push('delivery must be an object of the form { tier } when present');
+    } else {
+      if (args.delivery.tier !== undefined && !DELIVERY_TIERS.includes(args.delivery.tier)) {
+        errors.push(`invalid delivery.tier: ${args.delivery.tier} (expected one of ${DELIVERY_TIERS.join(', ')})`);
+      }
+      const id = args.delivery.prIdentity;
+      if (id !== undefined) validatePrIdentity(id, errors);
+    }
+  }
+  if (args.persist !== undefined) {
+    if (!isPlainObject(args.persist)) {
+      errors.push('persist must be an object of the form { assembleScriptPath, returnPrimaries } when present');
+    } else {
+      validateArgsFields(args.persist, 'persist', errors);
+    }
+  }
+  errors.push(...validateScriptPaths(args));
+  if (args.limits !== undefined) {
+    if (!isPlainObject(args.limits)) {
+      errors.push('limits must be an object when present');
+    } else {
+      for (const k of Object.keys(args.limits)) {
+        if (!LIMIT_KEYS.includes(k)) errors.push(`unknown limits key: ${k} (expected one of ${LIMIT_KEYS.join(', ')})`);
+      }
+      validateArgsFields(args.limits, 'limits', errors);
+    }
+  }
+  if (args.reviewScope !== undefined) {
+    if (!isPlainObject(args.reviewScope)) {
+      errors.push('reviewScope must be { requested, kind, since, commits, detector }');
+    } else {
+      const scopeKeys = Object.keys(args.reviewScope);
+      const scopeKeysExpected = ARGS_SHAPES.scopeFields;
+      const scopeExtra = scopeKeys.filter((key) => !scopeKeysExpected.includes(key));
+      if (scopeExtra.length) errors.push(`reviewScope has unexpected key(s): ${scopeExtra.join(', ')}`);
+      const { requested, kind, since, commits, detector } = args.reviewScope;
+      if (!ARGS_SHAPES.scopeKinds.includes(requested)) {
+        errors.push('reviewScope.requested must be full or incremental');
+      }
+      if (!ARGS_SHAPES.scopeKinds.includes(kind)) errors.push(`reviewScope.kind must be full or incremental`);
+      if (kind === 'incremental') {
+        if (requested !== 'incremental') errors.push('reviewScope.kind incremental requires requested incremental');
+        if (typeof since !== 'string' ||
+          !NONCE_RE.test(since)) errors.push('reviewScope.since must be a NONCE_RE-safe string for incremental scope');
+        if (commits !== null && (!Number.isSafeInteger(commits) ||
+          commits < 0)) errors.push('reviewScope.commits must be a non-negative safe integer or null');
+      } else if (kind === 'full') {
+        if (since !== null) errors.push('reviewScope.since must be null for full scope');
+        if (commits !== null) errors.push('reviewScope.commits must be null for full scope');
+      }
+      if (detector !== null) {
+        if (!isPlainObject(detector)) {
+          errors.push('reviewScope.detector must be null or an object copied from detect_prior_review.py');
+        } else {
+          const detectorKeys = ARGS_SHAPES.detectorFields;
+          const detectorExtra = Object.keys(detector).filter((key) => !detectorKeys.includes(key));
+          const detectorMissing = detectorKeys.filter((key) => !Object.hasOwn(detector, key));
+          if (detectorExtra.length) errors.push(`reviewScope.detector has unexpected key(s): ${detectorExtra.join(', ')}`);
+          if (detectorMissing.length) errors.push(`reviewScope.detector is missing key(s): ${detectorMissing.join(', ')}`);
+          for (const key of detectorKeys.slice(0, -1)) {
+            if (typeof detector[key] !== 'boolean') errors.push(`reviewScope.detector.${key} must be a boolean`);
+          }
+          if (detector.error !== null && typeof detector.error !== 'string') {
+            errors.push('reviewScope.detector.error must be a string or null');
+          } else if (typeof detector.error === 'string' && CONTROL_RE.test(detector.error)) {
+            errors.push('reviewScope.detector.error must be single-line without control characters');
+          }
+        }
+      }
+      if (kind === 'incremental' && (!isPlainObject(detector) || detector.incremental_safe !== true)) {
+        errors.push('reviewScope.kind incremental requires detector.incremental_safe true');
+      }
+      if (kind === 'full' && requested === 'incremental' && detector === null) {
+        errors.push('reviewScope full fallback requires detector facts when incremental was requested');
+      }
+    }
+  }
+  const reported = new Set();
+  if (isPlainObject(args.configEcho)) {
+    const capEntry = receiptEntryForKey(args, 'pr_comment_cap', descriptors);
+    if (isPlainObject(args.limits) && capEntry !== null) {
+      const capValue = args.limits.deliveryCap;
+      const capShapeInvalid = capValue !== undefined && capValue !== null
+        && (!Number.isSafeInteger(capValue) || capValue < 0);
+      if (capShapeInvalid) {
+        reported.add('limits.deliveryCap');
+      } else if (args.mode === 'headless' && (capValue === undefined || capValue === null)) {
+        errors.push('headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap');
+        reported.add('limits.deliveryCap');
+      } else if (args.mode === 'interactive'
+        && (capValue === null || capValue === undefined)
+        && capEntry.value !== 'null') {
+        errors.push('configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null');
+        reported.add('limits.deliveryCap');
+      }
+    }
+    const tierEntry = receiptEntryForKey(args, 'delivery_tier', descriptors);
+    const stampedTier = dottedValue(args, 'delivery.tier');
+    if (tierEntry !== null
+      && (args.delivery === undefined || args.delivery === null || isPlainObject(args.delivery))
+      && (stampedTier === undefined || stampedTier === null)) {
+      reported.add('delivery.tier');
+      if (tierEntry.value !== 'all') errors.push('configEcho.delivery_tier does not match delivery.tier');
+    }
+    if (args.mode === 'headless') {
+      const trivialEntry = receiptEntryForKey(args, 'trivial_scope', descriptors);
+      if (trivialEntry !== null && trivialEntry.value === 'light'
+        && !computeLightEligible(args.riskTable, args.changedLines)) {
+        errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible ` +
+          `(not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the ` +
+          `orchestrator answered a light/full question the gate never asked`);
+        reported.add('scopeAnswer');
+      }
+      const deliveryEcho = configEchoValue(args, 'delivery');
+      if (deliveryEcho && deliveryEcho.split(',').includes('pr_comments')
+        && (!isPlainObject(args.delivery) || args.delivery.prIdentity === undefined || args.delivery.prIdentity === null)) {
+        errors.push('delivery.prIdentity is required when configEcho.delivery contains pr_comments');
+      }
+    }
+  }
+  if (isPlainObject(args.configEcho)) {
+    for (const descriptor of descriptors) {
+      if (!descriptor.modes.includes(args.mode) || descriptor.waistPath === null) continue;
+      if (reported.has(descriptor.waistPath)) continue;
+      const entry = receiptEntryFor(args, descriptor);
+      if (entry === null) continue;
+      if (!deriveWhenHolds(descriptor, args)) continue;
+      const stamped = dottedValue(args, descriptor.waistPath);
+      if (stamped === undefined) continue;
+      const expected = mappedReceiptValue(descriptor, entry.value);
+      if (expected === undefined) continue;
+      const matches = descriptor.type === 'csv_list'
+        ? Array.isArray(stamped)
+          && stamped.length === expected.length
+          && stamped.every((value, index) => value === expected[index])
+        : stamped === expected;
+      if (!matches) errors.push(`${descriptor.waistPath} does not match configEcho.${descriptor.key}`);
+    }
+    for (const descriptor of descriptors) {
+      if (!descriptor.modes.includes(args.mode)
+        || descriptor.derivedFrom === null
+        || !Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)) continue;
+      const entry = receiptEntryFor(args, descriptor);
+      if (entry !== null && entry.value !== DERIVED_FROM[descriptor.derivedFrom].fill(args)) {
+        errors.push(`configEcho.${descriptor.key} does not match ${descriptor.derivedFrom}`);
+      }
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
+function resolveReviewConfig(A) {
+  const a = A || {};
+  const reviewConfigSource = a.reviewMd !== undefined ? 'reviewMd'
+    : (a.reviewConfig !== undefined ? 'preParsed' : 'none');
+  const exclusionsSource = a.exclusionsText !== undefined ? 'exclusionsText'
+    : (a.exclusionPatterns !== undefined ? 'preParsed' : 'none');
+  let reviewConfig;
+  let reviewMdEntryCount = 0;
+  if (a.reviewMd !== undefined) {
+    reviewConfig = buildReviewConfig(a.reviewMd);
+    reviewMdEntryCount = a.reviewMd.length;
+  } else {
+    reviewConfig = a.reviewConfig || {};
+  }
+  const exclusionPatterns = a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText)
+    : (a.exclusionPatterns || []);
+  return { reviewConfig, exclusionPatterns, reviewConfigSource, exclusionsSource, reviewMdEntryCount };
+}
+// --- entry.js ---
+const REVIEW_TARGET_LABEL = deepFreeze({
+  pr_url: 'a GitHub PR URL',
+  mr_url: 'a GitLab MR URL',
+  repo_ref: 'an owner/repo PR reference',
+  pr_number: 'a bare PR/MR number',
+  pr_shorthand: 'a PR/MR reference',
+});
+const REVIEW_TARGET_N = '[1-9]\\d{0,6}';
+const PR_URL_RE = new RegExp(`^(?:https?://)?[\\w.-]+/[^\\s/]+/[^\\s/]+/pull/(${REVIEW_TARGET_N})(?:/[^\\s?#]*)?(?:\\?[^\\s#]*)?(?:#\\S*)?$`);
+const MR_URL_RE = new RegExp(`^(?:https?://)?[\\w.-]+/\\S+?/-/merge_requests/(${REVIEW_TARGET_N})(?:/[^\\s?#]*)?(?:\\?[^\\s#]*)?(?:#\\S*)?$`);
+const REPO_REF_RE = new RegExp(`^[^\\s/]+/[^\\s/]+#(${REVIEW_TARGET_N})$`);
+const PR_NUMBER_RE = new RegExp(`^(${REVIEW_TARGET_N})$`);
+const PR_SHORTHAND_HASH_RE = new RegExp(`^[#!](${REVIEW_TARGET_N})$`);
+const PR_SHORTHAND_WORD_RE = new RegExp(`^(?:pull request|merge request|PR|MR|pull)[ ]?[#!]?(${REVIEW_TARGET_N})$`, 'i');
+function classifyReviewTarget(raw) {
+  if (typeof raw === 'number') {
+    if (Number.isSafeInteger(raw) && raw >= 1 && raw <= 9999999) {
+      return { kind: 'pr_number', number: String(raw), ref: String(raw) };
+    }
+    return null;
+  }
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (s === '' || s.length > 200) return null;
+  let m;
+  if ((m = PR_URL_RE.exec(s))) return { kind: 'pr_url', number: m[1], ref: s };
+  if ((m = MR_URL_RE.exec(s))) return { kind: 'mr_url', number: m[1], ref: s };
+  if ((m = REPO_REF_RE.exec(s))) return { kind: 'repo_ref', number: m[1], ref: s };
+  if ((m = PR_NUMBER_RE.exec(s))) return { kind: 'pr_number', number: m[1], ref: s };
+  if ((m = PR_SHORTHAND_HASH_RE.exec(s))) return { kind: 'pr_shorthand', number: m[1], ref: s };
+  if ((m = PR_SHORTHAND_WORD_RE.exec(s))) return { kind: 'pr_shorthand', number: m[1], ref: s };
+  return null;
+}
+const MAX_JSON_UNWRAP = 4;
+function unwrapWaist(raw) {
+  let value = raw;
+  for (let depth = 0; depth <= MAX_JSON_UNWRAP; depth++) {
+    if (isPlainObject(value)) return { waist: value, terminal: value };
+    if (typeof value !== 'string' || depth === MAX_JSON_UNWRAP) break;
+    let next;
+    try { next = JSON.parse(value); } catch { break; }
+    value = next;
+  }
+  return { waist: null, terminal: value };
+}
+function describeShape(raw) {
+  if (typeof raw === 'string') {
+    const s = raw.length > 80 ? `${raw.slice(0, 80)}…` : raw;
+    return `a raw string: ${JSON.stringify(s)}`;
+  }
+  if (Array.isArray(raw)) return 'an array';
+  if (typeof raw === 'boolean') return `a boolean: ${raw}`;
+  if (typeof raw === 'number') return `a number: ${raw}`;
+  return 'an unrecognized value';
+}
+function refusalFrom(raw, unwrapped) {
+  if (raw === undefined || raw === null) {
+    const got = raw === undefined ? 'undefined' : 'null';
+    return `args never arrived: the code-gauntlet workflow was invoked with no args at all (got ${got}). `
+      + 'This workflow builds nothing itself — Phases 1-2 of the code-gauntlet skill resolve and check '
+      + 'out the target, write the diff and shared context, and assemble the argsVersion:1 waist object '
+      + 'it consumes. Run the skill instead: Skill("code-gauntlet:code-gauntlet", args="<PR number or URL '
+      + '— omit to auto-detect this branch\'s PR, else local changes>"). To resume an interrupted run, '
+      + 're-invoke with the SAME args object plus resumeFromRunId.';
+  }
+  const { waist, terminal } = unwrapped;
+  if (waist !== null) return null;
+  const target = classifyReviewTarget(raw) || classifyReviewTarget(terminal);
+  if (target && !/["\\]/.test(target.ref)) {
+    return `args was ${REVIEW_TARGET_LABEL[target.kind]} (${target.ref}), not the assembled argsVersion:1 `
+      + 'waist object — do not invoke this workflow directly; run the code-gauntlet skill (Phases 1-2 '
+      + `build the args). Run this instead: Skill("code-gauntlet:code-gauntlet", args="${target.ref}")`;
+  }
+  return `args was ${describeShape(raw)}, not the assembled argsVersion:1 waist object — do not invoke `
+    + 'this workflow directly; run the code-gauntlet skill (Phases 1-2 build the args). Run this '
+    + 'instead: Skill("code-gauntlet:code-gauntlet", args="<your PR number or URL>")';
+}
+const SKILL_RECOVERY_LINE = 'The code-gauntlet skill assembles this object in Phases 1-2 — '
+  + 'run it instead of invoking the workflow directly: '
+  + 'Skill("code-gauntlet:code-gauntlet", args="<PR number or URL>")';
+function makeArgsRejectEnvelope(message, gaps) {
+  return {
+    ok: false,
+    error: message,
+    phaseReached: 'args',
+    failingPhase: 'args',
+    artifactPaths: {},
+    stats: {},
+    gaps,
+  };
+}
+function entryArgs(raw) {
+  const unwrapped = unwrapWaist(raw);
+  const message = refusalFrom(raw, unwrapped);
+  if (message === null) return { ok: true, waist: unwrapped.waist };
+  return { ok: false, envelope: makeArgsRejectEnvelope(message, [message]) };
+}
+function parseEntryArgs(raw) {
+  const entry = entryArgs(raw);
+  if (!entry.ok) throw new Error(entry.envelope.error);
+  return entry.waist;
 }
 // --- outputPaths.js ---
 const PATH_ESCAPE_MARKER = 'path-escape';
@@ -5582,7 +5733,9 @@ function checkpointFindingShapeErrors(finding, path) {
     } else {
       finding.corroborations.forEach((corroboration, idx) => {
         if (!isPlainCheckpointObject(corroboration)) {
-          violations.push(`checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`);
+          violations.push(
+            `checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`,
+          );
         }
       });
     }
@@ -5615,7 +5768,9 @@ function checkpointShapeErrors(resolvedCheckpoints) {
       arrVal.forEach((el, idx) => {
         if (!isPlainCheckpointObject(el)) {
           if (fields[field] === CHECKPOINT_ARRAY_STRICT) {
-            violations.push(`checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`);
+            violations.push(
+              `checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`,
+            );
           }
           return;
         }
@@ -5687,7 +5842,7 @@ function beltPartitionList(list) {
   return { list: splicedList, eliminated: eliminatedOut };
 }
 function stripEliminatedList(list) {
-  return list.map(applyInjectedProseStrip);
+  return list.map((finding) => applyInjectedProseStrip(finding));
 }
 function normalizePhaseFindings(name, out, replayed, args) {
   if (!out || typeof out !== 'object') return;
@@ -5777,7 +5932,7 @@ function hostPathTextFields(value, patterns) {
       return;
     }
     for (const [key, entry] of Object.entries(value)) {
-      const name = field ?? (FINDING_TEXT_FIELD_NAMES.has(key) ? key : 'other');
+      const name = field ?? (FINDING_TEXT_FIELD_NAMES.includes(key) ? key : 'other');
       visit(key, name);
       visit(entry, name);
     }
@@ -5831,7 +5986,7 @@ async function runWith(ctx, rawArgs) {
     derivedPaths,
   } = normalizeArgsReport(entry.waist);
   const nullArgGaps = [
-    ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map(nullToleranceGap),
+    ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map((key) => nullToleranceGap(key)),
     ...respelledNulls.map(nullRespellGap),
   ];
   const check = validateArgs(A);

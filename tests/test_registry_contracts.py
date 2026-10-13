@@ -816,7 +816,7 @@ def test_agent_mirrors(mirror):
             "skills/code-gauntlet/references/phase2-triage.md",
             ("contextLines", "contextChars", "policy.gateway"),
         ),
-        ("workflows/src/args.js", ("contextLines", "policy.gateway")),
+        ("workflows/src/args.js", ("contextLines",)),
         ("workflows/src/contextPlan.js", ("contextReadPlan",)),
         ("workflows/pipeline.js", ("contextReadPlan",)),
         ("workflows/src/registry.js", ("conditionalSchemaActive",)),

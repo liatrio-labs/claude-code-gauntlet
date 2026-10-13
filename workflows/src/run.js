@@ -7,11 +7,15 @@ import { mergeStage } from './mergeFindings.js';
 import { verifyStage } from './verifyStage.js';
 import { FINDING_TEXT_FIELD_NAMES, conditionalSchemaActive } from './registry.js';
 import { mentionsPreparedHostRoot, prepareHostRootPatterns, safeFindingLabel } from './paths.js';
-import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, resolveReviewConfig, computeLightEligible, configEchoValue } from './args.js';
-import { scopeMatchesFile } from './filterFindings.js';
+import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
+import { resolveReviewConfig } from './args.js';
+import { entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './entry.js';
+import { computeLightEligible, configEchoValue } from './knobs.js';
+import { scopeMatchesFile } from './reviewConfig.js';
 import { renderReport, renderSummaryBody } from './renderReport.js';
 import { writeArtifacts } from './persist.js';
-import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
+import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
+import { checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
 
 // The host injects runtime globals, while tests supply context explicitly.
 function defaultCtx() {
@@ -36,7 +40,7 @@ function hostPathTextFields(value, patterns) {
       return;
     }
     for (const [key, entry] of Object.entries(value)) {
-      const name = field ?? (FINDING_TEXT_FIELD_NAMES.has(key) ? key : 'other');
+      const name = field ?? (FINDING_TEXT_FIELD_NAMES.includes(key) ? key : 'other');
       visit(key, name);
       visit(entry, name);
     }
@@ -100,7 +104,7 @@ export async function runWith(ctx, rawArgs) {
     derivedPaths,
   } = normalizeArgsReport(entry.waist);
   const nullArgGaps = [
-    ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map(nullToleranceGap),
+    ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map((key) => nullToleranceGap(key)),
     ...respelledNulls.map(nullRespellGap),
   ];
   const check = validateArgs(A);

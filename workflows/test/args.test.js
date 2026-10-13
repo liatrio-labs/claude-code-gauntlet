@@ -1,2718 +1,819 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
-  stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, nullRespellGap, LIMIT_DEFAULTS,
-  resolveReviewConfig, computeLightEligible, nullToleranceRejectedKeys, KNOB_REGISTRY, safeReceiptValue,
-  REQUIRED, LIGHT_SCOPE_MAX_CHANGED_LINES, DERIVE_WHEN, DERIVED_FROM,
-  matchesRule, isPriorReviewDetector,
-} from '../src/args.js';
+import { normalizeArgs, normalizeArgsReport, validateArgs, stripNullOptionalsReport } from '../src/args.js';
+import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveReviewConfig } from '../src/args.js';
+import { interactiveArgs, headlessArgs, priorReviewDetector, knobRows, prIdentity } from './helpers/argsFixtures.js';
 
-const good = {
-  argsVersion: 1, mode: 'interactive', repoRoot: '/r', outputDir: '/r/.code-gauntlet',
-  headShaShort: 'abc123', nonce: 'n-1', generatedAt: '2026-07-18T00:00:00Z',
-  diffPath: '/r/.code-gauntlet/d.patch', changedFilesPath: '/r/.code-gauntlet/f.json',
-  changedFiles: ['a.js'], changedLines: 1,
-  // 'medium', not 'low': changedLines(1) < 50, so a 'low' entry would be light-eligible and
-  // require a coherent scopeAnswer — keep the base fixture scope-neutral (full scope, no
-  // scopeAnswer needed) the same way it always was ({} agentFlags == full scope).
-  reviewConfigPath: null, riskTable: [{ path: 'a.js', risk: 'medium' }],
-  policy: { tier: 'optimized', subagentModel: null },
-  configEcho: {
-    model_tier: { value: 'optimized', source: 'fixed' },
-    delivery_tier: { value: 'all', source: 'default' },
-    pr_comment_cap: { value: 'null', source: 'default' },
-    review_md: { value: 'absent', source: 'discovery' },
-  },
-  pluginRoot: '/plugin',
-  reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
-  limits: {
-    summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25,
-    maxLineSpan: 100,
-  },
-};
-
-const priorReviewDetector = {
-  previously_reviewed: true,
-  sha_resolvable: true,
-  head_advanced: true,
-  sha_is_ancestor: true,
-  incremental_safe: true,
-  error: null,
-};
-
-function headlessArgs(reviewedPolicy = 'full', reviewScope = {}) {
-  return {
-    ...good,
-    mode: 'headless',
-    delivery: {},
-    limits: { ...good.limits, deliveryCap: 6 },
-    configEcho: {
-      model_tier: { value: 'optimized', source: 'default' },
-      delivery: { value: 'markdown', source: 'default' },
-      post_mode: { value: 'dry-run', source: 'default' },
-      pr_comment_cap: { value: '6', source: 'default' },
-      delivery_tier: { value: 'all', source: 'default' },
-      draft_policy: { value: 'review', source: 'default' },
-      reviewed_policy: { value: reviewedPolicy, source: 'default' },
-      pr_not_found_policy: { value: 'error', source: 'default' },
-      trivial_scope: { value: 'full', source: 'default' },
-    },
-    reviewScope: {
-      requested: 'full', kind: 'full', since: null, commits: null,
-      detector: priorReviewDetector,
-      ...reviewScope,
-    },
-  };
-}
-
-test('normalizeArgs parses a JSON string (session tool-call form)', () => {
-  assert.deepEqual(normalizeArgs(JSON.stringify(good)), {
-    ...good,
-    delivery: { tier: 'all' },
-    limits: { ...good.limits, deliveryCap: null },
-  });
-});
-test('normalizeArgs passes an object through (workflow-nesting form)', () => {
-  assert.deepEqual(normalizeArgs(good), {
-    ...good,
-    delivery: { tier: 'all' },
-    limits: { ...good.limits, deliveryCap: null },
-  });
-});
-test('validateArgs accepts a well-formed waist', () => {
-  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
-});
-
-test('T182-ARGS: required receipt has the registry-defined mode key sets and render order', () => {
-  assert.deepEqual(
-    KNOB_REGISTRY.filter((d) => d.modes.includes('headless')).map((d) => d.key),
-    ['model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy', 'reviewed_policy', 'pr_not_found_policy', 'trivial_scope'],
-  );
-  assert.deepEqual(
-    KNOB_REGISTRY.filter((d) => d.modes.includes('interactive')).map((d) => d.key),
-    ['model_tier', 'pr_comment_cap', 'delivery_tier', 'review_md'],
-  );
-  for (const field of ['configEcho', 'pluginRoot', 'reviewScope']) {
-    const a = { ...good }; delete a[field];
-    const result = validateArgs(a);
-    assert.equal(result.ok, false);
-    assert.ok(result.errors.some((error) => error.includes(`missing required field: ${field}`)));
-  }
-});
-
-test('T182-ARGS: configEcho top-level shapes are rejected directly', () => {
-  for (const bad of [null, [], 'echo']) {
-    const result = validateArgs({ ...good, configEcho: bad });
-    assert.equal(result.ok, false, JSON.stringify(bad));
-    assert.ok(result.errors.some((error) => error.includes('configEcho must be an object')));
-  }
-});
-
-test('T182-ARGS: configEcho entry shape and value type are rejected directly', () => {
-  for (const bad of [null, [], 'entry']) {
-    const result = validateArgs({ ...good, configEcho: { ...good.configEcho, model_tier: bad } });
-    assert.equal(result.ok, false, JSON.stringify(bad));
-    assert.ok(result.errors.some((error) => error.includes('configEcho.model_tier must be { value, source }')));
-  }
-  for (const bad of [null, 4, false]) {
-    const result = validateArgs({ ...good, configEcho: { ...good.configEcho, model_tier: { value: bad, source: 'fixed' } } });
-    assert.equal(result.ok, false, JSON.stringify(bad));
-    assert.ok(result.errors.some((error) => error.includes('configEcho.model_tier.value must be a string')));
-  }
-});
-
-test('T182-ARGS: safeReceiptValue rejects control and backtick suffixes on an enum-valid value', () => {
-  for (const value of ['optimized\n', 'optimized`']) {
-    assert.equal(safeReceiptValue(value), false, JSON.stringify(value));
-  }
-});
-
-test('T182-ARGS: every registry receipt value rule and source rule is focused', () => {
-  const headless = {
-    ...good,
-    mode: 'headless',
-    delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', platform: 'github', web_origin: 'https://github.com' } },
-    configEcho: {
-      model_tier: { value: 'optimized', source: 'env' },
-      delivery: { value: 'chat,pr_comments,markdown', source: 'review_md' },
-      post_mode: { value: 'live', source: 'default' },
-      pr_comment_cap: { value: '1', source: 'env' },
-      delivery_tier: { value: 'all', source: 'default' },
-      draft_policy: { value: 'skip', source: 'env' },
-      reviewed_policy: { value: 'full', source: 'default' },
-      pr_not_found_policy: { value: 'local', source: 'env' },
-      trivial_scope: { value: 'full', source: 'default' },
-    },
-    limits: { ...good.limits, deliveryCap: 1 },
-  };
-  assert.equal(validateArgs(headless).ok, true);
-  const missingKey = { ...headless, configEcho: { ...headless.configEcho } };
-  delete missingKey.configEcho.delivery;
-  assert.equal(validateArgs(missingKey).ok, false);
-  const extraKey = { ...headless, configEcho: { ...headless.configEcho, unexpected: { value: 'x', source: 'default' } } };
-  assert.equal(validateArgs(extraKey).ok, false);
-  const malformedEntry = { ...headless, configEcho: { ...headless.configEcho, model_tier: { value: 'optimized', source: 'env', extra: true } } };
-  assert.equal(validateArgs(malformedEntry).ok, false);
-
-  const invalidValues = new Map([
-    ['model_tier', 'standard'], ['delivery', 'chat,chat'], ['post_mode', 'later'],
-    ['pr_comment_cap', '0'], ['delivery_tier', 'branch_only'], ['draft_policy', 'defer'],
-    ['reviewed_policy', 'partial'], ['pr_not_found_policy', 'ignore'], ['trivial_scope', 'none'],
-  ]);
-  const validHeadlessSources = new Map([
-    ['model_tier', 'env'], ['delivery', 'review_md'], ['post_mode', 'default'],
-    ['pr_comment_cap', 'env'], ['delivery_tier', 'default'], ['draft_policy', 'env'],
-    ['reviewed_policy', 'default'], ['pr_not_found_policy', 'env'], ['trivial_scope', 'default'],
-  ]);
-  const expectedHeadless = ['model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy', 'reviewed_policy', 'pr_not_found_policy', 'trivial_scope'];
-  assert.deepEqual([...invalidValues.keys()], expectedHeadless);
-  for (const value of ['optimized\n', 'optimized`']) {
-    const result = validateArgs({ ...headless, configEcho: { ...headless.configEcho, model_tier: { value, source: 'env' } } });
-    assert.equal(result.ok, false);
-    assert.ok(result.errors.some((error) => error.includes('single-line and contain no controls or backticks')));
-  }
-
-  const interactive = {
-    ...good,
-    mode: 'interactive',
-    limits: { ...good.limits, deliveryCap: 0 },
-    configEcho: {
-      model_tier: { value: 'optimized', source: 'fixed' },
-      pr_comment_cap: { value: '0', source: 'env' },
-      delivery_tier: { value: 'all', source: 'default' },
-      review_md: { value: 'absent', source: 'discovery' },
-    },
-  };
-  assert.equal(validateArgs(interactive).ok, true);
-  const invalidInteractiveValues = new Map([
-    ['model_tier', 'standard'], ['pr_comment_cap', 'not-a-cap'],
-    ['delivery_tier', 'branch_only'], ['review_md', 'other'],
-  ]);
-  const expectedInteractive = ['model_tier', 'pr_comment_cap', 'delivery_tier', 'review_md'];
-  assert.deepEqual([...invalidInteractiveValues.keys()], expectedInteractive);
-  const invalidSources = {
-    headless: new Map(expectedHeadless.map((key) => [key, 'fixed'])),
-    interactive: new Map([
-      ['model_tier', 'env'], ['pr_comment_cap', 'fixed'],
-      ['delivery_tier', 'fixed'], ['review_md', 'env'],
-    ]),
-  };
-
-  // This is deliberately one registry-driven loop for both modes. The hard-coded pins above
-  // keep a deleted descriptor from silently shrinking either half of the loop.
-  for (const [mode, fixture, invalidByKey, validSources] of [
-    ['headless', headless, invalidValues, validHeadlessSources],
-    ['interactive', interactive, invalidInteractiveValues, null],
-  ]) {
-    const expectedKeys = mode === 'headless' ? expectedHeadless : expectedInteractive;
-    assert.deepEqual(KNOB_REGISTRY.filter((d) => d.modes.includes(mode)).map((d) => d.key), expectedKeys);
-    for (const descriptor of KNOB_REGISTRY.filter((d) => d.modes.includes(mode))) {
-      const key = descriptor.key;
-      const invalidValue = invalidByKey.get(key);
-      const valueLimits = mode === 'headless' && key === 'pr_comment_cap'
-        ? { ...fixture.limits, deliveryCap: 0 }
-        : fixture.limits;
-      const valueResult = validateArgs({
-        ...fixture,
-        limits: valueLimits,
-        configEcho: {
-          ...fixture.configEcho,
-          [key]: {
-            value: invalidValue,
-            source: mode === 'headless' ? validSources.get(key) : descriptor.allowedSources.interactive[0],
-          },
-        },
-      });
-      assert.equal(valueResult.ok, false, `${mode} ${key}=${invalidValue} must be rejected`);
-      assert.ok(valueResult.errors.some((error) => error.includes(`configEcho.${key}.value`)), valueResult.errors.join('; '));
-
-      const badSource = invalidSources[mode].get(key);
-      const sourceResult = validateArgs({
-        ...fixture,
-        configEcho: { ...fixture.configEcho, [key]: { ...fixture.configEcho[key], source: badSource } },
-      });
-      assert.equal(sourceResult.ok, false, `${mode} ${key} must reject ${badSource} source`);
-      assert.ok(sourceResult.errors.some((error) => error.includes(`configEcho.${key}.source`)), sourceResult.errors.join('; '));
-    }
-  }
-  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, pr_comment_cap: { value: 'null', source: 'env' } } }).ok, false);
-  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, pr_comment_cap: { value: '1', source: 'default' } } }).ok, false);
-  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, model_tier: { value: 'optimized', source: 'env' } } }).ok, false);
-  assert.equal(validateArgs({ ...interactive, reviewMd: [], reviewConfigPath: null, configEcho: { ...interactive.configEcho, review_md: { value: 'present', source: 'discovery' } } }).ok, false);
-  const interactiveInvalid = validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, review_md: { value: 'other', source: 'discovery' } } });
-  assert.ok(interactiveInvalid.errors.some((error) => error.includes('configEcho.review_md.value')));
-});
-
-test('registry rule metadata has the complete projected row shape', () => {
-  const rowKeys = ['key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'waistMap', 'derivedFrom', 'deriveWhen', 'nullReceipt', 'resolvedKey'];
-  const resolvedKeys = new Map([
-    ['model_tier', true], ['delivery', true], ['post_mode', true], ['draft_policy', true],
-    ['reviewed_policy', true], ['pr_not_found_policy', true], ['pr_comment_cap', false],
-    ['delivery_tier', false], ['trivial_scope', false], ['review_md', false],
-  ]);
-  for (const descriptor of KNOB_REGISTRY) {
-    assert.deepEqual(Object.keys(descriptor), rowKeys);
-    assert.equal('example' in descriptor, false);
-    assert.equal('valueRule' in descriptor, false);
-    assert.equal(typeof descriptor.resolvedKey, 'boolean');
-    assert.equal(descriptor.resolvedKey, resolvedKeys.get(descriptor.key));
-    assert.deepEqual(
-      descriptor.waistMap,
-      descriptor.key === 'reviewed_policy' ? { skip: 'full' } : null,
-    );
-    for (const mode of descriptor.modes) {
-      const defaults = descriptor.defaults[mode];
-      assert.ok(Array.isArray(defaults), `${descriptor.key} needs ${mode} defaults`);
-      const [value, source] = defaults;
-      const fixture = mode === 'headless'
-        ? {
-          ...good,
-          mode,
-          delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', platform: 'github', web_origin: 'https://github.com' } },
-          configEcho: {
-            model_tier: { value: 'optimized', source: 'default' },
-            delivery: { value: 'markdown', source: 'default' },
-            post_mode: { value: 'dry-run', source: 'default' },
-            pr_comment_cap: { value: '6', source: 'default' },
-            delivery_tier: { value: 'all', source: 'default' },
-            draft_policy: { value: 'review', source: 'default' },
-            reviewed_policy: { value: 'full', source: 'default' },
-            pr_not_found_policy: { value: 'error', source: 'default' },
-            trivial_scope: { value: 'full', source: 'default' },
-          },
-          limits: { ...good.limits, deliveryCap: 6 },
-        }
-        : {
-          ...good,
-          configEcho: {
-            model_tier: { value: 'optimized', source: 'fixed' },
-            pr_comment_cap: { value: 'null', source: 'default' },
-            delivery_tier: { value: 'all', source: 'default' },
-            review_md: { value: 'absent', source: 'discovery' },
-          },
-          limits: { ...good.limits, deliveryCap: null },
-        };
-      fixture.configEcho = { ...fixture.configEcho, [descriptor.key]: { value, source } };
-      if (descriptor.key === 'pr_comment_cap') fixture.limits.deliveryCap = value === 'null' ? null : Number(value);
-      if (descriptor.key === 'delivery_tier') fixture.delivery = { tier: value };
-      assert.equal(validateArgs(fixture).ok, true, `${mode} ${descriptor.key} default value`);
-      assert.ok(descriptor.allowedSources[mode].includes(source), `${mode} ${descriptor.key} default source`);
-    }
-  }
-});
-
-test('registry waist maps use valid source keys and typed destination domains', () => {
-  const waistDomains = {
-    'delivery.tier': ['all', 'main_only'],
-    scopeAnswer: ['light', 'full'],
-    'reviewScope.requested': ['full', 'incremental'],
-  };
-  for (const descriptor of KNOB_REGISTRY.filter(({ waistMap }) => waistMap !== null)) {
-    const domain = waistDomains[descriptor.waistPath];
-    assert.ok(domain, `${descriptor.key} needs a hand-typed waist domain`);
-    for (const mode of descriptor.modes) {
-      const rule = descriptor.rule.kind ? descriptor.rule : descriptor.rule[mode];
-      for (const key of Object.keys(descriptor.waistMap)) {
-        assert.equal(matchesRule(descriptor.rule, key, mode), true, `${descriptor.key} maps invalid ${key}`);
-      }
-      for (const sourceValue of rule.values || []) {
-        const mappedValue = Object.hasOwn(descriptor.waistMap, sourceValue)
-          ? descriptor.waistMap[sourceValue]
-          : sourceValue;
-        assert.ok(domain.includes(mappedValue), `${descriptor.key} maps ${sourceValue} outside ${descriptor.waistPath}`);
-      }
-    }
-  }
-});
-
-test('T2: the light eligibility predicate, description, and validation arms share one limit', () => {
-  assert.match(DERIVE_WHEN.lightEligible.describe, new RegExp(String(LIGHT_SCOPE_MAX_CHANGED_LINES)));
-  assert.equal(
-    DERIVE_WHEN.lightEligible.describe,
-    'every changed file is low risk and fewer than 50 lines changed',
-  );
-  assert.equal(
-    computeLightEligible([{ path: 'a', risk: 'low' }], LIGHT_SCOPE_MAX_CHANGED_LINES - 1),
-    true,
-  );
-  assert.equal(
-    computeLightEligible([{ path: 'a', risk: 'low' }], LIGHT_SCOPE_MAX_CHANGED_LINES),
-    false,
-  );
-
-  const lightAnswer = validateArgs({
-    ...good,
-    changedLines: LIGHT_SCOPE_MAX_CHANGED_LINES,
-    riskTable: [{ path: 'a.js', risk: 'low' }],
-    scopeAnswer: 'light',
-  });
-  assert.ok(lightAnswer.errors.some((error) => error.includes(`changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}`)));
-
-  const headless = headlessArgs();
-  headless.riskTable = [{ path: 'a.js', risk: 'medium' }];
-  headless.configEcho.trivial_scope = { value: 'light', source: 'default' };
-  const receiptAnswer = validateArgs(headless);
-  assert.ok(receiptAnswer.errors.some((error) => error.includes(`changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}`)));
-});
-
-test('T5: derivation tables and registry names are bidirectionally complete', () => {
-  const deriveNames = new Set(
-    KNOB_REGISTRY.filter(({ deriveWhen }) => deriveWhen !== null).map(({ deriveWhen }) => deriveWhen),
-  );
-  const derivedNames = new Set(
-    KNOB_REGISTRY.filter(({ derivedFrom }) => derivedFrom !== null).map(({ derivedFrom }) => derivedFrom),
-  );
-  assert.deepEqual(deriveNames, new Set(Object.keys(DERIVE_WHEN)));
-  assert.deepEqual(derivedNames, new Set(Object.keys(DERIVED_FROM)));
-  for (const [name, entry] of Object.entries(DERIVE_WHEN)) {
-    assert.equal(typeof entry.holds, 'function', name);
-    assert.equal(typeof entry.describe, 'string', name);
-    assert.ok(entry.describe.trim(), name);
-  }
-  for (const [name, entry] of Object.entries(DERIVED_FROM)) {
-    assert.equal(typeof entry.fill, 'function', name);
-    assert.equal(typeof entry.source, 'string', name);
-    assert.equal(typeof entry.describe, 'string', name);
-    assert.ok(entry.describe.trim(), name);
-  }
-  assert.equal(
-    KNOB_REGISTRY.some(({ derivedFrom, waistPath }) => derivedFrom !== null && waistPath !== null),
-    false,
-  );
-});
-
-test('matchesRule evaluates every rule kind and fails closed for lures', () => {
-  const enumRule = { kind: 'enum', values: ['optimized'] };
-  const csvRule = { kind: 'csv_subset', values: ['chat', 'markdown'] };
-  const positiveRule = { kind: 'positive_digits' };
-  const digitsRule = { kind: 'digits_or_null' };
-  const cases = [
-    [enumRule, 'optimized', 'headless', true],
-    [enumRule, 'Optimized', 'headless', false],
-    [csvRule, '', 'headless', false],
-    [csvRule, 'chat,markdown', 'headless', true],
-    [csvRule, 'chat,,markdown', 'headless', false],
-    [csvRule, 'chat,chat', 'headless', false],
-    [csvRule, 'chat, markdown', 'headless', false],
-    [csvRule, 'Chat', 'headless', false],
-    [positiveRule, '1', 'headless', true],
-    [positiveRule, '0', 'headless', false],
-    [positiveRule, '00', 'headless', false],
-    [positiveRule, '01', 'headless', false],
-    [positiveRule, '-1', 'headless', false],
-    [positiveRule, ' 5', 'headless', false],
-    [positiveRule, '5 ', 'headless', false],
-    [positiveRule, '١', 'headless', false],
-    [positiveRule, '9007199254740992', 'headless', false],
-    [positiveRule, '9007199254740991', 'headless', true],
-    [digitsRule, '0', 'interactive', true],
-    [digitsRule, 'null', 'interactive', true],
-    [digitsRule, '00', 'interactive', false],
-    [digitsRule, '01', 'interactive', false],
-    [digitsRule, '-1', 'interactive', false],
-    [digitsRule, ' 5', 'interactive', false],
-    [digitsRule, '5 ', 'interactive', false],
-    [digitsRule, '١', 'interactive', false],
-    [digitsRule, '9007199254740991', 'interactive', true],
-    [digitsRule, '9007199254740992', 'interactive', false],
-    [{ kind: 'bogus' }, 'x', 'headless', false],
-    [{ headless: enumRule }, 'optimized', 'interactive', false],
-  ];
-  for (const [rule, value, mode, expected] of cases) {
-    assert.equal(matchesRule(rule, value, mode), expected, JSON.stringify({ rule, value, mode }));
-  }
-  for (const value of [null, 1, false, [], {}]) {
-    assert.equal(matchesRule(enumRule, value, 'headless'), false, JSON.stringify(value));
-  }
-});
-
-test('T305-ARGS: registry rule interpreter is exact, canonical, and fail-closed', () => {
-  const valid = (mode, key, value, overrides = {}) => {
-    const fixture = mode === 'headless'
-      ? {
-        ...good,
-        mode,
-        delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', platform: 'github', web_origin: 'https://github.com' } },
-        configEcho: {
-          model_tier: { value: 'optimized', source: 'default' },
-          delivery: { value: 'markdown', source: 'default' },
-          post_mode: { value: 'dry-run', source: 'default' },
-          pr_comment_cap: { value: '6', source: 'default' },
-          delivery_tier: { value: 'all', source: 'default' },
-          draft_policy: { value: 'review', source: 'default' },
-          reviewed_policy: { value: 'full', source: 'default' },
-          pr_not_found_policy: { value: 'error', source: 'default' },
-          trivial_scope: { value: 'full', source: 'default' },
-        },
-        limits: { ...good.limits, deliveryCap: 6 },
-      }
-      : {
-        ...good,
-        configEcho: {
-          model_tier: { value: 'optimized', source: 'fixed' },
-          pr_comment_cap: { value: 'null', source: 'default' },
-          delivery_tier: { value: 'all', source: 'default' },
-          review_md: { value: 'absent', source: 'discovery' },
-        },
-        limits: { ...good.limits, deliveryCap: null },
-      };
-    fixture.configEcho = { ...fixture.configEcho, [key]: { ...fixture.configEcho[key], value } };
-    if (key === 'pr_comment_cap' && ['0', '6', '9007199254740991'].includes(value)) {
-      fixture.limits.deliveryCap = Number(value);
-    }
-    if (key === 'pr_comment_cap' && value === 'null') fixture.limits.deliveryCap = null;
-    if (key === 'delivery_tier' && ['all', 'main_only'].includes(value)) fixture.delivery = { tier: value };
-    return validateArgs({ ...fixture, ...overrides });
-  };
-
-  assert.equal(valid('headless', 'model_tier', 'optimized').ok, true);
-  assert.equal(valid('headless', 'model_tier', 'Optimized').ok, false);
-  assert.equal(valid('headless', 'delivery', 'chat,markdown').ok, true);
-  for (const lure of ['', 'chat,,markdown', 'chat,chat', 'chat, markdown', 'Chat']) {
-    assert.equal(valid('headless', 'delivery', lure).ok, false, `csv lure ${JSON.stringify(lure)}`);
-  }
-  for (const lure of ['0', '00', '01', '-1', ' 5', '5 ', '9007199254740992', '١']) {
-    assert.equal(valid('headless', 'pr_comment_cap', lure).ok, false, `positive lure ${JSON.stringify(lure)}`);
-  }
-  assert.equal(valid('headless', 'pr_comment_cap', '9007199254740991').ok, true);
-  for (const lure of ['00', '01', '-1', ' 5', '5 ', '9007199254740992', '١']) {
-    assert.equal(valid('interactive', 'pr_comment_cap', lure).ok, false, `cap lure ${JSON.stringify(lure)}`);
-  }
-  assert.equal(valid('interactive', 'pr_comment_cap', '0').ok, true);
-  assert.equal(valid('interactive', 'pr_comment_cap', '9007199254740991').ok, true);
-  assert.equal(valid('interactive', 'pr_comment_cap', 'null').ok, true);
-  assert.equal(valid('headless', 'post_mode', 'bogus').ok, false);
-});
-
-test('T305-ARGS: normalizeArgs derives typed waist fields from the receipt once', () => {
-  const interactive = {
-    ...good,
-    configEcho: {
-      model_tier: { value: 'optimized', source: 'fixed' },
-      pr_comment_cap: { value: '7', source: 'env' },
-      delivery_tier: { value: 'main_only', source: 'env' },
-    },
-  };
-  const normalizedInteractive = normalizeArgs(interactive);
-  assert.deepEqual(normalizedInteractive.limits.deliveryCap, 7);
-  assert.deepEqual(normalizedInteractive.delivery, { tier: 'main_only' });
-  assert.deepEqual(normalizedInteractive.configEcho.review_md, { value: 'absent', source: 'discovery' });
-  assert.deepEqual(validateArgs(normalizedInteractive), { ok: true, errors: [] });
-
-  const headless = {
-    ...good,
-    mode: 'headless',
-    riskTable: [{ path: 'a.js', risk: 'low' }],
-    configEcho: {
-      model_tier: { value: 'optimized', source: 'default' },
-      delivery: { value: 'markdown', source: 'default' },
-      post_mode: { value: 'dry-run', source: 'default' },
-      pr_comment_cap: { value: '6', source: 'default' },
-      delivery_tier: { value: 'all', source: 'default' },
-      draft_policy: { value: 'review', source: 'default' },
-      reviewed_policy: { value: 'full', source: 'default' },
-      pr_not_found_policy: { value: 'error', source: 'default' },
-      trivial_scope: { value: 'light', source: 'default' },
-    },
-  };
-  const normalizedHeadless = normalizeArgs(headless);
-  assert.equal(normalizedHeadless.limits.deliveryCap, 6);
-  assert.deepEqual(normalizedHeadless.delivery, { tier: 'all' });
-  assert.equal(normalizedHeadless.scopeAnswer, 'light');
-  assert.deepEqual(validateArgs(normalizedHeadless), { ok: true, errors: [] });
-  const fullHeadless = normalizeArgs({
-    ...headless,
-    configEcho: { ...headless.configEcho, trivial_scope: { value: 'full', source: 'default' } },
-  });
-  assert.equal(fullHeadless.scopeAnswer, 'full');
-  assert.deepEqual(validateArgs(fullHeadless), { ok: true, errors: [] });
-
-  const scopeDescriptor = KNOB_REGISTRY.find(({ key }) => key === 'trivial_scope');
-  const originalDeriveWhen = scopeDescriptor.deriveWhen;
-  const ineligibleHeadless = {
-    ...headless,
-    riskTable: [{ path: 'a.js', risk: 'medium' }],
-  };
-  try {
-    scopeDescriptor.deriveWhen = null;
-    assert.equal(normalizeArgs(ineligibleHeadless).scopeAnswer, 'light');
-    scopeDescriptor.deriveWhen = originalDeriveWhen;
-    assert.equal(normalizeArgs(ineligibleHeadless).scopeAnswer, undefined);
-  } finally {
-    scopeDescriptor.deriveWhen = originalDeriveWhen;
-  }
-
-  const stamped = normalizeArgs({
-    ...interactive,
-    limits: { ...interactive.limits, deliveryCap: 3 },
-    delivery: { tier: 'all' },
-  });
-  assert.equal(stamped.limits.deliveryCap, 3);
-  assert.equal(stamped.delivery.tier, 'all');
-  assert.equal(interactive.delivery, undefined);
-  assert.equal(interactive.limits.deliveryCap, undefined);
-});
-
-test('T309-ARGS: headless PR review scope derives requested through the registry map', () => {
-  const cases = [
-    ['full', { kind: 'full', since: null, commits: null }, 'full'],
-    ['incremental', { kind: 'incremental', since: 'abc123', commits: null }, 'incremental'],
-    ['skip', { kind: 'full', since: null, commits: null }, 'full'],
-  ];
-  for (const [policy, scope, expected] of cases) {
-    const input = headlessArgs(policy, scope);
-    delete input.reviewScope.requested;
-    const before = JSON.parse(JSON.stringify(input));
-    const normalized = normalizeArgs(input);
-    assert.equal(normalized.reviewScope.requested, expected, policy);
-    assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] }, policy);
-    assert.deepEqual(input, before, `${policy} normalization must not mutate the caller object`);
-    assert.equal(isPriorReviewDetector(input), true);
-  }
-});
-
-test('T309-ARGS: review policy waistMap drives derivation and caller lockstep together', () => {
-  const descriptor = KNOB_REGISTRY.find(({ key }) => key === 'reviewed_policy');
-  const original = descriptor.waistMap;
-  try {
-    descriptor.waistMap = { skip: 'incremental' };
-    const omitted = headlessArgs('skip', { kind: 'full', since: null, commits: null });
-    delete omitted.reviewScope.requested;
-    assert.equal(normalizeArgs(omitted).reviewScope.requested, 'incremental');
-    const stamped = headlessArgs('skip', { requested: 'incremental', kind: 'full', since: null, commits: null });
-    assert.deepEqual(validateArgs(stamped), { ok: true, errors: [] });
-  } finally {
-    descriptor.waistMap = original;
-  }
-});
-
-test('T309-ARGS: interactive review policy receipts never derive reviewScope.requested', () => {
-  const input = {
-    ...good,
-    configEcho: {
-      ...good.configEcho,
-      reviewed_policy: { value: 'incremental', source: 'env' },
-    },
-    reviewScope: {
-      kind: 'full', since: null, commits: null, detector: priorReviewDetector,
-    },
-  };
-  assert.equal(normalizeArgs(input).reviewScope.requested, undefined);
-  assert.equal(isPriorReviewDetector(input), true);
-
-  const descriptor = KNOB_REGISTRY.find(({ key }) => key === 'reviewed_policy');
-  const originalModes = descriptor.modes;
-  const originalSources = descriptor.allowedSources;
-  try {
-    descriptor.modes = [...originalModes, 'interactive'];
-    descriptor.allowedSources = {
-      ...originalSources,
-      interactive: ['env', 'default'],
-    };
-    assert.equal(normalizeArgs(input).reviewScope.requested, 'incremental');
-  } finally {
-    descriptor.modes = originalModes;
-    descriptor.allowedSources = originalSources;
-  }
-});
-
-test('T309-ARGS: a stamped requested value survives and reports only the detector-backed lockstep mismatch', () => {
-  const args = headlessArgs('full', {
-    requested: 'incremental', kind: 'full', since: null, commits: null,
-  });
-  const normalized = normalizeArgs(args);
-  assert.equal(normalized.reviewScope.requested, 'incremental');
-  assert.deepEqual(validateArgs(normalized).errors, [
+const REJECTION_ROWS = [
+  { name: 'version', input: (a) => { a.argsVersion = 2; }, expected: [ "unsupported argsVersion 2 (expected 1)" ] },
+  { name: 'mode', input: (a) => { a.mode = "bogus"; }, expected: [
+    "invalid mode: bogus",
+    "configEcho has unexpected key(s): model_tier, delivery_tier, pr_comment_cap, review_md",
+  ] },
+  { name: 'nonce', input: (a) => { a.nonce = "n 1"; }, expected: [
+    "invalid nonce: must match /^[A-Za-z0-9._-]+$/ (AST-safe, non-splitting \u2014 interpolated into the verify " +
+      "command argv per slice)",
+  ] },
+  { name: 'agent flags', input: (a) => { a.agentFlags = {}; }, expected: [
+    "agentFlags is no longer accepted \u2014 the pipeline derives dimension flags itself from riskTable/scopeAnswer " +
+      "(issue #24). Stamp riskTable (the Phase 2e per-file risk classification) and, only when the light/full gate " +
+      "asked, scopeAnswer; do not stamp agentFlags.",
+  ] },
+  { name: 'policy provider',
+    input: (a) => { a.policy.provider = "aws"; },
+    expected: [ "invalid policy.provider: aws (expected one of firstParty, bedrock, vertex, foundry)" ] },
+  { name: 'policy tier',
+    input: (a) => { a.policy.tier = "standard"; }, expected: [ "invalid policy.tier: standard (expected optimized)" ] },
+  { name: 'policy gateway',
+    input: (a) => { a.policy.gateway = "true"; }, expected: [ "invalid policy.gateway: true (expected a boolean)" ] },
+  { name: 'repoRoot type', input: (a) => { a.repoRoot = 42; }, expected: [ "repoRoot must be a non-empty string when present" ] },
+  { name: 'repoRoot control', input: (a) => { a.repoRoot = "/p\n"; }, expected: [ "repoRoot must not contain a control character" ] },
+  { name: 'outputDir type', input: (a) => { a.outputDir = 42; }, expected: [ "outputDir must be a non-empty string when present" ] },
+  { name: 'outputDir control', input: (a) => { a.outputDir = "/p\n"; }, expected: [ "outputDir must not contain a control character" ] },
+  { name: 'headShaShort type',
+    input: (a) => { a.headShaShort = 42; }, expected: [ "headShaShort must be a non-empty string when present" ] },
+  { name: 'headShaShort shell metacharacter', input: (a) => { a.headShaShort = 'abc;id'; }, expected: [
+    "headShaShort must match /^[A-Za-z0-9._-]+$/ (AST-safe, non-splitting \u2014 interpolated into the verify command " +
+      "argv)",
+  ] },
+  { name: 'headShaShort control',
+    input: (a) => { a.headShaShort = "/p\n"; }, expected: [ "headShaShort must not contain a control character" ] },
+  { name: 'diffPath control', input: (a) => { a.diffPath = "/p\n"; }, expected: [ "diffPath must not contain a control character" ] },
+  { name: 'pluginRoot null', input: (a) => { a.pluginRoot = null; }, expected: [
+    'pluginRoot must be a non-empty string when present',
+  ] },
+  { name: 'pluginRoot object', input: (a) => { a.pluginRoot = {}; }, expected: [
+    'pluginRoot must be a non-empty string when present',
+  ] },
+  { name: 'pluginRoot control', input: (a) => { a.pluginRoot = "/p\n"; }, expected: [ "pluginRoot must not contain a control character" ] },
+  { name: 'blank path', input: (a) => { a.diffPath = "   "; }, expected: [ "diffPath must be a non-empty string when present" ] },
+  { name: 'empty path', input: (a) => { a.diffPath = ''; }, expected: [
+    'diffPath must be a non-empty string when present',
+  ] },
+  { name: 'relative output',
+    input: (a) => { a.outputDir = "relative"; }, expected: [ "outputDir must be an absolute path (POSIX /-prefix)" ] },
+  { name: 'root traversal',
+    input: (a) => { a.repoRoot = "/r/../other"; }, expected: [ "repoRoot must be an absolute path without .. segments or backslashes" ] },
+  { name: 'unsafe SHA', input: (a) => { a.headShaShort = "bad sha"; }, expected: [
+    "headShaShort must match /^[A-Za-z0-9._-]+$/ (AST-safe, non-splitting \u2014 interpolated into the verify command " +
+      "argv)",
+  ] },
+  { name: 'plugin relative',
+    input: (a) => { a.pluginRoot = "relative"; }, expected: [ "pluginRoot must be an absolute path (POSIX /-prefix)" ] },
+  { name: 'plugin backtick', input: (a) => { a.pluginRoot = "/plugin`root"; }, expected: [ "pluginRoot must not contain a backtick" ] },
+  { name: 'plugin traversal',
+    input: (a) => { a.pluginRoot = "/plugin/../other"; }, expected: [ "pluginRoot must not contain a .. path segment" ] },
+  { name: 'changed files type',
+    input: (a) => { a.changedFiles = {}; }, expected: [ "changedFiles must be an array of repo-relative paths" ] },
+  { name: 'changed files string', input: (a) => { a.changedFiles = 'a.js,b.js'; }, expected: [
+    'changedFiles must be an array of repo-relative paths',
+  ] },
+  { name: 'changed lines type', input: (a) => { a.changedLines = "1"; }, expected: [ "changedLines must be a number" ] },
+  { name: 'risk container', input: (a) => { a.riskTable = {}; }, expected: [ "riskTable must be an array of {path, risk} objects" ] },
+  { name: 'risk entry', input: (a) => { a.riskTable = [null]; }, expected: [
+    "riskTable[0] must be an object of the form {path, risk}",
+    "riskTable is missing risk classification for changed file(s): a.js",
+  ] },
+  { name: 'risk string entry', input: (a) => { a.riskTable = ['a.js']; }, expected: [
+    'riskTable[0] must be an object of the form {path, risk}',
+    'riskTable is missing risk classification for changed file(s): a.js',
+  ] },
+  { name: 'risk path', input: (a) => { a.riskTable[0].path = ""; }, expected: [
+    "riskTable[0].path must be a non-empty string",
+    "riskTable is missing risk classification for changed file(s): a.js",
+  ] },
+  { name: 'risk enum',
+    input: (a) => { a.riskTable[0].risk = "bogus"; }, expected: [ "riskTable[0].risk must be one of low, medium, high (got \"bogus\")" ] },
+  { name: 'risk extra',
+    input: (a) => { a.riskTable[0].note = 1; }, expected: [ "riskTable[0] has unexpected key(s): note (only path and risk are allowed)" ] },
+  { name: 'risk missing path',
+    input: (a) => { a.changedFiles.push("b.js"); }, expected: [ "riskTable is missing risk classification for changed file(s): b.js" ] },
+  { name: 'risk surplus path',
+    input: (a) => { a.riskTable.push({ path: "ghost.js", risk: "low" }); },
+    expected: [ "riskTable classifies file(s) not present in changedFiles: ghost.js" ] },
+  { name: 'scope enum',
+    input: (a) => { a.scopeAnswer = "partial"; }, expected: [ "invalid scopeAnswer: partial (expected one of light, full)" ] },
+  { name: 'eligible missing answer', input: (a) => { a.riskTable[0].risk = "low"; }, expected: [
+    "riskTable/changedLines are light-eligible but scopeAnswer is missing \u2014 the light/full gate must have asked, " +
+      "and its answer must be stamped as scopeAnswer",
+  ] },
+  { name: 'contextLines null', input: (a) => { a.contextLines = null; }, expected: [
+    'contextLines must be a positive safe integer (the measured size of the shared context file) when present',
+  ] },
+  { name: 'contextLines non-finite', input: (a) => { a.contextLines = NaN; }, expected: [
+    'contextLines must be a positive safe integer (the measured size of the shared context file) when present',
+  ] },
+  { name: 'contextLines minimum',
+    input: (a) => { a.contextLines = 0; },
+    expected: [ "contextLines must be a positive safe integer (the measured size of the shared context file) when present" ] },
+  { name: 'contextLines ceiling',
+    input: (a) => { a.contextLines = 5000001; },
+    expected: [ "contextLines is 5000001, above the 5000000 ceiling \u2014 that is not a review context, it is a mis-measurement" ] },
+  { name: 'contextChars domain',
+    input: (a) => { a.contextLines = 2028; a.contextChars = "1"; },
+    expected: [ "contextChars must be a positive safe integer (the measured size of the shared context file) when present" ] },
+  { name: 'contextChars unsafe integer', input: (a) => { a.contextLines = 1; a.contextChars = Number.MAX_SAFE_INTEGER + 2; },
+    expected: [
+      'contextChars must be a positive safe integer (the measured size of the shared context file) when present',
+    ] },
+  { name: 'contextChars ceiling', input: (a) => { a.contextLines = 2028; a.contextChars = 500000001; }, expected: [
+    "contextChars is 500000001, above the 500000000 ceiling \u2014 that is not a review context, it is a " +
+      "mis-measurement",
+  ] },
+  { name: 'chars alone',
+    input: (a) => { a.contextChars = 94784; },
+    expected: [ "contextChars requires contextLines \u2014 chars alone cannot size a line-offset read plan" ] },
+  { name: 'review config shape',
+    input: (a) => { a.reviewConfig = []; }, expected: [ "reviewConfig must be an object (the parseReviewMd output shape) when present" ] },
+  { name: 'fractional threshold', input: (a) => { a.reviewConfig = { confidence_threshold: 1.5 }; }, expected: [
+    'reviewConfig.confidence_threshold must be an integer from 0 through 100 when present',
+  ] },
+  { name: 'root security_min_confidence',
+    input: (a) => { a.reviewConfig = { security_min_confidence: 101 }; },
+    expected: [ "reviewConfig.security_min_confidence must be an integer from 0 through 100 when present" ] },
+  { name: 'root severity_threshold', input: (a) => { a.reviewConfig = { severity_threshold: "urgent" }; }, expected: [
+    "reviewConfig.severity_threshold must be one of critical|high|medium|low when present (pre-parsed REVIEW.md " +
+      "enum)",
+  ] },
+  { name: 'undefined threshold',
+    input: (a) => { a.reviewConfig = { confidence_threshold: undefined }; },
+    expected: [ "reviewConfig.confidence_threshold must be an integer from 0 through 100 when present" ] },
+  { name: 'root ignore shape',
+    input: (a) => { a.reviewConfig = { ignore: {} }; }, expected: [ "reviewConfig.ignore must be an array of flat pattern strings" ] },
+  { name: 'root ignore element', input: (a) => { a.reviewConfig = { ignore: [{}] }; }, expected: [
+    "reviewConfig.ignore[0] must be a flat pattern string (got object) \u2014 parseReviewMd emits strings, never " +
+      "objects",
+  ] },
+  { name: 'scopes container',
+    input: (a) => { a.reviewConfig = { scopes: {} }; }, expected: [ "reviewConfig.scopes must be an array when present" ] },
+  { name: 'scope null',
+    input: (a) => { a.reviewConfig = { scopes: [null] }; }, expected: [ "reviewConfig.scopes[0] must be a plain object" ] },
+  { name: 'scope empty dir',
+    input: (a) => { a.reviewConfig = { scopes: [{ dir: "" }] }; }, expected: [ "reviewConfig.scopes[0].dir must be a non-empty string" ] },
+  { name: 'scope leading slash', input: (a) => { a.reviewConfig = { scopes: [{ dir: "/api" }] }; }, expected: [
+    "reviewConfig.scopes[0].dir must not have a leading or trailing /",
+    "reviewConfig.scopes[0].dir must not contain an empty path segment",
+  ] },
+  { name: 'scope backslash',
+    input: (a) => { a.reviewConfig = { scopes: [{ dir: "api\\src" }] }; },
+    expected: [ "reviewConfig.scopes[0].dir must use / separators, not backslashes" ] },
+  { name: 'scope control',
+    input: (a) => { a.reviewConfig = { scopes: [{ dir: "api\n" }] }; },
+    expected: [ "reviewConfig.scopes[0].dir must not contain a control character" ] },
+  { name: 'scope dot',
+    input: (a) => { a.reviewConfig = { scopes: [{ dir: "api/./src" }] }; },
+    expected: [ "reviewConfig.scopes[0].dir must not contain . or .. path segments" ] },
+  { name: 'scope layer extra',
+    input: (a) => { a.reviewConfig = { scopes: [{ dir: "api", extra: true }] }; },
+    expected: [ "reviewConfig.scopes[0] has unexpected key(s): extra" ] },
+  { name: 'scope confidence',
+    input: (a) => { a.reviewConfig = { scopes: [{ dir: "api", confidence_threshold: "90" }] }; },
+    expected: [ "reviewConfig.scopes[0].confidence_threshold must be an integer from 0 through 100 when present" ] },
+  { name: 'scope security',
+    input: (a) => { a.reviewConfig = { scopes: [{ dir: "api", security_min_confidence: -1 }] }; },
+    expected: [ "reviewConfig.scopes[0].security_min_confidence must be an integer from 0 through 100 when present" ] },
+  { name: 'scope severity', input: (a) => { a.reviewConfig = { scopes: [{ dir: "api", severity_threshold: "urgent" }] }; }, expected: [
+    "reviewConfig.scopes[0].severity_threshold must be one of critical|high|medium|low when present (pre-parsed " +
+      "REVIEW.md enum)",
+  ] },
+  { name: 'scope ignore', input: (a) => { a.reviewConfig = { scopes: [{ dir: "api", ignore: [42] }] }; }, expected: [
+    "reviewConfig.scopes[0].ignore[0] must be a flat pattern string (got number) \u2014 parseReviewMd emits strings, " +
+      "never objects",
+  ] },
+  { name: 'duplicate scopes',
+    input: (a) => { a.reviewConfig = { scopes: [{ dir: "api" }, { dir: "api" }] }; },
+    expected: [ "reviewConfig.scopes[1].dir duplicates another scope dir: api" ] },
+  { name: 'exclusion shape',
+    input: (a) => { a.exclusionPatterns = {}; }, expected: [ "exclusionPatterns must be an array of flat pattern strings" ] },
+  { name: 'exclusion string', input: (a) => { a.exclusionPatterns = 'foo'; }, expected: [
+    'exclusionPatterns must be an array of flat pattern strings',
+  ] },
+  { name: 'exclusion element',
+    input: (a) => { a.exclusionPatterns = [42]; }, expected: [ "exclusionPatterns[0] must be a flat pattern string (got number)" ] },
+  { name: 'review md shape',
+    input: (a) => { a.reviewMd = {}; }, expected: [ "reviewMd must be an array of {path, text} objects when present" ] },
+  { name: 'review md entry', input: (a) => { a.reviewMd = [null]; }, expected: [
+    "reviewMd[0] must be an object of the form {path, text}",
+    "configEcho.review_md does not match reviewMd",
+  ] },
+  { name: 'review md extra', input: (a) => {
+    a.reviewMd = [{ path: "api/REVIEW.md", text: "", extra: 1 }]; a.configEcho.review_md.value = "present";
+  }, expected: [ "reviewMd[0] has unexpected key(s): extra (only path and text are allowed)" ] },
+  { name: 'review md path type', input: (a) => {
+    a.reviewMd = [{ path: 1, text: "" }]; a.configEcho.review_md.value = "present";
+  }, expected: [ "reviewMd[0].path must be a non-empty string" ] },
+  { name: 'review md missing path', input: (a) => {
+    a.reviewMd = [{ text: 'x' }]; a.configEcho.review_md.value = 'present';
+  }, expected: ['reviewMd[0].path must be a non-empty string'] },
+  { name: 'review md text type', input: (a) => {
+    a.reviewMd = [{ path: "api/REVIEW.md", text: 1 }]; a.configEcho.review_md.value = "present";
+  }, expected: [ "reviewMd[0].text must be a string" ] },
+  { name: 'review md missing text', input: (a) => {
+    a.reviewMd = [{ path: 'api/REVIEW.md' }]; a.configEcho.review_md.value = 'present';
+  }, expected: ['reviewMd[0].text must be a string'] },
+  { name: 'review path absolute', input: (a) => {
+    a.reviewMd = [{ path: "/api/REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
+  }, expected: [
+    "reviewMd[0].path must be repo-relative (must not start with /)",
+    "reviewMd[0].path must not contain an empty path segment",
+  ] },
+  { name: 'review path trailing slash', input: (a) => {
+    a.reviewMd = [{ path: "api/REVIEW.md/", text: "" }]; a.configEcho.review_md.value = "present";
+  }, expected: [
+    "reviewMd[0].path must not have a trailing /",
+    "reviewMd[0].path must not contain an empty path segment",
+    "reviewMd[0].path must end with exactly REVIEW.md",
+  ] },
+  { name: 'review path backslash', input: (a) => {
+    a.reviewMd = [{ path: "api\\REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
+  }, expected: [
+    "reviewMd[0].path must use / separators, not backslashes",
+    "reviewMd[0].path must end with exactly REVIEW.md",
+  ] },
+  { name: 'review path NUL', input: (a) => {
+    a.reviewMd = [{ path: 'api\u0000/REVIEW.md', text: '' }]; a.configEcho.review_md.value = 'present';
+  }, expected: ['reviewMd[0].path must not contain a control character'] },
+  { name: 'root without path', input: (a) => {
+    a.reviewMd = [{ path: "REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
+  }, expected: [
+    "reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd contains an entry " +
+      "with path exactly REVIEW.md",
+  ] },
+  { name: 'path without root', input: (a) => { a.reviewMd = []; a.reviewConfigPath = "/r/REVIEW.md"; }, expected: [
+    "reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd contains an entry " +
+      "with path exactly REVIEW.md",
+  ] },
+  { name: 'raw parsed review', input: (a) => { a.reviewMd = []; a.reviewConfig = {}; }, expected: [
+    "reviewMd and reviewConfig are both present \u2014 pass raw reviewMd or pre-parsed reviewConfig, not both (single " +
+      "authority)",
+  ] },
+  { name: 'raw parsed exclusions', input: (a) => { a.exclusionsText = ""; a.exclusionPatterns = []; }, expected: [
+    "exclusionsText and exclusionPatterns are both present \u2014 pass raw exclusionsText or pre-parsed " +
+      "exclusionPatterns, not both (single authority)",
+  ] },
+  { name: 'exclusions text', input: (a) => { a.exclusionsText = 1; }, expected: [ "exclusionsText must be a string when present" ] },
+  { name: 'delivery shape',
+    input: (a) => { a.delivery = "all"; }, expected: [ "delivery must be an object of the form { tier } when present" ] },
+  { name: 'delivery tier', input: (a) => { a.delivery = { tier: "suggestions_only" }; }, expected: [
+    "invalid delivery.tier: suggestions_only (expected one of all, main_only)",
+    "delivery.tier does not match configEcho.delivery_tier",
+  ] },
+  { name: 'identity shape', input: (a) => { a.delivery = { prIdentity: "org/repo#310" }; }, expected: [
+    "delivery.prIdentity must be an object { owner, repo, pr_number, sha_full, platform, web_origin[, title] } " +
+      "when present",
+  ] },
+  { name: 'identity owner',
+    input: (a) => { a.delivery = { prIdentity: prIdentity() }; a.delivery.prIdentity.owner = ""; },
+    expected: [ "delivery.prIdentity.owner must be a non-empty string" ] },
+  { name: 'identity repo',
+    input: (a) => { a.delivery = { prIdentity: prIdentity() }; a.delivery.prIdentity.repo = ""; },
+    expected: [ "delivery.prIdentity.repo must be a non-empty string" ] },
+  { name: 'identity pr_number', input: (a) => {
+    a.delivery = { prIdentity: prIdentity() };
+    a.delivery.prIdentity.pr_number = 0;
+  }, expected: [ "delivery.prIdentity.pr_number must be a positive safe integer" ] },
+  { name: 'identity pr_number negative', input: (a) => {
+    a.delivery = { prIdentity: prIdentity({ pr_number: -1 }) };
+  }, expected: ['delivery.prIdentity.pr_number must be a positive safe integer'] },
+  { name: 'identity pr_number fraction', input: (a) => {
+    a.delivery = { prIdentity: prIdentity({ pr_number: 1.5 }) };
+  }, expected: ['delivery.prIdentity.pr_number must be a positive safe integer'] },
+  { name: 'identity pr_number string', input: (a) => {
+    a.delivery = { prIdentity: prIdentity({ pr_number: '7' }) };
+  }, expected: ['delivery.prIdentity.pr_number must be a positive safe integer'] },
+  { name: 'identity sha_full', input: (a) => {
+    a.delivery = { prIdentity: prIdentity() };
+    a.delivery.prIdentity.sha_full = "D".repeat(40);
+  }, expected: [ "delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id" ] },
+  { name: 'identity web_origin', input: (a) => {
+    a.delivery = { prIdentity: prIdentity() };
+    a.delivery.prIdentity.web_origin = "github.com";
+  }, expected: [ "delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only" ] },
+  { name: 'identity title', input: (a) => {
+    a.delivery = { prIdentity: prIdentity() };
+    a.delivery.prIdentity.title = "   ";
+  }, expected: [ "delivery.prIdentity.title must be a non-empty string when present" ] },
+  { name: 'identity title type', input: (a) => {
+    a.delivery = { prIdentity: prIdentity({ title: 5 }) };
+  }, expected: ['delivery.prIdentity.title must be a non-empty string when present'] },
+  { name: 'identity repo slash',
+    input: (a) => { a.delivery = { prIdentity: prIdentity() }; a.delivery.prIdentity.repo = "a/b"; },
+    expected: [ "delivery.prIdentity.repo must not contain \"/\"" ] },
+  { name: 'identity required missing', input: (a) => {
+    a.delivery = { prIdentity: prIdentity() };
+    delete a.delivery.prIdentity.platform;
+  }, expected: [ "delivery.prIdentity.platform must be one of github, gitlab" ] },
+  { name: 'persist shape',
+    input: (a) => { a.persist = []; },
+    expected: [ "persist must be an object of the form { assembleScriptPath, returnPrimaries } when present" ] },
+  { name: 'persist script', input: (a) => { a.persist = { assembleScriptPath: "" }; }, expected: [
+    "persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py",
+    "persist.assembleScriptPath must equal /plugin/scripts/assemble_artifacts.py",
+  ] },
+  { name: 'persist script number', input: (a) => { a.persist = { assembleScriptPath: 42 }; }, expected: [
+    'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py',
+  ] },
+  { name: 'persist script object', input: (a) => { a.persist = { assembleScriptPath: {} }; }, expected: [
+    'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py',
+  ] },
+  { name: 'persist script null', input: (a) => { a.persist = { assembleScriptPath: null }; }, expected: [
+    'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py',
+  ] },
+  { name: 'persist number', input: (a) => { a.persist = 3; }, expected: [
+    'persist must be an object of the form { assembleScriptPath, returnPrimaries } when present',
+  ] },
+  { name: 'persist returns',
+    input: (a) => { a.persist = { returnPrimaries: "false" }; }, expected: [ "persist.returnPrimaries must be a boolean when present" ] },
+  { name: 'verify identity',
+    input: (a) => { a.verify = { scriptPath: "/plugin/scripts/../verify_findings.py" }; },
+    expected: [ "verify.scriptPath must equal /plugin/scripts/verify_findings.py" ] },
+  { name: 'limits shape', input: (a) => { a.limits = []; }, expected: [ "limits must be an object when present" ] },
+  { name: 'limits null', input: (a) => { a.limits = null; }, expected: [
+    'limits must be an object when present',
+  ] },
+  { name: 'limits string', input: (a) => { a.limits = 'x'; }, expected: [
+    'limits must be an object when present',
+  ] },
+  { name: 'limits unknown', input: (a) => { a.limits.verifySclieSize = 50; }, expected: [
+    "unknown limits key: verifySclieSize (expected one of summarizeBucketSize, validateBatch, challengeCap, " +
+      "verifySliceSize, deliveryCap, discoveryCap, maxLineSpan)",
+  ] },
+  { name: 'limits string value', input: (a) => { a.limits.validateBatch = 'x'; }, expected: [
+    'limits.validateBatch must be a positive safe integer when present',
+  ] },
+  { name: 'limits NaN value', input: (a) => { a.limits.validateBatch = NaN; }, expected: [
+    'limits.validateBatch must be a positive safe integer when present',
+  ] },
+  { name: 'multi-error limits', input: (a) => {
+    a.limits = { summarizeBucketSize: 0, validateBatch: -1, challengeCap: -1, verifySliceSize: 0,
+    deliveryCap: -1, discoveryCap: 0, maxLineSpan: 0 };
+  }, expected: [
+    "limits.summarizeBucketSize must be a positive safe integer when present",
+    "limits.validateBatch must be a positive safe integer when present",
+    "limits.verifySliceSize must be a positive safe integer when present",
+    "limits.maxLineSpan must be a positive safe integer when present",
+    "limits.challengeCap must be a non-negative safe integer when present",
+    "limits.deliveryCap must be null, absent, or a non-negative safe integer when present",
+    "limits.discoveryCap must be a positive safe integer when present",
+  ] },
+  { name: 'scope shape',
+    input: (a) => { a.reviewScope = []; }, expected: [ "reviewScope must be { requested, kind, since, commits, detector }" ] },
+  { name: 'reviewScope null', input: (a) => { a.reviewScope = null; }, expected: [
+    'reviewScope must be { requested, kind, since, commits, detector }',
+  ] },
+  { name: 'scope string', input: (a) => { a.reviewScope = 'scope'; }, expected: [
+    'reviewScope must be { requested, kind, since, commits, detector }',
+  ] },
+  { name: 'reviewScope extra',
+    input: (a) => { a.reviewScope.reason = "old reason"; }, expected: [ "reviewScope has unexpected key(s): reason" ] },
+  { name: 'scope kind', input: (a) => { a.reviewScope.kind = "bogus"; }, expected: [ "reviewScope.kind must be full or incremental" ] },
+  { name: 'full since', input: (a) => { a.reviewScope.since = "abc"; }, expected: [ "reviewScope.since must be null for full scope" ] },
+  { name: 'full commits', input: (a) => { a.reviewScope.commits = 1; }, expected: [ "reviewScope.commits must be null for full scope" ] },
+  { name: 'incremental requested', input: (a) => {
+    a.reviewScope = { requested: "incremental", kind: "incremental", since: "abc-1._x", commits: null,
+    detector: priorReviewDetector() }; a.reviewScope.requested = "full";
+  }, expected: [ "reviewScope.kind incremental requires requested incremental" ] },
+  { name: 'incremental since', input: (a) => {
+    a.reviewScope = { requested: "incremental", kind: "incremental", since: "abc-1._x", commits: null,
+    detector: priorReviewDetector() }; a.reviewScope.since = "bad sha!";
+  }, expected: [ "reviewScope.since must be a NONCE_RE-safe string for incremental scope" ] },
+  { name: 'incremental commits', input: (a) => {
+    a.reviewScope = { requested: "incremental", kind: "incremental", since: "abc-1._x", commits: null,
+    detector: priorReviewDetector() }; a.reviewScope.commits = -1;
+  }, expected: [ "reviewScope.commits must be a non-negative safe integer or null" ] },
+  { name: 'incremental unsafe', input: (a) => {
+    a.reviewScope = { requested: "incremental", kind: "incremental", since: "abc-1._x", commits: null,
+    detector: priorReviewDetector() }; a.reviewScope.detector.incremental_safe = false;
+  }, expected: [ "reviewScope.kind incremental requires detector.incremental_safe true" ] },
+  { name: 'incremental null detector', input: (a) => {
+    a.reviewScope = { requested: "incremental", kind: "incremental", since: "abc-1._x", commits: null,
+    detector: priorReviewDetector() }; a.reviewScope.detector = null;
+  }, expected: [ "reviewScope.kind incremental requires detector.incremental_safe true" ] },
+  { name: 'full fallback',
+    input: (a) => { a.reviewScope.requested = "incremental"; },
+    expected: [ "reviewScope full fallback requires detector facts when incremental was requested" ] },
+  { name: 'detector shape',
+    input: (a) => { a.reviewScope.detector = []; },
+    expected: [ "reviewScope.detector must be null or an object copied from detect_prior_review.py" ] },
+  { name: 'detector scalar', input: (a) => { a.reviewScope.detector = 1; }, expected: [
+    'reviewScope.detector must be null or an object copied from detect_prior_review.py',
+  ] },
+  { name: 'detector extra',
+    input: (a) => { a.reviewScope.detector = priorReviewDetector({ extra: true }); },
+    expected: [ "reviewScope.detector has unexpected key(s): extra" ] },
+  { name: 'detector missing', input: (a) => {
+    a.reviewScope.detector = priorReviewDetector(); delete a.reviewScope.detector.error;
+  }, expected: [
+    "reviewScope.detector is missing key(s): error",
+    "reviewScope.detector.error must be a string or null",
+  ] },
+  { name: 'detector previously_reviewed',
+    input: (a) => { a.reviewScope.detector = priorReviewDetector({ previously_reviewed: "no" }); },
+    expected: [ "reviewScope.detector.previously_reviewed must be a boolean" ] },
+  { name: 'detector sha_resolvable',
+    input: (a) => { a.reviewScope.detector = priorReviewDetector({ sha_resolvable: "no" }); },
+    expected: [ "reviewScope.detector.sha_resolvable must be a boolean" ] },
+  { name: 'detector head_advanced',
+    input: (a) => { a.reviewScope.detector = priorReviewDetector({ head_advanced: "no" }); },
+    expected: [ "reviewScope.detector.head_advanced must be a boolean" ] },
+  { name: 'detector sha_is_ancestor',
+    input: (a) => { a.reviewScope.detector = priorReviewDetector({ sha_is_ancestor: "no" }); },
+    expected: [ "reviewScope.detector.sha_is_ancestor must be a boolean" ] },
+  { name: 'detector incremental_safe',
+    input: (a) => { a.reviewScope.detector = priorReviewDetector({ incremental_safe: "no" }); },
+    expected: [ "reviewScope.detector.incremental_safe must be a boolean" ] },
+  { name: 'detector error control',
+    input: (a) => { a.reviewScope.detector = priorReviewDetector({ error: "line\nbreak" }); },
+    expected: [ "reviewScope.detector.error must be single-line without control characters" ] },
+  { name: 'headless cap absent', base: headlessArgs,
+    input: (a) => { delete a.limits.deliveryCap; },
+    expected: [ "headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap" ] },
+  { name: 'headless cap null', base: headlessArgs,
+    input: (a) => { a.limits.deliveryCap = null; },
+    expected: [ "headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap" ] },
+  { name: 'headless cap string', base: headlessArgs,
+    input: (a) => { a.limits.deliveryCap = "1"; },
+    expected: [ "limits.deliveryCap must be null, absent, or a non-negative safe integer when present" ] },
+  { name: 'interactive cap null mismatch',
+    input: (a) => { a.limits.deliveryCap = null; a.configEcho.pr_comment_cap.value = "5"; },
+    expected: [ "configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null" ] },
+  { name: 'interactive cap absent mismatch',
+    input: (a) => { a.configEcho.pr_comment_cap.value = "5"; },
+    expected: [ "configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null" ] },
+  { name: 'tier effective all',
+    input: (a) => { a.configEcho.delivery_tier.value = "main_only"; },
+    expected: [ "configEcho.delivery_tier does not match delivery.tier" ] },
+  { name: 'tier malformed receipt', base: headlessArgs, input: (a) => {
+    a.delivery.tier = "main_only"; a.configEcho.delivery_tier.source = "fixed";
+  }, expected: [ "configEcho.delivery_tier.source is invalid for headless" ] },
+  { name: 'cap malformed receipt', base: headlessArgs, input: (a) => {
+    a.limits.deliveryCap = 1; a.configEcho.pr_comment_cap.value = "007";
+  }, expected: [ "configEcho.pr_comment_cap.value is invalid for headless" ] },
+  { name: 'two scope refusals', base: headlessArgs, input: (a) => {
+    a.scopeAnswer = "full"; a.configEcho.trivial_scope.value = "light";
+  }, expected: [
+    "scopeAnswer is \"full\" but the riskTable/changedLines are not light-eligible (not every file is low risk, or " +
+      "changedLines >= 50) \u2014 the orchestrator answered a light/full question the gate never asked; omit scopeAnswer",
+    "configEcho.trivial_scope is \"light\" but the riskTable/changedLines are not light-eligible (not every file is" +
+      " low risk, or changedLines >= 50) \u2014 the orchestrator answered a light/full question the gate never asked",
+  ] },
+  { name: 'PR comments identity', base: headlessArgs,
+    input: (a) => { a.configEcho.delivery.value = "pr_comments"; },
+    expected: [ "delivery.prIdentity is required when configEcho.delivery contains pr_comments" ] },
+  { name: 'headless requested lockstep', base: headlessArgs,
+    input: (a) => { a.reviewScope.requested = "incremental"; },
+    expected: [ "reviewScope.requested does not match configEcho.reviewed_policy" ] },
+  { name: 'malformed cap keeps later lockstep', base: headlessArgs, input: (a) => {
+    a.limits.deliveryCap = 1; a.configEcho.pr_comment_cap.value = '007';
+    a.reviewScope.requested = 'incremental';
+  }, expected: [
+    'configEcho.pr_comment_cap.value is invalid for headless',
     'reviewScope.requested does not match configEcho.reviewed_policy',
-  ]);
-});
+  ] },
+  { name: 'headless answer lockstep', base: headlessArgs, input: (a) => {
+    a.riskTable[0].risk = "low"; a.scopeAnswer = "full"; a.configEcho.trivial_scope.value = "light";
+  }, expected: [ "scopeAnswer does not match configEcho.trivial_scope" ] },
+  { name: 'required limits remains absent', base: headlessArgs,
+    input: (a) => { delete a.limits; },
+    expected: [ "missing required field: limits" ], normalize: true, check: (out) => { assert.equal("limits" in out, false); } },
+  { name: 'required scope remains absent', base: headlessArgs, input: (a) => { delete a.reviewScope; }, expected: [
+    "missing required field: reviewScope",
+  ], normalize: true, check: (out) => { assert.equal("reviewScope" in out, false); } },
+  { name: 'local requested remains absent', base: headlessArgs, input: (a) => {
+    delete a.reviewScope.requested; a.reviewScope.detector = null;
+  }, expected: [
+    "reviewScope.requested must be full or incremental",
+  ], normalize: true, check: (out) => { assert.equal(out.reviewScope.requested, undefined); } },
+  { name: 'malformed reviewed requested remains absent', base: headlessArgs, input: (a) => {
+    delete a.reviewScope.requested; a.configEcho.reviewed_policy.value = "bogus";
+  }, expected: [
+    "configEcho.reviewed_policy.value is invalid for headless",
+    "reviewScope.requested must be full or incremental",
+  ], normalize: true, check: (out) => { assert.equal(out.reviewScope.requested, undefined); } },
+  { name: 'null model receipt stays null', input: (a) => { a.configEcho.model_tier.value = null; },
+    expected: ['configEcho.model_tier.value must be a string'], normalize: true,
+    check: (out) => { assert.equal(out.configEcho.model_tier.value, null); } },
+  { name: 'malformed config remains', input: (a) => { a.reviewConfig = 42; }, expected: [
+    "reviewConfig must be an object (the parseReviewMd output shape) when present",
+  ], normalize: true, check: (out) => { assert.equal(out.reviewConfig, 42); } },
+  { name: 'malformed persist remains', input: (a) => { a.persist = "bad"; }, expected: [
+    "persist must be an object of the form { assembleScriptPath, returnPrimaries } when present",
+  ], normalize: true, check: (out) => { assert.equal(out.persist, "bad"); } },
+ ];
+for (const { name, input, expected, base = interactiveArgs, normalize, check } of REJECTION_ROWS) {
+  test(`validate: ${name}`, () => {
+    const args = base();
+    input(args);
+    const out = normalize ? normalizeArgs(args) : args;
+    assert.deepEqual(validateArgs(out), { ok: false, errors: expected });
+    if (check) check(out);
+  });
+}
 
-test('T309-ARGS: required reviewScope is not synthesized by receipt derivation', () => {
-  const input = headlessArgs('full');
-  delete input.reviewScope;
-  // The priorReviewDetector gate also blocks this derivation.
-  // Whole-mechanism mutation: remove the REQUIRED-root guard and deriveWhen gate together.
-  const normalized = normalizeArgs(input);
-  assert.equal(normalized.reviewScope, undefined);
-  assert.deepEqual(validateArgs(normalized).errors, [
-    'missing required field: reviewScope',
-  ]);
-});
+const NON_OBJECT_ROWS = [
+  { name: 'string', input: 'waist', expected: { ok: false, errors: ['args is not an object'] } },
+];
+for (const { name, input, expected } of NON_OBJECT_ROWS) {
+  test(`validate scalar: ${name}`, () => assert.deepEqual(validateArgs(input), expected));
+}
 
-test('T309-ARGS: required limits is not synthesized by receipt derivation', () => {
-  const input = headlessArgs('full');
-  delete input.limits;
-  // Mutation: remove the REQUIRED-root guard alone.
-  const normalized = normalizeArgs(input);
-  assert.equal(normalized.limits, undefined);
-  assert.deepEqual(validateArgs(normalized).errors, [
-    'missing required field: limits',
-  ]);
-});
-
-test('T309-ARGS: malformed reviewed policy receipt derives nothing and reports the requested enum error', () => {
-  const input = headlessArgs('bogus', { kind: 'full', since: null, commits: null });
-  delete input.reviewScope.requested;
-  const normalized = normalizeArgs(input);
-  assert.equal(normalized.reviewScope.requested, undefined);
-  const result = validateArgs(normalized);
-  assert.ok(result.errors.includes('reviewScope.requested must be full or incremental'));
-});
-
-test('T4: unknown deriveWhen names fail closed without throwing', () => {
-  const descriptors = ['nonsense', 'toString'].map((deriveWhen, index) => ({
-    key: `unknown_${index}`,
-    modes: ['headless'],
-    allowedSources: { headless: ['default'] },
-    rule: { kind: 'enum', values: ['value'] },
-    env: null,
-    reviewMdKey: null,
-    defaults: { headless: ['value', 'default'] },
-    type: 'string',
-    waistPath: `unknown_${index}.field`,
-    waistMap: null,
-    derivedFrom: null,
-    deriveWhen,
-    nullReceipt: [],
-    resolvedKey: false,
-  }));
-  const input = headlessArgs();
-  for (const descriptor of descriptors) {
-    input.configEcho[descriptor.key] = { value: 'value', source: 'default' };
-  }
-  const originalLength = KNOB_REGISTRY.length;
-  try {
-    KNOB_REGISTRY.push(...descriptors);
-    const unstampedInput = headlessArgs();
-    for (const descriptor of descriptors) {
-      unstampedInput.configEcho[descriptor.key] = { value: 'value', source: 'default' };
-    }
-    let unstampedReport;
-    assert.doesNotThrow(() => {
-      unstampedReport = normalizeArgsReport(unstampedInput);
-    });
-    // Mutation: bypass the unknown-name guard in deriveConfigWaist only. Neither
-    // unknown deriveWhen name may derive its waist path from a receipt.
-    for (const descriptor of descriptors) {
-      const root = descriptor.waistPath.split('.')[0];
-      assert.equal(unstampedReport.args[root], undefined, descriptor.deriveWhen);
-      assert.equal(unstampedReport.derivedPaths.includes(descriptor.waistPath), false, descriptor.deriveWhen);
-    }
-    for (const descriptor of descriptors) {
-      input[descriptor.waistPath.split('.')[0]] = { field: 'value' };
-    }
-    const normalized = normalizeArgsReport(input).args;
-    for (const descriptor of descriptors) {
-      assert.deepEqual(normalized[descriptor.waistPath.split('.')[0]], { field: 'value' }, descriptor.deriveWhen);
-    }
-    // Mutation: remove the Object.hasOwn() half of deriveWhenHolds. Both an unknown
-    // own name and inherited Object.prototype.toString must still be accepted here.
-    assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
-  } finally {
-    KNOB_REGISTRY.length = originalLength;
-  }
-});
-
-test('T315-ARGS: a newly registered waist row is validated against its mapped receipt', () => {
-  const originalLength = KNOB_REGISTRY.length;
-  try {
-    KNOB_REGISTRY.push({
-      key: 'lockstep_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
-      rule: { kind: 'enum', values: ['raw'] }, env: null, reviewMdKey: null,
-      defaults: { headless: ['raw', 'default'] }, type: 'string', waistPath: 'probeWaist.field',
-      waistMap: { raw: 'mapped' }, derivedFrom: null, deriveWhen: null, nullReceipt: [],
-      resolvedKey: false,
-    });
-    const base = headlessArgs();
-    base.configEcho.lockstep_probe = { value: 'raw', source: 'default' };
-    assert.deepEqual(
-      validateArgs({ ...base, probeWaist: { field: 'raw' } }).errors,
-      ['probeWaist.field does not match configEcho.lockstep_probe'],
-    );
-    // Mutation: delete the generic pass, or compare entry.value without applying waistMap.
-    assert.deepEqual(validateArgs({ ...base, probeWaist: { field: 'mapped' } }), { ok: true, errors: [] });
-  } finally {
-    KNOB_REGISTRY.length = originalLength;
-  }
-});
-
-test('T315-ARGS: every real waist row and mode has one exact lockstep oracle pair', () => {
-  const cases = {
-    'headless:limits.deliveryCap': {
-      path: 'limits.deliveryCap', key: 'pr_comment_cap', receipt: '6',
-      agree: headlessArgs(),
-      disagree: { ...headlessArgs(), limits: { ...headlessArgs().limits, deliveryCap: 7 } },
-    },
-    'headless:delivery.tier': {
-      path: 'delivery.tier', key: 'delivery_tier', receipt: 'all',
-      agree: { ...headlessArgs(), delivery: { tier: 'all' } },
-      disagree: { ...headlessArgs(), delivery: { tier: 'main_only' } },
-    },
-    'headless:reviewScope.requested': {
-      path: 'reviewScope.requested', key: 'reviewed_policy', receipt: 'full',
-      agree: headlessArgs('full'),
-      disagree: headlessArgs('full', { requested: 'incremental' }),
-    },
-    'headless:scopeAnswer': {
-      path: 'scopeAnswer', key: 'trivial_scope', receipt: 'light',
-      agree: {
-        ...headlessArgs(), riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 1,
-        scopeAnswer: 'light',
-        configEcho: { ...headlessArgs().configEcho, trivial_scope: { value: 'light', source: 'default' } },
-      },
-      disagree: {
-        ...headlessArgs(), riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 1,
-        scopeAnswer: 'full',
-        configEcho: { ...headlessArgs().configEcho, trivial_scope: { value: 'light', source: 'default' } },
-      },
-    },
-    'interactive:limits.deliveryCap': {
-      path: 'limits.deliveryCap', key: 'pr_comment_cap', receipt: 'null',
-      agree: { ...good, limits: { ...good.limits, deliveryCap: null } },
-      disagree: { ...good, limits: { ...good.limits, deliveryCap: 1 } },
-    },
-    'interactive:delivery.tier': {
-      path: 'delivery.tier', key: 'delivery_tier', receipt: 'all',
-      agree: { ...good, delivery: { tier: 'all' } },
-      disagree: { ...good, delivery: { tier: 'main_only' } },
-    },
-  };
-  const registryPairs = KNOB_REGISTRY
-    .filter(({ waistPath }) => waistPath !== null)
-    .flatMap((descriptor) => descriptor.modes.map((mode) => `${mode}:${descriptor.waistPath}`));
-  assert.deepEqual(Object.keys(cases).sort(), registryPairs.sort());
-  for (const [pair, fixture] of Object.entries(cases)) {
-    assert.equal(fixture.agree.configEcho[fixture.key].value, fixture.receipt, pair);
-    assert.equal(fixture.disagree.configEcho[fixture.key].value, fixture.receipt, pair);
-    assert.deepEqual(validateArgs(fixture.agree).errors, [], `${pair} agreeing value`);
-    // Mutation: filter any registry row out of the pass, or retain an old equality arm.
-    assert.deepEqual(validateArgs(fixture.disagree).errors, [
-      `${fixture.path} does not match configEcho.${fixture.key}`,
-    ], `${pair} disagreeing value`);
-  }
-});
-
-test('T315-ARGS: derivedFrom rows reject a receipt that disagrees with their source', () => {
-  const originalLength = KNOB_REGISTRY.length;
-  try {
-    KNOB_REGISTRY.push({
-      key: 'derived_probe', modes: ['interactive'],
-      allowedSources: { interactive: ['discovery'] },
-      rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null,
-      defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null,
-      waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [],
-      resolvedKey: false,
-    });
-    const args = {
-      ...good,
-      configEcho: { ...good.configEcho, derived_probe: { value: 'present', source: 'discovery' } },
-    };
-    // Mutation: delete the generic derivedFrom loop.
-    assert.deepEqual(validateArgs(args).errors, ['configEcho.derived_probe does not match reviewMd']);
-  } finally {
-    KNOB_REGISTRY.length = originalLength;
-  }
-});
-
-test('T315-ARGS: an unhandled registry type is accepted without a false lockstep violation', () => {
-  const originalLength = KNOB_REGISTRY.length;
-  try {
-    KNOB_REGISTRY.push({
-      key: 'bool_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
-      rule: { kind: 'enum', values: ['true'] }, env: null, reviewMdKey: null,
-      defaults: { headless: ['true', 'default'] }, type: 'bool', waistPath: 'boolProbe.value',
-      waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: false,
-    });
+const ACCEPTANCE_ROWS = [
+  { name: 'local scope ignores policy lockstep', input: () => headlessArgs('incremental', { detector: null }),
+    expected: { ok: true, errors: [] } },
+  { name: 'non-pluginRoot backtick', input: () => interactiveArgs({ diffPath: '/r/.code-gauntlet/diff`patch' }),
+    expected: { ok: true, errors: [] } },
+  { name: 'absent delivery echo', input: () => {
     const args = headlessArgs();
-    args.configEcho.bool_probe = { value: 'true', source: 'default' };
-    args.boolProbe = { value: false };
-    // Mutation: remove the expected === undefined guard.
-    assert.deepEqual(validateArgs(args), { ok: true, errors: [] });
-  } finally {
-    KNOB_REGISTRY.length = originalLength;
-  }
-});
+    delete args.configEcho.delivery.value;
+    return args;
+  }, expected: { ok: false, errors: ['configEcho.delivery.value must be a string'] } },
+  { name: 'optional domains', input: () => interactiveArgs({
+    nonce: 'n-1.0_ab', policy: { tier: 'optimized', provider: null, gateway: null },
+    contextLines: 5000000, contextChars: 500000000,
+    reviewConfig: { confidence_threshold: 0, security_min_confidence: 100, severity_threshold: 'low', ignore: ['a.js'] },
+    exclusionPatterns: ['*.js'], delivery: {}, persist: { returnPrimaries: false },
+    limits: { challengeCap: 0, deliveryCap: null, discoveryCap: 1 },
+  }), expected: { ok: true, errors: [] } },
+  { name: 'incremental', input: () => interactiveArgs({
+    reviewScope: { requested: 'incremental', kind: 'incremental', since: 'abc-1._x', commits: 0, detector: priorReviewDetector() },
+  }), expected: { ok: true, errors: [] } },
+  { name: 'scripts at root', input: () => interactiveArgs({
+    pluginRoot: '/', persist: { assembleScriptPath: '/scripts/assemble_artifacts.py' },
+    verify: { scriptPath: '/scripts/verify_findings.py' },
+  }), expected: { ok: true, errors: [] } },
+  { name: 'IPv6 identity', input: () => interactiveArgs({ delivery: { prIdentity: {
+    owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd',
+    platform: 'gitlab', web_origin: 'http://[::1]:8443', title: 'A useful title',
+  } } }), expected: { ok: true, errors: [] } },
+];
+for (const { name, input, expected } of ACCEPTANCE_ROWS) {
+  test(`accept: ${name}`, () => assert.deepEqual(validateArgs(input()), expected));
+}
 
-test('T315-ARGS: csv_list lockstep equality is ordered and element-wise', () => {
-  const originalLength = KNOB_REGISTRY.length;
-  try {
-    KNOB_REGISTRY.push({
-      key: 'csv_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
-      rule: { kind: 'csv_subset', values: ['a', 'b'] }, env: null, reviewMdKey: null,
-      defaults: { headless: ['a,b', 'default'] }, type: 'csv_list', waistPath: 'csvProbe.items',
-      waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: false,
-    });
-    const base = headlessArgs();
-    base.configEcho.csv_probe = { value: 'a,b', source: 'default' };
-    for (const [value, expected] of [[['a', 'b'], true], [['b', 'a'], false], [['a'], false]]) {
-      const result = validateArgs({ ...base, csvProbe: { items: value } });
-      // Mutation: replace element-wise comparison with === or an always-true branch.
-      assert.equal(result.ok, expected, JSON.stringify(value));
-      if (!expected) assert.deepEqual(result.errors, ['csvProbe.items does not match configEcho.csv_probe']);
-    }
-  } finally {
-    KNOB_REGISTRY.length = originalLength;
-  }
-});
+const REQUIRED_ROWS = [
+  { name: 'ordered inventory', input: { argsVersion: 1 }, expected: { ok: false, errors: [
+    'missing required field: mode', 'missing required field: repoRoot', 'missing required field: outputDir',
+    'missing required field: headShaShort', 'missing required field: nonce', 'missing required field: generatedAt',
+    'missing required field: diffPath', 'missing required field: changedFiles', 'missing required field: changedLines',
+    'missing required field: riskTable', 'missing required field: policy', 'missing required field: limits',
+    'missing required field: configEcho', 'missing required field: pluginRoot', 'missing required field: reviewScope',
+  ] } },
+];
+for (const { name, input, expected } of REQUIRED_ROWS) {
+  test(`required: ${name}`, () => assert.deepEqual(validateArgs(input), expected));
+}
 
-test('T315-ARGS: a stamped null is data and is compared by the generic pass', () => {
-  const originalLength = KNOB_REGISTRY.length;
-  try {
-    KNOB_REGISTRY.push({
-      key: 'null_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
-      rule: { kind: 'enum', values: ['value'] }, env: null, reviewMdKey: null,
-      defaults: { headless: ['value', 'default'] }, type: 'string', waistPath: 'nullProbe.value',
-      waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: false,
-    });
+const STRIP_ROWS = [
+  { name: 'array', input: ['not', 'an', 'object'], expected: {
+    args: ['not', 'an', 'object'], dropped: [], respelled: [],
+  } },
+  { name: 'string', input: 'not an object', expected: {
+    args: 'not an object', dropped: [], respelled: [],
+  } },
+  { name: 'optional inventory', input: {
+    reviewConfig: null, exclusionPatterns: null, reviewMd: null, exclusionsText: null,
+    delivery: null, checkpoints: null, persist: null, scopeAnswer: null,
+  }, expected: { args: {}, dropped: [
+    'reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist', 'scopeAnswer',
+  ], respelled: [] } },
+  { name: 'nested inventory', input: { delivery: { tier: null, prIdentity: null } },
+    expected: { args: { delivery: {} }, dropped: ['delivery.prIdentity', 'delivery.tier'], respelled: [] } },
+  { name: 'title', input: { delivery: { prIdentity: { owner: 'o', title: null } } },
+    expected: { args: { delivery: { prIdentity: { owner: 'o' } } }, dropped: ['delivery.prIdentity.title'], respelled: [] } },
+  { name: 'interactive null receipt', input: {
+    mode: 'interactive', configEcho: { pr_comment_cap: { value: null, source: 'default' } },
+  }, expected: { args: { mode: 'interactive', configEcho: { pr_comment_cap: { value: 'null', source: 'default' } } },
+    dropped: [], respelled: ['configEcho.pr_comment_cap.value'] } },
+];
+for (const { name, input, expected } of STRIP_ROWS) {
+  test(`strip: ${name}`, () => {
+    const before = structuredClone(input);
+    assert.deepEqual(stripNullOptionalsReport(input), expected);
+    assert.deepEqual(input, before);
+  });
+}
+
+const NORMALIZE_ROWS = [
+  { name: 'undefined', input: () => undefined, expected: { args: undefined, dropped: [], respelled: [], derivedPaths: [] } },
+  { name: 'JSON null', input: () => '{"reviewConfig":null}',
+    expected: { args: {}, dropped: ['reviewConfig'], respelled: [], derivedPaths: [] } },
+  { name: 'null cap derivation', input: () => ({
+    mode: 'interactive', limits: {}, configEcho: { pr_comment_cap: { value: 'null', source: 'default' } },
+  }), expected: { args: {
+    mode: 'interactive', limits: {
+      summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100, deliveryCap: null,
+    }, configEcho: {
+      pr_comment_cap: { value: 'null', source: 'default' }, review_md: { value: 'absent', source: 'discovery' },
+    },
+  }, dropped: [], respelled: [], derivedPaths: ['limits.deliveryCap'] } },
+];
+for (const { name, input, expected } of NORMALIZE_ROWS) {
+  test(`normalize: ${name}`, () => {
+    const raw = input();
+    const before = structuredClone(raw);
+    assert.deepEqual(normalizeArgsReport(raw), expected);
+    assert.deepEqual(normalizeArgs(raw), expected.args);
+    assert.deepEqual(raw, before);
+  });
+}
+
+const PROVENANCE_ROWS = [
+  { name: 'empty raw overrides legacy', input: { reviewMd: [], reviewConfigPath: '/r/REVIEW.md' },
+    expected: { value: 'absent', source: 'discovery' } },
+  { name: 'legacy present', input: { reviewConfigPath: '/r/REVIEW.md' }, expected: { value: 'present', source: 'discovery' } },
+];
+for (const { name, input, expected } of PROVENANCE_ROWS) {
+  test(`provenance: ${name}`, () => {
+    const args = interactiveArgs(input);
+    delete args.configEcho.review_md;
+    assert.deepEqual(normalizeArgs(args).configEcho.review_md, expected);
+  });
+}
+
+const POLICY_DERIVE_ROWS = [
+  { name: 'skip mapped', input: 'skip', expected: 'full' },
+];
+for (const { name, input, expected } of POLICY_DERIVE_ROWS) {
+  test(`policy derivation: ${name}`, () => {
+    const args = headlessArgs(input);
+    delete args.reviewScope.requested;
+    const before = structuredClone(args);
+    assert.equal(normalizeArgs(args).reviewScope.requested, expected);
+    assert.deepEqual(args, before);
+  });
+}
+
+const SCOPE_DERIVE_ROWS = [
+  { name: 'light', input: 'light', expected: { answer: 'light', drops: ['scopeAnswer'],
+    paths: ['delivery.tier', 'scopeAnswer'], rejected: [], result: { ok: true, errors: [] } } },
+];
+for (const { name, input, expected } of SCOPE_DERIVE_ROWS) {
+  test(`scope derivation: ${name}`, () => {
     const args = headlessArgs();
-    args.configEcho.null_probe = { value: 'value', source: 'default' };
-    args.nullProbe = { value: null };
-    // Mutation: change the undefined skip to a nullish skip.
-    assert.deepEqual(validateArgs(args).errors, ['nullProbe.value does not match configEcho.null_probe']);
-  } finally {
-    KNOB_REGISTRY.length = originalLength;
-  }
-});
-
-test('T315-ARGS: malformed receipts produce focused errors without lockstep cascades', () => {
-  const cap = headlessArgs();
-  cap.configEcho.pr_comment_cap = { value: '007', source: 'default' };
-  cap.limits = { ...cap.limits, deliveryCap: 1 };
-  assert.deepEqual(validateArgs(cap).errors, ['configEcho.pr_comment_cap.value is invalid for headless']);
-
-  const tier = headlessArgs();
-  tier.configEcho.delivery_tier = { value: 'all', source: 'fixed' };
-  tier.delivery = { tier: 'main_only' };
-  // Mutation: read configEchoValue directly instead of receiptEntryFor in the pass.
-  assert.deepEqual(validateArgs(tier).errors, ['configEcho.delivery_tier.source is invalid for headless']);
-});
-
-test('T315-ARGS: special cap arms report one fault and suppress the generic template', () => {
-  const headless = headlessArgs();
-  headless.limits = { ...headless.limits, deliveryCap: '1' };
-  const headlessResult = validateArgs(headless);
-  // Mutation: restore the every-non-number presence arm; a present string must keep its shape
-  // error rather than being rewritten as a receipt-presence error.
-  assert.deepEqual(headlessResult.errors, [
-    'limits.deliveryCap must be null, absent, or a non-negative safe integer when present',
-  ]);
-
-  const interactive = { ...good, limits: { ...good.limits, deliveryCap: null }, configEcho: {
-    ...good.configEcho, pr_comment_cap: { value: '5', source: 'default' },
-  } };
-  const interactiveResult = validateArgs(interactive);
-  // Mutation: remove the interactive absence arm or let it fall through to equality.
-  assert.deepEqual(interactiveResult.errors, ['configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null']);
-});
-
-test('T315-ARGS: a mode twin is not lockstep-validated outside its declared modes', () => {
-  const originalLength = KNOB_REGISTRY.length;
-  try {
-    KNOB_REGISTRY.push({
-      key: 'mode_twin_probe', modes: ['headless'],
-      allowedSources: { headless: ['default'], interactive: ['default'] },
-      rule: { kind: 'enum', values: ['value'] }, env: null, reviewMdKey: null,
-      defaults: { headless: ['value', 'default'], interactive: ['value', 'default'] },
-      type: 'string', waistPath: 'modeTwinProbe.value', waistMap: null, derivedFrom: null,
-      deriveWhen: null, nullReceipt: [], resolvedKey: false,
-    });
-    const args = { ...good, configEcho: { ...good.configEcho, mode_twin_probe: { value: 'value', source: 'default' } }, modeTwinProbe: { value: 'wrong' } };
-    const result = validateArgs(args);
-    // Mutation: removing descriptor.modes.includes(args.mode) from the lockstep pass turns it red.
-    assert.equal(result.errors.some((error) => error.includes('configEcho has unexpected key(s): mode_twin_probe')), true);
-    assert.equal(result.errors.some((error) => /does not match configEcho/.test(error)), false);
-  } finally {
-    KNOB_REGISTRY.length = originalLength;
-  }
-});
-
-test('T315-ARGS: missing or null configEcho stays a focused validation refusal', () => {
-  for (const configEcho of [undefined, null]) {
-    const args = { ...good };
-    if (configEcho === undefined) delete args.configEcho;
-    else args.configEcho = configEcho;
-    // Mutation: remove the isPlainObject(args.configEcho) guard around the pass.
-    assert.doesNotThrow(() => validateArgs(args));
-    assert.equal(validateArgs(args).errors.some((error) => error.includes('configEcho')), true);
-  }
-});
-
-test('T316-ARGS: any present scopeAnswer is refused when the light gate was ineligible', () => {
-  // Mutation: revert the biconditional to the old light-only and missing-only checks.
-  const interactive = validateArgs({ ...good, scopeAnswer: 'full' });
-  assert.equal(interactive.errors.filter((error) => /scopeAnswer/.test(error)).length, 1);
-  assert.match(interactive.errors[interactive.errors.length - 1], /the orchestrator answered a light\/full question the gate never asked/);
-  assert.match(interactive.errors[interactive.errors.length - 1], /omit scopeAnswer/);
-
-  const headless = headlessArgs();
-  headless.scopeAnswer = 'full';
-  const result = validateArgs(headless);
-  assert.equal(result.errors.filter((error) => /scopeAnswer/.test(error)).length, 1);
-  assert.match(result.errors.find((error) => /scopeAnswer is/.test(error)), /the orchestrator answered a light\/full question the gate never asked/);
-});
-
-test('T316-ARGS: eligible scope accepts both values and a headless receipt derives either value', () => {
-  for (const scopeAnswer of ['light', 'full']) {
-    // Mutation: implement the biconditional as scopeAnswer === "light" iff eligible.
-    assert.deepEqual(validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 10, scopeAnswer }), { ok: true, errors: [] });
-  }
-  const derived = normalizeArgs({
-    ...headlessArgs(), riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 10,
-    configEcho: { ...headlessArgs().configEcho, trivial_scope: { value: 'full', source: 'default' } },
+    args.riskTable[0].risk = 'low';
+    args.scopeAnswer = null;
+    args.configEcho.trivial_scope.value = input;
+    const report = normalizeArgsReport(args);
+    assert.deepEqual({ answer: report.args.scopeAnswer, drops: report.dropped, paths: report.derivedPaths,
+      rejected: nullToleranceRejectedKeys(report.args, report.dropped, report.derivedPaths), result: validateArgs(report.args) }, expected);
   });
-  assert.deepEqual(validateArgs(derived), { ok: true, errors: [] });
-  assert.equal(derived.scopeAnswer, 'full');
-});
-
-test('T316-ARGS: a headless caller-stamped scopeAnswer equal to the derived receipt stays accepted', () => {
-  const args = headlessArgs();
-  args.riskTable = [{ path: 'a.js', risk: 'low' }];
-  args.changedLines = 10;
-  args.scopeAnswer = 'light';
-  args.configEcho.trivial_scope = { value: 'light', source: 'default' };
-  // Mutation: add caller-provenance rejection even when the stamped value equals the receipt.
-  // Decision pin: caller provenance is intentionally not rejected when the value is correct.
-  assert.deepEqual(validateArgs(normalizeArgs(args)), { ok: true, errors: [] });
-});
-
-test('T316-ARGS: ineligible light receipt plus a present scopeAnswer uses the two dedicated refusals', () => {
-  const args = headlessArgs();
-  args.riskTable = [{ path: 'a.js', risk: 'medium' }];
-  args.scopeAnswer = 'full';
-  args.configEcho.trivial_scope = { value: 'light', source: 'default' };
-  const result = validateArgs(args);
-  assert.ok(result.errors.some((error) => error.startsWith('scopeAnswer is "full"')));
-  const receiptError = result.errors.find((error) => error.startsWith('configEcho.trivial_scope is "light"'));
-  assert.ok(receiptError);
-  // Mutation: append the scopeAnswer fix to the receipt arm, which has no waist operand.
-  assert.doesNotMatch(receiptError, /omit scopeAnswer/);
-  // Mutation: retain the deleted scopeAnswer equality arm; no generic equality is valid here.
-  assert.equal(result.errors.some((error) => error.includes('scopeAnswer does not match configEcho')), false);
-});
-
-test('T316-ARGS: derived null scopeAnswer is disclosed as no gap after normalization', () => {
-  const input = headlessArgs();
-  input.riskTable = [{ path: 'a.js', risk: 'low' }];
-  input.changedLines = 10;
-  input.scopeAnswer = null;
-  input.configEcho.trivial_scope = { value: 'light', source: 'default' };
-  const report = normalizeArgsReport(input);
-  assert.equal(report.args.scopeAnswer, 'light');
-  assert.deepEqual(report.derivedPaths.sort(), ['delivery.tier', 'scopeAnswer']);
-  // Mutation: omit derivedPaths from nullToleranceRejectedKeys so the re-derived null is disclosed.
-  assert.deepEqual(nullToleranceRejectedKeys(report.args, report.dropped, report.derivedPaths), []);
-});
-
-test('T315-ARGS: direct special-arm fixtures isolate absence rules from generic equality', () => {
-  const interactiveCap = {
-    ...good,
-    limits: { ...good.limits },
-    configEcho: { ...good.configEcho, pr_comment_cap: { value: '5', source: 'default' } },
-  };
-  assert.deepEqual(validateArgs(interactiveCap).errors, [
-    'configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null',
-  ]);
-
-  for (const delivery of [undefined, {}]) {
-    const args = { ...good, configEcho: { ...good.configEcho, delivery_tier: { value: 'main_only', source: 'default' } } };
-    if (delivery === undefined) delete args.delivery;
-    else args.delivery = delivery;
-    assert.deepEqual(validateArgs(args).errors, ['configEcho.delivery_tier does not match delivery.tier']);
-  }
-
-  const headlessCap = headlessArgs();
-  delete headlessCap.limits.deliveryCap;
-  // Mutation: delete the named presence arms; the generic pass skips undefined and misses these.
-  assert.deepEqual(validateArgs(headlessCap).errors, [
-    'headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap',
-  ]);
-});
-
-test('T309-ARGS: local and branch scopes stay stamped while detector-backed lockstep is gated', () => {
-  for (const policy of ['full', 'incremental', 'skip']) {
-    const stamped = headlessArgs(policy, {
-      requested: 'full', kind: 'full', since: null, commits: null, detector: null,
-    });
-    assert.deepEqual(validateArgs(normalizeArgs(stamped)), { ok: true, errors: [] }, policy);
-
-    const omitted = headlessArgs(policy, {
-      kind: 'full', since: null, commits: null, detector: null,
-    });
-    delete omitted.reviewScope.requested;
-    const normalized = normalizeArgs(omitted);
-    assert.equal(normalized.reviewScope.requested, undefined, policy);
-    assert.ok(validateArgs(normalized).errors.includes('reviewScope.requested must be full or incremental'), policy);
-  }
-});
-
-test('T11: headless local or branch scope does not derive requested', () => {
-  const input = headlessArgs('full', {
-    requested: undefined,
-    kind: 'full',
-    since: null,
-    commits: null,
-    detector: null,
-  });
-  delete input.reviewScope.requested;
-  const normalized = normalizeArgs(input);
-  assert.equal(normalized.reviewScope.requested, undefined);
-  assert.ok(validateArgs(normalized).errors.includes('reviewScope.requested must be full or incremental'));
-});
-
-function dottedFixtureValue(object, path) {
-  return path.split('.').reduce((current, part) => current?.[part], object);
 }
 
-function deleteDottedFixtureValue(object, path) {
-  const parts = path.split('.');
-  const leaf = parts.pop();
-  const parent = parts.reduce((current, part) => current?.[part], object);
-  if (parent) delete parent[leaf];
+const PROBE_ROWS = [
+  { name: 'unknown type', mode: 'headless', input: { boolProbe: { value: false } },
+    descriptor: { key: 'bool_probe', type: 'bool', waistPath: 'boolProbe.value', rule: { kind: 'enum', values: ['true'] } },
+    receipt: 'true', expected: { ok: true, errors: [] } },
+  { name: 'CSV accepts', mode: 'headless', input: { csvProbe: { items: ['a', 'b'] } },
+    descriptor: { key: 'csv_probe', type: 'csv_list', waistPath: 'csvProbe.items', rule: { kind: 'csv_subset', values: ['a', 'b'] } },
+    receipt: 'a,b', expected: { ok: true, errors: [] } },
+  { name: 'CSV reorders', mode: 'headless', input: { csvProbe: { items: ['b', 'a'] } },
+    descriptor: { key: 'csv_probe', type: 'csv_list', waistPath: 'csvProbe.items', rule: { kind: 'csv_subset', values: ['a', 'b'] } },
+    receipt: 'a,b', expected: { ok: false, errors: ['csvProbe.items does not match configEcho.csv_probe'] } },
+  { name: 'CSV shortens', mode: 'headless', input: { csvProbe: { items: ['a'] } },
+    descriptor: { key: 'csv_probe', type: 'csv_list', waistPath: 'csvProbe.items', rule: { kind: 'csv_subset', values: ['a', 'b'] } },
+    receipt: 'a,b', expected: { ok: false, errors: ['csvProbe.items does not match configEcho.csv_probe'] } },
+  { name: 'inactive mode', mode: 'interactive', input: { modeTwinProbe: { value: 'wrong' } },
+    descriptor: { key: 'mode_twin_probe', waistPath: 'modeTwinProbe.value',
+      allowedSources: { headless: ['default'], interactive: ['default'] } }, receipt: 'value',
+    expected: { ok: false, errors: ['configEcho has unexpected key(s): mode_twin_probe'] } },
+  { name: 'unknown own gate', mode: 'headless', input: { unknown: { field: 'wrong' } },
+    descriptor: { key: 'unknown', waistPath: 'unknown.field', deriveWhen: 'nonsense' }, receipt: 'value',
+    expected: { ok: true, errors: [] } },
+];
+for (const { name, mode, input, descriptor, receipt, expected } of PROBE_ROWS) {
+  test(`copied table: ${name}`, () => {
+    const args = { ...(mode === 'headless' ? headlessArgs() : interactiveArgs()), ...structuredClone(input) };
+    args.configEcho[descriptor.key] = { value: receipt, source: 'default' };
+    const table = knobRows({}, [{
+      key: 'probe', modes: ['headless'], allowedSources: { headless: ['default'] }, rule: { kind: 'enum', values: ['value'] },
+      env: null, reviewMdKey: null, defaults: { headless: ['value', 'default'] }, type: 'string', waistPath: null,
+      waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: false, ...descriptor,
+    }]);
+    assert.deepEqual(validateArgs(args, table), expected);
+  });
 }
 
-function derivedWaistFixture(mode) {
-  if (mode === 'headless') {
-    const input = headlessArgs('skip');
-    input.riskTable = [{ path: 'a.js', risk: 'low' }];
-    input.changedLines = 1;
-    input.configEcho.trivial_scope = { value: 'light', source: 'default' };
-    delete input.limits;
-    input.delivery = {};
-    delete input.reviewScope.requested;
-    const requiredRoots = new Set(REQUIRED);
-    for (const descriptor of KNOB_REGISTRY.filter(({ waistPath }) => waistPath !== null)) {
-      const root = descriptor.waistPath.split('.')[0];
-      if (descriptor.modes.includes(mode) && requiredRoots.has(root) && input[root] === undefined) {
-        input[root] = {};
-      }
-    }
-    return input;
-  }
-  const input = structuredClone(good);
-  input.configEcho = {
-    ...input.configEcho,
-    pr_comment_cap: { value: '7', source: 'env' },
-    delivery_tier: { value: 'main_only', source: 'env' },
-  };
-  delete input.limits;
-  const requiredRoots = new Set(REQUIRED);
-  for (const descriptor of KNOB_REGISTRY.filter(({ waistPath }) => waistPath !== null)) {
-    const root = descriptor.waistPath.split('.')[0];
-    if (descriptor.modes.includes(mode) && requiredRoots.has(root) && input[root] === undefined) {
-      input[root] = {};
-    }
-  }
-  return input;
+
+const UNKNOWN_DERIVE_ROWS = [
+  { name: 'unknown type', gate: null, type: 'bool', expected: { value: undefined, paths: ['delivery.tier'] } },
+  { name: 'bad parent', gate: null, parent: [], expected: { value: undefined, paths: ['delivery.tier'] } },
+  { name: 'scalar parent', gate: null, parent: 'nope', expected: { value: undefined, paths: ['delivery.tier'] } },
+];
+for (const { name, gate, modes, type, parent, expected } of UNKNOWN_DERIVE_ROWS) {
+  test(`derive guard: ${name}`, () => {
+    const args = headlessArgs();
+    args.configEcho.probe = { value: 'value', source: 'default' };
+    if (parent) args.probeWaist = parent;
+    const table = knobRows({}, [{
+      ...knobRows()[0], key: 'probe', modes: modes || ['headless'], type: type || 'string',
+      allowedSources: { headless: ['default'] }, rule: { kind: 'enum', values: ['value'] },
+      waistPath: 'probeWaist.field', deriveWhen: gate,
+    }]);
+    const out = normalizeArgsReport(args, table);
+    assert.deepEqual({ value: out.args.probeWaist?.field, paths: out.derivedPaths }, expected);
+  });
 }
 
-test('T10: every waist row derives in each declared mode and not in its mode twin', () => {
-  for (const descriptor of KNOB_REGISTRY.filter(({ waistPath }) => waistPath !== null)) {
-    for (const mode of descriptor.modes) {
-      const input = derivedWaistFixture(mode);
-      deleteDottedFixtureValue(input, descriptor.waistPath);
-      const normalized = normalizeArgs(input);
-      assert.notEqual(dottedFixtureValue(normalized, descriptor.waistPath), undefined, `${descriptor.key}/${mode}`);
-    }
-  }
-
-  const originalLength = KNOB_REGISTRY.length;
-  try {
-    KNOB_REGISTRY.push({
-      key: 'twin_probe',
-      modes: ['headless'],
-      allowedSources: { headless: ['default'], interactive: ['default'] },
-      rule: { kind: 'enum', values: ['v'] },
-      env: null,
-      reviewMdKey: null,
-      defaults: { headless: ['v', 'default'], interactive: ['v', 'default'] },
-      type: 'string',
-      waistPath: 'twinProbe',
-      waistMap: null,
-      derivedFrom: null,
-      deriveWhen: null,
-      nullReceipt: [],
-      resolvedKey: false,
-    });
-    const twin = derivedWaistFixture('interactive');
-    twin.configEcho.twin_probe = { value: 'v', source: 'default' };
-    assert.equal(normalizeArgs(twin).twinProbe, undefined);
-  } finally {
-    KNOB_REGISTRY.length = originalLength;
-  }
-});
-
-test('T305-ARGS: derivation does not synthesize a missing required limits root', () => {
-  const input = { ...good };
-  delete input.limits;
-  const normalized = normalizeArgs(input);
-  assert.equal('limits' in normalized, false);
-  assert.equal(validateArgs(normalized).ok, false);
-});
-
-test('T305-ARGS: an ineligible light receipt is rejected and is not derived', () => {
-  const input = {
-    ...good,
-    mode: 'headless',
-    configEcho: {
-      model_tier: { value: 'optimized', source: 'default' },
-      delivery: { value: 'markdown', source: 'default' },
-      post_mode: { value: 'dry-run', source: 'default' },
-      pr_comment_cap: { value: '6', source: 'default' },
-      delivery_tier: { value: 'all', source: 'default' },
-      draft_policy: { value: 'review', source: 'default' },
-      reviewed_policy: { value: 'full', source: 'default' },
-      pr_not_found_policy: { value: 'error', source: 'default' },
-      trivial_scope: { value: 'light', source: 'default' },
-    },
-  };
-  const normalized = normalizeArgs(input);
-  assert.equal(normalized.limits.deliveryCap, 6);
-  assert.deepEqual(normalized.delivery, { tier: 'all' });
-  assert.equal(normalized.scopeAnswer, undefined);
-  const result = validateArgs(normalized);
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('configEcho.trivial_scope')));
-});
-
-test('T182-ARGS: receipt lockstep rejects mismatches before any stage can dispatch', () => {
-  const deliveryMismatch = validateArgs({ ...good, delivery: { tier: 'main_only' } });
-  assert.equal(deliveryMismatch.ok, false);
-  assert.ok(deliveryMismatch.errors.some((error) => error.includes('delivery_tier')));
-
-  const capMismatch = validateArgs({ ...good, limits: { ...good.limits, deliveryCap: 24 } });
-  assert.equal(capMismatch.ok, false);
-  assert.ok(capMismatch.errors.some((error) => error.includes('pr_comment_cap')));
-
-  const nullDeletedDelivery = normalizeArgs({ ...good, delivery: null });
-  assert.equal(validateArgs(nullDeletedDelivery).ok, true, 'null delivery uses effective tier all');
-  assert.equal(validateArgs({ ...nullDeletedDelivery, configEcho: { ...good.configEcho, delivery_tier: { value: 'main_only', source: 'default' } } }).ok, false);
-
-  const scopeMismatch = validateArgs({
-    ...good,
-    mode: 'headless',
-    riskTable: [{ path: 'a.js', risk: 'low' }],
-    scopeAnswer: 'light',
-    configEcho: { ...good.configEcho, trivial_scope: { value: 'full', source: 'default' } },
+const NULL_PROBE_ROWS = [
+  { name: 'two-level path', input: ['delivery.prIdentity.title'], derived: [], expected: ['delivery.prIdentity.title'] },
+  { name: 'bad dropped keys', input: null, derived: [], expected: [] },
+  { name: 'null identity rejected', input: ['delivery.prIdentity'], derived: [], expected: ['delivery.prIdentity'] },
+];
+for (const { name, input, derived, expected } of NULL_PROBE_ROWS) {
+  test(`null probe: ${name}`, () => {
+    const args = interactiveArgs();
+    const before = structuredClone(args);
+    assert.deepEqual(nullToleranceRejectedKeys(args, input, derived), expected);
+    assert.deepEqual(args, before);
   });
-  assert.ok(scopeMismatch.errors.some((error) => error.includes('scopeAnswer')));
-
-  const noIdentity = validateArgs({
-    ...good,
-    mode: 'headless',
-    delivery: { tier: 'all' },
-    limits: { ...good.limits, deliveryCap: 25 },
-    configEcho: {
-      model_tier: { value: 'optimized', source: 'default' },
-      delivery: { value: 'pr_comments', source: 'env' },
-      post_mode: { value: 'dry-run', source: 'default' },
-      pr_comment_cap: { value: '25', source: 'default' },
-      delivery_tier: { value: 'all', source: 'default' },
-      draft_policy: { value: 'review', source: 'default' },
-      reviewed_policy: { value: 'full', source: 'default' },
-      pr_not_found_policy: { value: 'error', source: 'default' },
-      trivial_scope: { value: 'full', source: 'default' },
-    },
-  });
-  assert.ok(noIdentity.errors.some((error) => error.includes('prIdentity')));
-});
-
-test('T182-ARGS: pluginRoot enforces path trust and script coherence', () => {
-  for (const bad of ['relative/plugin', '/plugin\nroot', '/plugin`root', '/plugin/../other']) {
-    const result = validateArgs({ ...good, pluginRoot: bad });
-    assert.equal(result.ok, false, `${bad} must be rejected`);
-    assert.ok(result.errors.some((error) => error.includes('pluginRoot')));
-  }
-  for (const bad of [null, [], 42, '', '   ']) {
-    const result = validateArgs({ ...good, pluginRoot: bad });
-    assert.equal(result.ok, false, `pluginRoot=${JSON.stringify(bad)} must be rejected`);
-    assert.ok(result.errors.some((error) => error.includes('pluginRoot')));
-  }
-  assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/other/scripts/assemble_artifacts.py' } }).ok, false);
-  assert.equal(validateArgs({ ...good, verify: { scriptPath: '/other/scripts/verify_findings.py' } }).ok, false);
-  assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, verify: { scriptPath: '/plugin/scripts/verify_findings.py' } }).ok, true);
-  assert.equal(validateArgs({ ...good, verify: { scriptPath: '/plugin/scripts/../verify_findings.py' } }).ok, false);
-  assert.equal(validateArgs({ ...good, pluginRoot: '/plugin/', persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, verify: { scriptPath: '/plugin/scripts/verify_findings.py' } }).ok, true);
-  assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/plugin/scripts/nested/assemble_artifacts.py' } }).ok, false);
-
-});
-
-test('T182-ARGS: incremental reviewScope accepts only a safe detector-backed scope', () => {
-  const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null };
-  const incremental = { requested: 'incremental', kind: 'incremental', since: 'abc-1._x', commits: null, detector };
-  assert.equal(validateArgs({ ...good, reviewScope: incremental }).ok, true);
-  assert.equal(validateArgs({ ...good, reviewScope: { ...incremental, since: 'bad sha!' } }).ok, false);
-  assert.ok(validateArgs({ ...good, reviewScope: { ...incremental, since: 'bad sha!' } }).errors.some((error) => error.includes('reviewScope.since')));
-});
-
-test('T182-ARGS: reviewScope requested/kind and incremental detector safety stay in lockstep', () => {
-  const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null };
-  const incremental = { requested: 'incremental', kind: 'incremental', since: 'abc-1._x', commits: null, detector };
-  assert.equal(validateArgs({ ...good, reviewScope: incremental }).ok, true);
-  const mismatch = validateArgs({ ...good, reviewScope: { ...incremental, requested: 'full' } });
-  assert.equal(mismatch.ok, false);
-  assert.ok(mismatch.errors.some((error) => error.includes('kind incremental requires requested incremental')));
-
-  const unsafe = validateArgs({ ...good, reviewScope: { ...incremental, detector: { ...detector, incremental_safe: false } } });
-  assert.equal(unsafe.ok, false);
-  assert.ok(unsafe.errors.some((error) => error.includes('detector.incremental_safe true')));
-
-  const missing = validateArgs({ ...good, reviewScope: { ...incremental, detector: null } });
-  assert.equal(missing.ok, false);
-  assert.ok(missing.errors.some((error) => error.includes('detector.incremental_safe true')));
-});
-
-test('T182-ARGS: reviewScope incremental commits validation is standalone', () => {
-  const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null };
-  const result = validateArgs({ ...good, reviewScope: { requested: 'incremental', kind: 'incremental', since: 'abc', commits: -1, detector } });
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('reviewScope.commits')));
-});
-
-test('T182-ARGS: reviewScope kind enum validation is standalone', () => {
-  const result = validateArgs({ ...good, reviewScope: { requested: 'full', kind: 'bogus', since: null, commits: null, detector: null } });
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('reviewScope.kind')));
-});
-
-test('T182-ARGS: reviewScope full since validation is standalone', () => {
-  const result = validateArgs({ ...good, reviewScope: { requested: 'full', kind: 'full', since: 'abc', commits: null, detector: null } });
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('reviewScope.since')));
-});
-
-test('T182-ARGS: reviewScope full commits validation is standalone', () => {
-  const result = validateArgs({ ...good, reviewScope: { requested: 'full', kind: 'full', since: null, commits: 1, detector: null } });
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('reviewScope.commits')));
-});
-
-test('T182-ARGS: reviewScope requested enum and fallback detector requirement are standalone', () => {
-  const badRequested = validateArgs({ ...good, reviewScope: { requested: 'skip', kind: 'full', since: null, commits: null, detector: null } });
-  assert.ok(badRequested.errors.some((error) => error.includes('reviewScope.requested')));
-  const missingDetector = validateArgs({ ...good, reviewScope: { requested: 'incremental', kind: 'full', since: null, commits: null, detector: null } });
-  assert.ok(missingDetector.errors.some((error) => error.includes('fallback requires detector')));
-});
-
-test('T182-ARGS: reviewScope non-object shapes are rejected independently', () => {
-  for (const bad of [null, [], 'scope']) {
-    const result = validateArgs({ ...good, reviewScope: bad });
-    assert.equal(result.ok, false, JSON.stringify(bad));
-    assert.ok(result.errors.some((error) => error.includes('reviewScope must be')));
-  }
-});
-
-test('T182-ARGS: reviewScope detector shape is strict and independently checked', () => {
-  const base = { requested: 'full', kind: 'full', since: null, commits: null };
-  const cases = [
-    ['scalar', 1, 'must be null or an object'],
-    ['array', [], 'must be null or an object'],
-    ['missing key', { previously_reviewed: false }, 'is missing key'],
-    ['wrong boolean', { previously_reviewed: 'no', sha_resolvable: false, head_advanced: false, sha_is_ancestor: false, incremental_safe: false, error: null }, 'previously_reviewed must be a boolean'],
-    ['extra key', { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false, incremental_safe: false, error: null, extra: true }, 'unexpected key'],
-    ['bad error', { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false, incremental_safe: false, error: 2 }, 'error must be a string or null'],
-    ['unsafe error', { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false, incremental_safe: false, error: 'line\nbreak' }, 'error must be single-line'],
-  ];
-  for (const [label, detector, message] of cases) {
-    const result = validateArgs({ ...good, reviewScope: { ...base, detector } });
-    assert.equal(result.ok, false, label);
-    assert.ok(result.errors.some((error) => error.includes(message)), `${label}: ${result.errors.join('; ')}`);
-  }
-});
-
-test('T182-ARGS: reviewScope extra keys are rejected independently', () => {
-  const detector = { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false, incremental_safe: false, error: null };
-  const result = validateArgs({ ...good, reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector, reason: 'old free-text fallback reason' } });
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('reviewScope has unexpected key')));
-});
-
-test('T182-ARGS: headless review policy and reviewScope requested value stay in lockstep', () => {
-  const headless = {
-    ...good,
-    mode: 'headless',
-    configEcho: {
-      model_tier: { value: 'optimized', source: 'default' }, delivery: { value: 'markdown', source: 'default' },
-      post_mode: { value: 'dry-run', source: 'default' }, pr_comment_cap: { value: '1', source: 'default' },
-      delivery_tier: { value: 'all', source: 'default' }, draft_policy: { value: 'review', source: 'default' },
-      reviewed_policy: { value: 'incremental', source: 'default' }, pr_not_found_policy: { value: 'error', source: 'default' },
-      trivial_scope: { value: 'full', source: 'default' },
-    },
-    limits: { ...good.limits, deliveryCap: 1 },
-    delivery: {},
-    reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: priorReviewDetector },
-  };
-  const result = validateArgs(headless);
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('reviewScope.requested')));
-});
-
-test('T182-ARGS: headless deliveryCap must be numeric for the receipt', () => {
-  const base = {
-    ...good,
-    mode: 'headless',
-    delivery: {},
-    configEcho: {
-      model_tier: { value: 'optimized', source: 'default' }, delivery: { value: 'markdown', source: 'default' },
-      post_mode: { value: 'dry-run', source: 'default' }, pr_comment_cap: { value: '1', source: 'default' },
-      delivery_tier: { value: 'all', source: 'default' }, draft_policy: { value: 'review', source: 'default' },
-      reviewed_policy: { value: 'full', source: 'default' }, pr_not_found_policy: { value: 'error', source: 'default' },
-      trivial_scope: { value: 'full', source: 'default' },
-    },
-  };
-  for (const [label, deliveryCap] of [['absent', undefined], ['null', null], ['non-number', '1']]) {
-    const limits = { ...base.limits };
-    if (label !== 'absent') limits.deliveryCap = deliveryCap;
-    const result = validateArgs({ ...base, limits });
-    assert.equal(result.ok, false, label);
-    // Mutation: restore the every-non-number presence arm; the string case must retain only
-    // its focused shape error.
-    const expected = label === 'non-number'
-      ? 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present'
-      : 'headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap';
-    assert.deepEqual(result.errors, [expected], label);
-  }
-});
-
-test('T182-ARGS: interactive null deliveryCap lockstep has its own branch', () => {
-  const args = {
-    ...good,
-    limits: { ...good.limits, deliveryCap: null },
-    configEcho: { ...good.configEcho, pr_comment_cap: { value: '0', source: 'env' } },
-  };
-  const result = validateArgs(args);
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('must be null when limits.deliveryCap is absent or null')));
-});
-
-test('T182-ARGS: policy.tier is checked when present but omitted fixture policy remains valid', () => {
-  assert.equal(validateArgs(good).ok, true);
-  assert.equal(validateArgs({ ...good, policy: { tier: 'standard' } }).ok, false);
-  assert.equal(validateArgs({ ...good, policy: { tier: 'optimized' } }).ok, true);
-});
-test('validateArgs rejects an unknown argsVersion loudly', () => {
-  const r = validateArgs({ ...good, argsVersion: 2 });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /argsVersion/);
-});
-test('validateArgs reports every missing required field', () => {
-  const r = validateArgs({ argsVersion: 1 });
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.length >= 5);
-});
-test('ARGS_VERSION is 1', () => { assert.equal(ARGS_VERSION, 1); });
-test('validateArgs rejects an unrecognized mode', () => {
-  const r = validateArgs({ ...good, mode: 'bogus' });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /invalid mode: bogus/);
-});
-test('normalizeArgs(undefined) returns undefined without throwing', () => {
-  assert.equal(normalizeArgs(undefined), undefined);
-});
-test('validateArgs rejects a nonce with characters outside [A-Za-z0-9._-]', () => {
-  // The nonce is interpolated into the verify executor command argv (per slice as
-  // `${nonce}.${i}`); anything with whitespace or shell metacharacters could split
-  // argv or break AST-safe emission. Reject it at the waist.
-  const r = validateArgs({ ...good, nonce: 'n 1; rm -rf /' });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /nonce/);
-});
-test('validateArgs accepts a dotted/hyphenated/underscored nonce (per-slice charset)', () => {
-  // `.` and `-` must be allowed: the verify stage derives per-slice nonces `n-1.0`.
-  assert.deepEqual(validateArgs({ ...good, nonce: 'n-1.0_ab' }), { ok: true, errors: [] });
-});
-test('validateArgs treats the delivery selector as optional (absent is fine)', () => {
-  // `good` carries no `delivery` field — the workflow defaults the tier to 'all'.
-  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
-});
-test('validateArgs accepts delivery.tier "all" and "main_only"', () => {
-  assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'all' } }), { ok: true, errors: [] });
-  assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'main_only' }, configEcho: { ...good.configEcho, delivery_tier: { value: 'main_only', source: 'default' } } }), { ok: true, errors: [] });
-});
-test('validateArgs accepts an empty delivery object (tier defaults to all downstream)', () => {
-  assert.deepEqual(validateArgs({ ...good, delivery: {} }), { ok: true, errors: [] });
-});
-// Bedrock live failure (2026-08-11 transcript): a typo'd provider would silently flip the
-// registry between the full-ID-pin arm and the bare-alias arm, so unknown spellings fail
-// loud at the waist. null and absent both mean 'firstParty' (older waists omit the field).
-test('validateArgs accepts every known policy.provider and tolerates null/absent', () => {
-  for (const provider of ['firstParty', 'bedrock', 'vertex', 'foundry']) {
-    assert.deepEqual(validateArgs({ ...good, policy: { ...good.policy, provider } }), { ok: true, errors: [] });
-  }
-  assert.deepEqual(validateArgs({ ...good, policy: { ...good.policy, provider: null } }), { ok: true, errors: [] });
-  assert.deepEqual(validateArgs(good), { ok: true, errors: [] }); // absent
-});
-test('validateArgs rejects an unknown policy.provider', () => {
-  const r = validateArgs({ ...good, policy: { ...good.policy, provider: 'aws' } });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /invalid policy\.provider: aws/);
-  // 'gateway' is deliberately NOT a provider: an LLM gateway proxies the Anthropic API and
-  // expects standard Claude model names, so gateway sessions stay firstParty (bugbot #179).
-  assert.equal(validateArgs({ ...good, policy: { ...good.policy, provider: 'gateway' } }).ok, false);
-});
-// issue #218: policy.gateway gates registry.js's conditionalSchemaActive. A non-boolean
-// (e.g. the string "true") must fail loud at the waist rather than silently coerce.
-test('validateArgs accepts policy.gateway true/false and tolerates null/absent', () => {
-  assert.deepEqual(validateArgs({ ...good, policy: { ...good.policy, gateway: true } }), { ok: true, errors: [] });
-  assert.deepEqual(validateArgs({ ...good, policy: { ...good.policy, gateway: false } }), { ok: true, errors: [] });
-  assert.deepEqual(validateArgs({ ...good, policy: { ...good.policy, gateway: null } }), { ok: true, errors: [] });
-  assert.deepEqual(validateArgs(good), { ok: true, errors: [] }); // absent
-});
-test('validateArgs rejects a non-boolean policy.gateway', () => {
-  const r = validateArgs({ ...good, policy: { ...good.policy, gateway: 'true' } });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /invalid policy\.gateway: true/);
-});
-
-test('validateArgs rejects an unknown delivery.tier', () => {
-  const r = validateArgs({ ...good, delivery: { tier: 'suggestions_only' } });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /invalid delivery\.tier: suggestions_only/);
-});
-test('validateArgs rejects a non-object delivery field', () => {
-  const r = validateArgs({ ...good, delivery: 'all' });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /delivery must be an object/);
-});
-// delivery.prIdentity (live-run L3): optional PR identity for the post_review-ready wrapper.
-test('validateArgs accepts a well-formed delivery.prIdentity and its absence (local-diff reviews)', () => {
-  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
-  // Mutation: remove bracketed IPv6 origins from WEB_ORIGIN_RE; the accepted twin turns red.
-  assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'all', prIdentity: id } }), { ok: true, errors: [] });
-  assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'all' } }), { ok: true, errors: [] });
-  assert.deepEqual(
-    validateArgs({ ...good, delivery: { tier: 'all', prIdentity: { ...id, platform: 'gitlab', web_origin: 'http://[::1]:8443' } } }),
-    { ok: true, errors: [] },
-  );
-});
-test('validateArgs rejects a malformed delivery.prIdentity (shape-checked when present)', () => {
-  // Mutation: delete the PR_IDENTITY_FIELDS validation loop; every negative row turns red.
-  const valid = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
-  const cases = [
-    [{ ...valid, platform: undefined }, 'delivery.prIdentity.platform must be one of github, gitlab'],
-    [{ ...valid, platform: 'bitbucket' }, 'delivery.prIdentity.platform must be one of github, gitlab'],
-    [{ ...valid, web_origin: 'github.com' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, web_origin: 'https://github.com/x' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, web_origin: 'https://user@github.com' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, web_origin: 'https://git.example:0' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, web_origin: 'https://git.example:65536' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, web_origin: `https://${'a'.repeat(64)}.example` }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, sha_full: 'd'.repeat(39) }, 'delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id'],
-    [{ ...valid, sha_full: 'D'.repeat(40) }, 'delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id'],
-    [{ ...valid, sha_full: 'not-hex' }, 'delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id'],
-    [{ ...valid, pr_number: 0 }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
-    [{ ...valid, pr_number: -1 }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
-    [{ ...valid, pr_number: 1.5 }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
-    [{ ...valid, pr_number: '7' }, 'delivery.prIdentity.pr_number must be a positive safe integer'],
-    // Mutation: delete repo.extraChecks; this slash case must go red while empty keeps the primary error.
-    [{ ...valid, repo: 'a/b' }, ['delivery.prIdentity.repo must not contain "/"']],
-    [{ ...valid, repo: '' }, ['delivery.prIdentity.repo must be a non-empty string']],
-  ];
-  for (const [prIdentity, expected] of cases) {
-    assert.deepEqual(validateArgs({ ...good, delivery: { prIdentity } }).errors, Array.isArray(expected) ? expected : [expected]);
-  }
-  const r2 = validateArgs({ ...good, delivery: { prIdentity: 'org/repo#310' } });
-  assert.equal(r2.ok, false);
-  assert.deepEqual(r2.errors, [
-    'delivery.prIdentity must be an object { owner, repo, pr_number, sha_full, platform, web_origin[, title] } when present',
-  ]);
-});
-test('T-ARGS: prIdentity.title is optional, shape-checked, and null-stripped without caller mutation', () => {
-  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
-  assert.deepEqual(
-    validateArgs({ ...good, delivery: { prIdentity: { ...id, title: 'A useful title' } } }),
-    { ok: true, errors: [] },
-  );
-  assert.deepEqual(
-    validateArgs({ ...good, delivery: { prIdentity: id } }),
-    { ok: true, errors: [] },
-  );
-  for (const title of [5, '  ']) {
-    const result = validateArgs({ ...good, delivery: { prIdentity: { ...id, title } } });
-    assert.equal(result.ok, false);
-    assert.ok(result.errors.includes('delivery.prIdentity.title must be a non-empty string when present'));
-  }
-
-  const caller = { ...good, delivery: { prIdentity: { ...id, title: null } } };
-  const beforeIdentity = caller.delivery.prIdentity;
-  const { args: stripped, dropped } = stripNullOptionalsReport(caller);
-  assert.deepEqual(dropped, ['delivery.prIdentity.title']);
-  assert.deepEqual(stripped.delivery.prIdentity, id);
-  assert.equal(caller.delivery.prIdentity, beforeIdentity);
-  assert.equal(caller.delivery.prIdentity.title, null);
-  assert.match(nullToleranceGap('delivery.prIdentity.title'), /falls back to owner\/repo#N/);
-});
-test('T-ARGS-NULL: a two-level null probe is rejected and disclosed', () => {
-  assert.deepEqual(
-    nullToleranceRejectedKeys(good, ['delivery.prIdentity.title']),
-    ['delivery.prIdentity.title'],
-  );
-});
-// Entry-args guard (live-run L1; superseded by issue #27's classified refusal design —
-// see entry_guard.test.js): a raw-string invocation ("PR 310") must throw an actionable
-// redirect to the skill, not a native JSON.parse stack. "PR 310" classifies as a
-// pr_shorthand review target (workflows/src/args.js classifyReviewTarget), so the thrown
-// message also carries the exact copy-paste Skill(...) line naming it back — pinned here,
-// not just loosely matched, because that line is the deliverable of the issue.
-test('parseEntryArgs: a non-JSON raw string throws with a skill redirect (no native parse stack)', () => {
-  assert.throws(() => parseEntryArgs('PR 310'), /code-gauntlet skill/);
-  assert.throws(() => parseEntryArgs('PR 310'), /PR 310/); // echoes the offending input
-  assert.throws(() => parseEntryArgs('PR 310'), /Skill\("code-gauntlet:code-gauntlet", args="PR 310"\)/);
-});
-test('parseEntryArgs: passes through the two legitimate forms unchanged', () => {
-  assert.deepEqual(parseEntryArgs(JSON.stringify(good)), good); // session tool-call form
-  assert.deepEqual(parseEntryArgs(good), good);                  // workflow-nesting form
-});
-// Issue #27 requirement 5: parseEntryArgs(undefined) used to return `undefined` SILENTLY,
-// leaving the caller least likely to parse a return value (the naked Workflow-tool call) to
-// fall through to a generic downstream validateArgs rejection with no recovery line at all.
-// Absent args is now refused at the entry, exactly like every other unusable shape — this
-// inverts the old assertion `parseEntryArgs(undefined) === undefined` on purpose.
-test('parseEntryArgs(undefined) now THROWS instead of silently returning undefined (requirement 5)', () => {
-  assert.throws(() => parseEntryArgs(undefined), /code-gauntlet skill/);
-  assert.throws(() => parseEntryArgs(undefined), /\(got undefined\)/);
-});
-
-// reviewConfig waist validation (live-run L2): the skill session assembled ignore entries
-// as {pattern, reason} objects; escapeRegExp assumes strings and crashed at Filter AFTER
-// five paid stages. The waist rejects the malformed shape up front.
-test('validateArgs rejects reviewConfig.ignore entries that are not strings', () => {
-  const a = { ...good, reviewConfig: { ignore: [{ pattern: 'x', reason: 'y' }] } };
-  const r = validateArgs(a);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('reviewConfig.ignore')));
-});
-test('validateArgs accepts reviewConfig.ignore as an array of flat strings (and absent reviewConfig)', () => {
-  assert.deepEqual(
-    validateArgs({ ...good, reviewConfig: { ignore: ['test_coverage:"*.generated.cs"'] } }),
-    { ok: true, errors: [] },
-  );
-  const a = { ...good }; delete a.reviewConfig;
-  assert.deepEqual(validateArgs(a), { ok: true, errors: [] });
-});
-test('validateArgs rejects a non-object reviewConfig and a non-array ignore', () => {
-  const r = validateArgs({ ...good, reviewConfig: 'ignore stuff' });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /reviewConfig must be an object/);
-  const r2 = validateArgs({ ...good, reviewConfig: { ignore: 'pattern' } });
-  assert.equal(r2.ok, false);
-  assert.ok(r2.errors.some((e) => e.includes('reviewConfig.ignore')));
-});
-
-// exclusionPatterns waist validation: consumed identically to reviewConfig.ignore (both feed
-// escapeRegExp in the Filter stage's applyFilterPipeline), so it gets the same shape guard.
-test('validateArgs rejects a non-string exclusionPatterns entry and a non-array exclusionPatterns', () => {
-  const r = validateArgs({ ...good, exclusionPatterns: [{ pattern: 'x' }] });
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('exclusionPatterns')));
-  const r2 = validateArgs({ ...good, exclusionPatterns: 'foo' });
-  assert.equal(r2.ok, false);
-  assert.match(r2.errors.join(' '), /exclusionPatterns must be an array/);
-});
-test('validateArgs accepts exclusionPatterns as an array of flat strings (and absent exclusionPatterns)', () => {
-  assert.deepEqual(
-    validateArgs({ ...good, exclusionPatterns: ['literal one', 'literal two'] }),
-    { ok: true, errors: [] },
-  );
-  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
-});
-
-// Single authority (issue #24 req 4, PR3): agentFlags is retired entirely.
-test('validateArgs rejects a caller-supplied agentFlags — single authority', () => {
-  const r = validateArgs({ ...good, agentFlags: {} });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /agentFlags is no longer accepted/);
-  assert.match(r.errors.join(' '), /riskTable\/scopeAnswer/);
-});
-
-// riskTable — the Phase 2e per-file risk classification (issue #24 req 1/2, PR3).
-test('validateArgs accepts a well-formed riskTable', () => {
-  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
-});
-test('validateArgs rejects a non-array riskTable', () => {
-  const r = validateArgs({ ...good, riskTable: {} });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /riskTable must be an array/);
-});
-test('validateArgs rejects an invalid risk literal', () => {
-  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'critical' }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /riskTable\[0\]\.risk must be one of low, medium, high/);
-});
-test('validateArgs rejects a non-object riskTable entry', () => {
-  const r = validateArgs({ ...good, riskTable: ['a.js'] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /riskTable\[0\] must be an object of the form \{path, risk\}/);
-});
-test('validateArgs rejects a riskTable entry with an empty path', () => {
-  const r = validateArgs({ ...good, riskTable: [{ path: '', risk: 'low' }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /riskTable\[0\]\.path must be a non-empty string/);
-});
-test('validateArgs rejects a riskTable entry with an extra key', () => {
-  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low', note: 'x' }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /unexpected key\(s\): note/);
-});
-test('validateArgs rejects riskTable missing a changed file (path-set mismatch, missing arm)', () => {
-  const r = validateArgs({ ...good, changedFiles: ['a.js', 'b.js'], riskTable: [{ path: 'a.js', risk: 'low' }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /missing risk classification for changed file\(s\): b\.js/);
-});
-test('validateArgs rejects riskTable with an extra path not in changedFiles (path-set mismatch, extra arm)', () => {
-  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'medium' }, { path: 'ghost.js', risk: 'low' }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /classifies file\(s\) not present in changedFiles: ghost\.js/);
-});
-
-// scopeAnswer — the light/full answer, only meaningful alongside a light-eligible riskTable.
-test('validateArgs accepts a coherent light scopeAnswer', () => {
-  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }], scopeAnswer: 'light' });
-  assert.deepEqual(r, { ok: true, errors: [] });
-});
-test('validateArgs accepts a coherent full scopeAnswer even when eligible', () => {
-  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }], scopeAnswer: 'full' });
-  assert.deepEqual(r, { ok: true, errors: [] });
-});
-test('validateArgs rejects an unknown scopeAnswer literal', () => {
-  const r = validateArgs({ ...good, scopeAnswer: 'partial' });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /invalid scopeAnswer: partial/);
-});
-test('validateArgs rejects scopeAnswer "light" when the riskTable is not light-eligible (medium/high present)', () => {
-  const r = validateArgs({ ...good, scopeAnswer: 'light' }); // fixture's riskTable is 'medium'
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /gate never asked/);
-});
-test('validateArgs rejects scopeAnswer "light" when changedLines >= 50 even if every file is low', () => {
-  const r = validateArgs({ ...good, changedLines: 50, riskTable: [{ path: 'a.js', risk: 'low' }], scopeAnswer: 'light' });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /gate never asked/);
-});
-test('validateArgs accepts changedLines exactly 49 as light-eligible (boundary)', () => {
-  const r = validateArgs({ ...good, changedLines: 49, riskTable: [{ path: 'a.js', risk: 'low' }], scopeAnswer: 'light' });
-  assert.deepEqual(r, { ok: true, errors: [] });
-});
-test('validateArgs rejects a light-eligible waist with no scopeAnswer (the gate must have asked)', () => {
-  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /scopeAnswer is missing/);
-});
-test('validateArgs accepts a not-eligible waist with no scopeAnswer', () => {
-  assert.deepEqual(validateArgs(good), { ok: true, errors: [] }); // fixture riskTable is 'medium'
-});
-test('validateArgs strips a stamped scopeAnswer: null the same way as its NULLABLE_TOP_LEVEL siblings', () => {
-  const { args, dropped } = stripNullOptionalsReport({ ...good, scopeAnswer: null });
-  assert.equal(args.scopeAnswer, undefined);
-  assert.ok(dropped.includes('scopeAnswer'));
-});
-
-// computeLightEligible — the ONE eligibility rule, shared by validateArgs's coherence guard
-// and discover.js's deriveAgentFlags.
-test('computeLightEligible: true iff every entry is low AND changedLines < 50', () => {
-  assert.equal(computeLightEligible([{ path: 'a', risk: 'low' }], 49), true);
-  assert.equal(computeLightEligible([{ path: 'a', risk: 'low' }], 50), false);
-  assert.equal(computeLightEligible([{ path: 'a', risk: 'medium' }], 1), false);
-  assert.equal(computeLightEligible([{ path: 'a', risk: 'low' }, { path: 'b', risk: 'high' }], 1), false);
-  assert.equal(computeLightEligible([], 1), true); // vacuously true for an empty riskTable
-  assert.equal(computeLightEligible(null, 1), false);
-  assert.equal(computeLightEligible([{ path: 'a', risk: 'low' }], 'not-a-number'), false);
-});
-test('validateArgs requires the consumed by-value fields changedFiles + changedLines', () => {
-  // REQUIRED mirrors consumption: summarize bucketing and the agent-count guard read
-  // these by value; a waist without them dispatches on garbage instead of failing loud.
-  const a = { ...good }; delete a.changedFiles; delete a.changedLines;
-  const r = validateArgs(a);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('changedFiles')));
-  assert.ok(r.errors.some((e) => e.includes('changedLines')));
-});
-test('validateArgs accepts an args waist without changedFilesPath (optional provenance)', () => {
-  const a = { ...good, changedFiles: ['a.js'], changedLines: 3 }; delete a.changedFilesPath;
-  assert.deepEqual(validateArgs(a), { ok: true, errors: [] });
-});
-test('validateArgs type-checks changedFiles (array) and changedLines (number)', () => {
-  const a = { ...good, changedFiles: 'a.js,b.js', changedLines: '3' };
-  const r = validateArgs(a);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('changedFiles')));
-  assert.ok(r.errors.some((e) => e.includes('changedLines')));
-});
-
-// D4 — args-waist null tolerance (issue #38 A1). A dispatch was rejected solely because
-// reviewConfig arrived as a stamped `null` rather than absent. normalizeArgs now strips a
-// literal null for a narrow allowlist of optional top-level fields so a stamped null costs
-// nothing at the waist.
-test('stripNullOptionalsReport deletes a null reviewConfig/exclusionPatterns/delivery/checkpoints', () => {
-  const a = { ...good, reviewConfig: null, exclusionPatterns: null, delivery: null, checkpoints: null };
-  const stripped = stripNullOptionalsReport(a).args;
-  assert.equal('reviewConfig' in stripped, false);
-  assert.equal('exclusionPatterns' in stripped, false);
-  assert.equal('delivery' in stripped, false);
-  assert.equal('checkpoints' in stripped, false);
-});
-test('stripNullOptionalsReport drops delivery.prIdentity: null and delivery.tier: null inside a present delivery object', () => {
-  const a = { ...good, delivery: { tier: null, prIdentity: null } };
-  const stripped = stripNullOptionalsReport(a).args;
-  assert.deepEqual(stripped.delivery, {});
-});
-test('stripNullOptionalsReport deletes a null reviewMd/exclusionsText and validateArgs accepts the stripped result', () => {
-  const a = { ...good, reviewMd: null, exclusionsText: null };
-  const { args: stripped, dropped } = stripNullOptionalsReport(a);
-  assert.equal('reviewMd' in stripped, false);
-  assert.equal('exclusionsText' in stripped, false);
-  assert.deepEqual([...dropped].sort(), ['exclusionsText', 'reviewMd']);
-  assert.equal(validateArgs(stripped).ok, true);
-});
-test('stripNullOptionalsReport does NOT strip limits.deliveryCap: null (uncapped is load-bearing)', () => {
-  const a = { ...good, limits: { ...good.limits, deliveryCap: null } };
-  const stripped = stripNullOptionalsReport(a).args;
-  assert.equal(stripped.limits.deliveryCap, null);
-});
-test('stripNullOptionalsReport does NOT strip policy.subagentModel: null (no-override is load-bearing)', () => {
-  const stripped = stripNullOptionalsReport(good).args; // good already carries policy.subagentModel: null
-  assert.equal(stripped.policy.subagentModel, null);
-});
-test('stripNullOptionalsReport leaves a non-null, non-allowlisted-field waist untouched', () => {
-  assert.deepEqual(stripNullOptionalsReport(good).args, good);
-});
-test('stripNullOptionalsReport passes through non-object input without throwing', () => {
-  for (const input of [undefined, null, 'not an object', ['not', 'an', 'object']]) {
-    const report = stripNullOptionalsReport(input);
-    assert.equal(report.args, input);
-    assert.deepEqual(report.dropped, []);
-    assert.deepEqual(report.respelled, []);
-  }
-});
-
-test('normalizeArgs strips stamped nulls on the object-passthrough form so validateArgs accepts them', () => {
-  const a = { ...good, reviewConfig: null, exclusionPatterns: null, delivery: null, checkpoints: null };
-  const normalized = normalizeArgs(a);
-  assert.equal('reviewConfig' in normalized, false);
-  assert.equal('exclusionPatterns' in normalized, false);
-  assert.deepEqual(normalized.delivery, { tier: 'all' });
-  assert.equal('checkpoints' in normalized, false);
-  assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
-});
-test('normalizeArgs strips stamped nulls on the JSON-string form too', () => {
-  const raw = JSON.stringify({ ...good, reviewConfig: null, delivery: { tier: null, prIdentity: null } });
-  const normalized = normalizeArgs(raw);
-  assert.equal('reviewConfig' in normalized, false);
-  assert.deepEqual(normalized.delivery, { tier: 'all' });
-  assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
-});
-test('normalizeArgs leaves a malformed non-null reviewConfig alone for validateArgs to reject loudly', () => {
-  const a = { ...good, reviewConfig: { ignore: [{ pattern: 'x', reason: 'y' }] } };
-  const r = validateArgs(normalizeArgs(a));
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('reviewConfig.ignore')));
-});
-test('normalizeArgs still round-trips a fully well-formed waist unchanged (no over-stripping)', () => {
-  const expected = { ...good, delivery: { tier: 'all' }, limits: { ...good.limits, deliveryCap: null } };
-  assert.deepEqual(normalizeArgs(good), expected);
-  assert.deepEqual(normalizeArgs(JSON.stringify(good)), expected);
-});
-
-// --- L3-1: the persist waist is null-tolerated AND shape-checked -------------
-// The persist field (issue #38 D3.4) was added to the waist but left OFF the very
-// null-tolerance allowlist the same diff introduced for its siblings, so a stamped
-// `persist: null` hard-rejected the whole run — the exact 21.3s-round-trip cost the
-// allowlist exists to remove.
-
-test('validateArgs accepts a well-formed persist waist, an empty one, and its absence', () => {
-  assert.deepEqual(
-    validateArgs({ ...good, persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' } }),
-    { ok: true, errors: [] },
-  );
-  assert.deepEqual(validateArgs({ ...good, persist: {} }), { ok: true, errors: [] });
-  assert.deepEqual(validateArgs(good), { ok: true, errors: [] }); // `good` carries no persist
-});
-test('validateArgs shape-checks a present persist (non-object, and a non-string/empty script path)', () => {
-  // Same present-then-shape-checked treatment as `delivery`: malformed fails loud at the
-  // waist, before any paid stage is dispatched.
-  const r = validateArgs({ ...good, persist: '/plugin/scripts/assemble_artifacts.py' });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /persist must be an object/);
-  const r2 = validateArgs({ ...good, persist: ['/p.py'] });
-  assert.equal(r2.ok, false);
-  assert.match(r2.errors.join(' '), /persist must be an object/);
-  const r3 = validateArgs({ ...good, persist: { assembleScriptPath: 42 } });
-  assert.equal(r3.ok, false);
-  assert.match(r3.errors.join(' '), /persist\.assembleScriptPath/);
-  const r4 = validateArgs({ ...good, persist: { assembleScriptPath: '' } });
-  assert.equal(r4.ok, false);
-  assert.match(r4.errors.join(' '), /persist\.assembleScriptPath/);
-});
-test('stripNullOptionalsReport deletes a null persist (same stand-in-for-absent treatment as its siblings)', () => {
-  const stripped = stripNullOptionalsReport({ ...good, persist: null }).args;
-  assert.equal('persist' in stripped, false);
-});
-test('normalizeArgs strips a stamped persist:null so validateArgs accepts the run instead of rejecting it', () => {
-  const normalized = normalizeArgs({ ...good, persist: null });
-  assert.equal('persist' in normalized, false);
-  assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
-  // ...and via the JSON-string form too.
-  assert.deepEqual(validateArgs(normalizeArgs(JSON.stringify({ ...good, persist: null }))), { ok: true, errors: [] });
-});
-test('a stamped persist:null still leaves a MALFORMED persist to fail loud (tolerance is null-only)', () => {
-  const r = validateArgs(normalizeArgs({ ...good, persist: { assembleScriptPath: '' } }));
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /persist\.assembleScriptPath/);
-});
-
-// --- L5-2: null tolerance is DISCLOSED, not silent ---------------------------
-// Tolerating a stamped null removes a fail-loud guard. A mis-stamped reviewConfig: null
-// would otherwise review under the Filter stage's config-absent defaults (55/70) rather
-// than the operator's REVIEW.md thresholds — a silent DELIVERED-findings change. The strip
-// therefore reports what it dropped so runWith can surface an actionable gap.
-
-test('stripNullOptionalsReport names every key it dropped', () => {
-  const { args: stripped, dropped } = stripNullOptionalsReport({
-    ...good, reviewConfig: null, exclusionPatterns: null, checkpoints: null, persist: null,
-  });
-  assert.deepEqual(dropped.slice().sort(), ['checkpoints', 'exclusionPatterns', 'persist', 'reviewConfig']);
-  for (const k of dropped) assert.equal(k in stripped, false, `${k} was dropped from the waist`);
-});
-test('stripNullOptionalsReport names the delivery sub-field drops with their dotted paths', () => {
-  const { dropped } = stripNullOptionalsReport({ ...good, delivery: { tier: null, prIdentity: null } });
-  assert.deepEqual(dropped.slice().sort(), ['delivery.prIdentity', 'delivery.tier']);
-});
-test('stripNullOptionalsReport reports NOTHING for a clean waist (no false disclosure)', () => {
-  assert.deepEqual(stripNullOptionalsReport(good).dropped, []);
-  // The two load-bearing nulls are not drops and must never be reported as such.
-  assert.deepEqual(
-    stripNullOptionalsReport({ ...good, limits: { ...good.limits, deliveryCap: null } }).dropped,
-    [],
-  );
-  assert.deepEqual(stripNullOptionalsReport(undefined).dropped, []);
-  assert.deepEqual(stripNullOptionalsReport('not an object').dropped, []);
-});
-test('the strip never mutates the caller object — nested delivery included', () => {
-  const caller = { ...good, reviewConfig: null, persist: null, delivery: { tier: null, prIdentity: null } };
-  const beforeDelivery = caller.delivery;
-  const { args: stripped } = stripNullOptionalsReport(caller);
-  assert.equal(caller.reviewConfig, null, 'caller keeps its stamped null');
-  assert.equal(caller.persist, null);
-  assert.equal(caller.delivery, beforeDelivery, 'the caller delivery object is the same reference');
-  assert.equal(caller.delivery.tier, null, 'the caller delivery sub-fields are untouched');
-  assert.equal(caller.delivery.prIdentity, null);
-  assert.notEqual(stripped.delivery, beforeDelivery, 'the returned delivery is a copy, not the caller object');
-  assert.deepEqual(stripped.delivery, {});
-});
-test('nullToleranceGap names the field, says it was treated as absent, and says to omit it', () => {
-  const g = nullToleranceGap('reviewConfig');
-  assert.match(g, /^null_arg: /);
-  assert.match(g, /reviewConfig/);
-  assert.match(g, /ABSENT/);
-  assert.match(g, /Omit/);
-  // The reviewConfig wording must name the concrete consequence: config-absent thresholds.
-  assert.match(g, /55/);
-  assert.match(g, /70/);
-  // An unlisted key still produces a well-formed, actionable line.
-  const g2 = nullToleranceGap('somethingNew');
-  assert.match(g2, /somethingNew/);
-  assert.match(g2, /Omit/);
-});
-test('normalizeArgsReport reports drops on both the object and JSON-string forms', () => {
-  const r1 = normalizeArgsReport({ ...good, reviewConfig: null });
-  assert.deepEqual(r1.dropped, ['reviewConfig']);
-  assert.equal('reviewConfig' in r1.args, false);
-  const r2 = normalizeArgsReport(JSON.stringify({ ...good, exclusionPatterns: null, persist: null }));
-  assert.deepEqual(r2.dropped.slice().sort(), ['exclusionPatterns', 'persist']);
-  assert.deepEqual(normalizeArgsReport(good).dropped, []);
-});
-
-test('T303-ARGS: interactive JSON null cap is respelled, validated, and reported without mutation', () => {
-  const input = {
-    ...good,
-    limits: { ...good.limits, deliveryCap: null },
-    configEcho: { ...good.configEcho, pr_comment_cap: { value: null, source: 'default' } },
-  };
-  const before = JSON.parse(JSON.stringify(input));
-  const normalized = normalizeArgs(input);
-  const report = normalizeArgsReport(input);
-
-  assert.equal(normalized.configEcho.pr_comment_cap.value, 'null');
-  assert.deepEqual(report.respelled, ['configEcho.pr_comment_cap.value']);
-  assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
-  assert.deepEqual(input, before, 'normalization must not mutate the caller object');
-  assert.equal(nullRespellGap(report.respelled[0]).includes('printed token "null"'), true);
-});
-
-test('T303-ARGS: null respelling consults the nullReceipt mode allowlist', () => {
-  const input = {
-    ...good,
-    mode: 'Interactive',
-    configEcho: { ...good.configEcho, pr_comment_cap: { value: null, source: 'default' } },
-  };
-  const report = normalizeArgsReport(JSON.stringify(input));
-
-  assert.equal(report.args.configEcho.pr_comment_cap.value, null);
-  assert.deepEqual(report.respelled, []);
-  const result = validateArgs(report.args);
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.includes('invalid mode: Interactive'));
-});
-
-test('T303-ARGS: an absent receipt value is not respelled', () => {
-  const input = {
-    ...good,
-    configEcho: { ...good.configEcho, pr_comment_cap: { source: 'default' } },
-  };
-  const report = normalizeArgsReport(input);
-
-  assert.equal('value' in report.args.configEcho.pr_comment_cap, false);
-  assert.deepEqual(report.respelled, []);
-});
-
-test('T303-ARGS: nullRespellGap keeps its complete operator disclosure', () => {
-  assert.equal(
-    nullRespellGap('pr_comment_cap'),
-    'null_receipt: args.pr_comment_cap arrived as a literal null and was spelled as the printed token "null"; the receipt and the configuration are unchanged; stamp the string "null".',
-  );
-});
-
-test('T303-ARGS: headless JSON null cap is still refused', () => {
-  const headless = {
-    ...good,
-    mode: 'headless',
-    limits: { ...good.limits, deliveryCap: null },
-    configEcho: {
-      model_tier: { value: 'optimized', source: 'default' },
-      delivery: { value: 'markdown', source: 'default' },
-      post_mode: { value: 'dry-run', source: 'default' },
-      pr_comment_cap: { value: null, source: 'default' },
-      delivery_tier: { value: 'all', source: 'default' },
-      draft_policy: { value: 'review', source: 'default' },
-      reviewed_policy: { value: 'full', source: 'default' },
-      pr_not_found_policy: { value: 'error', source: 'default' },
-      trivial_scope: { value: 'full', source: 'default' },
-    },
-  };
-  const report = normalizeArgsReport(JSON.stringify(headless));
-  assert.deepEqual(report.respelled, []);
-  const result = validateArgs(report.args);
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('configEcho.pr_comment_cap.value')));
-});
-
-test('T303-ARGS: interactive JSON null on model_tier is still refused', () => {
-  const input = {
-    ...good,
-    configEcho: { ...good.configEcho, model_tier: { value: null, source: 'fixed' } },
-  };
-  const normalized = normalizeArgs(input);
-  assert.equal(normalized.configEcho.model_tier.value, null);
-  assert.equal(validateArgs(normalized).ok, false);
-});
-test('parseEntryArgs does NOT strip stamped nulls — runWith owns the strip so it can disclose it', () => {
-  // If the entry stripped first, runWith would see an already-clean waist and the silent
-  // config substitution would go unreported on exactly the live path that matters.
-  // Issue #27 unchanged this: the entry now classifies/refuses non-object shapes and
-  // absent args, but a well-formed OBJECT with internal stamped nulls is still a plain
-  // object (accepted) and passes through untouched — the strip contract below still holds.
-  const parsed = parseEntryArgs(JSON.stringify({ ...good, reviewConfig: null, persist: null }));
-  assert.equal(parsed.reviewConfig, null);
-  assert.equal(parsed.persist, null);
-  const parsedObj = parseEntryArgs({ ...good, reviewConfig: null });
-  assert.equal(parsedObj.reviewConfig, null);
-});
-
-// --- contextLines / contextChars: the shared-context size waist (issue #48) ---
-//
-// The workflow has no disk, so the only way it can know how much of the shared context
-// file exists is for the skill to measure it and stamp it. contextReadPlan turns the
-// measurement into the exact Read calls the dispatch prompts enumerate; a malformed
-// measurement would yield a plan that misses the file's tail, which is precisely the
-// silent under-read #48 exists to stop. So the waist shape-checks both, hard.
-test('contextLines/contextChars are OPTIONAL — a pre-#48 waist stays valid', () => {
-  // Bench and every caller predating this field stamp neither. They must keep running
-  // (degrading to the count-free read-to-end wording), not be rejected.
-  assert.equal(validateArgs(good).ok, true);
-  assert.equal(validateArgs({ ...good, contextLines: 2028 }).ok, true);
-  assert.equal(validateArgs({ ...good, contextLines: 2028, contextChars: 94784 }).ok, true);
-  assert.equal(validateArgs({ ...good, contextLines: 1, contextChars: 1 }).ok, true);
-});
-
-test('contextLines/contextChars reject any value that would corrupt the read plan', () => {
-  for (const bad of [0, -1, 1.5, NaN, Infinity, '2028', null, {}, [], Number.MAX_SAFE_INTEGER + 2]) {
-    const r = validateArgs({ ...good, contextLines: bad });
-    assert.equal(r.ok, false, `contextLines=${String(bad)} should be rejected`);
-    assert.ok(r.errors.some((e) => e.includes('contextLines')), r.errors.join('; '));
-  }
-  for (const bad of [0, -1, 2.5, NaN, '95057', null, {}]) {
-    const r = validateArgs({ ...good, contextLines: 2028, contextChars: bad });
-    assert.equal(r.ok, false, `contextChars=${String(bad)} should be rejected`);
-    assert.ok(r.errors.some((e) => e.includes('contextChars')), r.errors.join('; '));
-  }
-});
-
-test('contextChars without contextLines is rejected — chars alone cannot size a line plan', () => {
-  const r = validateArgs({ ...good, contextChars: 94784 });
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('contextChars requires contextLines')), r.errors.join('; '));
-});
-
-test('a stamped null contextLines is NOT silently tolerated — it is a measurement, not an optional object', () => {
-  // NULLABLE_TOP_LEVEL is deliberately narrow (args.js). A null measurement must fail
-  // loud rather than degrade quietly to the count-free wording: the skill measured
-  // something and got null, which is a bug in the producer, not an omission.
-  assert.deepEqual(stripNullOptionalsReport({ ...good, contextLines: null }).dropped, []);
-  assert.equal(validateArgs({ ...good, contextLines: null }).ok, false);
-});
-
-test('contextLines/contextChars are bounded above — an absurd measurement fails loud at the waist', () => {
-  // Found by the adversarial review of this change: the guard checked only
-  // Number.isSafeInteger && > 0, so contextLines = Number.MAX_SAFE_INTEGER validated
-  // cleanly and then OOM-killed the node process inside contextReadPlan, uncatchably,
-  // before any dispatch. contextReadPlan carries its own chunk ceiling as the last line
-  // of defence; this is the fail-loud one, where the bad value is still attributable to
-  // the producer that stamped it.
-  for (const [k, over] of [['contextLines', 5000001], ['contextChars', 500000001]]) {
-    const base = k === 'contextChars' ? { ...good, contextLines: 2028 } : { ...good };
-    const r = validateArgs({ ...base, [k]: over });
-    assert.equal(r.ok, false, `${k}=${over} should be rejected`);
-    assert.ok(r.errors.some((e) => e.includes(k) && e.includes('ceiling')), r.errors.join('; '));
-  }
-  assert.equal(validateArgs({ ...good, contextLines: 5000000 }).ok, true, 'the ceiling itself is accepted');
-  assert.equal(validateArgs({ ...good, contextLines: Number.MAX_SAFE_INTEGER }).ok, false);
-});
-
-// --- Requirement 6 (issue #27): path-bearing waist fields are type/shape-checked ----------
-// Per-field reachability:
-//   - outputDir / headShaShort → shared-context path
-//     (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, built in runWith), which
-//     reaches every discovery prompt
-//   - headShaShort / diffPath → verify executor argv (--head-sha, --diff-file) — the same
-//     argv-splitting hazard NONCE_RE already guards against
-//   - repoRoot → discover-entry and checkpoint-replay normalization; absolute shape keeps
-//     path containment checks anchored to the repository
-// A present-but-garbage value on a consumed path field would otherwise render a junk path
-// into every paid dispatch instead of failing at the waist. Absence stays a REQUIRED-field
-// error (tested elsewhere); these checks fire only when the field is PRESENT.
-const PATH_FIELDS = ['repoRoot', 'outputDir', 'headShaShort', 'diffPath'];
-
-test('validateArgs rejects a non-string value for each path-bearing field when present', () => {
-  for (const field of PATH_FIELDS) {
-    for (const bad of [42, {}, null]) {
-      const r = validateArgs({ ...good, [field]: bad });
-      assert.equal(r.ok, false, `${field}=${JSON.stringify(bad)} should be rejected`);
-      assert.ok(r.errors.some((e) => e.includes(field)), `${field}: ${r.errors.join('; ')}`);
-    }
-  }
-});
-
-test('validateArgs rejects an empty or whitespace-only value for each path-bearing field', () => {
-  for (const field of PATH_FIELDS) {
-    for (const bad of ['', '   ']) {
-      const r = validateArgs({ ...good, [field]: bad });
-      assert.equal(r.ok, false, `${field}=${JSON.stringify(bad)} should be rejected`);
-      assert.ok(r.errors.some((e) => e.includes(field)), `${field}: ${r.errors.join('; ')}`);
-    }
-  }
-});
-
-test('validateArgs rejects a path-bearing field carrying an embedded control character (\\n)', () => {
-  // Write the class with unicode escapes at the implementation site, never a literal
-  // control byte (spec 1f) — this test drives that guard with an actual embedded newline,
-  // the one every path-bearing field is most likely to receive from a mis-templated stamp.
-  for (const field of PATH_FIELDS) {
-    const r = validateArgs({ ...good, [field]: 'a\nb' });
-    assert.equal(r.ok, false, `${field} with an embedded newline should be rejected`);
-    assert.ok(r.errors.some((e) => e.includes(field)), `${field}: ${r.errors.join('; ')}`);
-  }
-});
-
-test('validateArgs rejects headShaShort that would split or inject in the verify argv', () => {
-  // headShaShort reaches the shell-run string verifyCommand builds (verifyStage.js), where it
-  // is carried as a bare word. Apply the same NONCE_RE charset as the nonce — whitespace,
-  // shell metacharacters, and anything outside [A-Za-z0-9._-] must fail at the waist. A
-  // real short SHA never needs them (unlike a path, which verifyCommand quotes instead).
-  for (const bad of ['abc 1234', 'abc;id', 'abc$(id)', 'abc`id`', "abc'x", 'abc|x']) {
-    const r = validateArgs({ ...good, headShaShort: bad });
-    assert.equal(r.ok, false, `headShaShort=${JSON.stringify(bad)} should be rejected`);
-    assert.ok(r.errors.some((e) => e.includes('headShaShort')), `${bad}: ${r.errors.join('; ')}`);
-  }
-});
-
-test('validateArgs still accepts the existing good waist untouched (the path-field guard is not overzealous)', () => {
-  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
-});
-
-// Issue #86: outputDir must be absolute (POSIX /-prefix). Relative paths type-checked
-// fine before this guard; the waist rejects them rather than resolving (no reliable cwd).
-test('validateArgs rejects a relative outputDir', () => {
-  const r = validateArgs({ ...good, outputDir: '.code-gauntlet' });
-  assert.equal(r.ok, false);
-  assert.ok(
-    r.errors.some((e) => e.includes('outputDir') && e.includes('absolute')),
-    r.errors.join('; '),
-  );
-});
-
-test('validateArgs accepts an absolute outputDir (POSIX /-prefix)', () => {
-  assert.deepEqual(
-    validateArgs({ ...good, outputDir: '/r/.code-gauntlet' }),
-    { ok: true, errors: [] },
-  );
-});
-
-// Discover-entry normalization needs an absolute repoRoot for containment without a filesystem probe.
-test('validateArgs rejects a relative repoRoot', () => {
-  for (const bad of ['.', 'repo']) {
-    const r = validateArgs({ ...good, repoRoot: bad });
-    assert.equal(r.ok, false, `repoRoot=${JSON.stringify(bad)} should be rejected`);
-    assert.ok(
-      r.errors.some((e) => e.includes('repoRoot') && e.includes('absolute')),
-      r.errors.join('; '),
-    );
-  }
-});
-
-test('validateArgs accepts an absolute repoRoot (POSIX /-prefix)', () => {
-  assert.deepEqual(
-    validateArgs({ ...good, repoRoot: '/r' }),
-    { ok: true, errors: [] },
-  );
-});
-
-// --- Issue #24 req 7: LIMIT_DEFAULTS at the args waist ----------------------------------
-
-test('LIMIT_DEFAULTS covers exactly the five benchmarked/bound keys, never deliveryCap/discoveryCap', () => {
-  assert.deepEqual(LIMIT_DEFAULTS, {
-    summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25,
-    maxLineSpan: 100,
-  });
-});
-
-test('normalizeArgs fills every absent limits key from LIMIT_DEFAULTS', () => {
-  const raw = { ...good, limits: {} };
-  const out = normalizeArgs(raw);
-  assert.deepEqual(out.limits, { ...LIMIT_DEFAULTS, deliveryCap: null });
-});
-
-test('normalizeArgs fills only the MISSING limits keys, leaving every provided value untouched', () => {
-  const raw = { ...good, limits: { summarizeBucketSize: 7, deliveryCap: 3 } };
-  const out = normalizeArgs(raw);
-  assert.deepEqual(out.limits, {
-    summarizeBucketSize: 7, deliveryCap: 3,
-    validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100,
-  });
-});
-
-test('normalizeArgs treats a provided challengeCap:0 as a real value, not an absent one to default over', () => {
-  const raw = { ...good, limits: { challengeCap: 0 } };
-  const out = normalizeArgs(raw);
-  assert.equal(out.limits.challengeCap, 0);
-});
-
-test('normalizeArgs treats a provided deliveryCap:null as a real value (uncapped), never defaulted', () => {
-  const raw = { ...good, limits: { deliveryCap: null } };
-  const out = normalizeArgs(raw);
-  assert.equal(out.limits.deliveryCap, null);
-  assert.ok(!('deliveryCap' in LIMIT_DEFAULTS), 'deliveryCap must never be in LIMIT_DEFAULTS');
-});
-
-test('normalizeArgs leaves a non-object limits alone for validateArgs to reject', () => {
-  const out = normalizeArgs({ ...good, limits: 'nope' });
-  assert.equal(out.limits, 'nope');
-});
-
-test('validateArgs accepts a normalized (fully defaulted) limits object', () => {
-  const out = normalizeArgs({ ...good, limits: {} });
-  assert.deepEqual(validateArgs(out), { ok: true, errors: [] });
-});
-
-test('validateArgs accepts limits absent entirely, deliveryCap null, discoveryCap absent', () => {
-  const r = validateArgs({ ...good, limits: { ...good.limits, deliveryCap: null } });
-  assert.deepEqual(r, { ok: true, errors: [] });
-});
-
-test('validateArgs accepts limits.challengeCap: 0 (challenge nothing is a legal cap)', () => {
-  const r = validateArgs({ ...good, limits: { ...good.limits, challengeCap: 0 } });
-  assert.deepEqual(r, { ok: true, errors: [] });
-});
-
-test('validateArgs accepts a positive limits.discoveryCap', () => {
-  const r = validateArgs({ ...good, limits: { ...good.limits, discoveryCap: 10 } });
-  assert.deepEqual(r, { ok: true, errors: [] });
-});
-
-test('validateArgs accepts a positive limits.maxLineSpan (issue #204)', () => {
-  const r = validateArgs({ ...good, limits: { ...good.limits, maxLineSpan: 250 } });
-  assert.deepEqual(r, { ok: true, errors: [] });
-});
-
-test('validateArgs rejects a non-object limits', () => {
-  for (const bad of [null, 'x', 5, [], []]) {
-    const r = validateArgs({ ...good, limits: bad });
-    assert.equal(r.ok, false, `limits=${JSON.stringify(bad)} should be rejected`);
-  }
-});
-
-test('validateArgs rejects an unknown limits key — the silent-typo case (issue #24)', () => {
-  const r = validateArgs({ ...good, limits: { ...good.limits, verifySclieSize: 50 } });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /unknown limits key: verifySclieSize/);
-});
-
-test('validateArgs rejects zero/negative/non-integer summarizeBucketSize, validateBatch, verifySliceSize, maxLineSpan', () => {
-  for (const key of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan']) {
-    for (const bad of [0, -1, 1.5, 'x', NaN]) {
-      const r = validateArgs({ ...good, limits: { ...good.limits, [key]: bad } });
-      assert.equal(r.ok, false, `limits.${key}=${bad} should be rejected`);
-      assert.match(r.errors.join(' '), new RegExp(`limits\\.${key} must be a positive safe integer`));
-    }
-  }
-});
-
-test('validateArgs rejects a negative or non-integer challengeCap, but accepts 0', () => {
-  for (const bad of [-1, 1.5, 'x']) {
-    const r = validateArgs({ ...good, limits: { ...good.limits, challengeCap: bad } });
-    assert.equal(r.ok, false, `limits.challengeCap=${bad} should be rejected`);
-  }
-  assert.deepEqual(
-    validateArgs({ ...good, limits: { ...good.limits, challengeCap: 0 } }),
-    { ok: true, errors: [] },
-  );
-});
-
-test('validateArgs rejects a negative or non-integer deliveryCap, but accepts null/absent', () => {
-  for (const bad of [-1, 1.5, 'x']) {
-    const r = validateArgs({ ...good, limits: { ...good.limits, deliveryCap: bad } });
-    assert.equal(r.ok, false, `limits.deliveryCap=${bad} should be rejected`);
-  }
-  assert.deepEqual(
-    validateArgs({ ...good, limits: { ...good.limits, deliveryCap: null } }),
-    { ok: true, errors: [] },
-  );
-});
-
-test('validateArgs rejects a zero/negative/non-integer discoveryCap when present, but accepts absence', () => {
-  for (const bad of [0, -1, 1.5, 'x']) {
-    const r = validateArgs({ ...good, limits: { ...good.limits, discoveryCap: bad } });
-    assert.equal(r.ok, false, `limits.discoveryCap=${bad} should be rejected`);
-  }
-  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
-});
-
-// --- reviewMd / exclusionsText (issue #24 PR2) -------------------------------
-
-test('validateArgs accepts a well-formed reviewMd array', () => {
-  const r = validateArgs({ ...good, reviewConfigPath: '/r/REVIEW.md', reviewMd: [{ path: 'REVIEW.md', text: '' }, { path: 'src/REVIEW.md', text: 'ignore:\n  - foo' }], configEcho: { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } } });
-  assert.deepEqual(r, { ok: true, errors: [] });
-});
-test('validateArgs accepts an empty reviewMd array (authoritative "found nothing")', () => {
-  assert.deepEqual(validateArgs({ ...good, reviewMd: [] }), { ok: true, errors: [] });
-});
-test('validateArgs rejects a non-array reviewMd', () => {
-  const r = validateArgs({ ...good, reviewMd: { path: 'x', text: '' } });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /reviewMd must be an array/);
-});
-test('validateArgs rejects a reviewMd entry with an extra key', () => {
-  const r = validateArgs({ ...good, reviewMd: [{ path: 'x', text: '', extra: 1 }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /unexpected key/);
-});
-test('validateArgs rejects a reviewMd entry missing path or text', () => {
-  const base = { ...good, reviewConfigPath: '/r/REVIEW.md', configEcho: { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } } };
-  const missingPath = validateArgs({ ...base, reviewMd: [{ text: 'x' }] });
-  assert.ok(missingPath.errors.includes('reviewMd[0].path must be a non-empty string'));
-  const missingText = validateArgs({ ...base, reviewMd: [{ path: 'REVIEW.md' }] });
-  assert.ok(missingText.errors.includes('reviewMd[0].text must be a string'));
-});
-
-test('validateArgs enforces reviewMd root and reviewConfigPath coherence', () => {
-  const presentEcho = { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } };
-  const coherenceError = 'reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd contains an entry with path exactly REVIEW.md';
-
-  assert.deepEqual(validateArgs({
-    ...good, reviewMd: [{ path: 'REVIEW.md', text: '' }], reviewConfigPath: '/r/REVIEW.md', configEcho: presentEcho,
-  }), { ok: true, errors: [] });
-  assert.ok(validateArgs({
-    ...good, reviewMd: [{ path: 'REVIEW.md', text: '' }], reviewConfigPath: null, configEcho: presentEcho,
-  }).errors.includes(coherenceError));
-  assert.deepEqual(validateArgs({
-    ...good, reviewMd: [{ path: 'api/REVIEW.md', text: '' }], reviewConfigPath: null, configEcho: presentEcho,
-  }), { ok: true, errors: [] });
-  assert.ok(validateArgs({
-    ...good, reviewMd: [{ path: 'api/REVIEW.md', text: '' }], reviewConfigPath: '/r/REVIEW.md', configEcho: presentEcho,
-  }).errors.includes(coherenceError));
-});
-
-test('T290: subdirectory discovery fills present and rejects absent', () => {
-  const args = {
-    ...good,
-    reviewMd: [{ path: 'api/REVIEW.md', text: 'subtree' }],
-    reviewConfigPath: null,
-    configEcho: { ...good.configEcho },
-  };
-  delete args.configEcho.review_md;
-  const normalized = normalizeArgs(args);
-  assert.deepEqual(normalized.configEcho.review_md, { value: 'present', source: 'discovery' });
-  assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
-  assert.deepEqual(validateArgs({
-    ...args,
-    configEcho: { ...args.configEcho, review_md: { value: 'present', source: 'discovery' } },
-  }), { ok: true, errors: [] });
-  const absent = validateArgs({
-    ...args,
-    configEcho: { ...args.configEcho, review_md: { value: 'absent', source: 'discovery' } },
-  });
-  assert.ok(absent.errors.includes('configEcho.review_md does not match reviewMd'));
-});
-
-test('T290: root discovery accepts present', () => {
-  const args = {
-    ...good,
-    reviewMd: [{ path: 'REVIEW.md', text: 'root' }],
-    reviewConfigPath: '/r/REVIEW.md',
-    configEcho: { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } },
-  };
-  assert.deepEqual(validateArgs(args), { ok: true, errors: [] });
-  const missingEcho = { ...args, configEcho: { ...args.configEcho } };
-  delete missingEcho.configEcho.review_md;
-  assert.deepEqual(normalizeArgs(missingEcho).configEcho.review_md, { value: 'present', source: 'discovery' });
-});
-
-test('T290: empty discovery derives absent', () => {
-  const args = {
-    ...good,
-    reviewMd: [],
-    reviewConfigPath: null,
-    configEcho: { ...good.configEcho },
-  };
-  delete args.configEcho.review_md;
-  assert.deepEqual(normalizeArgs(args).configEcho.review_md, { value: 'absent', source: 'discovery' });
-  assert.deepEqual(validateArgs({
-    ...args,
-    configEcho: { ...args.configEcho, review_md: { value: 'absent', source: 'discovery' } },
-  }), { ok: true, errors: [] });
-  const present = validateArgs({
-    ...args,
-    configEcho: { ...args.configEcho, review_md: { value: 'present', source: 'discovery' } },
-  });
-  assert.ok(present.errors.includes('configEcho.review_md does not match reviewMd'));
-});
-
-test('T290: legacy path preserves present', () => {
-  const args = {
-    ...good,
-    reviewConfig: { ignore: [] },
-    reviewConfigPath: '/r/REVIEW.md',
-    configEcho: { ...good.configEcho },
-  };
-  delete args.configEcho.review_md;
-  assert.deepEqual(normalizeArgs(args).configEcho.review_md, { value: 'present', source: 'discovery' });
-  assert.deepEqual(validateArgs({
-    ...args,
-    configEcho: { ...args.configEcho, review_md: { value: 'present', source: 'discovery' } },
-  }), { ok: true, errors: [] });
-});
-
-test('T290: legacy null path refuses present', () => {
-  const args = {
-    ...good,
-    reviewConfig: { ignore: [] },
-    reviewConfigPath: null,
-    configEcho: { ...good.configEcho },
-  };
-  delete args.configEcho.review_md;
-  assert.deepEqual(normalizeArgs(args).configEcho.review_md, { value: 'absent', source: 'discovery' });
-  assert.deepEqual(validateArgs({
-    ...args,
-    configEcho: { ...args.configEcho, review_md: { value: 'absent', source: 'discovery' } },
-  }), { ok: true, errors: [] });
-  const present = validateArgs({
-    ...args,
-    configEcho: { ...args.configEcho, review_md: { value: 'present', source: 'discovery' } },
-  });
-  assert.ok(present.errors.includes('configEcho.review_md does not match reviewMd'));
-});
-test('validateArgs rejects an absolute reviewMd path', () => {
-  const r = validateArgs({ ...good, reviewMd: [{ path: '/foo/REVIEW.md', text: '' }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /repo-relative/);
-});
-test('validateArgs rejects non-string reviewMd text', () => {
-  const r = validateArgs({ ...good, reviewMd: [{ path: 'x', text: 123 }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /text must be a string/);
-});
-test('validateArgs rejects non-string reviewMd path', () => {
-  const r = validateArgs({ ...good, reviewMd: [{ path: 123, text: '' }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /path must be a non-empty string/);
-});
-test('validateArgs rejects a reviewMd path with a control character', () => {
-  const r = validateArgs({ ...good, reviewMd: [{ path: 'foo\u0000bar', text: '' }] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /control character/);
-});
-test('validateArgs rejects reviewMd + reviewConfig both present (single authority)', () => {
-  const r = validateArgs({ ...good, reviewMd: [], reviewConfig: { ignore: [] } });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /reviewMd and reviewConfig are both present/);
-});
-test('validateArgs rejects exclusionsText + exclusionPatterns both present (single authority)', () => {
-  const r = validateArgs({ ...good, exclusionsText: '', exclusionPatterns: [] });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /exclusionsText and exclusionPatterns are both present/);
-});
-test('validateArgs accepts exclusionsText alone', () => {
-  assert.deepEqual(validateArgs({ ...good, exclusionsText: 'foo.js\n' }), { ok: true, errors: [] });
-});
-test('validateArgs rejects non-string exclusionsText', () => {
-  const r = validateArgs({ ...good, exclusionsText: 42 });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /exclusionsText must be a string/);
-});
-test('validateArgs: reviewConfig alone (no reviewMd) still validates cleanly (req 8 backward compat)', () => {
-  assert.deepEqual(validateArgs({ ...good, reviewConfig: { ignore: ['x'] } }), { ok: true, errors: [] });
-});
-
-function assertReviewPathError(path, phrase) {
-  const result = validateArgs({ ...good, reviewMd: [{ path, text: '' }] });
-  assert.equal(result.ok, false, path);
-  assert.ok(result.errors.some((error) => error.includes(phrase)), `${path}: ${phrase}`);
 }
 
-test('validateArgs: reviewMd rejects a backslash path', () => {
-  assertReviewPathError('api\\REVIEW.md', 'must use / separators');
-});
-test('validateArgs: reviewMd rejects a trailing slash', () => {
-  assertReviewPathError('api/REVIEW.md/', 'trailing /');
-});
-test('validateArgs: reviewMd rejects an empty path segment', () => {
-  assertReviewPathError('api//REVIEW.md', 'empty path segment');
-});
-test('validateArgs: reviewMd rejects a dot path segment', () => {
-  assertReviewPathError('api/./REVIEW.md', 'must not contain . or ..');
-});
-test('validateArgs: reviewMd rejects a dot-dot path segment', () => {
-  assertReviewPathError('api/../REVIEW.md', 'must not contain . or ..');
-});
-test('validateArgs: reviewMd rejects a dot-prefix path', () => {
-  assertReviewPathError('./REVIEW.md', 'must not contain . or ..');
-});
-test('validateArgs: reviewMd rejects a wrong basename', () => {
-  assertReviewPathError('api/NOT-REVIEW.md', 'must end with exactly REVIEW.md');
-});
-
-test('validateArgs: reviewConfig validates threshold domains at root and scope', () => {
-  for (const key of ['confidence_threshold', 'security_min_confidence']) {
-    for (const value of [-1, 101, 1.5, '80']) {
-      const result = validateArgs({ ...good, reviewConfig: { ignore: [], [key]: value } });
-      assert.equal(result.ok, false, `${key}=${value}`);
-    }
-  }
-  for (const value of ['urgent', 1]) {
-    const result = validateArgs({ ...good, reviewConfig: { ignore: [], severity_threshold: value } });
-    assert.equal(result.ok, false, `severity=${value}`);
-  }
-  const scoped = validateArgs({ ...good, reviewConfig: {
-    ignore: [], confidence_threshold: 0, security_min_confidence: 100, severity_threshold: 'critical',
-    scopes: [{ dir: 'api', ignore: [], confidence_threshold: 90, security_min_confidence: 80, severity_threshold: 'high' }],
-  } });
-  assert.deepEqual(scoped, { ok: true, errors: [] });
-});
-
-test('validateArgs: reviewConfig rejects an explicitly undefined threshold key', () => {
-  const result = validateArgs({ ...good, reviewConfig: { ignore: [], confidence_threshold: undefined } });
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('confidence_threshold must be an integer')));
-});
-
-function assertScopeError(scope, phrase) {
-  const result = validateArgs({ ...good, reviewConfig: { ignore: [], scopes: [scope] } });
-  assert.equal(result.ok, false, JSON.stringify(scope));
-  assert.ok(result.errors.some((error) => error.includes(phrase)), `${JSON.stringify(scope)}: ${phrase}`);
-}
-
-test('validateArgs: reviewConfig scopes require plain objects', () => {
-  assertScopeError(null, 'scopes[0] must be a plain object');
-  assertScopeError([], 'scopes[0] must be a plain object');
-});
-test('validateArgs: reviewConfig scopes must be an array', () => {
-  const result = validateArgs({ ...good, reviewConfig: { ignore: [], scopes: {} } });
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('reviewConfig.scopes must be an array')));
-});
-test('validateArgs: reviewConfig scope dir is non-empty', () => {
-  assertScopeError({ dir: '', ignore: [] }, 'scopes[0].dir must be a non-empty string');
-});
-test('validateArgs: reviewConfig scope dir has no leading slash', () => {
-  assertScopeError({ dir: '/api', ignore: [] }, 'leading or trailing /');
-});
-test('validateArgs: reviewConfig scope dir has no trailing slash', () => {
-  assertScopeError({ dir: 'api/', ignore: [] }, 'leading or trailing /');
-});
-test('validateArgs: reviewConfig scope dir rejects backslashes', () => {
-  assertScopeError({ dir: 'api\\v1', ignore: [] }, 'must use / separators');
-});
-test('validateArgs: reviewConfig scope dir rejects control characters', () => {
-  assertScopeError({ dir: 'api\n', ignore: [] }, 'control character');
-});
-test('validateArgs: reviewConfig scope dir rejects empty segments', () => {
-  assertScopeError({ dir: 'api//v1', ignore: [] }, 'empty path segment');
-});
-test('validateArgs: reviewConfig scope dir rejects dot segments', () => {
-  assertScopeError({ dir: 'api/./v1', ignore: [] }, 'must not contain . or ..');
-});
-test('validateArgs: reviewConfig scope dir rejects dot-dot segments', () => {
-  assertScopeError({ dir: 'api/../v1', ignore: [] }, 'must not contain . or ..');
-});
-test('validateArgs: reviewConfig scope rejects unknown keys', () => {
-  assertScopeError({ dir: 'api', ignore: [], unexpected: true }, 'unexpected key(s)');
-});
-test('validateArgs: reviewConfig scope rejects an invalid threshold value', () => {
-  assertScopeError({ dir: 'api', ignore: [], confidence_threshold: '90' }, 'confidence_threshold must be an integer');
-});
-test('validateArgs: reviewConfig scope rejects an invalid severity enum', () => {
-  assertScopeError({ dir: 'api', ignore: [], severity_threshold: 'urgent' }, 'severity_threshold must be one of');
-});
-test('validateArgs: reviewConfig scope rejects non-string ignores', () => {
-  assertScopeError({ dir: 'api', ignore: [42] }, 'ignore[0] must be a flat pattern string');
-});
-
-test('validateArgs: reviewConfig scopes reject duplicate dirs', () => {
-  const duplicate = validateArgs({ ...good, reviewConfig: {
-    ignore: [], scopes: [{ dir: 'api', ignore: [] }, { dir: 'api', ignore: [] }],
-  } });
-  assert.equal(duplicate.ok, false);
-  assert.ok(duplicate.errors.some((error) => error.includes('scopes[1]')));
-});
-
-// --- resolveReviewConfig (issue #24 PR2) -------------------------------------
-
-test('resolveReviewConfig: absent reviewMd/exclusionsText falls back to reviewConfig/exclusionPatterns unchanged (req 8)', () => {
-  const A = { reviewConfig: { ignore: ['a'] }, exclusionPatterns: ['b'] };
-  assert.deepEqual(resolveReviewConfig(A), {
+const RESOLVE_ROWS = [
+  { name: 'none', input: undefined, expected: {
+    reviewConfig: {}, exclusionPatterns: [], reviewConfigSource: 'none', exclusionsSource: 'none', reviewMdEntryCount: 0,
+  } },
+  { name: 'parsed axes', input: { reviewConfig: { ignore: ['a'] }, exclusionPatterns: ['b'] }, expected: {
     reviewConfig: { ignore: ['a'] }, exclusionPatterns: ['b'],
     reviewConfigSource: 'preParsed', exclusionsSource: 'preParsed', reviewMdEntryCount: 0,
-  });
-});
-test('resolveReviewConfig: neither present -> source "none"', () => {
-  assert.deepEqual(resolveReviewConfig({}), {
-    reviewConfig: {}, exclusionPatterns: [], reviewConfigSource: 'none', exclusionsSource: 'none', reviewMdEntryCount: 0,
-  });
-});
-test('resolveReviewConfig: single reviewMd entry parses correctly', () => {
-  const text = '```yaml code-gauntlet\nconfidence_threshold: 80\nignore:\n  - foo.js\n```';
-  const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text }] });
-  assert.deepEqual(out.reviewConfig, { confidence_threshold: 80, ignore: ['foo.js'] });
-  assert.equal(out.reviewConfig.confidence_threshold, 80);
-  assert.deepEqual(out.reviewConfig.ignore, ['foo.js']);
-  assert.equal(out.reviewConfigSource, 'reviewMd');
-  assert.equal(out.reviewMdEntryCount, 1);
-});
-test('resolveReviewConfig: deeper entry overrides an earlier entry\'s threshold setting', () => {
-  const root = '```yaml code-gauntlet\nconfidence_threshold: 70\n```';
-  const deep = '```yaml code-gauntlet\nconfidence_threshold: 90\n```';
-  const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: root }, { path: 'src/REVIEW.md', text: deep }] });
-  assert.equal(out.reviewConfig.confidence_threshold, 70);
-  assert.deepEqual(out.reviewConfig.scopes, [{ dir: 'src', confidence_threshold: 90, ignore: [] }]);
-});
-test('resolveReviewConfig: ignore lists accumulate across entries, in order', () => {
-  const root = '```yaml code-gauntlet\nignore:\n  - a.js\n  - b.js\n```';
-  const deep = '```yaml code-gauntlet\nignore:\n  - c.js\n```';
-  const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: root }, { path: 'src/REVIEW.md', text: deep }] });
-  assert.deepEqual(out.reviewConfig.ignore, ['a.js', 'b.js']);
-  assert.deepEqual(out.reviewConfig.scopes, [{ dir: 'src', ignore: ['c.js'] }]);
-});
-test('resolveReviewConfig: absent settings stay strictly undefined after merge (no default fill)', () => {
-  const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: 'no config block here' }] });
-  assert.equal(out.reviewConfig.confidence_threshold, undefined);
-  assert.equal(out.reviewConfig.security_min_confidence, undefined);
-  assert.equal(out.reviewConfig.severity_threshold, undefined);
-  assert.deepEqual(out.reviewConfig.ignore, []);
-});
-test('resolveReviewConfig: empty reviewMd array is equivalent to today\'s no-REVIEW.md path', () => {
-  const out = resolveReviewConfig({ reviewMd: [] });
-  assert.deepEqual(out.reviewConfig, { ignore: [] });
-  assert.equal(out.reviewConfigSource, 'reviewMd');
-  assert.equal(out.reviewMdEntryCount, 0);
-});
-test('resolveReviewConfig: exclusionsText is parsed via loadExclusions', () => {
-  const out = resolveReviewConfig({ exclusionsText: '- foo.js\n- bar/*.js\n' });
-  assert.deepEqual(out.exclusionPatterns, ['foo.js', 'bar/*.js']);
-});
-test('resolveReviewConfig: deeper entry overrides an earlier entry\'s severity_threshold setting', () => {
-  const root = '```yaml code-gauntlet\nseverity_threshold: low\n```';
-  const deep = '```yaml code-gauntlet\nseverity_threshold: high\n```';
-  const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: root }, { path: 'src/REVIEW.md', text: deep }] });
-  assert.equal(out.reviewConfig.severity_threshold, 'low');
-  assert.equal(out.reviewConfig.scopes[0].severity_threshold, 'high');
-});
-test('resolveReviewConfig: deeper entry overrides an earlier entry\'s security_min_confidence setting', () => {
-  const root = '```yaml code-gauntlet\nsecurity_min_confidence: 60\n```';
-  const deep = '```yaml code-gauntlet\nsecurity_min_confidence: 85\n```';
-  const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: root }, { path: 'src/REVIEW.md', text: deep }] });
-  assert.equal(out.reviewConfig.security_min_confidence, 60);
-  assert.equal(out.reviewConfig.scopes[0].security_min_confidence, 85);
-});
-test('resolveReviewConfig: reviewMd + exclusionsText together — reviewConfig from reviewMd, exclusions actually parsed from exclusionsText', () => {
-  const text = '```yaml code-gauntlet\nconfidence_threshold: 80\n```';
-  const out = resolveReviewConfig({
-    reviewMd: [{ path: 'REVIEW.md', text }],
-    exclusionsText: '- foo.js\n- bar/*.js\n',
-  });
-  assert.equal(out.reviewConfig.confidence_threshold, 80);
-  assert.equal(out.reviewConfigSource, 'reviewMd');
-  assert.equal(out.exclusionsSource, 'exclusionsText');
-  assert.deepEqual(out.exclusionPatterns, ['foo.js', 'bar/*.js']);
-});
-test('resolveReviewConfig: reviewMd present + exclusionsText absent falls back to legacy exclusionPatterns', () => {
-  const text = '```yaml code-gauntlet\nconfidence_threshold: 80\n```';
-  const out = resolveReviewConfig({
-    reviewMd: [{ path: 'REVIEW.md', text }],
-    exclusionPatterns: ['legacy.js'],
-  });
-  assert.deepEqual(out.exclusionPatterns, ['legacy.js']);
-  assert.equal(out.exclusionsSource, 'preParsed');
-});
-test('resolveReviewConfig: exclusionsText-only (no reviewMd) echoes reviewConfigSource "preParsed" when reviewConfig was also stamped, never "reviewMd"', () => {
-  const out = resolveReviewConfig({ exclusionsText: '- foo.js\n', reviewConfig: { confidence_threshold: 70 } });
-  assert.equal(out.reviewConfigSource, 'preParsed');
-  assert.equal(out.exclusionsSource, 'exclusionsText');
-  assert.equal(out.reviewConfig.confidence_threshold, 70);
-});
-test('resolveReviewConfig: reviewMd scopes are depth-ordered regardless of input order', () => {
-  const root = '```yaml code-gauntlet\nconfidence_threshold: 70\n```';
-  const deep = '```yaml code-gauntlet\nconfidence_threshold: 90\n```';
-  // Deliberately reversed input order (deep before root) — the root and scope remain
-  // separate, and the scope array is ordered structurally.
-  const out = resolveReviewConfig({ reviewMd: [{ path: 'src/deep/REVIEW.md', text: deep }, { path: 'REVIEW.md', text: root }] });
-  assert.equal(out.reviewConfig.confidence_threshold, 70);
-  assert.deepEqual(out.reviewConfig.scopes, [{ dir: 'src/deep', confidence_threshold: 90, ignore: [] }]);
-});
-
-for (const repoRoot of ['/work/../repo', String.raw`/a\b`]) {
-  test(`validateArgs rejects an unconfined repoRoot: ${repoRoot}`, () => {
-    const out = validateArgs({ ...good, repoRoot });
-    assert.equal(out.ok, false);
-    assert.ok(out.errors.includes('repoRoot must be an absolute path without .. segments or backslashes'));
-  });
-}
-const PERSIST_VALIDATION_ROWS = [
-  ['absent', undefined, true, null],
-  ['script', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, true, null],
-  ['return true', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: true }, true, null],
-  ['return false', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: false }, true, null],
-  ['return string rejected', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: 'false' }, false, /returnPrimaries must be a boolean/],
-  ['null persist', null, false, /persist must be an object/], ['string persist', 'scripts/assemble_artifacts.py', false, /persist must be an object/],
-  ['array persist', [], false, /persist must be an object/], ['numeric persist', 3, false, /persist must be an object/],
-  ['empty script', { assembleScriptPath: '' }, false, /persist.assembleScriptPath/],
-  ['numeric script', { assembleScriptPath: 42 }, false, /persist.assembleScriptPath/],
-  ['object script', { assembleScriptPath: {} }, false, /persist.assembleScriptPath/],
-  ['null script', { assembleScriptPath: null }, false, /persist.assembleScriptPath/],
+  } },
+  { name: 'empty raw axes override parsed', input: {
+    reviewMd: [], exclusionsText: '', reviewConfig: { confidence_threshold: 99 }, exclusionPatterns: ['old'],
+  }, expected: { reviewConfig: { ignore: [] }, exclusionPatterns: [],
+    reviewConfigSource: 'reviewMd', exclusionsSource: 'exclusionsText', reviewMdEntryCount: 0 } },
+  { name: 'raw root and child settings', input: { reviewMd: [
+    { path: 'src/deep/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\nsecurity_min_confidence: 85\n' +
+      'severity_threshold: high\nignore:\n  - c.js\n```' },
+    { path: 'REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 70\nsecurity_min_confidence: 75\n' +
+      'severity_threshold: low\nignore:\n  - a.js\n  - b.js\n```' },
+  ], exclusionsText: '- foo.js\n- bar/*.js\n' }, expected: {
+    reviewConfig: { confidence_threshold: 70, security_min_confidence: 75, severity_threshold: 'low', ignore: ['a.js', 'b.js'],
+      scopes: [{ dir: 'src/deep', confidence_threshold: 90, security_min_confidence: 85, severity_threshold: 'high', ignore: ['c.js'] }] },
+    exclusionPatterns: ['foo.js', 'bar/*.js'], reviewConfigSource: 'reviewMd', exclusionsSource: 'exclusionsText', reviewMdEntryCount: 2,
+  } },
 ];
-for (const [name, persist, ok, error] of PERSIST_VALIDATION_ROWS) {
-  test(`persist args: ${name}`, () => {
-    const out = validateArgs({ ...good, persist });
-    assert.equal(out.ok, ok);
-    if (error) assert.ok(out.errors.some((message) => error.test(message)));
-    else assert.deepEqual(out.errors, []);
-  });
+for (const { name, input, expected } of RESOLVE_ROWS) {
+  test(`resolve config: ${name}`, () => assert.deepEqual(resolveReviewConfig(input), expected));
+}
+
+const GAP_ROWS = [
+  { name: 'reviewConfig', input: 'reviewConfig', expected:
+    "null_arg: args.reviewConfig arrived as a literal null and was treated as ABSENT \u2014 the review runs on " +
+    "the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your " +
+    "REVIEW.md configuration, so the delivered findings can differ. Omit reviewConfig entirely (or stamp a " +
+    "well-formed value); do not stamp null." },
+  { name: 'somethingNew', input: 'somethingNew', expected:
+    "null_arg: args.somethingNew arrived as a literal null and was treated as ABSENT \u2014 the run proceeds as " +
+    "if the field had not been supplied. Omit somethingNew entirely (or stamp a well-formed value); do not " +
+    "stamp null." },
+  { name: 'delivery.prIdentity.title', input: 'delivery.prIdentity.title', expected:
+    "null_arg: args.delivery.prIdentity.title arrived as a literal null and was treated as ABSENT \u2014 the " +
+    "report title falls back to owner/repo#N (or \"local changes\"). Omit delivery.prIdentity.title entirely " +
+    "(or stamp a well-formed value); do not stamp null." },
+  { name: 'respelling', input: 'pr_comment_cap', respell: true, expected:
+    'null_receipt: args.pr_comment_cap arrived as a literal null and was spelled as the printed ' +
+      'token "null"; the receipt and the configuration are unchanged; stamp the string "null".' },
+
+];
+for (const { name, input, respell, expected } of GAP_ROWS) {
+  test(`gap: ${name}`, () => assert.equal(respell ? nullRespellGap(input) : nullToleranceGap(input), expected));
+}
+
+const VALIDATION_BOUNDARY_ROWS = [
+  { name: 'zero cap mismatch', input: () => {
+    const a = interactiveArgs(); a.limits.deliveryCap = 0; return a;
+  }, expected: { ok: false, errors: ['limits.deliveryCap does not match configEcho.pr_comment_cap'] } },
+  { name: 'invalid interactive cap receipt', input: () => {
+    const a = interactiveArgs(); a.configEcho.pr_comment_cap.value = '00'; return a;
+  }, expected: { ok: false, errors: ['configEcho.pr_comment_cap.value is invalid for interactive'] } },
+  { name: 'invalid trivial receipt', input: () => {
+    const a = headlessArgs(); a.configEcho.trivial_scope.value = 'none'; return a;
+  }, expected: { ok: false, errors: ['configEcho.trivial_scope.value is invalid for headless'] } },
+  { name: 'invalid derived receipt', input: () => {
+    const a = interactiveArgs(); a.configEcho.review_md.value = 'other'; return a;
+  }, expected: { ok: false, errors: ['configEcho.review_md.value is invalid for interactive'] } },
+  { name: 'minimum context sizes', input: () => interactiveArgs({ contextLines: 1, contextChars: 1 }),
+    expected: { ok: true, errors: [] } },
+  { name: 'zero numeric receipt', input: () => {
+    const a = interactiveArgs(); a.limits.deliveryCap = 0; a.configEcho.pr_comment_cap = { value: '0', source: 'env' }; return a;
+  }, expected: { ok: true, errors: [] } },
+  { name: 'scope trailing slash', input: () => interactiveArgs({ reviewConfig: { scopes: [{ dir: 'api/' }] } }),
+    expected: { ok: false, errors: ['reviewConfig.scopes[0].dir must not have a leading or trailing /',
+      'reviewConfig.scopes[0].dir must not contain an empty path segment'] } },
+  { name: 'review path dot-dot', input: () => {
+    const a = interactiveArgs({ reviewMd: [{ path: 'api/../REVIEW.md', text: '' }] });
+    a.configEcho.review_md.value = 'present'; return a;
+  }, expected: { ok: false, errors: ['reviewMd[0].path must not contain . or .. path segments'] } },
+  { name: 'absent tier in empty delivery', input: () => {
+    const a = interactiveArgs({ delivery: {} }); a.configEcho.delivery_tier.value = 'main_only'; return a;
+  }, expected: { ok: false, errors: ['configEcho.delivery_tier does not match delivery.tier'] } },
+  { name: 'PR comments complete identity', input: () => {
+    const a = headlessArgs();
+    a.configEcho.delivery.value = 'chat,pr_comments,markdown';
+    a.delivery.prIdentity = { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      platform: 'github', web_origin: 'https://github.com' };
+    return a;
+  }, expected: { ok: true, errors: [] } },
+];
+for (const { name, input, expected } of VALIDATION_BOUNDARY_ROWS) {
+  test(`validate boundary: ${name}`, () => assert.deepEqual(validateArgs(input()), expected));
 }

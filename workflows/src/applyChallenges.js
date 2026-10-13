@@ -1,11 +1,8 @@
 // Apply challenge scores to findings and preserve the consolidation fields.
 
-import { consolidateCrossAgent, SEVERITY_ORDER } from './filterFindings.js';
+import { consolidateCrossAgent } from './filterFindings.js';
+import { SEVERITY_ORDER } from './registry.js';
 import { INT_POLICY, coerceInt, deepClone } from './wire.js';
-
-// SEVERITY_ORDER is imported from filterFindings.js (its single owner) — see the
-// note there. A second top-level `const SEVERITY_ORDER` here collided in the
-// concatenated bundle after build.js strips the `export` keyword.
 
 export function downgradeSeverity(severity) {
   const idx = typeof severity === 'string' ? SEVERITY_ORDER.indexOf(severity.toLowerCase()) : -1;

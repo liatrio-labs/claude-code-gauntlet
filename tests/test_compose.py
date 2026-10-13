@@ -216,7 +216,7 @@ def test_severity_values(raw_values, label, expected):
 import {normalizeReportSeverity} from './workflows/src/renderReport.js';
 let source = '';
 for await (const chunk of process.stdin) source += chunk;
-process.stdout.write(JSON.stringify(JSON.parse(source).map(normalizeReportSeverity)));
+process.stdout.write(JSON.stringify(JSON.parse(source).map((severity) => normalizeReportSeverity(severity))));
 """
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],

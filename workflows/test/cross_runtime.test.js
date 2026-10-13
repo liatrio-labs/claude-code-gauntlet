@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fnv1a32, normalizeForChecksum } from '../src/wire.js';
-import { matchesRule } from '../src/args.js';
-import { foldInline, foldProse, openProseFence, proseFenceCloser } from '../src/renderReport.js';
+import { matchesRule } from '../src/knobs.js';
+import { foldInline, foldProse, openProseFence, proseFenceCloser } from '../src/outboundText.js';
 
 const families = ['fnv1a32', 'json_spelling', 'outbound_fold', 'config_rule'];
 const foldOperations = new Set(['fold', 'closer', 'fence_state', 'fold_prose_js', 'fold_inline_js']);

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { inspect } from 'node:util';
-import { INT_POLICY, WS_TRIM_RE, coerceInt, deepClone } from '../src/wire.js';
+import { INT_POLICY, WS_TRIM_RE, coerceInt, deepClone, deepFreeze } from '../src/wire.js';
 import { verifyStage } from '../src/verifyStage.js';
 import { pinNumericFields } from '../src/verifyWire.js';
 import { verifyCtx, verifyInput } from './helpers/verifyDelta.js';
@@ -10,6 +10,21 @@ import { verifyCtx, verifyInput } from './helpers/verifyDelta.js';
 const validation = (value) => coerceInt(value, INT_POLICY.validation);
 const filter = (value) => coerceInt(value, INT_POLICY.filter);
 const verifyPin = (value) => pinNumericFields({ confidence: value }).confidence;
+
+const FREEZE_ROWS = [
+  { name: 'global and sticky regexes keep writable cursors', build: () => ({ global: /a/g, sticky: /a/y }),
+    check: (value) => [Object.isFrozen(value), 'aa'.replace(value.global, 'b'), 'aa'.replace(value.sticky, 'b')],
+    expected: [true, 'bb', 'ba'] },
+  { name: 'shallow-frozen cyclic parent still freezes children', build: () => {
+    const parent = { child: { value: 1 } };
+    parent.child.parent = parent;
+    return Object.freeze(parent);
+  }, check: (value) => [Object.isFrozen(value), Object.isFrozen(value.child), value.child.parent === value],
+  expected: [true, true, true] },
+];
+for (const row of FREEZE_ROWS) test(`deep freeze: ${row.name}`, () => {
+  assert.deepEqual(row.check(deepFreeze(row.build())), row.expected);
+});
 
 // The verify pin leaves a value it cannot coerce exactly as it was.
 const SAME = Symbol('unchanged');

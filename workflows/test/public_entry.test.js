@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { makeCtx, validArgs } from './helpers/pipelineMock.js';
+import { validArgs } from './helpers/argsFixtures.js';
+import { makeCtx } from './helpers/pipelineMock.js';
 import { runWith } from '../src/run.js';
 
 const bundlePath = fileURLToPath(new URL('../pipeline.js', import.meta.url));

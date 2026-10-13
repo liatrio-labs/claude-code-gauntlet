@@ -7,7 +7,8 @@
 // the resume checkpoint, not in a persisted findings file — so only findings are emitted.)
 import { writeFileSync } from 'node:fs';
 import { runWith } from '../../src/run.js';
-import { validArgs, makeCtx, makeFinding } from '../helpers/pipelineMock.js';
+import { validArgs } from '../helpers/argsFixtures.js';
+import { makeCtx, makeFinding } from '../helpers/pipelineMock.js';
 
 const outPath = process.argv[2];
 if (!outPath) {

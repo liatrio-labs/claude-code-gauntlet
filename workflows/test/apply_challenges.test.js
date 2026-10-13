@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyChallenges, downgradeSeverity, rankFindings } from '../src/applyChallenges.js';
-import { finding } from './helpers/findings.js';
+import { finding, consolidationFinding } from './helpers/findings.js';
 
 const DOWNGRADE_CASES = [
   { name: 'critical becomes high', input: 'critical', expected: 'high' },
@@ -78,4 +78,46 @@ test('applyChallenges never mutates the caller input, even with structuredClone 
   } finally {
     globalThis.structuredClone = saved;
   }
+});
+
+const ORIGIN_RANK_ROWS = [
+  {
+    name: 'verified findings outrank degraded confidence',
+    input: [{ id: 'A', origin: 'unknown', confidence: 75, severity: 'high' },
+      { id: 'B', origin: 'verified', confidence: 80, severity: 'high' },
+      { id: 'C', origin: 'verified', confidence: 74, severity: 'high' }], expected: ['B', 'C', 'A'],
+  },
+  {
+    name: 'uniform origin keeps severity then confidence order',
+    input: [{ id: 'H1', origin: 'verified', severity: 'high', confidence: 60 },
+      { id: 'H2', origin: 'verified', severity: 'high', confidence: 90 },
+      { id: 'M1', origin: 'verified', severity: 'medium', confidence: 99 }], expected: ['H2', 'H1', 'M1'],
+  },
+];
+for (const row of ORIGIN_RANK_ROWS) test(`rank origin: ${row.name}`, () => {
+  assert.deepEqual(rankFindings(row.input.map(consolidationFinding)).map((item) => item.id), row.expected);
+});
+
+const CONSOLIDATION_CHALLENGE_ROWS = [
+  {
+    name: 'challenge retains cross-agent siblings',
+    input: [{ id: 'bug-1', confidence: 80 },
+      { id: 'test-1', line_start: 12, agent: 'test-analyzer', dimension: 'test_coverage', confidence: 95 }], challenges: [],
+    expected: { ids: ['test-1', 'bug-1'], keys: ['a.py:10', 'a.py:10'], consolidated: 2, dedup: false },
+  },
+  {
+    name: 'orphaned singleton loses stale stamps',
+    input: [{ id: 'bug-1', confidence: 95, consolidation_key: 'a.py:10', consolidation_primary: true },
+      { id: 'test-1', line_start: 12, agent: 'test-analyzer', dimension: 'test_coverage', confidence: 60,
+        consolidation_key: 'a.py:10', consolidation_primary: false }],
+    challenges: [{ id: 'bug-1', score: 10 }, { id: 'test-1', score: 90 }],
+    expected: { ids: ['test-1'], keys: [undefined], consolidated: 0, dedup: false },
+  },
+];
+for (const row of CONSOLIDATION_CHALLENGE_ROWS) test(`challenge consolidation: ${row.name}`, () => {
+  const out = applyChallenges(row.input.map(consolidationFinding), row.challenges);
+  assert.deepEqual({ ids: out.findings.map((item) => item.id), keys: out.findings.map((item) => item.consolidation_key),
+    consolidated: out.stats.cross_agent_consolidated,
+    dedup: out.eliminated.some((item) => item.eliminated_by === 'dedup:cross-agent') }, row.expected);
+  if (row.expected.consolidated === 0) assert.equal('consolidation_primary' in out.findings[0], false);
 });

@@ -12,12 +12,12 @@ break it.
 """
 
 import re
-import unittest
 from pathlib import Path
+
+from tests.support.js_values import js_values
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SPEC_PATH = REPO_ROOT / "skills" / "code-gauntlet" / "references" / "review-md-spec.md"
-FILTER_JS_PATH = REPO_ROOT / "workflows" / "src" / "filterFindings.js"
 
 
 def _extract_doc_defaults(text):
@@ -57,40 +57,6 @@ def _extract_doc_defaults(text):
     }
 
 
-def _extract_js_constants(text):
-    def _int_const(name):
-        found = re.search(
-            rf"^const\s+{re.escape(name)}\s*=\s*(\d+);", text, re.MULTILINE
-        )
-        assert found, f"{name} not found in workflows/src/filterFindings.js"
-        return int(found.group(1))
-
-    def _str_const(name):
-        found = re.search(
-            rf"^const\s+{re.escape(name)}\s*=\s*'(\w+)';", text, re.MULTILINE
-        )
-        assert found, f"{name} not found in workflows/src/filterFindings.js"
-        return found.group(1)
-
-    return {
-        "confidence_threshold_nonsecurity": _int_const(
-            "DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD"
-        ),
-        "security_min_confidence": _int_const("DEFAULT_SECURITY_MIN_CONFIDENCE"),
-        "severity_threshold": _str_const("DEFAULT_SEVERITY_THRESHOLD"),
-    }
-
-
-class TestReviewMdDefaultsContract(unittest.TestCase):
-    def setUp(self):
-        self.spec_text = SPEC_PATH.read_text(encoding="utf-8")
-        self.js_text = FILTER_JS_PATH.read_text(encoding="utf-8")
-
-    def test_doc_numbers_match_js_constants(self):
-        doc = _extract_doc_defaults(self.spec_text)
-        js = _extract_js_constants(self.js_text)
-        self.assertEqual(doc, js)
-
-
-if __name__ == "__main__":
-    unittest.main()
+def test_doc_numbers_match_js_constants():
+    doc = _extract_doc_defaults(SPEC_PATH.read_text(encoding="utf-8"))
+    assert doc == js_values()["REVIEW_DEFAULTS"]

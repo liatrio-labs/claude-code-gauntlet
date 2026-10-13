@@ -1,40 +1,40 @@
-import { SEVERITY_ORDER } from './filterFindings.js';
+// Owns local report rendering: multiline prose keeps Markdown, while evidence and receipts keep their fence grammars.
+// Line fields use the outbound line contract, and repository spans preserve copyable normalized text in dynamic delimiters.
 import { rankFindings } from './applyChallenges.js';
-import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, CODE_OWNED_HEADINGS, resolvePolicy, conditionalSchemaActive } from './registry.js';
-import { KNOB_REGISTRY } from './args.js';
+import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
+import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, resolvePolicy } from './registry.js';
+import { SEVERITY_ORDER, REPORT_FOLD_LIMITS } from './registry.js';
+import { REPORT_PLACED_FIELDS, STAGE_DEFAULTS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
+import { KNOB_REGISTRY } from './knobs.js';
+import { longestBacktickRun, deepFreeze } from './wire.js';
+import { reportAsText, foldProse, foldEvidence, oneLine, outboundBase, prepareLine, foldInline } from './outboundText.js';
+import { prepareSummaryTitle, preparedCodeSpan, codeSpan, outboundTildeRuns } from './outboundText.js';
 
-// Omit fields that the report renderer cannot present safely.
-export const REPORT_EXCLUDED_FIELDS = [
+// Delivery owns committable fix fences; the report must not expose them as unvalidated prose extras.
+const REPORT_EXCLUDED_FIELDS = deepFreeze([
   'suggested_fix_code',
   'suggested_fix_code_removed_by',
   'suggested_fix_code_removal_reason',
-];
+]);
 
-// Display limits, not a whole-report or return-budget mechanism. The summary index
-// admits whole bullets; findings.json keeps unfolded values and unbounded cardinality.
-export const REPORT_FOLD_LIMITS = {
-  proseChars: 4000,
-  summaryChars: 12000,
-  summaryIndexChars: 12000,
-  evidenceLines: 40,
-  evidenceChars: 8000,
-  inlineChars: 512,
-};
+export const REVIEW_SCOPE_FALLBACK_RULES = deepFreeze([
+  { error: true },
+  { facts: { previously_reviewed: false }, reason: 'no prior review recorded' },
+  { facts: { previously_reviewed: true, sha_resolvable: false }, reason: 'recorded SHA not resolvable' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: false },
+    reason: 'head has not advanced' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: false },
+    reason: 'history rewritten (recorded SHA is not an ancestor)' },
+]);
 
-
-// Findings with a missing/unknown `dimension` are silently excluded from every row's
-// count: the discovery contracts pin `dimension` to one of the nine registry names, so
-// an unmapped value here is belt-and-braces, never a live path.
-function dimensionOwnerMap() {
+function dimensionOwnerMap(dimensions) {
   const owner = {};
-  for (const d of DIMENSIONS) owner[d.dimension] = d.agentType;
+  for (const d of dimensions) owner[d.dimension] = d.agentType;
   return owner;
 }
 
-// "2 high, 1 low" — counted over the agent's HIGH-CONFIDENCE findings only, in the closed
-// severity order. The schema keeps severity as a string by the recorded fail-open decision,
-// so the renderer maps any value outside the four labels to low. Empty string when no
-// finding in the row carries a severity value at all.
+// Severity is an open wire string, so display unknown values as low rather than dropping the finding.
 function severityBreakdown(rowFindings) {
   const counts = new Map();
   for (const f of rowFindings) {
@@ -53,41 +53,34 @@ function severityBreakdown(rowFindings) {
   return known.map((s) => `${counts.get(s)} ${s}`).join(', ');
 }
 
-export function dimensionsSummaryTable(input) {
+export function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   const inp = input || {};
   const dispatchedSet = new Set((Array.isArray(inp.dispatched) ? inp.dispatched : []).map(reportAsText));
   const degradedSet = new Set((Array.isArray(inp.degraded) ? inp.degraded : []).map(reportAsText));
-  const owner = dimensionOwnerMap();
+  const owner = dimensionOwnerMap(dimensions);
+  const agents = [...new Set(dimensions.map((dimension) => dimension.agentType))];
 
-  const byAgent = new Map(AGENTS.map((a) => [a, []]));
-  const unverifiedByAgent = new Map(AGENTS.map((a) => [a, []]));
-  for (const f of (inp.findings || [])) {
+  const byAgent = new Map(agents.map((agent) => [agent, []]));
+  const unverifiedByAgent = new Map(agents.map((agent) => [agent, []]));
+  const bucketFinding = (buckets, finding) => {
     let dimension;
     try {
-      dimension = f ? f.dimension : undefined;
+      dimension = finding ? finding.dimension : undefined;
     } catch {
       dimension = undefined;
     }
     const agentType = owner[dimension];
-    if (agentType && byAgent.has(agentType)) byAgent.get(agentType).push(f);
-  }
-  for (const f of (inp.unverified || [])) {
-    let dimension;
-    try {
-      dimension = f ? f.dimension : undefined;
-    } catch {
-      dimension = undefined;
-    }
-    const agentType = owner[dimension];
-    if (agentType && unverifiedByAgent.has(agentType)) unverifiedByAgent.get(agentType).push(f);
-  }
+    if (agentType && buckets.has(agentType)) buckets.get(agentType).push(finding);
+  };
+  for (const finding of (inp.findings || [])) bucketFinding(byAgent, finding);
+  for (const finding of (inp.unverified || [])) bucketFinding(unverifiedByAgent, finding);
 
-  const rows = AGENTS.map((agentType) => {
+  const rows = agents.map((agentType) => {
     const rowFindings = byAgent.get(agentType);
     const rowUnverified = unverifiedByAgent.get(agentType);
     const n = rowFindings.length;
     const m = rowUnverified.length;
-    const dims = DIMENSIONS.filter((d) => d.agentType === agentType).map((d) => d.dimension);
+    const dims = dimensions.filter((d) => d.agentType === agentType).map((d) => d.dimension);
     const isDegraded = dims.some((d) => degradedSet.has(d));
     const isDispatched = dispatchedSet.has(agentType);
     const label = AGENT_LABELS[agentType] || agentType;
@@ -143,9 +136,7 @@ function consolidateForReport(findings) {
     } else group.corroborators.push(f);
   }
   return groups.map((group) => {
-    // Reachable only for hand-assembled payloads: filterFindings.js always
-    // stamps exactly one consolidation_primary per group. If a caller's data
-    // has none, fall back to the first-seen member rather than surfacing `null`.
+    // A delivered subset may omit the stamped primary; use its first remaining member instead of surfacing null.
     const primary = group.primary || group.corroborators.shift();
     if (!group.corroborators.length) return primary;
     return {
@@ -161,36 +152,16 @@ function consolidateForReport(findings) {
   });
 }
 
-// Fields with a dedicated placement below. Every other registry-declared field is
-// rendered through reportExtraFields, so declared-but-unrendered cannot recur.
-const REPORT_PLACED_FIELDS = new Set([
-  'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
-  'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
-]);
+// Derive extras from the schema so a newly declared field cannot silently lack a report placement.
 
-export function reportExtraFields() {
+export function reportExtraFields(dimensions = DIMENSIONS) {
   const declared = new Set(Object.keys(FINDING_PROP_TYPES));
-  for (const dimension of DIMENSIONS) {
+  for (const dimension of dimensions) {
     for (const key of Object.keys(dimension.schemaExtra || {})) declared.add(key);
   }
   return [...declared]
-    .filter((key) => !REPORT_PLACED_FIELDS.has(key) && !REPORT_EXCLUDED_FIELDS.includes(key))
+    .filter((key) => !REPORT_PLACED_FIELDS.includes(key) && !REPORT_EXCLUDED_FIELDS.includes(key))
     .sort();
-}
-
-// Replayed checkpoints are object-shaped but may predate the finding schema's field types.
-// Coerce at this renderer boundary so every downstream report read sees the same safe view:
-// text fields stringify non-null values, null/undefined text is omitted, and confidence keeps
-// only finite numbers. The catch arms make even hostile object coercion total.
-function reportAsText(value) {
-  if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return value;
-  try {
-    return String(value);
-  } catch {
-    return '';
-  }
 }
 
 function reportOptionalText(value) {
@@ -199,114 +170,6 @@ function reportOptionalText(value) {
 
 function reportAsConfidence(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function codePointLength(value) {
-  return Array.from(reportAsText(value)).length;
-}
-
-function codePointPrefix(value, limit) {
-  return Array.from(reportAsText(value)).slice(0, limit).join('');
-}
-
-export function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
-  const value = reportAsText(text);
-  const length = codePointLength(value);
-  if (length <= limit) return value;
-  return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
-}
-
-// Twin of open_fence in gauntlet.markdown.
-export function openProseFence(text) {
-  const value = reportAsText(text);
-  let state = null;
-  let lineStart = 0;
-
-  function lineRun(line) {
-    let indent = 0;
-    while (indent < 3 && indent < line.length && line[indent] === ' ') indent += 1;
-    if (indent >= line.length || !['`', '~'].includes(line[indent])) return null;
-    const char = line[indent];
-    let end = indent;
-    while (end < line.length && line[end] === char) end += 1;
-    return { char, length: end - indent, end, indent };
-  }
-
-  function visit(line, offset) {
-    const run = lineRun(line);
-    if (state !== null) {
-      if (run !== null && run.char === state[0] && run.length >= state[1]
-        && /^[ \t]*$/.test(line.slice(run.end))) state = null;
-      return;
-    }
-    if (run !== null && run.length >= 3
-      && !(run.char === '`' && line.slice(run.end).includes('`'))) {
-      state = [run.char, run.length, offset + run.indent];
-    }
-  }
-
-  let index = 0;
-  while (index < value.length) {
-    if (value[index] === '\n' || value[index] === '\r') {
-      visit(value.slice(lineStart, index), lineStart);
-      if (value[index] === '\r' && value[index + 1] === '\n') index += 2;
-      else index += 1;
-      lineStart = index;
-    } else index += 1;
-  }
-  visit(value.slice(lineStart), lineStart);
-  return state;
-}
-
-export function proseFenceCloser(prefix) {
-  const state = openProseFence(prefix);
-  return state === null ? '' : state[0].repeat(state[1]);
-}
-
-// Twin of fold_review_body in gauntlet.delivery.fold.
-export function foldProse(text, limit) {
-  const value = reportAsText(text);
-  const length = codePointLength(value);
-  if (length <= limit) return value;
-
-  let prefix = '';
-  const lines = value.split('\n');
-  for (let index = 0; index < lines.length; index += 1) {
-    const next = `${index ? '\n' : ''}${lines[index]}`;
-    const remaining = limit - codePointLength(prefix);
-    if (codePointLength(next) <= remaining) {
-      prefix += next;
-      continue;
-    }
-    if (codePointLength(lines[index]) > limit) prefix += codePointPrefix(next, remaining);
-    break;
-  }
-  const omitted = length - codePointLength(prefix);
-  const closer = proseFenceCloser(prefix);
-  if (closer) prefix += `${prefix.endsWith('\n') || prefix.endsWith('\r') ? '' : '\n'}${closer}`;
-  return `${prefix}\n\n_[folded: ${omitted} more characters]_`;
-}
-
-export function foldEvidence(text) {
-  const value = reportAsText(text);
-  const length = codePointLength(value);
-  const separators = [...value.matchAll(/\r\n|\r|\n/g)];
-  const lineCount = separators.length + 1;
-  const lineFolded = lineCount > REPORT_FOLD_LIMITS.evidenceLines;
-  const linePrefix = lineFolded
-    ? value.slice(0, separators[REPORT_FOLD_LIMITS.evidenceLines - 1].index)
-    : value;
-  const linePrefixLength = codePointLength(linePrefix);
-  const charFolded = length > REPORT_FOLD_LIMITS.evidenceChars;
-
-  if (charFolded && (!lineFolded || REPORT_FOLD_LIMITS.evidenceChars <= linePrefixLength)) {
-    const prefix = codePointPrefix(value, REPORT_FOLD_LIMITS.evidenceChars);
-    return `${prefix}\n... [folded: ${length - REPORT_FOLD_LIMITS.evidenceChars} more characters]`;
-  }
-  if (lineFolded) {
-    return `${linePrefix}\n... [folded: ${lineCount - REPORT_FOLD_LIMITS.evidenceLines} more lines]`;
-  }
-  return value;
 }
 
 function reportRiskLevel(value) {
@@ -339,7 +202,7 @@ function reportCorroboration(value) {
   return out;
 }
 
-function coerceReportFinding(finding) {
+function coerceReportFinding(finding, severities) {
   const out = {};
   let keys;
   try {
@@ -356,7 +219,7 @@ function coerceReportFinding(finding) {
     }
     let value;
     if (key === 'severity') {
-      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw);
+      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw, severities);
     } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
@@ -365,6 +228,8 @@ function coerceReportFinding(finding) {
       value = raw;
     } else if (key === 'risk_level') {
       value = reportRiskLevel(raw);
+    } else if (FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(raw)) {
+      value = raw.map(reportAsText);
     } else {
       value = reportOptionalText(raw);
     }
@@ -373,367 +238,50 @@ function coerceReportFinding(finding) {
   return out;
 }
 
-// Exported for the run seam that ranks the selected delivery before invoking renderReport.
-// Keeping this projection here means replayed malformed findings cannot reach a raw rankKey.
-export function coerceReportFindings(value) {
+// Project replayed field types before ranking so malformed values and throwing getters cannot reach raw ranking code.
+export function coerceReportFindings(value, severities = SEVERITY_ORDER) {
   if (!Array.isArray(value)) return [];
   return value.map((finding) => (
     finding && typeof finding === 'object' && !Array.isArray(finding)
-      ? coerceReportFinding(finding)
+      ? coerceReportFinding(finding, severities)
       : {}
   ));
 }
 
-export function normalizeReportSeverity(raw) {
+export function normalizeReportSeverity(raw, severities = SEVERITY_ORDER) {
   if (typeof raw !== 'string') return 'low';
   const normalized = raw.trim().toLowerCase();
-  return SEVERITY_ORDER.includes(normalized) ? normalized : 'low';
+  return severities.includes(normalized) ? normalized : 'low';
 }
 
-// 'failure_scenario' -> 'Failure scenario'
 function fieldLabel(key) {
   const words = String(key).replaceAll('_', ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-// A fence at least one backtick longer than the longest run inside text, minimum 3.
+// Size the evidence fence beyond every embedded backtick run so payload text cannot close it.
 function fenceFor(text) {
-  let longest = 0;
-  for (const match of reportAsText(text).matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
-  return '`'.repeat(Math.max(3, longest + 1));
+  return '`'.repeat(Math.max(3, longestBacktickRun(reportAsText(text)) + 1));
 }
 
-// Bullet values, heading interpolations and the identity line are single-line positions.
-function oneLine(value) {
-  return reportAsText(value).replace(/[\r\n]+/g, ' ').replace(/ +/g, ' ').trim();
+function inline(value, prefixLimit) {
+  const text = reportAsText(value).replace(/\r/g, ' ');
+  if (prefixLimit === undefined) return prepareSummaryTitle(text);
+  const sliced = oneLine(outboundBase(text)).slice(0, prefixLimit);
+  return prepareLine(foldInline(sliced), true);
 }
 
-const OUTBOUND_INVISIBLES = /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/;
-const OUTBOUND_NAMED_ENTITIES = {
-  commat: '@',
-  excl: '!',
-  lbrack: '[',
-  lsqb: '[',
-  rsqb: ']',
-  rbrack: ']',
-  Hat: '^',
-  colon: ':',
-  lpar: '(',
-  rpar: ')',
-  bsol: '\\',
-  nbsp: ' ',
-  NonBreakingSpace: ' ',
-};
-const OUTBOUND_NAMED_ENTITY_PREFIXES = new Set(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
-  Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
-)));
-const entityAt = (start, kind, fields = {}) => ({ start, kind, value: 0, hasDigit: false, name: '', ...fields });
-
-export function normalizeOutboundText(value) {
-  let text = reportAsText(value);
-  const output = [];
-  const push = (character) => {
-    if (character === '\u00A0') character = ' ';
-    if (OUTBOUND_INVISIBLES.test(character)) return undefined;
-    const previous = output.length ? output[output.length - 1] : null;
-    let entity = previous ? previous.entity : null;
-    let replacement;
-    if (character === '&') {
-      entity = entityAt(output.length, 'start');
-    } else if (entity) {
-      if (entity.kind === 'start') {
-        if (character === '#') {
-          entity = entityAt(entity.start, 'numeric');
-        } else if (/[A-Za-z]/.test(character)) {
-          const name = entity.name + character;
-          entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
-            ? entityAt(entity.start, 'named', { name })
-            : null;
-        } else {
-          entity = null;
-        }
-      } else if (entity.kind === 'numeric') {
-        if (character === 'x' || character === 'X') {
-          entity = entityAt(entity.start, 'hex');
-        } else if (character >= '0' && character <= '9') {
-          entity = entityAt(entity.start, 'decimal', {
-            value: Math.min(127, character.charCodeAt(0) - 48),
-            hasDigit: true,
-          });
-        } else {
-          entity = null;
-        }
-      } else if (entity.kind === 'decimal' || entity.kind === 'hex') {
-        const radix = entity.kind === 'decimal' ? 10 : 16;
-        let digit = -1;
-        if (character >= '0' && character <= '9') digit = character.charCodeAt(0) - 48;
-        else if (radix === 16 && character.toLowerCase() >= 'a' && character.toLowerCase() <= 'f') {
-          digit = character.toLowerCase().charCodeAt(0) - 87;
-        }
-        if (character === ';' && entity.hasDigit) {
-          replacement = entity.value >= 32 && entity.value <= 126
-            ? String.fromCharCode(entity.value)
-            : '';
-        } else if (digit >= 0 && digit < radix) {
-          entity = entityAt(entity.start, entity.kind, {
-            value: Math.min(127, entity.value * radix + digit),
-            hasDigit: true,
-          });
-        } else {
-          entity = null;
-        }
-      } else if (entity.kind === 'named') {
-        if (character === ';') {
-          if (Object.hasOwn(OUTBOUND_NAMED_ENTITIES, entity.name)) {
-            replacement = OUTBOUND_NAMED_ENTITIES[entity.name];
-          } else {
-            entity = null;
-          }
-        } else if (/[A-Za-z]/.test(character)) {
-          const name = entity.name + character;
-          entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
-            ? entityAt(entity.start, 'named', { name })
-            : null;
-        } else {
-          entity = null;
-        }
-      }
-    }
-
-    if (replacement !== undefined) {
-      output.length = entity.start;
-      return replacement || undefined;
-    }
-
-    const commentStart = previous ? previous.commentStart : null;
-    const commentEnd = previous ? previous.commentEnd : null;
-    output.push({ character, entity, commentStart, commentEnd });
-    const length = output.length;
-    if (commentStart === null && length >= 4
-        && output[length - 4].character === '<'
-        && output[length - 3].character === '!'
-        && output[length - 2].character === '-'
-        && output[length - 1].character === '-') {
-      output[length - 1] = { character, entity, commentStart: length - 4, commentEnd: length };
-      return undefined;
-    }
-    if (commentStart !== null && length >= 3
-        && output[length - 3].character === '-'
-        && output[length - 2].character === '-'
-        && output[length - 1].character === '>'
-        && length - 3 >= commentEnd) {
-      output.length = commentStart;
-    }
-    return undefined;
-  };
-
-  for (let index = 0; index < text.length; index += 1) {
-    let character = text[index];
-    while (character !== undefined) character = push(character);
-  }
-  return output.map((entry) => entry.character).join('');
-}
-
-function outboundBase(value) {
-  const text = normalizeOutboundText(value);
-  if (text.trim() === '') return '';
-  return text.replace(/(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}/g, '[REDACTED]')
-    .replace(/(?:glpat-|glrt-)[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
-    .replace(/[\r\n]+/g, ' ');
-}
-
-function outboundVisible(text, code = false) {
-  // Fullwidth brackets survive reparsing and keep footnote text visible.
-  text = text.replace(/(?<=[!\[])\\*\[|\[(?=\\*\^)/g, (match) => `${match.slice(0, -1)}\uFF3B`);
-  const escaped = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
-  return escaped.replace(/@/g, (match, index) => (
-    index === 0 || !/[A-Za-z0-9]/.test(escaped[index - 1])
-      ? '\uFF20' : match
-  ));
-}
-
-function outboundTickRunIndex(line) {
-  const runs = [];
-  const startsByWidth = new Map();
-  let slashParity = 0;
-  let index = 0;
-  while (index < line.length) {
-    if (line[index] === '\\') {
-      slashParity ^= 1;
-      index += 1;
-      continue;
-    }
-    if (line[index] === '`') {
-      const start = index;
-      while (index < line.length && line[index] === '`') index += 1;
-      const width = index - start;
-      runs.push({ start, end: index, width, escaped: Boolean(slashParity) });
-      if (!startsByWidth.has(width)) startsByWidth.set(width, []);
-      startsByWidth.get(width).push(start);
-    } else {
-      index += 1;
-    }
-    slashParity = 0;
-  }
-  return { runs, startsByWidth };
-}
-
-function outboundSpanClose(index, after, width) {
-  const starts = index.startsByWidth.get(width);
-  if (!starts) return -1;
-  let low = 0;
-  let high = starts.length;
-  while (low < high) {
-    const middle = low + Math.floor((high - low) / 2);
-    if (starts[middle] < after) low = middle + 1;
-    else high = middle;
-  }
-  return low < starts.length ? starts[low] : -1;
-}
-
-function outboundCodeSpans(line, index = outboundTickRunIndex(line)) {
-  const spans = [];
-  let runIndex = 0;
-  while (runIndex < index.runs.length) {
-    const run = index.runs[runIndex];
-    let opener = run.start + Number(run.escaped);
-    let width = run.width - Number(run.escaped);
-    if (width <= 0) {
-      runIndex += 1;
-      continue;
-    }
-    let close = -1;
-    while (width > 0) {
-      close = outboundSpanClose(index, run.end, width);
-      if (close >= 0) break;
-      width -= 1;
-      opener += 1;
-    }
-    if (close < 0) {
-      runIndex += 1;
-      continue;
-    }
-    const closeEnd = close + width;
-    spans.push([opener, close, closeEnd]);
-    runIndex += 1;
-    while (runIndex < index.runs.length && index.runs[runIndex].start < closeEnd) runIndex += 1;
-  }
-  return spans;
-}
-
-function outboundDefinitions(line, forceColon = false) {
-  const guardColon = forceColon || /\]\\?\(/.test(line);
-  if (guardColon) {
-    line = line.replace(/\](\\*):/g, (match) => `${match.slice(0, -1)}\uFF1A`);
-  }
-  return line.replace(/^[^A-Za-z\\\[\n]*\[((?:\\[^\n]|[^\\\[\]\n])+)\]:/u, (match, label) => (
-    /\S/.test(label) ? `${match.slice(0, -1)}\\:` : match
-  ));
-}
-
-function outboundContain(line, forceColon = false) {
-  line = outboundDefinitions(line, forceColon);
-  line = line.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C');
-  const index = outboundTickRunIndex(line);
-  const spans = outboundCodeSpans(line, index);
-  let spanIndex = 0;
-  const output = [];
-  let cursor = 0;
-  let runIndex = 0;
-  while (runIndex < index.runs.length) {
-    const run = index.runs[runIndex];
-    output.push(outboundVisible(line.slice(cursor, run.start)));
-    let opener = run.start;
-    if (run.escaped) {
-      output.push('`');
-      opener += 1;
-    }
-    if (spanIndex < spans.length && spans[spanIndex][0] < run.end) {
-      const [selected, close, closeEnd] = spans[spanIndex];
-      spanIndex += 1;
-      output.push('\\`'.repeat(selected - opener));
-      const openerEnd = selected + closeEnd - close;
-      output.push(line.slice(selected, openerEnd));
-      output.push(outboundVisible(line.slice(openerEnd, close), true));
-      output.push(line.slice(close, closeEnd));
-      cursor = closeEnd;
-      runIndex += 1;
-      while (runIndex < index.runs.length && index.runs[runIndex].start < cursor) runIndex += 1;
-    } else {
-      output.push('\\`'.repeat(run.width - Number(run.escaped)));
-      cursor = run.end;
-      runIndex += 1;
-    }
-  }
-  output.push(outboundVisible(line.slice(cursor)));
-  // Bracket replacements can complete definition-shaped labels.
-  return outboundDefinitions(output.join(''), forceColon);
-}
-
-export function prepareLine(value, forceColon = false) {
-  const text = outboundBase(value);
-  return text.trim() === '' ? '' : outboundContain(text, forceColon === true);
-}
-
-function prepareSummaryTitle(value) {
-  return prepareLine(foldInline(oneLine(outboundBase(value))), true);
-}
-
-function outboundTildeRuns(line) {
-  const spans = outboundCodeSpans(line);
-  let spanIndex = 0;
-  const parts = [];
-  let index = 0;
-  let backslashes = 0;
-  while (index < line.length) {
-    if (spanIndex < spans.length && index === spans[spanIndex][0]) {
-      // A tilde fence needs line start; a span's earlier tick prevents it.
-      const end = spans[spanIndex][2];
-      parts.push(line.slice(index, end));
-      index = end;
-      spanIndex += 1;
-      backslashes = 0;
-      continue;
-    }
-    if (line[index] === '~') {
-      let end = index + 1;
-      while (end < line.length && line[end] === '~') end += 1;
-      if (end - index >= 3) {
-        if (backslashes % 2 === 0) parts.push('\\');
-        parts.push(`~${'\\~'.repeat(end - index - 1)}`);
-        index = end;
-        backslashes = 0;
-        continue;
-      }
-    }
-    const character = line[index];
-    parts.push(character);
-    backslashes = character === '\\' ? backslashes + 1 : 0;
-    index += 1;
-  }
-  return parts.join('');
-}
-
-function inline(value) {
-  return foldInline(oneLine(value));
-}
-
-// Model prose is deliberately multiline, but a model-controlled line must not become a
-// second code-owned section heading. Evidence is excluded because it is placed in a fenced
-// block and must remain byte-for-byte verbatim.
+// Multiline model prose must not forge code-owned section headings.
+// Evidence bypasses this rename because its fence contains the literal payload.
 function safeProse(value) {
   const parts = reportAsText(value).split(/(\r\n|\r|\n)/);
   let output = '';
   for (let index = 0; index < parts.length; index += 2) {
     const line = parts[index];
     const boundary = parts[index + 1] || '';
-    // The split keeps a terminal CR in the boundary, but strip one here as a
-    // belt-and-braces comparison rule for any line supplied by a future splitter.
-    const withoutTerminalCR = line.endsWith('\r') ? line.slice(0, -1) : line;
-    const comparable = withoutTerminalCR.replace(/[ \t]+$/, '');
+    const comparable = line.replace(/[ \t]+$/, '');
     if (CODE_OWNED_HEADINGS.includes(comparable)) {
-      // Preserve original CR bytes on untouched prose. A renamed heading drops
-      // only its CR and keeps an LF boundary, so the next model line stays separate.
+      // Preserve prose delimiters unless renaming a heading; keep a line boundary so adjacent model lines cannot join.
       const renamedBoundary = boundary === '\r\n' || boundary === '\r' ? '\n' : boundary;
       output += `${comparable} (finding text)${renamedBoundary}`;
     } else {
@@ -747,12 +295,13 @@ function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
   return safeProse(foldProse(value, limit));
 }
 
-// Table cells are a separate primitive from receipt lines: methodology details are prose
-// assembled by the pipeline, but a replayed detector error or provider value can still
-// contain a newline or pipe. Keep each row physically one line and keep Markdown's column
-// boundary intact.
-export function tableCell(value) {
-  return oneLine(value).replaceAll('|', '\\|');
+function findingFieldText(key, value) {
+  return FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(value)
+    ? foldedProse(value.map((path) => inline(path)).join(',')) : foldedProse(value);
+}
+
+function tableCell(value) {
+  return reportAsText(value).replaceAll('|', '\\|');
 }
 
 function isPresent(value) {
@@ -764,18 +313,25 @@ function isPresent(value) {
 
 const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)];
 
-function normalizeFindings(value) {
-  return coerceReportFindings(value);
-}
-
-// Collect protected evidence offsets while composing, then neutralize comment openers
-// in one final pass everywhere else. Evidence must preserve source bytes verbatim.
+// Preserve evidence and prepared spans; neutralize comment openers elsewhere so prose cannot hide later sections.
 function reportBuilder() {
   let text = '';
-  const evidenceRanges = [];
+  const protectedRanges = [];
   const add = (line = '') => {
     if (text.length) text += '\n';
     text += reportAsText(line);
+  };
+  const addSpans = (line, spans) => {
+    const start = text.length + (text.length ? 1 : 0);
+    add(line);
+    let cursor = 0;
+    for (const span of spans) {
+      if (!span) continue;
+      const index = line.indexOf(span, cursor);
+      if (index < 0) continue;
+      protectedRanges.push([start + index, start + index + span.length]);
+      cursor = index + span.length;
+    }
   };
   const addEvidence = (evidence) => {
     const folded = foldEvidence(evidence);
@@ -784,7 +340,7 @@ function reportBuilder() {
     add(fence);
     add(folded);
     add(fence);
-    evidenceRanges.push([start, text.length]);
+    protectedRanges.push([start, text.length]);
   };
   const finish = () => {
     let out = '';
@@ -793,47 +349,40 @@ function reportBuilder() {
       const index = text.indexOf('<!--', cursor);
       if (index < 0) break;
       out += text.slice(cursor, index);
-      const protectedEvidence = evidenceRanges.some(([start, end]) => index >= start && index < end);
-      out += protectedEvidence ? '<!--' : '&lt;!--';
+      const protectedLiteral = protectedRanges.some(([start, end]) => index >= start && index < end);
+      out += protectedLiteral ? '<!--' : '&lt;!--';
       cursor = index + 4;
     }
     return out + text.slice(cursor);
   };
-  return { add, addEvidence, finish };
+  return { add, addSpans, addEvidence, finish };
+}
+
+function joinLocation(finding, preparePart, file = preparePart(finding.file)) {
+  if (!isPresent(finding.line_start)) return file;
+  const start = preparePart(finding.line_start);
+  if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
+    return `${file}:${start}`;
+  }
+  return `${file}:${start}-${preparePart(finding.line_end)}`;
 }
 
 function location(finding) {
   if (!isPresent(finding.file)) return '';
-  const file = inline(finding.file);
-  if (!isPresent(finding.line_start)) return file;
-  const start = oneLine(finding.line_start);
-  if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
-    return `${file}:${start}`;
-  }
-  return `${file}:${start}-${oneLine(finding.line_end)}`;
+  const file = oneLine(outboundBase(oneLine(finding.file)));
+  const foldedFile = foldInline(file);
+  // Keep joint normalization when the file fits; the line suffix must stay outside the file's fold budget.
+  if (foldedFile === file) return preparedCodeSpan(joinLocation(finding, oneLine));
+  return codeSpan(joinLocation(finding, (part) => oneLine(outboundBase(oneLine(part))), foldedFile));
 }
 
 function quotedSummaryLocation(finding) {
   if (!isPresent(finding.file)) return '';
-  const file = oneLine(outboundBase(finding.file));
-  let display = file;
-  if (isPresent(finding.line_start)) {
-    const start = oneLine(outboundBase(finding.line_start));
-    display += `:${start}`;
-    if (isPresent(finding.line_end) && String(finding.line_end) !== String(finding.line_start)) {
-      display += `-${oneLine(outboundBase(finding.line_end))}`;
-    }
-  }
-  display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
-  display = outboundDefinitions(display, true);
-  let longest = 0;
-  for (const match of display.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
-  const delimiter = '`'.repeat(longest + 1);
-  if (/^[` ]|[` ]$/.test(display)) display = ` ${display} `;
-  return `${delimiter}${display}${delimiter}`;
+  const display = joinLocation(finding, (part) => oneLine(outboundBase(part)));
+  return codeSpan(display, true);
 }
 
-export function encodeUrlSegment(segment) {
+function encodeUrlSegment(segment) {
   const repaired = reportAsText(segment)
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '\uFFFD')
     .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
@@ -844,11 +393,6 @@ function templateValue(template, values) {
   let output = template;
   for (const [name, value] of Object.entries(values)) output = output.replaceAll(`{${name}}`, value);
   return output;
-}
-
-function identityCheck(identity, name) {
-  const field = PR_IDENTITY_FIELDS.find((entry) => entry.name === name);
-  return Boolean(field && field.check(identity[name]));
 }
 
 function permalinkContext(identity) {
@@ -874,11 +418,13 @@ function positiveLine(value) {
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
 
-function locationUrl(finding, permalinks) {
+function locationUrl(finding, permalinks, displayedLocation) {
   if (!permalinks.blobBase || !isPresent(finding.file)) return null;
   const rawFile = reportAsText(finding.file);
+  // Refuse a link when normalization changes its path so the displayed location cannot disagree with the target.
   if (outboundBase(rawFile) !== rawFile) return null;
   if (oneLine(rawFile) !== rawFile) return null;
+  if (displayedLocation !== undefined && displayedLocation !== preparedCodeSpan(joinLocation(finding, oneLine))) return null;
   const segments = rawFile.split('/');
   if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
   const path = segments.map(encodeUrlSegment).join('/');
@@ -911,8 +457,8 @@ function renderFinding(builder, finding, unverified, permalinks) {
 
   const bullets = [];
   const where = location(finding);
-  const url = locationUrl(finding, permalinks);
-  if (where) bullets.push(url ? `- **Location:** [\`${where}\`](${url})` : `- **Location:** \`${where}\``);
+  const url = locationUrl(finding, permalinks, where);
+  if (where) bullets.push(url ? `- **Location:** [${where}](${url})` : `- **Location:** ${where}`);
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
   if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);
@@ -930,7 +476,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   if (finding.challenge_contested === true) {
     bullets.push('- **Contested:** the challenger could not confirm the cited location');
   }
-  if (bullets.length) blocks.push(() => bullets.forEach(builder.add));
+  if (bullets.length) blocks.push(() => bullets.forEach((line) => builder.addSpans(line, [where])));
 
   if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
   if (isPresent(finding.evidence)) {
@@ -942,8 +488,9 @@ function renderFinding(builder, finding, unverified, permalinks) {
   }
 
   const extras = reportExtraFields()
-    .filter((key) => isPresent(finding[key]))
-    .map((key) => `- **${fieldLabel(key)}:** ${foldedProse(finding[key])}`);
+    .map((key) => ({ key, text: findingFieldText(key, finding[key]) }))
+    .filter(({ text }) => isPresent(text))
+    .map(({ key, text }) => `- **${fieldLabel(key)}:** ${text}`);
   if (extras.length) blocks.push(() => extras.forEach(builder.add));
 
   if (isPresent(finding.suggestion)) {
@@ -968,18 +515,19 @@ function renderFinding(builder, finding, unverified, permalinks) {
     });
   }
 
-  if (isPresent(finding.cross_file_refs)) {
-    blocks.push(() => builder.add(`- **Cross-file refs:** ${foldedProse(finding.cross_file_refs)}`));
+  const crossFileRefs = findingFieldText('cross_file_refs', finding.cross_file_refs);
+  if (isPresent(crossFileRefs)) {
+    blocks.push(() => builder.add(`- **Cross-file refs:** ${crossFileRefs}`));
   }
 
   if (Array.isArray(finding.corroborations) && finding.corroborations.length) {
     blocks.push(() => {
       for (const corroboration of finding.corroborations) {
-        const agent = inline(corroboration.agent);
-        const dimension = inline(corroboration.dimension);
+        const agent = preparedCodeSpan(corroboration.agent, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
+        const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
-        builder.add(`- **Corroborated by** \`${agent}\` (\`${dimension}\`, confidence ${confidence}) — ${title}`);
+        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, confidence ${confidence}) — ${title}`, [agent, dimension]);
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -993,15 +541,11 @@ function renderFinding(builder, finding, unverified, permalinks) {
   });
 }
 
-function severityKey(finding) {
-  return normalizeReportSeverity(finding.severity);
-}
-
 function severityView(findings) {
   const ranked = rankFindings(findings);
   const buckets = new Map();
   for (const finding of ranked) {
-    const key = severityKey(finding);
+    const key = normalizeReportSeverity(finding.severity);
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(finding);
   }
@@ -1082,8 +626,7 @@ function summaryIndex(rawFindings, findingsView, input) {
   const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding)).map((finding) => (
     [reportUnitKey(finding, originalByProjected.get(finding)), finding]
   )));
-  // Keep the report's group order, but use the delivered subset's primary (or its
-  // first member when selection omitted the primary), just as the poster does.
+  // Keep report group order but select the delivered subset's primary so the index agrees with posted issues.
   const indexed = reported.map((finding) => deliveredUnits.get(
     reportUnitKey(finding, originalByProjected.get(finding)),
   )).filter(Boolean);
@@ -1104,10 +647,10 @@ function summaryIndex(rawFindings, findingsView, input) {
   return { indexed, reasons };
 }
 
-export function summaryBlock(builder, input) {
+function summaryBlock(builder, input) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = normalizeFindings(inp.findings);
-  const rawUnverified = normalizeFindings(inp.unverified);
+  const rawFindings = coerceReportFindings(inp.findings);
+  const rawUnverified = coerceReportFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -1123,7 +666,9 @@ export function summaryBlock(builder, input) {
     const url = locationUrl(finding, permalinks);
     const link = url ? `[${where}](${url})` : where;
     const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
-    const bullet = outboundTildeRuns(`- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`);
+    const bullet = outboundTildeRuns(
+      `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`,
+    );
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
     if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
       cutForLength = true;
@@ -1151,19 +696,19 @@ export function renderSummaryBody(input) {
   return builder.finish();
 }
 
-function receiptSafe(value, fallback = 'unknown') {
-  if (value === undefined || value === null) return fallback;
+function receiptSafe(value) {
+  if (value === undefined || value === null) return 'unknown';
   const cleaned = oneLine(value).replaceAll('`', '');
-  return cleaned || fallback;
+  return cleaned || 'unknown';
 }
 
-function receiptLines(input) {
+function receiptLines(input, knobs) {
   const mode = input.mode === 'headless' ? 'headless' : 'interactive';
   const echo = input.configEcho && typeof input.configEcho === 'object' && !Array.isArray(input.configEcho)
     ? input.configEcho
     : {};
   const lines = [mode === 'headless' ? 'Headless config:' : 'Resolved config:'];
-  for (const descriptor of KNOB_REGISTRY) {
+  for (const descriptor of knobs) {
     if (!descriptor.modes.includes(mode)) continue;
     const entry = echo[descriptor.key];
     const validEntry = entry && typeof entry === 'object' && !Array.isArray(entry)
@@ -1181,30 +726,28 @@ function countSummary(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'none';
   const entries = Object.entries(value).filter(([key, item]) => key !== 'replay_path_rejected' || item > 0).map(([key, item]) => {
     const count = Array.isArray(item) ? item.length : item;
-    return `${key}=${tableCell(count)}`;
+    return `${inline(key)}=${inline(count)}`;
   });
   return entries.length ? entries.join(', ') : 'none';
 }
 
-// The detector facts are the only source for an incremental-to-full explanation. Keep the
-// precedence in one table: an unresolvable SHA and rewritten history both imply no advanced
-// head, but they are materially different operator outcomes.
-export const REVIEW_SCOPE_FALLBACK_RULES = [
-  { when: (detector) => typeof detector.error === 'string' && detector.error !== '', reason: (detector) => `detection failed: ${oneLine(detector.error).slice(0, 120)}` },
-  { when: (detector) => detector.previously_reviewed === false, reason: () => 'no prior review recorded' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === false, reason: () => 'recorded SHA not resolvable' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === true && detector.head_advanced === false, reason: () => 'head has not advanced' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === false, reason: () => 'history rewritten (recorded SHA is not an ancestor)' },
-];
-
-export function reviewScopeFallbackReason(scope) {
+// Detector facts own fallback explanations; precedence distinguishes unresolved SHAs from rewritten history
+// even when both report that the head has not advanced.
+export function reviewScopeFallbackReason(scope, rules = REVIEW_SCOPE_FALLBACK_RULES) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)
     || scope.kind !== 'full' || scope.requested !== 'incremental'
     || !scope.detector || typeof scope.detector !== 'object' || Array.isArray(scope.detector)) {
     return null;
   }
-  for (const rule of REVIEW_SCOPE_FALLBACK_RULES) {
-    if (rule.when(scope.detector)) return rule.reason(scope.detector);
+  for (const rule of rules) {
+    const detector = scope.detector;
+    if (rule.error) {
+      if (typeof detector.error === 'string' && detector.error !== '') {
+        return `detection failed: ${inline(detector.error, 120)}`;
+      }
+    } else if (Object.entries(rule.facts).every(([key, value]) => detector[key] === value)) {
+      return rule.reason;
+    }
   }
   return 'detection failed: unavailable';
 }
@@ -1217,34 +760,34 @@ function methodologyRows(input, rawFindings) {
   const gateway = policy.gateway === true;
   const conditional = conditionalSchemaActive({ ...policy, provider });
   const rows = [];
-  const version = receiptSafe(input.pipelineVersion);
+  const version = inline(input.pipelineVersion) || 'unknown';
   rows.push(['Version', `${version} (plugin and pipeline)`]);
-  rows.push(['Provider', `provider=${provider}; gateway=${gateway}; conditional schema active=${conditional}`]);
+  rows.push(['Provider', `provider=${inline(provider)}; gateway=${gateway}; conditional schema active=${conditional}`]);
 
   if (policy.subagentModel) {
-    rows.push(['Subagent model override', `EVERY stage uses ${receiptSafe(policy.subagentModel)}`]);
+    rows.push(['Subagent model override', `EVERY stage uses ${inline(policy.subagentModel)}`]);
   }
   const stageTypes = [
     'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
-    'validator', 'challenger', 'executor', 'artifact-writer',
+    ...Object.keys(STAGE_DEFAULTS),
   ];
   const models = stageTypes.map((agentType) => {
     const model = resolvePolicy(`code-gauntlet:${agentType}`, {
       subagentModelEnv: policy.subagentModel,
       provider,
     }).model;
-    return `${agentType}=${model}`;
+    return `${agentType}=${inline(model)}`;
   }).join(', ');
   rows.push(['Per-stage models', models]);
 
   const tier = input.deliveryTier ?? 'all';
   const cap = typeof input.deliveryCap === 'number' ? String(input.deliveryCap) : 'uncapped';
-  rows.push(['Delivery selection', `selection policy: tier=${tier}, cap=${cap}`]);
+  rows.push(['Delivery selection', `selection policy: tier=${inline(tier)}, cap=${inline(cap)}`]);
 
   const scope = input.reviewScope && typeof input.reviewScope === 'object' ? input.reviewScope : { kind: 'full' };
   if (scope.kind === 'incremental') {
-    const commits = scope.commits === null || scope.commits === undefined ? 'commits unknown' : `${scope.commits} commits`;
-    rows.push(['Review scope', `Incremental since ${scope.since || 'unknown'} (${commits})`]);
+    const commits = scope.commits === null || scope.commits === undefined ? 'commits unknown' : `${inline(scope.commits)} commits`;
+    rows.push(['Review scope', `Incremental since ${inline(scope.since || 'unknown')} (${commits})`]);
   } else {
     const reason = reviewScopeFallbackReason(scope);
     rows.push(['Review scope', reason ? `Full (incremental requested; ${reason})` : 'Full']);
@@ -1253,14 +796,17 @@ function methodologyRows(input, rawFindings) {
   const stats = input.stats && typeof input.stats === 'object' ? input.stats : {};
   const merge = stats.merge && typeof stats.merge === 'object' ? stats.merge : {};
   const channels = merge.findings_per_channel && typeof merge.findings_per_channel === 'object'
-    ? `ndjson=${merge.findings_per_channel.ndjson ?? 0}, text_fallback=${merge.findings_per_channel.text_fallback ?? 0}`
+    ? `ndjson=${inline(merge.findings_per_channel.ndjson ?? 0)}, text_fallback=${inline(merge.findings_per_channel.text_fallback ?? 0)}`
     : 'ndjson=0, text_fallback=0';
-  const mergeCounts = `per-channel: ${channels}; duplicates resolved=${merge.duplicates_resolved ?? 0}; dropped-no-id=${merge.dropped_no_id ?? 0}; truncation warnings=${merge.truncation_warnings ?? 0}; validation warnings=${merge.validation_warnings ?? 0}`;
+  const mergeCounts = `per-channel: ${channels}; duplicates resolved=${inline(merge.duplicates_resolved ?? 0)}; `
+    + `dropped-no-id=${inline(merge.dropped_no_id ?? 0)}; truncation warnings=${inline(merge.truncation_warnings ?? 0)}; `
+    + `validation warnings=${inline(merge.validation_warnings ?? 0)}`;
   const pathCounts = Object.entries(stats.pathNormalization || {})
-    .map(([phase, counts]) => `; ${tableCell(phase)} paths: ${countSummary(counts)}`).join('');
+    .map(([phase, counts]) => `; ${inline(phase)} paths: ${countSummary(counts)}`).join('');
   rows.push([
     'Findings pipeline',
-    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}${pathCounts}`,
+    `discovered=${inline(stats.discovered ?? rawFindings.length)}; validate: ${countSummary(stats.validate)}; `
+      + `filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}${pathCounts}`,
   ]);
 
   const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;
@@ -1271,11 +817,11 @@ function methodologyRows(input, rawFindings) {
   return rows;
 }
 
-function renderMethodology(builder, input, rawFindings) {
+function renderMethodology(builder, input, rawFindings, knobs) {
   builder.add();
   builder.add('## Review Methodology');
   builder.add();
-  const receipt = receiptLines(input);
+  const receipt = receiptLines(input, knobs);
   const receiptText = receipt.join('\n');
   const fence = fenceFor(receiptText);
   builder.add(`${fence}text`);
@@ -1288,15 +834,14 @@ function renderMethodology(builder, input, rawFindings) {
     builder.add(`| ${tableCell(aspect)} | ${tableCell(details)} |`);
   }
   builder.add();
-  builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported by the orchestrator at delivery.');
+  builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported '
+    + 'by the orchestrator at delivery.');
 }
 
-// Complete report.md with no trailing newline. Pure and total for absent/empty input:
-// no clock, dispatch, prompt, schema, segmentation or fallback participates.
-export function renderReport(input) {
+export function renderReport(input, knobs = KNOB_REGISTRY) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = normalizeFindings(inp.findings);
-  const rawUnverified = normalizeFindings(inp.unverified);
+  const rawFindings = coerceReportFindings(inp.findings);
+  const rawUnverified = coerceReportFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -1311,30 +856,40 @@ export function renderReport(input) {
       ? templateValue(PERMALINK_TEMPLATES[identity.platform].ref, { number: oneLine(identity.pr_number) })
       : `#${oneLine(identity.pr_number)}`}`
     : null;
+  const referenceSpan = reference ? preparedCodeSpan(reference) : '';
 
   let subject = 'local changes';
+  const subjectSpans = [];
   if (identity && typeof identity.title === 'string' && identity.title.trim()) {
     subject = inline(identity.title);
   } else if (reference) {
-    subject = `\`${reference}\``;
+    subject = referenceSpan;
+    subjectSpans.push(referenceSpan);
   }
 
   const identityParts = ['Reviewed'];
-  if (isPresent(inp.headShaShort)) identityParts.push(`head \`${oneLine(inp.headShaShort)}\``);
-  if (isPresent(inp.generatedAt)) identityParts.push(`at ${oneLine(inp.generatedAt)}`);
+  const identitySpans = [];
+  if (isPresent(inp.headShaShort)) {
+    const head = preparedCodeSpan(inp.headShaShort);
+    identityParts.push(`head ${head}`);
+    identitySpans.push(head);
+  }
+  if (isPresent(inp.generatedAt)) identityParts.push(`at ${inline(inp.generatedAt)}`);
   if (permalinks.repositoryBase && identityCheck(identity, 'pr_number')) {
     const refUrl = templateValue(permalinks.template.refUrl, {
       ...permalinks.values,
       number: String(identity.pr_number),
     });
-    identityParts.push(`for [\`${reference}\`](${refUrl})`);
+    identityParts.push(oneLine(outboundBase(reference)) === reference
+      ? `for [${referenceSpan}](${refUrl})` : `for ${referenceSpan}`);
+    identitySpans.push(referenceSpan);
   }
   identityParts.push(`by ${BRAND_NAME}.`);
 
   const builder = reportBuilder();
-  builder.add(`# ${BRAND_MARK} ${BRAND_NAME}: ${subject}`);
+  builder.addSpans(`# ${BRAND_MARK} ${BRAND_NAME}: ${subject}`, subjectSpans);
   builder.add();
-  builder.add(identityParts.join(' '));
+  builder.addSpans(identityParts.join(' '), identitySpans);
   builder.add();
   builder.add('## Summary');
   builder.add();
@@ -1361,7 +916,8 @@ export function renderReport(input) {
     builder.add();
     builder.add('## Unverified / pipeline-degraded findings');
     builder.add();
-    builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. They are not confirmed findings.');
+    builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. '
+      + 'They are not confirmed findings.');
     renderSeverityBuckets(builder, unverifiedView, true, permalinks);
   }
 
@@ -1374,6 +930,6 @@ export function renderReport(input) {
   builder.add('## Review Dimensions Summary');
   builder.add();
   builder.add(dimensionsTable);
-  renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings);
+  renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings, knobs);
   return builder.finish();
 }

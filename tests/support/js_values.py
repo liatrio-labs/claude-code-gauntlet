@@ -11,9 +11,13 @@ REPO = Path(__file__).resolve().parents[2]
 @lru_cache(maxsize=1)
 def js_values():
     script = (
-        "import('./workflows/src/filterFindings.js').then(m => "
+        "Promise.all([import('./workflows/src/registry.js'), "
+        "import('./workflows/src/filterFindings.js')]).then(([m, f]) => "
         "console.log(JSON.stringify({FIELD_RENAMES: m.FIELD_RENAMES, "
-        "SEVERITY_ORDER: m.SEVERITY_ORDER})))"
+        "SEVERITY_ORDER: m.SEVERITY_ORDER, REVIEW_DEFAULTS: {"
+        "confidence_threshold_nonsecurity: f.FILTER_DEFAULTS.nonsecurityConfidenceThreshold, "
+        "security_min_confidence: f.FILTER_DEFAULTS.securityMinConfidence, "
+        "severity_threshold: f.FILTER_DEFAULTS.severityThreshold}})))"
     )
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
