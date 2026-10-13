@@ -22,6 +22,14 @@ const POLICY_ROWS = [
   { name: 'third-party deployment', agent: 'code-gauntlet:bug-detector',
     input: { provider: 'bedrock', subagentModelEnv: 'us.anthropic.claude-sonnet-4-6' },
     expected: { model: 'us.anthropic.claude-sonnet-4-6' } },
+  { name: 'third-party alias override', agent: 'code-gauntlet:bug-detector',
+    input: { provider: 'bedrock', subagentModelEnv: 'sonnet' }, expected: { model: 'sonnet' } },
+  { name: 'vertex stage default', agent: 'code-gauntlet:executor', input: { provider: 'vertex' },
+    expected: { model: 'sonnet' } },
+  { name: 'foundry stage default', agent: 'code-gauntlet:executor', input: { provider: 'foundry' },
+    expected: { model: 'sonnet' } },
+  { name: 'unknown provider stage default', agent: 'code-gauntlet:executor', input: { provider: 'someday-provider' },
+    expected: { model: 'sonnet' } },
   { name: 'null provider', agent: 'code-gauntlet:bug-detector', input: { provider: null }, expected: { model: 'claude-sonnet-5-5' } },
   { name: 'first-party', agent: 'code-gauntlet:bug-detector', input: { provider: 'firstParty' },
     expected: { model: 'claude-sonnet-5-5' } },
@@ -49,6 +57,7 @@ for (const { name, input, expected } of SCHEMA_ROWS) {
 }
 
 const DATA_ROWS = [
+  { name: 'SHA pattern', input: String(SHA_FULL_RE), expected: '/^[0-9a-f]{40}$/' },
   { name: 'dimension order', input: DIMENSIONS.map((row) => row.dimension), expected: [
     'bug', 'security', 'cross_file_impact', 'test_coverage', 'convention', 'intent', 'comment_accuracy', 'type_design', 'simplification',
   ] },

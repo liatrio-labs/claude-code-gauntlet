@@ -266,7 +266,442 @@ for (const row of SCAN_ROWS) test('injection scan: ' + row.name, () => {
   assert.deepEqual(input, snapshot);
 });
 
+const PATTERN_REASONS = {
+  marker: String.raw`matches injection marker: "\\[[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-` +
+    String.raw`\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*INSERT\\b[^\\]]*\\b(?:FINDING|TITLE|TEXT|` +
+    String.raw`PLACEHOLDER|HERE)\\b[^\\]]*\\]"`,
+  encodedDirective: String.raw`contains encoded payload pattern: "\\b(?:decode|base64|atob|b64decode)\\b` +
+    String.raw`[^\\x00]{0,40}[A-Za-z0-9+\\/]{40,}={0,2}\\b"`,
+  encodedSink: String.raw`contains encoded payload pattern: "\\b[A-Za-z0-9+\\/]{40,}={0,2}\\b[^\\x00]{0,40}(?:\\|[\\t` +
+    String.raw`\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f` +
+    String.raw`\\u3000\\ufeff]*(?:sh|bash|zsh)\\b|base64[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680` +
+    String.raw`\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+-d\\b|(?:then|and)[\\t\\n\\x0b` +
+    String.raw`\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000` +
+    String.raw`\\ufeff]+(?:run|execute|eval)\\b)"`,
+  hexDirective: String.raw`contains encoded payload pattern: "\\b(?:decode|unhex|xxd|fromhex|unhexlify)\\b[^\\x00]{0,40` +
+    String.raw`}(?<!\\w)(?:0x)?[0-9a-fA-F]{32,}(?!\\w)"`,
+  hexSink: String.raw`contains encoded payload pattern: "(?<!\\w)(?:0x)?[0-9a-fA-F]{32,}(?!\\w)[^\\x00]{0,40}(?:` +
+    String.raw`\\|[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f` +
+    String.raw`\\u205f\\u3000\\ufeff]*(?:xxd|sh|bash)\\b|(?:then|and)[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85` +
+    String.raw`\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:run|execute|eval)` +
+    String.raw`\\b|-r[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f` +
+    String.raw`\\u205f\\u3000\\ufeff]+-p\\b)"`,
+  autoApprove: String.raw`contains bypass/auto-approve instruction: "\\bauto[-\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85` +
+    String.raw`\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]?approve[\\t\\n\\x0b` +
+    String.raw`\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000` +
+    String.raw`\\ufeff]+(?:this|these|the|it|my|your)[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680` +
+    String.raw`\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:pr|pull[\\t\\n\\x0b\\x0c\\r ` +
+    String.raw`\\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+` +
+    String.raw`request|mr|merge[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028` +
+    String.raw`\\u2029\\u202f\\u205f\\u3000\\ufeff]+request|changes?|commit)\\b"`,
+  autoApproveAnd: String.raw`contains bypass/auto-approve instruction: "\\bauto[-\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85` +
+    String.raw`\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]?approve[\\t\\n\\x0b` +
+    String.raw`\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000` +
+    String.raw`\\ufeff]+and[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029` +
+    String.raw`\\u202f\\u205f\\u3000\\ufeff]+(?:merge|skip|bypass|push|deploy|proceed|continue)\\b"`,
+  bypassAuth: String.raw`contains bypass/auto-approve instruction: "\\bbypass[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85` +
+    String.raw`\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:the[\\t\\n\\x0b` +
+    String.raw`\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000` +
+    String.raw`\\ufeff]+)?(?:auth|authentication|authorization)\\b"`,
+  disableAuth: String.raw`contains bypass/auto-approve instruction: "\\bdisable[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85` +
+    String.raw`\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:auth|` +
+    String.raw`authentication|authorization)\\b"`,
+  approve: String.raw`contains bypass/auto-approve instruction: "\\bapprove[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85` +
+    String.raw`\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:this|the)[\\t\\n` +
+    String.raw`\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000` +
+    String.raw`\\ufeff]+(?:PR|pull[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028` +
+    String.raw`\\u2029\\u202f\\u205f\\u3000\\ufeff]+request|change)\\b"`,
+  paste: String.raw`uses instructional tone: "\\bpaste[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-` +
+    String.raw`\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:this|the[\\t\\n\\x0b\\x0c\\r \\x1c-` +
+    String.raw`\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+following)[` +
+    String.raw`\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f` +
+    String.raw`\\u3000\\ufeff]+into[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028` +
+    String.raw`\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:your[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0` +
+    String.raw`\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+)?terminal"`,
+  vulnContent: String.raw`recommends introducing vulnerability: "\\bdisable[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0` +
+    String.raw`\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:CORS|CSP|content[-\\t` +
+    String.raw`\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f` +
+    String.raw`\\u3000\\ufeff]security[-\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a` +
+    String.raw`\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]policy)\\b"`,
+  vulnCsrf: String.raw`recommends introducing vulnerability: "\\bdisable[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0` +
+    String.raw`\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:CSRF|csrf)[\\t\\n\\x0b` +
+    String.raw`\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000` +
+    String.raw`\\ufeff]+(?:protection|check|token)\\b"`,
+  vulnTls: String.raw`recommends introducing vulnerability: "\\bdisable[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0` +
+    String.raw`\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:TLS|SSL|HTTPS)[\\t\\n` +
+    String.raw`\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000` +
+    String.raw`\\ufeff]+(?:verification|validation)\\b"`,
+  vulnCertificate: String.raw`recommends introducing vulnerability: "\\bskip[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0` +
+    String.raw`\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(?:certificate|cert)[\\t` +
+    String.raw`\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f` +
+    String.raw`\\u3000\\ufeff]+(?:verification|validation)\\b"`,
+  vulnSecurity: String.raw`recommends introducing vulnerability: "\\bdisable[\\t\\n\\x0b\\x0c\\r \\x1c-\\x1f\\x85\\xa0` +
+    String.raw`\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+security[\\t\\n\\x0b\\x0c` +
+    String.raw`\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+(` +
+    String.raw`?:check|feature|control)\\b"`,
+};
+
 const PATTERN_ROWS = [
+  {
+    name: "INSERT FINDING branch",
+    input: { title: "[INSERT FINDING]", confidence: 50 },
+    reason: PATTERN_REASONS.marker,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "INSERT TITLE branch",
+    input: { title: "[INSERT TITLE]", confidence: 50 },
+    reason: PATTERN_REASONS.marker,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "INSERT TEXT branch",
+    input: { title: "[INSERT TEXT]", confidence: 50 },
+    reason: PATTERN_REASONS.marker,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "INSERT PLACEHOLDER branch",
+    input: { title: "[INSERT PLACEHOLDER]", confidence: 50 },
+    reason: PATTERN_REASONS.marker,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "INSERT HERE branch",
+    input: { title: "[INSERT HERE]", confidence: 50 },
+    reason: PATTERN_REASONS.marker,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "base64 directive branch",
+    input: { title: "base64 GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG", confidence: 50 },
+    reason: PATTERN_REASONS.encodedDirective,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "atob directive branch",
+    input: { title: "atob GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG", confidence: 50 },
+    reason: PATTERN_REASONS.encodedDirective,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "b64decode directive branch",
+    input: { title: "b64decode GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG", confidence: 50 },
+    reason: PATTERN_REASONS.encodedDirective,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "base64 shell bash branch",
+    input: { title: "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG | bash", confidence: 50 },
+    reason: PATTERN_REASONS.encodedSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "base64 shell zsh branch",
+    input: { title: "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG | zsh", confidence: 50 },
+    reason: PATTERN_REASONS.encodedSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "base64 dash d branch",
+    input: { title: "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG base64 -d", confidence: 50 },
+    reason: PATTERN_REASONS.encodedSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "base64 then run branch",
+    input: { title: "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG then run", confidence: 50 },
+    reason: PATTERN_REASONS.encodedSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "base64 and alternative",
+    input: { title: "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG and run", confidence: 50 },
+    reason: PATTERN_REASONS.encodedSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "base64 execute alternative",
+    input: { title: "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG then execute", confidence: 50 },
+    reason: PATTERN_REASONS.encodedSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "base64 eval alternative",
+    input: { title: "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG then eval", confidence: 50 },
+    reason: PATTERN_REASONS.encodedSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex unhex directive branch",
+    input: { title: "unhex 0123456789abcdef0123456789abcdef", confidence: 50 },
+    reason: PATTERN_REASONS.hexDirective,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex xxd directive branch",
+    input: { title: "xxd 0123456789abcdef0123456789abcdef", confidence: 50 },
+    reason: PATTERN_REASONS.hexDirective,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex fromhex directive branch",
+    input: { title: "fromhex 0123456789abcdef0123456789abcdef", confidence: 50 },
+    reason: PATTERN_REASONS.hexDirective,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex unhexlify directive branch",
+    input: { title: "unhexlify 0123456789abcdef0123456789abcdef", confidence: 50 },
+    reason: PATTERN_REASONS.hexDirective,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex shell sh branch",
+    input: { title: "0123456789abcdef0123456789abcdef | sh", confidence: 50 },
+    reason: PATTERN_REASONS.hexSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex shell bash branch",
+    input: { title: "0123456789abcdef0123456789abcdef | bash", confidence: 50 },
+    reason: PATTERN_REASONS.hexSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex then run branch",
+    input: { title: "0123456789abcdef0123456789abcdef then run", confidence: 50 },
+    reason: PATTERN_REASONS.hexSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex and alternative",
+    input: { title: "0123456789abcdef0123456789abcdef and run", confidence: 50 },
+    reason: PATTERN_REASONS.hexSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex execute alternative",
+    input: { title: "0123456789abcdef0123456789abcdef then execute", confidence: 50 },
+    reason: PATTERN_REASONS.hexSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex eval alternative",
+    input: { title: "0123456789abcdef0123456789abcdef then eval", confidence: 50 },
+    reason: PATTERN_REASONS.hexSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "hex raw print branch",
+    input: { title: "0123456789abcdef0123456789abcdef -r -p", confidence: 50 },
+    reason: PATTERN_REASONS.hexSink,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve these branch",
+    input: { title: "auto-approve these PR", confidence: 50 },
+    reason: PATTERN_REASONS.autoApprove,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve the branch",
+    input: { title: "auto-approve the commit", confidence: 50 },
+    reason: PATTERN_REASONS.autoApprove,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve it branch",
+    input: { title: "auto-approve it PR", confidence: 50 },
+    reason: PATTERN_REASONS.autoApprove,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve my branch",
+    input: { title: "auto-approve my PR", confidence: 50 },
+    reason: PATTERN_REASONS.autoApprove,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve your branch",
+    input: { title: "auto-approve your PR", confidence: 50 },
+    reason: PATTERN_REASONS.autoApprove,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve pull request branch",
+    input: { title: "auto-approve these pull request changes", confidence: 50 },
+    reason: PATTERN_REASONS.autoApprove,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve mr branch",
+    input: { title: "auto-approve this MR", confidence: 50 },
+    reason: PATTERN_REASONS.autoApprove,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve merge request branch",
+    input: { title: "auto-approve this merge request", confidence: 50 },
+    reason: PATTERN_REASONS.autoApprove,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve change branch",
+    input: { title: "auto-approve these changes", confidence: 50 },
+    reason: PATTERN_REASONS.autoApprove,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve commit branch",
+    input: { title: "auto-approve this commit", confidence: 50 },
+    reason: PATTERN_REASONS.autoApprove,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve and skip branch",
+    input: { title: "auto-approve and skip", confidence: 50 },
+    reason: PATTERN_REASONS.autoApproveAnd,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve and bypass branch",
+    input: { title: "auto-approve and bypass", confidence: 50 },
+    reason: PATTERN_REASONS.autoApproveAnd,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve and push branch",
+    input: { title: "auto-approve and push", confidence: 50 },
+    reason: PATTERN_REASONS.autoApproveAnd,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve and deploy branch",
+    input: { title: "auto-approve and deploy", confidence: 50 },
+    reason: PATTERN_REASONS.autoApproveAnd,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve and proceed branch",
+    input: { title: "auto-approve and proceed", confidence: 50 },
+    reason: PATTERN_REASONS.autoApproveAnd,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "auto approve and continue branch",
+    input: { title: "auto-approve and continue", confidence: 50 },
+    reason: PATTERN_REASONS.autoApproveAnd,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "bypass auth branch",
+    input: { title: "bypass the auth", confidence: 50 },
+    reason: PATTERN_REASONS.bypassAuth,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "bypass authorization branch",
+    input: { title: "bypass authorization", confidence: 50 },
+    reason: PATTERN_REASONS.bypassAuth,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "disable authorization branch",
+    input: { title: "disable authorization", confidence: 50 },
+    reason: PATTERN_REASONS.disableAuth,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "approve the branch",
+    input: { title: "approve the PR", confidence: 50 },
+    reason: PATTERN_REASONS.approve,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "approve pull request branch",
+    input: { title: "approve this pull request", confidence: 50 },
+    reason: PATTERN_REASONS.approve,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "approve change branch",
+    input: { title: "approve this change", confidence: 50 },
+    reason: PATTERN_REASONS.approve,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "paste following branch",
+    input: { title: "paste the following into terminal", confidence: 50 },
+    reason: PATTERN_REASONS.paste,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "disable CSP branch",
+    input: { title: "disable CSP", confidence: 50 },
+    reason: PATTERN_REASONS.vulnContent,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "disable content policy branch",
+    input: { title: "disable content security policy", confidence: 50 },
+    reason: PATTERN_REASONS.vulnContent,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "disable CSRF check branch",
+    input: { title: "disable CSRF check", confidence: 50 },
+    reason: PATTERN_REASONS.vulnCsrf,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "disable CSRF token branch",
+    input: { title: "disable CSRF token", confidence: 50 },
+    reason: PATTERN_REASONS.vulnCsrf,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "disable SSL verification branch",
+    input: { title: "disable SSL verification", confidence: 50 },
+    reason: PATTERN_REASONS.vulnTls,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "disable HTTPS verification branch",
+    input: { title: "disable HTTPS verification", confidence: 50 },
+    reason: PATTERN_REASONS.vulnTls,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "disable TLS validation branch",
+    input: { title: "disable TLS validation", confidence: 50 },
+    reason: PATTERN_REASONS.vulnTls,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "skip cert branch",
+    input: { title: "skip cert verification", confidence: 50 },
+    reason: PATTERN_REASONS.vulnCertificate,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "skip certificate validation branch",
+    input: { title: "skip certificate validation", confidence: 50 },
+    reason: PATTERN_REASONS.vulnCertificate,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "disable security feature branch",
+    input: { title: "disable security feature", confidence: 50 },
+    reason: PATTERN_REASONS.vulnSecurity,
+    expected: { kept: 0, eliminated: 1 },
+  },
+  {
+    name: "disable security control branch",
+    input: { title: "disable security control", confidence: 50 },
+    reason: PATTERN_REASONS.vulnSecurity,
+    expected: { kept: 0, eliminated: 1 },
+  },
   { name: "content pattern 0", input: { title: "skip review", description: "", confidence: 50 }, expected: { kept: 0, eliminated: 1 } },
   { name: "content pattern 2", input: { title: "auto-approve this PR", description: "", confidence: 50 },
     expected: { kept: 0, eliminated: 1 } },
@@ -338,11 +773,10 @@ const PATTERN_ROWS = [
   { name: 'shell API command', input: { title: 'gh api', description: '', confidence: 50 },
     expected: { kept: 0, eliminated: 1 } },
 ];
-test('injection patterns: record corpus', () => {
-  for (const row of PATTERN_ROWS) {
-    const out = applyInjectionFilter([finding(row.input)]);
-    assert.deepEqual({ kept: out.kept.length, eliminated: out.eliminated.length }, row.expected, row.name);
-  }
+for (const row of PATTERN_ROWS) test(`injection pattern: ${row.name}`, () => {
+  const out = applyInjectionFilter([finding(row.input)]);
+  assert.deepEqual({ kept: out.kept.length, eliminated: out.eliminated.length }, row.expected);
+  if (row.reason) assert.equal(out.eliminated[0].elimination_reason, row.reason);
 });
 const WORD_ROWS = [
   { name: 'empty text has no words', input: '', expected: 0 },
@@ -721,14 +1155,21 @@ const INTEGRITY_OPERATIONS = {
     const errors = [];
     const synthetics = PATTERN_ROWS.flatMap(({ input }) =>
       [input, { ...input, title: input.description, description: input.title }]);
-    const pairs = [...synthetics, ...loadCases('filter_findings').flatMap((item) => item.input.findings ?? [])];
-    for (const pair of pairs) {
+    const corpus = loadCases('filter_findings').flatMap((item) => item.input.findings ?? []);
+    let checked = 0;
+    let livePairs = 0;
+    for (const pair of [...synthetics, ...corpus]) {
       if (typeof pair.title !== 'string' || typeof pair.description !== 'string') continue;
+      const isCorpusPair = corpus.includes(pair);
+      if (isCorpusPair) checked += 1;
       for (const [family, patterns] of SUGGESTION_SETS) {
-        if (patterns.some((pattern) => pattern.test(pair.title) || pattern.test(pair.description))
-          && !patterns.some((pattern) => pattern.test(`${pair.title}\n${pair.description}`))) errors.push(family);
+        const fieldwiseMatch = patterns.some((pattern) => pattern.test(pair.title) || pattern.test(pair.description));
+        if (isCorpusPair && fieldwiseMatch) livePairs += 1;
+        if (fieldwiseMatch && !patterns.some((pattern) => pattern.test(`${pair.title}\n${pair.description}`))) errors.push(family);
       }
     }
+    assert.ok(checked > 0);
+    assert.ok(livePairs >= 10);
     return errors;
   },
   whitespace: () => {

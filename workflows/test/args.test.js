@@ -32,13 +32,26 @@ const REJECTION_ROWS = [
   { name: 'outputDir control', input: (a) => { a.outputDir = "/p\n"; }, expected: [ "outputDir must not contain a control character" ] },
   { name: 'headShaShort type',
     input: (a) => { a.headShaShort = 42; }, expected: [ "headShaShort must be a non-empty string when present" ] },
+  { name: 'headShaShort shell metacharacter', input: (a) => { a.headShaShort = 'abc;id'; }, expected: [
+    "headShaShort must match /^[A-Za-z0-9._-]+$/ (AST-safe, non-splitting \u2014 interpolated into the verify command " +
+      "argv)",
+  ] },
   { name: 'headShaShort control',
     input: (a) => { a.headShaShort = "/p\n"; }, expected: [ "headShaShort must not contain a control character" ] },
   { name: 'diffPath type', input: (a) => { a.diffPath = 42; }, expected: [ "diffPath must be a non-empty string when present" ] },
   { name: 'diffPath control', input: (a) => { a.diffPath = "/p\n"; }, expected: [ "diffPath must not contain a control character" ] },
   { name: 'pluginRoot type', input: (a) => { a.pluginRoot = 42; }, expected: [ "pluginRoot must be a non-empty string when present" ] },
+  { name: 'pluginRoot null', input: (a) => { a.pluginRoot = null; }, expected: [
+    'pluginRoot must be a non-empty string when present',
+  ] },
+  { name: 'pluginRoot object', input: (a) => { a.pluginRoot = {}; }, expected: [
+    'pluginRoot must be a non-empty string when present',
+  ] },
   { name: 'pluginRoot control', input: (a) => { a.pluginRoot = "/p\n"; }, expected: [ "pluginRoot must not contain a control character" ] },
   { name: 'blank path', input: (a) => { a.diffPath = "   "; }, expected: [ "diffPath must be a non-empty string when present" ] },
+  { name: 'empty path', input: (a) => { a.diffPath = ''; }, expected: [
+    'diffPath must be a non-empty string when present',
+  ] },
   { name: 'relative output',
     input: (a) => { a.outputDir = "relative"; }, expected: [ "outputDir must be an absolute path (POSIX /-prefix)" ] },
   { name: 'relative root',
@@ -58,11 +71,18 @@ const REJECTION_ROWS = [
     input: (a) => { a.pluginRoot = "/plugin/../other"; }, expected: [ "pluginRoot must not contain a .. path segment" ] },
   { name: 'changed files type',
     input: (a) => { a.changedFiles = {}; }, expected: [ "changedFiles must be an array of repo-relative paths" ] },
+  { name: 'changed files string', input: (a) => { a.changedFiles = 'a.js,b.js'; }, expected: [
+    'changedFiles must be an array of repo-relative paths',
+  ] },
   { name: 'changed lines type', input: (a) => { a.changedLines = "1"; }, expected: [ "changedLines must be a number" ] },
   { name: 'risk container', input: (a) => { a.riskTable = {}; }, expected: [ "riskTable must be an array of {path, risk} objects" ] },
   { name: 'risk entry', input: (a) => { a.riskTable = [null]; }, expected: [
     "riskTable[0] must be an object of the form {path, risk}",
     "riskTable is missing risk classification for changed file(s): a.js",
+  ] },
+  { name: 'risk string entry', input: (a) => { a.riskTable = ['a.js']; }, expected: [
+    'riskTable[0] must be an object of the form {path, risk}',
+    'riskTable is missing risk classification for changed file(s): a.js',
   ] },
   { name: 'risk path', input: (a) => { a.riskTable[0].path = ""; }, expected: [
     "riskTable[0].path must be a non-empty string",
@@ -100,6 +120,12 @@ const REJECTION_ROWS = [
   { name: 'contextLines domain',
     input: (a) => { a.contextLines = "1"; },
     expected: [ "contextLines must be a positive safe integer (the measured size of the shared context file) when present" ] },
+  { name: 'contextLines null', input: (a) => { a.contextLines = null; }, expected: [
+    'contextLines must be a positive safe integer (the measured size of the shared context file) when present',
+  ] },
+  { name: 'contextLines non-finite', input: (a) => { a.contextLines = NaN; }, expected: [
+    'contextLines must be a positive safe integer (the measured size of the shared context file) when present',
+  ] },
   { name: 'contextLines minimum',
     input: (a) => { a.contextLines = 0; },
     expected: [ "contextLines must be a positive safe integer (the measured size of the shared context file) when present" ] },
@@ -109,6 +135,10 @@ const REJECTION_ROWS = [
   { name: 'contextChars domain',
     input: (a) => { a.contextLines = 2028; a.contextChars = "1"; },
     expected: [ "contextChars must be a positive safe integer (the measured size of the shared context file) when present" ] },
+  { name: 'contextChars unsafe integer', input: (a) => { a.contextLines = 1; a.contextChars = Number.MAX_SAFE_INTEGER + 2; },
+    expected: [
+      'contextChars must be a positive safe integer (the measured size of the shared context file) when present',
+    ] },
   { name: 'contextChars ceiling', input: (a) => { a.contextLines = 2028; a.contextChars = 500000001; }, expected: [
     "contextChars is 500000001, above the 500000000 ceiling \u2014 that is not a review context, it is a " +
       "mis-measurement",
@@ -121,6 +151,9 @@ const REJECTION_ROWS = [
   { name: 'root confidence_threshold',
     input: (a) => { a.reviewConfig = { confidence_threshold: "90" }; },
     expected: [ "reviewConfig.confidence_threshold must be an integer from 0 through 100 when present" ] },
+  { name: 'fractional threshold', input: (a) => { a.reviewConfig = { confidence_threshold: 1.5 }; }, expected: [
+    'reviewConfig.confidence_threshold must be an integer from 0 through 100 when present',
+  ] },
   { name: 'root security_min_confidence',
     input: (a) => { a.reviewConfig = { security_min_confidence: 101 }; },
     expected: [ "reviewConfig.security_min_confidence must be an integer from 0 through 100 when present" ] },
@@ -183,6 +216,9 @@ const REJECTION_ROWS = [
     expected: [ "reviewConfig.scopes[1].dir duplicates another scope dir: api" ] },
   { name: 'exclusion shape',
     input: (a) => { a.exclusionPatterns = {}; }, expected: [ "exclusionPatterns must be an array of flat pattern strings" ] },
+  { name: 'exclusion string', input: (a) => { a.exclusionPatterns = 'foo'; }, expected: [
+    'exclusionPatterns must be an array of flat pattern strings',
+  ] },
   { name: 'exclusion element',
     input: (a) => { a.exclusionPatterns = [42]; }, expected: [ "exclusionPatterns[0] must be a flat pattern string (got number)" ] },
   { name: 'review md shape',
@@ -197,9 +233,15 @@ const REJECTION_ROWS = [
   { name: 'review md path type', input: (a) => {
     a.reviewMd = [{ path: 1, text: "" }]; a.configEcho.review_md.value = "present";
   }, expected: [ "reviewMd[0].path must be a non-empty string" ] },
+  { name: 'review md missing path', input: (a) => {
+    a.reviewMd = [{ text: 'x' }]; a.configEcho.review_md.value = 'present';
+  }, expected: ['reviewMd[0].path must be a non-empty string'] },
   { name: 'review md text type', input: (a) => {
     a.reviewMd = [{ path: "api/REVIEW.md", text: 1 }]; a.configEcho.review_md.value = "present";
   }, expected: [ "reviewMd[0].text must be a string" ] },
+  { name: 'review md missing text', input: (a) => {
+    a.reviewMd = [{ path: 'api/REVIEW.md' }]; a.configEcho.review_md.value = 'present';
+  }, expected: ['reviewMd[0].text must be a string'] },
   { name: 'review path absolute', input: (a) => {
     a.reviewMd = [{ path: "/api/REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
   }, expected: [
@@ -222,6 +264,9 @@ const REJECTION_ROWS = [
   { name: 'review path control', input: (a) => {
     a.reviewMd = [{ path: "api\n/REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
   }, expected: [ "reviewMd[0].path must not contain a control character" ] },
+  { name: 'review path NUL', input: (a) => {
+    a.reviewMd = [{ path: 'api\u0000/REVIEW.md', text: '' }]; a.configEcho.review_md.value = 'present';
+  }, expected: ['reviewMd[0].path must not contain a control character'] },
   { name: 'review path empty segment', input: (a) => {
     a.reviewMd = [{ path: "api//REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
   }, expected: [ "reviewMd[0].path must not contain an empty path segment" ] },
@@ -270,6 +315,15 @@ const REJECTION_ROWS = [
     a.delivery = { prIdentity: prIdentity() };
     a.delivery.prIdentity.pr_number = 0;
   }, expected: [ "delivery.prIdentity.pr_number must be a positive safe integer" ] },
+  { name: 'identity pr_number negative', input: (a) => {
+    a.delivery = { prIdentity: prIdentity({ pr_number: -1 }) };
+  }, expected: ['delivery.prIdentity.pr_number must be a positive safe integer'] },
+  { name: 'identity pr_number fraction', input: (a) => {
+    a.delivery = { prIdentity: prIdentity({ pr_number: 1.5 }) };
+  }, expected: ['delivery.prIdentity.pr_number must be a positive safe integer'] },
+  { name: 'identity pr_number string', input: (a) => {
+    a.delivery = { prIdentity: prIdentity({ pr_number: '7' }) };
+  }, expected: ['delivery.prIdentity.pr_number must be a positive safe integer'] },
   { name: 'identity sha_full', input: (a) => {
     a.delivery = { prIdentity: prIdentity() };
     a.delivery.prIdentity.sha_full = "D".repeat(40);
@@ -286,6 +340,9 @@ const REJECTION_ROWS = [
     a.delivery = { prIdentity: prIdentity() };
     a.delivery.prIdentity.title = "   ";
   }, expected: [ "delivery.prIdentity.title must be a non-empty string when present" ] },
+  { name: 'identity title type', input: (a) => {
+    a.delivery = { prIdentity: prIdentity({ title: 5 }) };
+  }, expected: ['delivery.prIdentity.title must be a non-empty string when present'] },
   { name: 'identity repo slash',
     input: (a) => { a.delivery = { prIdentity: prIdentity() }; a.delivery.prIdentity.repo = "a/b"; },
     expected: [ "delivery.prIdentity.repo must not contain \"/\"" ] },
@@ -320,6 +377,18 @@ const REJECTION_ROWS = [
     "persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py",
     "persist.assembleScriptPath must equal /plugin/scripts/assemble_artifacts.py",
   ] },
+  { name: 'persist script number', input: (a) => { a.persist = { assembleScriptPath: 42 }; }, expected: [
+    'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py',
+  ] },
+  { name: 'persist script object', input: (a) => { a.persist = { assembleScriptPath: {} }; }, expected: [
+    'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py',
+  ] },
+  { name: 'persist script null', input: (a) => { a.persist = { assembleScriptPath: null }; }, expected: [
+    'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py',
+  ] },
+  { name: 'persist number', input: (a) => { a.persist = 3; }, expected: [
+    'persist must be an object of the form { assembleScriptPath, returnPrimaries } when present',
+  ] },
   { name: 'persist returns',
     input: (a) => { a.persist = { returnPrimaries: "false" }; }, expected: [ "persist.returnPrimaries must be a boolean when present" ] },
   { name: 'assemble identity',
@@ -329,6 +398,12 @@ const REJECTION_ROWS = [
     input: (a) => { a.verify = { scriptPath: "/plugin/scripts/../verify_findings.py" }; },
     expected: [ "verify.scriptPath must equal /plugin/scripts/verify_findings.py" ] },
   { name: 'limits shape', input: (a) => { a.limits = []; }, expected: [ "limits must be an object when present" ] },
+  { name: 'limits null', input: (a) => { a.limits = null; }, expected: [
+    'limits must be an object when present',
+  ] },
+  { name: 'limits string', input: (a) => { a.limits = 'x'; }, expected: [
+    'limits must be an object when present',
+  ] },
   { name: 'limits unknown', input: (a) => { a.limits.verifySclieSize = 50; }, expected: [
     "unknown limits key: verifySclieSize (expected one of summarizeBucketSize, validateBatch, challengeCap, " +
       "verifySliceSize, deliveryCap, discoveryCap, maxLineSpan)",
@@ -351,6 +426,12 @@ const REJECTION_ROWS = [
     input: (a) => { a.limits.discoveryCap = 0; }, expected: [ "limits.discoveryCap must be a positive safe integer when present" ] },
   { name: 'limits integer domain',
     input: (a) => { a.limits.validateBatch = 1.5; }, expected: [ "limits.validateBatch must be a positive safe integer when present" ] },
+  { name: 'limits string value', input: (a) => { a.limits.validateBatch = 'x'; }, expected: [
+    'limits.validateBatch must be a positive safe integer when present',
+  ] },
+  { name: 'limits NaN value', input: (a) => { a.limits.validateBatch = NaN; }, expected: [
+    'limits.validateBatch must be a positive safe integer when present',
+  ] },
   { name: 'multi-error limits', input: (a) => {
     a.limits = { summarizeBucketSize: 0, validateBatch: -1, challengeCap: -1, verifySliceSize: 0,
     deliveryCap: -1, discoveryCap: 0, maxLineSpan: 0 };
@@ -365,6 +446,12 @@ const REJECTION_ROWS = [
   ] },
   { name: 'scope shape',
     input: (a) => { a.reviewScope = []; }, expected: [ "reviewScope must be { requested, kind, since, commits, detector }" ] },
+  { name: 'reviewScope null', input: (a) => { a.reviewScope = null; }, expected: [
+    'reviewScope must be { requested, kind, since, commits, detector }',
+  ] },
+  { name: 'scope string', input: (a) => { a.reviewScope = 'scope'; }, expected: [
+    'reviewScope must be { requested, kind, since, commits, detector }',
+  ] },
   { name: 'reviewScope extra',
     input: (a) => { a.reviewScope.reason = "old reason"; }, expected: [ "reviewScope has unexpected key(s): reason" ] },
   { name: 'scope requested',
@@ -398,6 +485,9 @@ const REJECTION_ROWS = [
   { name: 'detector shape',
     input: (a) => { a.reviewScope.detector = []; },
     expected: [ "reviewScope.detector must be null or an object copied from detect_prior_review.py" ] },
+  { name: 'detector scalar', input: (a) => { a.reviewScope.detector = 1; }, expected: [
+    'reviewScope.detector must be null or an object copied from detect_prior_review.py',
+  ] },
   { name: 'detector extra',
     input: (a) => { a.reviewScope.detector = priorReviewDetector({ extra: true }); },
     expected: [ "reviewScope.detector has unexpected key(s): extra" ] },
@@ -474,6 +564,13 @@ const REJECTION_ROWS = [
   { name: 'headless requested lockstep', base: headlessArgs,
     input: (a) => { a.reviewScope.requested = "incremental"; },
     expected: [ "reviewScope.requested does not match configEcho.reviewed_policy" ] },
+  { name: 'malformed cap keeps later lockstep', base: headlessArgs, input: (a) => {
+    a.limits.deliveryCap = 1; a.configEcho.pr_comment_cap.value = '007';
+    a.reviewScope.requested = 'incremental';
+  }, expected: [
+    'configEcho.pr_comment_cap.value is invalid for headless',
+    'reviewScope.requested does not match configEcho.reviewed_policy',
+  ] },
   { name: 'headless answer lockstep', base: headlessArgs, input: (a) => {
     a.riskTable[0].risk = "low"; a.scopeAnswer = "full"; a.configEcho.trivial_scope.value = "light";
   }, expected: [ "scopeAnswer does not match configEcho.trivial_scope" ] },
@@ -536,6 +633,8 @@ for (const { name, input, expected } of NON_OBJECT_ROWS) {
 
 const ACCEPTANCE_ROWS = [
   { name: 'base', input: () => interactiveArgs(), expected: { ok: true, errors: [] } },
+  { name: 'local scope ignores policy lockstep', input: () => headlessArgs('incremental', { detector: null }),
+    expected: { ok: true, errors: [] } },
   { name: 'headless', input: () => headlessArgs(), expected: { ok: true, errors: [] } },
   { name: 'wired builder', input: () => validArgs(), expected: { ok: true, errors: [] } },
   { name: 'optional domains', input: () => interactiveArgs({
@@ -587,6 +686,12 @@ for (const { name, input, expected } of REQUIRED_ROWS) {
 
 const STRIP_ROWS = [
   { name: 'scalar', input: null, expected: { args: null, dropped: [], respelled: [] } },
+  { name: 'array', input: ['not', 'an', 'object'], expected: {
+    args: ['not', 'an', 'object'], dropped: [], respelled: [],
+  } },
+  { name: 'string', input: 'not an object', expected: {
+    args: 'not an object', dropped: [], respelled: [],
+  } },
   { name: 'optional inventory', input: {
     reviewConfig: null, exclusionPatterns: null, reviewMd: null, exclusionsText: null,
     delivery: null, checkpoints: null, persist: null, scopeAnswer: null,
@@ -807,6 +912,7 @@ const UNKNOWN_DERIVE_ROWS = [
   { name: 'inactive mode', gate: null, modes: ['interactive'], expected: { value: undefined, paths: ['delivery.tier'] } },
   { name: 'unknown type', gate: null, type: 'bool', expected: { value: undefined, paths: ['delivery.tier'] } },
   { name: 'bad parent', gate: null, parent: [], expected: { value: undefined, paths: ['delivery.tier'] } },
+  { name: 'scalar parent', gate: null, parent: 'nope', expected: { value: undefined, paths: ['delivery.tier'] } },
 ];
 for (const { name, gate, modes, type, parent, expected } of UNKNOWN_DERIVE_ROWS) {
   test(`derive guard: ${name}`, () => {

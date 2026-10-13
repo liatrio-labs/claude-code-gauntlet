@@ -6,6 +6,7 @@ import { REVIEW_SETTING_KEYS } from '../src/registry.js';
 import { finding } from './helpers/findings.js';
 
 const PARSE_ROWS = [
+  { name: 'empty review returns only empty ignore', input: '', expected: { ignore: [] } },
   {
     name: 'code-gauntlet fenced YAML wins over bare fallback',
     input: 'confidence_threshold: 40\n```yaml\n# code-gauntlet\nconfidence_threshold: 70\nseverity_threshold: high\n' +
@@ -44,6 +45,10 @@ const NEWLINE_ROWS = [
   { name: 'CRLF is one break', input: 'a\r\nb', expected: ['a', 'b'] },
   { name: 'LF before CR is two breaks', input: 'a\n\rb', expected: ['a', '', 'b'] },
   { name: 'lone CR is one break', input: 'a\rb', expected: ['a', 'b'] },
+  { name: 'CR before CRLF is two breaks', input: 'a\r\r\nb', expected: ['a', '', 'b'] },
+  { name: 'trailing CRLF leaves empty segment', input: 'a\r\n', expected: ['a', ''] },
+  { name: 'trailing LF leaves empty segment', input: 'a\n', expected: ['a', ''] },
+  { name: 'empty text is one empty segment', input: '', expected: [''] },
 ];
 for (const row of NEWLINE_ROWS) test(`review newline: ${row.name}`, () => {
   assert.deepEqual(splitReviewLines(row.input), row.expected);

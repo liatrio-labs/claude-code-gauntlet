@@ -36,9 +36,20 @@ const CLASSIFIER_ROWS = [
   { name: "pull word", input: "pull 45",
     expected: { kind: 'pr_shorthand', number: '45', ref: "pull 45" } },
   { name: 'non-string', input: {}, expected: null },
+  { name: 'null', input: null, expected: null },
   { name: 'empty', input: '   ', expected: null },
   { name: 'long', input: 'x'.repeat(201), expected: null },
   { name: 'unmatched', input: 'review my changes', expected: null },
+  { name: 'bare repo URL', input: 'https://github.com/o/r', expected: null },
+  { name: 'git ref', input: 'main..feature', expected: null },
+  { name: 'source path', input: 'src/args.js', expected: null },
+  { name: 'array', input: [], expected: null },
+  { name: 'NaN', input: NaN, expected: null },
+  { name: 'issues URL', input: 'https://github.com/o/r/issues/45', expected: null },
+  { name: 'blob anchor URL', input: 'https://github.com/o/r/blob/main/x.js#L45', expected: null },
+  { name: 'compare URL', input: 'https://github.com/o/r/compare/main...feature', expected: null },
+  { name: 'ISO date', input: '2026-07-28', expected: null },
+  { name: 'semver', input: '3.2.4', expected: null },
   { name: 'string zero', input: '0', expected: null },
   { name: 'leading zero', input: '0045', expected: null },
   { name: 'eight digits', input: '12345678', expected: null },
@@ -148,6 +159,7 @@ for (const { name, input, expected } of REFUSAL_ROWS) {
       parallel: async () => { calls.push('parallel'); },
     };
     assert.deepEqual(await runWith(ctx, input), envelope);
+    assert.deepEqual(await runWith(undefined, input), envelope);
     assert.deepEqual(calls, []);
   });
 }
@@ -204,6 +216,22 @@ for (const { name, input, expected } of WIRED_ROWS) {
     assert.ok(out.error.includes(expected.error));
     assert.ok(out.error.includes(expected.recovery));
     assert.deepEqual(calls, []);
+  });
+}
+
+const WIRED_ENVELOPE_ROWS = [
+  { name: 'validation refusal', input: () => interactiveArgs({ argsVersion: 2 }), expected: {
+    ok: false,
+    error: 'invalid args: unsupported argsVersion 2 (expected 1). The code-gauntlet skill assembles this object ' +
+      'in Phases 1-2 \u2014 run it instead of invoking the workflow directly: ' +
+      'Skill("code-gauntlet:code-gauntlet", args="<PR number or URL>")',
+    phaseReached: 'args', failingPhase: 'args', artifactPaths: {}, stats: {},
+    gaps: ['unsupported argsVersion 2 (expected 1)'],
+  } },
+];
+for (const { name, input, expected } of WIRED_ENVELOPE_ROWS) {
+  test(`entry envelope: ${name}`, async () => {
+    assert.deepEqual(await runWith(undefined, input()), expected);
   });
 }
 

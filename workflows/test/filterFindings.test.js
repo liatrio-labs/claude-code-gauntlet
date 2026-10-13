@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeFieldNames, applyThresholdFilter, detectDisagreement } from '../src/filterFindings.js';
+import { normalizeFieldNames, applyThresholdFilter, detectDisagreement, groupByProximity } from '../src/filterFindings.js';
 import { routeByDimension, consolidateCrossAgent, tagFindings, applyFilterPipeline } from '../src/filterFindings.js';
 import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS } from '../src/registry.js';
 import { finding, cleanFinding, consolidationFinding } from './helpers/findings.js';
@@ -167,6 +167,12 @@ const ROUTE_ROWS = [
   { name: "correctness pattern 23", input: { dimension: "test_coverage", title: "logic error", description: "" }, expected: "main" },
   { name: "correctness pattern 24", input: { dimension: "test_coverage", title: "incorrect behaviour", description: "" },
       expected: "main" },
+  { name: 'type design null pointer promotes main', input: { dimension: 'type_design', title: 'Nullable type issue',
+    description: 'Null pointer dereference when optional field is absent' }, expected: 'main' },
+  { name: 'convention with wrong result promotes main', input: { dimension: 'convention', title: 'Incorrect return value',
+    description: 'The function returns wrong result for edge cases' }, expected: 'main' },
+  { name: 'correctness pattern 13 value', input: { dimension: 'test_coverage', title: 'wrong value', description: '' },
+    expected: 'main' },
   { name: "typed null prose defaults suggestion", input: { dimension: "convention", title: null, description: null }, expected: "suggestion"
   },
   { name: "typed array title cannot promote", input: { dimension: "test_coverage", title: ["race condition detected"], description: "" },
@@ -228,6 +234,11 @@ const CONSOLIDATION_ROWS = [
                agent: "code-simplifier", dimension: "simplification", confidence: 0,
                description: "a much longer description that should win the tie-break" } ],
     expected: { count: 2, primary: ["jf4"], stamped: 2, ids: ["jf3", "jf4"] } },
+  { name: 'different report routes still consolidate', input: [
+    { id: 'bug-2', file: 'AssertEvents.java', line_start: 483, report_destination: 'main', confidence: 95 },
+    { id: 'conv-2', file: 'AssertEvents.java', line_start: 483, dimension: 'comment_accuracy',
+      agent: 'conventions-and-intent', report_destination: 'suggestion', confidence: 97 }],
+    expected: { count: 2, primary: ['bug-2'], stamped: 2, ids: ['bug-2', 'conv-2'] } },
 ];
 for (const row of CONSOLIDATION_ROWS) test('consolidate: ' + row.name, () => {
   const out = consolidateCrossAgent(row.input.map(consolidationFinding));
@@ -313,12 +324,24 @@ const DISAGREEMENT_ROWS = [
   { name: "missing dimension singleton keeps confidence", input: [{ dimension: undefined, confidence: 85 }],
     fields: ["confidence", "singleton_penalty", "consensus_count"], expected: { active: [[85, undefined, 1]], suppressed: [], boosted: 0 }
   },
+  { name: 'three co-located agents share one consensus group', input: [
+    { id: 'c1', file: 'a.py', line_start: 42, confidence: 80 },
+    { id: 'c2', file: 'a.py', line_start: 44, agent: 'security-reviewer', confidence: 85 },
+    { id: 'c3', file: 'a.py', line_start: 43, agent: 'conventions-and-intent', confidence: 75 }],
+    fields: ['consensus_count', 'corroborated_by'],
+    expected: { active: [[3, ['security-reviewer', 'conventions-and-intent']],
+      [3, ['bug-detector', 'conventions-and-intent']], [3, ['bug-detector', 'security-reviewer']]], suppressed: [], boosted: 3 } },
 ];
 for (const row of DISAGREEMENT_ROWS) test(`disagreement: ${row.name}`, () => {
   const out = detectDisagreement(row.input.map(finding), row.rules);
   assert.deepEqual({ active: out.active.map((item) => row.fields.map((field) => item[field])),
     suppressed: out.suppressed.map((item) => [item.id, item.eliminated_by, item.elimination_reason]),
     boosted: out.boostedCount }, row.expected);
+});
+
+test('proximity: default width splits lines 12 and 13', () => {
+  const grouped = groupByProximity([{ id: 'a', line_start: 12 }, { id: 'b', line_start: 13 }].map(consolidationFinding));
+  assert.equal(grouped.size, 2);
 });
 
 const PIPELINE_ROWS = [
