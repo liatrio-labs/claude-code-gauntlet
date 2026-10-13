@@ -16,7 +16,8 @@ import {
   applyChallengeReplayBelt
 } from '../src/checkpoints.js';
 import { runWith } from '../src/run.js';
-import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
+import { validArgs } from './helpers/argsFixtures.js';
+import { makeFinding, makeCtx } from './helpers/pipelineMock.js';
 import { expectedWith, challengeOutput, runAndCapture, replaySurvivor, wellFormedCheckpoints } from './helpers/persistFixtures.js';
 
 const PHASES = ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'];

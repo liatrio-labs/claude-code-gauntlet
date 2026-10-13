@@ -1,57 +1,72 @@
-// registry.test.js — DIMENSIONS registry + resolvePolicy (S5) unit tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_PATH_ARRAY_FIELDS, FINDING_REQUIRED, STAGE_DEFAULTS,
-  RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES, SHA_FULL_RE, WEB_ORIGIN_RE, resolvePolicy,
-    conditionalSchemaActive } from '../src/registry.js';
+import { prIdentity } from './helpers/argsFixtures.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_PATH_ARRAY_FIELDS, FINDING_REQUIRED } from '../src/registry.js';
+import { STAGE_DEFAULTS, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK } from '../src/registry.js';
+import { PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES } from '../src/registry.js';
+import { SHA_FULL_RE, WEB_ORIGIN_RE, resolvePolicy, conditionalSchemaActive, modelFor, identityCheck } from '../src/registry.js';
 
-test('every structural path array field is declared as a string array in the registry schema', () => {
-  const properties = Object.assign({}, FINDING_PROP_TYPES, ...DIMENSIONS.map((row) => row.schemaExtra));
-  for (const field of FINDING_PATH_ARRAY_FIELDS) {
-    assert.deepEqual(properties[field], { type: 'array', items: { type: 'string' } }, field);
-  }
-});
-
-test('7 unique discovery agents', () => { assert.equal(AGENTS.length, 7); });
-test('conventions-and-intent covers 3 dimensions', () => {
-  const dims = DIMENSIONS.filter((d) => d.agentType === 'code-gauntlet:conventions-and-intent').map((d) => d.dimension);
-  assert.deepEqual(dims.sort(), ['comment_accuracy', 'convention', 'intent']);
-});
-test('security-reviewer default is opus (S5 deviation)', () => {
-  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', {}).model, 'claude-opus-5-5');
-});
-test('discovery default is sonnet', () => {
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', {}).model, 'claude-sonnet-5-5');
-});
-test('challenger resolves sonnet — the single benchmarked policy; no mode flag changes it (fable mode is roadmap #17 V3.2)', () => {
-  assert.equal(resolvePolicy('code-gauntlet:challenger', {}).model, 'claude-sonnet-5-5');
-  // A stray legacy frontier flag in opts must be ignored, not resurrect an upgrade path.
-  assert.equal(resolvePolicy('code-gauntlet:challenger', { frontier: true, frontierModelId: 'claude-fable-5' }).model, 'claude-sonnet-5-5');
-});
-test('CLAUDE_CODE_SUBAGENT_MODEL overrides everything', () => {
-  const r = resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5' });
-  assert.equal(r.model, 'claude-haiku-4-5');
-});
-test('resolvePolicy returns only { model } — provenance lives in resolvedPolicy.subagentModel (#114)', () => {
-  // Both branches: the env-override return and the policy-table return.
-  assert.deepEqual(Object.keys(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5' })), ['model']);
-  assert.deepEqual(Object.keys(resolvePolicy('code-gauntlet:bug-detector', {})), ['model']);
-});
-test('STAGE_DEFAULTS pins the complete dispatch inventory', () => {
-  assert.deepEqual(STAGE_DEFAULTS, {
-    validator: 'sonnet',
-    challenger: 'sonnet',
-    executor: 'sonnet',
-    'artifact-writer': 'sonnet',
+const POLICY_ROWS = [
+  { name: 'discovery default', agent: 'code-gauntlet:bug-detector', input: undefined, expected: { model: 'claude-sonnet-5-5' } },
+  { name: 'security override', agent: 'code-gauntlet:security-reviewer', input: {}, expected: { model: 'claude-opus-5-5' } },
+  { name: 'stage default ignores legacy frontier', agent: 'code-gauntlet:challenger',
+    input: { frontier: true, frontierModelId: 'claude-fable-5' }, expected: { model: 'claude-sonnet-5-5' } },
+  { name: 'unknown agent', agent: 'code-gauntlet:unknown', input: {}, expected: { model: 'claude-sonnet-5-5' } },
+  { name: 'explicit model', agent: 'code-gauntlet:security-reviewer', input: { subagentModelEnv: 'claude-haiku-4-5' },
+    expected: { model: 'claude-haiku-4-5' } },
+  { name: 'alias override', agent: 'code-gauntlet:bug-detector', input: { subagentModelEnv: 'sonnet' },
+    expected: { model: 'claude-sonnet-5-5' } },
+  { name: 'third-party default', agent: 'code-gauntlet:bug-detector', input: { provider: 'bedrock' }, expected: { model: 'sonnet' } },
+  { name: 'third-party override', agent: 'code-gauntlet:security-reviewer', input: { provider: 'bedrock' },
+    expected: { model: 'opus' } },
+  { name: 'third-party deployment', agent: 'code-gauntlet:bug-detector',
+    input: { provider: 'bedrock', subagentModelEnv: 'us.anthropic.claude-sonnet-4-6' },
+    expected: { model: 'us.anthropic.claude-sonnet-4-6' } },
+  { name: 'null provider', agent: 'code-gauntlet:bug-detector', input: { provider: null }, expected: { model: 'claude-sonnet-5-5' } },
+  { name: 'first-party', agent: 'code-gauntlet:bug-detector', input: { provider: 'firstParty' },
+    expected: { model: 'claude-sonnet-5-5' } },
+  { name: 'copied dimension', agent: 'code-gauntlet:bug-detector', input: {},
+    table: DIMENSIONS.map((row) => ({ ...row, modelOverride: row.dimension === 'bug' ? 'haiku' : row.modelOverride })),
+    expected: { model: 'claude-haiku-4-5-20251001' } },
+];
+for (const { name, agent, input, table, expected } of POLICY_ROWS) {
+  test(`policy: ${name}`, () => {
+    assert.deepEqual(resolvePolicy(agent, input, table), expected);
+    assert.equal(modelFor(agent, { ...input, subagentModel: input?.subagentModelEnv }, table), expected.model);
   });
-});
-test('STAGE_DEFAULTS has no deleted report-writer policy row', () => { assert.ok(!('report-writer' in STAGE_DEFAULTS)); });
+}
 
-test('PR identity registry owns the complete ordered field contract', () => {
-  // Mutation: delete PR_IDENTITY_FIELDS or any row; this hand-typed shape must fail.
-  assert.deepEqual(
-    PR_IDENTITY_FIELDS.map(({ name, required, describe }) => ({ name, required, describe })),
-    [
+const SCHEMA_ROWS = [
+  { name: 'absent', input: undefined, expected: true },
+  { name: 'null provider', input: { provider: null }, expected: true },
+  { name: 'first-party', input: { provider: 'firstParty' }, expected: true },
+  { name: 'bedrock', input: { provider: 'bedrock' }, expected: false },
+  { name: 'gateway', input: { provider: 'firstParty', gateway: true }, expected: false },
+  { name: 'direct', input: { gateway: false }, expected: true },
+];
+for (const { name, input, expected } of SCHEMA_ROWS) {
+  test(`conditional schema: ${name}`, () => assert.equal(conditionalSchemaActive(input), expected));
+}
+
+const DATA_ROWS = [
+  { name: 'dimension order', input: DIMENSIONS.map((row) => row.dimension), expected: [
+    'bug', 'security', 'cross_file_impact', 'test_coverage', 'convention', 'intent', 'comment_accuracy', 'type_design', 'simplification',
+  ] },
+  { name: 'stages', input: STAGE_DEFAULTS,
+    expected: { validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet', 'artifact-writer': 'sonnet' } },
+  { name: 'labels', input: AGENT_LABELS, expected: {
+    'code-gauntlet:bug-detector': 'Correctness & Error Handling', 'code-gauntlet:security-reviewer': 'Security',
+    'code-gauntlet:cross-file-impact': 'Cross-file Impact', 'code-gauntlet:test-analyzer': 'Test Coverage',
+    'code-gauntlet:conventions-and-intent': 'Conventions & Intent', 'code-gauntlet:type-design-analyzer': 'Type Design',
+    'code-gauntlet:code-simplifier': 'Code Simplification',
+  } },
+  { name: 'agent order', input: AGENTS, expected: [
+    'code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer', 'code-gauntlet:cross-file-impact',
+    'code-gauntlet:test-analyzer', 'code-gauntlet:conventions-and-intent', 'code-gauntlet:type-design-analyzer',
+    'code-gauntlet:code-simplifier',
+  ] },
+  { name: 'identity fields', input: PR_IDENTITY_FIELDS.map(({ name, required, describe }) => ({ name, required, describe })),
+    expected: [
       { name: 'owner', required: true, describe: 'a non-empty string' },
       { name: 'repo', required: true, describe: 'a non-empty string' },
       { name: 'pr_number', required: true, describe: 'a positive safe integer' },
@@ -59,274 +74,103 @@ test('PR identity registry owns the complete ordered field contract', () => {
       { name: 'platform', required: true, describe: 'one of github, gitlab' },
       { name: 'web_origin', required: true, describe: 'an http(s) origin: scheme, host and optional port only' },
       { name: 'title', required: false, describe: 'a non-empty string when present' },
-    ],
-  );
-  assert.ok(PR_IDENTITY_FIELDS.every((field) => typeof field.check === 'function'));
-});
+    ] },
+  { name: 'permalink bytes', input: PERMALINK_TEMPLATES, expected: {
+    github: { blob: '{origin}/{owner}/{repo}/blob/{sha}/{path}', line: '#L{start}', range: '#L{start}-L{end}',
+      ref: '#{number}', refUrl: '{origin}/{owner}/{repo}/pull/{number}' },
+    gitlab: { blob: '{origin}/{owner}/{repo}/-/blob/{sha}/{path}', line: '#L{start}', range: '#L{start}-{end}',
+      ref: '!{number}', refUrl: '{origin}/{owner}/{repo}/-/merge_requests/{number}' },
+  } },
+  { name: 'rule labels', input: RULE_SOURCE_LABELS, expected: {
+    documented_rule: 'Cited rule', code_comment: 'Cited comment', repo_precedent: 'Repo precedent', self_inconsistency: 'Inconsistency',
+  } },
+  { name: 'rule fallback', input: RULE_SOURCE_LABEL_FALLBACK, expected: 'Cited rule' },
+  { name: 'required finding fields', input: FINDING_REQUIRED,
+    expected: ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'] },
+  { name: 'path array fields', input: FINDING_PATH_ARRAY_FIELDS, expected: ['cross_file_refs', 'affected_consumers'] },
+  { name: 'canonical schema', input: FINDING_PROP_TYPES, expected: {
+    id: 'string', file: 'string', line_start: 'number', line_end: 'number', title: 'string', description: 'string', severity: 'string',
+    confidence: 'number', dimension: 'string', origin: 'string', evidence: 'string', suggestion: 'string', claude_md_rule: 'string',
+    suggested_fix_code: 'string', cross_file_refs: { type: 'array', items: { type: 'string' } },
+  } },
+];
+for (const { name, input, expected } of DATA_ROWS) {
+  test(`registry data: ${name}`, () => assert.deepEqual(input, expected));
+}
 
-test('PR identity registry pins platform permalink templates and scalar patterns', () => {
-  // Mutation: replace PERMALINK_TEMPLATES, SHA_FULL_RE, or WEB_ORIGIN_RE; these literals turn red.
-  assert.deepEqual(PERMALINK_TEMPLATES, {
-    github: {
-      blob: '{origin}/{owner}/{repo}/blob/{sha}/{path}',
-      line: '#L{start}',
-      range: '#L{start}-L{end}',
-      ref: '#{number}',
-      refUrl: '{origin}/{owner}/{repo}/pull/{number}',
-    },
-    gitlab: {
-      blob: '{origin}/{owner}/{repo}/-/blob/{sha}/{path}',
-      line: '#L{start}',
-      range: '#L{start}-{end}',
-      ref: '!{number}',
-      refUrl: '{origin}/{owner}/{repo}/-/merge_requests/{number}',
-    },
+const DIMENSION_ROWS = [
+  { name: 'bug', expected: ['code-gauntlet:bug-detector', null, { hidden_errors: 'string' }, [], [], null] },
+  { name: 'security', expected: ['code-gauntlet:security-reviewer', null, { attack_vector: 'string' }, ['attack_vector'], [], 'opus'] },
+  { name: 'cross_file_impact', expected: ['code-gauntlet:cross-file-impact', 'deep',
+    { affected_consumers: { type: 'array', items: { type: 'string' } } }, ['affected_consumers'], [], null] },
+  { name: 'test_coverage', expected: ['code-gauntlet:test-analyzer', 'deep',
+    { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
+    ['criticality', 'failure_scenario'], [], null] },
+  { name: 'convention', expected: ['code-gauntlet:conventions-and-intent', 'deep', { rule_source: 'string' },
+    [], ['claude_md_rule'], null] },
+  { name: 'intent', expected: ['code-gauntlet:conventions-and-intent', 'deep', { spec_text: 'string' }, [], ['spec_text'], null] },
+  { name: 'comment_accuracy', expected: ['code-gauntlet:conventions-and-intent', 'deep', {}, [], [], null] },
+  { name: 'type_design', expected: ['code-gauntlet:type-design-analyzer', 'deep', { invalid_state_example: 'string' }, [], [], null] },
+  { name: 'simplification', expected: ['code-gauntlet:code-simplifier', 'deep',
+    { behavior_preserved: 'string' }, ['behavior_preserved'], [], null] },
+];
+for (const { name, expected } of DIMENSION_ROWS) {
+  test(`dimension: ${name}`, () => {
+    const row = DIMENSIONS.find((d) => d.dimension === name);
+    assert.deepEqual([row.agentType, row.conditionalFlag, row.schemaExtra, row.requiredExtra,
+      row.requiredWhenDimension, row.modelOverride], expected);
+    assert.ok(Object.isFrozen(row));
+    assert.ok(Object.isFrozen(row.schemaExtra));
+    assert.ok(Object.isFrozen(row.requiredExtra));
   });
-  assert.equal(SHA_FULL_RE.source, '^[0-9a-f]{40}$');
-  assert.equal(WEB_ORIGIN_RE.test('http://[::1]:8443'), true);
-  assert.equal(WEB_ORIGIN_RE.test('https://git.example:65535'), true);
-  assert.equal(WEB_ORIGIN_RE.test('https://git.example:65536'), false);
-});
+}
 
-// V3.1 orchestrator-model waist: resolvePolicy pins explicit FULL model IDs so no agent
-// pin can cascade the orchestrator session's model variant (measured on bench: a child
-// session pinned to 'sonnet[1m]' cascaded the [1m] variant into every agent whose policy
-// said the bare alias 'sonnet' — zero plain-sonnet rows in the per-model usage table).
-test('resolvePolicy pins full model IDs — no bare aliases can cascade a session variant', () => {
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector').model, 'claude-sonnet-5-5');
-  assert.equal(resolvePolicy('code-gauntlet:security-reviewer').model, 'claude-opus-5-5');
-  assert.equal(resolvePolicy('code-gauntlet:executor').model, 'claude-sonnet-5-5');
-});
-test('subagentModelEnv override maps through the same full-ID pin', () => {
-  // A bare alias in CLAUDE_CODE_SUBAGENT_MODEL now pins the plain full ID instead of
-  // inheriting the session variant (intended behavior change, documented in headless-mode);
-  // an explicit full/dated ID passes through untouched.
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'sonnet' }).model, 'claude-sonnet-5-5');
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5-20251001' }).model,
-    'claude-haiku-4-5-20251001');
-});
+const PATTERN_ROWS = [
+  { name: 'SHA lowercase', pattern: SHA_FULL_RE, input: 'dddddddddddddddddddddddddddddddddddddddd', expected: true },
+  { name: 'SHA uppercase', pattern: SHA_FULL_RE, input: 'D'.repeat(40), expected: false },
+  { name: 'SHA length', pattern: SHA_FULL_RE, input: 'd'.repeat(39), expected: false },
+  { name: 'SHA excess length', pattern: SHA_FULL_RE, input: 'd'.repeat(41), expected: false },
+  { name: 'origin IPv6', pattern: WEB_ORIGIN_RE, input: 'http://[::1]:8443', expected: true },
+  { name: 'origin port bound', pattern: WEB_ORIGIN_RE, input: 'https://git.example:65535', expected: true },
+  { name: 'origin port overflow', pattern: WEB_ORIGIN_RE, input: 'https://git.example:65536', expected: false },
+];
+for (const { name, pattern, input, expected } of PATTERN_ROWS) {
+  test(`pattern: ${name}`, () => assert.equal(pattern.test(input), expected));
+}
 
-// Bedrock live failure (2026-08-11 transcript): third-party providers use deployment-
-// specific model IDs and pass first-party names (claude-sonnet-5-5, claude-opus-5-5) through
-// UNCHECKED to the provider, which 400s them — every discovery agent degraded in one 2s
-// run. On any provider other than firstParty the bare alias is the only spelling the
-// harness's deployment mapping resolves, so resolvePolicy must emit it untouched.
-test('non-firstParty provider dispatches bare aliases, never first-party full IDs', () => {
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: 'bedrock' }).model, 'sonnet');
-  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', { provider: 'bedrock' }).model, 'opus');
-  assert.equal(resolvePolicy('code-gauntlet:executor', { provider: 'vertex' }).model, 'sonnet');
-  // Unknown provider strings are waist-rejected upstream; the registry's safe arm for any
-  // non-firstParty value is still the alias (it resolves on every provider).
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: 'someday-provider' }).model, 'sonnet');
-});
-test('firstParty / absent / null provider keeps the full-ID pin (the [1m]-cascade guard)', () => {
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: 'firstParty' }).model, 'claude-sonnet-5-5');
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: null }).model, 'claude-sonnet-5-5');
-  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', {}).model, 'claude-opus-5-5');
-});
-test('subagentModelEnv passes through unmapped on a third-party provider', () => {
-  // An operator's explicit deployment ID (the Bedrock escape hatch) must survive verbatim,
-  // and a bare alias must NOT be rewritten to a first-party full ID there.
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'us.anthropic.claude-sonnet-4-6',
-    provider: 'bedrock' }).model, 'us.anthropic.claude-sonnet-4-6');
-  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'sonnet', provider: 'bedrock' }).model, 'sonnet');
-});
+const IDENTITY_ROWS = [
+  { name: 'unknown field', input: {}, key: 'unknown', expected: false },
+  { name: 'copied field', input: { owner: 'long' }, key: 'owner',
+    table: PR_IDENTITY_FIELDS.map((row) => ({ ...row, check: row.name === 'owner' ? (value) => value === 'short' : row.check })),
+    expected: false },
+  { name: 'origin type', input: prIdentity({ web_origin: 1 }), key: 'web_origin', expected: false },
+  { name: 'origin total length', input: { web_origin: `https://${'a'.repeat(63)}.${'a'.repeat(63)}.${'a'.repeat(63)}.${'a'.repeat(63)}` },
+    key: 'web_origin', expected: false },
+];
+for (const { name, input, key, table, expected } of IDENTITY_ROWS) {
+  test(`identity check: ${name}`, () => assert.equal(identityCheck(input, key, table), expected));
+}
 
-// S7 model bump: security-reviewer's agent frontmatter says opus; assert the registry's
-// modelOverride actually binds through resolvePolicy AND that security-reviewer is the ONLY
-// discovery agent bumped off the sonnet default (the deviation Task 8 review confirmed).
-test('S7: resolvePolicy routes security-reviewer to opus, the sole opus discovery agent', () => {
-  assert.equal(DIMENSIONS.find((d) => d.dimension === 'security').modelOverride, 'opus');
-  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', {}).model, 'claude-opus-5-5');
-  const opusAgents = AGENTS.filter((a) => resolvePolicy(a, {}).model === 'claude-opus-5-5');
-  assert.deepEqual(opusAgents, ['code-gauntlet:security-reviewer']);
-});
-
-// Hill-climb iter 5 (discovery breadth): per-agent promptExtra sweeps live in the registry.
-test('promptExtra: security sweep on security-reviewer, typo/naming on bug + conventions, none elsewhere', () => {
-  const byDim = (dim) => DIMENSIONS.find((d) => d.dimension === dim);
-  assert.match(byDim('security').promptExtra, /SSRF/);
-  assert.match(byDim('bug').promptExtra, /typo and naming sweep/);
-  // conventions-and-intent is multi-dimension; every one of its rows must carry the SAME
-  // value (agentSpecs unions them, so a mismatch would be iteration-order-dependent).
-  const convRows = DIMENSIONS.filter((d) => d.agentType === 'code-gauntlet:conventions-and-intent');
-  assert.ok(convRows.every((d) => d.promptExtra === byDim('convention').promptExtra));
-  assert.match(byDim('convention').promptExtra, /typo and naming sweep/);
-  // bug-detector and conventions share the one typo/naming sweep string.
-  assert.equal(byDim('bug').promptExtra, byDim('intent').promptExtra);
-  // Agents without a sweep carry null.
-  for (const dim of ['cross_file_impact', 'test_coverage', 'type_design', 'simplification']) {
-    assert.equal(byDim(dim).promptExtra, null);
-  }
-});
-
-// Issue #89 sync guard: AGENT_LABELS is keyed by agentType, not by DIMENSIONS row, so
-// nothing else fails the build the day AGENTS gains an 8th member without a matching
-// label — this is the guard that would.
-test('AGENT_LABELS key set is exactly AGENTS — a new agent needs a label too', () => {
-  assert.deepEqual(Object.keys(AGENT_LABELS).sort(), [...AGENTS].sort());
-});
-
-// --- requiredExtra (issue #66) ----------------------------------------------------
-
-test('every DIMENSIONS row declares requiredExtra as an array of field-name strings', () => {
-  for (const d of DIMENSIONS) {
-    assert.ok(Array.isArray(d.requiredExtra), `${d.dimension}: requiredExtra must be an array`);
-    for (const field of d.requiredExtra) {
-      assert.equal(typeof field, 'string', `${d.dimension}: requiredExtra entries must be strings`);
-    }
-  }
-});
-
-test('every requiredExtra entry is a key of its own row\'s schemaExtra — never a canonical FINDING_PROP_TYPES field', () => {
-  // F9: narrowed deliberately. A canonical field is, by definition, already emitted
-  // unconditionally by every dimension — its promotion belongs in FINDING_REQUIRED directly,
-  // not smuggled in piecemeal through one row's requiredExtra, where the Canonical fields
-  // table's Required-column lockstep test would never see it.
-  for (const d of DIMENSIONS) {
-    const declared = new Set(Object.keys(d.schemaExtra || {}));
-    for (const field of d.requiredExtra) {
-      assert.ok(declared.has(field), `${d.dimension}: requiredExtra names "${field}", which is not a key of this row's own schemaExtra`);
-      assert.ok(!(field in FINDING_PROP_TYPES),
-        (`${d.dimension}: requiredExtra names "${field}", a canonical field — promote it via FINDING_REQUIRED,`
-        + ` not requiredExtra`));
-    }
-  }
-});
-
-test('requiredExtra entries are disjoint from FINDING_REQUIRED', () => {
-  for (const d of DIMENSIONS) {
-    for (const field of d.requiredExtra) {
-      assert.ok(!FINDING_REQUIRED.includes(field),
-        `${d.dimension}: "${field}" is already in FINDING_REQUIRED — do not duplicate it in requiredExtra`);
-    }
-  }
-});
-
-test('rows sharing an agentType declare identical requiredExtra sets — a silent per-row drop must fail the build', () => {
-  // agentSpecs() intersects, but the registry itself should never author a divergence in the
-  // first place: a row whose requiredExtra differs from its siblings would have that field
-  // silently dropped by the intersection, declared but unenforced with no signal anywhere.
-  const seen = new Map();
-  for (const d of DIMENSIONS) {
-    const key = [...d.requiredExtra].sort().join(',');
-    if (seen.has(d.agentType)) {
-      assert.equal(
-        key,
-        seen.get(d.agentType),
-        `${d.agentType}: rows disagree on requiredExtra (${d.dimension} says [${key}]) — the ` +
-          'intersection would silently drop the difference instead of failing loud',
-      );
-    } else {
-      seen.set(d.agentType, key);
-    }
-  }
-});
-
-
-
-
-// --- requiredWhenDimension (issue #218) -------------------------------------------
-
-test('every DIMENSIONS row declares requiredWhenDimension as an array of field-name strings', () => {
-  for (const d of DIMENSIONS) {
-    assert.ok(Array.isArray(d.requiredWhenDimension), `${d.dimension}: requiredWhenDimension must be an array`);
-    for (const field of d.requiredWhenDimension) {
-      assert.equal(typeof field, 'string', `${d.dimension}: requiredWhenDimension entries must be strings`);
-    }
-  }
-});
-
-// [v3] Pipeline-stamped canonical fields no agent ever emits (tests/test_registry_contracts.py
-// excludes the same `origin`). Excluded from the canonical-field arm below: the bare
-// either-or rule would otherwise admit `origin`, and schema-requiring a field within a
-// dimension no agent contract ever instructs guarantees that dimension's dispatch degrades.
-const PIPELINE_STAMPED = new Set(['origin']);
-
-test(('every requiredWhenDimension entry is EITHER a key of its own row\'s schemaExtra OR a canonical field'
-  + ' not in FINDING_REQUIRED and not pipeline-stamped'), () => {
-  // [v2] red-team finding 1: unlike requiredExtra, a requiredWhenDimension entry may be a
-  // canonical FINDING_PROP_TYPES field (claude_md_rule) as long as it is not already
-  // unconditional (FINDING_REQUIRED) — that promotion belongs in FINDING_REQUIRED directly.
-  for (const d of DIMENSIONS) {
-    const declared = new Set(Object.keys(d.schemaExtra || {}));
-    for (const field of d.requiredWhenDimension) {
-      const ownSchemaExtra = declared.has(field);
-      const canonicalNotRequired = field in FINDING_PROP_TYPES && !FINDING_REQUIRED.includes(field) && !PIPELINE_STAMPED.has(field);
-      assert.ok(
-        ownSchemaExtra || canonicalNotRequired,
-        `${d.dimension}: requiredWhenDimension names "${field}", which is neither a key of ` +
-          'this row\'s own schemaExtra nor a canonical field outside FINDING_REQUIRED/pipeline-stamped',
-      );
-    }
-  }
-});
-
-test('requiredWhenDimension is disjoint from the row\'s own requiredExtra', () => {
-  for (const d of DIMENSIONS) {
-    for (const field of d.requiredWhenDimension) {
-      assert.ok(!d.requiredExtra.includes(field), `${d.dimension}: "${field}" is in both requiredExtra and requiredWhenDimension`);
-    }
-  }
-});
-
-test('requiredWhenDimension is non-empty only on rows whose agentType has multiple rows', () => {
-  const rowCounts = new Map();
-  for (const d of DIMENSIONS) rowCounts.set(d.agentType, (rowCounts.get(d.agentType) || 0) + 1);
-  for (const d of DIMENSIONS) {
-    if (d.requiredWhenDimension.length) {
-      assert.ok(
-        rowCounts.get(d.agentType) > 1,
-        `${d.dimension}: requiredWhenDimension is non-empty on a single-row agentType — use requiredExtra instead`,
-      );
-    }
-  }
-});
-
-test('the live registry: only convention (claude_md_rule) and intent (spec_text) carry a requiredWhenDimension entry', () => {
-  const byDim = (dim) => DIMENSIONS.find((d) => d.dimension === dim);
-  assert.deepEqual(byDim('convention').schemaExtra, { rule_source: 'string' });
-  assert.deepEqual(byDim('convention').requiredWhenDimension, ['claude_md_rule']);
-  assert.deepEqual(byDim('intent').requiredWhenDimension, ['spec_text']);
-  for (const dim of ['bug', 'security', 'cross_file_impact', 'test_coverage', 'comment_accuracy', 'type_design', 'simplification']) {
-    assert.deepEqual(byDim(dim).requiredWhenDimension, [], `${dim} must carry no requiredWhenDimension entry`);
-  }
-});
-
-test('rule-source labels have the registered vocabulary and neutral fallback', () => {
-  assert.deepEqual(RULE_SOURCE_LABELS, {
-    documented_rule: 'Cited rule',
-    code_comment: 'Cited comment',
-    repo_precedent: 'Repo precedent',
-    self_inconsistency: 'Inconsistency',
+const PROMPT_ROWS = [
+  { name: 'security', input: ['security'], expected:
+    'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs ' +
+    'reaching http/request/fetch clients without allowlist validation); frame and embedding ' +
+    'policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); ' +
+    'postMessage handlers that do not validate event.origin or check it with weak substring ' +
+    'matching; and string-matching bypass patterns where a security decision uses containment ' +
+    'checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of ' +
+    'exact parsing \u2014 these are bypassable (e.g. a host "evil.com/trusted.com" still contains ' +
+    '"trusted.com").' },
+  { name: 'typo', input: ['bug', 'convention', 'intent', 'comment_accuracy'], expected:
+    'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in ' +
+    'user-facing strings, messages, and log output; case-sensitivity mistakes in string ' +
+    'comparisons (comparing mixed-case values without normalizing case); and copy-paste ' +
+    'plural/singular or off-by-one naming mismatches (a field, key, or variable named for one ' +
+    'thing but holding another).' },
+  { name: 'none', input: ['cross_file_impact', 'test_coverage', 'type_design', 'simplification'], expected: null },
+];
+for (const { name, input, expected } of PROMPT_ROWS) {
+  test(`prompt: ${name}`, () => {
+    for (const dimension of input) assert.equal(DIMENSIONS.find((d) => d.dimension === dimension).promptExtra, expected);
   });
-  assert.equal(RULE_SOURCE_LABEL_FALLBACK, 'Cited rule');
-});
-
-
-
-
-
-test('conditionalSchemaActive: firstParty/absent/null provider with no gateway is active', () => {
-  assert.equal(conditionalSchemaActive({}), true);
-  assert.equal(conditionalSchemaActive({ provider: 'firstParty' }), true);
-  assert.equal(conditionalSchemaActive({ provider: null }), true);
-  assert.equal(conditionalSchemaActive({ provider: undefined }), true);
-});
-
-test('conditionalSchemaActive: any non-firstParty provider is inactive regardless of gateway', () => {
-  for (const provider of ['bedrock', 'vertex', 'foundry']) {
-    assert.equal(conditionalSchemaActive({ provider }), false);
-    assert.equal(conditionalSchemaActive({ provider, gateway: false }), false);
-  }
-});
-
-test('conditionalSchemaActive: gateway:true on an otherwise first-party policy is inactive', () => {
-  assert.equal(conditionalSchemaActive({ gateway: true }), false);
-  assert.equal(conditionalSchemaActive({ provider: 'firstParty', gateway: true }), false);
-});
-
-test('conditionalSchemaActive: gateway:false or absent on first-party stays active', () => {
-  assert.equal(conditionalSchemaActive({ gateway: false }), true);
-  assert.equal(conditionalSchemaActive({}), true);
-});
+}

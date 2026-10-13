@@ -1382,9 +1382,10 @@ def _ci_setup_node_steps(text: str) -> list[tuple[str, int, str]]:
     ]
 
 
-def _copy_tracked_tree(destination: Path) -> None:
+def _copy_working_tree(destination: Path) -> None:
+    # Hook checks must see unstaged additions and deletions as well as tracked edits.
     result = subprocess.run(
-        ["git", "ls-files", "-z"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=REPO,
         check=True,
         capture_output=True,
@@ -1392,6 +1393,8 @@ def _copy_tracked_tree(destination: Path) -> None:
     relatives = {path for path in result.stdout.decode().split("\0") if path}
     for relative in sorted(relatives):
         source = REPO / relative
+        if not source.is_file():
+            continue
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
@@ -1521,7 +1524,7 @@ class TestContractFenceHook(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            _copy_tracked_tree(root)
+            _copy_working_tree(root)
             target = root / "skills/code-gauntlet/references/phase1-preflight.md"
             clean_result = subprocess.run(
                 entry,
