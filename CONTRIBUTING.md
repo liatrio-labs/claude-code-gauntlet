@@ -223,10 +223,9 @@ change the posted text. Re-record the verdicts when the supported GitLab version
 expected text or a composer's output changes.
 
 When a change alters an expected text, re-record both probes and review the diff. The GitLab
-probe needs the local GitLab instance described in the module docstring of
-`tests/tools/render_probes.py`; the seed creates the users and groups the fixture mentions, and
-`record` checks that every seedable handle renders as a link. GitLab never links `@all` or
-one-character names.
+probe needs the local GitLab instance described below; the seed creates the users and groups
+the fixture mentions, and `record` checks that every seedable handle renders as a link. GitLab
+never links `@all` or one-character names.
 
 ```bash
 python3 tests/tools/render_probes.py record --platform github   # needs gh auth; posts nothing
@@ -237,6 +236,44 @@ python3 tests/tools/render_probes.py record --platform gitlab --check  # re-rend
 python3 tests/tools/render_probes.py quick-actions                     # local GitLab Rails, records verdicts
 python3 tests/tools/render_probes.py quick-actions --check             # compares without writing
 ```
+
+Start GitLab with the same external URL the recorded probes use, since rendered links are
+absolute:
+
+```bash
+docker run --detach --name cdr-gitlab --hostname localhost \
+  --publish 8929:8929 --shm-size 256m \
+  --env GITLAB_OMNIBUS_CONFIG="external_url 'http://localhost:8929'" \
+  gitlab/gitlab-ce:19.4.1-ce.0
+```
+
+When `curl -s -o /dev/null -w '%{http_code}' http://localhost:8929/api/v4/version` prints 401,
+export a root API token:
+
+```bash
+export GITLAB_TOKEN=$(docker exec cdr-gitlab gitlab-rails runner \
+  'u=User.find_by_username("root"); puts u.personal_access_tokens.create!(name: "render-probes", scopes: ["api"], expires_at: Date.today + 30).token')
+```
+
+Then run the `seed` and GitLab `record` commands above. GitHub recording needs only an
+authenticated `gh`. Add `--check` to either `record` command to re-render without writing.
+
+### Optional outbound canary
+
+After changing outbound preparation, entity handling, marker neutralization or probe HTML checks,
+run this locally with authenticated `gh` and network access:
+
+```bash
+python3 tests/tools/outbound_canary.py --live --seed 375 --cases 64
+```
+
+It renders generated `prepare_prose` and `prepare_line` outputs with GitHub's Markdown API and
+posts no comments. This optional check never runs in CI or pre-commit; deterministic offline
+suites remain the merge gate. Replay a failure with the printed seed, mention handle and case
+index; both operations always run. Add the printed input as a reviewed regression fixture with an
+independently written safe expected value. A failed renderer or preflight is not a passing
+containment check. Record seed, generator version and results in the PR when you run it. Fixture
+changes follow the separate recorder workflow above.
 
 ## Style and Quality
 
