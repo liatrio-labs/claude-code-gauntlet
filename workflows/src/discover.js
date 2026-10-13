@@ -1,6 +1,7 @@
 // Summary and discovery stages, finding schemas, and scope flags.
 import { DIMENSIONS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
-import { computeLightEligible, LIMIT_DEFAULTS } from './args.js';
+import { computeLightEligible } from './knobs.js';
+import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
 
 // StructuredOutput requires an object wrapper around summary prose.

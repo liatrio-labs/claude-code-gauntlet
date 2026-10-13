@@ -815,7 +815,7 @@ def test_command_drift(registry_tree, invoke):
 
 
 def test_added_knob(registry_tree, invoke):
-    path = registry_tree / "workflows/src/args.js"
+    path = registry_tree / "workflows/src/knobs.js"
     source = path.read_text(encoding="utf-8")
     row = (
         "  { key: 'added', modes: ['headless'], allowedSources: { headless: ['default'] }, "
@@ -1168,7 +1168,7 @@ def test_no_conditional_fields():
     ("source", "old", "new", "projection"),
     [
         pytest.param(
-            "filterFindings.js",
+            "injection.js",
             "FIX_MAX_LINES = 100",
             "FIX_MAX_LINES = 101",
             "FIX_MAX_LINES = 101",

@@ -194,7 +194,7 @@ function verifyDegradeGap(detail, k, n) {
 // truncated body, schema-retry exhaustion or a timeout. The retry carries a distinct
 // nonce: with the slice nonce reused, a replay of the untrusted first receipt would
 // satisfy the second attempt. The `.r1` suffix stays inside the args-waist nonce charset
-// (args.js NONCE_RE). Each nonce is spelled once here and handed to both the command and
+// (registry.js NONCE_RE). Each nonce is spelled once here and handed to both the command and
 // the trust check, so the two cannot derive different values.
 async function verifySliceWithRetry(c, inp, i, slice, record) {
   const { nonce } = inp;

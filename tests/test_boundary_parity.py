@@ -1340,7 +1340,7 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
         ]
         node_cases = json.dumps(cases, ensure_ascii=False)
         script = (
-            "import('./workflows/src/args.js').then(m => { const cases = "
+            "import('./workflows/src/knobs.js').then(m => { const cases = "
             + node_cases
             + "; process.stdout.write(JSON.stringify(cases.map(c => Object.hasOwn(c, 'mode')"
             + " ? m.matchesRule(c.rule, c.value, c.mode) : m.matchesRule(c.rule, c.value)))); })"

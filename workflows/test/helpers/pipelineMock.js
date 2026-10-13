@@ -100,7 +100,7 @@ export function makeFindings() {
   return [makeFinding('F1'), makeFinding('F2')];
 }
 
-// A fully valid args waist (every REQUIRED field from args.js). `over` patches it.
+// A fully valid args waist (every REQUIRED field from registry.js). `over` patches it.
 // riskTable is DERIVED from `over.changedFiles` (each entry 'medium') when the caller
 // overrides changedFiles but not riskTable — riskTable's path set must equal changedFiles'
 // exactly, so a fixture whose default riskTable never tracked an overridden changedFiles

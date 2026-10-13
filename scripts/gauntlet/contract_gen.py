@@ -108,9 +108,9 @@ def _run_node(node_src: str, repo_root: str) -> proc.CompletedProcess[str]:
 def load_registry(repo_root: str) -> Mapping[str, Any]:
     """Import the live schemas and keep finding and waist required lists distinct."""
     node_src = (
-        "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/args.js'), import('./workflows/src/applyValidations.js'), import('./workflows/src/filterFindings.js'), import('./workflows/src/outputPaths.js'), import('./workflows/src/verifyWire.js')]).then(([m, a, v, f, o, w]) => console.log(JSON.stringify({"
+        "Promise.all([import('./workflows/src/registry.js'), import('./workflows/src/knobs.js'), import('./workflows/src/applyValidations.js'), import('./workflows/src/injection.js'), import('./workflows/src/outputPaths.js'), import('./workflows/src/verifyWire.js')]).then(([m, a, v, f, o, w]) => console.log(JSON.stringify({"
         "  required: m.FINDING_REQUIRED,"
-        "  waistRequired: a.REQUIRED,"
+        "  waistRequired: m.REQUIRED,"
         "  canonicalFields: Object.keys(m.FINDING_PROP_TYPES),"
         "  findingTypes: m.FINDING_PROP_TYPES,"
         "  dimensions: m.DIMENSIONS.map(d => ({"
@@ -121,7 +121,7 @@ def load_registry(repo_root: str) -> Mapping[str, Any]:
         "  })),"
         "  brand: { mark: m.BRAND_MARK, name: m.BRAND_NAME },"
         "  severityEmoji: m.SEVERITY_EMOJI,"
-        "  severityOrder: f.SEVERITY_ORDER,"
+        "  severityOrder: m.SEVERITY_ORDER,"
         "  reachability: v.REACHABILITY_VALUES,"
         "  deltaKeys: w.DELTA_KEYS,"
         "  verifySliceFields: w.VERIFY_SLICE_FIELDS,"

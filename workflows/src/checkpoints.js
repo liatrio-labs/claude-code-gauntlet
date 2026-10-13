@@ -1,6 +1,7 @@
 import { normalizeFindingPaths } from './mergeFindings.js';
 import { RETURN_CHAR_BUDGET } from './wire.js';
-import { applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames } from './filterFindings.js';
+import { applyInjectedProseStrip, applyReplayInjectionScan } from './injection.js';
+import { normalizeFieldNames } from './filterFindings.js';
 
 // Arrays are unusable phase maps: indexing a phase name can otherwise replay an Array prototype method.
 function unwrapCheckpointMap(cp) {

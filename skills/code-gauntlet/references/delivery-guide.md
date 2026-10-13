@@ -165,7 +165,7 @@ removed: `<!--&#38;#45;&#38;#45;&#38;#62;z-->tail` becomes `z-->tail`,
 `<!-<!--x-->- y --<!--z-->> w` becomes `> w`.
 Secrets are redacted before containment. Inline spans pair on one line at the next exact
 backtick-run length, retrying shorter opener suffixes when a complete run has no mate.
-Only containment and the tilde guard share that span selection. The colon guard is
+Only containment and the tilde guard share that span selection (`workflows/src/outboundText.js` for the pipeline Summary). The colon guard is
 span-blind and rewrites inside inline code too.
 A wrong pairing can show literal `&lt;` or backslashes, or show
 fullwidth characters in prose, but leaves the text contained. Fullwidth `＜` and `＠`

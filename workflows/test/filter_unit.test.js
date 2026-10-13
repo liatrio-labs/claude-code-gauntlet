@@ -1,39 +1,14 @@
-// Unit tests for filterFindings.js. Frozen behavior lives in goldens.test.js.
+// Unit tests for filterFindings.js, reviewConfig.js, and injection.js. Frozen behavior lives in goldens.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { loadCases } from './helpers/goldenCases.js';
-import {
-  pyRound,
-  lineBucket,
-  applyFilterPipeline,
-  buildReviewConfig,
-  configForFile,
-  scopeMatchesFile,
-  applyThresholdFilter,
-  applyReachabilityDemotion,
-  applyInjectionFilter,
-  applyExclusions,
-  applyInjectedProseStrip,
-  detectDisagreement,
-  routeByDimension,
-  consolidateCrossAgent,
-  tagFindings,
-  INJECTION_STRIPPED_PROSE_FIELDS,
-  WORD_SPLIT_RE,
-  countWords,
-  SUGGESTION_SETS,
-  INJECTION_TITLE_PATTERNS,
-  foldConfusables,
-  CONFUSABLE_FOLD,
-  INVISIBLE_STRIP,
-  parseReviewMd,
-  splitReviewLines,
-  normalizeFieldNames,
-  loadExclusions,
-} from '../src/filterFindings.js';
+import { pyRound, lineBucket, applyFilterPipeline, applyThresholdFilter, applyReachabilityDemotion, detectDisagreement, routeByDimension, consolidateCrossAgent, tagFindings, normalizeFieldNames } from '../src/filterFindings.js';
+import { buildReviewConfig, configForFile, scopeMatchesFile, applyExclusions, parseReviewMd, splitReviewLines, loadExclusions } from '../src/reviewConfig.js';
+import { applyInjectionFilter, applyInjectedProseStrip, WORD_SPLIT_RE, countWords, SUGGESTION_SETS, INJECTION_TITLE_PATTERNS, foldConfusables, CONFUSABLE_FOLD, INVISIBLE_STRIP } from '../src/injection.js';
+import { INJECTION_STRIPPED_PROSE_FIELDS } from '../src/registry.js';
 import { finding } from './helpers/findings.js';
 
 test('filter data content digest', () => {
@@ -309,7 +284,7 @@ function inspectPattern(source, label, unionClass, checkAnchors = false) {
 }
 
 test('filter regex sources retain union whitespace and unanchored content patterns', () => {
-  const source = ['filterFindings.js', 'wire.js'].map((file) => readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8')).join('\n');
+  const source = ['filterFindings.js', 'reviewConfig.js', 'injection.js', 'wire.js'].map((file) => readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8')).join('\n');
   const unionClass = String.raw`\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff`;
   const literals = regexLiterals(source);
   assert.ok(literals.length > 80, `source scan covered only ${literals.length} regex literals`);

@@ -374,3 +374,186 @@ export function resolvePolicy(agentType, opts = {}) {
 export function modelFor(agentType, policy) {
   return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
 }
+
+export const ARGS_VERSION = 1;
+
+// changedFiles/changedLines feed summarize bucketing and the agent-count guard, so they're
+// REQUIRED because they're consumed. `mode` is NOT read anywhere in workflows/src beyond a
+// re-check against its own enum below — it is provenance/telemetry the skill always stamps.
+// `repoRoot` is REQUIRED for discover-entry and checkpoint-replay path normalization. changedFilesPath
+// is on-disk provenance the workflow never opens.
+export const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope'];
+
+// The nonce is interpolated into the verify executor command argv (the verify stage
+// derives one per slice as `${nonce}.${i}`), so it must be a single AST-safe,
+// non-splitting token: word chars plus `.` `_` `-` only — no whitespace or shell
+// metacharacters that could split argv or break AST-safe emission.
+export const NONCE_RE = /^[A-Za-z0-9._-]+$/;
+
+// The optional Phase 8 delivery selector: { tier }. Absent is fine (the workflow defaults
+// the tier to 'all' — post every challenge-survivor). A present tier must be a known value.
+export const DELIVERY_TIERS = ['all', 'main_only'];
+
+// The headless scope selector and the interactive scope answer share these literals.
+export const SCOPE_ANSWERS = ['light', 'full'];
+
+// Known values for policy.provider. The enum exists because the two arms diverge silently:
+// a typo ('first-party', 'aws') would flip a first-party session onto bare aliases —
+// reintroducing the measured [1m] session-variant cascade the full-ID pin exists to stop —
+// with no error anywhere. Fail loud at the waist instead. No 'gateway' value: an LLM
+// gateway (ANTHROPIC_BASE_URL) proxies the Anthropic API and expects standard Claude model
+// names, so gateway sessions are firstParty; non-standard gateway names go through the
+// subagentModel escape hatch. A gateway session is instead marked by the separate
+// policy.gateway BOOLEAN (issue #218, validated below) — it rides alongside provider rather
+// than inside this enum because it answers a different question (does input_schema reach an
+// unmeasured backend verbatim?), not which model-ID arm resolvePolicy takes.
+export const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
+
+// The single code-owned methodology receipt registry. It owns the mode-specific key set,
+// source vocabulary, validation rule, and render order. Add a knob here once; args validation
+// and renderReport both consume the same declaration.
+export const CONTROL_RE = /[\u0000-\u001F\u007F]/;
+
+// Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
+// stamped `null` rather than absent — a wasted model round trip. These five top-level
+// optional fields have no meaning as `null` (only "absent" or "a well-formed object/array"),
+// so a literal null is equivalent to omission and gets dropped before validateArgs ever sees
+// it. This allowlist is intentionally narrow: do NOT extend the null-tolerance treatment to
+// any other field. In particular, limits.deliveryCap: null means "uncapped" and
+// policy.subagentModel: null means "no override" — both are load-bearing DATA, not omitted-
+// field stand-ins, and must survive this step untouched.
+//
+// `persist` is on the list for the same reason its siblings are (its null means "take the
+// legacy by-value writer path", exactly what absence means); leaving it off was a hole that
+// hard-rejected a whole run over a stamped null — the very cost this allowlist exists to
+// remove.
+//
+// TOLERATED IS NOT SILENT. Dropping a stamped null removes a fail-loud guard: a mis-stamped
+// `reviewConfig: null` would otherwise review under the Filter stage's config-absent
+// defaults instead of the operator's REVIEW.md thresholds — a silent change to the DELIVERED
+// findings, which issue #38 forbids. So every drop that ACTUALLY removed a guard is REPORTED
+// (stripNullOptionalsReport -> nullToleranceRejectedKeys -> runWith -> an envelope gap via
+// nullToleranceGap): degraded-but-disclosed, the contract this pipeline uses everywhere else.
+// A drop that validateArgs would have accepted anyway (`checkpoints`) tolerated nothing and
+// is deliberately NOT disclosed — see nullToleranceRejectedKeys.
+export const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist', 'scopeAnswer'];
+
+// Issue #24 req 1/2 (PR3): the risk classification a plain string. Matches the three-tier
+// scale documented in skills/code-gauntlet/references/phase2-triage.md 2e — that table is now
+// the single contract for these literals; riskTable values must stay in lockstep with it.
+export const RISK_LEVELS = ['low', 'medium', 'high'];
+
+// The one home of the benchmarked default limits. normalizeArgs fills a limits object from
+// this constant, and every stage and capacity helper reads that object, so no literal default
+// is repeated in a stage body, a helper or a prose table.
+//
+// deliveryCap and discoveryCap are DELIBERATELY ABSENT from this table: their null/absent
+// state is meaningful DATA (uncapped delivery / no per-agent discovery ceiling), not a
+// value waiting on a default — see the "meaningful nulls" note above (limits.deliveryCap:
+// null means "uncapped"). Defaulting either here would silently cap a caller who asked for
+// none.
+export const LIMIT_DEFAULTS = {
+  summarizeBucketSize: 20,
+  validateBatch: 25,
+  challengeCap: 40,
+  // Keep a bad inline transcription's blast radius small. Ten retained mini slice documents
+  // measured 15.7k-42.4k chars for 14-38 findings (~1.1k chars/finding), so 25 findings is about 28k.
+  verifySliceSize: 25,
+  maxLineSpan: 100,
+};
+
+// What the operator actually loses when a stamped null is treated as absent, per key. Used
+// only to word the disclosure gap — no control flow reads it.
+export const NULL_TOLERANCE_CONSEQUENCE = {
+  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
+  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
+  delivery: 'delivery falls back to tier "all" with no PR identity',
+  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
+  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
+  'delivery.prIdentity.title': 'the report title falls back to owner/repo#N (or "local changes")',
+  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
+  persist: 'the artifact-writer takes the legacy full by-value persist path',
+  scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
+};
+
+export const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
+
+export const REVIEW_TARGET_LABEL = {
+  pr_url: 'a GitHub PR URL',
+  mr_url: 'a GitLab MR URL',
+  repo_ref: 'an owner/repo PR reference',
+  pr_number: 'a bare PR/MR number',
+  pr_shorthand: 'a PR/MR reference',
+};
+
+export const TRUSTED_SCRIPT_BASENAMES = {
+  assemble: 'assemble_artifacts.py',
+  verify: 'verify_findings.py',
+};
+
+// --- Field normalization (BF-14) --------------------------------------------
+
+export const FIELD_RENAMES = { body: 'description', line: 'line_start', blame_tag: 'origin' };
+
+// --- REVIEW.md parser ---------------------------------------------------
+
+// Single owner of SEVERITY_ORDER: the bundle shares one scope, so a second top-level
+// declaration in an importer would be a duplicate-declaration SyntaxError.
+export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
+
+export const REVIEW_SETTING_KEYS = [
+  'confidence_threshold',
+  'security_min_confidence',
+  'severity_threshold',
+];
+
+// Strip only prose fields matching the suggestion patterns; keep the finding itself.
+export const INJECTION_STRIPPED_PROSE_FIELDS = ['suggestion', 'claude_md_rule', 'spec_text'];
+
+// --- Disagreement detection --------------------------------------------
+
+export const AGENT_BUG_DETECTOR = 'bug-detector';
+
+export const AGENT_CONVENTIONS = 'conventions-and-intent';
+
+export const AGENT_TEST_ANALYZER = 'test-analyzer';
+
+export const AGENT_SECURITY_REVIEWER = 'security-reviewer';
+
+export const CONVENTIONS_AGENT = 'conventions-and-intent';
+
+// Omit fields that the report renderer cannot present safely.
+export const REPORT_EXCLUDED_FIELDS = [
+  'suggested_fix_code',
+  'suggested_fix_code_removed_by',
+  'suggested_fix_code_removal_reason',
+];
+
+// Display limits, not a whole-report or return-budget mechanism. The summary index
+// admits whole bullets; findings.json keeps unfolded values and unbounded cardinality.
+export const REPORT_FOLD_LIMITS = {
+  proseChars: 4000,
+  summaryChars: 12000,
+  summaryIndexChars: 12000,
+  evidenceLines: 40,
+  evidenceChars: 8000,
+  inlineChars: 512,
+};
+
+export const OUTBOUND_NAMED_ENTITIES = {
+  commat: '@',
+  excl: '!',
+  lbrack: '[',
+  lsqb: '[',
+  rsqb: ']',
+  rbrack: ']',
+  Hat: '^',
+  colon: ':',
+  lpar: '(',
+  rpar: ')',
+  bsol: '\\',
+  nbsp: ' ',
+  NonBreakingSpace: ' ',
+};

@@ -63,7 +63,7 @@ An environment pin wins over this value and the headless default. Interactive mo
 
 A `## Model Tier` heading is inert prose. The model policy remains fixed, and its environment pin is documented in `references/headless-mode.md`.
 
-**Legacy forms.** `parseReviewMd`/`parse_review_md` also still recognize the pre-rename block
+**Legacy forms.** `parseReviewMd` (`workflows/src/reviewConfig.js`)/`parse_review_md` also still recognize the pre-rename block
 forms — a fenced ```` ```deep-review ```` block and an `<!-- deep-review-config -->` comment block
 — so a REVIEW.md written before the `code-gauntlet` rename keeps working unmodified. When a file
 somehow has both a current-form block and a legacy-form block, the parser checks the current form

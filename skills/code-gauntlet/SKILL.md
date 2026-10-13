@@ -253,7 +253,7 @@ python3 -c "import secrets; print(secrets.token_hex(8))"
 Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a second search. Never use `find` from Bash for locating these files. Never Read or Glob CLAUDE.md/AGENTS.md/QODO.md directly here.
 
 Do not hand-parse or schema-validate REVIEW.md here — pass the raw text through. The workflow's
-`resolveReviewConfig` (`workflows/src/args.js`) calls `buildReviewConfig`, preserving a root layer
+`resolveReviewConfig` (`workflows/src/args.js`) calls `buildReviewConfig` (`workflows/src/reviewConfig.js`), preserving a root layer
 and depth-ordered subtree layers. Filter selects the root layer or matching subtree layers per
 `finding.file`: thresholds override and `ignore` entries accumulate from root to the deepest match.
 In particular, `resolveReviewConfig` never pins a numeric default for
@@ -486,8 +486,8 @@ Headless config:
 
 Invoke the workflow in **one** `Workflow` tool call. This single call runs the eight review stages — Summarize → Discover → Merge → Verify → Validate → Filter → Challenge → Report — and persists artifacts. Read `references/phase3-dispatch.md` for the internal stage map and the executor/writer agent roles.
 
-No pre-dispatch scope check is needed here: `deriveAgentFlags` (`workflows/src/args.js` /
-`workflows/src/discover.js`) computes the dimension flags from `riskTable`/`changedLines`/
+No pre-dispatch scope check is needed here: `deriveAgentFlags` (`workflows/src/discover.js`, using eligibility from
+`workflows/src/knobs.js`) computes the dimension flags from `riskTable`/`changedLines`/
 `scopeAnswer` inside the workflow itself, and `validateArgs` refuses a `scopeAnswer` on a
 riskTable/changedLines that is not light-eligible, a light-eligible waist with no
 `scopeAnswer`, or any derived waist field that disagrees with its receipt before any agent is

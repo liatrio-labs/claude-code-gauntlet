@@ -1,6 +1,6 @@
 // Verify slice capacity and dispatch limits shared by stages and the agent-count guard.
 import { AGENTS } from './registry.js';
-import { LIMIT_DEFAULTS } from './args.js';
+import { LIMIT_DEFAULTS } from './registry.js';
 import { VERIFY_INLINE_CHAR_BUDGET, encodeSliceInline, projectVerifySliceFinding } from './verifyWire.js';
 
 export const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';

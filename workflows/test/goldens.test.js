@@ -3,23 +3,9 @@ import assert from 'node:assert/strict';
 import { dedupById } from '../src/mergeFindings.js';
 import { merge } from '../src/mergeFindings.js';
 import { applyValidations } from '../src/applyValidations.js';
-import {
-  normalizeFieldNames,
-  parseReviewMd,
-  buildReviewConfig,
-  configForFile,
-  applyFilterPipeline,
-  applyThresholdFilter,
-  applyReachabilityDemotion,
-  applyInjectionFilter,
-  applyReplayInjectionScan,
-  loadExclusions,
-  applyExclusions,
-  detectDisagreement,
-  routeByDimension,
-  consolidateCrossAgent,
-  tagFindings,
-} from '../src/filterFindings.js';
+import { normalizeFieldNames, applyFilterPipeline, applyThresholdFilter, applyReachabilityDemotion, detectDisagreement, routeByDimension, consolidateCrossAgent, tagFindings } from '../src/filterFindings.js';
+import { parseReviewMd, buildReviewConfig, configForFile, loadExclusions, applyExclusions } from '../src/reviewConfig.js';
+import { applyInjectionFilter, applyReplayInjectionScan } from '../src/injection.js';
 import { applyChallenges } from '../src/applyChallenges.js';
 import { loadCases, writeGolden } from './helpers/goldenCases.js';
 

@@ -1,12 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
-  stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, nullRespellGap, LIMIT_DEFAULTS,
-  resolveReviewConfig, computeLightEligible, nullToleranceRejectedKeys, KNOB_REGISTRY, safeReceiptValue,
-  REQUIRED, LIGHT_SCOPE_MAX_CHANGED_LINES, DERIVE_WHEN, DERIVED_FROM,
-  matchesRule, isPriorReviewDetector,
-} from '../src/args.js';
+import { ARGS_VERSION, LIMIT_DEFAULTS, REQUIRED, LIGHT_SCOPE_MAX_CHANGED_LINES } from '../src/registry.js';
+import { normalizeArgs, validateArgs, stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, nullRespellGap, resolveReviewConfig, nullToleranceRejectedKeys } from '../src/args.js';
+import { parseEntryArgs } from '../src/entry.js';
+import { computeLightEligible, KNOB_REGISTRY, safeReceiptValue, DERIVE_WHEN, DERIVED_FROM, matchesRule, isPriorReviewDetector } from '../src/knobs.js';
 
 const good = {
   argsVersion: 1, mode: 'interactive', repoRoot: '/r', outputDir: '/r/.code-gauntlet',
@@ -1551,7 +1548,7 @@ test('T-ARGS-NULL: a two-level null probe is rejected and disclosed', () => {
 // Entry-args guard (live-run L1; superseded by issue #27's classified refusal design —
 // see entry_guard.test.js): a raw-string invocation ("PR 310") must throw an actionable
 // redirect to the skill, not a native JSON.parse stack. "PR 310" classifies as a
-// pr_shorthand review target (workflows/src/args.js classifyReviewTarget), so the thrown
+// pr_shorthand review target (workflows/src/entry.js classifyReviewTarget), so the thrown
 // message also carries the exact copy-paste Skill(...) line naming it back — pinned here,
 // not just loosely matched, because that line is the deliverable of the issue.
 test('parseEntryArgs: a non-JSON raw string throws with a skill redirect (no native parse stack)', () => {
@@ -2054,7 +2051,7 @@ test('contextChars without contextLines is rejected — chars alone cannot size 
 });
 
 test('a stamped null contextLines is NOT silently tolerated — it is a measurement, not an optional object', () => {
-  // NULLABLE_TOP_LEVEL is deliberately narrow (args.js). A null measurement must fail
+  // NULLABLE_TOP_LEVEL is deliberately narrow (registry.js). A null measurement must fail
   // loud rather than degrade quietly to the count-free wording: the skill measured
   // something and got null, which is a bug in the producer, not an omission.
   assert.deepEqual(stripNullOptionalsReport({ ...good, contextLines: null }).dropped, []);

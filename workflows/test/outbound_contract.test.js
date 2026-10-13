@@ -2,11 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import * as reportRenderer from '../src/renderReport.js';
+import * as reportRenderer from '../src/outboundText.js';
 import { DIMENSIONS, FINDING_PROP_TYPES } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
-const { renderSummaryBody } = reportRenderer;
+import { renderSummaryBody } from '../src/renderReport.js';
 
 function finding(id, over = {}) {
   return makeFinding(id, { evidence: '', ...over });
@@ -135,7 +135,7 @@ test('large_backslash_preparation', () => {
     ['unclosed_footnote', `[^${'[\\a'.repeat(100000)}`, `\uFF3B^${'[\\a'.repeat(100000)}`],
   ];
   const script = `
-import { prepareLine } from './workflows/src/renderReport.js';
+import { prepareLine } from './workflows/src/outboundText.js';
 let source = '';
 for await (const chunk of process.stdin) source += chunk;
 process.stdout.write(prepareLine(source));
@@ -162,7 +162,7 @@ const largePreparationCases = [
 for (const [id, source, expected] of largePreparationCases) {
   test(`large_outbound_preparation: ${id}`, () => {
     const script = `
-import { prepareLine } from './workflows/src/renderReport.js';
+import { prepareLine } from './workflows/src/outboundText.js';
 let source = '';
 for await (const chunk of process.stdin) source += chunk;
 process.stdout.write(prepareLine(source));

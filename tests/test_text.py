@@ -421,7 +421,7 @@ def test_markup_idempotence_and_line_parity() -> None:
             "--input-type=module",
             "-e",
             """
-import { prepareLine } from './workflows/src/renderReport.js';
+import { prepareLine } from './workflows/src/outboundText.js';
 let source = '';
 for await (const chunk of process.stdin) source += chunk;
 process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));

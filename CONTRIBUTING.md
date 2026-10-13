@@ -188,8 +188,8 @@ stay off so a later re-evaluation need not re-derive them:
 | --- | --- | --- |
 | `useOptionalChain` | 51 | Style churn; no reliability delta |
 | `noUnusedFunctionParameters` | 55 | Dominated by positional mock callback params in tests |
-| `noAssignInExpressions` | 7 | Six are intentional `args.js` pattern |
-| `noControlCharactersInRegex` | 2 | Intentional U+0000/U+001F sanitization in `args.js` |
+| `noAssignInExpressions` | 7 | Six are intentional `entry.js` pattern |
+| `noControlCharactersInRegex` | 2 | Intentional U+0000/U+001F sanitization in `args.js` and `registry.js` |
 | `organizeImports` | 24 | Assist/format-adjacent; out of scope with formatter off |
 
 ### Parity fixtures

@@ -13,7 +13,7 @@
 // the one-message-two-signals test, not by convention.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyReviewTarget, parseEntryArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from '../src/args.js';
+import { classifyReviewTarget, parseEntryArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from '../src/entry.js';
 import { runWith } from '../src/run.js';
 import { validArgs } from './helpers/pipelineMock.js';
 
@@ -72,7 +72,7 @@ const POSITIVE_CASES = [
   ['a !-prefixed shorthand (GitLab MR style)', '!89', 'pr_shorthand', '!89', '89'],
   ['a "PR <n>" shorthand', 'PR 310', 'pr_shorthand', 'PR 310', '310'],
   ['a "MR#<n>" shorthand', 'MR#7', 'pr_shorthand', 'MR#7', '7'],
-  // PR_SHORTHAND_WORD_RE alternatives + case-insensitivity (comment at args.js calls out
+  // PR_SHORTHAND_WORD_RE alternatives + case-insensitivity (comment at entry.js calls out
   // lowercase "pr 310" as an intended catch; pin every alternation branch).
   ['a lowercase "pr <n>" shorthand', 'pr 310', 'pr_shorthand', 'pr 310', '310'],
   ['a "pull request <n>" shorthand', 'pull request 45', 'pr_shorthand', 'pull request 45', '45'],

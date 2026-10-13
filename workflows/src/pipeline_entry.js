@@ -7,7 +7,7 @@
 // bundle body as a wrapped async function — top-level `await`/`return` are the entry
 // contract, and args arrive via the runtime-injected `args` global, not a parameter.
 import { runWith } from './run.js';
-import { parseEntryArgs } from './args.js';
+import { parseEntryArgs } from './entry.js';
 
 // meta.name MUST NOT equal the skill's name (`code-gauntlet`). Both are registered by
 // this plugin, so an identical name would make `/code-gauntlet:code-gauntlet` resolve to
@@ -27,7 +27,7 @@ async function run(rawArgs) {
 // parseEntryArgs THROWS on a refusal (absent args, a review-target reference like a bare
 // PR number/URL, or any other non-waist shape) rather than returning — the only signal
 // this platform renders as a visible failure (issue #27; see the doc comment on
-// parseEntryArgs in args.js for the verified reasoning). runWith carries the identical
+// parseEntryArgs in entry.js for the verified reasoning). runWith carries the identical
 // wording for its own, throw-free seam, so a naked Workflow call and a programmatic
 // runWith() caller see the same message either way.
 const __args = parseEntryArgs(typeof args === 'undefined' ? undefined : args);

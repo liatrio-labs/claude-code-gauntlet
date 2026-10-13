@@ -1492,7 +1492,7 @@ class TestContractFenceHook(unittest.TestCase):
         self.assertTrue(
             {
                 "workflows/src/registry.js",
-                "workflows/src/args.js",
+                "workflows/src/knobs.js",
                 "workflows/src/renderReport.js",
             }.issubset(declared_inputs),
             declared_inputs,

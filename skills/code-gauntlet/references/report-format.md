@@ -261,7 +261,7 @@ Summary section body: the code-owned counts sentence comes first, followed by an
 consolidation units selected for delivery and any remainder count with its selection reasons.
 The change-summarizer prose appears only in the following Change Context section. A present summary
 has a code-owned lead-in explaining its role as shared review-agent context, then folds at
-`REPORT_FOLD_LIMITS.summaryChars`. An absent or blank summary uses this exact sentence with no
+`REPORT_FOLD_LIMITS.summaryChars` (`workflows/src/registry.js`). An absent or blank summary uses this exact sentence with no
 lead-in:
 
 ```text

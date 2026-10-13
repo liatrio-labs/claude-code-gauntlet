@@ -11,7 +11,7 @@ REPO = Path(__file__).resolve().parents[2]
 @lru_cache(maxsize=1)
 def js_values():
     script = (
-        "import('./workflows/src/filterFindings.js').then(m => "
+        "import('./workflows/src/registry.js').then(m => "
         "console.log(JSON.stringify({FIELD_RENAMES: m.FIELD_RENAMES, "
         "SEVERITY_ORDER: m.SEVERITY_ORDER})))"
     )

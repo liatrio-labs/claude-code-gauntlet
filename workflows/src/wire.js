@@ -111,3 +111,29 @@ export function coerceInt(value, policy) {
 // largest proven return. Above it, persistence falls back to the artifact-writer and the
 // failure-path resume state shrinks to phase names.
 export const RETURN_CHAR_BUDGET = 1000000;
+
+export function dottedValue(object, path) {
+  let current = object;
+  for (const part of path.split('.')) {
+    if (current === null || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+export const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// re.escape equivalent: escape every regex metacharacter so the pattern is
+// searched as a literal substring.
+export function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Coerce typed finding fields before grouping or comparing them.
+export function asText(value) {
+  return typeof value === 'string' ? value : '';
+}
+
+export function asConfidence(value) {
+  return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
+}
