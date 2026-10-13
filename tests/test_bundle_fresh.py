@@ -51,7 +51,8 @@ def test_bundle_runtime_shape(bundle_text: str) -> None:
     lines = [line for line in bundle_text.splitlines() if line.strip()]
     assert lines, "bundle is empty"
     assert lines[0].startswith("export const meta"), "bundle must begin with meta"
-    # The workflow runtime permits only the meta export and enters via a trailing return.
+    # The workflow runtime permits only the meta export and enters via a trailing
+    # return.
     assert len([line for line in lines if re.match(r"^\s*export\b", line)]) == 1
     assert lines[-1].strip().startswith("return await run(")
     result = subprocess.run(

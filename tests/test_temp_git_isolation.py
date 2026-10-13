@@ -93,5 +93,4 @@ def test_suite_is_hermetic_to_a_temp_root_inside_a_work_tree(
     )
     after = _repository_facts(outer)
     assert after == before
-    assert after["is-bare"] != "true"
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"

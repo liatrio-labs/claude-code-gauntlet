@@ -514,7 +514,7 @@ def test_labels_accepted_input(
     payload: bytes,
     status: int,
     stdout_fragments: tuple[bytes, ...],
-    stderr_fragment: bytes,
+    stderr_fragment: bytes | None,
 ) -> None:
     result = subprocess.run(
         [sys.executable, str(LABELS_DIFF), "--live", "-"],
@@ -526,7 +526,12 @@ def test_labels_accepted_input(
     assert result.returncode == status, result.stdout + result.stderr
     for fragment in stdout_fragments:
         assert fragment in result.stdout
-    assert stderr_fragment in result.stderr
+    if stderr_fragment is None:
+        return
+    if not stderr_fragment:
+        assert not result.stderr
+    else:
+        assert stderr_fragment in result.stderr
 
 
 def test_labels_loader_reads_utf8_bytes_with_cp1252_text_wrapper() -> None:
@@ -565,12 +570,24 @@ REFUSED_LABEL_INPUTS: tuple[RefusedInputRow, ...] = (
         None,
         b"{oops",
     ),
+    (
+        "manifest-live-no-labels-key",
+        ("--manifest", "{path}", "--live", "{path}"),
+        None,
+        b'{"tags": []}',
+    ),
     ("live-required", (), None, None),
     ("empty-response", stdin_response, b"", None),
     (
         "api-error-object",
         stdin_response,
         b'{"message": "Not Found", "status": "404"}',
+        None,
+    ),
+    (
+        "single-label-object",
+        stdin_response,
+        b'{"name": "bug", "color": "d73a4a"}',
         None,
     ),
     ("names-only", stdin_response, b'["bug", "enhancement"]', None),
@@ -1113,18 +1130,20 @@ def _ci_job_blocks(text: str) -> list[tuple[str, str]]:
         (index for index, line in enumerate(lines) if line == "jobs:"), None
     )
     if jobs_index is None:
-        raise AssertionError("ci.yml is missing jobs:")
+        raise AssertionError("workflow is missing jobs:")
     starts = []
+    jobs_end = len(lines)
     for index in range(jobs_index + 1, len(lines)):
         line = lines[index]
         if line and not line.startswith(" ") and not line.startswith("#"):
+            jobs_end = index
             break
         match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
         if match:
             starts.append((index, match.group(1)))
     jobs = []
     for position, (start, job_id) in enumerate(starts):
-        end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
+        end = starts[position + 1][0] if position + 1 < len(starts) else jobs_end
         jobs.append((job_id, "\n".join(lines[start:end])))
     return jobs
 

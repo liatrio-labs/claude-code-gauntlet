@@ -8,6 +8,7 @@ import socket
 import stat
 import urllib.error
 from contextlib import redirect_stderr
+from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -239,6 +240,16 @@ def test_biome_return_code_is_propagated(pin_file: Path, tmp_path: Path) -> None
             5,
             [1, 2, 4, 8],
             id="five-failures-exhausted",
+        ),
+        pytest.param(
+            urllib.error.HTTPError(
+                "https://example.test", 503, "Unavailable", Message(), None
+            ),
+            1,
+            0,
+            2,
+            [1],
+            id="http-error-recovered",
         ),
         pytest.param(
             # Exercise the socket API spelling.

@@ -207,6 +207,8 @@ def test_tracked_paths_preserve_selected_inputs(monkeypatch, tmp_path) -> None:
 
     def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         assert args == ["git", "ls-files", "-z", "--", *pathspecs]
+        assert kwargs["cwd"] == tmp_path
+        assert kwargs["check"] is True
         return subprocess.CompletedProcess(args, 0, stdout=output)
 
     monkeypatch.setattr(subprocess, "run", run)
