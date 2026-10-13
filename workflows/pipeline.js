@@ -2909,7 +2909,9 @@ function fenceFor(text) {
 }
 function inline(value, prefixLimit) {
   const text = reportAsText(value).replace(/\r/g, ' ');
-  return prepareSummaryTitle(prefixLimit === undefined ? text : oneLine(outboundBase(text)).slice(0, prefixLimit));
+  if (prefixLimit === undefined) return prepareSummaryTitle(text);
+  const sliced = oneLine(outboundBase(text)).slice(0, prefixLimit);
+  return prepareLine(foldInline(sliced), true);
 }
 function safeProse(value) {
   const parts = reportAsText(value).split(/(\r\n|\r|\n)/);
@@ -2932,7 +2934,7 @@ function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
 }
 function findingFieldText(key, value) {
   return FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(value)
-    ? value.map((path) => inline(path)).join(',') : foldedProse(value);
+    ? foldedProse(value.map((path) => inline(path)).join(',')) : foldedProse(value);
 }
 function tableCell(value) {
   return reportAsText(value).replaceAll('|', '\\|');
@@ -2987,8 +2989,7 @@ function reportBuilder() {
   };
   return { add, addSpans, addEvidence, finish };
 }
-function joinLocation(finding, preparePart) {
-  const file = preparePart(finding.file);
+function joinLocation(finding, preparePart, file = preparePart(finding.file)) {
   if (!isPresent(finding.line_start)) return file;
   const start = preparePart(finding.line_start);
   if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
@@ -2997,8 +2998,11 @@ function joinLocation(finding, preparePart) {
   return `${file}:${start}-${preparePart(finding.line_end)}`;
 }
 function location(finding) {
-  return isPresent(finding.file)
-    ? preparedCodeSpan(joinLocation(finding, oneLine), false, undefined, REPORT_FOLD_LIMITS.inlineChars) : '';
+  if (!isPresent(finding.file)) return '';
+  const file = oneLine(outboundBase(oneLine(finding.file)));
+  const foldedFile = foldInline(file);
+  if (foldedFile === file) return preparedCodeSpan(joinLocation(finding, oneLine));
+  return codeSpan(joinLocation(finding, (part) => oneLine(outboundBase(oneLine(part))), foldedFile));
 }
 function quotedSummaryLocation(finding) {
   if (!isPresent(finding.file)) return '';
@@ -3101,8 +3105,9 @@ function renderFinding(builder, finding, unverified, permalinks) {
     });
   }
   const extras = reportExtraFields()
-    .filter((key) => isPresent(finding[key]))
-    .map((key) => `- **${fieldLabel(key)}:** ${findingFieldText(key, finding[key])}`);
+    .map((key) => ({ key, text: findingFieldText(key, finding[key]) }))
+    .filter(({ text }) => isPresent(text))
+    .map(({ key, text }) => `- **${fieldLabel(key)}:** ${text}`);
   if (extras.length) blocks.push(() => extras.forEach(builder.add));
   if (isPresent(finding.suggestion)) {
     blocks.push(() => {
@@ -3124,8 +3129,9 @@ function renderFinding(builder, finding, unverified, permalinks) {
       builder.add(foldedProse(citedRule).split(/\r?\n/).map((line) => `> ${line}`).join('\n'));
     });
   }
-  if (isPresent(finding.cross_file_refs)) {
-    blocks.push(() => builder.add(`- **Cross-file refs:** ${findingFieldText('cross_file_refs', finding.cross_file_refs)}`));
+  const crossFileRefs = findingFieldText('cross_file_refs', finding.cross_file_refs);
+  if (isPresent(crossFileRefs)) {
+    blocks.push(() => builder.add(`- **Cross-file refs:** ${crossFileRefs}`));
   }
   if (Array.isArray(finding.corroborations) && finding.corroborations.length) {
     blocks.push(() => {

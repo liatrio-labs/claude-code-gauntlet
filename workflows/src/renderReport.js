@@ -8,7 +8,7 @@ import { SEVERITY_ORDER, REPORT_FOLD_LIMITS } from './registry.js';
 import { REPORT_PLACED_FIELDS, STAGE_DEFAULTS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 import { KNOB_REGISTRY } from './knobs.js';
 import { longestBacktickRun, deepFreeze } from './wire.js';
-import { reportAsText, foldProse, foldEvidence, oneLine, outboundBase } from './outboundText.js';
+import { reportAsText, foldProse, foldEvidence, oneLine, outboundBase, prepareLine, foldInline } from './outboundText.js';
 import { prepareSummaryTitle, preparedCodeSpan, codeSpan, outboundTildeRuns } from './outboundText.js';
 
 // Delivery owns committable fix fences; the report must not expose them as unvalidated prose extras.
@@ -266,7 +266,9 @@ function fenceFor(text) {
 
 function inline(value, prefixLimit) {
   const text = reportAsText(value).replace(/\r/g, ' ');
-  return prepareSummaryTitle(prefixLimit === undefined ? text : oneLine(outboundBase(text)).slice(0, prefixLimit));
+  if (prefixLimit === undefined) return prepareSummaryTitle(text);
+  const sliced = oneLine(outboundBase(text)).slice(0, prefixLimit);
+  return prepareLine(foldInline(sliced), true);
 }
 
 // Multiline model prose must not forge code-owned section headings.
@@ -295,7 +297,7 @@ function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
 
 function findingFieldText(key, value) {
   return FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(value)
-    ? value.map((path) => inline(path)).join(',') : foldedProse(value);
+    ? foldedProse(value.map((path) => inline(path)).join(',')) : foldedProse(value);
 }
 
 function tableCell(value) {
@@ -356,8 +358,7 @@ function reportBuilder() {
   return { add, addSpans, addEvidence, finish };
 }
 
-function joinLocation(finding, preparePart) {
-  const file = preparePart(finding.file);
+function joinLocation(finding, preparePart, file = preparePart(finding.file)) {
   if (!isPresent(finding.line_start)) return file;
   const start = preparePart(finding.line_start);
   if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
@@ -367,8 +368,12 @@ function joinLocation(finding, preparePart) {
 }
 
 function location(finding) {
-  return isPresent(finding.file)
-    ? preparedCodeSpan(joinLocation(finding, oneLine), false, undefined, REPORT_FOLD_LIMITS.inlineChars) : '';
+  if (!isPresent(finding.file)) return '';
+  const file = oneLine(outboundBase(oneLine(finding.file)));
+  const foldedFile = foldInline(file);
+  // Keep joint normalization when the file fits; the line suffix must stay outside the file's fold budget.
+  if (foldedFile === file) return preparedCodeSpan(joinLocation(finding, oneLine));
+  return codeSpan(joinLocation(finding, (part) => oneLine(outboundBase(oneLine(part))), foldedFile));
 }
 
 function quotedSummaryLocation(finding) {
@@ -483,8 +488,9 @@ function renderFinding(builder, finding, unverified, permalinks) {
   }
 
   const extras = reportExtraFields()
-    .filter((key) => isPresent(finding[key]))
-    .map((key) => `- **${fieldLabel(key)}:** ${findingFieldText(key, finding[key])}`);
+    .map((key) => ({ key, text: findingFieldText(key, finding[key]) }))
+    .filter(({ text }) => isPresent(text))
+    .map(({ key, text }) => `- **${fieldLabel(key)}:** ${text}`);
   if (extras.length) blocks.push(() => extras.forEach(builder.add));
 
   if (isPresent(finding.suggestion)) {
@@ -509,8 +515,9 @@ function renderFinding(builder, finding, unverified, permalinks) {
     });
   }
 
-  if (isPresent(finding.cross_file_refs)) {
-    blocks.push(() => builder.add(`- **Cross-file refs:** ${findingFieldText('cross_file_refs', finding.cross_file_refs)}`));
+  const crossFileRefs = findingFieldText('cross_file_refs', finding.cross_file_refs);
+  if (isPresent(crossFileRefs)) {
+    blocks.push(() => builder.add(`- **Cross-file refs:** ${crossFileRefs}`));
   }
 
   if (Array.isArray(finding.corroborations) && finding.corroborations.length) {

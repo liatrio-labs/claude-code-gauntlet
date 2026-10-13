@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyReviewTarget, parseEntryArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from '../src/entry.js';
+import { classifyReviewTarget, parseEntryArgs, entryArgs, SKILL_RECOVERY_LINE } from '../src/entry.js';
 import { runWith } from '../src/run.js';
 import { interactiveArgs } from './helpers/argsFixtures.js';
 
@@ -174,11 +174,6 @@ for (const { name, depth, input, expected } of DECODE_ROWS) {
   });
 }
 
-const ENVELOPE_ROWS = [
-];
-for (const { name, input, expected } of ENVELOPE_ROWS) {
-  test(`envelope: ${name}`, () => assert.deepEqual(makeArgsRejectEnvelope(...input), expected));
-}
 
 const WIRED_ROWS = [
   { name: 'decoded validation', input: () => JSON.stringify(JSON.stringify(interactiveArgs({ mode: 'bogus' }))),

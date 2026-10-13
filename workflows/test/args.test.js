@@ -693,18 +693,6 @@ for (const { name, mode, input, descriptor, receipt, expected } of PROBE_ROWS) {
   });
 }
 
-const TABLE_DERIVE_ROWS = [
-];
-for (const { name, input, expected } of TABLE_DERIVE_ROWS) {
-  test(`copied derivation: ${name}`, () => {
-    const { args, table, path } = input();
-    const out = normalizeArgs(args, table);
-    assert.deepEqual(out[path], expected);
-    if (name === 'reviewed map copy' || name === 'interactive modes copy') {
-      assert.deepEqual(validateArgs(out, table), { ok: true, errors: [] });
-    }
-  });
-}
 
 const UNKNOWN_DERIVE_ROWS = [
   { name: 'unknown type', gate: null, type: 'bool', expected: { value: undefined, paths: ['delivery.tier'] } },

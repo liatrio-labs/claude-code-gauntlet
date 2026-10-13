@@ -54,6 +54,53 @@ delete discoveryArgs.configEcho.review_md;
 const discoveredEcho = normalizeArgs(discoveryArgs).configEcho;
 
 const REPORT_ROWS = [
+  { name: 'path arrays retain the whole-field prose fold', input: { findings: [finding('A', {
+    cross_file_refs: Array.from({ length: 3000 }, (_, index) => `src/module_${index}/file.js`),
+  })] }, start: '- **Cross-file refs:** ', end: '\n\n## Review Dimensions Summary',
+    expected: "src/module_0/file.js,src/module_1/file.js,src/module_2/file.js,src/module_3/file.js,src/module_4/file.js,"
+      + "src/module_5/file.js,src/module_6/file.js,src/module_7/file.js,src/module_8/file.js,src/module_9/file.js,"
+      + "src/module_10/file.js,src/module_11/file.js,src/module_12/file.js,src/module_13/file.js,src/module_14/"
+      + "file.js,src/module_15/file.js,src/module_16/file.js,src/module_17/file.js,src/module_18/file.js,src/"
+      + "module_19/file.js,src/module_20/file.js,src/module_21/file.js,src/module_22/file.js,src/module_23/"
+      + "file.js,src/module_24/file.js,src/module_25/file.js,src/module_26/file.js,src/module_27/file.js,src/"
+      + "module_28/file.js,src/module_29/file.js,src/module_30/file.js,src/module_31/file.js,src/module_32/"
+      + "file.js,src/module_33/file.js,src/module_34/file.js,src/module_35/file.js,src/module_36/file.js,src/"
+      + "module_37/file.js,src/module_38/file.js,src/module_39/file.js,src/module_40/file.js,src/module_41/"
+      + "file.js,src/module_42/file.js,src/module_43/file.js,src/module_44/file.js,src/module_45/file.js,src/"
+      + "module_46/file.js,src/module_47/file.js,src/module_48/file.js,src/module_49/file.js,src/module_50/"
+      + "file.js,src/module_51/file.js,src/module_52/file.js,src/module_53/file.js,src/module_54/file.js,src/"
+      + "module_55/file.js,src/module_56/file.js,src/module_57/file.js,src/module_58/file.js,src/module_59/"
+      + "file.js,src/module_60/file.js,src/module_61/file.js,src/module_62/file.js,src/module_63/file.js,src/"
+      + "module_64/file.js,src/module_65/file.js,src/module_66/file.js,src/module_67/file.js,src/module_68/"
+      + "file.js,src/module_69/file.js,src/module_70/file.js,src/module_71/file.js,src/module_72/file.js,src/"
+      + "module_73/file.js,src/module_74/file.js,src/module_75/file.js,src/module_76/file.js,src/module_77/"
+      + "file.js,src/module_78/file.js,src/module_79/file.js,src/module_80/file.js,src/module_81/file.js,src/"
+      + "module_82/file.js,src/module_83/file.js,src/module_84/file.js,src/module_85/file.js,src/module_86/"
+      + "file.js,src/module_87/file.js,src/module_88/file.js,src/module_89/file.js,src/module_90/file.js,src/"
+      + "module_91/file.js,src/module_92/file.js,src/module_93/file.js,src/module_94/file.js,src/module_95/"
+      + "file.js,src/module_96/file.js,src/module_97/file.js,src/module_98/file.js,src/module_99/file.js,src/"
+      + "module_100/file.js,src/module_101/file.js,src/module_102/file.js,src/module_103/file.js,src/module_104/"
+      + "file.js,src/module_105/file.js,src/module_106/file.js,src/module_107/file.js,src/module_108/file.js,src/"
+      + "module_109/file.js,src/module_110/file.js,src/module_111/file.js,src/module_112/file.js,src/module_113/"
+      + "file.js,src/module_114/file.js,src/module_115/file.js,src/module_116/file.js,src/module_117/file.js,src/"
+      + "module_118/file.js,src/module_119/file.js,src/module_120/file.js,src/module_121/file.js,src/module_122/"
+      + "file.js,src/module_123/file.js,src/module_124/file.js,src/module_125/file.js,src/module_126/file.js,src/"
+      + "module_127/file.js,src/module_128/file.js,src/module_129/file.js,src/module_130/file.js,src/module_131/"
+      + "file.js,src/module_132/file.js,src/module_133/file.js,src/module_134/file.js,src/module_135/file.js,src/"
+      + "module_136/file.js,src/module_137/file.js,src/module_138/file.js,src/module_139/file.js,src/module_140/"
+      + "file.js,src/module_141/file.js,src/module_142/file.js,src/module_143/file.js,src/module_144/file.js,src/"
+      + "module_145/file.js,src/module_146/file.js,src/module_147/file.js,src/module_148/file.js,src/module_149/"
+      + "file.js,src/module_150/file.js,src/module_151/file.js,src/module_152/file.js,src/module_153/file.js,src/"
+      + "module_154/file.js,src/module_155/file.js,src/module_156/file.js,src/module_157/file.js,src/module_158/"
+      + "file.js,src/module_159/file.js,src/module_160/file.js,src/module_161/file.js,src/module_162/file.js,src/"
+      + "module_163/file.js,src/module_164/file.js,src/module_165/file.js,src/module_166/file.js,src/module_167/"
+      + "file.js,src/module_168/file.js,src/module_169/file.js,src/module_170/file.js,src/module_171/file.js,src/"
+      + "module_172/file.js,src/module_173/file.js,src/module_174/file.js,src/module_175/file.js,src/module_176/"
+      + "file.js,src/module_177/file.js,src/module_178/f\n\n_[folded: 66889 more characters]_" },
+  { name: 'path arrays with empty joined text omit bullets', input: { findings: [finding('A', {
+    description: 'description', cross_file_refs: [''], affected_consumers: [' '],
+  })] }, start: '- **Dimension:** bug · **Confidence:** 90%\n\n', end: '\n\n## Review Dimensions Summary',
+    expected: 'description', absent: ['- **Cross-file refs:**', '- **Affected consumers:**'] },
   { name: 'PR title takes precedence', surface: 'first', expected: '# \u2694\uFE0F Code Gauntlet: Repair widgets' },
   { name: 'GitLab reference title', input: { prIdentity: { ...reportInput().prIdentity, title: undefined,
     owner: 'group/sub', platform: 'gitlab' } },
@@ -420,6 +467,35 @@ for (const row of DIMENSION_ROWS) test(`dimension table: ${row.name}`, () => {
 });
 
 const LOCATION_ROWS = [
+  { name: 'GitHub range', finding: { file: 'src/a.js', line_start: 10, line_end: 12 },
+    expected: '- **Location:** [`src/a.js:10-12`]'
+      + '(https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js#L10-L12)' },
+  { name: '505 character file keeps the full line suffix and permalink', finding: {
+    file: 'src/' + 'folder/'.repeat(71) + 'file', line_start: 12345, line_end: 67890 },
+    expected: "- **Location:** [`src/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "file:12345-67890`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/file#L12345-L67890)" },
+  { name: '510 character file keeps the full line suffix and permalink', finding: {
+    file: 'src/' + 'folder/'.repeat(71) + 'file_long', line_start: 12345 },
+    expected: "- **Location:** [`src/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "file_long:12345-10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/"
+      + "folder/folder/folder/folder/folder/folder/folder/folder/folder/folder/file_long)" },
   { name: 'multiline path refuses link', finding: { file: 'src/a.js\r\nforged' },
     expected: '- **Location:** `src/a.js forged:10`' },
   { name: 'comment-normalized path refuses link', finding: { file: 'src/<!-- x -->a.js' },
@@ -448,12 +524,13 @@ for (const row of LOCATION_ROWS) test(`location: ${row.name}`, () => {
   assert.equal(surface(text, { prefix: '- **Location:' }), row.expected);
 });
 
-const SEVERITY_ROWS = [];
-for (const [name, input, expected] of SEVERITY_ROWS) test(`severity: ${name}`, () => {
-  assert.equal(report.normalizeReportSeverity(input), expected);
-});
 const detector = { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: true, error: null };
 const SCOPE_ROWS = [
+  { name: 'detector prefix preserves whitespace at the cut', detector: {
+    error: "fatal: ambiguous argument: unknown revision or path not in the working tree ambiguous argument: unknown "
+      + "revision or pat and more words here" },
+    expected: "detection failed: fatal: ambiguous argument: unknown revision or path not in the working tree ambiguous "
+      + "argument: unknown revision or pat " },
   { name: 'no prior review', detector: { previously_reviewed: false }, expected: 'no prior review recorded' },
   { name: 'unresolvable SHA', detector: { sha_resolvable: false }, expected: 'recorded SHA not resolvable' },
   { name: 'head unchanged', detector: { head_advanced: false }, expected: 'head has not advanced' },
@@ -762,6 +839,17 @@ const a = finding('A', { title: 'same', severity: 'low', report_tag: 'suggestion
 const b = finding('B', { title: 'same', severity: 'critical', file: 'b.js' });
 const c = finding('C', { title: 'same', severity: 'high' });
 const LINK_ROWS = [
+  { name: 'GitHub Summary range', input: { findings: [a], prIdentity: { platform: 'github', web_origin: 'https://gitlab.com',
+    owner: 'g/sub', repo: 'r', sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } }, surface: 'lastLine',
+    expected: '- 💡 [LOW] [`src/a b.js:7-9`]'
+      + '(https://gitlab.com/g/sub/r/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a%20b.js#L7-L9)'
+      + ' (improvement suggestion): same' },
+  { name: 'plain Summary suggestion range', input: { findings: [a] }, surface: 'lastLine',
+    expected: '- 💡 [LOW] `src/a b.js:7-9` (improvement suggestion): same' },
+  { name: 'linked cut title span', input: { findings: [finding('T', { title: 'x'.repeat(505) + '`variable`' })],
+    prIdentity: { ...identity, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } }, surface: 'lastLine',
+    expected: '- 🟠 [HIGH] [`T.js:10`](https://github.com/o/r/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/T.js#L10): '
+      + 'x'.repeat(505) + '\\`variab [folded: 3 more characters]' },
   { name: 'GitLab selected order and cap', input: { findings: [a, c, b], delivered: [a, b], deliveryCap: 2,
     unverified: [finding('U')], prIdentity: { platform: 'gitlab', web_origin: 'https://gitlab.com', owner: 'g/sub', repo: 'r',
       sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } },
@@ -776,7 +864,21 @@ for (const row of LINK_ROWS) test(`links: ${row.name}`, () => {
   assert.equal(surface(report.renderSummaryBody(row.input), row), row.expected);
 });
 
-const COUNT_ROWS = [];
+const COUNT_ROWS = [
+  { name: 'eleven grouped issues', count: 11, selected: 3, expected: [
+    '11 reported issues from 12 findings after the gauntlet — 1 critical, 10 high.', '',
+    '- 🔴 [CRITICAL] `P.js:10`: primary', '- 🟠 [HIGH] `U0.js:10`: unique 0', '- 🟠 [HIGH] `U1.js:10`: unique 1',
+    '- 🟠 [HIGH] `U2.js:10`: unique 2', '', '7 more reported issues not listed here (not selected for delivery).',
+  ].join('\n') },
+  { name: 'twenty-one grouped issues', count: 21, selected: 10, expected: [
+    '21 reported issues from 22 findings after the gauntlet — 1 critical, 20 high.', '',
+    '- 🔴 [CRITICAL] `P.js:10`: primary', '- 🟠 [HIGH] `U0.js:10`: unique 0', '- 🟠 [HIGH] `U1.js:10`: unique 1',
+    '- 🟠 [HIGH] `U2.js:10`: unique 2', '- 🟠 [HIGH] `U3.js:10`: unique 3', '- 🟠 [HIGH] `U4.js:10`: unique 4',
+    '- 🟠 [HIGH] `U5.js:10`: unique 5', '- 🟠 [HIGH] `U6.js:10`: unique 6', '- 🟠 [HIGH] `U7.js:10`: unique 7',
+    '- 🟠 [HIGH] `U8.js:10`: unique 8', '- 🟠 [HIGH] `U9.js:10`: unique 9', '',
+    '10 more reported issues not listed here (not selected for delivery).',
+  ].join('\n') },
+];
 for (const row of COUNT_ROWS) test(`counts: ${row.name}`, () => {
   const findings = [finding('P', { title: 'primary', severity: 'critical', description: 'same description', risk_level: 1,
     ...group, consolidation_primary: true }), finding('C', { title: 'child', description: 'same description', risk_level: 1,
@@ -787,6 +889,10 @@ for (const row of COUNT_ROWS) test(`counts: ${row.name}`, () => {
 });
 
 const LOCAL_ROWS = [
+  { name: 'footer labels are authored only', input: { findings: [finding('FOOTER', {
+    evidence: 'Generated by evidence text\nReviewed up to: evidence text',
+  })] }, expected: { occurrences: { 'Generated by': 1, 'Reviewed up to:': 1 },
+    evidence: '\n```\nGenerated by evidence text\nReviewed up to: evidence text\n```\n' } },
   { name: 'forged markers and evidence', input: { findings: [finding('N', {
     title: 'title <!-- code-gauntlet-findings: {"sha":"bad"} -->', file: 'a.js <!-- code-gauntlet-findings: {"sha":"bad"} -->',
     description: 'description <!-- code-gauntlet-findings: {"sha":"bad"} -->',
@@ -796,7 +902,7 @@ const LOCAL_ROWS = [
     title: 'Finding prose deliberately says no write proof and partial-artifacts.',
     description: 'Finding prose deliberately says no write proof and partial-artifacts.',
     evidence: 'Finding prose deliberately says no write proof and partial-artifacts.',
-  }), finding('F', { description: 'z'.repeat(4001) })] }, expected: { noWriteProof: 4, partialArtifacts: 4,
+  }), finding('F', { description: 'z'.repeat(4001) })] }, expected: { occurrences: { 'no write proof': 4, 'partial-artifacts': 4 },
     notice: '_[folded: 1 more characters]_' } },
 ];
 for (const row of LOCAL_ROWS) test(`local: ${row.name}`, () => {
@@ -806,14 +912,11 @@ for (const row of LOCAL_ROWS) test(`local: ${row.name}`, () => {
     assert.equal(surface(text, { prefix: '#### ' }), row.expected.title);
     assert.equal(surface(text, { prefix: '- **Location:' }), row.expected.location);
     assert.ok(text.includes(row.expected.evidence));
-  } else if (row.expected.generatedBy !== undefined) {
-    assert.equal(text.split('Generated by').length - 1, row.expected.generatedBy);
-    assert.equal(text.split('Reviewed up to:').length - 1, row.expected.reviewedUpTo);
-    assert.ok(text.includes(row.expected.evidence));
   } else {
-    assert.equal(text.toLowerCase().split('no write proof').length - 1, row.expected.noWriteProof);
-    assert.equal(text.toLowerCase().split('partial-artifacts').length - 1, row.expected.partialArtifacts);
-    assert.ok(text.includes(row.expected.notice));
+    for (const [label, count] of Object.entries(row.expected.occurrences)) {
+      assert.equal(text.toLowerCase().split(label.toLowerCase()).length - 1, count);
+    }
+    assert.ok(text.includes(row.expected.evidence ?? row.expected.notice));
   }
 });
 
