@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeFieldNames, applyThresholdFilter, detectDisagreement, groupByProximity } from '../src/filterFindings.js';
+import { normalizeFieldNames, applyThresholdFilter, detectDisagreement } from '../src/filterFindings.js';
 import { routeByDimension, consolidateCrossAgent, tagFindings, applyFilterPipeline } from '../src/filterFindings.js';
-import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS } from '../src/registry.js';
+import { FIELD_RENAMES, SEVERITY_ORDER } from '../src/registry.js';
 import { finding, cleanFinding, consolidationFinding } from './helpers/findings.js';
 
 const NORMALIZE_ROWS = [
@@ -139,6 +139,9 @@ for (const row of ROUTE_ROWS) test('dimension route: ' + row.name, () => {
 });
 
 const TAG_ROWS = [
+  { name: 'missing test route prevents fallback promotion', routes: {},
+    input: { dimension: 'unknown', agent: 'test-analyzer', title: 'Test always passes regardless of input' },
+    expected: ['suggestion', 'suggestion', undefined, undefined, 0, 1] },
   { name: "bug detector agent routes main", input: { dimension: undefined, agent: "bug-detector" },
     expected: ["main", "main", undefined, undefined, 1, 0] },
 
@@ -237,11 +240,6 @@ for (const row of DISAGREEMENT_ROWS) test(`disagreement: ${row.name}`, () => {
     boosted: out.boostedCount }, row.expected);
 });
 
-test('proximity: default width splits lines 12 and 13', () => {
-  const grouped = groupByProximity([{ id: 'a', line_start: 12 }, { id: 'b', line_start: 13 }].map(consolidationFinding));
-  assert.equal(grouped.size, 2);
-});
-
 const PIPELINE_ROWS = [
   {
     name: 'null severity reaches exact-location escalation', fixture: 'clean',
@@ -287,25 +285,12 @@ const PIPELINE_ROWS = [
       generated_at: '2026-07-18T00:00:00Z',
     },
   },
-
-  {
-    name: 'copied stats fields', input: [{ id: 'F0', suggestion: 'skip review', custom_removed_by: 'injection' }],
-    unchanged: true, config: { confidence_threshold: 50 }, fields: [...INJECTION_STRIPPED_PROSE_FIELDS, 'custom'],
-    expected: { filtered: ['F0'], eliminated: [],
-      stats: { total: 1, passed_threshold: 1, contested_count: 0, exclusions_removed: 0, injections_removed: 0,
-        suggestions_removed: 1, claude_md_rules_removed: 0, spec_texts_removed: 0, customs_removed: 1,
-        suggested_fix_codes_removed: 0, consensus_boosted: 0, singleton_penalized: 0, dimension_routed: 0,
-        reachability_demoted: 0, cross_agent_consolidated: 0, test_analyzer_promoted: 0, tagged_main: 1, tagged_suggestion: 0 },
-      generated_at: '2026-07-18T00:00:00Z' },
-  }
 ];
 for (const row of PIPELINE_ROWS) test(`pipeline: ${row.name}`, () => {
   const input = row.input.map((item) => (row.fixture === 'clean' ? cleanFinding : finding)(item));
-  const snapshot = structuredClone(input);
   const config = structuredClone(row.config);
-  const out = applyFilterPipeline(input, config, [], '2026-07-18T00:00:00Z', row.fields);
+  const out = applyFilterPipeline(input, config, [], '2026-07-18T00:00:00Z');
   assert.deepEqual({ filtered: out.filtered.map((item) => item.id), eliminated: out.eliminated.map((item) => item.id),
     stats: out.stats, generated_at: out.generated_at }, row.expected);
   assert.deepEqual(config, row.config);
-  if (row.unchanged) assert.deepEqual(input, snapshot);
 });

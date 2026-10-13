@@ -1,4 +1,3 @@
-// Owns methodology knob descriptors, receipt validation, and receipt-driven configuration derivation.
 import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE, LIGHT_SCOPE_MAX_CHANGED_LINES, KNOB_VOCAB } from './registry.js';
 import { dottedValue, isPlainObject, deepFreeze } from './wire.js';
 

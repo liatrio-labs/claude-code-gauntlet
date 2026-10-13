@@ -7,6 +7,9 @@ import { finding } from './helpers/findings.js';
 
 const PARSE_ROWS = [
   { name: 'empty review returns only empty ignore', input: '', expected: { ignore: [] } },
+  { name: 'rule keys bind each setting explicitly', checkKeys: true,
+    input: 'confidence_threshold: 60\nsecurity_min_confidence: 80\nseverity_threshold: high',
+    expected: { ignore: [], confidence_threshold: 60, security_min_confidence: 80, severity_threshold: 'high' } },
 
   {
     name: 'code-gauntlet fenced YAML wins over bare fallback',
@@ -37,6 +40,10 @@ const PARSE_ROWS = [
   }
 ];
 for (const row of PARSE_ROWS) test(`review parser: ${row.name}`, () => {
+  if (row.checkKeys) {
+    assert.deepEqual(REVIEW_CONFIG_RULES.filter((rule) => rule.key !== undefined).map((rule) => rule.key).sort(),
+      [...REVIEW_SETTING_KEYS].sort());
+  }
   assert.deepEqual(parseReviewMd(row.input, row.rules), row.expected);
 });
 

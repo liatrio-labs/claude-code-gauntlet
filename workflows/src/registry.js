@@ -1,4 +1,3 @@
-// Owns closed vocabularies, finding and identity schemas, dimension and agent policy, and presentation data.
 // Shared contract rows belong here; knob descriptors, injection patterns, and stage orchestration belong in their modules.
 import { deepFreeze } from './wire.js';
 const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs ' +
@@ -94,7 +93,7 @@ export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affecte
 // Flat required fields must be unconditional for every dimension in a dispatch to avoid forcing fabricated sibling fields.
 export const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
 
-// `requiredWhenDimension` (issue #218) names fields the owning contract emits
+// `requiredWhenDimension` names fields the owning contract emits
 // within one dimension; sibling dimensions omit them, so a flat dispatch requirement
 // would force fabricated fields. Conditional enforcement is provider-gated.
 export const DIMENSIONS = deepFreeze([
@@ -196,7 +195,7 @@ export const conditionalSchemaActive = (policy) => {
 };
 
 export function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
-  if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
+  if (opts.subagentModelEnv) {
     // Preserve explicit third-party deployment IDs so the override remains an escape hatch from alias mapping.
     return { model: toModelId(opts.subagentModelEnv, opts.provider) };
   }
@@ -255,6 +254,8 @@ export const AGENT_BUG_DETECTOR = 'bug-detector';
 export const AGENT_TEST_ANALYZER = 'test-analyzer';
 
 export const AGENT_SECURITY_REVIEWER = 'security-reviewer';
+
+export const AGENT_CONVENTIONS = 'conventions-and-intent';
 
 // Display limits do not bound the whole report or return payload; findings.json retains unfolded values and cardinality.
 export const REPORT_FOLD_LIMITS = deepFreeze({

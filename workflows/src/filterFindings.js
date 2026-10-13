@@ -1,13 +1,10 @@
-// Owns finding field normalization, ordered filtering, disagreement resolution, consolidation, and routing.
 import { INT_POLICY, coerceInt, asText, asConfidence, deepFreeze } from './wire.js';
 import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_BUG_DETECTOR } from './registry.js';
-import { AGENT_TEST_ANALYZER, AGENT_SECURITY_REVIEWER } from './registry.js';
+import { AGENT_TEST_ANALYZER, AGENT_SECURITY_REVIEWER, AGENT_CONVENTIONS } from './registry.js';
 import { CORE_DIMENSIONS, SUGGESTION_DIMENSIONS } from './registry.js';
 import { MAIN_REPORT_AGENTS, SUGGESTION_AGENTS, COMMENT_ACCURACY_DIMENSIONS } from './registry.js';
 import { cfgGet, configForFile, applyExclusions } from './reviewConfig.js';
 import { applyInjectionFilter } from './injection.js';
-
-const AGENT_CONVENTIONS = 'conventions-and-intent';
 
 const FUNCTIONAL_VIOLATION_KEYWORDS =
   /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
@@ -173,7 +170,7 @@ function pyGet(obj, key, dflt) {
   return key in obj ? obj[key] : dflt;
 }
 
-export function pyRound(x) {
+function pyRound(x) {
   const floor = Math.floor(x);
   const diff = x - floor;
   if (diff < 0.5) return floor;
@@ -181,7 +178,7 @@ export function pyRound(x) {
   return floor % 2 === 0 ? floor : floor + 1; // exact .5 -> nearest even
 }
 
-export function lineBucket(line, proximity) {
+function lineBucket(line, proximity) {
   const n = coerceInt(line, INT_POLICY.filter);
   if (n === null) return 0;
   return pyRound(n / proximity) * proximity;
@@ -322,7 +319,7 @@ function isTestCorrectnessFinding(finding, patterns) {
   return patterns.some((rx) => rx.test(combined));
 }
 
-export function groupByProximity(findings, lineProximity = 5) {
+function groupByProximity(findings, lineProximity) {
   return groupFilterFindings(findings, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
   ]));
@@ -407,7 +404,8 @@ export function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
       } else if (agent === AGENT_CONVENTIONS) {
         destination = COMMENT_ACCURACY_DIMENSIONS.includes(dimension) ? 'suggestion' : 'main';
       } else if (SUGGESTION_AGENTS.includes(agent)) {
-        if (agent === AGENT_TEST_ANALYZER && isTestCorrectnessFinding(finding, routes.test_coverage.patterns)) {
+        if (agent === AGENT_TEST_ANALYZER && routes.test_coverage
+          && isTestCorrectnessFinding(finding, routes.test_coverage.patterns)) {
           destination = 'main';
           finding.promoted_from = 'test-analyzer';
           finding.promotion_reason =
@@ -423,7 +421,7 @@ export function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
     }
 
     finding.report_destination = destination;
-    finding.report_tag = destination; // backward-compat alias
+    finding.report_tag = destination; // Artifact readers consume both routing names.
     if (destination === 'main') mainCount += 1;
     else suggestionCount += 1;
   }
@@ -432,7 +430,7 @@ export function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
 }
 
 // Reachability demotion precedes thresholds; injection sanitization precedes corroboration and routing.
-export function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt, proseFields = INJECTION_STRIPPED_PROSE_FIELDS) {
+export function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const total = findings.length;
 
   normalizeFieldNames(findings);
@@ -455,7 +453,7 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
   const proseFieldsRemoved = Object.fromEntries(
-    proseFields.map((field) => [
+    INJECTION_STRIPPED_PROSE_FIELDS.map((field) => [
       `${field}s_removed`,
       afterInjection.filter((f) => f[`${field}_removed_by`] === 'injection').length,
     ]),

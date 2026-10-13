@@ -1,4 +1,3 @@
-// Owns outbound line normalization and containment, prepared code spans, and report display folding.
 import { REPORT_FOLD_LIMITS } from './registry.js';
 import { longestBacktickRun, deepFreeze } from './wire.js';
 
@@ -152,17 +151,18 @@ export function oneLine(value) {
 const OUTBOUND_INVISIBLES =
   /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/;
 
-const OUTBOUND_NAMED_ENTITY_PREFIXES = Object.freeze(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
-  Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
-)));
+function entityPrefixSet(entities) {
+  return new Set(Object.keys(entities).flatMap((name) => (
+    Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
+  )));
+}
+
+const OUTBOUND_NAMED_ENTITY_PREFIXES = deepFreeze(entityPrefixSet(OUTBOUND_NAMED_ENTITIES));
 
 const entityAt = (start, kind, fields = {}) => ({ start, kind, value: 0, hasDigit: false, name: '', ...fields });
 
 export function normalizeOutboundText(value, entities = OUTBOUND_NAMED_ENTITIES) {
-  const prefixes = entities === OUTBOUND_NAMED_ENTITIES ? OUTBOUND_NAMED_ENTITY_PREFIXES : Object.keys(entities).flatMap((name) => (
-    Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
-  ));
-  const namedPrefixes = new Set(prefixes);
+  const namedPrefixes = entities === OUTBOUND_NAMED_ENTITIES ? OUTBOUND_NAMED_ENTITY_PREFIXES : entityPrefixSet(entities);
   let text = reportAsText(value);
   const output = [];
   const push = (character) => {
@@ -275,7 +275,7 @@ export function outboundBase(value, entities = OUTBOUND_NAMED_ENTITIES) {
     .replace(/[\r\n]+/g, ' ');
 }
 
-export function outboundVisible(text, code = false) {
+function outboundVisible(text, code = false) {
   // Fullwidth brackets survive reparsing and keep footnote text visible.
   text = text.replace(/(?<=[!\[])\\*\[|\[(?=\\*\^)/g, (match) => `${match.slice(0, -1)}\uFF3B`);
   const escaped = text.replace(/<(?=[A-Za-z/!?])/g, code ? '\uFF1C' : '&lt;');
@@ -354,7 +354,7 @@ function outboundCodeSpans(line, index = outboundTickRunIndex(line)) {
   return spans;
 }
 
-export function outboundDefinitions(line, forceColon = false) {
+function outboundDefinitions(line, forceColon = false) {
   // Forced guarding covers interpolated labels that can become definitions when embedded in surrounding Markdown.
   const guardColon = forceColon || /\]\\?\(/.test(line);
   if (guardColon) {
@@ -413,8 +413,13 @@ export function prepareSummaryTitle(value, entities = OUTBOUND_NAMED_ENTITIES) {
   return prepareLine(foldInline(oneLine(outboundBase(value, entities))), true, entities);
 }
 
-export function preparedCodeSpan(value, substituteVisible = false, entities = OUTBOUND_NAMED_ENTITIES) {
-  let display = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' '), entities));
+export function preparedCodeSpan(value, substituteVisible = false, entities = OUTBOUND_NAMED_ENTITIES, foldLimit) {
+  const display = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' '), entities));
+  return codeSpan(foldLimit === undefined ? display : foldInline(display, foldLimit), substituteVisible);
+}
+
+export function codeSpan(display, substituteVisible = false) {
+  // Joined Summary parts must not be normalized again because joining can form new comment or token delimiters.
   if (substituteVisible) {
     display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
     display = outboundDefinitions(display, true);

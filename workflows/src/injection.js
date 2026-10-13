@@ -1,4 +1,3 @@
-// Owns injection rule data, explicit Unicode folding, and record and prose sanitization.
 import { WS_TRIM_RE, asText, asConfidence, deepFreeze } from './wire.js';
 import { INJECTION_STRIPPED_PROSE_FIELDS } from './registry.js';
 
@@ -273,7 +272,7 @@ export function foldConfusables(text) {
 }
 
 // Prefer raw matches so diagnostics name the original trigger before any Unicode-folded trigger.
-function firstMatch(text, folded, patterns = INJECTION_TITLE_PATTERNS) {
+function firstMatch(text, folded, patterns) {
   for (const rx of patterns) {
     if (rx.test(text)) return rx.source;
   }
@@ -305,10 +304,6 @@ export const INJECTION_RULES = deepFreeze([
   { kind: 'path', pattern: /<[^\n]*?>|\{[^\n]*?\}/, label: 'file path is empty or contains template markers' },
   { kind: 'duplicate', label: 'duplicate of finding' },
 ]);
-
-export const SUGGESTION_SETS = deepFreeze(
-  INJECTION_RULES.filter((row) => row.prose).map((row) => [row.label, row.patterns]),
-);
 
 // Reject oversized fixes before delivery can try to render a suggestion fence.
 export const FIX_MAX_LINES = 100;

@@ -1,4 +1,3 @@
-// Review-target classification, bounded args decoding, and shared refusal envelopes.
 import { isPlainObject, deepFreeze } from './wire.js';
 
 const REVIEW_TARGET_LABEL = deepFreeze({

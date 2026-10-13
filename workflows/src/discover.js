@@ -3,6 +3,7 @@ import { DIMENSIONS, modelFor, FINDING_PROP_TYPES, FINDING_REQUIRED, conditional
 import { computeLightEligible } from './knobs.js';
 import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
+import { deepClone } from './wire.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
@@ -142,18 +143,18 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   const props = {};
   // Dimension extras may narrow canonical fields, so they take precedence.
   for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
-    // Full schema fragments preserve array items required by the platform validator.
-    props[k] = typeof t === 'string' ? { type: t } : t;
+    // The host may normalize schema fragments in place; copies keep registry data immutable.
+    props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
   }
   // One missing required field rejects the whole dispatch, so only unconditional fields belong in this shared list.
-  const required = requiredExtra && requiredExtra.length ? [...FINDING_REQUIRED, ...requiredExtra] : FINDING_REQUIRED;
+  const required = [...FINDING_REQUIRED, ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
   if (conditionalRequired && conditionalRequired.length) {
     // The platform accepts conditional requirements nested in finding items rather than top-level schema composition.
     // A dimension enum would reject tolerated aliases and degrade every sibling dimension in the shared dispatch.
     itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({
       if: { properties: { dimension: { const: dimension } }, required: ['dimension'] },
-      then: { required: dimRequired },
+      then: { required: [...dimRequired] },
     }));
   }
   return itemSchema;

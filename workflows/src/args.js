@@ -1,4 +1,3 @@
-// Owns args normalization, validation, and raw or pre-parsed review configuration resolution.
 import { normalizeAbsoluteRoot } from './paths.js';
 import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE } from './registry.js';
 import { LIMIT_DEFAULTS, LIGHT_SCOPE_MAX_CHANGED_LINES } from './registry.js';
@@ -36,8 +35,6 @@ const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
   persist: 'the artifact-writer takes the legacy full by-value persist path',
   scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
 });
-
-const MODE_VALUES = deepFreeze(['interactive', 'headless']);
 
 const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000 });
 
@@ -114,9 +111,9 @@ const FIELD_DOMAINS = deepFreeze({
   safeInteger: Number.isSafeInteger,
 });
 
-function validateArgsFields(value, group, errors, label = '', checks = ARGS_FIELD_CHECKS) {
+function validateArgsFields(value, group, errors, label = '') {
   const prefix = label ? `${label}.` : '';
-  for (const row of checks[group]) {
+  for (const row of ARGS_FIELD_CHECKS[group]) {
     if (row.presence === 'in' && !(row.key in value)) continue;
     const field = value[row.key];
     if (row.presence !== 'in' && field === undefined) continue;
@@ -136,14 +133,14 @@ function validateArgsFields(value, group, errors, label = '', checks = ARGS_FIEL
   }
 }
 
-function validatePrIdentity(id, errors, fields = PR_IDENTITY_FIELDS) {
+function validatePrIdentity(id, errors) {
   if (!isPlainObject(id)) {
-    const required = fields.filter((field) => field.required).map((field) => field.name);
-    const optional = fields.filter((field) => !field.required).map((field) => field.name);
+    const required = PR_IDENTITY_FIELDS.filter((field) => field.required).map((field) => field.name);
+    const optional = PR_IDENTITY_FIELDS.filter((field) => !field.required).map((field) => field.name);
     errors.push(`delivery.prIdentity must be an object { ${required.join(', ')}[, ${optional.join(', ')}] } when present`);
     return;
   }
-  for (const field of fields) {
+  for (const field of PR_IDENTITY_FIELDS) {
     const value = id[field.name];
     const valid = value !== undefined && field.check(value);
     if ((value === undefined && field.required) || (value !== undefined && !valid)) {
@@ -157,12 +154,12 @@ function validatePrIdentity(id, errors, fields = PR_IDENTITY_FIELDS) {
   }
 }
 
-function validateScriptPaths(args, rows = ARGS_SHAPES.scriptFields) {
+function validateScriptPaths(args) {
   const errors = [];
   if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
   const root = args.pluginRoot.replace(/\/+$/, '') || '/';
   const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
-  for (const row of rows) {
+  for (const row of ARGS_SHAPES.scriptFields) {
     const member = args[row.root];
     const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
     if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
@@ -313,7 +310,7 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   if (!args || typeof args !== 'object') return { ok: false, errors: ['args is not an object'] };
   if (args.argsVersion !== ARGS_VERSION) errors.push(`unsupported argsVersion ${args.argsVersion} (expected ${ARGS_VERSION})`);
   for (const k of REQUIRED) if (args[k] === undefined) errors.push(`missing required field: ${k}`);
-  if (args.mode && !MODE_VALUES.includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
+  if (args.mode && !KNOB_VOCAB.modes.includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
   validateConfigEcho(args, errors, descriptors);
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
@@ -419,9 +416,6 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   }
   // Provider typos must fail before dispatch because model IDs and provider aliases resolve differently.
 
-  //   - policy.gateway (optional boolean; issue #218) is the skill's Phase 2 capture of
-  //     a gateway session. Schemas may reach a different backend even with first-party model names,
-  //     so conditional schema support is gated separately from provider model resolution.
   if (isPlainObject(args.policy)) validateArgsFields(args.policy, 'policy', errors, 'policy');
   validateArgsFields(args, 'changed', errors);
   // The host cannot inspect the context file, so supplied sizes drive its read plan.

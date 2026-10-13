@@ -199,6 +199,28 @@ for (const row of REPORT_ROWS) test(`report: ${row.name}`, () => {
 });
 
 const OUTSIDE_SUMMARY_ROWS = [
+  { name: 'repository path arrays prepare each element before joining', finding: {
+    affected_consumers: ['a.js', 'docs/<img src=x onerror=alert(1)>![c](http://evil.example)@team.js'],
+    cross_file_refs: ['docs/<img src=x onerror=alert(1)>![c](http://evil.example)@team.js', 'x<!--', 'y-->z', 'b.js'],
+  }, start: '- **Affected consumers:** ', end: '\n\n## Review Dimensions Summary',
+    expected: 'a.js,docs/&lt;img src=x onerror=alert(1)>!\uFF3Bc](http://evil.example)\uFF20team.js\n\n'
+      + '- **Cross-file refs:** '
+      + 'docs/&lt;img src=x onerror=alert(1)>!\uFF3Bc](http://evil.example)\uFF20team.js,x&lt;!--,y-->z,b.js' },
+  { name: 'normalized PR reference refuses permalink', input: {
+    prIdentity: { ...identity, owner: 'glpat\u002Daaaaaaaaaaaaaaaaaaaa', platform: 'gitlab', web_origin: 'https://gitlab.com' },
+  }, prefix: 'Reviewed ', expected: 'Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for '
+    + '`[REDACTED]/r!7` by Code Gauntlet.' },
+  { name: 'folded normalized Location refuses permalink', finding: {
+    file: 'a'.repeat(513), line_start: null, line_end: null,
+  }, prefix: '- **Location:', expected: '- **Location:** `' + 'a'.repeat(512) + ' [folded: 1 more characters]`' },
+  { name: 'corroborator agent folds after normalization', finding: { corroborations: [
+    { agent: '<!-- cut -->' + 'a'.repeat(513), dimension: 'bug', confidence: 90, title: 'support' },
+  ] }, prefix: '- **Corroborated', expected: '- **Corroborated by** `' + 'a'.repeat(512)
+    + ' [folded: 1 more characters]` (`bug`, confidence 90) \u2014 support' },
+  { name: 'corroborator dimension folds after normalization', finding: { corroborations: [
+    { agent: 'agent', dimension: '<!-- cut -->' + 'd'.repeat(513), confidence: 90, title: 'support' },
+  ] }, prefix: '- **Corroborated', expected: '- **Corroborated by** `agent` (`' + 'd'.repeat(512)
+    + ' [folded: 1 more characters]`, confidence 90) \u2014 support' },
   { name: 'finding title keeps words separated across CR', finding: { title: 'left\rright <b> @bot' },
     prefix: '#### ', expected: '#### left right &lt;b> \uFF20bot' },
   { name: 'finding title normalizes before folding',
@@ -456,6 +478,16 @@ const SUMMARY_CASE_IDS = new Set([
   "tilde_interior_linked",
 ]);
 const SUMMARY_ROWS = [
+  { name: 'joined comment delimiters normalize once', input: { findings: [finding('O1', {
+    title: 'location', file: 'src/a.js', line_start: '<!-', line_end: 'x-->',
+  })] }, expected: '1 finding after the gauntlet \u2014 1 high.\n\n- \uD83D\uDFE0 [HIGH] `src/a.js:\uFF1C!--x-->`: location' },
+  { name: 'joined GitLab token normalizes once', input: { findings: [finding('O1', {
+    title: 'location', file: 'src/a.js', line_start: 'glpat', line_end: 'AAAAAAAAAAAAAAAAAAAA',
+  })] }, expected: '1 finding after the gauntlet \u2014 1 high.\n\n'
+    + '- \uD83D\uDFE0 [HIGH] `src/a.js:glpat\u002DAAAAAAAAAAAAAAAAAAAA`: location' },
+  { name: 'joined file and line comment normalizes once', input: { findings: [finding('O1', {
+    title: 'location', file: 'a<!--', line_start: 'b-->c', line_end: null,
+  })] }, expected: '1 finding after the gauntlet \u2014 1 high.\n\n- \uD83D\uDFE0 [HIGH] `a\uFF1C!--:b-->c`: location' },
   ...corpus('cross_runtime/outbound_line').summary_cases
     .filter((row) => SUMMARY_CASE_IDS.has(row.id)).map((row) => ({ name: row.id, input: row.input,
     expected: row.expected_js })),

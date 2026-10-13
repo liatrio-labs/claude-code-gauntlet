@@ -5,11 +5,11 @@ import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_T
 import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
 import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, resolvePolicy } from './registry.js';
 import { SEVERITY_ORDER, REPORT_FOLD_LIMITS } from './registry.js';
-import { REPORT_PLACED_FIELDS, STAGE_DEFAULTS } from './registry.js';
+import { REPORT_PLACED_FIELDS, STAGE_DEFAULTS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
 import { KNOB_REGISTRY } from './knobs.js';
 import { longestBacktickRun, deepFreeze } from './wire.js';
-import { reportAsText, foldInline, foldProse, foldEvidence, oneLine, outboundBase, prepareLine } from './outboundText.js';
-import { prepareSummaryTitle, preparedCodeSpan, outboundTildeRuns } from './outboundText.js';
+import { reportAsText, foldProse, foldEvidence, oneLine, outboundBase } from './outboundText.js';
+import { prepareSummaryTitle, preparedCodeSpan, codeSpan, outboundTildeRuns } from './outboundText.js';
 
 // Delivery owns committable fix fences; the report must not expose them as unvalidated prose extras.
 const REPORT_EXCLUDED_FIELDS = deepFreeze([
@@ -228,6 +228,8 @@ function coerceReportFinding(finding, severities) {
       value = raw;
     } else if (key === 'risk_level') {
       value = reportRiskLevel(raw);
+    } else if (FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(raw)) {
+      value = raw.map(reportAsText);
     } else {
       value = reportOptionalText(raw);
     }
@@ -263,9 +265,8 @@ function fenceFor(text) {
 }
 
 function inline(value, prefixLimit) {
-  let text = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' ')));
-  if (prefixLimit !== undefined) text = text.slice(0, prefixLimit);
-  return prepareLine(foldInline(text), true);
+  const text = reportAsText(value).replace(/\r/g, ' ');
+  return prepareSummaryTitle(prefixLimit === undefined ? text : oneLine(outboundBase(text)).slice(0, prefixLimit));
 }
 
 // Multiline model prose must not forge code-owned section headings.
@@ -292,9 +293,13 @@ function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
   return safeProse(foldProse(value, limit));
 }
 
-// Replayed cell components can carry Markdown boundaries, unlike the diagnostic receipt grammar.
-export function tableCell(value, codeOwned = false) {
-  return reportAsText(codeOwned ? value : inline(value)).replaceAll('|', '\\|');
+function findingFieldText(key, value) {
+  return FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(value)
+    ? value.map((path) => inline(path)).join(',') : foldedProse(value);
+}
+
+function tableCell(value) {
+  return reportAsText(value).replaceAll('|', '\\|');
 }
 
 function isPresent(value) {
@@ -351,29 +356,25 @@ function reportBuilder() {
   return { add, addSpans, addEvidence, finish };
 }
 
-function location(finding) {
-  if (!isPresent(finding.file)) return '';
-  const file = oneLine(finding.file);
-  if (!isPresent(finding.line_start)) return preparedCodeSpan(file);
-  const start = oneLine(finding.line_start);
+function joinLocation(finding, preparePart) {
+  const file = preparePart(finding.file);
+  if (!isPresent(finding.line_start)) return file;
+  const start = preparePart(finding.line_start);
   if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
-    return preparedCodeSpan(`${file}:${start}`);
+    return `${file}:${start}`;
   }
-  return preparedCodeSpan(`${file}:${start}-${oneLine(finding.line_end)}`);
+  return `${file}:${start}-${preparePart(finding.line_end)}`;
+}
+
+function location(finding) {
+  return isPresent(finding.file)
+    ? preparedCodeSpan(joinLocation(finding, oneLine), false, undefined, REPORT_FOLD_LIMITS.inlineChars) : '';
 }
 
 function quotedSummaryLocation(finding) {
   if (!isPresent(finding.file)) return '';
-  const file = oneLine(outboundBase(finding.file));
-  let display = file;
-  if (isPresent(finding.line_start)) {
-    const start = oneLine(outboundBase(finding.line_start));
-    display += `:${start}`;
-    if (isPresent(finding.line_end) && String(finding.line_end) !== String(finding.line_start)) {
-      display += `-${oneLine(outboundBase(finding.line_end))}`;
-    }
-  }
-  return preparedCodeSpan(display, true);
+  const display = joinLocation(finding, (part) => oneLine(outboundBase(part)));
+  return codeSpan(display, true);
 }
 
 function encodeUrlSegment(segment) {
@@ -412,12 +413,13 @@ function positiveLine(value) {
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
 
-function locationUrl(finding, permalinks) {
+function locationUrl(finding, permalinks, displayedLocation) {
   if (!permalinks.blobBase || !isPresent(finding.file)) return null;
   const rawFile = reportAsText(finding.file);
   // Refuse a link when normalization changes its path so the displayed location cannot disagree with the target.
   if (outboundBase(rawFile) !== rawFile) return null;
   if (oneLine(rawFile) !== rawFile) return null;
+  if (displayedLocation !== undefined && displayedLocation !== preparedCodeSpan(joinLocation(finding, oneLine))) return null;
   const segments = rawFile.split('/');
   if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
   const path = segments.map(encodeUrlSegment).join('/');
@@ -450,7 +452,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
 
   const bullets = [];
   const where = location(finding);
-  const url = locationUrl(finding, permalinks);
+  const url = locationUrl(finding, permalinks, where);
   if (where) bullets.push(url ? `- **Location:** [${where}](${url})` : `- **Location:** ${where}`);
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
@@ -482,7 +484,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
 
   const extras = reportExtraFields()
     .filter((key) => isPresent(finding[key]))
-    .map((key) => `- **${fieldLabel(key)}:** ${foldedProse(finding[key])}`);
+    .map((key) => `- **${fieldLabel(key)}:** ${findingFieldText(key, finding[key])}`);
   if (extras.length) blocks.push(() => extras.forEach(builder.add));
 
   if (isPresent(finding.suggestion)) {
@@ -508,14 +510,14 @@ function renderFinding(builder, finding, unverified, permalinks) {
   }
 
   if (isPresent(finding.cross_file_refs)) {
-    blocks.push(() => builder.add(`- **Cross-file refs:** ${foldedProse(finding.cross_file_refs)}`));
+    blocks.push(() => builder.add(`- **Cross-file refs:** ${findingFieldText('cross_file_refs', finding.cross_file_refs)}`));
   }
 
   if (Array.isArray(finding.corroborations) && finding.corroborations.length) {
     blocks.push(() => {
       for (const corroboration of finding.corroborations) {
-        const agent = preparedCodeSpan(corroboration.agent);
-        const dimension = preparedCodeSpan(corroboration.dimension);
+        const agent = preparedCodeSpan(corroboration.agent, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
+        const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
         builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, confidence ${confidence}) — ${title}`, [agent, dimension]);
@@ -822,8 +824,7 @@ function renderMethodology(builder, input, rawFindings, knobs) {
   builder.add('| Aspect | Details |');
   builder.add('|--------|---------|');
   for (const [aspect, details] of methodologyRows(input, rawFindings)) {
-    // Contain each interpolated component while leaving assembled pipeline facts uncapped.
-    builder.add(`| ${tableCell(aspect, true)} | ${tableCell(details, true)} |`);
+    builder.add(`| ${tableCell(aspect)} | ${tableCell(details)} |`);
   }
   builder.add();
   builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported '
@@ -872,7 +873,8 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
       ...permalinks.values,
       number: String(identity.pr_number),
     });
-    identityParts.push(`for [${referenceSpan}](${refUrl})`);
+    identityParts.push(oneLine(outboundBase(reference)) === reference
+      ? `for [${referenceSpan}](${refUrl})` : `for ${referenceSpan}`);
     identitySpans.push(referenceSpan);
   }
   identityParts.push(`by ${BRAND_NAME}.`);

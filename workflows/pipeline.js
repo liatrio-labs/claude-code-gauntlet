@@ -153,18 +153,23 @@ function asConfidence(value) {
 }
 const rejectFrozenCollectionMutation = () => { throw new TypeError('Cannot modify a frozen collection'); };
 function deepFreeze(value) {
-  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
-    if (value instanceof Map || value instanceof Set) {
-      if (value instanceof Map) for (const key of value.keys()) deepFreeze(key);
-      for (const child of value.values()) deepFreeze(child);
-      for (const method of ['delete', 'clear', value instanceof Map ? 'set' : 'add']) {
-        Object.defineProperty(value, method, { value: rejectFrozenCollectionMutation });
+  const visited = new Set();
+  function freeze(node) {
+    if (node === null || typeof node !== 'object' || node instanceof RegExp || visited.has(node)) return node;
+    visited.add(node);
+    if (node instanceof Map || node instanceof Set) {
+      if (node instanceof Map) for (const key of node.keys()) freeze(key);
+      for (const child of node.values()) freeze(child);
+      if (!Object.isFrozen(node)) {
+        for (const method of ['delete', 'clear', node instanceof Map ? 'set' : 'add']) {
+          Object.defineProperty(node, method, { value: rejectFrozenCollectionMutation });
+        }
       }
     }
-    for (const child of Object.values(value)) deepFreeze(child);
-    Object.freeze(value);
+    for (const child of Object.values(node)) freeze(child);
+    return Object.freeze(node);
   }
-  return value;
+  return freeze(value);
 }
 function longestBacktickRun(text) {
   let longest = 0;
@@ -324,7 +329,7 @@ const conditionalSchemaActive = (policy) => {
   return pinsModelIds(p.provider) && !p.gateway;
 };
 function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
-  if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
+  if (opts.subagentModelEnv) {
     return { model: toModelId(opts.subagentModelEnv, opts.provider) };
   }
   const dim = dimensions.find((d) => d.agentType === agentType);
@@ -363,6 +368,7 @@ const INJECTION_STRIPPED_PROSE_FIELDS = deepFreeze(['suggestion', 'claude_md_rul
 const AGENT_BUG_DETECTOR = 'bug-detector';
 const AGENT_TEST_ANALYZER = 'test-analyzer';
 const AGENT_SECURITY_REVIEWER = 'security-reviewer';
+const AGENT_CONVENTIONS = 'conventions-and-intent';
 const REPORT_FOLD_LIMITS = deepFreeze({
   proseChars: 4000,
   summaryChars: 12000,
@@ -967,14 +973,14 @@ function allActiveDimensionsDegraded(dispatched, degraded) {
 function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   const props = {};
   for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
-    props[k] = typeof t === 'string' ? { type: t } : t;
+    props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
   }
-  const required = requiredExtra && requiredExtra.length ? [...FINDING_REQUIRED, ...requiredExtra] : FINDING_REQUIRED;
+  const required = [...FINDING_REQUIRED, ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
   if (conditionalRequired && conditionalRequired.length) {
     itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({
       if: { properties: { dimension: { const: dimension } }, required: ['dimension'] },
-      then: { required: dimRequired },
+      then: { required: [...dimRequired] },
     }));
   }
   return itemSchema;
@@ -1161,9 +1167,9 @@ const REVIEW_EXCL_BULLET_RE =
   /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[-*][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+([^\n]+)$/;
 const REVIEW_CONFIG_RULES = deepFreeze([
   ...REVIEW_BLOCK_PATTERNS.map((pattern) => ({ kind: 'block', pattern })),
-  { kind: 'numeric', key: REVIEW_SETTING_KEYS[0], pattern: REVIEW_CONFIDENCE_RE },
-  { kind: 'numeric', key: REVIEW_SETTING_KEYS[1], pattern: REVIEW_SECURITY_RE },
-  { kind: 'severity', key: REVIEW_SETTING_KEYS[2], pattern: REVIEW_SEVERITY_RE },
+  { kind: 'numeric', key: 'confidence_threshold', pattern: REVIEW_CONFIDENCE_RE },
+  { kind: 'numeric', key: 'security_min_confidence', pattern: REVIEW_SECURITY_RE },
+  { kind: 'severity', key: 'severity_threshold', pattern: REVIEW_SEVERITY_RE },
   { kind: 'ignore', pattern: REVIEW_IGNORE_RE, itemPattern: REVIEW_IGNORE_ITEM_RE },
 ]);
 function parseReviewMd(text, rules = REVIEW_CONFIG_RULES) {
@@ -1562,7 +1568,7 @@ function foldConfusables(text) {
   }
   return out;
 }
-function firstMatch(text, folded, patterns = INJECTION_TITLE_PATTERNS) {
+function firstMatch(text, folded, patterns) {
   for (const rx of patterns) {
     if (rx.test(text)) return rx.source;
   }
@@ -1593,9 +1599,6 @@ const INJECTION_RULES = deepFreeze([
   { kind: 'path', pattern: /<[^\n]*?>|\{[^\n]*?\}/, label: 'file path is empty or contains template markers' },
   { kind: 'duplicate', label: 'duplicate of finding' },
 ]);
-const SUGGESTION_SETS = deepFreeze(
-  INJECTION_RULES.filter((row) => row.prose).map((row) => [row.label, row.patterns]),
-);
 const FIX_MAX_LINES = 100;
 const FIX_MAX_CHARS = 8000;
 function normalizeFixCodeForBound(code) {
@@ -1704,7 +1707,6 @@ function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
   return injectionScanCore(findings, false, rules);
 }
 // --- filterFindings.js ---
-const AGENT_CONVENTIONS = 'conventions-and-intent';
 const FUNCTIONAL_VIOLATION_KEYWORDS =
   /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
 const TYPE_SAFETY_BUG_KEYWORDS =
@@ -1968,7 +1970,7 @@ function isTestCorrectnessFinding(finding, patterns) {
   const combined = `${asText(finding.title)}\n${asText(finding.description)}`;
   return patterns.some((rx) => rx.test(combined));
 }
-function groupByProximity(findings, lineProximity = 5) {
+function groupByProximity(findings, lineProximity) {
   return groupFilterFindings(findings, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
   ]));
@@ -2036,7 +2038,8 @@ function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
       } else if (agent === AGENT_CONVENTIONS) {
         destination = COMMENT_ACCURACY_DIMENSIONS.includes(dimension) ? 'suggestion' : 'main';
       } else if (SUGGESTION_AGENTS.includes(agent)) {
-        if (agent === AGENT_TEST_ANALYZER && isTestCorrectnessFinding(finding, routes.test_coverage.patterns)) {
+        if (agent === AGENT_TEST_ANALYZER && routes.test_coverage
+          && isTestCorrectnessFinding(finding, routes.test_coverage.patterns)) {
           destination = 'main';
           finding.promoted_from = 'test-analyzer';
           finding.promotion_reason =
@@ -2050,13 +2053,13 @@ function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
       }
     }
     finding.report_destination = destination;
-    finding.report_tag = destination; // backward-compat alias
+    finding.report_tag = destination; // Artifact readers consume both routing names.
     if (destination === 'main') mainCount += 1;
     else suggestionCount += 1;
   }
   return { tagged, consolidatedCount, mainCount, suggestionCount };
 }
-function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt, proseFields = INJECTION_STRIPPED_PROSE_FIELDS) {
+function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const total = findings.length;
   normalizeFieldNames(findings);
   applyReachabilityDemotion(findings);
@@ -2073,7 +2076,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt, p
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
   const proseFieldsRemoved = Object.fromEntries(
-    proseFields.map((field) => [
+    INJECTION_STRIPPED_PROSE_FIELDS.map((field) => [
       `${field}s_removed`,
       afterInjection.filter((f) => f[`${field}_removed_by`] === 'injection').length,
     ]),
@@ -2389,15 +2392,15 @@ function oneLine(value) {
 }
 const OUTBOUND_INVISIBLES =
   /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/;
-const OUTBOUND_NAMED_ENTITY_PREFIXES = Object.freeze(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
-  Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
-)));
+function entityPrefixSet(entities) {
+  return new Set(Object.keys(entities).flatMap((name) => (
+    Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
+  )));
+}
+const OUTBOUND_NAMED_ENTITY_PREFIXES = deepFreeze(entityPrefixSet(OUTBOUND_NAMED_ENTITIES));
 const entityAt = (start, kind, fields = {}) => ({ start, kind, value: 0, hasDigit: false, name: '', ...fields });
 function normalizeOutboundText(value, entities = OUTBOUND_NAMED_ENTITIES) {
-  const prefixes = entities === OUTBOUND_NAMED_ENTITIES ? OUTBOUND_NAMED_ENTITY_PREFIXES : Object.keys(entities).flatMap((name) => (
-    Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
-  ));
-  const namedPrefixes = new Set(prefixes);
+  const namedPrefixes = entities === OUTBOUND_NAMED_ENTITIES ? OUTBOUND_NAMED_ENTITY_PREFIXES : entityPrefixSet(entities);
   let text = reportAsText(value);
   const output = [];
   const push = (character) => {
@@ -2632,8 +2635,11 @@ function prepareLine(value, forceColon = false, entities = OUTBOUND_NAMED_ENTITI
 function prepareSummaryTitle(value, entities = OUTBOUND_NAMED_ENTITIES) {
   return prepareLine(foldInline(oneLine(outboundBase(value, entities))), true, entities);
 }
-function preparedCodeSpan(value, substituteVisible = false, entities = OUTBOUND_NAMED_ENTITIES) {
-  let display = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' '), entities));
+function preparedCodeSpan(value, substituteVisible = false, entities = OUTBOUND_NAMED_ENTITIES, foldLimit) {
+  const display = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' '), entities));
+  return codeSpan(foldLimit === undefined ? display : foldInline(display, foldLimit), substituteVisible);
+}
+function codeSpan(display, substituteVisible = false) {
   if (substituteVisible) {
     display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
     display = outboundDefinitions(display, true);
@@ -2872,6 +2878,8 @@ function coerceReportFinding(finding, severities) {
       value = raw;
     } else if (key === 'risk_level') {
       value = reportRiskLevel(raw);
+    } else if (FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(raw)) {
+      value = raw.map(reportAsText);
     } else {
       value = reportOptionalText(raw);
     }
@@ -2900,9 +2908,8 @@ function fenceFor(text) {
   return '`'.repeat(Math.max(3, longestBacktickRun(reportAsText(text)) + 1));
 }
 function inline(value, prefixLimit) {
-  let text = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' ')));
-  if (prefixLimit !== undefined) text = text.slice(0, prefixLimit);
-  return prepareLine(foldInline(text), true);
+  const text = reportAsText(value).replace(/\r/g, ' ');
+  return prepareSummaryTitle(prefixLimit === undefined ? text : oneLine(outboundBase(text)).slice(0, prefixLimit));
 }
 function safeProse(value) {
   const parts = reportAsText(value).split(/(\r\n|\r|\n)/);
@@ -2923,8 +2930,12 @@ function safeProse(value) {
 function foldedProse(value, limit = REPORT_FOLD_LIMITS.proseChars) {
   return safeProse(foldProse(value, limit));
 }
-function tableCell(value, codeOwned = false) {
-  return reportAsText(codeOwned ? value : inline(value)).replaceAll('|', '\\|');
+function findingFieldText(key, value) {
+  return FINDING_PATH_ARRAY_FIELDS.includes(key) && Array.isArray(value)
+    ? value.map((path) => inline(path)).join(',') : foldedProse(value);
+}
+function tableCell(value) {
+  return reportAsText(value).replaceAll('|', '\\|');
 }
 function isPresent(value) {
   if (value == null) return false;
@@ -2976,28 +2987,23 @@ function reportBuilder() {
   };
   return { add, addSpans, addEvidence, finish };
 }
-function location(finding) {
-  if (!isPresent(finding.file)) return '';
-  const file = oneLine(finding.file);
-  if (!isPresent(finding.line_start)) return preparedCodeSpan(file);
-  const start = oneLine(finding.line_start);
+function joinLocation(finding, preparePart) {
+  const file = preparePart(finding.file);
+  if (!isPresent(finding.line_start)) return file;
+  const start = preparePart(finding.line_start);
   if (!isPresent(finding.line_end) || String(finding.line_end) === String(finding.line_start)) {
-    return preparedCodeSpan(`${file}:${start}`);
+    return `${file}:${start}`;
   }
-  return preparedCodeSpan(`${file}:${start}-${oneLine(finding.line_end)}`);
+  return `${file}:${start}-${preparePart(finding.line_end)}`;
+}
+function location(finding) {
+  return isPresent(finding.file)
+    ? preparedCodeSpan(joinLocation(finding, oneLine), false, undefined, REPORT_FOLD_LIMITS.inlineChars) : '';
 }
 function quotedSummaryLocation(finding) {
   if (!isPresent(finding.file)) return '';
-  const file = oneLine(outboundBase(finding.file));
-  let display = file;
-  if (isPresent(finding.line_start)) {
-    const start = oneLine(outboundBase(finding.line_start));
-    display += `:${start}`;
-    if (isPresent(finding.line_end) && String(finding.line_end) !== String(finding.line_start)) {
-      display += `-${oneLine(outboundBase(finding.line_end))}`;
-    }
-  }
-  return preparedCodeSpan(display, true);
+  const display = joinLocation(finding, (part) => oneLine(outboundBase(part)));
+  return codeSpan(display, true);
 }
 function encodeUrlSegment(segment) {
   const repaired = reportAsText(segment)
@@ -3031,11 +3037,12 @@ function positiveLine(value) {
   const number = Number(value);
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
-function locationUrl(finding, permalinks) {
+function locationUrl(finding, permalinks, displayedLocation) {
   if (!permalinks.blobBase || !isPresent(finding.file)) return null;
   const rawFile = reportAsText(finding.file);
   if (outboundBase(rawFile) !== rawFile) return null;
   if (oneLine(rawFile) !== rawFile) return null;
+  if (displayedLocation !== undefined && displayedLocation !== preparedCodeSpan(joinLocation(finding, oneLine))) return null;
   const segments = rawFile.split('/');
   if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
   const path = segments.map(encodeUrlSegment).join('/');
@@ -3065,7 +3072,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   blocks.push(() => builder.add(`#### ${inline(finding.title)}`));
   const bullets = [];
   const where = location(finding);
-  const url = locationUrl(finding, permalinks);
+  const url = locationUrl(finding, permalinks, where);
   if (where) bullets.push(url ? `- **Location:** [${where}](${url})` : `- **Location:** ${where}`);
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
@@ -3095,7 +3102,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   }
   const extras = reportExtraFields()
     .filter((key) => isPresent(finding[key]))
-    .map((key) => `- **${fieldLabel(key)}:** ${foldedProse(finding[key])}`);
+    .map((key) => `- **${fieldLabel(key)}:** ${findingFieldText(key, finding[key])}`);
   if (extras.length) blocks.push(() => extras.forEach(builder.add));
   if (isPresent(finding.suggestion)) {
     blocks.push(() => {
@@ -3118,13 +3125,13 @@ function renderFinding(builder, finding, unverified, permalinks) {
     });
   }
   if (isPresent(finding.cross_file_refs)) {
-    blocks.push(() => builder.add(`- **Cross-file refs:** ${foldedProse(finding.cross_file_refs)}`));
+    blocks.push(() => builder.add(`- **Cross-file refs:** ${findingFieldText('cross_file_refs', finding.cross_file_refs)}`));
   }
   if (Array.isArray(finding.corroborations) && finding.corroborations.length) {
     blocks.push(() => {
       for (const corroboration of finding.corroborations) {
-        const agent = preparedCodeSpan(corroboration.agent);
-        const dimension = preparedCodeSpan(corroboration.dimension);
+        const agent = preparedCodeSpan(corroboration.agent, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
+        const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
         builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, confidence ${confidence}) — ${title}`, [agent, dimension]);
@@ -3407,7 +3414,7 @@ function renderMethodology(builder, input, rawFindings, knobs) {
   builder.add('| Aspect | Details |');
   builder.add('|--------|---------|');
   for (const [aspect, details] of methodologyRows(input, rawFindings)) {
-    builder.add(`| ${tableCell(aspect, true)} | ${tableCell(details, true)} |`);
+    builder.add(`| ${tableCell(aspect)} | ${tableCell(details)} |`);
   }
   builder.add();
   builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported '
@@ -3452,7 +3459,8 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
       ...permalinks.values,
       number: String(identity.pr_number),
     });
-    identityParts.push(`for [${referenceSpan}](${refUrl})`);
+    identityParts.push(oneLine(outboundBase(reference)) === reference
+      ? `for [${referenceSpan}](${refUrl})` : `for ${referenceSpan}`);
     identitySpans.push(referenceSpan);
   }
   identityParts.push(`by ${BRAND_NAME}.`);
@@ -4364,7 +4372,6 @@ const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
   persist: 'the artifact-writer takes the legacy full by-value persist path',
   scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
 });
-const MODE_VALUES = deepFreeze(['interactive', 'headless']);
 const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000 });
 const LIMIT_KEYS = deepFreeze([
   'summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize',
@@ -4434,9 +4441,9 @@ const FIELD_DOMAINS = deepFreeze({
   integer: Number.isInteger,
   safeInteger: Number.isSafeInteger,
 });
-function validateArgsFields(value, group, errors, label = '', checks = ARGS_FIELD_CHECKS) {
+function validateArgsFields(value, group, errors, label = '') {
   const prefix = label ? `${label}.` : '';
-  for (const row of checks[group]) {
+  for (const row of ARGS_FIELD_CHECKS[group]) {
     if (row.presence === 'in' && !(row.key in value)) continue;
     const field = value[row.key];
     if (row.presence !== 'in' && field === undefined) continue;
@@ -4455,14 +4462,14 @@ function validateArgsFields(value, group, errors, label = '', checks = ARGS_FIEL
     errors.push(message.replace(/\{(\w+)\}/g, (_, key) => `${params[key]}`));
   }
 }
-function validatePrIdentity(id, errors, fields = PR_IDENTITY_FIELDS) {
+function validatePrIdentity(id, errors) {
   if (!isPlainObject(id)) {
-    const required = fields.filter((field) => field.required).map((field) => field.name);
-    const optional = fields.filter((field) => !field.required).map((field) => field.name);
+    const required = PR_IDENTITY_FIELDS.filter((field) => field.required).map((field) => field.name);
+    const optional = PR_IDENTITY_FIELDS.filter((field) => !field.required).map((field) => field.name);
     errors.push(`delivery.prIdentity must be an object { ${required.join(', ')}[, ${optional.join(', ')}] } when present`);
     return;
   }
-  for (const field of fields) {
+  for (const field of PR_IDENTITY_FIELDS) {
     const value = id[field.name];
     const valid = value !== undefined && field.check(value);
     if ((value === undefined && field.required) || (value !== undefined && !valid)) {
@@ -4475,12 +4482,12 @@ function validatePrIdentity(id, errors, fields = PR_IDENTITY_FIELDS) {
     }
   }
 }
-function validateScriptPaths(args, rows = ARGS_SHAPES.scriptFields) {
+function validateScriptPaths(args) {
   const errors = [];
   if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
   const root = args.pluginRoot.replace(/\/+$/, '') || '/';
   const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
-  for (const row of rows) {
+  for (const row of ARGS_SHAPES.scriptFields) {
     const member = args[row.root];
     const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
     if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
@@ -4614,7 +4621,7 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   if (!args || typeof args !== 'object') return { ok: false, errors: ['args is not an object'] };
   if (args.argsVersion !== ARGS_VERSION) errors.push(`unsupported argsVersion ${args.argsVersion} (expected ${ARGS_VERSION})`);
   for (const k of REQUIRED) if (args[k] === undefined) errors.push(`missing required field: ${k}`);
-  if (args.mode && !MODE_VALUES.includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
+  if (args.mode && !KNOB_VOCAB.modes.includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
   validateConfigEcho(args, errors, descriptors);
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);

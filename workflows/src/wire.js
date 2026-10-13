@@ -126,19 +126,25 @@ export function asConfidence(value) {
 const rejectFrozenCollectionMutation = () => { throw new TypeError('Cannot modify a frozen collection'); };
 
 export function deepFreeze(value) {
-  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
-    if (value instanceof Map || value instanceof Set) {
+  const visited = new Set();
+  function freeze(node) {
+    // Stateful regexes need a writable lastIndex; table membership can still be frozen.
+    if (node === null || typeof node !== 'object' || node instanceof RegExp || visited.has(node)) return node;
+    visited.add(node);
+    if (node instanceof Map || node instanceof Set) {
       // Object.freeze does not lock a collection's internal entries.
-      if (value instanceof Map) for (const key of value.keys()) deepFreeze(key);
-      for (const child of value.values()) deepFreeze(child);
-      for (const method of ['delete', 'clear', value instanceof Map ? 'set' : 'add']) {
-        Object.defineProperty(value, method, { value: rejectFrozenCollectionMutation });
+      if (node instanceof Map) for (const key of node.keys()) freeze(key);
+      for (const child of node.values()) freeze(child);
+      if (!Object.isFrozen(node)) {
+        for (const method of ['delete', 'clear', node instanceof Map ? 'set' : 'add']) {
+          Object.defineProperty(node, method, { value: rejectFrozenCollectionMutation });
+        }
       }
     }
-    for (const child of Object.values(value)) deepFreeze(child);
-    Object.freeze(value);
+    for (const child of Object.values(node)) freeze(child);
+    return Object.freeze(node);
   }
-  return value;
+  return freeze(value);
 }
 
 export function longestBacktickRun(text) {

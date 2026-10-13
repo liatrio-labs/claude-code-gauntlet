@@ -2,10 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { applyInjectionFilter, applyReplayInjectionScan, applyInjectedProseStrip, INJECTION_RULES } from '../src/injection.js';
-import { WORD_SPLIT_RE, SUGGESTION_SETS, INJECTION_TITLE_PATTERNS } from '../src/injection.js';
+import { WORD_SPLIT_RE, countWords, INJECTION_TITLE_PATTERNS } from '../src/injection.js';
 import { CONFUSABLE_FOLD, INVISIBLE_STRIP } from '../src/injection.js';
 import { loadCases } from './helpers/goldenCases.js';
 import { finding, cleanFinding } from './helpers/findings.js';
+
+const WORD_COUNT_ROWS = [
+  { name: 'empty or absent text counts zero words', input: ['', undefined], expected: [0, 0] },
+];
+for (const row of WORD_COUNT_ROWS) test(`injection word count: ${row.name}`, () => {
+  assert.deepEqual(row.input.map((text) => countWords(text)), row.expected);
+});
 
 const ORDERED_INPUT = {
   id: 'first', file: '', confidence: 90, description: 'short body',
@@ -546,6 +553,8 @@ for (const row of BODY_PROSE_ROWS) test('injection prose: ' + row.name, () => {
   assert.deepEqual(applyInjectedProseStrip(row.input), row.expected);
 });
 
+const prosePatternFamilies = INJECTION_RULES.filter((row) => row.prose).map((row) => [row.label, row.patterns]);
+
 const INTEGRITY_ROWS = [
   { name: 'decoded fold digest', operation: 'foldDigest', expected: '0fc4937935d3f237ea80c3cfea211d687e9d9454548bb5d44ee98fd0e84e71df' },
   { name: 'decoded strip digest', operation: 'stripDigest', expected: '0b819d7fae824aa9c1dad7e640ae0c7672d5d2aaaa5935fcc9ce428e797b64ee' },
@@ -568,7 +577,7 @@ const INTEGRITY_OPERATIONS = {
   patterns: () => {
     const shared = String.raw`\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff`;
     const errors = [];
-    for (const [family, patterns] of [['title', INJECTION_TITLE_PATTERNS], ...SUGGESTION_SETS]) {
+    for (const [family, patterns] of [['title', INJECTION_TITLE_PATTERNS], ...prosePatternFamilies]) {
       for (const pattern of patterns) {
         if (pattern.flags.includes('m')) errors.push(`${family}: multiline`);
         const outsideClasses = pattern.source.replace(/\[(?:\\.|[^\]\\])*\]|\\./g, '');
@@ -586,7 +595,7 @@ const INTEGRITY_OPERATIONS = {
   },
   entryCoverage: () => {
     const uncovered = [];
-    for (const [family, patterns] of SUGGESTION_SETS) {
+    for (const [family, patterns] of prosePatternFamilies) {
       patterns.forEach((pattern, index) => {
         if (!PATTERN_ROWS.some(([, title]) => pattern.test(title))) {
           uncovered.push(`${family} pattern #${index}: ${pattern.source}`);
@@ -606,7 +615,7 @@ const INTEGRITY_OPERATIONS = {
       if (typeof pair.title !== 'string' || typeof pair.description !== 'string') continue;
       const isCorpusPair = corpus.includes(pair);
       if (isCorpusPair) checked += 1;
-      for (const [family, patterns] of SUGGESTION_SETS) {
+      for (const [family, patterns] of prosePatternFamilies) {
         const fieldwiseMatch = patterns.some((pattern) => pattern.test(pair.title) || pattern.test(pair.description));
         if (isCorpusPair && fieldwiseMatch) livePairs += 1;
         if (fieldwiseMatch && !patterns.some((pattern) => pattern.test(`${pair.title}\n${pair.description}`))) errors.push(family);

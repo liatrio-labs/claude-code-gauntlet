@@ -1,4 +1,3 @@
-// Owns REVIEW.md parsing, scoped configuration layers, and literal exclusion matching.
 import { WS_TRIM_RE, escapeRegExp, asText, deepFreeze } from './wire.js';
 import { REVIEW_SETTING_KEYS } from './registry.js';
 
@@ -52,9 +51,9 @@ const REVIEW_EXCL_BULLET_RE =
 
 export const REVIEW_CONFIG_RULES = deepFreeze([
   ...REVIEW_BLOCK_PATTERNS.map((pattern) => ({ kind: 'block', pattern })),
-  { kind: 'numeric', key: REVIEW_SETTING_KEYS[0], pattern: REVIEW_CONFIDENCE_RE },
-  { kind: 'numeric', key: REVIEW_SETTING_KEYS[1], pattern: REVIEW_SECURITY_RE },
-  { kind: 'severity', key: REVIEW_SETTING_KEYS[2], pattern: REVIEW_SEVERITY_RE },
+  { kind: 'numeric', key: 'confidence_threshold', pattern: REVIEW_CONFIDENCE_RE },
+  { kind: 'numeric', key: 'security_min_confidence', pattern: REVIEW_SECURITY_RE },
+  { kind: 'severity', key: 'severity_threshold', pattern: REVIEW_SEVERITY_RE },
   { kind: 'ignore', pattern: REVIEW_IGNORE_RE, itemPattern: REVIEW_IGNORE_ITEM_RE },
 ]);
 
