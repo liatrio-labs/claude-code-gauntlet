@@ -4,12 +4,30 @@ import { rankFindings } from './applyChallenges.js';
 import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
 import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
 import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, resolvePolicy } from './registry.js';
-import { SEVERITY_ORDER, REPORT_EXCLUDED_FIELDS, REPORT_FOLD_LIMITS } from './registry.js';
-import { REPORT_PLACED_FIELDS, REVIEW_SCOPE_FALLBACK_RULES, STAGE_DEFAULTS } from './registry.js';
+import { SEVERITY_ORDER, REPORT_FOLD_LIMITS } from './registry.js';
+import { REPORT_PLACED_FIELDS, STAGE_DEFAULTS } from './registry.js';
 import { KNOB_REGISTRY } from './knobs.js';
-import { longestBacktickRun } from './wire.js';
+import { longestBacktickRun, deepFreeze } from './wire.js';
 import { reportAsText, foldInline, foldProse, foldEvidence, oneLine, outboundBase, prepareLine } from './outboundText.js';
 import { prepareSummaryTitle, preparedCodeSpan, outboundTildeRuns } from './outboundText.js';
+
+// Omit fields that the report renderer cannot present safely.
+const REPORT_EXCLUDED_FIELDS = deepFreeze([
+  'suggested_fix_code',
+  'suggested_fix_code_removed_by',
+  'suggested_fix_code_removal_reason',
+]);
+
+export const REVIEW_SCOPE_FALLBACK_RULES = deepFreeze([
+  { error: true },
+  { facts: { previously_reviewed: false }, reason: 'no prior review recorded' },
+  { facts: { previously_reviewed: true, sha_resolvable: false }, reason: 'recorded SHA not resolvable' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: false },
+    reason: 'head has not advanced' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: false },
+    reason: 'history rewritten (recorded SHA is not an ancestor)' },
+]);
+
 
 // Findings with a missing/unknown `dimension` are silently excluded from every row's
 // count: the discovery contracts pin `dimension` to one of the nine registry names, so

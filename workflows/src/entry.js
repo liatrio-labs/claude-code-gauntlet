@@ -1,6 +1,13 @@
 // Review-target classification and pipeline entry refusal envelopes.
-import { REVIEW_TARGET_LABEL } from './registry.js';
-import { isPlainObject } from './wire.js';
+import { isPlainObject, deepFreeze } from './wire.js';
+
+const REVIEW_TARGET_LABEL = deepFreeze({
+  pr_url: 'a GitHub PR URL',
+  mr_url: 'a GitLab MR URL',
+  repo_ref: 'an owner/repo PR reference',
+  pr_number: 'a bare PR/MR number',
+  pr_shorthand: 'a PR/MR reference',
+});
 
 //
 // Two live incidents motivate this section, both from naked `Workflow` invocations that

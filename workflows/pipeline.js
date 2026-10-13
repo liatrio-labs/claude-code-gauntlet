@@ -334,17 +334,12 @@ function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
 function modelFor(agentType, policy, dimensions = DIMENSIONS) {
   return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }, dimensions).model;
 }
-const ARGS_VERSION = 1;
 const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',
   'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope']);
-const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 const DELIVERY_TIERS = deepFreeze(['all', 'main_only']);
 const SCOPE_ANSWERS = deepFreeze(['light', 'full']);
 const POLICY_PROVIDERS = deepFreeze(['firstParty', 'bedrock', 'vertex', 'foundry']);
 const CONTROL_RE = /[\u0000-\u001F\u007F]/;
-const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
-  'persist', 'scopeAnswer']);
-const RISK_LEVELS = deepFreeze(['low', 'medium', 'high']);
 const LIMIT_DEFAULTS = deepFreeze({
   summarizeBucketSize: 20,
   validateBatch: 25,
@@ -352,29 +347,7 @@ const LIMIT_DEFAULTS = deepFreeze({
   verifySliceSize: 25,
   maxLineSpan: 100,
 });
-const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
-  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
-    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
-  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
-    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
-  delivery: 'delivery falls back to tier "all" with no PR identity',
-  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
-  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
-  'delivery.prIdentity.title': 'the report title falls back to owner/repo#N (or "local changes")',
-  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
-  persist: 'the artifact-writer takes the legacy full by-value persist path',
-  scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
-});
 const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
-const REVIEW_TARGET_LABEL = deepFreeze({
-  pr_url: 'a GitHub PR URL',
-  mr_url: 'a GitLab MR URL',
-  repo_ref: 'an owner/repo PR reference',
-  pr_number: 'a bare PR/MR number',
-  pr_shorthand: 'a PR/MR reference',
-});
 const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
   assemble: 'assemble_artifacts.py',
   verify: 'verify_findings.py',
@@ -388,14 +361,8 @@ const REVIEW_SETTING_KEYS = deepFreeze([
 ]);
 const INJECTION_STRIPPED_PROSE_FIELDS = deepFreeze(['suggestion', 'claude_md_rule', 'spec_text']);
 const AGENT_BUG_DETECTOR = 'bug-detector';
-const AGENT_CONVENTIONS = 'conventions-and-intent';
 const AGENT_TEST_ANALYZER = 'test-analyzer';
 const AGENT_SECURITY_REVIEWER = 'security-reviewer';
-const REPORT_EXCLUDED_FIELDS = deepFreeze([
-  'suggested_fix_code',
-  'suggested_fix_code_removed_by',
-  'suggested_fix_code_removal_reason',
-]);
 const REPORT_FOLD_LIMITS = deepFreeze({
   proseChars: 4000,
   summaryChars: 12000,
@@ -404,22 +371,6 @@ const REPORT_FOLD_LIMITS = deepFreeze({
   evidenceChars: 8000,
   inlineChars: 512,
 });
-const OUTBOUND_NAMED_ENTITIES = deepFreeze({
-  commat: '@',
-  excl: '!',
-  lbrack: '[',
-  lsqb: '[',
-  rsqb: ']',
-  rbrack: ']',
-  Hat: '^',
-  colon: ':',
-  lpar: '(',
-  rpar: ')',
-  bsol: '\\',
-  nbsp: ' ',
-  NonBreakingSpace: ' ',
-});
-const MODE_VALUES = deepFreeze(['interactive', 'headless']);
 const KNOB_VOCAB = deepFreeze({
   modes: ['headless', 'interactive'],
   headless: ['headless'],
@@ -437,119 +388,9 @@ const KNOB_VOCAB = deepFreeze({
   reviewMdValues: ['present', 'absent'],
   receiptEntryKeys: ['value', 'source'],
 });
-const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000 });
-const LIMIT_KEYS = deepFreeze([
-  'summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize',
-  'deliveryCap', 'discoveryCap', 'maxLineSpan',
-]);
-const ARGS_SHAPES = deepFreeze({
-  pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
-  riskFields: ['path', 'risk'],
-  reviewMdFields: ['path', 'text'],
-  scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
-  scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
-  scopeKinds: ['full', 'incremental'],
-  detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
-  scriptFields: [
-    { root: 'persist', key: 'assembleScriptPath', script: 'assemble' },
-    { root: 'verify', key: 'scriptPath', script: 'verify' },
-  ],
-});
-const ARGS_FIELD_CHECKS = deepFreeze({
-  policy: [
-    { key: 'provider', presence: 'nonnull', values: POLICY_PROVIDERS,
-      message: 'invalid {label}: {value} (expected one of {values})' },
-    { key: 'tier', values: KNOB_VOCAB.modelTiers, message: 'invalid {label}: {value} (expected optimized)' },
-    { key: 'gateway', presence: 'nonnull', domain: 'boolean', message: 'invalid {label}: {value} (expected a boolean)' },
-  ],
-  changed: [
-    { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
-    { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
-  ],
-  context: ['contextLines', 'contextChars'].map((key) => ({
-    key, domain: 'safeInteger', minimum: 1, maximum: CONTEXT_SIZE_MAX[key],
-    message: '{label} must be a positive safe integer (the measured size of the shared context file) when present',
-    boundMessage: '{label} is {value}, above the {maximum} ceiling '
-      + '\u2014 that is not a review context, it is a mis-measurement',
-  })),
-  review: REVIEW_SETTING_KEYS.map((key) => key === 'severity_threshold'
-    ? { key, presence: 'in', values: SEVERITY_ORDER, separator: '|',
-      message: '{label} must be one of {values} when present (pre-parsed REVIEW.md enum)' }
-    : { key, presence: 'in', domain: 'integer', minimum: 0, maximum: 100,
-      message: '{label} must be an integer from 0 through 100 when present' }),
-  exclusions: [
-    { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
-  ],
-  persist: [
-    { key: 'assembleScriptPath', domain: 'nonEmptyString',
-      message: 'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py' },
-    { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
-  ],
-  limits: [
-    ...['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan'].map((key) => ({
-      key, domain: 'safeInteger', minimum: 1, message: 'limits.{key} must be a positive safe integer when present',
-    })),
-    { key: 'challengeCap', domain: 'safeInteger', minimum: 0,
-      message: 'limits.challengeCap must be a non-negative safe integer when present' },
-    { key: 'deliveryCap', presence: 'nonnull', domain: 'safeInteger', minimum: 0,
-      message: 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present' },
-    { key: 'discoveryCap', domain: 'safeInteger', minimum: 1,
-      message: 'limits.discoveryCap must be a positive safe integer when present' },
-  ],
-});
-const FIELD_DOMAINS = deepFreeze({
-  array: Array.isArray,
-  number: (value) => typeof value === 'number',
-  boolean: (value) => typeof value === 'boolean',
-  string: (value) => typeof value === 'string',
-  nonEmptyString: (value) => typeof value === 'string' && value !== '',
-  integer: Number.isInteger,
-  safeInteger: Number.isSafeInteger,
-});
-function validateArgsFields(value, group, errors, label = '', checks = ARGS_FIELD_CHECKS) {
-  const prefix = label ? `${label}.` : '';
-  for (const row of checks[group]) {
-    if (row.presence === 'in' && !(row.key in value)) continue;
-    const field = value[row.key];
-    if (row.presence !== 'in' && field === undefined) continue;
-    if (row.presence === 'nonnull' && field === null) continue;
-    const domainInvalid = row.domain && !FIELD_DOMAINS[row.domain](field);
-    const valuesInvalid = row.values && !row.values.includes(field);
-    const minimumInvalid = !domainInvalid && row.minimum !== undefined && field < row.minimum;
-    const maximumInvalid = !domainInvalid && row.maximum !== undefined && field > row.maximum;
-    if (!domainInvalid && !valuesInvalid && !minimumInvalid && !maximumInvalid) continue;
-    const message = !domainInvalid && !minimumInvalid && maximumInvalid && row.boundMessage
-      ? row.boundMessage : row.message;
-    const params = {
-      key: row.key, label: `${prefix}${row.key}`, value: field, maximum: row.maximum,
-      values: row.values?.join(row.separator || ', '),
-    };
-    errors.push(message.replace(/\{(\w+)\}/g, (_, key) => `${params[key]}`));
-  }
-}
 function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
   const field = fields.find((entry) => entry.name === name);
   return Boolean(field && field.check(identity[name]));
-}
-function validatePrIdentity(id, errors, fields = PR_IDENTITY_FIELDS) {
-  if (!isPlainObject(id)) {
-    const required = fields.filter((field) => field.required).map((field) => field.name);
-    const optional = fields.filter((field) => !field.required).map((field) => field.name);
-    errors.push(`delivery.prIdentity must be an object { ${required.join(', ')}[, ${optional.join(', ')}] } when present`);
-    return;
-  }
-  for (const field of fields) {
-    const value = id[field.name];
-    const valid = value !== undefined && field.check(value);
-    if ((value === undefined && field.required) || (value !== undefined && !valid)) {
-      errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
-    }
-    if (valid) {
-      for (const extra of field.extraChecks || []) {
-        if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
-      }
-    }
-  }
 }
 const CORE_DIMENSIONS = deepFreeze(['bug', 'security', 'cross_file_impact', 'intent']);
 const SUGGESTION_DIMENSIONS = deepFreeze(['comment_accuracy', 'comment-accuracy']);
@@ -560,71 +401,6 @@ const REPORT_PLACED_FIELDS = deepFreeze([
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
   'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
-]);
-const REVIEW_SCOPE_FALLBACK_RULES = deepFreeze([
-  { error: true },
-  { facts: { previously_reviewed: false }, reason: 'no prior review recorded' },
-  { facts: { previously_reviewed: true, sha_resolvable: false }, reason: 'recorded SHA not resolvable' },
-  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: false },
-    reason: 'head has not advanced' },
-  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: false },
-    reason: 'history rewritten (recorded SHA is not an ancestor)' },
-]);
-function validateScriptPaths(args, rows = ARGS_SHAPES.scriptFields) {
-  const errors = [];
-  if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
-  const root = args.pluginRoot.replace(/\/+$/, '') || '/';
-  const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
-  for (const row of rows) {
-    const member = args[row.root];
-    const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
-    if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
-      errors.push(`${row.root}.${row.key} must equal ${expected}`);
-    }
-  }
-  return errors;
-}
-const FUNCTIONAL_VIOLATION_KEYWORDS =
-  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
-const TYPE_SAFETY_BUG_KEYWORDS =
-  /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
-const TEST_CORRECTNESS_PATTERNS = deepFreeze([
-  /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
-  /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
-  /\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b/i,
-  /\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b/i,
-  /\bvacuous(?:ly)?\b/i,
-  /\btautolog(?:y|ical)\b/i,
-  /\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b/i,
-  /\bdeadlock\b/i,
-  /\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b/i,
-  /\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b/i,
-  /\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b/i,
-  /\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b/i,
-  /\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b/i,
-  /\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b/i,
-  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b/i,
-  /\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b/i,
-  /\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b/i,
-  /\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b/i,
-  /\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b/i,
-  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
-  /\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b/i,
-  /\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b/i,
-]);
-const FILTER_DIMENSION_ROUTES = deepFreeze({
-  test_coverage: { patterns: TEST_CORRECTNESS_PATTERNS },
-  convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] },
-  type_design: { patterns: [TYPE_SAFETY_BUG_KEYWORDS] },
-});
-const FILTER_SUPPRESSION_RULES = deepFreeze([
-  { agent: AGENT_BUG_DETECTOR, pattern: /\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/,
-    eliminatedBy: 'suppressed:intentional', subject: 'behaviour', conclusion: 'intentional' },
-  { agent: AGENT_TEST_ANALYZER, pattern: /\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/,
-    eliminatedBy: 'suppressed:generated', subject: 'code', conclusion: 'generated/scaffolding' },
 ]);
 // --- verifyWire.js ---
 const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
@@ -1928,6 +1704,49 @@ function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
   return injectionScanCore(findings, false, rules);
 }
 // --- filterFindings.js ---
+const AGENT_CONVENTIONS = 'conventions-and-intent';
+const FUNCTIONAL_VIOLATION_KEYWORDS =
+  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
+const TYPE_SAFETY_BUG_KEYWORDS =
+  /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
+const TEST_CORRECTNESS_PATTERNS = deepFreeze([
+  /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
+  /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
+  /\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b/i,
+  /\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b/i,
+  /\bvacuous(?:ly)?\b/i,
+  /\btautolog(?:y|ical)\b/i,
+  /\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b/i,
+  /\bdeadlock\b/i,
+  /\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b/i,
+  /\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b/i,
+  /\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b/i,
+  /\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b/i,
+  /\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b/i,
+  /\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b/i,
+  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b/i,
+  /\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b/i,
+  /\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b/i,
+  /\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b/i,
+  /\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b/i,
+  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
+  /\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b/i,
+  /\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b/i,
+]);
+const FILTER_DIMENSION_ROUTES = deepFreeze({
+  test_coverage: { patterns: TEST_CORRECTNESS_PATTERNS },
+  convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] },
+  type_design: { patterns: [TYPE_SAFETY_BUG_KEYWORDS] },
+});
+const FILTER_SUPPRESSION_RULES = deepFreeze([
+  { agent: AGENT_BUG_DETECTOR, pattern: /\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/,
+    eliminatedBy: 'suppressed:intentional', subject: 'behaviour', conclusion: 'intentional' },
+  { agent: AGENT_TEST_ANALYZER, pattern: /\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/,
+    eliminatedBy: 'suppressed:generated', subject: 'code', conclusion: 'generated/scaffolding' },
+]);
 function normalizeFieldNames(findings, renames = FIELD_RENAMES) {
   let normalizedCount = 0;
   for (const finding of findings) {
@@ -2439,6 +2258,21 @@ function applyChallenges(findings, challenges) {
   };
 }
 // --- outboundText.js ---
+const OUTBOUND_NAMED_ENTITIES = deepFreeze({
+  commat: '@',
+  excl: '!',
+  lbrack: '[',
+  lsqb: '[',
+  rsqb: ']',
+  rbrack: ']',
+  Hat: '^',
+  colon: ':',
+  lpar: '(',
+  rpar: ')',
+  bsol: '\\',
+  nbsp: ' ',
+  NonBreakingSpace: ' ',
+});
 function reportAsText(value) {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value;
@@ -2842,6 +2676,20 @@ function outboundTildeRuns(line) {
   return parts.join('');
 }
 // --- renderReport.js ---
+const REPORT_EXCLUDED_FIELDS = deepFreeze([
+  'suggested_fix_code',
+  'suggested_fix_code_removed_by',
+  'suggested_fix_code_removal_reason',
+]);
+const REVIEW_SCOPE_FALLBACK_RULES = deepFreeze([
+  { error: true },
+  { facts: { previously_reviewed: false }, reason: 'no prior review recorded' },
+  { facts: { previously_reviewed: true, sha_resolvable: false }, reason: 'recorded SHA not resolvable' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: false },
+    reason: 'head has not advanced' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: false },
+    reason: 'history rewritten (recorded SHA is not an ancestor)' },
+]);
 function dimensionOwnerMap(dimensions) {
   const owner = {};
   for (const d of dimensions) owner[d.dimension] = d.agentType;
@@ -4496,6 +4344,151 @@ function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
   return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, inline_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
 }
 // --- args.js ---
+const ARGS_VERSION = 1;
+const NONCE_RE = /^[A-Za-z0-9._-]+$/;
+const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
+  'persist', 'scopeAnswer']);
+const RISK_LEVELS = deepFreeze(['low', 'medium', 'high']);
+const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
+  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
+    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
+  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
+    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
+  delivery: 'delivery falls back to tier "all" with no PR identity',
+  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
+  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
+  'delivery.prIdentity.title': 'the report title falls back to owner/repo#N (or "local changes")',
+  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
+  persist: 'the artifact-writer takes the legacy full by-value persist path',
+  scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
+});
+const MODE_VALUES = deepFreeze(['interactive', 'headless']);
+const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000 });
+const LIMIT_KEYS = deepFreeze([
+  'summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize',
+  'deliveryCap', 'discoveryCap', 'maxLineSpan',
+]);
+const ARGS_SHAPES = deepFreeze({
+  pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
+  riskFields: ['path', 'risk'],
+  reviewMdFields: ['path', 'text'],
+  scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
+  scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
+  scopeKinds: ['full', 'incremental'],
+  detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
+  scriptFields: [
+    { root: 'persist', key: 'assembleScriptPath', script: 'assemble' },
+    { root: 'verify', key: 'scriptPath', script: 'verify' },
+  ],
+});
+const ARGS_FIELD_CHECKS = deepFreeze({
+  policy: [
+    { key: 'provider', presence: 'nonnull', values: POLICY_PROVIDERS,
+      message: 'invalid {label}: {value} (expected one of {values})' },
+    { key: 'tier', values: KNOB_VOCAB.modelTiers, message: 'invalid {label}: {value} (expected optimized)' },
+    { key: 'gateway', presence: 'nonnull', domain: 'boolean', message: 'invalid {label}: {value} (expected a boolean)' },
+  ],
+  changed: [
+    { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
+    { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
+  ],
+  context: ['contextLines', 'contextChars'].map((key) => ({
+    key, domain: 'safeInteger', minimum: 1, maximum: CONTEXT_SIZE_MAX[key],
+    message: '{label} must be a positive safe integer (the measured size of the shared context file) when present',
+    boundMessage: '{label} is {value}, above the {maximum} ceiling '
+      + '\u2014 that is not a review context, it is a mis-measurement',
+  })),
+  review: REVIEW_SETTING_KEYS.map((key) => key === 'severity_threshold'
+    ? { key, presence: 'in', values: SEVERITY_ORDER, separator: '|',
+      message: '{label} must be one of {values} when present (pre-parsed REVIEW.md enum)' }
+    : { key, presence: 'in', domain: 'integer', minimum: 0, maximum: 100,
+      message: '{label} must be an integer from 0 through 100 when present' }),
+  exclusions: [
+    { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
+  ],
+  persist: [
+    { key: 'assembleScriptPath', domain: 'nonEmptyString',
+      message: 'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py' },
+    { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
+  ],
+  limits: [
+    ...['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan'].map((key) => ({
+      key, domain: 'safeInteger', minimum: 1, message: 'limits.{key} must be a positive safe integer when present',
+    })),
+    { key: 'challengeCap', domain: 'safeInteger', minimum: 0,
+      message: 'limits.challengeCap must be a non-negative safe integer when present' },
+    { key: 'deliveryCap', presence: 'nonnull', domain: 'safeInteger', minimum: 0,
+      message: 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present' },
+    { key: 'discoveryCap', domain: 'safeInteger', minimum: 1,
+      message: 'limits.discoveryCap must be a positive safe integer when present' },
+  ],
+});
+const FIELD_DOMAINS = deepFreeze({
+  array: Array.isArray,
+  number: (value) => typeof value === 'number',
+  boolean: (value) => typeof value === 'boolean',
+  string: (value) => typeof value === 'string',
+  nonEmptyString: (value) => typeof value === 'string' && value !== '',
+  integer: Number.isInteger,
+  safeInteger: Number.isSafeInteger,
+});
+function validateArgsFields(value, group, errors, label = '', checks = ARGS_FIELD_CHECKS) {
+  const prefix = label ? `${label}.` : '';
+  for (const row of checks[group]) {
+    if (row.presence === 'in' && !(row.key in value)) continue;
+    const field = value[row.key];
+    if (row.presence !== 'in' && field === undefined) continue;
+    if (row.presence === 'nonnull' && field === null) continue;
+    const domainInvalid = row.domain && !FIELD_DOMAINS[row.domain](field);
+    const valuesInvalid = row.values && !row.values.includes(field);
+    const minimumInvalid = !domainInvalid && row.minimum !== undefined && field < row.minimum;
+    const maximumInvalid = !domainInvalid && row.maximum !== undefined && field > row.maximum;
+    if (!domainInvalid && !valuesInvalid && !minimumInvalid && !maximumInvalid) continue;
+    const message = !domainInvalid && !minimumInvalid && maximumInvalid && row.boundMessage
+      ? row.boundMessage : row.message;
+    const params = {
+      key: row.key, label: `${prefix}${row.key}`, value: field, maximum: row.maximum,
+      values: row.values?.join(row.separator || ', '),
+    };
+    errors.push(message.replace(/\{(\w+)\}/g, (_, key) => `${params[key]}`));
+  }
+}
+function validatePrIdentity(id, errors, fields = PR_IDENTITY_FIELDS) {
+  if (!isPlainObject(id)) {
+    const required = fields.filter((field) => field.required).map((field) => field.name);
+    const optional = fields.filter((field) => !field.required).map((field) => field.name);
+    errors.push(`delivery.prIdentity must be an object { ${required.join(', ')}[, ${optional.join(', ')}] } when present`);
+    return;
+  }
+  for (const field of fields) {
+    const value = id[field.name];
+    const valid = value !== undefined && field.check(value);
+    if ((value === undefined && field.required) || (value !== undefined && !valid)) {
+      errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
+    }
+    if (valid) {
+      for (const extra of field.extraChecks || []) {
+        if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
+      }
+    }
+  }
+}
+function validateScriptPaths(args, rows = ARGS_SHAPES.scriptFields) {
+  const errors = [];
+  if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
+  const root = args.pluginRoot.replace(/\/+$/, '') || '/';
+  const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
+  for (const row of rows) {
+    const member = args[row.root];
+    const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
+    if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
+      errors.push(`${row.root}.${row.key} must equal ${expected}`);
+    }
+  }
+  return errors;
+}
 function validatePathSegments(value, label, reviewFile = false) {
   const errors = [];
   if (reviewFile) {
@@ -4978,6 +4971,13 @@ function resolveReviewConfig(A) {
   return { reviewConfig, exclusionPatterns, reviewConfigSource, exclusionsSource, reviewMdEntryCount };
 }
 // --- entry.js ---
+const REVIEW_TARGET_LABEL = deepFreeze({
+  pr_url: 'a GitHub PR URL',
+  mr_url: 'a GitLab MR URL',
+  repo_ref: 'an owner/repo PR reference',
+  pr_number: 'a bare PR/MR number',
+  pr_shorthand: 'a PR/MR reference',
+});
 const REVIEW_TARGET_N = '[1-9]\\d{0,6}';
 const PR_URL_RE = new RegExp(`^(?:https?://)?[\\w.-]+/[^\\s/]+/[^\\s/]+/pull/(${REVIEW_TARGET_N})(?:/[^\\s?#]*)?(?:\\?[^\\s#]*)?(?:#\\S*)?$`);
 const MR_URL_RE = new RegExp(`^(?:https?://)?[\\w.-]+/\\S+?/-/merge_requests/(${REVIEW_TARGET_N})(?:/[^\\s?#]*)?(?:\\?[^\\s#]*)?(?:#\\S*)?$`);

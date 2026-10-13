@@ -1,6 +1,22 @@
 // Outbound text normalization, containment, and display folding.
-import { REPORT_FOLD_LIMITS, OUTBOUND_NAMED_ENTITIES } from './registry.js';
-import { longestBacktickRun } from './wire.js';
+import { REPORT_FOLD_LIMITS } from './registry.js';
+import { longestBacktickRun, deepFreeze } from './wire.js';
+
+const OUTBOUND_NAMED_ENTITIES = deepFreeze({
+  commat: '@',
+  excl: '!',
+  lbrack: '[',
+  lsqb: '[',
+  rsqb: ']',
+  rbrack: ']',
+  Hat: '^',
+  colon: ':',
+  lpar: '(',
+  rpar: ')',
+  bsol: '\\',
+  nbsp: ' ',
+  NonBreakingSpace: ' ',
+});
 
 // Replayed checkpoints are object-shaped but may predate the finding schema's field types.
 // Coerce at this renderer boundary so every downstream report read sees the same safe view:

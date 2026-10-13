@@ -1,4 +1,4 @@
-import { REVIEW_SCOPE_FALLBACK_RULES } from '../src/registry.js';
+import { REVIEW_SCOPE_FALLBACK_RULES } from '../src/renderReport.js';
 // render_report.test.js — the deterministic report surface (issues #36, #67).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

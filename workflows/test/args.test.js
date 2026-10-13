@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ARGS_VERSION, LIMIT_DEFAULTS, REQUIRED, LIGHT_SCOPE_MAX_CHANGED_LINES } from '../src/registry.js';
+import { ARGS_VERSION } from '../src/args.js';
+import { LIMIT_DEFAULTS, REQUIRED, LIGHT_SCOPE_MAX_CHANGED_LINES } from '../src/registry.js';
 import { normalizeArgs, validateArgs, stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap } from '../src/args.js';
 import { nullRespellGap, resolveReviewConfig, nullToleranceRejectedKeys } from '../src/args.js';
 import { parseEntryArgs } from '../src/entry.js';

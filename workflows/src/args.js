@@ -1,11 +1,203 @@
 import { normalizeAbsoluteRoot } from './paths.js';
-import { ARGS_VERSION, REQUIRED, NONCE_RE, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE } from './registry.js';
-import { NULLABLE_TOP_LEVEL, RISK_LEVELS, LIMIT_DEFAULTS, NULL_TOLERANCE_CONSEQUENCE, LIGHT_SCOPE_MAX_CHANGED_LINES } from './registry.js';
-import { MODE_VALUES, LIMIT_KEYS, ARGS_SHAPES, validateArgsFields, validatePrIdentity, validateScriptPaths } from './registry.js';
+import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE } from './registry.js';
+import { LIMIT_DEFAULTS, LIGHT_SCOPE_MAX_CHANGED_LINES } from './registry.js';
+import { PR_IDENTITY_FIELDS, POLICY_PROVIDERS, TRUSTED_SCRIPT_BASENAMES } from './registry.js';
+import { REVIEW_SETTING_KEYS, SEVERITY_ORDER, KNOB_VOCAB } from './registry.js';
 import { KNOB_REGISTRY, computeLightEligible, receiptEntryFor, receiptEntryForKey, mappedReceiptValue, DERIVED_FROM } from './knobs.js';
 import { deriveWhenHolds, deriveConfigWaist, configEchoValue, validateConfigEcho } from './knobs.js';
-import { dottedValue, isPlainObject } from './wire.js';
+import { dottedValue, isPlainObject, deepFreeze } from './wire.js';
 import { buildReviewConfig, loadExclusions } from './reviewConfig.js';
+
+export const ARGS_VERSION = 1;
+
+// The nonce is interpolated into the verify executor command argv (the verify stage
+// derives one per slice as `${nonce}.${i}`), so it must be a single AST-safe,
+// non-splitting token: word chars plus `.` `_` `-` only — no whitespace or shell
+// metacharacters that could split argv or break AST-safe emission.
+const NONCE_RE = /^[A-Za-z0-9._-]+$/;
+
+// Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
+// stamped `null` rather than absent — a wasted model round trip. These five top-level
+// optional fields have no meaning as `null` (only "absent" or "a well-formed object/array"),
+// so a literal null is equivalent to omission and gets dropped before validateArgs ever sees
+// it. This allowlist is intentionally narrow: do NOT extend the null-tolerance treatment to
+// any other field. In particular, limits.deliveryCap: null means "uncapped" and
+// policy.subagentModel: null means "no override" — both are load-bearing DATA, not omitted-
+// field stand-ins, and must survive this step untouched.
+//
+// `persist` is on the list for the same reason its siblings are (its null means "take the
+// legacy by-value writer path", exactly what absence means); leaving it off was a hole that
+// hard-rejected a whole run over a stamped null — the very cost this allowlist exists to
+// remove.
+//
+// TOLERATED IS NOT SILENT. Dropping a stamped null removes a fail-loud guard: a mis-stamped
+// `reviewConfig: null` would otherwise review under the Filter stage's config-absent
+// defaults instead of the operator's REVIEW.md thresholds — a silent change to the DELIVERED
+// findings, which issue #38 forbids. So every drop that ACTUALLY removed a guard is REPORTED
+// (stripNullOptionalsReport -> nullToleranceRejectedKeys -> runWith -> an envelope gap via
+// nullToleranceGap): degraded-but-disclosed, the contract this pipeline uses everywhere else.
+// A drop that validateArgs would have accepted anyway (`checkpoints`) tolerated nothing and
+// is deliberately NOT disclosed — see nullToleranceRejectedKeys.
+const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
+  'persist', 'scopeAnswer']);
+
+// Issue #24 req 1/2 (PR3): the risk classification a plain string. Matches the three-tier
+// scale documented in skills/code-gauntlet/references/phase2-triage.md 2e — that table is now
+// the single contract for these literals; riskTable values must stay in lockstep with it.
+const RISK_LEVELS = deepFreeze(['low', 'medium', 'high']);
+
+// What the operator actually loses when a stamped null is treated as absent, per key. Used
+// only to word the disclosure gap — no control flow reads it.
+const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
+  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
+    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
+  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
+    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
+  delivery: 'delivery falls back to tier "all" with no PR identity',
+  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
+  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
+  'delivery.prIdentity.title': 'the report title falls back to owner/repo#N (or "local changes")',
+  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
+  persist: 'the artifact-writer takes the legacy full by-value persist path',
+  scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
+});
+
+const MODE_VALUES = deepFreeze(['interactive', 'headless']);
+
+const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000 });
+
+const LIMIT_KEYS = deepFreeze([
+  'summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize',
+  'deliveryCap', 'discoveryCap', 'maxLineSpan',
+]);
+
+const ARGS_SHAPES = deepFreeze({
+  pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
+  riskFields: ['path', 'risk'],
+  reviewMdFields: ['path', 'text'],
+  scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
+  scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
+  scopeKinds: ['full', 'incremental'],
+  detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
+  scriptFields: [
+    { root: 'persist', key: 'assembleScriptPath', script: 'assemble' },
+    { root: 'verify', key: 'scriptPath', script: 'verify' },
+  ],
+});
+
+const ARGS_FIELD_CHECKS = deepFreeze({
+  policy: [
+    { key: 'provider', presence: 'nonnull', values: POLICY_PROVIDERS,
+      message: 'invalid {label}: {value} (expected one of {values})' },
+    { key: 'tier', values: KNOB_VOCAB.modelTiers, message: 'invalid {label}: {value} (expected optimized)' },
+    { key: 'gateway', presence: 'nonnull', domain: 'boolean', message: 'invalid {label}: {value} (expected a boolean)' },
+  ],
+  changed: [
+    { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
+    { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
+  ],
+  context: ['contextLines', 'contextChars'].map((key) => ({
+    key, domain: 'safeInteger', minimum: 1, maximum: CONTEXT_SIZE_MAX[key],
+    message: '{label} must be a positive safe integer (the measured size of the shared context file) when present',
+    boundMessage: '{label} is {value}, above the {maximum} ceiling '
+      + '\u2014 that is not a review context, it is a mis-measurement',
+  })),
+  review: REVIEW_SETTING_KEYS.map((key) => key === 'severity_threshold'
+    ? { key, presence: 'in', values: SEVERITY_ORDER, separator: '|',
+      message: '{label} must be one of {values} when present (pre-parsed REVIEW.md enum)' }
+    : { key, presence: 'in', domain: 'integer', minimum: 0, maximum: 100,
+      message: '{label} must be an integer from 0 through 100 when present' }),
+  exclusions: [
+    { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
+  ],
+  persist: [
+    { key: 'assembleScriptPath', domain: 'nonEmptyString',
+      message: 'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py' },
+    { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
+  ],
+  // The check order differs from the key-list order because focused errors precede cap errors.
+  limits: [
+    ...['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan'].map((key) => ({
+      key, domain: 'safeInteger', minimum: 1, message: 'limits.{key} must be a positive safe integer when present',
+    })),
+    { key: 'challengeCap', domain: 'safeInteger', minimum: 0,
+      message: 'limits.challengeCap must be a non-negative safe integer when present' },
+    { key: 'deliveryCap', presence: 'nonnull', domain: 'safeInteger', minimum: 0,
+      message: 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present' },
+    { key: 'discoveryCap', domain: 'safeInteger', minimum: 1,
+      message: 'limits.discoveryCap must be a positive safe integer when present' },
+  ],
+});
+
+const FIELD_DOMAINS = deepFreeze({
+  array: Array.isArray,
+  number: (value) => typeof value === 'number',
+  boolean: (value) => typeof value === 'boolean',
+  string: (value) => typeof value === 'string',
+  nonEmptyString: (value) => typeof value === 'string' && value !== '',
+  integer: Number.isInteger,
+  safeInteger: Number.isSafeInteger,
+});
+
+function validateArgsFields(value, group, errors, label = '', checks = ARGS_FIELD_CHECKS) {
+  const prefix = label ? `${label}.` : '';
+  for (const row of checks[group]) {
+    if (row.presence === 'in' && !(row.key in value)) continue;
+    const field = value[row.key];
+    if (row.presence !== 'in' && field === undefined) continue;
+    if (row.presence === 'nonnull' && field === null) continue;
+    const domainInvalid = row.domain && !FIELD_DOMAINS[row.domain](field);
+    const valuesInvalid = row.values && !row.values.includes(field);
+    const minimumInvalid = !domainInvalid && row.minimum !== undefined && field < row.minimum;
+    const maximumInvalid = !domainInvalid && row.maximum !== undefined && field > row.maximum;
+    if (!domainInvalid && !valuesInvalid && !minimumInvalid && !maximumInvalid) continue;
+    const message = !domainInvalid && !minimumInvalid && maximumInvalid && row.boundMessage
+      ? row.boundMessage : row.message;
+    const params = {
+      key: row.key, label: `${prefix}${row.key}`, value: field, maximum: row.maximum,
+      values: row.values?.join(row.separator || ', '),
+    };
+    errors.push(message.replace(/\{(\w+)\}/g, (_, key) => `${params[key]}`));
+  }
+}
+
+function validatePrIdentity(id, errors, fields = PR_IDENTITY_FIELDS) {
+  if (!isPlainObject(id)) {
+    const required = fields.filter((field) => field.required).map((field) => field.name);
+    const optional = fields.filter((field) => !field.required).map((field) => field.name);
+    errors.push(`delivery.prIdentity must be an object { ${required.join(', ')}[, ${optional.join(', ')}] } when present`);
+    return;
+  }
+  for (const field of fields) {
+    const value = id[field.name];
+    const valid = value !== undefined && field.check(value);
+    if ((value === undefined && field.required) || (value !== undefined && !valid)) {
+      errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
+    }
+    if (valid) {
+      for (const extra of field.extraChecks || []) {
+        if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
+      }
+    }
+  }
+}
+
+function validateScriptPaths(args, rows = ARGS_SHAPES.scriptFields) {
+  const errors = [];
+  if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
+  const root = args.pluginRoot.replace(/\/+$/, '') || '/';
+  const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
+  for (const row of rows) {
+    const member = args[row.root];
+    const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
+    if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
+      errors.push(`${row.root}.${row.key} must equal ${expected}`);
+    }
+  }
+  return errors;
+}
 
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.

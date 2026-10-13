@@ -1,4 +1,4 @@
-import { deepFreeze, isPlainObject } from './wire.js';
+import { deepFreeze } from './wire.js';
 // registry.js — single point of extension. Adding a dimension = one entry here + one agent .md.
 //
 // `promptExtra` is an optional per-agent prompt-extension string appended verbatim to that
@@ -404,8 +404,6 @@ export function modelFor(agentType, policy, dimensions = DIMENSIONS) {
   return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }, dimensions).model;
 }
 
-export const ARGS_VERSION = 1;
-
 // changedFiles/changedLines feed summarize bucketing and the agent-count guard, so they're
 // REQUIRED because they're consumed. `mode` is NOT read anywhere in workflows/src beyond a
 // re-check against its own enum below — it is provenance/telemetry the skill always stamps.
@@ -413,12 +411,6 @@ export const ARGS_VERSION = 1;
 // is on-disk provenance the workflow never opens.
 export const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',
   'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope']);
-
-// The nonce is interpolated into the verify executor command argv (the verify stage
-// derives one per slice as `${nonce}.${i}`), so it must be a single AST-safe,
-// non-splitting token: word chars plus `.` `_` `-` only — no whitespace or shell
-// metacharacters that could split argv or break AST-safe emission.
-export const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 
 // The optional Phase 8 delivery selector: { tier }. Absent is fine (the workflow defaults
 // the tier to 'all' — post every challenge-survivor). A present tier must be a known value.
@@ -437,42 +429,12 @@ export const SCOPE_ANSWERS = deepFreeze(['light', 'full']);
 // policy.gateway BOOLEAN (issue #218, validated below) — it rides alongside provider rather
 // than inside this enum because it answers a different question (does input_schema reach an
 // unmeasured backend verbatim?), not which model-ID arm resolvePolicy takes.
-const POLICY_PROVIDERS = deepFreeze(['firstParty', 'bedrock', 'vertex', 'foundry']);
+export const POLICY_PROVIDERS = deepFreeze(['firstParty', 'bedrock', 'vertex', 'foundry']);
 
 // The single code-owned methodology receipt registry. It owns the mode-specific key set,
 // source vocabulary, validation rule, and render order. Add a knob here once; args validation
 // and renderReport both consume the same declaration.
 export const CONTROL_RE = /[\u0000-\u001F\u007F]/;
-
-// Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
-// stamped `null` rather than absent — a wasted model round trip. These five top-level
-// optional fields have no meaning as `null` (only "absent" or "a well-formed object/array"),
-// so a literal null is equivalent to omission and gets dropped before validateArgs ever sees
-// it. This allowlist is intentionally narrow: do NOT extend the null-tolerance treatment to
-// any other field. In particular, limits.deliveryCap: null means "uncapped" and
-// policy.subagentModel: null means "no override" — both are load-bearing DATA, not omitted-
-// field stand-ins, and must survive this step untouched.
-//
-// `persist` is on the list for the same reason its siblings are (its null means "take the
-// legacy by-value writer path", exactly what absence means); leaving it off was a hole that
-// hard-rejected a whole run over a stamped null — the very cost this allowlist exists to
-// remove.
-//
-// TOLERATED IS NOT SILENT. Dropping a stamped null removes a fail-loud guard: a mis-stamped
-// `reviewConfig: null` would otherwise review under the Filter stage's config-absent
-// defaults instead of the operator's REVIEW.md thresholds — a silent change to the DELIVERED
-// findings, which issue #38 forbids. So every drop that ACTUALLY removed a guard is REPORTED
-// (stripNullOptionalsReport -> nullToleranceRejectedKeys -> runWith -> an envelope gap via
-// nullToleranceGap): degraded-but-disclosed, the contract this pipeline uses everywhere else.
-// A drop that validateArgs would have accepted anyway (`checkpoints`) tolerated nothing and
-// is deliberately NOT disclosed — see nullToleranceRejectedKeys.
-export const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
-  'persist', 'scopeAnswer']);
-
-// Issue #24 req 1/2 (PR3): the risk classification a plain string. Matches the three-tier
-// scale documented in skills/code-gauntlet/references/phase2-triage.md 2e — that table is now
-// the single contract for these literals; riskTable values must stay in lockstep with it.
-export const RISK_LEVELS = deepFreeze(['low', 'medium', 'high']);
 
 // The one home of the benchmarked default limits. normalizeArgs fills a limits object from
 // this constant, and every stage and capacity helper reads that object, so no literal default
@@ -493,35 +455,9 @@ export const LIMIT_DEFAULTS = deepFreeze({
   maxLineSpan: 100,
 });
 
-// What the operator actually loses when a stamped null is treated as absent, per key. Used
-// only to word the disclosure gap — no control flow reads it.
-export const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
-  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
-    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
-  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
-    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
-  delivery: 'delivery falls back to tier "all" with no PR identity',
-  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
-  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
-  'delivery.prIdentity.title': 'the report title falls back to owner/repo#N (or "local changes")',
-  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
-  persist: 'the artifact-writer takes the legacy full by-value persist path',
-  scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
-});
-
 export const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
 
-export const REVIEW_TARGET_LABEL = deepFreeze({
-  pr_url: 'a GitHub PR URL',
-  mr_url: 'a GitLab MR URL',
-  repo_ref: 'an owner/repo PR reference',
-  pr_number: 'a bare PR/MR number',
-  pr_shorthand: 'a PR/MR reference',
-});
-
-const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
+export const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
   assemble: 'assemble_artifacts.py',
   verify: 'verify_findings.py',
 });
@@ -549,18 +485,9 @@ export const INJECTION_STRIPPED_PROSE_FIELDS = deepFreeze(['suggestion', 'claude
 
 export const AGENT_BUG_DETECTOR = 'bug-detector';
 
-export const AGENT_CONVENTIONS = 'conventions-and-intent';
-
 export const AGENT_TEST_ANALYZER = 'test-analyzer';
 
 export const AGENT_SECURITY_REVIEWER = 'security-reviewer';
-
-// Omit fields that the report renderer cannot present safely.
-export const REPORT_EXCLUDED_FIELDS = deepFreeze([
-  'suggested_fix_code',
-  'suggested_fix_code_removed_by',
-  'suggested_fix_code_removal_reason',
-]);
 
 // Display limits, not a whole-report or return-budget mechanism. The summary index
 // admits whole bullets; findings.json keeps unfolded values and unbounded cardinality.
@@ -572,24 +499,6 @@ export const REPORT_FOLD_LIMITS = deepFreeze({
   evidenceChars: 8000,
   inlineChars: 512,
 });
-
-export const OUTBOUND_NAMED_ENTITIES = deepFreeze({
-  commat: '@',
-  excl: '!',
-  lbrack: '[',
-  lsqb: '[',
-  rsqb: ']',
-  rbrack: ']',
-  Hat: '^',
-  colon: ':',
-  lpar: '(',
-  rpar: ')',
-  bsol: '\\',
-  nbsp: ' ',
-  NonBreakingSpace: ' ',
-});
-
-export const MODE_VALUES = deepFreeze(['interactive', 'headless']);
 
 export const KNOB_VOCAB = deepFreeze({
   modes: ['headless', 'interactive'],
@@ -609,127 +518,9 @@ export const KNOB_VOCAB = deepFreeze({
   receiptEntryKeys: ['value', 'source'],
 });
 
-const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000 });
-
-export const LIMIT_KEYS = deepFreeze([
-  'summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize',
-  'deliveryCap', 'discoveryCap', 'maxLineSpan',
-]);
-
-export const ARGS_SHAPES = deepFreeze({
-  pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
-  riskFields: ['path', 'risk'],
-  reviewMdFields: ['path', 'text'],
-  scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
-  scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
-  scopeKinds: ['full', 'incremental'],
-  detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
-  scriptFields: [
-    { root: 'persist', key: 'assembleScriptPath', script: 'assemble' },
-    { root: 'verify', key: 'scriptPath', script: 'verify' },
-  ],
-});
-
-const ARGS_FIELD_CHECKS = deepFreeze({
-  policy: [
-    { key: 'provider', presence: 'nonnull', values: POLICY_PROVIDERS,
-      message: 'invalid {label}: {value} (expected one of {values})' },
-    { key: 'tier', values: KNOB_VOCAB.modelTiers, message: 'invalid {label}: {value} (expected optimized)' },
-    { key: 'gateway', presence: 'nonnull', domain: 'boolean', message: 'invalid {label}: {value} (expected a boolean)' },
-  ],
-  changed: [
-    { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
-    { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
-  ],
-  context: ['contextLines', 'contextChars'].map((key) => ({
-    key, domain: 'safeInteger', minimum: 1, maximum: CONTEXT_SIZE_MAX[key],
-    message: '{label} must be a positive safe integer (the measured size of the shared context file) when present',
-    boundMessage: '{label} is {value}, above the {maximum} ceiling '
-      + '\u2014 that is not a review context, it is a mis-measurement',
-  })),
-  review: REVIEW_SETTING_KEYS.map((key) => key === 'severity_threshold'
-    ? { key, presence: 'in', values: SEVERITY_ORDER, separator: '|',
-      message: '{label} must be one of {values} when present (pre-parsed REVIEW.md enum)' }
-    : { key, presence: 'in', domain: 'integer', minimum: 0, maximum: 100,
-      message: '{label} must be an integer from 0 through 100 when present' }),
-  exclusions: [
-    { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
-  ],
-  persist: [
-    { key: 'assembleScriptPath', domain: 'nonEmptyString',
-      message: 'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py' },
-    { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
-  ],
-  // The check order differs from the key-list order because focused errors precede cap errors.
-  limits: [
-    ...['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan'].map((key) => ({
-      key, domain: 'safeInteger', minimum: 1, message: 'limits.{key} must be a positive safe integer when present',
-    })),
-    { key: 'challengeCap', domain: 'safeInteger', minimum: 0,
-      message: 'limits.challengeCap must be a non-negative safe integer when present' },
-    { key: 'deliveryCap', presence: 'nonnull', domain: 'safeInteger', minimum: 0,
-      message: 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present' },
-    { key: 'discoveryCap', domain: 'safeInteger', minimum: 1,
-      message: 'limits.discoveryCap must be a positive safe integer when present' },
-  ],
-});
-
-const FIELD_DOMAINS = deepFreeze({
-  array: Array.isArray,
-  number: (value) => typeof value === 'number',
-  boolean: (value) => typeof value === 'boolean',
-  string: (value) => typeof value === 'string',
-  nonEmptyString: (value) => typeof value === 'string' && value !== '',
-  integer: Number.isInteger,
-  safeInteger: Number.isSafeInteger,
-});
-
-export function validateArgsFields(value, group, errors, label = '', checks = ARGS_FIELD_CHECKS) {
-  const prefix = label ? `${label}.` : '';
-  for (const row of checks[group]) {
-    if (row.presence === 'in' && !(row.key in value)) continue;
-    const field = value[row.key];
-    if (row.presence !== 'in' && field === undefined) continue;
-    if (row.presence === 'nonnull' && field === null) continue;
-    const domainInvalid = row.domain && !FIELD_DOMAINS[row.domain](field);
-    const valuesInvalid = row.values && !row.values.includes(field);
-    const minimumInvalid = !domainInvalid && row.minimum !== undefined && field < row.minimum;
-    const maximumInvalid = !domainInvalid && row.maximum !== undefined && field > row.maximum;
-    if (!domainInvalid && !valuesInvalid && !minimumInvalid && !maximumInvalid) continue;
-    const message = !domainInvalid && !minimumInvalid && maximumInvalid && row.boundMessage
-      ? row.boundMessage : row.message;
-    const params = {
-      key: row.key, label: `${prefix}${row.key}`, value: field, maximum: row.maximum,
-      values: row.values?.join(row.separator || ', '),
-    };
-    errors.push(message.replace(/\{(\w+)\}/g, (_, key) => `${params[key]}`));
-  }
-}
-
 export function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
   const field = fields.find((entry) => entry.name === name);
   return Boolean(field && field.check(identity[name]));
-}
-
-export function validatePrIdentity(id, errors, fields = PR_IDENTITY_FIELDS) {
-  if (!isPlainObject(id)) {
-    const required = fields.filter((field) => field.required).map((field) => field.name);
-    const optional = fields.filter((field) => !field.required).map((field) => field.name);
-    errors.push(`delivery.prIdentity must be an object { ${required.join(', ')}[, ${optional.join(', ')}] } when present`);
-    return;
-  }
-  for (const field of fields) {
-    const value = id[field.name];
-    const valid = value !== undefined && field.check(value);
-    if ((value === undefined && field.required) || (value !== undefined && !valid)) {
-      errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
-    }
-    if (valid) {
-      for (const extra of field.extraChecks || []) {
-        if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
-      }
-    }
-  }
 }
 
 export const CORE_DIMENSIONS = deepFreeze(['bug', 'security', 'cross_file_impact', 'intent']);
@@ -746,81 +537,4 @@ export const REPORT_PLACED_FIELDS = deepFreeze([
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
   'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
-]);
-
-export const REVIEW_SCOPE_FALLBACK_RULES = deepFreeze([
-  { error: true },
-  { facts: { previously_reviewed: false }, reason: 'no prior review recorded' },
-  { facts: { previously_reviewed: true, sha_resolvable: false }, reason: 'recorded SHA not resolvable' },
-  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: false },
-    reason: 'head has not advanced' },
-  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: false },
-    reason: 'history rewritten (recorded SHA is not an ancestor)' },
-]);
-
-export function validateScriptPaths(args, rows = ARGS_SHAPES.scriptFields) {
-  const errors = [];
-  if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
-  const root = args.pluginRoot.replace(/\/+$/, '') || '/';
-  const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
-  for (const row of rows) {
-    const member = args[row.root];
-    const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
-    if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
-      errors.push(`${row.root}.${row.key} must equal ${expected}`);
-    }
-  }
-  return errors;
-}
-
-// Keywords that promote convention/type_design findings from suggestion to main.
-const FUNCTIONAL_VIOLATION_KEYWORDS =
-  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
-
-// Keywords that promote type_design findings specifically.
-const TYPE_SAFETY_BUG_KEYWORDS =
-  /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
-
-// Keyword patterns indicating a test-analyzer finding describes a functional
-// correctness bug that EXISTS TODAY (vs. a coverage gap). Shared by routeByDimension's
-// test_coverage branch and isTestCorrectnessFinding's promotion check.
-const TEST_CORRECTNESS_PATTERNS = deepFreeze([
-  /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
-  /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
-  /\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b/i,
-  /\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b/i,
-  /\bvacuous(?:ly)?\b/i,
-  /\btautolog(?:y|ical)\b/i,
-  /\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b/i,
-  /\bdeadlock\b/i,
-  /\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b/i,
-  /\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b/i,
-  /\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b/i,
-  /\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b/i,
-  /\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b/i,
-  /\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b/i,
-  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b/i,
-  /\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b/i,
-  /\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b/i,
-  /\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b/i,
-  /\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b/i,
-  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
-  /\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b/i,
-  /\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b/i,
-]);
-
-export const FILTER_DIMENSION_ROUTES = deepFreeze({
-  test_coverage: { patterns: TEST_CORRECTNESS_PATTERNS },
-  convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] },
-  type_design: { patterns: [TYPE_SAFETY_BUG_KEYWORDS] },
-});
-
-export const FILTER_SUPPRESSION_RULES = deepFreeze([
-  { agent: AGENT_BUG_DETECTOR, pattern: /\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/,
-    eliminatedBy: 'suppressed:intentional', subject: 'behaviour', conclusion: 'intentional' },
-  { agent: AGENT_TEST_ANALYZER, pattern: /\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/,
-    eliminatedBy: 'suppressed:generated', subject: 'code', conclusion: 'generated/scaffolding' },
 ]);
