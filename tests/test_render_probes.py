@@ -83,6 +83,11 @@ HTML_NORMALIZATION_CASES = {
         "<insert-code-snippet>noise</insert-code-snippet><p>x</p>",
         "<p>x</p>",
     ),
+    "heading-anchor": (
+        "gitlab",
+        '<h1>head<a href="#head" class="anchor"></a></h1>',
+        "<h1>head</h1>",
+    ),
     "gitlab-code-wrapper": (
         "gitlab",
         '<div class="gl-relative markdown-code-block js-markdown-code"><p>x</p></div>',
@@ -216,6 +221,11 @@ MEANINGFUL_HTML_SURVIVES_CASES = {
         "gitlab",
         '<a href="#head" class="anchor" onclick="run()">content</a>',
         "content",
+    ),
+    "heading-no-class": (
+        "gitlab",
+        '<h1>T<a href="#poison"></a></h1>',
+        "<h1>T</h1>",
     ),
     "heading-wrong-class": (
         "gitlab",
@@ -369,6 +379,7 @@ RENDER_CONTAINMENT_CASES = {
         "GitHub mention anchor",
     ),
     "gitlab-comment": ("gitlab", "<!-- retained -->", "comment node"),
+    "github-comment": ("github", "<!-- retained -->", "comment node"),
     "gitlab-unknown": ("gitlab", "<abbr>HTML</abbr>", "unknown element <abbr>"),
     "github-unknown": ("github", "<abbr>HTML</abbr>", "unknown element <abbr>"),
     "bare-span": ("gitlab", "<span>x</span>", "unknown element <span>"),
@@ -1168,7 +1179,6 @@ def test_main_record_check_and_cleared_divergence_output(
     probe_file, monkeypatch, capsys, platform: str
 ) -> None:
     path = probe_file
-    write_utf8(str(path), serialize_fixture(_probe_rows()))
     monkeypatch.setattr("tests.tools.probe_cli._fixture_path", lambda: str(path))
     if platform == "github":
         monkeypatch.setattr("tests.tools.probe_cli.github_login", lambda: "lee")
@@ -1232,7 +1242,7 @@ def test_main_seed_dispatch_prints_seed_counts(monkeypatch, capsys) -> None:
 
 @pytest.mark.parametrize(
     "failure",
-    ["stale", "equal", "nesting", "extra", "duplicate", "issue", "note"],
+    ["stale", "equal", "skeleton", "nesting", "extra", "duplicate", "issue", "note"],
 )
 def test_divergence_refuses_invalid_fixture_or_pair(probe_file, failure: str) -> None:
     path = probe_file
@@ -1242,6 +1252,8 @@ def test_divergence_refuses_invalid_fixture_or_pair(probe_file, failure: str) ->
         row["gitlab_probe"]["input_sha256"] = "0" * 64
     elif failure == "equal":
         row["gitlab_probe"]["html"] = "<p>a</p>"
+    elif failure == "skeleton":
+        row["gitlab_probe"]["html"] = "<h1>b</h1>"
     elif failure == "nesting":
         row["github_probe"]["html"] = "<blockquote><p>a</p></blockquote><p>b</p>"
         row["gitlab_probe"]["html"] = "<blockquote><p>a</p><p>b</p></blockquote>"
@@ -1257,6 +1269,7 @@ def test_divergence_refuses_invalid_fixture_or_pair(probe_file, failure: str) ->
         match={
             "stale": "stale",
             "equal": "equal",
+            "skeleton": "skeleton",
             "nesting": "skeleton",
             "extra": "only a cases",
             "duplicate": "expected one fixture row",

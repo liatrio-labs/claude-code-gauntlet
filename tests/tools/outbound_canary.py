@@ -168,7 +168,7 @@ def main(
         parser.error("--case-index must be within --cases")
     if (
         args.mention is not None
-        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,99}", handle) is None
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,99}", handle) is None
     ):
         parser.error("--mention must be a GitHub handle without @")
     if not args.live:

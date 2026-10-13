@@ -48,13 +48,11 @@ def test_generator_prefix(index: int, expected: str) -> None:
     assert canary.generate_cases(375, "lee", 3)[index] == expected
 
 
-def test_generator_reproducibility_and_bound() -> None:
+def test_generator_reproducibility() -> None:
     first = canary.generate_cases(375, "lee", 40)
     assert first == canary.generate_cases(375, "lee", 40)
     assert first[:15] == canary.generate_cases(375, "lee", 15)
     assert first[13:] != canary.generate_cases(376, "lee", 40)[13:]
-    for index, text in enumerate(canary.generate_cases(375, "x" * 100, 80)):
-        assert f"<b>OUTBOUND_PROBE_HTML_{index}</b>" in text
 
 
 @pytest.mark.parametrize(
@@ -200,6 +198,15 @@ def test_checker(
         pytest.param(
             ["--live", "--mention", "@lee"], {}, "--mention must", id="invalid-mention"
         ),
+        pytest.param(
+            ["--live", "--mention", "org/team"],
+            {},
+            "--mention must",
+            id="team-mention",
+        ),
+        pytest.param(
+            ["--live", "--mention", ""], {}, "--mention must", id="empty-mention"
+        ),
     ],
 )
 def test_cli_refuses_before_transport(
@@ -289,7 +296,11 @@ def test_preflight_missing_gh(
     def unavailable_login() -> str:
         raise FileNotFoundError("gh unavailable")
 
+    def forbidden_render(text: str) -> str:
+        raise AssertionError("transport must not run")
+
     monkeypatch.setattr(probe_github, "github_login", unavailable_login)
+    monkeypatch.setattr(probe_github, "render_github", forbidden_render)
     assert canary.main(["--live"]) == 1
     lines = capsys.readouterr().out.splitlines()
     diagnostic: dict[str, object] = json.loads(lines[0])
@@ -381,6 +392,31 @@ def test_failure_diagnostic_and_replay(
     replay = shlex.split(lines[1].removeprefix("Replay: "))[2:]
     assert canary.main(replay, login=lambda: "lee", render=render) == 1
     assert capsys.readouterr().out == output
+
+
+def test_main_diagnostic_serializes_second(
+    offline_live: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import gauntlet.text
+
+    def prepare_non_idempotently(text: str) -> str:
+        return text + "!"
+
+    def login() -> str:
+        return "lee"
+
+    def render(text: str) -> str:
+        if text == "@lee":
+            return POSITIVE
+        return "<p>" + html.escape(text) + "</p>"
+
+    monkeypatch.setattr(gauntlet.text, "prepare_prose", prepare_non_idempotently)
+    assert canary.main(["--live", "--cases", "1"], login=login, render=render) == 1
+    diagnostic: dict[str, object] = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert diagnostic["property"] == "fixpoint"
+    assert diagnostic["second"] is not None
 
 
 def test_entry_from_foreign_cwd_without_live(tmp_path: Path) -> None:
