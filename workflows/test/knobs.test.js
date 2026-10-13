@@ -157,9 +157,15 @@ for (const { name, key, expected } of LOOKUP_ROWS) {
   test(`receipt lookup: ${name}`, () => assert.deepEqual(receiptEntryForKey(interactiveArgs(), key), expected));
 }
 
+const nestedCopyInput = headlessArgs('incremental');
+nestedCopyInput.configEcho = { reviewed_policy: { value: 'incremental', source: 'default' } };
+delete nestedCopyInput.reviewScope.requested;
 const DERIVE_ROWS = [
   { name: 'malformed echo', input: { configEcho: [], mode: 'interactive' },
     expected: { args: { configEcho: [], mode: 'interactive' }, derivedPaths: [] } },
+  { name: 'nested copy', input: nestedCopyInput, expected: {
+    requested: 'incremental', paths: ['reviewScope.requested'],
+  } },
 ];
 for (const { name, input, expected } of DERIVE_ROWS) {
   test(`derive: ${name}`, () => {
@@ -169,6 +175,7 @@ for (const { name, input, expected } of DERIVE_ROWS) {
       ? { requested: out.args.reviewScope.requested, paths: out.derivedPaths } : out;
     assert.deepEqual(actual, expected);
     assert.deepEqual(input, before);
+    if (name === 'nested copy') assert.notEqual(out.args.reviewScope, input.reviewScope);
   });
 }
 

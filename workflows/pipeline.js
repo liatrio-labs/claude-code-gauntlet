@@ -1964,9 +1964,9 @@ function routeByDimension(finding, routes = FILTER_DIMENSION_ROUTES) {
   if (CORE_DIMENSIONS.includes(dimension)) return 'main';
   if (SUGGESTION_DIMENSIONS.includes(dimension)) return 'suggestion';
   if (!Object.hasOwn(routes, dimension)) return null;
-  return isTestCorrectnessFinding(finding, routes[dimension].patterns) ? 'main' : 'suggestion';
+  return findingMatchesPatterns(finding, routes[dimension].patterns) ? 'main' : 'suggestion';
 }
-function isTestCorrectnessFinding(finding, patterns) {
+function findingMatchesPatterns(finding, patterns) {
   const combined = `${asText(finding.title)}\n${asText(finding.description)}`;
   return patterns.some((rx) => rx.test(combined));
 }
@@ -2039,7 +2039,7 @@ function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
         destination = COMMENT_ACCURACY_DIMENSIONS.includes(dimension) ? 'suggestion' : 'main';
       } else if (SUGGESTION_AGENTS.includes(agent)) {
         if (agent === AGENT_TEST_ANALYZER && routes.test_coverage
-          && isTestCorrectnessFinding(finding, routes.test_coverage.patterns)) {
+          && findingMatchesPatterns(finding, routes.test_coverage.patterns)) {
           destination = 'main';
           finding.promoted_from = 'test-analyzer';
           finding.promotion_reason =
@@ -4459,7 +4459,7 @@ function validateArgsFields(value, group, errors, label = '') {
     const minimumInvalid = !domainInvalid && row.minimum !== undefined && field < row.minimum;
     const maximumInvalid = !domainInvalid && row.maximum !== undefined && field > row.maximum;
     if (!domainInvalid && !valuesInvalid && !minimumInvalid && !maximumInvalid) continue;
-    const message = !domainInvalid && !minimumInvalid && maximumInvalid && row.boundMessage
+    const message = maximumInvalid && row.boundMessage
       ? row.boundMessage : row.message;
     const params = {
       key: row.key, label: `${prefix}${row.key}`, value: field, maximum: row.maximum,

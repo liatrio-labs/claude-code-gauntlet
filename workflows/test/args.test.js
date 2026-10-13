@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ARGS_VERSION, normalizeArgs, normalizeArgsReport, validateArgs, stripNullOptionalsReport } from '../src/args.js';
+import { normalizeArgs, normalizeArgsReport, validateArgs, stripNullOptionalsReport } from '../src/args.js';
 import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveReviewConfig } from '../src/args.js';
 import { interactiveArgs, headlessArgs, priorReviewDetector, knobRows, prIdentity } from './helpers/argsFixtures.js';
 
@@ -560,7 +560,7 @@ const REQUIRED_ROWS = [
   ] } },
 ];
 for (const { name, input, expected } of REQUIRED_ROWS) {
-  test(`required: ${name}`, () => assert.deepEqual(name === 'version constant' ? input : validateArgs(input), expected));
+  test(`required: ${name}`, () => assert.deepEqual(validateArgs(input), expected));
 }
 
 const STRIP_ROWS = [

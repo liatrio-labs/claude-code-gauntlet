@@ -123,7 +123,7 @@ function validateArgsFields(value, group, errors, label = '') {
     const minimumInvalid = !domainInvalid && row.minimum !== undefined && field < row.minimum;
     const maximumInvalid = !domainInvalid && row.maximum !== undefined && field > row.maximum;
     if (!domainInvalid && !valuesInvalid && !minimumInvalid && !maximumInvalid) continue;
-    const message = !domainInvalid && !minimumInvalid && maximumInvalid && row.boundMessage
+    const message = maximumInvalid && row.boundMessage
       ? row.boundMessage : row.message;
     const params = {
       key: row.key, label: `${prefix}${row.key}`, value: field, maximum: row.maximum,
@@ -414,8 +414,7 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
       }
     }
   }
-  // Provider typos must fail before dispatch because model IDs and provider aliases resolve differently.
-
+  // Validate policy before dispatch because providers, tiers, and gateway settings affect model resolution.
   if (isPlainObject(args.policy)) validateArgsFields(args.policy, 'policy', errors, 'policy');
   validateArgsFields(args, 'changed', errors);
   // The host cannot inspect the context file, so supplied sizes drive its read plan.

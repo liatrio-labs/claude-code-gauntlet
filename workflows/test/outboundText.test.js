@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import * as outbound from '../src/outboundText.js';
-import { REPORT_FOLD_LIMITS } from '../src/registry.js';
 import { corpus } from './helpers/reportFixtures.js';
 
 const commentCases = corpus('outbound_comment_cases').cases;
@@ -127,24 +126,21 @@ function containmentInvariants(input) {
 
 const forty = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n');
 const FOLD_ROWS = [
-  { name: 'evidence exact char cap', api: 'foldEvidence', input: 'e'.repeat(8000), expected: 'e'.repeat(8000) },
-  { name: 'evidence exact line cap', api: 'foldEvidence', input: forty, expected: forty },
-  { name: 'evidence line cap plus one', api: 'foldEvidence', input: forty + '\nline 41',
+  { name: 'evidence exact char cap', input: 'e'.repeat(8000), expected: 'e'.repeat(8000) },
+  { name: 'evidence exact line cap', input: forty, expected: forty },
+  { name: 'evidence line cap plus one', input: forty + '\nline 41',
     expected: forty + '\n... [folded: 1 more lines]' },
 ];
 for (const row of FOLD_ROWS) test(`fold: ${row.name}`, () => {
-  const limits = row.limits ? { ...REPORT_FOLD_LIMITS, ...row.limits } : undefined;
-  const actual = row.api === 'foldEvidence' ? outbound.foldEvidence(row.input, limits)
-    : outbound[row.api](row.input, row.limit, limits);
-  assert.equal(actual, row.expected);
+  assert.equal(outbound.foldEvidence(row.input), row.expected);
 });
 
 const DISPLAY_ROWS = [
-  { name: 'absent', api: 'reportAsText', input: undefined, expected: '' },
-  { name: 'null', api: 'reportAsText', input: null, expected: '' },
+  { name: 'absent', input: undefined, expected: '' },
+  { name: 'null', input: null, expected: '' },
 ];
 for (const row of DISPLAY_ROWS) test(`display: ${row.name}`, () => {
-  assert.equal(outbound[row.api](row.input, row.flag), row.expected);
+  assert.equal(outbound.reportAsText(row.input), row.expected);
 });
 
 const ENTITY_ROWS = [
