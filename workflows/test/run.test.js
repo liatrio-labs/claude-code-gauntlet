@@ -136,8 +136,8 @@ for (const row of REPLAY_ROWS) test(`phase replay: ${row.name}`, async () => {
   for (const label of row.absent || []) assert.equal(ctx.calls.some((call) => call.label === label), false);
   for (const label of row.present) assert.equal(ctx.calls.some((call) => call.label === label), true);
   if (row.absentDiscovery) assert.equal(ctx.calls.some((call) => call.label.startsWith('code-gauntlet:')), false);
-  if (row.summary) assert.ok(payload.report.includes('## Change Context\n\n'
-    + 'This is the change summary the review agents shared as context.\n\nreplayed summary'));
+  if (row.summary) assert.ok(payload.report.includes('## Change Context\n\nThis is the change summary the review '
+    + 'agents shared as context.\n\nreplayed summary'));
 });
 
 const SCOPE_ROWS = [

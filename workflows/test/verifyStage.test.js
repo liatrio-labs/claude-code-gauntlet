@@ -74,101 +74,95 @@ for (const row of TRUSTED_ROWS) {
 const UNTRUSTED_ROWS = [
   { name: 'omitted id keeps the uncovered finding', count: 3,
     options: (f) => ({ deltas: deltasFor(f).slice(0, 2), ids: ['F0', 'F1'] }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta does not cover 1 of 3 dispatched finding(s) (first: F2) '
-      + '\u2014 retried once after the first attempt failed (delta does not cover 1 of 3 dispatched finding(s'
-      + ') (first: F2)); 3 of 3 finding(s) marked origin=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta does not cover 1 of 3 dispatched finding(s) (first: F2) \u2014 '
+      + 'retried once after the first attempt failed (delta does not cover 1 of 3 dispatched finding(s) (first: F2)); '
+      + '3 of 3 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'undispatched id rejects a sibling answer',
     options: (f) => ({ deltas: [...deltasFor(f), { id: 'STRANGER', verified: true, origin: 'new' }] }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta names a finding this slice did not dispatch (STRANGER) '
-      + '\u2014 retried once after the first attempt failed (delta names a finding this slice did not dispatc'
-      + 'h (STRANGER)); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta names a finding this slice did not dispatch (STRANGER) \u2014 '
+      + 'retried once after the first attempt failed (delta names a finding this slice did not dispatch (STRANGER)); 2 '
+      + 'of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'repeated delta id rejects the slice', options: (f) => ({ deltas: [...deltasFor(f), deltasFor(f)[0]] }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta repeats a finding id (F0) \u2014 retried once after the fir'
-      + 'st attempt failed (delta repeats a finding id (F0)); 2 of 2 finding(s) marked origin=unknown, surfac'
-      + 'ed-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta repeats a finding id (F0) \u2014 retried once after the first '
+      + 'attempt failed (delta repeats a finding id (F0)); 2 of 2 finding(s) marked origin=unknown, '
+      + 'surfaced-classification skipped') },
   { name: 'origin drift rejects the original script proof',
     options: (f) => ({ deltas: deltasFor(f, { F0: { origin: 'surfaced' } }), checksum: 'fnv1a32:0xc35f3d60' }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta content proof mismatch (receipt fnv1a32:0xc35f3d60, recompu'
-      + 'ted fnv1a32:0x151174e3) \u2014 the echoed values are not the ones the script wrote \u2014 retried on'
-      + 'ce after the first attempt failed (delta content proof mismatch (receipt fnv1a32:0xc35f3d60, recompu'
-      + 'ted fnv1a32:0x151174e3) \u2014 the echoed values are not the ones the script wrote); 2 of 2 finding('
-      + 's) marked origin=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta content proof mismatch (receipt fnv1a32:0xc35f3d60, recomputed '
+      + 'fnv1a32:0x151174e3) \u2014 the echoed values are not the ones the script wrote \u2014 retried once after the '
+      + 'first attempt failed (delta content proof mismatch (receipt fnv1a32:0xc35f3d60, recomputed '
+      + 'fnv1a32:0x151174e3) \u2014 the echoed values are not the ones the script wrote); 2 of 2 finding(s) marked '
+      + 'origin=unknown, surfaced-classification skipped') },
   { name: 'confidence drift rejects the original script proof', count: 1,
     options: (f) => ({ deltas: deltasFor(f, { F0: { confidence: 75 } }), checksum: 'fnv1a32:0x3c40d9ff' }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta content proof mismatch (receipt fnv1a32:0x3c40d9ff, recompu'
-      + 'ted fnv1a32:0x6db20037) \u2014 the echoed values are not the ones the script wrote \u2014 retried on'
-      + 'ce after the first attempt failed (delta content proof mismatch (receipt fnv1a32:0x3c40d9ff, recompu'
-      + 'ted fnv1a32:0x6db20037) \u2014 the echoed values are not the ones the script wrote); 1 of 1 finding('
-      + 's) marked origin=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta content proof mismatch (receipt fnv1a32:0x3c40d9ff, recomputed '
+      + 'fnv1a32:0x6db20037) \u2014 the echoed values are not the ones the script wrote \u2014 retried once after the '
+      + 'first attempt failed (delta content proof mismatch (receipt fnv1a32:0x3c40d9ff, recomputed '
+      + 'fnv1a32:0x6db20037) \u2014 the echoed values are not the ones the script wrote); 1 of 1 finding(s) marked '
+      + 'origin=unknown, surfaced-classification skipped') },
   { name: 'absent delta proof is untrusted', mutate: (env) => { delete env.receipt.deltas_checksum; },
-    gap: ('verify: UNVERIFIED \u2014 slice 0: receipt carries no deltas_checksum (content proof missing) \u2014'
-      + ' retried once after the first attempt failed (receipt carries no deltas_checksum (content proof miss'
-      + 'ing)); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: receipt carries no deltas_checksum (content proof missing) \u2014 '
+      + 'retried once after the first attempt failed (receipt carries no deltas_checksum (content proof missing)); 2 '
+      + 'of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'fabricated elimination keeps the claimed eliminated finding',
     options: () => ({ overrides: { F1: { verified: false } } }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta F1: eliminated without the elimination_reason stamp (fabric'
-      + 'ated elimination \u2014 the verify script always stamps a real one) \u2014 retried once after the fi'
-      + 'rst attempt failed (delta F1: eliminated without the elimination_reason stamp (fabricated eliminatio'
-      + 'n \u2014 the verify script always stamps a real one)); 2 of 2 finding(s) marked origin=unknown, surf'
-      + 'aced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta F1: eliminated without the elimination_reason stamp (fabricated '
+      + 'elimination \u2014 the verify script always stamps a real one) \u2014 retried once after the first attempt '
+      + 'failed (delta F1: eliminated without the elimination_reason stamp (fabricated elimination \u2014 the verify '
+      + 'script always stamps a real one)); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'verified delta rejects an elimination stamp',
     options: () => ({ overrides: { F1: { elimination_reason: ELIMINATION_STAMP } } }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta F1: verified finding carries an elimination_reason stamp '
-      + '\u2014 retried once after the first attempt failed (delta F1: verified finding carries an eliminatio'
-      + 'n_reason stamp); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta F1: verified finding carries an elimination_reason stamp \u2014 '
+      + 'retried once after the first attempt failed (delta F1: verified finding carries an elimination_reason stamp); '
+      + '2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'fractional delta confidence is untrusted', count: 1,
     options: () => ({ deltas: [{ id: 'F0', verified: true, origin: 'new', confidence: 82.5 }] }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta F0: confidence is not an integer \u2014 retried once after '
-      + 'the first attempt failed (delta F0: confidence is not an integer); 1 of 1 finding(s) marked origin=u'
-      + 'nknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta F0: confidence is not an integer \u2014 retried once after the '
+      + 'first attempt failed (delta F0: confidence is not an integer); 1 of 1 finding(s) marked origin=unknown, '
+      + 'surfaced-classification skipped') },
   { name: 'non-object delta is untrusted', count: 1,
     options: () => ({ deltas: ['not-an-object'], checksum: 'fnv1a32:0xdeadbeef' }),
       gap: ('verify: UNVERIFIED \u2014 slice 0: delta entry is not an object \u2014 retried once after the first '
-      + 'attempt failed (delta entry is not an object); 1 of 1 finding(s) marked origin=unknown, surfaced-cla'
-      + 'ssification skipped') },
+      + 'attempt failed (delta entry is not an object); 1 of 1 finding(s) marked origin=unknown, '
+      + 'surfaced-classification skipped') },
   { name: 'blank delta id is untrusted', count: 1,
     options: () => ({ deltas: [{ id: '   ', verified: true, origin: 'new' }], checksum: 'fnv1a32:0xdeadbeef' }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta entry has no id \u2014 retried once after the first attempt'
-      + ' failed (delta entry has no id); 1 of 1 finding(s) marked origin=unknown, surfaced-classification sk'
-      + 'ipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta entry has no id \u2014 retried once after the first attempt failed '
+      + '(delta entry has no id); 1 of 1 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'string verified flag is untrusted', count: 1,
     options: () => ({ deltas: [{ id: 'F0', verified: 'true', origin: 'new', severity: 'high', confidence: 80 }],
       checksum: 'fnv1a32:0xdeadbeef' }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta F0 has no boolean verified flag \u2014 retried once after t'
-      + 'he first attempt failed (delta F0 has no boolean verified flag); 1 of 1 finding(s) marked origin=unk'
-      + 'nown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta F0 has no boolean verified flag \u2014 retried once after the '
+      + 'first attempt failed (delta F0 has no boolean verified flag); 1 of 1 finding(s) marked origin=unknown, '
+      + 'surfaced-classification skipped') },
   { name: 'missing delta array is untrusted', mutate: (env) => { env.result = {}; },
-    gap: ('verify: UNVERIFIED \u2014 slice 0: result missing deltas array \u2014 retried once after the first a'
-    + 'ttempt failed (result missing deltas array); 2 of 2 finding(s) marked origin=unknown, surfaced-class'
-    + 'ification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: result missing deltas array \u2014 retried once after the first attempt '
+    + 'failed (result missing deltas array); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'failed executor preserves original agent and findings', envelope: () => ({ status: 'failed', exitCode: 1, stderr: 'boom' }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: status=failed (boom) \u2014 retried once after the first attempt '
-      + 'failed (status=failed (boom)); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skip'
-      + 'ped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: status=failed (boom) \u2014 retried once after the first attempt failed '
+      + '(status=failed (boom)); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'wrong receipt sha is untrusted', options: () => ({ sha: 'wrong' }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: receipt sha mismatch (got wrong) \u2014 retried once after the fi'
-    + 'rst attempt failed (receipt sha mismatch (got wrong)); 2 of 2 finding(s) marked origin=unknown, surf'
-    + 'aced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: receipt sha mismatch (got wrong) \u2014 retried once after the first '
+    + 'attempt failed (receipt sha mismatch (got wrong)); 2 of 2 finding(s) marked origin=unknown, '
+    + 'surfaced-classification skipped') },
   { name: 'wrong receipt input count is untrusted', options: () => ({ n_in: 1 }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: receipt n_in mismatch (got 1, expected 2) \u2014 retried once aft'
-    + 'er the first attempt failed (receipt n_in mismatch (got 1, expected 2)); 2 of 2 finding(s) marked or'
-    + 'igin=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: receipt n_in mismatch (got 1, expected 2) \u2014 retried once after the '
+    + 'first attempt failed (receipt n_in mismatch (got 1, expected 2)); 2 of 2 finding(s) marked origin=unknown, '
+    + 'surfaced-classification skipped') },
   { name: 'executor throw is retried and disclosed', envelope: () => { throw new Error('boom'); },
-    gap: ('verify: UNVERIFIED \u2014 slice 0: executor threw (boom) \u2014 retried once after the first attempt'
-    + ' failed (executor threw (boom)); 2 of 2 finding(s) marked origin=unknown, surfaced-classification sk'
-    + 'ipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: executor threw (boom) \u2014 retried once after the first attempt failed '
+    + '(executor threw (boom)); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'null envelope is retried and disclosed', envelope: () => null,
-    gap: ('verify: UNVERIFIED \u2014 slice 0: executor returned no envelope \u2014 retried once after the first'
-    + ' attempt failed (executor returned no envelope); 2 of 2 finding(s) marked origin=unknown, surfaced-c'
-    + 'lassification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: executor returned no envelope \u2014 retried once after the first '
+    + 'attempt failed (executor returned no envelope); 2 of 2 finding(s) marked origin=unknown, '
+    + 'surfaced-classification skipped') },
   { name: 'non-string origin is untrusted', options: () => ({ overrides: { F0: { origin: 7 } } }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: delta F0: origin is not a string \u2014 retried once after the fi'
-    + 'rst attempt failed (delta F0: origin is not a string); 2 of 2 finding(s) marked origin=unknown, surf'
-    + 'aced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: delta F0: origin is not a string \u2014 retried once after the first '
+    + 'attempt failed (delta F0: origin is not a string); 2 of 2 finding(s) marked origin=unknown, '
+    + 'surfaced-classification skipped') },
   { name: 'JSON string input preserves findings on failure', json: true, envelope: () => ({ status: 'failed', stderr: 'boom' }),
-    gap: ('verify: UNVERIFIED \u2014 slice 0: status=failed (boom) \u2014 retried once after the first attempt '
-    + 'failed (status=failed (boom)); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skip'
-    + 'ped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: status=failed (boom) \u2014 retried once after the first attempt failed '
+    + '(status=failed (boom)); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'wrong nonce degrades only its slice and retries once', count: 5, over: { limits: { verifySliceSize: 2 } },
     envelope: (findings, index) => deltaEnvelope(findings.slice(index * 2, index * 2 + 2), { nonce: ['n-1.0', 'WRONG', 'n-1.2'][index] }),
     origins: ['new', 'new', 'unknown', 'unknown', 'new'], ledger: { ...ZERO, slices: 3, proven: 2 },
@@ -182,9 +176,9 @@ const UNTRUSTED_ROWS = [
       '/out/phase4-output-abc123.slice0.json', '/out/phase4-output-abc123.slice1.json',
       '/out/phase4-output-abc123.slice1.json', '/out/phase4-output-abc123.slice2.json',
     ],
-    gap: ('verify: UNVERIFIED \u2014 slice 1: receipt nonce mismatch (got WRONG, expected n-1.1.r1) \u2014 retr'
-      + 'ied once after the first attempt failed (receipt nonce mismatch (got WRONG, expected n-1.1)); 2 of 5'
-      + ' finding(s) marked origin=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 1: receipt nonce mismatch (got WRONG, expected n-1.1.r1) \u2014 retried '
+      + 'once after the first attempt failed (receipt nonce mismatch (got WRONG, expected n-1.1)); 2 of 5 finding(s) '
+      + 'marked origin=unknown, surfaced-classification skipped') },
 ];
 for (const row of UNTRUSTED_ROWS) {
   test(`untrusted: ${row.name}`, async () => {
@@ -216,21 +210,17 @@ for (const row of UNTRUSTED_ROWS) {
 
 const NOT_DISPATCHED_ROWS = [
   { name: 'missing id', findings: [findingsFor(2)[0], { ...findingsFor(2)[1], id: undefined }],
-    gap: ('verify: UNVERIFIED \u2014 slice 0: a dispatched finding has no usable id \u2014 the delta echo is ke'
-      + 'yed by id, so this slice cannot be verified; 2 of 2 finding(s) marked origin=unknown, surfaced-class'
-      + 'ification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: a dispatched finding has no usable id \u2014 the delta echo is keyed by '
+      + 'id, so this slice cannot be verified; 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'whitespace-only id', findings: [findingsFor(2)[0], { ...findingsFor(2)[1], id: '   ' }],
-    gap: ('verify: UNVERIFIED \u2014 slice 0: a dispatched finding has no usable id \u2014 the delta echo is ke'
-      + 'yed by id, so this slice cannot be verified; 2 of 2 finding(s) marked origin=unknown, surfaced-class'
-      + 'ification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: a dispatched finding has no usable id \u2014 the delta echo is keyed by '
+      + 'id, so this slice cannot be verified; 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'duplicate ids', findings: [findingsFor(2)[0], { ...findingsFor(2)[1], id: 'F0' }],
-    gap: ('verify: UNVERIFIED \u2014 slice 0: duplicate finding id in the slice (F0) \u2014 the delta echo is k'
-      + 'eyed by id, so this slice cannot be verified; 2 of 2 finding(s) marked origin=unknown, surfaced-clas'
-      + 'sification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: duplicate finding id in the slice (F0) \u2014 the delta echo is keyed by '
+      + 'id, so this slice cannot be verified; 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'null finding', findings: [null],
-    gap: ('verify: UNVERIFIED \u2014 slice 0: a dispatched finding has no usable id \u2014 the delta echo is ke'
-    + 'yed by id, so this slice cannot be verified; 1 of 1 finding(s) marked origin=unknown, surfaced-class'
-    + 'ification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: a dispatched finding has no usable id \u2014 the delta echo is keyed by '
+    + 'id, so this slice cannot be verified; 1 of 1 finding(s) marked origin=unknown, surfaced-classification skipped') },
 ];
 for (const row of NOT_DISPATCHED_ROWS) {
   test(`not dispatched: ${row.name}`, async () => {
@@ -250,54 +240,52 @@ const BAD_PROOF = 'fnv1a32:0xdeadbeef';
 const transposedProof = () => sliceInputChecksum({ base_branch: 'main', findings: BASE.map(projectVerifySliceFinding) });
 const LEDGER_ROWS = [
   { name: 'missing content proof degrades after the fresh retry', receipt: () => ({ input_checksum: null }), missing: 1,
-    gap: ('verify: UNVERIFIED \u2014 slice 0: input content proof missing from receipt \u2014 retried once afte'
-      + 'r the first attempt failed (input content proof missing from receipt); 2 of 2 finding(s) marked orig'
-      + 'in=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: input content proof missing from receipt \u2014 retried once after the '
+      + 'first attempt failed (input content proof missing from receipt); 2 of 2 finding(s) marked origin=unknown, '
+      + 'surfaced-classification skipped') },
   { name: 'wrong content proof recovers on a fresh attempt', receipt: (attempt) => attempt === 1 ? { input_checksum: BAD_PROOF } : {},
     trusted: true, retriedMismatch: 1,
-    gap: ('verify-slice-retry: slice 0\'s first executor dispatch was untrusted (slice-input content proof mism'
-      + 'atch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0x693ddb36) \u2014 the document the script deco'
-      + 'ded is not the document this stage dispatched); a second dispatch was trusted and this slice\'s veri'
-      + 'fied findings are from that attempt') },
+    gap: ('verify-slice-retry: slice 0\'s first executor dispatch was untrusted (slice-input content proof mismatch '
+      + '(receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0x693ddb36) \u2014 the document the script decoded is not the '
+      + 'document this stage dispatched); a second dispatch was trusted and this slice\'s verified findings are from '
+      + 'that attempt') },
   { name: 'missing content proof recovers on a fresh attempt', receipt: (attempt) => attempt === 1 ? { input_checksum: null } : {},
     trusted: true, retriedMissing: 1,
-    gap: ('verify-slice-retry: slice 0\'s first executor dispatch was untrusted (input content proof missing fr'
-      + 'om receipt); a second dispatch was trusted and this slice\'s verified findings are from that attempt') },
+    gap: ('verify-slice-retry: slice 0\'s first executor dispatch was untrusted (input content proof missing from '
+      + 'receipt); a second dispatch was trusted and this slice\'s verified findings are from that attempt') },
   { name: 'wrong token proof precedes a wrong content proof', receipt: () => ({ inline_checksum: BAD_PROOF, input_checksum: BAD_PROOF }),
     mismatched: 1,
-    gap: ('verify: UNVERIFIED \u2014 slice 0: slice-input token proof mismatch (receipt fnv1a32:0xdeadbeef, dis'
-      + 'patched fnv1a32:0xc69f8ec8) \u2014 the token the script decoded is not the token this stage dispatch'
-      + 'ed \u2014 retried once after the first attempt failed (slice-input token proof mismatch (receipt fnv'
-      + '1a32:0xdeadbeef, dispatched fnv1a32:0xc69f8ec8) \u2014 the token the script decoded is not the token'
-      + ' this stage dispatched); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: slice-input token proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched '
+      + 'fnv1a32:0xc69f8ec8) \u2014 the token the script decoded is not the token this stage dispatched \u2014 retried '
+      + 'once after the first attempt failed (slice-input token proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched '
+      + 'fnv1a32:0xc69f8ec8) \u2014 the token the script decoded is not the token this stage dispatched); 2 of 2 '
+      + 'finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'missing token proof precedes a wrong content proof', receipt: () => ({ inline_checksum: null, input_checksum: BAD_PROOF }),
     missing: 1,
-    gap: ('verify: UNVERIFIED \u2014 slice 0: inline token proof missing from receipt \u2014 retried once after'
-      + ' the first attempt failed (inline token proof missing from receipt); 2 of 2 finding(s) marked origin'
-      + '=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: inline token proof missing from receipt \u2014 retried once after the '
+      + 'first attempt failed (inline token proof missing from receipt); 2 of 2 finding(s) marked origin=unknown, '
+      + 'surfaced-classification skipped') },
   { name: 'missing token proof recovers on a fresh attempt', receipt: (attempt) => attempt === 1 ? { inline_checksum: null } : {},
     trusted: true, retriedMissing: 1,
-    gap: ('verify-slice-retry: slice 0\'s first executor dispatch was untrusted (inline token proof missing fro'
-      + 'm receipt); a second dispatch was trusted and this slice\'s verified findings are from that attempt') },
+    gap: ('verify-slice-retry: slice 0\'s first executor dispatch was untrusted (inline token proof missing from '
+      + 'receipt); a second dispatch was trusted and this slice\'s verified findings are from that attempt') },
   { name: 'transposed keys fail both attempts', receipt: () => ({ input_checksum: transposedProof() }), mismatched: 1,
-    gap: ('verify: UNVERIFIED \u2014 slice 0: slice-input content proof mismatch (receipt fnv1a32:0x3c2b753e, d'
-      + 'ispatched fnv1a32:0x693ddb36) \u2014 the document the script decoded is not the document this stage '
-      + 'dispatched \u2014 retried once after the first attempt failed (slice-input content proof mismatch (r'
-      + 'eceipt fnv1a32:0x3c2b753e, dispatched fnv1a32:0x693ddb36) \u2014 the document the script decoded is '
-      + 'not the document this stage dispatched); 2 of 2 finding(s) marked origin=unknown, surfaced-classific'
-      + 'ation skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: slice-input content proof mismatch (receipt fnv1a32:0x3c2b753e, '
+      + 'dispatched fnv1a32:0x693ddb36) \u2014 the document the script decoded is not the document this stage '
+      + 'dispatched \u2014 retried once after the first attempt failed (slice-input content proof mismatch (receipt '
+      + 'fnv1a32:0x3c2b753e, dispatched fnv1a32:0x693ddb36) \u2014 the document the script decoded is not the document '
+      + 'this stage dispatched); 2 of 2 finding(s) marked origin=unknown, surfaced-classification skipped') },
   { name: 'first input fault survives a differently failing retry', receipt: () => ({ inline_checksum: BAD_PROOF }), failRetry: true,
     mismatched: 1,
-    gap: ('verify: UNVERIFIED \u2014 slice 0: status=failed (boom) \u2014 retried once after the first attempt '
-      + 'failed (slice-input token proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0xc69f8ec8)'
-      + ' \u2014 the token the script decoded is not the token this stage dispatched); 2 of 2 finding(s) mark'
-      + 'ed origin=unknown, surfaced-classification skipped') },
+    gap: ('verify: UNVERIFIED \u2014 slice 0: status=failed (boom) \u2014 retried once after the first attempt failed '
+      + '(slice-input token proof mismatch (receipt fnv1a32:0xdeadbeef, dispatched fnv1a32:0xc69f8ec8) \u2014 the '
+      + 'token the script decoded is not the token this stage dispatched); 2 of 2 finding(s) marked origin=unknown, '
+      + 'surfaced-classification skipped') },
   { name: 'empty input emits the complete zero ledger', empty: true },
   { name: 'wrong delta proof recovers with literal retry nonce', deltaFault: true, trusted: true,
-    gap: ('verify-slice-retry: slice 0\'s first executor dispatch was untrusted (delta content proof mismatch ('
-      + 'receipt fnv1a32:0xdeadbeef, recomputed fnv1a32:0xdca84eaa) \u2014 the echoed values are not the ones'
-      + ' the script wrote); a second dispatch was trusted and this slice\'s verified findings are from that '
-      + 'attempt') },
+    gap: ('verify-slice-retry: slice 0\'s first executor dispatch was untrusted (delta content proof mismatch (receipt '
+      + 'fnv1a32:0xdeadbeef, recomputed fnv1a32:0xdca84eaa) \u2014 the echoed values are not the ones the script '
+      + 'wrote); a second dispatch was trusted and this slice\'s verified findings are from that attempt') },
 ];
 for (const row of LEDGER_ROWS) {
   test(`input-proof ledger: ${row.name}`, async () => {
@@ -329,33 +317,33 @@ const bulk = (prefix, length, chars) => Array.from({ length }, (_, i) => ({
 }));
 const FANOUT_ROWS = [
   { name: 'count bound advises raising slice size', findings: bulk('COUNT', 130, 800),
-    gap: ('verify_fanout: effective verifySliceSize=25 splits 130 finding(s) into 6 slices (above the 5-slice d'
-      + 'isclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. Raise verifySliceS'
-      + 'ize to reduce fan-out.') },
+    gap: ('verify_fanout: effective verifySliceSize=25 splits 130 finding(s) into 6 slices (above the 5-slice '
+      + 'disclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. Raise verifySliceSize to '
+      + 'reduce fan-out.') },
   { name: 'budget bound advises that raising slice size will not help', findings: bulk('FAT', 60, 4100),
-    gap: ('verify_fanout: effective verifySliceSize=25 splits 60 finding(s) into 6 slices (above the 5-slice di'
-      + 'sclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. The inline characte'
-      + 'r budget bound this split; raising verifySliceSize will not reduce this fan-out.') },
+    gap: ('verify_fanout: effective verifySliceSize=25 splits 60 finding(s) into 6 slices (above the 5-slice '
+      + 'disclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. The inline character '
+      + 'budget bound this split; raising verifySliceSize will not reduce this fan-out.') },
   { name: 'oversize boundary takes precedence over count', findings: [
     ...Array.from({ length: 24 }, (_, i) => ({ id: `A${i}`, origin: 'new' })), BIG,
     ...Array.from({ length: 125 }, (_, i) => ({ id: `B${i}`, origin: 'new' })),
   ], reasons: ['oversize', 'count', 'count', 'count', 'count', null], oversize: 1,
-    gap: ('verify_fanout: effective verifySliceSize=25 splits 150 finding(s) into 6 slices (above the 5-slice d'
-      + 'isclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. An oversize findin'
-      + 'g forced this split; raising verifySliceSize will not reduce this fan-out.') },
+    gap: ('verify_fanout: effective verifySliceSize=25 splits 150 finding(s) into 6 slices (above the 5-slice '
+      + 'disclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. An oversize finding forced '
+      + 'this split; raising verifySliceSize will not reduce this fan-out.') },
   { name: 'budget boundary takes precedence over oversize', findings: [
     ...Array.from({ length: 60 }, (_, i) => ({ id: `FAT${i}`, origin: 'new', description: 'x'.repeat(4100) })), BIG, { id: 'TAIL',
       origin: 'new' },
   ], reasons: ['budget', 'budget', 'budget', 'budget', 'oversize', null], oversize: 1,
-    gap: ('verify_fanout: effective verifySliceSize=25 splits 62 finding(s) into 6 slices (above the 5-slice di'
-      + 'sclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. The inline characte'
-      + 'r budget bound this split; raising verifySliceSize will not reduce this fan-out.') },
+    gap: ('verify_fanout: effective verifySliceSize=25 splits 62 finding(s) into 6 slices (above the 5-slice '
+      + 'disclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. The inline character '
+      + 'budget bound this split; raising verifySliceSize will not reduce this fan-out.') },
   { name: 'last oversize closure does not change count advice', findings: [
     ...Array.from({ length: 150 }, (_, i) => ({ id: `C${i}`, origin: 'new' })), BIG,
   ], reasons: ['count', 'count', 'count', 'count', 'count', 'oversize'], oversize: 1,
-    gap: ('verify_fanout: effective verifySliceSize=25 splits 151 finding(s) into 6 slices (above the 5-slice d'
-      + 'isclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. Raise verifySliceS'
-      + 'ize to reduce fan-out.') },
+    gap: ('verify_fanout: effective verifySliceSize=25 splits 151 finding(s) into 6 slices (above the 5-slice '
+      + 'disclosure threshold) \u2014 up to 12 executor dispatches at 2 attempts per slice. Raise verifySliceSize to '
+      + 'reduce fan-out.') },
 ];
 for (const row of FANOUT_ROWS) {
   test(`fan-out: ${row.name}`, async () => {
@@ -377,17 +365,16 @@ test('sibling-slice substitution keeps every finding and degrades only the subst
   const out = await verifyStage(ctx, verifyInput(findings, { limits: { verifySliceSize: 2 } }));
   assert.equal(out.verified, false);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['F0', 'unknown'], ['F1', 'unknown'], ['F2', 'new'], ['F3', 'new']]);
-  assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 slice 0: delta names a finding this slice did not dispatch (F2) \u2014 ret'
-    + 'ried once after the first attempt failed (status=failed (transient)); 2 of 4 finding(s) marked origi'
-    + 'n=unknown, surfaced-classification skipped')]);
+  assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 slice 0: delta names a finding this slice did not dispatch '
+    + '(F2) \u2014 retried once after the first attempt failed (status=failed (transient)); 2 of 4 finding(s) marked '
+    + 'origin=unknown, surfaced-classification skipped')]);
 });
 
 test('command carries the literal encoded document as one shell word', async () => {
   const ctx = verifyCtx(() => deltaEnvelope(BASE, { nonce: 'n-1.0' }));
   await verifyStage(ctx, verifyInput(BASE));
   const call = ctx.calls[0];
-  assert.equal(inlineOf(call), ('{"findings":[{"id":"F1","file":"a.js","line_start":1,"cross_file_refs":[],"origin":"new"},{"id":"F2"'
-    + ',"file":"b.js","line_start":2,"cross_file_refs":["c.js:9"],"origin":"new"}],"base_branch":"main"}'));
+  assert.equal(inlineOf(call), ('{"findings":[{"id":"F1","file":"a.js","line_start":1,"cross_file_refs":[],"origin":"new"},{"id":"F2","file":"b.js","line_start":2,"cross_file_refs":["c.js:9"],"origin":"new"}],"base_branch":"main"}'));
   assert.deepEqual(argvOf(call), [
     'python3', '/plugin/scripts/verify_findings.py', '--input', '/out/phase4-input-abc123.slice0.json',
     '--input-inline', inlineOf(call), '--output', '/out/phase4-output-abc123.slice0.json',
@@ -437,8 +424,8 @@ test('oversize finding is disclosed without dispatch and leaves the next slice n
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, proven: 1, oversize: 1 });
   assert.deepEqual(ctx.calls.map((call) => call.label), ['verify-slice-0']);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['BIG', 'unknown'], ['OK', 'new']]);
-  assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 finding BIG has encoded length 50130, over VERIFY_INLINE_CHAR_BUDGET=50000'
-    + '; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped')]);
+  assert.deepEqual(out.gaps, [('verify: UNVERIFIED \u2014 finding BIG has encoded length 50130, over '
+    + 'VERIFY_INLINE_CHAR_BUDGET=50000; 1 of 2 finding(s) marked origin=unknown, surfaced-classification skipped')]);
 });
 
 test('delta-only schema: failed executor and retry both carry only deltas', async () => {

@@ -88,13 +88,13 @@ test('T-TITLE: title subject precedence and identity line bytes are exact', () =
   assert.equal(rendered({ prIdentity: null }).split('\n')[0], '# \u2694\uFE0F Code Gauntlet: local changes');
 
   assert.equal(rendered().split('\n')[2],
-    ('Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for [`acme/widget#36`](https://github.com/acme/widge'
-    + 't/pull/36) by Code Gauntlet.'));
+    ('Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for [`acme/widget#36`](https://github.com/acme/widget/pull/36) '
+    + 'by Code Gauntlet.'));
   assert.equal(
     rendered({ prIdentity: { owner: 'group/sub', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff',
       platform: 'gitlab', web_origin: 'http://gitlab.example:8080' } }).split('\n')[2],
-    ('Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for [`group/sub/widget!36`](http://gitlab.example:80'
-      + '80/group/sub/widget/-/merge_requests/36) by Code Gauntlet.'),
+    ('Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for '
+      + '[`group/sub/widget!36`](http://gitlab.example:8080/group/sub/widget/-/merge_requests/36) by Code Gauntlet.'),
   );
   assert.equal(rendered({ prIdentity: null, headShaShort: null }).split('\n')[2], 'Reviewed at 2026-09-02T12:00:00Z by Code Gauntlet.');
   assert.equal(rendered({ prIdentity: null, generatedAt: null }).split('\n')[2], 'Reviewed head `abcdef0` by Code Gauntlet.');
@@ -203,16 +203,16 @@ test('T-PERMALINK: location links are platform-correct, encoded, and fail plain'
       { file: 'docs/my file/caf\u00E9.md', line_start: 10, line_end: 10 },
       { owner: 'group/sub', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' },
     ),
-    ('- **Location:** [`docs/my file/caf\u00E9.md:10`](http://gitlab.example:8080/group/sub/r/-/blob/01234'
-      + '56789abcdef0123456789abcdef01234567/docs/my%20file/caf%C3%A9.md#L10)'),
+    ('- **Location:** [`docs/my '
+      + 'file/caf\u00E9.md:10`](http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/my%20file/caf%C3%A9.md#L10)'),
   );
   assert.equal(
     locationLine(
       { file: 'docs/a.md', line_start: 10, line_end: 12 },
       { owner: 'group/sub', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' },
     ),
-    ('- **Location:** [`docs/a.md:10-12`](http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef01'
-      + '23456789abcdef01234567/docs/a.md#L10-12)'),
+    ('- **Location:** '
+      + '[`docs/a.md:10-12`](http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/a.md#L10-12)'),
   );
   assert.equal(
     locationLine({ file: 'src/a(b).js', line_start: 10, line_end: 10 }),
@@ -937,9 +937,9 @@ test('T-METH-TABLE: table cells collapse newlines and escape pipes', () => {
   });
   assert.ok(report.includes('| Subagent model override | EVERY stage uses model\\|override |'));
   assert.ok(report.includes('| Review scope | Incremental since abc-1 (commits unknown) |'));
-  assert.ok(report.includes(('| Findings pipeline | discovered=4; validate: accepted=3, rejected=1; filter: accepted=2, rejected=1'
-    + '; challenge: accepted=1, rejected=1; merge: per-channel: ndjson=3, text_fallback=1; duplicates resol'
-    + 'ved=1; dropped-no-id=1; truncation warnings=1; validation warnings=2 |')));
+  assert.ok(report.includes(('| Findings pipeline | discovered=4; validate: accepted=3, rejected=1; filter: '
+    + 'accepted=2, rejected=1; challenge: accepted=1, rejected=1; merge: per-channel: ndjson=3, text_fallback=1; '
+    + 'duplicates resolved=1; dropped-no-id=1; truncation warnings=1; validation warnings=2 |')));
   assert.ok(report.includes('| Gaps | 2 |'));
   assert.ok(!report.includes('| Gaps | no write proof'));
 });
@@ -1188,8 +1188,8 @@ test('T-SUMMARY-UNITS: partial groups use delivered representatives and conserve
   const findings = [primary, child, middle, suggestion];
   const partial = renderSummaryBody({ findings, delivered: [child, middle], deliveryCap: 2 });
   assert.equal(partial.split('\n')[0],
-    ('3 reported issues from 4 findings after the gauntlet \u2014 1 critical, 1 high, 1 low. 1 routed as i'
-    + 'mprovement suggestion.'));
+    ('3 reported issues from 4 findings after the gauntlet \u2014 1 critical, 1 high, 1 low. 1 routed as improvement '
+    + 'suggestion.'));
   assert.deepEqual(partial.split('\n').filter(l => l.startsWith('- ')), [
     '- \u{1f4a1} [LOW] `C.js:10` (improvement suggestion): finding C',
     '- \u{1f7e0} [HIGH] `M.js:10`: finding M',
@@ -1203,8 +1203,8 @@ test('T-SUMMARY-UNITS: partial groups use delivered representatives and conserve
   assert.ok(primaryFirst.includes('[CRITICAL] `P.js:10`: finding P'));
   assert.ok(!primaryFirst.includes('finding C'));
   const withheld = renderSummaryBody({ findings: [middle, suggestion], delivered: [], deliveryTier: 'main_only', deliveryCap: 0 });
-  assert.ok(withheld.endsWith(('2 more findings not listed here (over the delivery cap of 0 findings; improvement suggestions held b'
-    + 'ack by delivery tier main_only).')));
+  assert.ok(withheld.endsWith(('2 more findings not listed here (over the delivery cap of 0 findings; improvement '
+    + 'suggestions held back by delivery tier main_only).')));
   const tierOnly = renderSummaryBody({ findings: [suggestion], delivered: [], deliveryTier: 'main_only', deliveryCap: 6 });
   assert.ok(tierOnly.endsWith('1 more finding not listed here (improvement suggestions held back by delivery tier main_only).'));
   const alias = { ...suggestion, report_tag: undefined, report_destination: 'suggestion' };
@@ -1300,14 +1300,13 @@ const DIMENSION_AGENTS = ['bug-detector', 'security-reviewer', 'cross-file-impac
   'conventions-and-intent', 'type-design-analyzer', 'code-simplifier'];
 const DIMENSION_LABELS = ['Correctness & Error Handling', 'Security', 'Cross-file Impact', 'Test Coverage',
   'Conventions & Intent', 'Type Design', 'Code Simplification'];
-const SKIPPED_TABLE = '| Dimension | Agent | Findings | Notes |\n|-----------|-------|----------|-------|\n'
-  + '| Correctness & Error Handling | bug-detector | \u2014 | Skipped \u2014 not dispatched in this run |\n'
-  + '| Security | security-reviewer | \u2014 | Skipped \u2014 not dispatched in this run |\n'
-  + '| Cross-file Impact | cross-file-impact | \u2014 | Skipped \u2014 not dispatched in this run |\n'
-  + '| Test Coverage | test-analyzer | \u2014 | Skipped \u2014 not dispatched in this run |\n'
-  + '| Conventions & Intent | conventions-and-intent | \u2014 | Skipped \u2014 not dispatched in this run |\n'
-  + '| Type Design | type-design-analyzer | \u2014 | Skipped \u2014 not dispatched in this run |\n'
-  + '| Code Simplification | code-simplifier | \u2014 | Skipped \u2014 not dispatched in this run |';
+const SKIPPED_TABLE = '| Dimension | Agent | Findings | Notes |\n|-----------|-------|----------|-------|\n| '
+  + 'Correctness & Error Handling | bug-detector | \u2014 | Skipped \u2014 not dispatched in this run |\n| Security | '
+  + 'security-reviewer | \u2014 | Skipped \u2014 not dispatched in this run |\n| Cross-file Impact | cross-file-impact '
+  + '| \u2014 | Skipped \u2014 not dispatched in this run |\n| Test Coverage | test-analyzer | \u2014 | Skipped \u2014 '
+  + 'not dispatched in this run |\n| Conventions & Intent | conventions-and-intent | \u2014 | Skipped \u2014 not '
+  + 'dispatched in this run |\n| Type Design | type-design-analyzer | \u2014 | Skipped \u2014 not dispatched in this '
+  + 'run |\n| Code Simplification | code-simplifier | \u2014 | Skipped \u2014 not dispatched in this run |';
 const DIMENSION_GOLDEN = { count: '0', note: 'Clean \u2014 no findings returned' };
 const DIMENSION_ROWS = [
   { name: 'no argument renders full skipped table', absent: true, text: SKIPPED_TABLE },
