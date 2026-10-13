@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v3.42.29 (2026-10-13)
+
+### Bug Fixes
+
+- Report lines outside the Summary pass the outbound line contract
+  ([#492](https://github.com/liatrio-labs/claude-code-gauntlet/pull/492),
+  [`205de2e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/205de2e87fa5df9d5368370a372bb586cebb55eb))
+
+### Refactoring
+
+- Finish splitting stages.js; merge takes structured findings
+  ([#490](https://github.com/liatrio-labs/claude-code-gauntlet/pull/490),
+  [`2bd4047`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2bd404761c7f69fe5fd9cb48a1ed7ae7eff463ab))
+
+- One generated-target engine, generators and the style hook as Commands
+  ([#486](https://github.com/liatrio-labs/claude-code-gauntlet/pull/486),
+  [`b00dbac`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b00dbacd019a8970a014f419303771bc48a47f48))
+
+- Split the workflow args, filter and report modules; report lines take the outbound contract
+  ([#492](https://github.com/liatrio-labs/claude-code-gauntlet/pull/492),
+  [`205de2e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/205de2e87fa5df9d5368370a372bb586cebb55eb))
+
+- Verify wire and verify stage out of stages.js
+  ([#487](https://github.com/liatrio-labs/claude-code-gauntlet/pull/487),
+  [`4759cc2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4759cc20821529711ed12bbb673405d64d3bf377))
+
+
 ## v3.42.28 (2026-10-09)
 
 ### Bug Fixes
