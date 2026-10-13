@@ -1,9 +1,10 @@
-"""Pin the registered workflow name across the skill's dispatch surfaces."""
-
 import json
 import re
-import unittest
 from pathlib import Path
+
+import pytest
+
+from tests.support.repository import workflow_header
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = REPO_ROOT / "skills"
@@ -28,36 +29,49 @@ def _registered_workflow_name():
     plugin = json.loads(
         (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
-    source = (REPO_ROOT / "workflows" / "src" / "pipeline_entry.js").read_text(
-        encoding="utf-8"
+    return f"{plugin['name']}:{workflow_header(REPO_ROOT)['name']}"
+
+
+@pytest.mark.parametrize("path", WORKFLOW_FILES, ids=["skill", "dispatch", "recovery"])
+def test_dispatch_blocks_use_derived_registered_name(path):
+    expected = f'name: "{_registered_workflow_name()}"'
+    blocks = _workflow_blocks(path.read_text(encoding="utf-8"))
+    assert blocks, f"no Workflow( fenced block in {path}"
+    for block in blocks:
+        assert expected in block, path
+
+
+def test_skill_workflow_blocks_never_pass_pipeline_script_path():
+    offenders = [
+        str(path)
+        for path in SKILLS_ROOT.rglob("*.md")
+        for block in _workflow_blocks(path.read_text(encoding="utf-8"))
+        if "scriptPath" in block and "pipeline.js" in block
+    ]
+    assert offenders == []
+
+
+@pytest.mark.parametrize(
+    "header, expected",
+    [
+        pytest.param(
+            "export const meta = { name: 'first-workflow', description: 'First' };",
+            {"name": "first-workflow", "description": "First"},
+            id="first-metadata-name",
+        ),
+        pytest.param(
+            "export const meta = { name: 'second-workflow', description: 'Second' };",
+            {"name": "second-workflow", "description": "Second"},
+            id="distinct-metadata-name",
+        ),
+    ],
+)
+def test_workflow_header_reads_runtime_metadata(tmp_path, header, expected):
+    (tmp_path / "workflows").mkdir()
+    # A body with top-level return must never be imported as module metadata.
+    bundle = header + "\nreturn await run();\n"
+    (tmp_path / "workflows/build.js").write_text(
+        "export function build() { return " + json.dumps(bundle) + "; }\n",
+        encoding="utf-8",
     )
-    match = re.search(
-        r"export\s+const\s+meta\s*=\s*\{\s*name:\s*['\"]([^'\"]+)['\"]",
-        source,
-    )
-    if match is None:
-        raise AssertionError("pipeline entry has no readable meta.name literal")
-    return f"{plugin['name']}:{match.group(1)}"
-
-
-class WorkflowInvocationNameTest(unittest.TestCase):
-    def test_dispatch_blocks_use_derived_registered_name(self):
-        registered_name = _registered_workflow_name()
-        expected = f'name: "{registered_name}"'
-        for path in WORKFLOW_FILES:
-            blocks = _workflow_blocks(path.read_text(encoding="utf-8"))
-            self.assertTrue(blocks, f"no Workflow( fenced block in {path}")
-            for block in blocks:
-                self.assertIn(expected, block, path)
-
-    def test_skill_workflow_blocks_never_pass_pipeline_script_path(self):
-        offenders = []
-        for path in SKILLS_ROOT.rglob("*.md"):
-            for block in _workflow_blocks(path.read_text(encoding="utf-8")):
-                if "scriptPath" in block and "pipeline.js" in block:
-                    offenders.append(str(path))
-        self.assertEqual(offenders, [])
-
-
-if __name__ == "__main__":
-    unittest.main()
+    assert workflow_header(tmp_path) == expected
