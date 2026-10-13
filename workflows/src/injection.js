@@ -1,9 +1,6 @@
-// Injection patterns, Unicode folding, and finding sanitization.
+// Owns injection rule data, explicit Unicode folding, and record and prose sanitization.
 import { WS_TRIM_RE, asText, asConfidence, deepFreeze } from './wire.js';
 import { INJECTION_STRIPPED_PROSE_FIELDS } from './registry.js';
-
-// --- Filter: injection artifact detection -----------------------------------
-
 
 export const INJECTION_TITLE_PATTERNS = deepFreeze([
   /\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
@@ -13,7 +10,6 @@ export const INJECTION_TITLE_PATTERNS = deepFreeze([
   /\bPlaceholder[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
 ]);
 
-// Match opening finding/example tags with attributes and placeholders with a clear noun.
 const INJECTION_BODY_PATTERNS = deepFreeze([
   /<finding(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
   /<example(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
@@ -35,14 +31,7 @@ const INJECTION_URL_PATTERNS = deepFreeze([
   /\bdownload[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
 ]);
 
-// Encoded payload patterns -- base64 or hex blobs in findings are injection
-// artifacts. Each shape is now two directive-gated entries: a before-branch
-// requiring a decode-family verb ahead of the blob, an after-branch requiring
-// decode/execute sink syntax after it. A bare encoded-looking run with no
-// decode directive nearby (a commit SHA, an opaque config token, a padded
-// identifier) no longer matches either branch -- both measured a false-fire
-// on ordinary review/DevOps prose where a generic verb (run/curl/wget)
-// happened to sit near an unrelated hash-shaped token.
+// Require a decode directive or execution sink near encoded text so ordinary hashes and tokens stay inert.
 const INJECTION_ENCODED_PATTERNS = deepFreeze([
   /\b(?:decode|base64|atob|b64decode)\b[^\x00]{0,40}[A-Za-z0-9+\/]{40,}={0,2}\b/i,
   /\b[A-Za-z0-9+\/]{40,}={0,2}\b[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:sh|bash|zsh)\b|base64[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-d\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b)/i,
@@ -50,12 +39,7 @@ const INJECTION_ENCODED_PATTERNS = deepFreeze([
   /(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:xxd|sh|bash)\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b|-r[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-p\b)/i,
 ]);
 
-// Bypass / auto-approve instruction patterns. auto-approve is now two
-// grammatically-gated entries (a determiner + PR/MR/commit object, or an
-// "and <verb>" continuation) instead of a bare phrase match -- the bare
-// phrase false-fired on third-person policy prose ("auto-approve changes to
-// lockfiles should be gated behind review") where "auto-approve" is the
-// grammatical subject, not an imperative.
+// Gate auto-approve on imperative grammar so third-person policy prose is not treated as an instruction.
 const INJECTION_BYPASS_PATTERNS = deepFreeze([
   /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+review\b/i,
   /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|these|the|it|my|your)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:pr|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|mr|merge[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|changes?|commit)\b/i,
@@ -278,7 +262,6 @@ export const INVISIBLE_STRIP = deepFreeze(new Set(
   [...INVISIBLE_STRIP_PACKED].map((c) => c.codePointAt(0)),
 ));
 
-// Fold lookalikes and remove invisible code points before injection scanning.
 export function foldConfusables(text) {
   let out = '';
   for (const ch of text) {
@@ -289,6 +272,7 @@ export function foldConfusables(text) {
   return out;
 }
 
+// Prefer raw matches so diagnostics name the original trigger before any Unicode-folded trigger.
 function firstMatch(text, folded, patterns = INJECTION_TITLE_PATTERNS) {
   for (const rx of patterns) {
     if (rx.test(text)) return rx.source;
@@ -326,12 +310,12 @@ export const SUGGESTION_SETS = deepFreeze(
   INJECTION_RULES.filter((row) => row.prose).map((row) => [row.label, row.patterns]),
 );
 
-// Apply the same normalized line and character bounds used by the delivery fence.
+// Reject oversized fixes before delivery can try to render a suggestion fence.
 export const FIX_MAX_LINES = 100;
 
 export const FIX_MAX_CHARS = 8000;
 
-// Normalize one surrounding fence before measuring suggested fix code.
+// Discount only one terminal LF when measuring delivery bounds; surrounding fences remain part of the code.
 function normalizeFixCodeForBound(code) {
   return code.endsWith('\n') ? code.slice(0, -1) : code;
 }
@@ -360,6 +344,7 @@ function stripInjectedProseFields(finding, rules) {
       const m = firstMatch(value, valueFolded, row.patterns);
       if (m) {
         kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(m)}`);
+        // First field and rule win so propagated fix-removal reasons remain deterministic.
         if (firstPatternStrip === null) firstPatternStrip = [field, row.label];
         break;
       }
@@ -379,7 +364,7 @@ function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
     return stripInjectionField(finding, 'suggested_fix_code', 'suggested_fix_code exceeds the delivery bound');
   }
   if (firstPatternStrip !== null) {
-    // Clear suggested fix code when its accompanying prose was stripped.
+    // Stripped prose taints its accompanying fix even when the code itself passes the delivery bounds.
     const [propField, propPhrase] = firstPatternStrip;
     return stripInjectionField(finding, 'suggested_fix_code', `${propField} carried ${propPhrase}`);
   }
@@ -391,7 +376,7 @@ export function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
   return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
 }
 
-// Scan folded and raw text in a fixed order, then deduplicate by normalized title and location.
+// Rule order fixes diagnostic reason order; replay scans stage outputs without reapplying discovery's short-body heuristic.
 function injectionScanCore(findings, includeH4, rules) {
   const kept = [];
   const eliminated = [];
@@ -424,6 +409,7 @@ function injectionScanCore(findings, includeH4, rules) {
           reasons.push(`${row.label}: ${JSON.stringify(filepath)}`);
         }
       } else if (row.kind === 'duplicate') {
+        // Ordered tuple encoding keeps title and location boundaries unambiguous for duplicate detection.
         const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, finding.line_start]);
         if (seenSignatures.has(sig)) {
           reasons.push(`${row.label} ${JSON.stringify(seenSignatures.get(sig))}`);
@@ -434,6 +420,7 @@ function injectionScanCore(findings, includeH4, rules) {
     }
 
     if (reasons.length) {
+      // Preserve eliminated prose as forensic input; only survivors receive field stripping.
       const elim = { ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') };
       eliminated.push(elim);
     } else {

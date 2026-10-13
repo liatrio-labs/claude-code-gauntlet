@@ -1,4 +1,4 @@
-// Methodology knobs, receipt validation, and configuration derivation.
+// Owns methodology knob descriptors, receipt validation, and receipt-driven configuration derivation.
 import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE, LIGHT_SCOPE_MAX_CHANGED_LINES, KNOB_VOCAB } from './registry.js';
 import { dottedValue, isPlainObject, deepFreeze } from './wire.js';
 
@@ -64,18 +64,11 @@ export function matchesRule(rule, value, mode) {
   return false;
 }
 
-// The ONE place the light-scope eligibility rule lives — behavior-preserving copy of the
-// prose rule SKILL.md used to state at assembly time (phase2-triage.md 2e "Light Review for
-// Trivial PRs"): every riskTable entry classified 'low' AND total changedLines is below
-// LIGHT_SCOPE_MAX_CHANGED_LINES. Exported
-// so validateArgs (below, for the pre-dispatch coherence guard) and discover.js's
-// deriveAgentFlags (the actual flag derivation) call the SAME rule rather than each carrying
-// its own copy that could drift. Pure — no host globals.
+// Validation and dispatch share this eligibility predicate so their scope decisions cannot drift.
 export function computeLightEligible(riskTable, changedLines) {
   if (!Array.isArray(riskTable)) return false;
   if (typeof changedLines !== 'number' || !(changedLines < LIGHT_SCOPE_MAX_CHANGED_LINES)) return false;
-  // .every on an empty array is vacuously true — a PR with zero changed files/lines is
-  // trivially "every file is low risk" and is eligible for light scope, same as one file.
+  // An empty diff is eligible: there are no files whose risk would exclude light scope.
   return riskTable.every((entry) => entry && entry.risk === 'low');
 }
 

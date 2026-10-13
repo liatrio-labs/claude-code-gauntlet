@@ -1,5 +1,5 @@
-// Line fields use outbound containment, and repository spans preserve copyable normalized text inside dynamic delimiters.
-// Prose keeps local Markdown, while evidence and diagnostic receipts keep their own fence grammars.
+// Owns local report rendering: multiline prose keeps Markdown, while evidence and receipts keep their fence grammars.
+// Line fields use the outbound line contract, and repository spans preserve copyable normalized text in dynamic delimiters.
 import { rankFindings } from './applyChallenges.js';
 import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
 import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
@@ -11,7 +11,7 @@ import { longestBacktickRun, deepFreeze } from './wire.js';
 import { reportAsText, foldInline, foldProse, foldEvidence, oneLine, outboundBase, prepareLine } from './outboundText.js';
 import { prepareSummaryTitle, preparedCodeSpan, outboundTildeRuns } from './outboundText.js';
 
-// Omit fields that the report renderer cannot present safely.
+// Delivery owns committable fix fences; the report must not expose them as unvalidated prose extras.
 const REPORT_EXCLUDED_FIELDS = deepFreeze([
   'suggested_fix_code',
   'suggested_fix_code_removed_by',
@@ -28,21 +28,13 @@ export const REVIEW_SCOPE_FALLBACK_RULES = deepFreeze([
     reason: 'history rewritten (recorded SHA is not an ancestor)' },
 ]);
 
-
-// Findings with a missing/unknown `dimension` are silently excluded from every row's
-// count: the discovery contracts pin `dimension` to one of the nine registry names, so
-// an unmapped value here is belt-and-braces, never a live path.
-
 function dimensionOwnerMap(dimensions) {
   const owner = {};
   for (const d of dimensions) owner[d.dimension] = d.agentType;
   return owner;
 }
 
-// "2 high, 1 low" — counted over the agent's HIGH-CONFIDENCE findings only, in the closed
-// severity order. The schema keeps severity as a string by the recorded fail-open decision,
-// so the renderer maps any value outside the four labels to low. Empty string when no
-// finding in the row carries a severity value at all.
+// Severity is an open wire string, so display unknown values as low rather than dropping the finding.
 function severityBreakdown(rowFindings) {
   const counts = new Map();
   for (const f of rowFindings) {
@@ -144,9 +136,7 @@ function consolidateForReport(findings) {
     } else group.corroborators.push(f);
   }
   return groups.map((group) => {
-    // Reachable only for hand-assembled payloads: filterFindings.js always
-    // stamps exactly one consolidation_primary per group. If a caller's data
-    // has none, fall back to the first-seen member rather than surfacing `null`.
+    // A delivered subset may omit the stamped primary; use its first remaining member instead of surfacing null.
     const primary = group.primary || group.corroborators.shift();
     if (!group.corroborators.length) return primary;
     return {
@@ -162,8 +152,7 @@ function consolidateForReport(findings) {
   });
 }
 
-// Fields with a dedicated placement below. Every other registry-declared field is
-// rendered through reportExtraFields, so declared-but-unrendered cannot recur.
+// Derive extras from the schema so a newly declared field cannot silently lack a report placement.
 
 export function reportExtraFields(dimensions = DIMENSIONS) {
   const declared = new Set(Object.keys(FINDING_PROP_TYPES));
@@ -247,8 +236,7 @@ function coerceReportFinding(finding, severities) {
   return out;
 }
 
-// Exported for the run seam that ranks the selected delivery before invoking renderReport.
-// Keeping this projection here means replayed malformed findings cannot reach a raw rankKey.
+// Project replayed field types before ranking so malformed values and throwing getters cannot reach raw ranking code.
 export function coerceReportFindings(value, severities = SEVERITY_ORDER) {
   if (!Array.isArray(value)) return [];
   return value.map((finding) => (
@@ -264,13 +252,12 @@ export function normalizeReportSeverity(raw, severities = SEVERITY_ORDER) {
   return severities.includes(normalized) ? normalized : 'low';
 }
 
-// 'failure_scenario' -> 'Failure scenario'
 function fieldLabel(key) {
   const words = String(key).replaceAll('_', ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-// A fence at least one backtick longer than the longest run inside text, minimum 3.
+// Size the evidence fence beyond every embedded backtick run so payload text cannot close it.
 function fenceFor(text) {
   return '`'.repeat(Math.max(3, longestBacktickRun(reportAsText(text)) + 1));
 }
@@ -281,9 +268,8 @@ function inline(value, prefixLimit) {
   return prepareLine(foldInline(text), true);
 }
 
-// Model prose is deliberately multiline, but a model-controlled line must not become a
-// second code-owned section heading. Evidence is excluded because it is placed in a fenced
-// block and must remain byte-for-byte verbatim.
+// Multiline model prose must not forge code-owned section headings.
+// Evidence bypasses this rename because its fence contains the literal payload.
 function safeProse(value) {
   const parts = reportAsText(value).split(/(\r\n|\r|\n)/);
   let output = '';
@@ -292,8 +278,7 @@ function safeProse(value) {
     const boundary = parts[index + 1] || '';
     const comparable = line.replace(/[ \t]+$/, '');
     if (CODE_OWNED_HEADINGS.includes(comparable)) {
-      // Preserve original CR bytes on untouched prose. A renamed heading drops
-      // only its CR and keeps an LF boundary, so the next model line stays separate.
+      // Preserve prose delimiters unless renaming a heading; keep a line boundary so adjacent model lines cannot join.
       const renamedBoundary = boundary === '\r\n' || boundary === '\r' ? '\n' : boundary;
       output += `${comparable} (finding text)${renamedBoundary}`;
     } else {
@@ -321,7 +306,7 @@ function isPresent(value) {
 
 const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)];
 
-// Evidence and code-owned spans preserve literal bytes; neutralize comment openers everywhere else.
+// Preserve evidence and prepared spans; neutralize comment openers elsewhere so prose cannot hide later sections.
 function reportBuilder() {
   let text = '';
   const protectedRanges = [];
@@ -430,6 +415,7 @@ function positiveLine(value) {
 function locationUrl(finding, permalinks) {
   if (!permalinks.blobBase || !isPresent(finding.file)) return null;
   const rawFile = reportAsText(finding.file);
+  // Refuse a link when normalization changes its path so the displayed location cannot disagree with the target.
   if (outboundBase(rawFile) !== rawFile) return null;
   if (oneLine(rawFile) !== rawFile) return null;
   const segments = rawFile.split('/');
@@ -631,8 +617,7 @@ function summaryIndex(rawFindings, findingsView, input) {
   const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding)).map((finding) => (
     [reportUnitKey(finding, originalByProjected.get(finding)), finding]
   )));
-  // Keep the report's group order, but use the delivered subset's primary (or its
-  // first member when selection omitted the primary), just as the poster does.
+  // Keep report group order but select the delivered subset's primary so the index agrees with posted issues.
   const indexed = reported.map((finding) => deliveredUnits.get(
     reportUnitKey(finding, originalByProjected.get(finding)),
   )).filter(Boolean);
@@ -737,9 +722,8 @@ function countSummary(value) {
   return entries.length ? entries.join(', ') : 'none';
 }
 
-// The detector facts are the only source for an incremental-to-full explanation. Keep the
-// precedence in one table: an unresolvable SHA and rewritten history both imply no advanced
-// head, but they are materially different operator outcomes.
+// Detector facts own fallback explanations; precedence distinguishes unresolved SHAs from rewritten history
+// even when both report that the head has not advanced.
 export function reviewScopeFallbackReason(scope, rules = REVIEW_SCOPE_FALLBACK_RULES) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)
     || scope.kind !== 'full' || scope.requested !== 'incremental'
@@ -838,7 +822,7 @@ function renderMethodology(builder, input, rawFindings, knobs) {
   builder.add('| Aspect | Details |');
   builder.add('|--------|---------|');
   for (const [aspect, details] of methodologyRows(input, rawFindings)) {
-    // Component containment keeps assembled code-owned cells readable without truncating pipeline facts.
+    // Contain each interpolated component while leaving assembled pipeline facts uncapped.
     builder.add(`| ${tableCell(aspect, true)} | ${tableCell(details, true)} |`);
   }
   builder.add();
@@ -846,8 +830,6 @@ function renderMethodology(builder, input, rawFindings, knobs) {
     + 'by the orchestrator at delivery.');
 }
 
-// Complete report.md with no trailing newline. Pure and total for absent/empty input:
-// no clock, dispatch, prompt, schema, segmentation or fallback participates.
 export function renderReport(input, knobs = KNOB_REGISTRY) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const rawFindings = coerceReportFindings(inp.findings);

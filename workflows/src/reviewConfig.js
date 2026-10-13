@@ -1,4 +1,4 @@
-// REVIEW.md parsing, scoped configuration, and exclusion matching.
+// Owns REVIEW.md parsing, scoped configuration layers, and literal exclusion matching.
 import { WS_TRIM_RE, escapeRegExp, asText, deepFreeze } from './wire.js';
 import { REVIEW_SETTING_KEYS } from './registry.js';
 
@@ -18,12 +18,10 @@ function stripMatchingQuotes(item) {
   return item;
 }
 
-// Split all three newline spellings, treating CRLF as one break.
 export function splitReviewLines(text) {
   return text.split(/\r\n|\r|\n/);
 }
 
-// Review block patterns accept every character except NUL in the block body.
 const REVIEW_BLOCK_PATTERNS = deepFreeze([
   /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet(?:[^\n]*)?\n([^\x00]*?)```/i,
   /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
@@ -60,13 +58,12 @@ export const REVIEW_CONFIG_RULES = deepFreeze([
   { kind: 'ignore', pattern: REVIEW_IGNORE_RE, itemPattern: REVIEW_IGNORE_ITEM_RE },
 ]);
 
-// Parse REVIEW.md text; only keys present in the selected config block enter the result.
 export function parseReviewMd(text, rules = REVIEW_CONFIG_RULES) {
   const config = { ignore: [] };
 
   if (text === undefined || text === null) return config;
 
-  // Prefer code-gauntlet fenced and comment blocks, then legacy deep-review blocks.
+  // Config block precedence makes code-gauntlet settings authoritative when multiple dialects coexist.
   let blockText = '';
   for (const row of rules) {
     if (row.kind !== 'block') continue;
@@ -77,7 +74,6 @@ export function parseReviewMd(text, rules = REVIEW_CONFIG_RULES) {
     }
   }
 
-  // Fall back to the whole file when there is no config block.
   if (!blockText) blockText = text;
 
   // Anchor each key to a real line start so commented examples stay inert.
@@ -91,7 +87,6 @@ export function parseReviewMd(text, rules = REVIEW_CONFIG_RULES) {
     } else if (row.kind === 'severity') {
       config[row.key] = m[1].toLowerCase();
     } else if (row.kind === 'ignore') {
-      // ignore: consecutive "-"-led lines, indentation-tolerant (spaces or tabs).
       for (const line of splitReviewLines(m[1])) {
         const item = line.replace(row.itemPattern, '').replace(WS_TRIM_RE, '');
         if (item) config.ignore.push(stripMatchingQuotes(item));
@@ -102,9 +97,8 @@ export function parseReviewMd(text, rules = REVIEW_CONFIG_RULES) {
   return config;
 }
 
-// A REVIEW.md entry owns the directory containing its final REVIEW.md segment.
-// Keep layer construction separate from file lookup so the resolver preserves the
-// raw discovery shape while the filter can derive a fresh effective view per finding.
+// Separate layer construction from lookup so raw discovery keeps its shape
+// and each finding receives a fresh effective configuration.
 function reviewScopeDir(path) {
   const slash = path.lastIndexOf('/');
   return slash < 0 ? '' : path.slice(0, slash);
@@ -154,9 +148,7 @@ export function scopeMatchesFile(scope, file) {
 }
 
 export function configForFile(config, file, keys = REVIEW_SETTING_KEYS) {
-  // Build a flat, non-mutating view: root settings and ignores are followed by
-  // matching subtree layers in structural depth order, so array order cannot
-  // let a shallower layer override a deeper one.
+  // Apply subtree layers in structural depth order so input array order cannot let a shallower layer win.
   const source = config || {};
   // The args waist guarantees the ignore shape is an array at this boundary.
   const view = { ignore: [...(source.ignore === undefined ? [] : source.ignore)] };
@@ -179,9 +171,6 @@ export function configForFile(config, file, keys = REVIEW_SETTING_KEYS) {
   return view;
 }
 
-// --- Exclusions loader -------------------------------------------------------
-
-// Parse exclusion text with the same newline handling as REVIEW.md.
 export function loadExclusions(text) {
   if (text === undefined || text === null) return [];
 
@@ -231,6 +220,7 @@ export function applyExclusions(findings, exclusionPatterns, config = null, keys
       }
     }
 
+    // An empty first match masks later exclusions but cannot itself eliminate a finding.
     if (matchedPattern) {
       eliminated.push({
         ...finding,

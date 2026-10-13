@@ -1,4 +1,4 @@
-// Outbound text normalization, containment, and display folding.
+// Owns outbound line normalization and containment, prepared code spans, and report display folding.
 import { REPORT_FOLD_LIMITS } from './registry.js';
 import { longestBacktickRun, deepFreeze } from './wire.js';
 
@@ -18,10 +18,7 @@ const OUTBOUND_NAMED_ENTITIES = deepFreeze({
   NonBreakingSpace: ' ',
 });
 
-// Replayed checkpoints are object-shaped but may predate the finding schema's field types.
-// Coerce at this renderer boundary so every downstream report read sees the same safe view:
-// text fields stringify non-null values, null/undefined text is omitted, and confidence keeps
-// only finite numbers. The catch arms make even hostile object coercion total.
+// Rendering must accept replayed field types and hostile coercion without throwing; filtering keeps its stricter text policy.
 
 export function reportAsText(value) {
   if (value === undefined || value === null) return '';
@@ -49,7 +46,6 @@ export function foldInline(text, limit, limits = REPORT_FOLD_LIMITS) {
   return `${codePointPrefix(value, limit)} [folded: ${length - limit} more characters]`;
 }
 
-// Twin of open_fence in gauntlet.markdown.
 export function openProseFence(text) {
   const value = reportAsText(text);
   let state = null;
@@ -74,6 +70,7 @@ export function openProseFence(text) {
     }
     if (run !== null && run.length >= 3
       && !(run.char === '`' && line.slice(run.end).includes('`'))) {
+      // Keep UTF-16 offsets because callers use them with String.slice, even when fold budgets count code points.
       state = [run.char, run.length, offset + run.indent];
     }
   }
@@ -96,7 +93,6 @@ export function proseFenceCloser(prefix) {
   return state === null ? '' : state[0].repeat(state[1]);
 }
 
-// Twin of fold_review_body in gauntlet.delivery.fold.
 export function foldProse(text, limit) {
   const value = reportAsText(text);
   const length = codePointLength(value);
@@ -149,7 +145,6 @@ export function foldEvidence(text, limits = REPORT_FOLD_LIMITS) {
   return value;
 }
 
-// Bullet values, heading interpolations and the identity line are single-line positions.
 export function oneLine(value) {
   return reportAsText(value).replace(/[\r\n]+/g, ' ').replace(/ +/g, ' ').trim();
 }
@@ -360,6 +355,7 @@ function outboundCodeSpans(line, index = outboundTickRunIndex(line)) {
 }
 
 export function outboundDefinitions(line, forceColon = false) {
+  // Forced guarding covers interpolated labels that can become definitions when embedded in surrounding Markdown.
   const guardColon = forceColon || /\]\\?\(/.test(line);
   if (guardColon) {
     line = line.replace(/\](\\*):/g, (match) => `${match.slice(0, -1)}\uFF1A`);

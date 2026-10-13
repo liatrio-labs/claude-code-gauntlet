@@ -299,7 +299,7 @@ const AGENT_LABELS = deepFreeze({
   'code-gauntlet:type-design-analyzer': 'Type Design',
   'code-gauntlet:code-simplifier': 'Code Simplification',
 });
-const BRAND_MARK = '\u2694\uFE0F';   // CROSSED SWORDS U+2694 + VS16 U+FE0F
+const BRAND_MARK = '\u2694\uFE0F';
 const BRAND_NAME = 'Code Gauntlet';
 const SEVERITY_EMOJI = deepFreeze({
   critical: '\u{1F534}', high: '\u{1F7E0}', medium: '\u{1F7E1}', low: '\u{1F4A1}',
@@ -2000,7 +2000,7 @@ function consolidateCrossAgent(findings) {
   let consolidatedCount = 0;
   for (const group of groups.values()) {
     const agentsInGroup = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
-    if (group.length < 2 || agentsInGroup.size < 2) continue; // no stamps
+    if (group.length < 2 || agentsInGroup.size < 2) continue;
     const file = pyGet(group[0], 'file', '');
     const bucket = lineBucket(group[0].line_start, LINE_PROXIMITY);
     const consolidationKey = `${file}:${bucket}`;

@@ -1,9 +1,7 @@
-// Wire primitives shared by more than one stage: checksums, cloning, shell quoting and
-// integer coercion. A leaf module, so any stage can import it without a cycle.
+// Owns shared wire coercion, checksums, cloning, shell quoting, and freezing primitives.
+// Keep orchestration out so consumers can import these mechanisms without a cycle.
 
-// The content-proof checksum, computed identically by scripts/gauntlet/jsjson.py. The
-// sandbox has no TextEncoder or Buffer, so it walks UTF-16 code units (a surrogate pair
-// counts twice on both sides); Math.imul is a language builtin, not a host global.
+// The sandbox has no byte encoder, so content checksums use UTF-16 code units; surrogate pairs count twice.
 export function fnv1a32(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -13,9 +11,7 @@ export function fnv1a32(s) {
   return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
 }
 
-// Strip a BOM and at most one trailing newline before checksumming: the Write tool may
-// add either, and gauntlet.jsjson.normalize_content applies the same tolerance. Two
-// trailing newlines are a real difference.
+// The Write tool may add a BOM or one newline; tolerate those without hiding additional trailing newlines.
 export function normalizeForChecksum(s) {
   let out = typeof s === 'string' ? s : '';
   if (out.charCodeAt(0) === 0xfeff) out = out.slice(1);
@@ -24,17 +20,13 @@ export function normalizeForChecksum(s) {
   return out;
 }
 
-// The sandbox has no structuredClone. Findings are JSON-safe by construction, so a JSON
-// round-trip is a faithful deep copy.
+// The sandbox has no structuredClone. JSON-safe findings permit a faithful JSON round-trip copy.
 export function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-// The path of the first number the Python twin could not spell identically, or null.
-// repr(float) and Number#toString disagree (1e-7 against 1e-07, 90 against 90.0), and
-// scripts/gauntlet/jsjson.py refuses such numbers instead of porting the spelling, so
-// this applies the same rule one step earlier, where refusing still has a fallback.
-// An integer outside the safe range is refused too: JS has already parsed it lossily.
+// Cross-runtime JSON number spellings can differ, so content proofs admit only safe integers.
+// Reject before persistence while a fallback is available; unsafe integers may already be rounded.
 export function firstUnsafeNumber(root, rootPath) {
   const stack = [[root, rootPath]];
   while (stack.length > 0) {
@@ -58,45 +50,38 @@ export function firstUnsafeNumber(root, rootPath) {
   return null;
 }
 
-// One shell word. Ordinary path characters stay bare, so a plain command is unchanged;
-// anything else is POSIX single-quoted, which the sandbox's auto-approval parse reads as
-// one raw string. The class is shlex.quote's. An embedded single quote parses as a
-// concatenation, so auto-approval is not guaranteed on that edge.
+// POSIX quoting keeps unsafe tokens in one shell word for command parsing.
+// Embedded quotes require concatenation, which may prevent automatic approval.
 const SHELL_SAFE_RE = /^[A-Za-z0-9_%+=:,.\/@-]+$/;
 export function shellWord(tok) {
-  // An absent optional field contributes nothing.
   if (tok == null) return '';
   const s = String(tok);
   if (s === '' || SHELL_SAFE_RE.test(s)) return s;
   return `'${s.replaceAll("'", `'\\''`)}'`;
 }
 
-// Trim the union whitespace class at both ends of titles and review lines.
+// Use the union whitespace class so wire trimming accepts both runtime whitespace vocabularies.
 const WIRE_TRIM_CLASS = String.raw`\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff`;
 export const WS_TRIM_RE = new RegExp(`^[${WIRE_TRIM_CLASS}]+|[${WIRE_TRIM_CLASS}]+$`, 'g');
 
-// One integer parser for the three boundaries that read a number a model wrote. `mode`
-// selects rounding, boolean handling and the string grammar; `trim` is the class stripped
-// before the pyInt grammar, with null meaning String#trim.
+// Keep integer policies distinct: filter coercion accepts Python-style integers while verification uses numeric-string grammar.
 export const INT_POLICY = Object.freeze({
   validation: Object.freeze({ trim: null, mode: 'pyInt' }),
   filter: Object.freeze({ trim: WS_TRIM_RE, mode: 'pyInt' }),
   verify: Object.freeze({ trim: null, mode: 'jsNumber' }),
 });
 
-// Returns an integer or null; pyInt can also return an infinity for an over-long digit
-// string, as parseInt does.
+// Long digit strings can overflow parseInt to infinity; callers must retain their boundary policy for that result.
 export function coerceInt(value, policy) {
   const pyInt = policy.mode === 'pyInt';
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return null;
-    // Returned as is: rounding would turn -0 into 0 and move a large odd integer.
+    // Preserve integer values: rounding would erase negative zero or shift large odd integers.
     if (Number.isInteger(value)) return value;
-    // pyInt truncates as Python's int(); jsNumber rounds half up as the verify script's
-    // int(math.floor(value + 0.5)), which Math.round would not match on negative ties.
+    // Verification rounds ties toward positive infinity; the integer grammar truncates instead.
     return pyInt ? Math.trunc(value) : Math.floor(value + 0.5);
   }
-  // A Python bool is an int subclass.
+  // The Python-style integer policy accepts booleans because they are integer values at that wire boundary.
   if (typeof value === 'boolean') return pyInt ? (value ? 1 : 0) : null;
   if (typeof value !== 'string') return null;
   if (pyInt) {
@@ -108,9 +93,7 @@ export function coerceInt(value, policy) {
   return Number.isInteger(n) ? n : null;
 }
 
-// Guard against pathological return values, far above any recorded run and below the
-// largest proven return. Above it, persistence falls back to the artifact-writer and the
-// failure-path resume state shrinks to phase names.
+// Bound pathological return payloads so persistence can fall back to the artifact writer and a smaller resume state.
 export const RETURN_CHAR_BUDGET = 1000000;
 
 export function dottedValue(object, path) {
@@ -124,17 +107,17 @@ export function dottedValue(object, path) {
 
 export const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// re.escape equivalent: escape every regex metacharacter so the pattern is
-// searched as a literal substring.
 export function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Coerce typed finding fields before grouping or comparing them.
+// Non-string model fields must not participate in text matching through implicit coercion.
 export function asText(value) {
   return typeof value === 'string' ? value : '';
 }
 
+// Keep infinities as numeric filter inputs; the report's finite-only policy is deliberately separate.
+// Non-numbers and NaN need the numeric fallback so arithmetic cannot concatenate text or propagate NaN.
 export function asConfidence(value) {
   return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
 }

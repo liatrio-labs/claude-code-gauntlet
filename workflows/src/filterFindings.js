@@ -1,4 +1,4 @@
-// Normalize, filter, consolidate, and tag findings for the workflow.
+// Owns finding field normalization, ordered filtering, disagreement resolution, consolidation, and routing.
 import { INT_POLICY, coerceInt, asText, asConfidence, deepFreeze } from './wire.js';
 import { FIELD_RENAMES, SEVERITY_ORDER, INJECTION_STRIPPED_PROSE_FIELDS, AGENT_BUG_DETECTOR } from './registry.js';
 import { AGENT_TEST_ANALYZER, AGENT_SECURITY_REVIEWER } from './registry.js';
@@ -9,17 +9,13 @@ import { applyInjectionFilter } from './injection.js';
 
 const AGENT_CONVENTIONS = 'conventions-and-intent';
 
-// Keywords that promote convention/type_design findings from suggestion to main.
 const FUNCTIONAL_VIOLATION_KEYWORDS =
   /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
 
-// Keywords that promote type_design findings specifically.
 const TYPE_SAFETY_BUG_KEYWORDS =
   /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
 
-// Keyword patterns indicating a test-analyzer finding describes a functional
-// correctness bug that EXISTS TODAY (vs. a coverage gap). Shared by routeByDimension's
-// test_coverage branch and isTestCorrectnessFinding's promotion check.
+// Promote test findings for existing correctness failures, while keeping coverage gaps as suggestions.
 const TEST_CORRECTNESS_PATTERNS = deepFreeze([
   /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
   /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
@@ -77,8 +73,8 @@ export function normalizeFieldNames(findings, renames = FIELD_RENAMES) {
   return normalizedCount;
 }
 
-// An absent confidence setting uses 55 for non-security findings and 70 for security findings;
-// explicit confidence_threshold applies to both, while security_min_confidence applies only to security.
+// Defaults deliberately admit lower-confidence non-security findings; security keeps the stricter floor.
+// Explicit confidence settings can lower either floor.
 export const FILTER_DEFAULTS = deepFreeze({
   confidenceThreshold: 70,
   nonsecurityConfidenceThreshold: 55,
@@ -87,8 +83,6 @@ export const FILTER_DEFAULTS = deepFreeze({
 });
 
 const CONTESTATION_DROP_THRESHOLD = 25;
-
-// --- Filter: confidence / severity threshold (with validator contestation) -
 
 export function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER) {
   const kept = [];
@@ -107,13 +101,10 @@ export function applyThresholdFilter(findings, config, severityOrder = SEVERITY_
       const minConf = cfgGet(fileConfig, 'security_min_confidence', FILTER_DEFAULTS.securityMinConfidence);
       effectiveThreshold = Math.min(cfgGet(fileConfig, 'confidence_threshold', FILTER_DEFAULTS.confidenceThreshold), minConf);
     } else {
-      // Non-security config-absent fallback is 55 (iter 5), decoupled from the
-      // security branch above (which keeps the 70 fallback via FILTER_DEFAULTS.confidenceThreshold).
       effectiveThreshold = cfgGet(fileConfig, 'confidence_threshold', FILTER_DEFAULTS.nonsecurityConfidenceThreshold);
     }
 
-    // Validator contestation check (V5-09C): strict `> 25`, not `>=` — an
-    // exact 25-point drop does NOT contest.
+    // Only a drop beyond the contestation boundary bypasses thresholds; equality is not contestation.
     let isContested = false;
     const originalConfidence = 'original_confidence' in finding ? finding.original_confidence : undefined;
     if (originalConfidence !== undefined && originalConfidence !== null) {
@@ -158,10 +149,7 @@ export function applyThresholdFilter(findings, config, severityOrder = SEVERITY_
   return { kept, eliminated, contestedCount };
 }
 
-// Demote validator findings whose claim is true only after a future change. The
-// step stamps every matching finding, including one already at low severity, but
-// never removes anything; applyThresholdFilter below applies the user's severity
-// threshold to the demoted result.
+// Demote future-change claims before threshold filtering so the severity threshold sees the demoted value.
 const REACHABILITY_DEMOTION_REASON =
   'validator found no code path that reaches this issue without a future change';
 
@@ -180,8 +168,7 @@ export function applyReachabilityDemotion(findings) {
   return { findings, demotedCount };
 }
 
-// Disagreement detection, dimension routing, consolidation, and tagging.
-
+// Present null values remain data: defaulting them would merge distinct grouping keys and IDs.
 function pyGet(obj, key, dflt) {
   return key in obj ? obj[key] : dflt;
 }
@@ -215,7 +202,6 @@ function groupFilterFindings(findings, keyFor) {
 }
 
 export function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
-  // Phase 1: group by (file, line_bucket(10)) for co-location checks.
   const locationGroups = groupFilterFindings(findings, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10),
   ]));
@@ -288,8 +274,7 @@ export function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
     }
   }
 
-  // Phase 4: contradiction and security escalation, keyed on the EXACT
-  // (file, line_start) pair -- NOT bucketed, unlike phases 1 and 3 above.
+  // Contradiction and security escalation require exact locations; nearby bucketed findings are insufficient.
   const locationGroupsActive = groupFilterFindings(active, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), pyGet(finding, 'line_start', 0),
   ]));
@@ -319,14 +304,8 @@ export function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
     }
   }
 
-
   return { active, suppressed, boostedCount };
 }
-
-// --- Dimension-based routing (BF-15a) ---------------------------------------
-
-
-
 
 export function routeByDimension(finding, routes = FILTER_DIMENSION_ROUTES) {
   const dimension = pyGet(finding, 'dimension', '').toLowerCase();
@@ -343,8 +322,6 @@ function isTestCorrectnessFinding(finding, patterns) {
   return patterns.some((rx) => rx.test(combined));
 }
 
-// --- Proximity grouping + cross-agent dedup ---------------------------------
-
 export function groupByProximity(findings, lineProximity = 5) {
   return groupFilterFindings(findings, (finding) => JSON.stringify([
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
@@ -354,10 +331,7 @@ export function groupByProximity(findings, lineProximity = 5) {
 export function consolidateCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
 
-  // Clear any stamps from a prior pass first: a re-run (applyChallenges, after
-  // a group's primary is eliminated) must not leave survivors carrying a
-  // consolidation_key/consolidation_primary from a group that no longer
-  // qualifies.
+  // Clear consolidation stamps before regrouping so a removed primary cannot leave stale group ownership.
   for (const f of findings) {
     if (f && typeof f === 'object') {
       delete f.consolidation_key;
@@ -369,6 +343,7 @@ export function consolidateCrossAgent(findings) {
     const dim = pyGet(f, 'dimension', '').toLowerCase();
     const isCore = CORE_DIMENSIONS.includes(dim) ? 1 : 0;
     const conf = asConfidence(f.confidence);
+    // Ranking uses UTF-16 length; code-point counting would change winners for astral text.
     const descLen = asText(f.description).length;
     return [isCore, conf, descLen];
   };
@@ -388,7 +363,7 @@ export function consolidateCrossAgent(findings) {
 
   for (const group of groups.values()) {
     const agentsInGroup = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
-    if (group.length < 2 || agentsInGroup.size < 2) continue; // no stamps
+    if (group.length < 2 || agentsInGroup.size < 2) continue;
 
     const file = pyGet(group[0], 'file', '');
     const bucket = lineBucket(group[0].line_start, LINE_PROXIMITY);
@@ -407,11 +382,6 @@ export function consolidateCrossAgent(findings) {
 
   return { findings, consolidatedCount };
 }
-
-// --- Tagging -----------------------------------------------------------
-
-
-
 
 export function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
   const { findings: tagged, consolidatedCount } = consolidateCrossAgent(findings);
@@ -447,7 +417,7 @@ export function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
           destination = 'suggestion';
         }
       } else {
-        // Unknown agent -- conservative fallback: route to main.
+        // Unknown agents go to main so an unrecognized producer cannot silently hide a finding.
         destination = 'main';
       }
     }
@@ -461,9 +431,7 @@ export function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
   return { tagged, consolidatedCount, mainCount, suggestionCount };
 }
 
-// --- Pipeline composition ----------------------------------------------
-
-// Compose the filter passes and return each outcome in pipeline order.
+// Reachability demotion precedes thresholds; injection sanitization precedes corroboration and routing.
 export function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt, proseFields = INJECTION_STRIPPED_PROSE_FIELDS) {
   const total = findings.length;
 
@@ -516,10 +484,7 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
       contested_count: contestedCount,
       exclusions_removed: exclusionsRemoved,
       injections_removed: injectionsRemoved,
-      // Spliced, not hand-listed: proseFieldsRemoved's keys/order are exactly
-      // INJECTION_STRIPPED_PROSE_FIELDS's (Object.fromEntries over the list, in
-      // order), so adding a field to that list is the only edit a future stat needs
-      // -- no second key to add here.
+      // Derive prose-removal stats from the field list so extending it needs no second declaration.
       ...proseFieldsRemoved,
       suggested_fix_codes_removed: suggestedFixCodesRemoved,
       consensus_boosted: consensusBoosted,
