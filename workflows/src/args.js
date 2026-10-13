@@ -172,7 +172,7 @@ export const LIMIT_DEFAULTS = {
 // prose rule SKILL.md used to state at assembly time (phase2-triage.md 2e "Light Review for
 // Trivial PRs"): every riskTable entry classified 'low' AND total changedLines is below
 // LIGHT_SCOPE_MAX_CHANGED_LINES. Exported
-// so validateArgs (below, for the pre-dispatch coherence guard) and stages.js's
+// so validateArgs (below, for the pre-dispatch coherence guard) and discover.js's
 // deriveAgentFlags (the actual flag derivation) call the SAME rule rather than each carrying
 // its own copy that could drift. Pure — no host globals.
 export function computeLightEligible(riskTable, changedLines) {
@@ -744,7 +744,7 @@ export function entryArgs(raw) {
 // return value (it branches on status) would read a refused review as a finished one. A
 // throw is the only signal this platform renders as a visible failure. runWith's own seam
 // is throw-free by contract and RETURNS the identical refusal, via the shared entryArgs,
-// instead (stages.js) — two signals, ONE refusalFrom wording, so the wording cannot drift
+// instead (run.js) — two signals, ONE refusalFrom wording, so the wording cannot drift
 // between them.
 //
 // Refuses three classes now, not just an unparseable string: absent (undefined/null), a
@@ -819,7 +819,7 @@ export function validateArgs(args) {
     errors.push('agentFlags is no longer accepted — the pipeline derives dimension flags itself from riskTable/scopeAnswer (issue #24). Stamp riskTable (the Phase 2e per-file risk classification) and, only when the light/full gate asked, scopeAnswer; do not stamp agentFlags.');
   }
   // riskTable is the orchestrator's Phase 2e per-file risk classification, REQUIRED (see
-  // REQUIRED above) so deriveAgentFlags (stages.js) has a deterministic input instead of a
+  // REQUIRED above) so deriveAgentFlags (discover.js) has a deterministic input instead of a
   // hand-stamped agentFlags map. Malformed or missing NEVER silently resolves to full scope —
   // it refuses the run (req 2). The path set must equal changedFiles' set EXACTLY: a missing
   // path means a file was reviewed with no risk classification (silently under-scoped), an
@@ -912,7 +912,7 @@ export function validateArgs(args) {
     errors.push('changedLines must be a number');
   // Optional shared-context file size, measured by the skill immediately after it writes
   // {output_dir}/code-gauntlet-context-{head_sha_short}.md. The workflow has no disk, so
-  // this is the only path for it. contextReadPlan (stages.js) turns the pair into the
+  // this is the only path for it. contextReadPlan (contextPlan.js) turns the pair into the
   // exact Read calls the discovery/validate/summarize prompts enumerate — issue #48,
   // where an unmeasurable file left the agent to guess whether it had read all of it.
   //

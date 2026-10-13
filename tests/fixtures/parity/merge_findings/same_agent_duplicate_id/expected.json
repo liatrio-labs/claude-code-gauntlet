@@ -10,7 +10,7 @@
       "id": "F1",
       "line_start": 10,
       "severity": "medium",
-      "title": "a } brace \" here"
+      "title": "first"
     }
   ],
   "head_sha": "abc123",
@@ -19,10 +19,10 @@
       "bug-detector"
     ],
     "dropped_no_id": 0,
-    "duplicates_resolved": 0,
+    "duplicates_resolved": 1,
     "findings_per_channel": {
-      "ndjson": 0,
-      "text_fallback": 1
+      "ndjson": 1,
+      "text_fallback": 0
     },
     "truncation_warnings": [],
     "validation_warnings": []

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dedupById } from '../src/findingDedup.js';
+import { dedupById } from '../src/mergeFindings.js';
 import { merge } from '../src/mergeFindings.js';
 import { applyValidations } from '../src/applyValidations.js';
 import {
@@ -25,17 +25,8 @@ import { loadCases, writeGolden } from './helpers/goldenCases.js';
 
 const UPDATE_GOLDENS = process.env.UPDATE_GOLDENS === '1';
 
-function mapByAgent(files) {
-  const out = {};
-  for (const [name, text] of Object.entries(files || {})) {
-    const agent = name.replace(/^(?:code-gauntlet|deep-review)-(text-)?/, '').replace(/-[^-]+\.(ndjson|txt)$/, '');
-    out[agent] = text;
-  }
-  return out;
-}
-
 function runFindingDedup(input) {
-  const got = dedupById(input.ndjson_findings, input.text_findings);
+  const got = dedupById(input.findings);
   return {
     merged: got.merged,
     duplicates_resolved: got.duplicatesResolved,
@@ -44,11 +35,7 @@ function runFindingDedup(input) {
 }
 
 function runMergeFindings(input) {
-  return merge(
-    mapByAgent(input.findings_dir_files),
-    mapByAgent(input.text_dir_files),
-    input.args,
-  );
+  return merge(input.findings_by_agent, input.args);
 }
 
 function runApplyValidations(input) {

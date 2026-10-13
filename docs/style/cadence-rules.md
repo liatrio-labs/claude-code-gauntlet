@@ -26,10 +26,10 @@ Before:
 ```text
 Good question. To determine which module owns the retry, I looked at how the pipeline
 composes its stages and traced the call path from the entry point through to the writer,
-and the answer is that stages.js owns it.
+and the answer is that persist.js owns it.
 ```
 
-After: `stages.js` owns the retry.
+After: `persist.js` owns the retry.
 
 ## Summarize by default
 

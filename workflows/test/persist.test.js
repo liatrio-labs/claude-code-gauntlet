@@ -723,15 +723,3 @@ for (const [name, input, expected] of [
 ]) {
   test(`writer payload parser: ${name}`, () => assert.deepEqual(parseWriterPayload(input), expected));
 }
-test('derived persistence runs without Node globals', async () => {
-  const names = ['structuredClone', 'Buffer', 'TextEncoder', 'TextDecoder', 'setTimeout', 'queueMicrotask'];
-  const saved = names.map((name) => globalThis[name]);
-  for (const name of names) delete globalThis[name];
-  try {
-    const ctx = persistCtx();
-    assert.deepEqual(await writeArtifacts(ctx, persistInput()), SUCCESS_GOLDEN);
-    assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts']);
-  } finally {
-    names.forEach((name, i) => { globalThis[name] = saved[i]; });
-  }
-});

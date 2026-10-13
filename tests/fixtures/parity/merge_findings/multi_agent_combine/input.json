@@ -1,10 +1,39 @@
 {
-  "findings_dir_files": {
-    "deep-review-bug-detector-abc123.ndjson": "{\"id\": \"F1\", \"file\": \"src/app.py\", \"line_start\": 10, \"title\": \"example finding\", \"description\": \"a description of the finding\", \"severity\": \"medium\", \"confidence\": \"high\", \"dimension\": \"bug\"}",
-    "deep-review-security-reviewer-abc123.ndjson": "{\"id\": \"F2\", \"file\": \"src/app.py\", \"line_start\": 10, \"title\": \"example finding\", \"description\": \"a description of the finding\", \"severity\": \"medium\", \"confidence\": \"high\", \"dimension\": \"security\"}"
-  },
-  "text_dir_files": {
-    "deep-review-text-security-reviewer-abc123.txt": "Investigation note: {\"id\": \"F3\", \"file\": \"src/loop.js\", \"line_start\": 10, \"title\": \"🐛 缺陷 detected in loop\", \"description\": \"unicode bug 🎉 here\", \"severity\": \"medium\", \"confidence\": \"high\", \"dimension\": \"security\"} (end of report)"
+  "findings_by_agent": {
+    "security-reviewer": [
+      {
+        "id": "F3",
+        "file": "src/loop.js",
+        "line_start": 10,
+        "title": "🐛 缺陷 detected in loop",
+        "description": "unicode bug 🎉 here",
+        "severity": "medium",
+        "confidence": "high",
+        "dimension": "security"
+      },
+      {
+        "id": "F2",
+        "file": "src/app.py",
+        "line_start": 10,
+        "title": "example finding",
+        "description": "a description of the finding",
+        "severity": "medium",
+        "confidence": "high",
+        "dimension": "security"
+      }
+    ],
+    "bug-detector": [
+      {
+        "id": "F1",
+        "file": "src/app.py",
+        "line_start": 10,
+        "title": "example finding",
+        "description": "a description of the finding",
+        "severity": "medium",
+        "confidence": "high",
+        "dimension": "bug"
+      }
+    ]
   },
   "args": {
     "session_sha": "abc123",

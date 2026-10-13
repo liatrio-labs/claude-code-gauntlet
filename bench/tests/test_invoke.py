@@ -1421,8 +1421,8 @@ class PluginMutationGuardTest(InvokeTestBase):
     def test_preexisting_local_edit_is_not_flagged_or_reset(self):
         # A dirty file that predates the child (the run's baseline) must survive untouched
         # — the guard flags DELTA, not absolute dirtiness.
-        root = self._init_repo({"workflows/src/stages.js": "COMMITTED\n"})
-        preexisting = root / "workflows" / "src" / "stages.js"
+        root = self._init_repo({"workflows/src/run.js": "COMMITTED\n"})
+        preexisting = root / "workflows" / "src" / "run.js"
         preexisting.write_text(
             "LOCAL WIP\n", encoding="utf-8"
         )  # dirty BEFORE the child runs

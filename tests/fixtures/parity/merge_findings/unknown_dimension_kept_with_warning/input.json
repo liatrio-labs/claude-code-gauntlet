@@ -1,8 +1,18 @@
 {
-  "findings_dir_files": {
-    "deep-review-bug-detector-abc123.ndjson": "{\"id\": \"F1\", \"file\": \"src/app.py\", \"line_start\": 10, \"title\": \"example finding\", \"description\": \"a description of the finding\", \"severity\": \"medium\", \"confidence\": \"high\", \"dimension\": \"banana\"}"
+  "findings_by_agent": {
+    "bug-detector": [
+      {
+        "id": "F1",
+        "file": "src/app.py",
+        "line_start": 10,
+        "title": "example finding",
+        "description": "a description of the finding",
+        "severity": "medium",
+        "confidence": "high",
+        "dimension": "banana"
+      }
+    ]
   },
-  "text_dir_files": {},
   "args": {
     "session_sha": "abc123",
     "agents": [

@@ -467,7 +467,7 @@ class TestWriteSharedContext(unittest.TestCase):
             self.assertIn(
                 "const contextPath = `${A.outputDir}/code-gauntlet-context-"
                 "${A.headShaShort}.md`;",
-                (REPO / "workflows" / "src" / "stages.js").read_text(encoding="utf-8"),
+                (REPO / "workflows" / "src" / "run.js").read_text(encoding="utf-8"),
             )
 
     def test_output_write_oserror_exits_two_with_one_line(self):

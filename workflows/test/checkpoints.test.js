@@ -11,9 +11,11 @@ import {
   stripEliminatedList,
   CHECKPOINT_FINDING_LISTS,
   checkpointFindingListsForPhase,
-  isPlainCheckpointObject
+  isPlainCheckpointObject,
+  normalizePhaseFindings,
+  applyChallengeReplayBelt
 } from '../src/checkpoints.js';
-import { runWith } from '../src/stages.js';
+import { runWith } from '../src/run.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { expectedWith, challengeOutput, runAndCapture, replaySurvivor, wellFormedCheckpoints } from './helpers/persistFixtures.js';
 
@@ -539,3 +541,19 @@ for (const row of REPLAY_ROWS) {
     }
   });
 }
+
+for (const [name, value] of [
+  ['absent', undefined], ['null', null], ['number', 1], ['string', 'legacy'],
+]) {
+  test(`replay helpers: ${name} passes through`, () => {
+    assert.equal(normalizePhaseFindings('challenge', value, true, { repoRoot: '/repo' }), undefined);
+    assert.equal(applyChallengeReplayBelt(value), 0);
+  });
+}
+test('replay helpers: missing findings retain the count and stamp the empty belt', () => {
+  const value = { stats: { final_count: 1 }, unverified: [], eliminated: [] };
+  assert.equal(normalizePhaseFindings('challenge', value, true, { repoRoot: '/repo' }), undefined);
+  assert.equal(applyChallengeReplayBelt(value), 0);
+  assert.deepEqual(value, { stats: { final_count: 1, replay_belt_eliminated: 0 },
+    unverified: [], eliminated: [], findings: undefined });
+});

@@ -1,49 +1,11 @@
-// Merge structured and text-channel findings into the Phase 4 envelope.
-import { dedupById } from './findingDedup.js';
+// Finding path normalization, validation, deduplication, and merge envelopes.
 import { repoRelativeFindingPath, safeFindingLabel } from './paths.js';
-import { FINDING_PATH_ARRAY_FIELDS } from './registry.js';
+import { AGENTS, DIMENSIONS, FINDING_PATH_ARRAY_FIELDS } from './registry.js';
+import { deepClone } from './wire.js';
 
-const KNOWN_DIMENSIONS = new Set([
-  'bug',
-  'security',
-  'cross_file_impact',
-  'test_coverage',
-  'convention',
-  'intent',
-  'comment_accuracy',
-  'type_design',
-  'simplification',
-]);
+const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));
 
-export const REQUIRED_FIELDS = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence'];
-
-// --- Channel 1: NDJSON parsing ---------------------------------------------
-
-export function parseNdjson(text, agent) {
-  const findings = [];
-  const warnings = [];
-  if (text === undefined || text === null) return { findings, warnings };
-
-  let lineno = 0;
-  for (const rawLine of text.split('\n')) {
-    lineno += 1;
-    const line = rawLine.trim();
-    if (!line) continue;
-    let obj;
-    try {
-      obj = JSON.parse(line);
-    } catch {
-      warnings.push(`[${agent}] NDJSON line ${lineno}: invalid JSON`);
-      continue;
-    }
-    if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
-      warnings.push(`[${agent}] NDJSON line ${lineno}: expected object, got ${jsonTypeName(obj)}`);
-      continue;
-    }
-    findings.push(obj);
-  }
-  return { findings, warnings };
-}
+const REQUIRED_FIELDS = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence'];
 
 function jsonTypeName(v) {
   if (v === null) return 'null';
@@ -51,110 +13,9 @@ function jsonTypeName(v) {
   return typeof v;
 }
 
-// --- Channel 2: text fallback parsing --------------------------------------
-
-export function extractJsonBlocks(text) {
-  const results = [];
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] !== '{') {
-      i += 1;
-      continue;
-    }
-    const obj = tryParseJsonAt(text, i);
-    if (obj !== null && obj !== undefined && typeof obj === 'object' && !Array.isArray(obj) && 'id' in obj) {
-      results.push(obj);
-      i = findEndOfJson(text, i);
-    } else {
-      i += 1;
-    }
-  }
-  return results;
-}
-
-function scanJsonObject(text, start) {
-  let depth = 0;
-  let inString = false;
-  let escapeNext = false;
-  let i = start;
-  while (i < text.length) {
-    const ch = text[i];
-    if (escapeNext) {
-      escapeNext = false;
-      i += 1;
-      continue;
-    }
-    if (ch === '\\' && inString) {
-      escapeNext = true;
-      i += 1;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      i += 1;
-      continue;
-    }
-    if (inString) {
-      i += 1;
-      continue;
-    }
-    if (ch === '{') {
-      depth += 1;
-    } else if (ch === '}') {
-      depth -= 1;
-      if (depth === 0) return i + 1;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
-function tryParseJsonAt(text, start) {
-  const end = scanJsonObject(text, start);
-  if (end < 0) return null;
-  try {
-    return JSON.parse(text.slice(start, end));
-  } catch {
-    return null;
-  }
-}
-
-function findEndOfJson(text, start) {
-  const end = scanJsonObject(text, start);
-  if (end < 0) return text.length + 1;
-  return end;
-}
-
-export function parseTextFile(text, agent) {
-  const findings = [];
-  const warnings = [];
-  let hasProse = false;
-  let hasSkip = false;
-
-  if (text === undefined || text === null) return { findings, warnings, hasProse, hasSkip };
-  if (text.trim() === '') return { findings, warnings, hasProse, hasSkip };
-
-  if (/^\s*SKIP\s*:/im.test(text)) hasSkip = true;
-
-  for (const obj of extractJsonBlocks(text)) {
-    if ('id' in obj) findings.push(obj);
-  }
-
-  let stripped = text.replace(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, '');
-  stripped = stripped.replace(/^\s*SKIP\s*:.*$/gim, '');
-  stripped = stripped.trim();
-  if (stripped.replace(/\s+/g, '').length > 20) hasProse = true;
-
-  return { findings, warnings, hasProse, hasSkip };
-}
-
-// --- Agent field injection --------------------------------------------------
-
-export function injectAgentField(findings, agent) {
+function injectAgentField(findings, agent) {
   for (const f of findings) f.agent = agent;
 }
-
-// --- Validation -------------------------------------------------------------
 
 function invalidFindingPathWarning(finding, field, reason, action) {
   const label = finding.id == null
@@ -251,164 +112,97 @@ export function validateFindings(findings) {
   return { valid, warnings };
 }
 
-// --- Truncation detection ---------------------------------------------------
+export function merge(findingsByAgent, meta) {
+  const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
+  const agents = M.agents;
+  const allWarnings = [];
 
-export function detectTruncation(ndjsonRaw, textPre, hasProse, hasSkip) {
-  const warnings = [];
-  for (const agent of Object.keys(ndjsonRaw)) {
-    const ndjsonEmpty = (ndjsonRaw[agent] || 0) === 0;
-    const textEmpty = (textPre[agent] || []).length === 0;
-    const prose = hasProse[agent] || false;
-    const skip = hasSkip[agent] || false;
-    if (ndjsonEmpty && textEmpty && prose && !skip) {
-      warnings.push(
-        `[${agent}] Possible truncation: no structured findings, ` +
-          'prose present in text output, no SKIP lines detected',
-      );
+  // Dictionary selection preserves repeated roster keys and integer-key enumeration.
+  const selected = {};
+  for (const agent of agents) {
+    const group = (findingsByAgent || {})[agent] || [];
+    const findings = [];
+    for (let i = 0; i < group.length; i += 1) {
+      let obj;
+      try {
+        obj = deepClone(group[i]);
+      } catch {
+        obj = undefined;
+      }
+      if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+        allWarnings.push(`[${agent}] finding ${i + 1}: expected object, got ${jsonTypeName(obj)}`);
+      } else {
+        findings.push(obj);
+      }
     }
+    selected[agent] = findings;
   }
-  return warnings;
-}
+  for (const [agent, findings] of Object.entries(selected)) injectAgentField(findings, agent);
 
-// --- Output assembly --------------------------------------------------------
+  // Validate before deduplication so warnings cover every raw finding.
+  const allFlat = Object.values(selected).flat();
+  const { valid, warnings: preValWarnings } = validateFindings(allFlat);
 
-function assembleOutput(
-  findings,
-  agents,
-  ndjsonCount,
-  textFallbackCount,
-  duplicatesResolved,
-  droppedNoId,
-  truncationWarnings,
-  validationWarnings,
-  baseBranch,
-  headSha,
-  prNumber,
-  owner,
-  repo,
-) {
+  let droppedNoId = 0;
+  for (const f of allFlat) {
+    const fid = f.id;
+    if (fid === undefined || fid === null || fid === '') droppedNoId += 1;
+  }
+
+  const { merged, duplicatesResolved } = dedupById(valid);
+  const validationWarnings = allWarnings.concat(preValWarnings);
+
   return {
-    findings,
-    base_branch: baseBranch,
-    head_sha: headSha,
-    pr_number: prNumber,
-    owner,
-    repo,
+    findings: merged,
+    base_branch: M.base_branch,
+    head_sha: M.head_sha,
+    pr_number: M.pr_number,
+    owner: M.owner,
+    repo: M.repo,
     methodology: {
       agents_dispatched: agents,
       findings_per_channel: {
-        ndjson: ndjsonCount,
-        text_fallback: textFallbackCount,
+        ndjson: merged.length,
+        text_fallback: 0,
       },
       duplicates_resolved: duplicatesResolved,
       dropped_no_id: droppedNoId,
-      truncation_warnings: truncationWarnings,
+      truncation_warnings: [],
       validation_warnings: validationWarnings,
     },
   };
 }
 
-// --- Main merge pipeline ----------------------------------------------------
+export function mergeStage(discoverOut, meta) {
+  const out = discoverOut || { findings: [] };
+  const M = typeof meta === 'string' ? JSON.parse(meta) : (meta || {});
+  const findings = out.findings || [];
 
-export function merge(ndjsonContents, textContents, meta) {
-  const M = typeof meta === 'string' ? JSON.parse(meta) : meta;
-  const agents = M.agents;
-  const nd = ndjsonContents || {};
-  const tx = textContents || {};
-  const allWarnings = [];
-
-  // Channel 1: NDJSON.
-  const ndjsonFindings = {};
-  for (const agent of agents) {
-    const { findings, warnings } = parseNdjson(nd[agent], agent);
-    ndjsonFindings[agent] = findings;
-    for (const w of warnings) allWarnings.push(w);
+  const byAgent = {};
+  for (const f of findings) {
+    const a = f.agent || 'unknown';
+    (byAgent[a] = byAgent[a] || []).push(f);
   }
 
-  // Channel 2: text fallback.
-  const textFindings = {};
-  const textHasProse = {};
-  const textHasSkip = {};
-  for (const agent of agents) {
-    const { findings, warnings, hasProse, hasSkip } = parseTextFile(tx[agent], agent);
-    textFindings[agent] = findings;
-    textHasProse[agent] = hasProse;
-    textHasSkip[agent] = hasSkip;
-    for (const w of warnings) allWarnings.push(w);
-  }
+  // Discovery uses short finding names and full dispatch types; merge needs a consistent roster to retain zero-finding agents in methodology.
+  const shortAgentName = (a) => (typeof a === 'string' ? a.split(':').pop() : a);
+  const agents = Array.isArray(out.dispatched)
+    ? out.dispatched.map(shortAgentName)
+    : (Object.keys(byAgent).length ? Object.keys(byAgent) : AGENTS.map(shortAgentName));
+  return merge(byAgent, { ...M, agents });
+}
 
-  // Pre-validation raw counts (for truncation detection only).
-  const ndjsonRawCounts = {};
-  for (const agent of Object.keys(ndjsonFindings)) ndjsonRawCounts[agent] = ndjsonFindings[agent].length;
-
-  for (const [agent, findings] of Object.entries(textFindings)) injectAgentField(findings, agent);
-  for (const [agent, findings] of Object.entries(ndjsonFindings)) injectAgentField(findings, agent);
-
-  // Validate the combined flat list (pre-dedup) so warnings cover all raw findings.
-  const allNdjsonFlat = Object.values(ndjsonFindings).flat();
-  const allTextFlat = Object.values(textFindings).flat();
-  const { warnings: preValWarnings } = validateFindings(allNdjsonFlat.concat(allTextFlat));
-
+export function dedupById(findings) {
+  const seen = new Map();
+  let duplicatesResolved = 0;
   let droppedNoId = 0;
-  for (const f of allNdjsonFlat.concat(allTextFlat)) {
-    const fid = f.id;
-    if (fid === undefined || fid === null || fid === '') droppedNoId += 1;
+
+  for (const finding of findings) {
+    const fid = finding.id;
+    if (fid === undefined || fid === null) { droppedNoId += 1; continue; }
+    if (seen.has(fid)) duplicatesResolved += 1;
+    else seen.set(fid, finding);
   }
 
-  // Filter each channel to only valid findings.
-  const filterValid = (dict) => {
-    const out = {};
-    for (const [agent, findings] of Object.entries(dict)) {
-      out[agent] = validateFindings(findings).valid;
-    }
-    return out;
-  };
-
-  const ndjsonValid = filterValid(ndjsonFindings);
-  // Snapshot pre-validation text findings for truncation detection before filtering.
-  const textFindingsPreValidation = {};
-  for (const [agent, findings] of Object.entries(textFindings)) textFindingsPreValidation[agent] = findings.slice();
-  const textValid = filterValid(textFindings);
-
-  // Deduplicate (NDJSON wins on id collision). dedup's own dropped_no_id is 0
-  // here because filterValid already removed id-less findings.
-  const { merged, duplicatesResolved } = dedupById(ndjsonValid, textValid);
-
-  // Channel counts: both post-validation, post-dedup, via the ndjson-source id set.
-  const ndjsonIds = new Set();
-  for (const findings of Object.values(ndjsonValid)) {
-    for (const f of findings) if ('id' in f) ndjsonIds.add(f.id);
-  }
-  let ndjsonCount = 0;
-  let textFallbackCount = 0;
-  for (const f of merged) {
-    if (ndjsonIds.has(f.id)) ndjsonCount += 1;
-    else textFallbackCount += 1;
-  }
-
-  // Truncation detection uses pre-validation counts + pre-validation text findings.
-  const truncationWarnings = detectTruncation(
-    ndjsonRawCounts,
-    textFindingsPreValidation,
-    textHasProse,
-    textHasSkip,
-  );
-
-  const validationWarnings = allWarnings.concat(preValWarnings);
-
-  return assembleOutput(
-    merged,
-    agents,
-    ndjsonCount,
-    textFallbackCount,
-    duplicatesResolved,
-    droppedNoId,
-    truncationWarnings,
-    validationWarnings,
-    M.base_branch,
-    M.head_sha,
-    M.pr_number,
-    M.owner,
-    M.repo,
-  );
+  return { merged: [...seen.values()], duplicatesResolved, droppedNoId };
 }

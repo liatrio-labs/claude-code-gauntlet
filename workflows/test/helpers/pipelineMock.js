@@ -27,9 +27,9 @@ export function assertPrompt(prompt) {
 
 // A single allOf entry of the conditional-required construct (issue #218): { if, then }, NOT
 // a full JSON Schema — `if`/`then` here carry only `properties`/`required`, no `type` (the
-// measured-accepted spelling stages.js emits). Local validity coverage only: this pins the
+// measured-accepted spelling discover.js emits). Local validity coverage only: this pins the
 // SHAPE (if.properties.dimension.const, if.required, then.required), not that it is
-// semantically the right dimension/field pair — that is finding_schema.test.js's job.
+// semantically the right dimension/field pair — that is discover.test.js's job.
 function assertValidConditional(clause, path) {
   if (!clause || typeof clause !== 'object') throw new Error(`schema ${path}: allOf entry must be an object`);
   if (!clause.if || typeof clause.if !== 'object') throw new Error(`schema ${path}: allOf entry must declare "if"`);
@@ -46,7 +46,9 @@ function assertValidConditional(clause, path) {
 // array schemas carry "items" — recursively (catches nested shorthand like {id:'string'}).
 export function assertValidSchema(schema, path = '$') {
   if (!schema || typeof schema !== 'object') throw new Error(`schema ${path}: must be a JSON Schema object (got ${typeof schema})`);
-  if (typeof schema.type !== 'string') throw new Error(`schema ${path}: must declare a string "type" (shorthand like {id:'string'} is invalid)`);
+  if (typeof schema.type !== 'string') {
+    throw new Error(`schema ${path}: must declare a string "type" (shorthand like {id:'string'} is invalid)`);
+  }
   if (schema.type === 'object') {
     if (!schema.properties || typeof schema.properties !== 'object') throw new Error(`schema ${path}: object must declare "properties"`);
     for (const [k, v] of Object.entries(schema.properties)) assertValidSchema(v, `${path}.${k}`);
@@ -176,7 +178,7 @@ export function validArgs(over = {}) {
 //     null-isolation (Phase 0) resolves that member to null in place — siblings dispatch
 //     normally. Discovery labels ARE the agentType (e.g. 'code-gauntlet:bug-detector'), so
 //     this is how a test drives "every/some discovery agent failed" end-to-end through
-//     runWith, mirroring stages_discover.test.js's local fakeCtx({nulls}) (issue #178).
+//     runWith, mirroring discover.test.js's label-keyed failure rows.
 //     Generic by label, not scoped to discovery — any dispatch labeled here nulls out.
 export function makeCtx(args, opts = {}) {
   const calls = [];
@@ -258,7 +260,10 @@ export function makeCtx(args, opts = {}) {
 
   const parallel = async (thunks) => {
     if (opts.parallelThrows) throw new Error('simulated platform failure: parallel() unavailable');
-    if (!Array.isArray(thunks)) { violations.push('parallel() was not given an array'); throw new Error('parallel() takes an array of thunks'); }
+    if (!Array.isArray(thunks)) {
+      violations.push('parallel() was not given an array');
+      throw new Error('parallel() takes an array of thunks');
+    }
     return Promise.all(thunks.map(async (thunk) => {
       if (typeof thunk !== 'function') { violations.push('parallel() member is not a zero-arg function'); return null; }
       try { return await thunk(); } catch { return null; } // null-isolate a failed member (Phase 0)

@@ -5,7 +5,7 @@
 // caller as <status>completed</status> — identical to success (recorded bench runs;
 // anthropics/claude-code#66745) — so the entry (pipeline_entry.js -> parseEntryArgs) keeps
 // THROWING; only a throw renders as a visible platform failure. runWith's own seam is
-// throw-free by contract (stages.js's runWith doc comment: "NEVER lets a throw escape") but its
+// throw-free by contract (run.js's runWith doc comment: "NEVER lets a throw escape") but its
 // normalizeArgsReport(rawArgs) call sat OUTSIDE its try/catch, so a non-JSON-string rawArgs
 // (e.g. 'PR 310') escaped as an uncaught native SyntaxError — empirically confirmed against
 // this repo's source. runWith's arm therefore RETURNS the same refusalFrom wording
@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyReviewTarget, parseEntryArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from '../src/args.js';
-import { runWith } from '../src/stages.js';
+import { runWith } from '../src/run.js';
 import { validArgs } from './helpers/pipelineMock.js';
 
 // Local waist fixture, in the style of args.test.js:8-16 (duplicated deliberately — the

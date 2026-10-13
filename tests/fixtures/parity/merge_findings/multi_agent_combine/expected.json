@@ -2,17 +2,6 @@
   "base_branch": "main",
   "findings": [
     {
-      "agent": "security-reviewer",
-      "confidence": "high",
-      "description": "unicode bug \ud83c\udf89 here",
-      "dimension": "security",
-      "file": "src/loop.js",
-      "id": "F3",
-      "line_start": 10,
-      "severity": "medium",
-      "title": "\ud83d\udc1b \u7f3a\u9677 detected in loop"
-    },
-    {
       "agent": "bug-detector",
       "confidence": "high",
       "description": "a description of the finding",
@@ -22,6 +11,17 @@
       "line_start": 10,
       "severity": "medium",
       "title": "example finding"
+    },
+    {
+      "agent": "security-reviewer",
+      "confidence": "high",
+      "description": "unicode bug \ud83c\udf89 here",
+      "dimension": "security",
+      "file": "src/loop.js",
+      "id": "F3",
+      "line_start": 10,
+      "severity": "medium",
+      "title": "\ud83d\udc1b \u7f3a\u9677 detected in loop"
     },
     {
       "agent": "security-reviewer",
@@ -44,8 +44,8 @@
     "dropped_no_id": 0,
     "duplicates_resolved": 0,
     "findings_per_channel": {
-      "ndjson": 2,
-      "text_fallback": 1
+      "ndjson": 3,
+      "text_fallback": 0
     },
     "truncation_warnings": [],
     "validation_warnings": []

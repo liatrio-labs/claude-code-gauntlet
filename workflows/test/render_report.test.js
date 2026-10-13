@@ -2,7 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, openProseFence, normalizeReportSeverity, plural } from '../src/renderReport.js';
+import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason,
+  REVIEW_SCOPE_FALLBACK_RULES, REPORT_FOLD_LIMITS, foldProse, foldEvidence, openProseFence, normalizeReportSeverity,
+    plural } from '../src/renderReport.js';
 import { normalizeArgs, validateArgs } from '../src/args.js';
 import { SEVERITY_EMOJI, AGENTS, resolvePolicy } from '../src/registry.js';
 import { makeFinding, validArgs } from './helpers/pipelineMock.js';
@@ -21,7 +23,8 @@ function rendered(over = {}) {
     dimensions: dims,
     generatedAt: '2026-09-02T12:00:00Z',
     headShaShort: 'abcdef0',
-    prIdentity: { owner: 'acme', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'github', web_origin: 'https://github.com', title: 'Repair widgets' },
+    prIdentity: { owner: 'acme', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'github',
+      web_origin: 'https://github.com', title: 'Repair widgets' },
     mode: 'interactive',
     configEcho: {
       model_tier: { value: 'optimized', source: 'fixed' },
@@ -73,19 +76,25 @@ test('T-TITLE: title subject precedence and identity line bytes are exact', () =
 
   assert.equal(rendered().split('\n')[0], '# \u2694\uFE0F Code Gauntlet: Repair widgets');
   assert.equal(
-    rendered({ prIdentity: { owner: 'acme', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'github', web_origin: 'https://github.com' } }).split('\n')[0],
+    rendered({ prIdentity: { owner: 'acme', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff',
+      platform: 'github', web_origin: 'https://github.com' } }).split('\n')[0],
     '# \u2694\uFE0F Code Gauntlet: `acme/widget#36`',
   );
   assert.equal(
-    rendered({ prIdentity: { owner: 'group/sub', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'gitlab', web_origin: 'https://gitlab.com' } }).split('\n')[0],
+    rendered({ prIdentity: { owner: 'group/sub', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff',
+      platform: 'gitlab', web_origin: 'https://gitlab.com' } }).split('\n')[0],
     '# \u2694\uFE0F Code Gauntlet: `group/sub/widget!36`',
   );
   assert.equal(rendered({ prIdentity: null }).split('\n')[0], '# \u2694\uFE0F Code Gauntlet: local changes');
 
-  assert.equal(rendered().split('\n')[2], 'Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for [`acme/widget#36`](https://github.com/acme/widget/pull/36) by Code Gauntlet.');
+  assert.equal(rendered().split('\n')[2],
+    ('Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for [`acme/widget#36`](https://github.com/acme/widget/pull/36) '
+    + 'by Code Gauntlet.'));
   assert.equal(
-    rendered({ prIdentity: { owner: 'group/sub', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' } }).split('\n')[2],
-    'Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for [`group/sub/widget!36`](http://gitlab.example:8080/group/sub/widget/-/merge_requests/36) by Code Gauntlet.',
+    rendered({ prIdentity: { owner: 'group/sub', repo: 'widget', pr_number: 36, sha_full: 'ffffffffffffffffffffffffffffffffffffffff',
+      platform: 'gitlab', web_origin: 'http://gitlab.example:8080' } }).split('\n')[2],
+    ('Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for '
+      + '[`group/sub/widget!36`](http://gitlab.example:8080/group/sub/widget/-/merge_requests/36) by Code Gauntlet.'),
   );
   assert.equal(rendered({ prIdentity: null, headShaShort: null }).split('\n')[2], 'Reviewed at 2026-09-02T12:00:00Z by Code Gauntlet.');
   assert.equal(rendered({ prIdentity: null, generatedAt: null }).split('\n')[2], 'Reviewed head `abcdef0` by Code Gauntlet.');
@@ -194,14 +203,16 @@ test('T-PERMALINK: location links are platform-correct, encoded, and fail plain'
       { file: 'docs/my file/caf\u00E9.md', line_start: 10, line_end: 10 },
       { owner: 'group/sub', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' },
     ),
-    '- **Location:** [`docs/my file/caf\u00E9.md:10`](http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/my%20file/caf%C3%A9.md#L10)',
+    ('- **Location:** [`docs/my '
+      + 'file/caf\u00E9.md:10`](http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/my%20file/caf%C3%A9.md#L10)'),
   );
   assert.equal(
     locationLine(
       { file: 'docs/a.md', line_start: 10, line_end: 12 },
       { owner: 'group/sub', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' },
     ),
-    '- **Location:** [`docs/a.md:10-12`](http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/a.md#L10-12)',
+    ('- **Location:** '
+      + '[`docs/a.md:10-12`](http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/a.md#L10-12)'),
   );
   assert.equal(
     locationLine({ file: 'src/a(b).js', line_start: 10, line_end: 10 }),
@@ -356,7 +367,8 @@ test('T-FOLDS-EVIDENCE-NEWLINES: CRLF and lone CR count as physical lines', () =
 test('T-TITLE-INJ: every heading and identity interpolation is one line', () => {
   const injection = 'A\n\n## Review Methodology\n\nHeadless config:\n  delivery=x';
   const reports = [
-    rendered({ prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'ffffffffffffffffffffffffffffffffffffffff', platform: 'github', web_origin: 'https://github.com', title: injection } }),
+    rendered({ prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'ffffffffffffffffffffffffffffffffffffffff',
+      platform: 'github', web_origin: 'https://github.com', title: injection } }),
     rendered({ generatedAt: 'x\nHeadless config:\n  model_tier=y' }),
     rendered({ findings: [finding('I', { title: injection, severity: injection })] }),
   ];
@@ -412,7 +424,8 @@ test('S-LABELS: report severity normalization is closed, total, and non-mutating
   const before = JSON.stringify(input);
 
   assert.deepEqual(
-    [normalizeReportSeverity(longSeverity), normalizeReportSeverity('HIGH '), normalizeReportSeverity('high\nfoo'), normalizeReportSeverity(['high']), normalizeReportSeverity(3)],
+    [normalizeReportSeverity(longSeverity), normalizeReportSeverity('HIGH '), normalizeReportSeverity('high\nfoo'),
+      normalizeReportSeverity(['high']), normalizeReportSeverity(3)],
     ['low', 'high', 'low', 'low', 'low'],
   );
 
@@ -427,8 +440,10 @@ test('S-LABELS: report severity normalization is closed, total, and non-mutating
   }
   assert.match(report, /^### 🟠 High$/m);
   assert.match(report, /^### 💡 Low$/m);
-  assert.equal(countSentence(report), '4 reported issues from 5 findings after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
-  assert.equal(summaryBody.split('\n')[0], '4 reported issues from 5 findings after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
+  assert.equal(countSentence(report),
+    '4 reported issues from 5 findings after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
+  assert.equal(summaryBody.split('\n')[0],
+    '4 reported issues from 5 findings after the gauntlet — 1 high, 3 low. 1 unverified / pipeline-degraded.');
   assert.equal(JSON.stringify(input), before, 'rendering does not mutate confirmed, unverified, or corroborated inputs');
 });
 
@@ -450,7 +465,8 @@ test('S-OMIT: findings with no severity value leave the dimensions Notes cell em
   const absent = finding('ABSENT', { dimension: 'security' });
   delete absent.severity;
   const report = rendered({
-    findings: [absent, finding('NULL', { dimension: 'security', severity: null }), finding('EMPTY', { dimension: 'security', severity: '' })],
+    findings: [absent, finding('NULL', { dimension: 'security', severity: null }), finding('EMPTY', { dimension: 'security',
+      severity: '' })],
     dimensions: dims,
   });
   const lines = report.split('\n');
@@ -879,7 +895,8 @@ test('T-METH-SCOPE-DISJOINT: the non-error fallback rules never overlap, and err
 
 test('T-METH-SCOPE: each incremental fallback reason is derived from detector facts', () => {
   const scope = (detector) => ({ requested: 'incremental', kind: 'full', since: null, commits: null, detector });
-  const detectorBase = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: false, error: null };
+  const detectorBase = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true,
+    incremental_safe: false, error: null };
   const cases = [
     [{ ...detectorBase, previously_reviewed: false }, 'no prior review recorded'],
     [{ ...detectorBase, sha_resolvable: false }, 'recorded SHA not resolvable'],
@@ -892,7 +909,8 @@ test('T-METH-SCOPE: each incremental fallback reason is derived from detector fa
   ];
   for (const [detector, expected] of cases) assert.equal(reviewScopeFallbackReason(scope(detector)), expected);
   assert.equal(
-    reviewScopeFallbackReason(scope({ ...detectorBase, previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: true, error: `${'x'.repeat(130)}\nmore` })),
+    reviewScopeFallbackReason(scope({ ...detectorBase, previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true,
+      head_advanced: true, error: `${'x'.repeat(130)}\nmore` })),
     `detection failed: ${'x'.repeat(120)}`,
   );
   assert.equal(reviewScopeFallbackReason({ requested: 'full', kind: 'full', detector: null }), null);
@@ -901,7 +919,8 @@ test('T-METH-SCOPE: each incremental fallback reason is derived from detector fa
 test('T-METH-TABLE: table cells collapse newlines and escape pipes', () => {
   assert.equal(tableCell('left\nright | still one cell'), 'left right \\| still one cell');
   const report = rendered({
-    reviewScope: { requested: 'incremental', kind: 'incremental', since: 'abc-1', commits: null, detector: { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null } },
+    reviewScope: { requested: 'incremental', kind: 'incremental', since: 'abc-1', commits: null, detector: { previously_reviewed: true,
+      sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null } },
     policy: { tier: 'optimized', provider: 'firstParty', gateway: false, subagentModel: 'model|override' },
     stats: {
       discovered: 4,
@@ -918,7 +937,9 @@ test('T-METH-TABLE: table cells collapse newlines and escape pipes', () => {
   });
   assert.ok(report.includes('| Subagent model override | EVERY stage uses model\\|override |'));
   assert.ok(report.includes('| Review scope | Incremental since abc-1 (commits unknown) |'));
-  assert.ok(report.includes('| Findings pipeline | discovered=4; validate: accepted=3, rejected=1; filter: accepted=2, rejected=1; challenge: accepted=1, rejected=1; merge: per-channel: ndjson=3, text_fallback=1; duplicates resolved=1; dropped-no-id=1; truncation warnings=1; validation warnings=2 |'));
+  assert.ok(report.includes(('| Findings pipeline | discovered=4; validate: accepted=3, rejected=1; filter: '
+    + 'accepted=2, rejected=1; challenge: accepted=1, rejected=1; merge: per-channel: ndjson=3, text_fallback=1; '
+    + 'duplicates resolved=1; dropped-no-id=1; truncation warnings=1; validation warnings=2 |')));
   assert.ok(report.includes('| Gaps | 2 |'));
   assert.ok(!report.includes('| Gaps | no write proof'));
 });
@@ -946,7 +967,8 @@ function renderedConfigEcho() {
 test('T-SUMMARY-PLURALS: zero, one and many use grammatical nouns', () => {
   for (const [n, expected] of [[0, 'findings'], [1, 'finding'], [2, 'findings']]) assert.equal(plural(n, 'finding'), expected);
   assert.equal(renderSummaryBody(), '0 findings after the gauntlet.');
-  assert.equal(renderSummaryBody({ findings: [finding('A', { report_tag: 'suggestion' }), finding('B', { report_tag: 'suggestion' })] }).split('\n')[0], '2 findings after the gauntlet \u2014 2 high. 2 routed as improvement suggestions.');
+  assert.equal(renderSummaryBody({ findings: [finding('A', { report_tag: 'suggestion' }), finding('B',
+    { report_tag: 'suggestion' })] }).split('\n')[0], '2 findings after the gauntlet \u2014 2 high. 2 routed as improvement suggestions.');
 });
 
 test('T-SUMMARY-INDEX: original references select units in report order with links and labels', () => {
@@ -957,9 +979,11 @@ test('T-SUMMARY-INDEX: original references select units in report order with lin
   const input = { findings: [a, c, b], delivered: [a, b], prIdentity: identity, deliveryCap: 2, unverified: [finding('U')] };
   const body = renderSummaryBody(input);
   assert.equal(body, [
-    '3 findings after the gauntlet \u2014 1 critical, 1 high, 1 low. 1 routed as improvement suggestion. 1 unverified / pipeline-degraded.', '',
+    ('3 findings after the gauntlet \u2014 1 critical, 1 high, 1 low. 1 routed as improvement suggestion. '
+      + '1 unverified / pipeline-degraded.'), '',
     `- \u{1f534} [CRITICAL] [\`b.js:10\`](https://gitlab.com/g/sub/r/-/blob/${'a'.repeat(40)}/b.js#L10): same`,
-    `- \u{1f4a1} [LOW] [\`src/a b.js:7-9\`](https://gitlab.com/g/sub/r/-/blob/${'a'.repeat(40)}/src/a%20b.js#L7-9) (improvement suggestion): same`, '',
+    (`- \u{1f4a1} [LOW] [\`src/a b.js:7-9\`](https://gitlab.com/g/sub/r/-/blob/${'a'.repeat(40)}/src/a%20b`
+      + `.js#L7-9) (improvement suggestion): same`), '',
     '1 more finding not listed here (over the delivery cap of 2 findings).',
   ].join('\n'));
   const gh = renderSummaryBody({ findings: [a], prIdentity: { ...identity, platform: 'github' } });
@@ -967,7 +991,9 @@ test('T-SUMMARY-INDEX: original references select units in report order with lin
   const plain = renderSummaryBody({ findings: [a] });
   assert.ok(plain.includes('- \u{1f4a1} [LOW] `src/a b.js:7-9` (improvement suggestion): same'));
   assert.ok(!plain.includes(']('));
-  assert.equal(renderSummaryBody({ findings: [a], delivered: [] }), '1 finding after the gauntlet \u2014 1 low. 1 routed as improvement suggestion.\n\n1 more finding not listed here (not selected for delivery).');
+  assert.equal(renderSummaryBody({ findings: [a], delivered: [] }),
+    ('1 finding after the gauntlet \u2014 1 low. 1 routed as improvement suggestion.\n\n1 more finding not'
+    + ' listed here (not selected for delivery).'));
   assert.ok(renderSummaryBody({ findings: [finding('X', { file: '' })] }).includes('`location unavailable`'));
 });
 
@@ -1088,7 +1114,8 @@ test('T-SUMMARY-INDEX: whole bullets fit exactly and the next code point moves a
     findings: [...over, omitted], delivered: over, deliveryCap: over.length,
   });
   assert.equal(capped.split('\n').filter((line) => line.startsWith('- ')).length, findings.length - 1);
-  assert.ok(capped.endsWith(`2 more findings not listed here (over the delivery cap of ${over.length} findings; over the summary length limit).`));
+  assert.ok(capped.endsWith((`2 more findings not listed here (over the delivery cap of ${over.length} findings; over the summary `
+    + `length limit).`)));
 });
 
 test('T-SUMMARY-INDEX: cap, tier, fallback and severity strings are exact', () => {
@@ -1129,12 +1156,15 @@ test('T-SUMMARY-INDEX: the title follows the location after a cut code span', ()
 
 test('T-SUMMARY-PLURALS: 11 and 21 reported counts stay plural with different index sizes', () => {
   for (const [reportedCount, selectedUngrouped, remainder] of [[11, 3, 7], [21, 10, 10]]) {
-    const primary = finding('P', { title: 'primary', severity: 'critical', description: 'same description', risk_level: 1, consolidation_key: 'g', consolidation_primary: true });
-    const child = finding('C', { title: 'child', description: 'same description', risk_level: 1, consolidation_key: 'g', consolidation_primary: false });
+    const primary = finding('P', { title: 'primary', severity: 'critical', description: 'same description', risk_level: 1,
+      consolidation_key: 'g', consolidation_primary: true });
+    const child = finding('C', { title: 'child', description: 'same description', risk_level: 1, consolidation_key: 'g',
+      consolidation_primary: false });
     const rawFindings = [
       primary,
       child,
-      ...Array.from({ length: reportedCount - 1 }, (_, index) => finding(`U${index}`, { title: `unique ${index}`, description: 'same description', risk_level: 1 })),
+      ...Array.from({ length: reportedCount - 1 }, (_, index) => finding(`U${index}`, { title: `unique ${index}`,
+        description: 'same description', risk_level: 1 })),
     ];
     const delivered = [primary, child, ...rawFindings.slice(2, 2 + selectedUngrouped)];
     const body = renderSummaryBody({ findings: rawFindings, delivered, deliveryCap: null });
@@ -1157,7 +1187,9 @@ test('T-SUMMARY-UNITS: partial groups use delivered representatives and conserve
   const suggestion = finding('S', { severity: 'low', report_tag: 'suggestion' });
   const findings = [primary, child, middle, suggestion];
   const partial = renderSummaryBody({ findings, delivered: [child, middle], deliveryCap: 2 });
-  assert.equal(partial.split('\n')[0], '3 reported issues from 4 findings after the gauntlet \u2014 1 critical, 1 high, 1 low. 1 routed as improvement suggestion.');
+  assert.equal(partial.split('\n')[0],
+    ('3 reported issues from 4 findings after the gauntlet \u2014 1 critical, 1 high, 1 low. 1 routed as improvement '
+    + 'suggestion.'));
   assert.deepEqual(partial.split('\n').filter(l => l.startsWith('- ')), [
     '- \u{1f4a1} [LOW] `C.js:10` (improvement suggestion): finding C',
     '- \u{1f7e0} [HIGH] `M.js:10`: finding M',
@@ -1171,7 +1203,8 @@ test('T-SUMMARY-UNITS: partial groups use delivered representatives and conserve
   assert.ok(primaryFirst.includes('[CRITICAL] `P.js:10`: finding P'));
   assert.ok(!primaryFirst.includes('finding C'));
   const withheld = renderSummaryBody({ findings: [middle, suggestion], delivered: [], deliveryTier: 'main_only', deliveryCap: 0 });
-  assert.ok(withheld.endsWith('2 more findings not listed here (over the delivery cap of 0 findings; improvement suggestions held back by delivery tier main_only).'));
+  assert.ok(withheld.endsWith(('2 more findings not listed here (over the delivery cap of 0 findings; improvement '
+    + 'suggestions held back by delivery tier main_only).')));
   const tierOnly = renderSummaryBody({ findings: [suggestion], delivered: [], deliveryTier: 'main_only', deliveryCap: 6 });
   assert.ok(tierOnly.endsWith('1 more finding not listed here (improvement suggestions held back by delivery tier main_only).'));
   const alias = { ...suggestion, report_tag: undefined, report_destination: 'suggestion' };
@@ -1261,4 +1294,86 @@ test('T-G3: code-owned report text never emits bench G3 sentinels', () => {
   assert.equal((report.toLowerCase().match(/partial-artifacts/g) || []).length, 4);
   const codeOwned = report.replaceAll(authored, '').replaceAll(folded, '');
   assert.doesNotMatch(codeOwned, /no write proof|partial-artifacts/i);
+});
+
+const DIMENSION_AGENTS = ['bug-detector', 'security-reviewer', 'cross-file-impact', 'test-analyzer',
+  'conventions-and-intent', 'type-design-analyzer', 'code-simplifier'];
+const DIMENSION_LABELS = ['Correctness & Error Handling', 'Security', 'Cross-file Impact', 'Test Coverage',
+  'Conventions & Intent', 'Type Design', 'Code Simplification'];
+const SKIPPED_TABLE = '| Dimension | Agent | Findings | Notes |\n|-----------|-------|----------|-------|\n| '
+  + 'Correctness & Error Handling | bug-detector | \u2014 | Skipped \u2014 not dispatched in this run |\n| Security | '
+  + 'security-reviewer | \u2014 | Skipped \u2014 not dispatched in this run |\n| Cross-file Impact | cross-file-impact '
+  + '| \u2014 | Skipped \u2014 not dispatched in this run |\n| Test Coverage | test-analyzer | \u2014 | Skipped \u2014 '
+  + 'not dispatched in this run |\n| Conventions & Intent | conventions-and-intent | \u2014 | Skipped \u2014 not '
+  + 'dispatched in this run |\n| Type Design | type-design-analyzer | \u2014 | Skipped \u2014 not dispatched in this '
+  + 'run |\n| Code Simplification | code-simplifier | \u2014 | Skipped \u2014 not dispatched in this run |';
+const DIMENSION_GOLDEN = { count: '0', note: 'Clean \u2014 no findings returned' };
+const DIMENSION_ROWS = [
+  { name: 'no argument renders full skipped table', absent: true, text: SKIPPED_TABLE },
+  { name: 'explicit empty dispatch skips all', dispatched: [], text: SKIPPED_TABLE },
+  { name: 'clean dispatched agents', every: true },
+  { name: 'failed bug without findings', degraded: ['bug'], expected: {
+    count: '\u2014', note: 'No results \u2014 agent did not complete',
+  } },
+  { name: 'partial bug with both buckets', degraded: ['bug'], findings: [makeFinding('B1', { dimension: 'bug', severity: 'high' })],
+    unverified: [makeFinding('B2', { dimension: 'bug', severity: 'low' })],
+    expected: { count: '1 (+1 unverified)', note: 'Partial \u2014 agent may not have completed' } },
+  { name: 'partial bug without unverified suffix', degraded: ['bug'],
+    findings: [makeFinding('B1', { dimension: 'bug', severity: 'high' })],
+    expected: { count: '1', note: 'Partial \u2014 agent may not have completed' } },
+  { name: 'severity breakdown order', agent: 'security-reviewer', findings: [
+    makeFinding('S1', { dimension: 'security', severity: 'high' }),
+    makeFinding('S2', { dimension: 'security', severity: 'critical' }),
+    makeFinding('S3', { dimension: 'security', severity: 'high' }),
+  ], expected: { count: '3', note: '1 critical, 2 high' } },
+  { name: 'unverified excluded from severity breakdown', agent: 'security-reviewer',
+    findings: [makeFinding('S1', { dimension: 'security', severity: 'high' })], unverified: [
+      makeFinding('S2', { dimension: 'security', severity: 'low' }), makeFinding('S3', { dimension: 'security', severity: 'low' }),
+    ], expected: { count: '1 (+2 unverified)', note: '1 high' } },
+  { name: 'closed severity labels with throwing fields', agent: 'security-reviewer', findings: [
+    makeFinding('S1', { dimension: 'security', severity: 'Critical' }),
+    makeFinding('S2', { dimension: 'security', severity: ' medium ' }),
+    makeFinding('S3', { dimension: 'security', severity: 'bogus' }),
+    makeFinding('S4', { dimension: 'security', severity: ['high'] }),
+    makeFinding('S5', { dimension: 'security', severity: 'high\nx' }),
+    makeFinding('S6', { dimension: 'security', severity: '' }),
+    makeFinding('S7', { dimension: 'security', severity: undefined }),
+    makeFinding('S8', { dimension: 'security', severity: 0 }),
+    makeFinding('S9', { dimension: 'security', severity: false }),
+    Object.defineProperty(makeFinding('S10', { dimension: 'security' }), 'severity', { get() { throw new Error('boom'); } }),
+    Object.defineProperty(makeFinding('S11'), 'dimension', { get() { throw new Error('boom'); } }),
+  ], expected: { count: '10', note: '1 critical, 1 medium, 5 low' } },
+  { name: 'absent severity leaves empty note', agent: 'security-reviewer',
+    findings: [makeFinding('S1', { dimension: 'security', severity: undefined })], expected: { count: '1', note: '' } },
+  { name: 'only unverified', agent: 'security-reviewer',
+    unverified: [makeFinding('S1', { dimension: 'security', severity: 'low' })],
+    expected: { count: '0 (+1 unverified)', note: 'Unverified findings only \u2014 see secondary section' } },
+  { name: 'multiple dimensions aggregate into one agent', agent: 'conventions-and-intent', findings: [
+    makeFinding('C1', { dimension: 'convention', severity: 'medium' }),
+    makeFinding('C2', { dimension: 'comment_accuracy', severity: 'medium' }),
+  ], expected: { count: '2', note: '2 medium' } },
+  { name: 'one failed dimension degrades the shared agent', agent: 'conventions-and-intent', degraded: ['convention'],
+    findings: [makeFinding('I1', { dimension: 'intent', severity: 'medium' })],
+    expected: { count: '1', note: 'Partial \u2014 agent may not have completed' } },
+  { name: 'unknown and absent dimensions count nowhere', every: true, findings: [
+    makeFinding('X1', { dimension: 'not-a-real-dimension' }), makeFinding('X2', { dimension: undefined }),
+  ] },
+];
+for (const row of DIMENSION_ROWS) test(`dimension table: ${row.name}`, () => {
+  const md = dimensionsSummaryTable(row.absent ? undefined : { dispatched: row.dispatched ?? AGENTS,
+    degraded: row.degraded ?? [], findings: row.findings ?? [], unverified: row.unverified ?? [] });
+  if (row.text) assert.equal(md, row.text);
+  const lines = md.split('\n');
+  assert.equal(lines[0], '| Dimension | Agent | Findings | Notes |');
+  assert.equal(lines[1], '|-----------|-------|----------|-------|');
+  const data = lines.slice(2).map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
+  assert.equal(data.length, 7);
+  assert.deepEqual(data.map((cells) => cells[0]), DIMENSION_LABELS);
+  assert.deepEqual(data.map((cells) => cells[1]), DIMENSION_AGENTS);
+  if (!row.text) {
+    const expected = row.expected ?? DIMENSION_GOLDEN;
+    const selected = row.every ? data : data.filter((cells) => cells[1] === (row.agent ?? 'bug-detector'));
+    assert.equal(selected.length, row.every ? 7 : 1);
+    for (const cells of selected) assert.deepEqual(cells.slice(2), [expected.count, expected.note]);
+  }
 });
