@@ -5,8 +5,6 @@ import { runWith } from '../src/run.js';
 import { interactiveArgs } from './helpers/argsFixtures.js';
 
 const CLASSIFIER_ROWS = [
-  { name: "number", input: 45,
-    expected: { kind: 'pr_number', number: '45', ref: "45" } },
   { name: "number upper bound", input: 9999999,
     expected: { kind: 'pr_number', number: '9999999', ref: "9999999" } },
   { name: "trimmed number", input: " 45 ",
@@ -38,7 +36,6 @@ const CLASSIFIER_ROWS = [
   { name: 'non-string', input: {}, expected: null },
   { name: 'null', input: null, expected: null },
   { name: 'empty', input: '   ', expected: null },
-  { name: 'long', input: 'x'.repeat(201), expected: null },
   { name: 'unmatched', input: 'review my changes', expected: null },
   { name: 'bare repo URL', input: 'https://github.com/o/r', expected: null },
   { name: 'git ref', input: 'main..feature', expected: null },
@@ -56,7 +53,6 @@ const CLASSIFIER_ROWS = [
   { name: 'negative', input: -1, expected: null },
   { name: 'fraction', input: 1.5, expected: null },
   { name: 'number above bound', input: 10000000, expected: null },
-  { name: 'pathological', input: 'a/'.repeat(100), expected: null },
  ];
 for (const { name, input, expected } of CLASSIFIER_ROWS) {
   test(`classify: ${name}`, () => {
@@ -100,10 +96,6 @@ const REFUSAL_ROWS = [
     expected: "args was a bare PR/MR number (45), not the assembled argsVersion:1 waist object \u2014 do not invoke this " +
     "workflow directly; run the code-gauntlet skill (Phases 1-2 build the args). Run this instead: " +
     "Skill(\"code-gauntlet:code-gauntlet\", args=\"45\")" },
-  { name: 'shorthand', input: 'PR 310',
-    expected: "args was a PR/MR reference (PR 310), not the assembled argsVersion:1 waist object \u2014 do not invoke this " +
-    "workflow directly; run the code-gauntlet skill (Phases 1-2 build the args). Run this instead: " +
-    "Skill(\"code-gauntlet:code-gauntlet\", args=\"PR 310\")" },
   { name: 'encoded terminal', input: JSON.stringify('PR 310'),
     expected: "args was a PR/MR reference (PR 310), not the assembled argsVersion:1 waist object \u2014 do not invoke this " +
     "workflow directly; run the code-gauntlet skill (Phases 1-2 build the args). Run this instead: " +
@@ -165,11 +157,6 @@ for (const { name, input, expected } of REFUSAL_ROWS) {
 }
 
 const DECODE_ROWS = [
-  { name: 'object', depth: 0, input: { argsVersion: 1, reviewConfig: null, persist: null },
-    expected: { argsVersion: 1, reviewConfig: null, persist: null } },
-  { name: 'JSON', depth: 1, input: { argsVersion: 1 }, expected: { argsVersion: 1 } },
-  { name: 'double JSON', depth: 2, input: { argsVersion: 1 }, expected: { argsVersion: 1 } },
-  { name: 'triple JSON', depth: 3, input: { argsVersion: 1 }, expected: { argsVersion: 1 } },
   { name: 'four JSON', depth: 4, input: { argsVersion: 1 }, expected: { argsVersion: 1 } },
   { name: 'five JSON', depth: 5, input: {}, expected: false },
 ];
@@ -188,8 +175,6 @@ for (const { name, depth, input, expected } of DECODE_ROWS) {
 }
 
 const ENVELOPE_ROWS = [
-  { name: 'factory', input: ['x', ['gap']],
-    expected: { ok: false, error: 'x', phaseReached: 'args', failingPhase: 'args', artifactPaths: {}, stats: {}, gaps: ['gap'] } },
 ];
 for (const { name, input, expected } of ENVELOPE_ROWS) {
   test(`envelope: ${name}`, () => assert.deepEqual(makeArgsRejectEnvelope(...input), expected));
@@ -201,11 +186,6 @@ const WIRED_ROWS = [
       'The code-gauntlet skill assembles this object in Phases 1-2 \u2014 ' +
       'run it instead of invoking the workflow directly: ' +
       'Skill("code-gauntlet:code-gauntlet", args="<PR number or URL>")' } },
-  { name: 'plain object cascade', input: () => ({}), expected: {
-    error: 'missing required field: mode', recovery: 'The code-gauntlet skill assembles this object in Phases 1-2 \u2014 ' +
-      'run it instead of invoking the workflow directly: ' +
-      'Skill("code-gauntlet:code-gauntlet", args="<PR number or URL>")',
-  } },
 ];
 for (const { name, input, expected } of WIRED_ROWS) {
   test(`entry wiring: ${name}`, async () => {

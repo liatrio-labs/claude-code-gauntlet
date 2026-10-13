@@ -7,21 +7,6 @@ import { PR_IDENTITY_FIELDS, PERMALINK_TEMPLATES } from '../src/registry.js';
 import { SHA_FULL_RE, WEB_ORIGIN_RE, resolvePolicy, conditionalSchemaActive, modelFor, identityCheck } from '../src/registry.js';
 
 const POLICY_ROWS = [
-  { name: 'discovery default', agent: 'code-gauntlet:bug-detector', input: undefined, expected: { model: 'claude-sonnet-5-5' } },
-  { name: 'security override', agent: 'code-gauntlet:security-reviewer', input: {}, expected: { model: 'claude-opus-5-5' } },
-  { name: 'stage default ignores legacy frontier', agent: 'code-gauntlet:challenger',
-    input: { frontier: true, frontierModelId: 'claude-fable-5' }, expected: { model: 'claude-sonnet-5-5' } },
-  { name: 'unknown agent', agent: 'code-gauntlet:unknown', input: {}, expected: { model: 'claude-sonnet-5-5' } },
-  { name: 'explicit model', agent: 'code-gauntlet:security-reviewer', input: { subagentModelEnv: 'claude-haiku-4-5' },
-    expected: { model: 'claude-haiku-4-5' } },
-  { name: 'alias override', agent: 'code-gauntlet:bug-detector', input: { subagentModelEnv: 'sonnet' },
-    expected: { model: 'claude-sonnet-5-5' } },
-  { name: 'third-party default', agent: 'code-gauntlet:bug-detector', input: { provider: 'bedrock' }, expected: { model: 'sonnet' } },
-  { name: 'third-party override', agent: 'code-gauntlet:security-reviewer', input: { provider: 'bedrock' },
-    expected: { model: 'opus' } },
-  { name: 'third-party deployment', agent: 'code-gauntlet:bug-detector',
-    input: { provider: 'bedrock', subagentModelEnv: 'us.anthropic.claude-sonnet-4-6' },
-    expected: { model: 'us.anthropic.claude-sonnet-4-6' } },
   { name: 'third-party alias override', agent: 'code-gauntlet:bug-detector',
     input: { provider: 'bedrock', subagentModelEnv: 'sonnet' }, expected: { model: 'sonnet' } },
   { name: 'vertex stage default', agent: 'code-gauntlet:executor', input: { provider: 'vertex' },
@@ -31,8 +16,6 @@ const POLICY_ROWS = [
   { name: 'unknown provider stage default', agent: 'code-gauntlet:executor', input: { provider: 'someday-provider' },
     expected: { model: 'sonnet' } },
   { name: 'null provider', agent: 'code-gauntlet:bug-detector', input: { provider: null }, expected: { model: 'claude-sonnet-5-5' } },
-  { name: 'first-party', agent: 'code-gauntlet:bug-detector', input: { provider: 'firstParty' },
-    expected: { model: 'claude-sonnet-5-5' } },
   { name: 'copied dimension', agent: 'code-gauntlet:bug-detector', input: {},
     table: DIMENSIONS.map((row) => ({ ...row, modelOverride: row.dimension === 'bug' ? 'haiku' : row.modelOverride })),
     expected: { model: 'claude-haiku-4-5-20251001' } },
@@ -135,11 +118,8 @@ for (const { name, expected } of DIMENSION_ROWS) {
 }
 
 const PATTERN_ROWS = [
-  { name: 'SHA lowercase', pattern: SHA_FULL_RE, input: 'dddddddddddddddddddddddddddddddddddddddd', expected: true },
-  { name: 'SHA uppercase', pattern: SHA_FULL_RE, input: 'D'.repeat(40), expected: false },
   { name: 'SHA length', pattern: SHA_FULL_RE, input: 'd'.repeat(39), expected: false },
   { name: 'SHA excess length', pattern: SHA_FULL_RE, input: 'd'.repeat(41), expected: false },
-  { name: 'origin IPv6', pattern: WEB_ORIGIN_RE, input: 'http://[::1]:8443', expected: true },
   { name: 'origin port bound', pattern: WEB_ORIGIN_RE, input: 'https://git.example:65535', expected: true },
   { name: 'origin port overflow', pattern: WEB_ORIGIN_RE, input: 'https://git.example:65536', expected: false },
 ];

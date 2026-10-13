@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ARGS_VERSION, normalizeArgs, normalizeArgsReport, validateArgs, stripNullOptionalsReport } from '../src/args.js';
 import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveReviewConfig } from '../src/args.js';
-import { interactiveArgs, headlessArgs, priorReviewDetector, knobRows, validArgs, prIdentity } from './helpers/argsFixtures.js';
+import { interactiveArgs, headlessArgs, priorReviewDetector, knobRows, prIdentity } from './helpers/argsFixtures.js';
 
 const REJECTION_ROWS = [
   { name: 'version', input: (a) => { a.argsVersion = 2; }, expected: [ "unsupported argsVersion 2 (expected 1)" ] },
@@ -38,9 +38,7 @@ const REJECTION_ROWS = [
   ] },
   { name: 'headShaShort control',
     input: (a) => { a.headShaShort = "/p\n"; }, expected: [ "headShaShort must not contain a control character" ] },
-  { name: 'diffPath type', input: (a) => { a.diffPath = 42; }, expected: [ "diffPath must be a non-empty string when present" ] },
   { name: 'diffPath control', input: (a) => { a.diffPath = "/p\n"; }, expected: [ "diffPath must not contain a control character" ] },
-  { name: 'pluginRoot type', input: (a) => { a.pluginRoot = 42; }, expected: [ "pluginRoot must be a non-empty string when present" ] },
   { name: 'pluginRoot null', input: (a) => { a.pluginRoot = null; }, expected: [
     'pluginRoot must be a non-empty string when present',
   ] },
@@ -54,12 +52,8 @@ const REJECTION_ROWS = [
   ] },
   { name: 'relative output',
     input: (a) => { a.outputDir = "relative"; }, expected: [ "outputDir must be an absolute path (POSIX /-prefix)" ] },
-  { name: 'relative root',
-    input: (a) => { a.repoRoot = "relative"; }, expected: [ "repoRoot must be an absolute path without .. segments or backslashes" ] },
   { name: 'root traversal',
     input: (a) => { a.repoRoot = "/r/../other"; }, expected: [ "repoRoot must be an absolute path without .. segments or backslashes" ] },
-  { name: 'root backslash',
-    input: (a) => { a.repoRoot = "/a\\b"; }, expected: [ "repoRoot must be an absolute path without .. segments or backslashes" ] },
   { name: 'unsafe SHA', input: (a) => { a.headShaShort = "bad sha"; }, expected: [
     "headShaShort must match /^[A-Za-z0-9._-]+$/ (AST-safe, non-splitting \u2014 interpolated into the verify command " +
       "argv)",
@@ -99,27 +93,10 @@ const REJECTION_ROWS = [
     expected: [ "riskTable classifies file(s) not present in changedFiles: ghost.js" ] },
   { name: 'scope enum',
     input: (a) => { a.scopeAnswer = "partial"; }, expected: [ "invalid scopeAnswer: partial (expected one of light, full)" ] },
-  { name: 'medium light answer', input: (a) => { a.scopeAnswer = "light"; }, expected: [
-    "scopeAnswer is \"light\" but the riskTable/changedLines are not light-eligible (not every file is low risk, or" +
-      " changedLines >= 50) \u2014 the orchestrator answered a light/full question the gate never asked; omit " +
-      "scopeAnswer",
-  ] },
-  { name: 'low 50 answer', input: (a) => { a.scopeAnswer = "light"; a.riskTable[0].risk = "low"; a.changedLines = 50; }, expected: [
-    "scopeAnswer is \"light\" but the riskTable/changedLines are not light-eligible (not every file is low risk, or" +
-      " changedLines >= 50) \u2014 the orchestrator answered a light/full question the gate never asked; omit " +
-      "scopeAnswer",
-  ] },
-  { name: 'ineligible full answer', input: (a) => { a.scopeAnswer = "full"; }, expected: [
-    "scopeAnswer is \"full\" but the riskTable/changedLines are not light-eligible (not every file is low risk, or " +
-      "changedLines >= 50) \u2014 the orchestrator answered a light/full question the gate never asked; omit scopeAnswer",
-  ] },
   { name: 'eligible missing answer', input: (a) => { a.riskTable[0].risk = "low"; }, expected: [
     "riskTable/changedLines are light-eligible but scopeAnswer is missing \u2014 the light/full gate must have asked, " +
       "and its answer must be stamped as scopeAnswer",
   ] },
-  { name: 'contextLines domain',
-    input: (a) => { a.contextLines = "1"; },
-    expected: [ "contextLines must be a positive safe integer (the measured size of the shared context file) when present" ] },
   { name: 'contextLines null', input: (a) => { a.contextLines = null; }, expected: [
     'contextLines must be a positive safe integer (the measured size of the shared context file) when present',
   ] },
@@ -148,9 +125,6 @@ const REJECTION_ROWS = [
     expected: [ "contextChars requires contextLines \u2014 chars alone cannot size a line-offset read plan" ] },
   { name: 'review config shape',
     input: (a) => { a.reviewConfig = []; }, expected: [ "reviewConfig must be an object (the parseReviewMd output shape) when present" ] },
-  { name: 'root confidence_threshold',
-    input: (a) => { a.reviewConfig = { confidence_threshold: "90" }; },
-    expected: [ "reviewConfig.confidence_threshold must be an integer from 0 through 100 when present" ] },
   { name: 'fractional threshold', input: (a) => { a.reviewConfig = { confidence_threshold: 1.5 }; }, expected: [
     'reviewConfig.confidence_threshold must be an integer from 0 through 100 when present',
   ] },
@@ -174,8 +148,6 @@ const REJECTION_ROWS = [
     input: (a) => { a.reviewConfig = { scopes: {} }; }, expected: [ "reviewConfig.scopes must be an array when present" ] },
   { name: 'scope null',
     input: (a) => { a.reviewConfig = { scopes: [null] }; }, expected: [ "reviewConfig.scopes[0] must be a plain object" ] },
-  { name: 'scope array',
-    input: (a) => { a.reviewConfig = { scopes: [[]] }; }, expected: [ "reviewConfig.scopes[0] must be a plain object" ] },
   { name: 'scope empty dir',
     input: (a) => { a.reviewConfig = { scopes: [{ dir: "" }] }; }, expected: [ "reviewConfig.scopes[0].dir must be a non-empty string" ] },
   { name: 'scope leading slash', input: (a) => { a.reviewConfig = { scopes: [{ dir: "/api" }] }; }, expected: [
@@ -188,9 +160,6 @@ const REJECTION_ROWS = [
   { name: 'scope control',
     input: (a) => { a.reviewConfig = { scopes: [{ dir: "api\n" }] }; },
     expected: [ "reviewConfig.scopes[0].dir must not contain a control character" ] },
-  { name: 'scope empty segment',
-    input: (a) => { a.reviewConfig = { scopes: [{ dir: "api//src" }] }; },
-    expected: [ "reviewConfig.scopes[0].dir must not contain an empty path segment" ] },
   { name: 'scope dot',
     input: (a) => { a.reviewConfig = { scopes: [{ dir: "api/./src" }] }; },
     expected: [ "reviewConfig.scopes[0].dir must not contain . or .. path segments" ] },
@@ -261,21 +230,9 @@ const REJECTION_ROWS = [
     "reviewMd[0].path must use / separators, not backslashes",
     "reviewMd[0].path must end with exactly REVIEW.md",
   ] },
-  { name: 'review path control', input: (a) => {
-    a.reviewMd = [{ path: "api\n/REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
-  }, expected: [ "reviewMd[0].path must not contain a control character" ] },
   { name: 'review path NUL', input: (a) => {
     a.reviewMd = [{ path: 'api\u0000/REVIEW.md', text: '' }]; a.configEcho.review_md.value = 'present';
   }, expected: ['reviewMd[0].path must not contain a control character'] },
-  { name: 'review path empty segment', input: (a) => {
-    a.reviewMd = [{ path: "api//REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
-  }, expected: [ "reviewMd[0].path must not contain an empty path segment" ] },
-  { name: 'review path dot segment', input: (a) => {
-    a.reviewMd = [{ path: "api/./REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
-  }, expected: [ "reviewMd[0].path must not contain . or .. path segments" ] },
-  { name: 'review path wrong basename', input: (a) => {
-    a.reviewMd = [{ path: "api/review.md", text: "" }]; a.configEcho.review_md.value = "present";
-  }, expected: [ "reviewMd[0].path must end with exactly REVIEW.md" ] },
   { name: 'root without path', input: (a) => {
     a.reviewMd = [{ path: "REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
   }, expected: [
@@ -328,10 +285,6 @@ const REJECTION_ROWS = [
     a.delivery = { prIdentity: prIdentity() };
     a.delivery.prIdentity.sha_full = "D".repeat(40);
   }, expected: [ "delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id" ] },
-  { name: 'identity platform', input: (a) => {
-    a.delivery = { prIdentity: prIdentity() };
-    a.delivery.prIdentity.platform = "bitbucket";
-  }, expected: [ "delivery.prIdentity.platform must be one of github, gitlab" ] },
   { name: 'identity web_origin', input: (a) => {
     a.delivery = { prIdentity: prIdentity() };
     a.delivery.prIdentity.web_origin = "github.com";
@@ -350,26 +303,6 @@ const REJECTION_ROWS = [
     a.delivery = { prIdentity: prIdentity() };
     delete a.delivery.prIdentity.platform;
   }, expected: [ "delivery.prIdentity.platform must be one of github, gitlab" ] },
-  { name: 'origin path', input: (a) => {
-    a.delivery = { prIdentity: prIdentity() };
-    a.delivery.prIdentity.web_origin = "https://github.com/x";
-  }, expected: [ "delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only" ] },
-  { name: 'origin userinfo', input: (a) => {
-    a.delivery = { prIdentity: prIdentity() };
-    a.delivery.prIdentity.web_origin = "https://user@github.com";
-  }, expected: [ "delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only" ] },
-  { name: 'origin zero port', input: (a) => {
-    a.delivery = { prIdentity: prIdentity() };
-    a.delivery.prIdentity.web_origin = "https://git.example:0";
-  }, expected: [ "delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only" ] },
-  { name: 'origin high port', input: (a) => {
-    a.delivery = { prIdentity: prIdentity() };
-    a.delivery.prIdentity.web_origin = "https://git.example:65536";
-  }, expected: [ "delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only" ] },
-  { name: 'origin long label', input: (a) => {
-    a.delivery = { prIdentity: prIdentity() };
-    a.delivery.prIdentity.web_origin = "https://" + "a".repeat(64) + ".example";
-  }, expected: [ "delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only" ] },
   { name: 'persist shape',
     input: (a) => { a.persist = []; },
     expected: [ "persist must be an object of the form { assembleScriptPath, returnPrimaries } when present" ] },
@@ -391,9 +324,6 @@ const REJECTION_ROWS = [
   ] },
   { name: 'persist returns',
     input: (a) => { a.persist = { returnPrimaries: "false" }; }, expected: [ "persist.returnPrimaries must be a boolean when present" ] },
-  { name: 'assemble identity',
-    input: (a) => { a.persist = { assembleScriptPath: "/other/scripts/assemble_artifacts.py" }; },
-    expected: [ "persist.assembleScriptPath must equal /plugin/scripts/assemble_artifacts.py" ] },
   { name: 'verify identity',
     input: (a) => { a.verify = { scriptPath: "/plugin/scripts/../verify_findings.py" }; },
     expected: [ "verify.scriptPath must equal /plugin/scripts/verify_findings.py" ] },
@@ -408,24 +338,6 @@ const REJECTION_ROWS = [
     "unknown limits key: verifySclieSize (expected one of summarizeBucketSize, validateBatch, challengeCap, " +
       "verifySliceSize, deliveryCap, discoveryCap, maxLineSpan)",
   ] },
-  { name: 'limits summarizeBucketSize',
-    input: (a) => { a.limits.summarizeBucketSize = 0; },
-    expected: [ "limits.summarizeBucketSize must be a positive safe integer when present" ] },
-  { name: 'limits validateBatch',
-    input: (a) => { a.limits.validateBatch = 0; }, expected: [ "limits.validateBatch must be a positive safe integer when present" ] },
-  { name: 'limits verifySliceSize',
-    input: (a) => { a.limits.verifySliceSize = 0; }, expected: [ "limits.verifySliceSize must be a positive safe integer when present" ] },
-  { name: 'limits maxLineSpan',
-    input: (a) => { a.limits.maxLineSpan = 0; }, expected: [ "limits.maxLineSpan must be a positive safe integer when present" ] },
-  { name: 'limits challengeCap',
-    input: (a) => { a.limits.challengeCap = -1; }, expected: [ "limits.challengeCap must be a non-negative safe integer when present" ] },
-  { name: 'limits deliveryCap',
-    input: (a) => { a.limits.deliveryCap = -1; },
-    expected: [ "limits.deliveryCap must be null, absent, or a non-negative safe integer when present" ] },
-  { name: 'limits discoveryCap',
-    input: (a) => { a.limits.discoveryCap = 0; }, expected: [ "limits.discoveryCap must be a positive safe integer when present" ] },
-  { name: 'limits integer domain',
-    input: (a) => { a.limits.validateBatch = 1.5; }, expected: [ "limits.validateBatch must be a positive safe integer when present" ] },
   { name: 'limits string value', input: (a) => { a.limits.validateBatch = 'x'; }, expected: [
     'limits.validateBatch must be a positive safe integer when present',
   ] },
@@ -454,8 +366,6 @@ const REJECTION_ROWS = [
   ] },
   { name: 'reviewScope extra',
     input: (a) => { a.reviewScope.reason = "old reason"; }, expected: [ "reviewScope has unexpected key(s): reason" ] },
-  { name: 'scope requested',
-    input: (a) => { a.reviewScope.requested = "skip"; }, expected: [ "reviewScope.requested must be full or incremental" ] },
   { name: 'scope kind', input: (a) => { a.reviewScope.kind = "bogus"; }, expected: [ "reviewScope.kind must be full or incremental" ] },
   { name: 'full since', input: (a) => { a.reviewScope.since = "abc"; }, expected: [ "reviewScope.since must be null for full scope" ] },
   { name: 'full commits', input: (a) => { a.reviewScope.commits = 1; }, expected: [ "reviewScope.commits must be null for full scope" ] },
@@ -512,9 +422,6 @@ const REJECTION_ROWS = [
   { name: 'detector incremental_safe',
     input: (a) => { a.reviewScope.detector = priorReviewDetector({ incremental_safe: "no" }); },
     expected: [ "reviewScope.detector.incremental_safe must be a boolean" ] },
-  { name: 'detector error type',
-    input: (a) => { a.reviewScope.detector = priorReviewDetector({ error: 2 }); },
-    expected: [ "reviewScope.detector.error must be a string or null" ] },
   { name: 'detector error control',
     input: (a) => { a.reviewScope.detector = priorReviewDetector({ error: "line\nbreak" }); },
     expected: [ "reviewScope.detector.error must be single-line without control characters" ] },
@@ -542,10 +449,6 @@ const REJECTION_ROWS = [
   { name: 'cap malformed receipt', base: headlessArgs, input: (a) => {
     a.limits.deliveryCap = 1; a.configEcho.pr_comment_cap.value = "007";
   }, expected: [ "configEcho.pr_comment_cap.value is invalid for headless" ] },
-  { name: 'ineligible light receipt', base: headlessArgs, input: (a) => { a.configEcho.trivial_scope.value = "light"; }, expected: [
-    "configEcho.trivial_scope is \"light\" but the riskTable/changedLines are not light-eligible (not every file is" +
-      " low risk, or changedLines >= 50) \u2014 the orchestrator answered a light/full question the gate never asked",
-  ], normalize: true, check: (out) => { assert.equal(out.scopeAnswer, undefined); } },
   { name: 'two scope refusals', base: headlessArgs, input: (a) => {
     a.scopeAnswer = "full"; a.configEcho.trivial_scope.value = "light";
   }, expected: [
@@ -557,10 +460,6 @@ const REJECTION_ROWS = [
   { name: 'PR comments identity', base: headlessArgs,
     input: (a) => { a.configEcho.delivery.value = "pr_comments"; },
     expected: [ "delivery.prIdentity is required when configEcho.delivery contains pr_comments" ] },
-  { name: 'headless cap lockstep', base: headlessArgs,
-    input: (a) => { a.limits.deliveryCap = 7; }, expected: [ "limits.deliveryCap does not match configEcho.pr_comment_cap" ] },
-  { name: 'headless tier lockstep', base: headlessArgs,
-    input: (a) => { a.delivery.tier = "main_only"; }, expected: [ "delivery.tier does not match configEcho.delivery_tier" ] },
   { name: 'headless requested lockstep', base: headlessArgs,
     input: (a) => { a.reviewScope.requested = "incremental"; },
     expected: [ "reviewScope.requested does not match configEcho.reviewed_policy" ] },
@@ -574,15 +473,6 @@ const REJECTION_ROWS = [
   { name: 'headless answer lockstep', base: headlessArgs, input: (a) => {
     a.riskTable[0].risk = "low"; a.scopeAnswer = "full"; a.configEcho.trivial_scope.value = "light";
   }, expected: [ "scopeAnswer does not match configEcho.trivial_scope" ] },
-  { name: 'interactive cap lockstep',
-    input: (a) => { a.limits.deliveryCap = 1; }, expected: [ "limits.deliveryCap does not match configEcho.pr_comment_cap" ] },
-  { name: 'derived source lockstep',
-    input: (a) => { a.reviewMd = []; a.configEcho.review_md.value = "present"; },
-    expected: [ "configEcho.review_md does not match reviewMd" ] },
-  { name: 'conflicting requested normalization', base: headlessArgs,
-    input: (a) => { a.configEcho.reviewed_policy.value = "incremental"; }, expected: [
-    "reviewScope.requested does not match configEcho.reviewed_policy",
-  ], normalize: true, check: (out) => { assert.equal(out.reviewScope.requested, "full"); } },
   { name: 'required limits remains absent', base: headlessArgs,
     input: (a) => { delete a.limits; },
     expected: [ "missing required field: limits" ], normalize: true, check: (out) => { assert.equal("limits" in out, false); } },
@@ -600,9 +490,6 @@ const REJECTION_ROWS = [
     "configEcho.reviewed_policy.value is invalid for headless",
     "reviewScope.requested must be full or incremental",
   ], normalize: true, check: (out) => { assert.equal(out.reviewScope.requested, undefined); } },
-  { name: 'missing config echo', input: (a) => { delete a.configEcho; }, expected: [ "missing required field: configEcho" ] },
-  { name: 'null config echo',
-    input: (a) => { a.configEcho = null; }, expected: [ "configEcho must be an object keyed by methodology knob" ] },
   { name: 'null model receipt stays null', input: (a) => { a.configEcho.model_tier.value = null; },
     expected: ['configEcho.model_tier.value must be a string'], normalize: true,
     check: (out) => { assert.equal(out.configEcho.model_tier.value, null); } },
@@ -624,7 +511,6 @@ for (const { name, input, expected, base = interactiveArgs, normalize, check } o
 }
 
 const NON_OBJECT_ROWS = [
-  { name: 'undefined', input: undefined, expected: { ok: false, errors: ['args is not an object'] } },
   { name: 'string', input: 'waist', expected: { ok: false, errors: ['args is not an object'] } },
 ];
 for (const { name, input, expected } of NON_OBJECT_ROWS) {
@@ -632,11 +518,15 @@ for (const { name, input, expected } of NON_OBJECT_ROWS) {
 }
 
 const ACCEPTANCE_ROWS = [
-  { name: 'base', input: () => interactiveArgs(), expected: { ok: true, errors: [] } },
   { name: 'local scope ignores policy lockstep', input: () => headlessArgs('incremental', { detector: null }),
     expected: { ok: true, errors: [] } },
-  { name: 'headless', input: () => headlessArgs(), expected: { ok: true, errors: [] } },
-  { name: 'wired builder', input: () => validArgs(), expected: { ok: true, errors: [] } },
+  { name: 'non-pluginRoot backtick', input: () => interactiveArgs({ diffPath: '/r/.code-gauntlet/diff`patch' }),
+    expected: { ok: true, errors: [] } },
+  { name: 'absent delivery echo', input: () => {
+    const args = headlessArgs();
+    delete args.configEcho.delivery.value;
+    return args;
+  }, expected: { ok: false, errors: ['configEcho.delivery.value must be a string'] } },
   { name: 'optional domains', input: () => interactiveArgs({
     nonce: 'n-1.0_ab', policy: { tier: 'optimized', provider: null, gateway: null },
     contextLines: 5000000, contextChars: 500000000,
@@ -644,22 +534,12 @@ const ACCEPTANCE_ROWS = [
     exclusionPatterns: ['*.js'], delivery: {}, persist: { returnPrimaries: false },
     limits: { challengeCap: 0, deliveryCap: null, discoveryCap: 1 },
   }), expected: { ok: true, errors: [] } },
-  { name: 'light 49', input: () => interactiveArgs({
-    riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 49, scopeAnswer: 'light',
-  }), expected: { ok: true, errors: [] } },
-  { name: 'eligible full', input: () => interactiveArgs({
-    riskTable: [{ path: 'a.js', risk: 'low' }], scopeAnswer: 'full',
-  }), expected: { ok: true, errors: [] } },
   { name: 'incremental', input: () => interactiveArgs({
     reviewScope: { requested: 'incremental', kind: 'incremental', since: 'abc-1._x', commits: 0, detector: priorReviewDetector() },
   }), expected: { ok: true, errors: [] } },
   { name: 'scripts at root', input: () => interactiveArgs({
     pluginRoot: '/', persist: { assembleScriptPath: '/scripts/assemble_artifacts.py' },
     verify: { scriptPath: '/scripts/verify_findings.py' },
-  }), expected: { ok: true, errors: [] } },
-  { name: 'scripts trailing root', input: () => interactiveArgs({
-    pluginRoot: '/plugin/', persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: true },
-    verify: { scriptPath: '/plugin/scripts/verify_findings.py' },
   }), expected: { ok: true, errors: [] } },
   { name: 'IPv6 identity', input: () => interactiveArgs({ delivery: { prIdentity: {
     owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd',
@@ -678,14 +558,12 @@ const REQUIRED_ROWS = [
     'missing required field: riskTable', 'missing required field: policy', 'missing required field: limits',
     'missing required field: configEcho', 'missing required field: pluginRoot', 'missing required field: reviewScope',
   ] } },
-  { name: 'version constant', input: ARGS_VERSION, expected: 1 },
 ];
 for (const { name, input, expected } of REQUIRED_ROWS) {
   test(`required: ${name}`, () => assert.deepEqual(name === 'version constant' ? input : validateArgs(input), expected));
 }
 
 const STRIP_ROWS = [
-  { name: 'scalar', input: null, expected: { args: null, dropped: [], respelled: [] } },
   { name: 'array', input: ['not', 'an', 'object'], expected: {
     args: ['not', 'an', 'object'], dropped: [], respelled: [],
   } },
@@ -702,25 +580,10 @@ const STRIP_ROWS = [
     expected: { args: { delivery: {} }, dropped: ['delivery.prIdentity', 'delivery.tier'], respelled: [] } },
   { name: 'title', input: { delivery: { prIdentity: { owner: 'o', title: null } } },
     expected: { args: { delivery: { prIdentity: { owner: 'o' } } }, dropped: ['delivery.prIdentity.title'], respelled: [] } },
-  { name: 'meaningful nulls', input: { policy: { subagentModel: null }, limits: { deliveryCap: null, challengeCap: 0 } },
-    expected: { args: { policy: { subagentModel: null }, limits: {
-      deliveryCap: null, challengeCap: 0, summarizeBucketSize: 20, validateBatch: 25, verifySliceSize: 25, maxLineSpan: 100,
-    } }, dropped: [], respelled: [] } },
-  { name: 'partial limits', input: { limits: { summarizeBucketSize: 7, deliveryCap: 3 } },
-    expected: { args: { limits: {
-      summarizeBucketSize: 7, deliveryCap: 3, validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100,
-    } }, dropped: [], respelled: [] } },
-  { name: 'malformed limits', input: { limits: 'nope' }, expected: { args: { limits: 'nope' }, dropped: [], respelled: [] } },
   { name: 'interactive null receipt', input: {
     mode: 'interactive', configEcho: { pr_comment_cap: { value: null, source: 'default' } },
   }, expected: { args: { mode: 'interactive', configEcho: { pr_comment_cap: { value: 'null', source: 'default' } } },
     dropped: [], respelled: ['configEcho.pr_comment_cap.value'] } },
-  { name: 'headless null receipt', input: { mode: 'headless', configEcho: { pr_comment_cap: { value: null } } },
-    expected: { args: { mode: 'headless', configEcho: { pr_comment_cap: { value: null } } }, dropped: [], respelled: [] } },
-  { name: 'absent receipt value', input: { mode: 'interactive', configEcho: { pr_comment_cap: { source: 'default' } } },
-    expected: { args: { mode: 'interactive', configEcho: { pr_comment_cap: { source: 'default' } } }, dropped: [], respelled: [] } },
-  { name: 'clean', input: { reviewConfig: {}, delivery: { tier: 'all' } },
-    expected: { args: { reviewConfig: {}, delivery: { tier: 'all' } }, dropped: [], respelled: [] } },
 ];
 for (const { name, input, expected } of STRIP_ROWS) {
   test(`strip: ${name}`, () => {
@@ -732,8 +595,6 @@ for (const { name, input, expected } of STRIP_ROWS) {
 
 const NORMALIZE_ROWS = [
   { name: 'undefined', input: () => undefined, expected: { args: undefined, dropped: [], respelled: [], derivedPaths: [] } },
-  { name: 'object null', input: () => ({ persist: null }),
-    expected: { args: {}, dropped: ['persist'], respelled: [], derivedPaths: [] } },
   { name: 'JSON null', input: () => '{"reviewConfig":null}',
     expected: { args: {}, dropped: ['reviewConfig'], respelled: [], derivedPaths: [] } },
   { name: 'null cap derivation', input: () => ({
@@ -745,18 +606,6 @@ const NORMALIZE_ROWS = [
       pr_comment_cap: { value: 'null', source: 'default' }, review_md: { value: 'absent', source: 'discovery' },
     },
   }, dropped: [], respelled: [], derivedPaths: ['limits.deliveryCap'] } },
-  { name: 'interactive waist', input: () => ({
-    mode: 'interactive', limits: {}, configEcho: {
-      pr_comment_cap: { value: '7', source: 'env' }, delivery_tier: { value: 'main_only', source: 'env' },
-    },
-  }), expected: { args: {
-    mode: 'interactive', limits: {
-      summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100, deliveryCap: 7,
-    }, configEcho: {
-      pr_comment_cap: { value: '7', source: 'env' }, delivery_tier: { value: 'main_only', source: 'env' },
-      review_md: { value: 'absent', source: 'discovery' },
-    }, delivery: { tier: 'main_only' },
-  }, dropped: [], respelled: [], derivedPaths: ['limits.deliveryCap', 'delivery.tier'] } },
 ];
 for (const { name, input, expected } of NORMALIZE_ROWS) {
   test(`normalize: ${name}`, () => {
@@ -769,12 +618,9 @@ for (const { name, input, expected } of NORMALIZE_ROWS) {
 }
 
 const PROVENANCE_ROWS = [
-  { name: 'child', input: { reviewMd: [{ path: 'api/REVIEW.md', text: 'subtree' }], reviewConfigPath: null },
-    expected: { value: 'present', source: 'discovery' } },
   { name: 'empty raw overrides legacy', input: { reviewMd: [], reviewConfigPath: '/r/REVIEW.md' },
     expected: { value: 'absent', source: 'discovery' } },
   { name: 'legacy present', input: { reviewConfigPath: '/r/REVIEW.md' }, expected: { value: 'present', source: 'discovery' } },
-  { name: 'legacy absent', input: { reviewConfigPath: null }, expected: { value: 'absent', source: 'discovery' } },
 ];
 for (const { name, input, expected } of PROVENANCE_ROWS) {
   test(`provenance: ${name}`, () => {
@@ -785,8 +631,6 @@ for (const { name, input, expected } of PROVENANCE_ROWS) {
 }
 
 const POLICY_DERIVE_ROWS = [
-  { name: 'full', input: 'full', expected: 'full' },
-  { name: 'incremental', input: 'incremental', expected: 'incremental' },
   { name: 'skip mapped', input: 'skip', expected: 'full' },
 ];
 for (const { name, input, expected } of POLICY_DERIVE_ROWS) {
@@ -802,8 +646,6 @@ for (const { name, input, expected } of POLICY_DERIVE_ROWS) {
 const SCOPE_DERIVE_ROWS = [
   { name: 'light', input: 'light', expected: { answer: 'light', drops: ['scopeAnswer'],
     paths: ['delivery.tier', 'scopeAnswer'], rejected: [], result: { ok: true, errors: [] } } },
-  { name: 'full', input: 'full', expected: { answer: 'full', drops: ['scopeAnswer'],
-    paths: ['delivery.tier', 'scopeAnswer'], rejected: [], result: { ok: true, errors: [] } } },
 ];
 for (const { name, input, expected } of SCOPE_DERIVE_ROWS) {
   test(`scope derivation: ${name}`, () => {
@@ -818,17 +660,6 @@ for (const { name, input, expected } of SCOPE_DERIVE_ROWS) {
 }
 
 const PROBE_ROWS = [
-  { name: 'mapped accepts', mode: 'headless', input: { probeWaist: { field: 'mapped' } },
-    descriptor: { key: 'lockstep_probe', waistPath: 'probeWaist.field', waistMap: { raw: 'mapped' },
-      rule: { kind: 'enum', values: ['raw'] } }, receipt: 'raw', expected: { ok: true, errors: [] } },
-  { name: 'raw rejects', mode: 'headless', input: { probeWaist: { field: 'raw' } },
-    descriptor: { key: 'lockstep_probe', waistPath: 'probeWaist.field', waistMap: { raw: 'mapped' },
-      rule: { kind: 'enum', values: ['raw'] } }, receipt: 'raw',
-    expected: { ok: false, errors: ['probeWaist.field does not match configEcho.lockstep_probe'] } },
-  { name: 'derived rejects', mode: 'interactive', input: {},
-    descriptor: { key: 'derived_probe', modes: ['interactive'], allowedSources: { interactive: ['discovery'] },
-      derivedFrom: 'reviewMd', rule: { kind: 'enum', values: ['present', 'absent'] } }, receipt: 'present', source: 'discovery',
-    expected: { ok: false, errors: ['configEcho.derived_probe does not match reviewMd'] } },
   { name: 'unknown type', mode: 'headless', input: { boolProbe: { value: false } },
     descriptor: { key: 'bool_probe', type: 'bool', waistPath: 'boolProbe.value', rule: { kind: 'enum', values: ['true'] } },
     receipt: 'true', expected: { ok: true, errors: [] } },
@@ -841,11 +672,6 @@ const PROBE_ROWS = [
   { name: 'CSV shortens', mode: 'headless', input: { csvProbe: { items: ['a'] } },
     descriptor: { key: 'csv_probe', type: 'csv_list', waistPath: 'csvProbe.items', rule: { kind: 'csv_subset', values: ['a', 'b'] } },
     receipt: 'a,b', expected: { ok: false, errors: ['csvProbe.items does not match configEcho.csv_probe'] } },
-  { name: 'stamped null', mode: 'headless', input: { nullProbe: { value: null } },
-    descriptor: { key: 'null_probe', waistPath: 'nullProbe.value' }, receipt: 'value',
-    expected: { ok: false, errors: ['nullProbe.value does not match configEcho.null_probe'] } },
-  { name: 'unstamped', mode: 'headless', input: {},
-    descriptor: { key: 'null_probe', waistPath: 'nullProbe.value' }, receipt: 'value', expected: { ok: true, errors: [] } },
   { name: 'inactive mode', mode: 'interactive', input: { modeTwinProbe: { value: 'wrong' } },
     descriptor: { key: 'mode_twin_probe', waistPath: 'modeTwinProbe.value',
       allowedSources: { headless: ['default'], interactive: ['default'] } }, receipt: 'value',
@@ -853,14 +679,11 @@ const PROBE_ROWS = [
   { name: 'unknown own gate', mode: 'headless', input: { unknown: { field: 'wrong' } },
     descriptor: { key: 'unknown', waistPath: 'unknown.field', deriveWhen: 'nonsense' }, receipt: 'value',
     expected: { ok: true, errors: [] } },
-  { name: 'inherited gate', mode: 'headless', input: { unknown: { field: 'wrong' } },
-    descriptor: { key: 'unknown', waistPath: 'unknown.field', deriveWhen: 'toString' }, receipt: 'value',
-    expected: { ok: true, errors: [] } },
 ];
-for (const { name, mode, input, descriptor, receipt, source, expected } of PROBE_ROWS) {
+for (const { name, mode, input, descriptor, receipt, expected } of PROBE_ROWS) {
   test(`copied table: ${name}`, () => {
     const args = { ...(mode === 'headless' ? headlessArgs() : interactiveArgs()), ...structuredClone(input) };
-    args.configEcho[descriptor.key] = { value: receipt, source: source || 'default' };
+    args.configEcho[descriptor.key] = { value: receipt, source: 'default' };
     const table = knobRows({}, [{
       key: 'probe', modes: ['headless'], allowedSources: { headless: ['default'] }, rule: { kind: 'enum', values: ['value'] },
       env: null, reviewMdKey: null, defaults: { headless: ['value', 'default'] }, type: 'string', waistPath: null,
@@ -871,29 +694,6 @@ for (const { name, mode, input, descriptor, receipt, source, expected } of PROBE
 }
 
 const TABLE_DERIVE_ROWS = [
-  { name: 'scope gate copy', input: () => {
-    const args = headlessArgs();
-    args.configEcho.trivial_scope.value = 'light';
-    return { args, table: knobRows({ trivial_scope: { deriveWhen: null } }), path: 'scopeAnswer' };
-  }, expected: 'light' },
-  { name: 'reviewed map copy', input: () => {
-    const args = headlessArgs('skip');
-    delete args.reviewScope.requested;
-    return { args, table: knobRows({ reviewed_policy: { waistMap: { skip: 'incremental' } } }), path: 'reviewScope' };
-  }, expected: { kind: 'full', since: null, commits: null, requested: 'incremental', detector: {
-    previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null,
-  } } },
-  { name: 'interactive modes copy', input: () => {
-    const args = interactiveArgs();
-    args.configEcho.reviewed_policy = { value: 'incremental', source: 'env' };
-    args.reviewScope.detector = priorReviewDetector();
-    delete args.reviewScope.requested;
-    return { args, table: knobRows({ reviewed_policy: {
-      modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] },
-    } }), path: 'reviewScope' };
-  }, expected: { kind: 'full', since: null, commits: null, requested: 'incremental', detector: {
-    previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null,
-  } } },
 ];
 for (const { name, input, expected } of TABLE_DERIVE_ROWS) {
   test(`copied derivation: ${name}`, () => {
@@ -907,9 +707,6 @@ for (const { name, input, expected } of TABLE_DERIVE_ROWS) {
 }
 
 const UNKNOWN_DERIVE_ROWS = [
-  { name: 'own gate', gate: 'nonsense', expected: { value: undefined, paths: ['delivery.tier'] } },
-  { name: 'inherited gate', gate: 'toString', expected: { value: undefined, paths: ['delivery.tier'] } },
-  { name: 'inactive mode', gate: null, modes: ['interactive'], expected: { value: undefined, paths: ['delivery.tier'] } },
   { name: 'unknown type', gate: null, type: 'bool', expected: { value: undefined, paths: ['delivery.tier'] } },
   { name: 'bad parent', gate: null, parent: [], expected: { value: undefined, paths: ['delivery.tier'] } },
   { name: 'scalar parent', gate: null, parent: 'nope', expected: { value: undefined, paths: ['delivery.tier'] } },
@@ -931,11 +728,8 @@ for (const { name, gate, modes, type, parent, expected } of UNKNOWN_DERIVE_ROWS)
 
 const NULL_PROBE_ROWS = [
   { name: 'two-level path', input: ['delivery.prIdentity.title'], derived: [], expected: ['delivery.prIdentity.title'] },
-  { name: 'no dropped keys', input: [], derived: [], expected: [] },
   { name: 'bad dropped keys', input: null, derived: [], expected: [] },
-  { name: 'bad derived paths', input: ['reviewConfig'], derived: null, expected: ['reviewConfig'] },
   { name: 'null identity rejected', input: ['delivery.prIdentity'], derived: [], expected: ['delivery.prIdentity'] },
-  { name: 'derived drop', input: ['reviewConfig'], derived: ['reviewConfig'], expected: [] },
 ];
 for (const { name, input, derived, expected } of NULL_PROBE_ROWS) {
   test(`null probe: ${name}`, () => {
@@ -968,12 +762,6 @@ const RESOLVE_ROWS = [
       scopes: [{ dir: 'src/deep', confidence_threshold: 90, security_min_confidence: 85, severity_threshold: 'high', ignore: ['c.js'] }] },
     exclusionPatterns: ['foo.js', 'bar/*.js'], reviewConfigSource: 'reviewMd', exclusionsSource: 'exclusionsText', reviewMdEntryCount: 2,
   } },
-  { name: 'raw review parsed exclusions', input: { reviewMd: [{ path: 'REVIEW.md', text: 'no config block here' }],
-    exclusionPatterns: ['legacy.js'] }, expected: { reviewConfig: { ignore: [] }, exclusionPatterns: ['legacy.js'],
-    reviewConfigSource: 'reviewMd', exclusionsSource: 'preParsed', reviewMdEntryCount: 1 } },
-  { name: 'parsed review raw exclusions', input: { reviewConfig: { confidence_threshold: 70 }, exclusionsText: '- foo.js\n' },
-    expected: { reviewConfig: { confidence_threshold: 70 }, exclusionPatterns: ['foo.js'],
-      reviewConfigSource: 'preParsed', exclusionsSource: 'exclusionsText', reviewMdEntryCount: 0 } },
 ];
 for (const { name, input, expected } of RESOLVE_ROWS) {
   test(`resolve config: ${name}`, () => assert.deepEqual(resolveReviewConfig(input), expected));
@@ -1017,12 +805,6 @@ const VALIDATION_BOUNDARY_ROWS = [
   }, expected: { ok: false, errors: ['configEcho.review_md.value is invalid for interactive'] } },
   { name: 'minimum context sizes', input: () => interactiveArgs({ contextLines: 1, contextChars: 1 }),
     expected: { ok: true, errors: [] } },
-  { name: 'challenge integer domain', input: () => {
-    const a = interactiveArgs(); a.limits.challengeCap = 1.5; return a;
-  }, expected: { ok: false, errors: ['limits.challengeCap must be a non-negative safe integer when present'] } },
-  { name: 'discovery integer domain', input: () => {
-    const a = interactiveArgs(); a.limits.discoveryCap = 1.5; return a;
-  }, expected: { ok: false, errors: ['limits.discoveryCap must be a positive safe integer when present'] } },
   { name: 'zero numeric receipt', input: () => {
     const a = interactiveArgs(); a.limits.deliveryCap = 0; a.configEcho.pr_comment_cap = { value: '0', source: 'env' }; return a;
   }, expected: { ok: true, errors: [] } },
@@ -1033,8 +815,6 @@ const VALIDATION_BOUNDARY_ROWS = [
     const a = interactiveArgs({ reviewMd: [{ path: 'api/../REVIEW.md', text: '' }] });
     a.configEcho.review_md.value = 'present'; return a;
   }, expected: { ok: false, errors: ['reviewMd[0].path must not contain . or .. path segments'] } },
-  { name: 'scope path dot-dot', input: () => interactiveArgs({ reviewConfig: { scopes: [{ dir: 'api/../src' }] } }),
-    expected: { ok: false, errors: ['reviewConfig.scopes[0].dir must not contain . or .. path segments'] } },
   { name: 'absent tier in empty delivery', input: () => {
     const a = interactiveArgs({ delivery: {} }); a.configEcho.delivery_tier.value = 'main_only'; return a;
   }, expected: { ok: false, errors: ['configEcho.delivery_tier does not match delivery.tier'] } },

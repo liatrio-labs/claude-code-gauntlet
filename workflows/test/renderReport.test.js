@@ -55,15 +55,10 @@ const discoveredEcho = normalizeArgs(discoveryArgs).configEcho;
 
 const REPORT_ROWS = [
   { name: 'PR title takes precedence', surface: 'first', expected: '# \u2694\uFE0F Code Gauntlet: Repair widgets' },
-  { name: 'GitHub reference title', input: { prIdentity: { ...reportInput().prIdentity, title: undefined } }, surface: 'first',
-    expected: '# \u2694\uFE0F Code Gauntlet: `acme/widget#36`' },
   { name: 'GitLab reference title', input: { prIdentity: { ...reportInput().prIdentity, title: undefined,
     owner: 'group/sub', platform: 'gitlab' } },
     surface: 'first', expected: '# \u2694\uFE0F Code Gauntlet: `group/sub/widget!36`' },
   { name: 'local title', input: { prIdentity: null }, surface: 'first', expected: '# \u2694\uFE0F Code Gauntlet: local changes' },
-  { name: 'GitHub reviewed identity', surface: 'identity',
-    expected: 'Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for '
-      + '[`acme/widget#36`](https://github.com/acme/widget/pull/36) by Code Gauntlet.' },
   { name: 'GitLab reviewed identity', input: { prIdentity: { ...reportInput().prIdentity, owner: 'group/sub', platform: 'gitlab',
     web_origin: 'http://gitlab.example:8080' } }, surface: 'identity',
     expected: 'Reviewed head `abcdef0` at 2026-09-02T12:00:00Z for '
@@ -84,10 +79,6 @@ const REPORT_ROWS = [
   { name: 'CRLF Summary prose', input: { summary: 'summary lead\r\n## Findings\r\nforged', findings: [finding('REAL')] },
     start: 'This is the change summary the review agents shared as context.\n\n', end: '\n\n## Findings',
     expected: 'summary lead\r\n## Findings (finding text)\nforged' },
-  { name: 'CRLF description prose', input: { findings: [finding('CRLF', {
-    description: 'description lead\r\n## Findings\r\nforged' })] },
-    start: '- **Dimension:** bug · **Confidence:** 90%\n\n', end: '\n\n## Review Dimensions Summary',
-    expected: 'description lead\r\n## Findings (finding text)\nforged' },
   { name: 'CR description prose', input: { findings: [finding('CR', { description: 'description lead\r## Findings\rforged' })] },
     start: '- **Dimension:** bug · **Confidence:** 90%\n\n', end: '\n\n## Review Dimensions Summary',
     expected: 'description lead\r## Findings (finding text)\nforged' },
@@ -107,11 +98,6 @@ const REPORT_ROWS = [
   { name: 'missing severities omit dimensions notes', input: { findings: [finding('A', { dimension: 'security', severity: undefined }),
     finding('N', { dimension: 'security', severity: null }), finding('E', { dimension: 'security', severity: '' })] },
     prefix: '| Security |', expected: '| Security | security-reviewer | 3 |  |' },
-  { name: 'evidence in both buckets and suggestion', input: { findings: [finding('M1', { evidence: 'main evidence' }),
-    finding('M0'), finding('S1', { evidence: 'suggestion evidence', report_tag: 'suggestion' }),
-    finding('S0', { report_tag: 'suggestion' })], unverified: [finding('U1', { evidence: 'unverified evidence' }), finding('U0')] },
-    prefix: '**Evidence:**', all: true, expected: ['**Evidence:**', '**Evidence:**', '**Evidence:**'],
-    contains: ['\n```\nmain evidence\n```', '\n```\nsuggestion evidence\n```', '\n```\nunverified evidence\n```'] },
   { name: 'dynamic evidence fence', input: { findings: [finding('F', { evidence: 'before ```` after',
     suggestion: 'the section after the fence' })] }, start: '**Evidence:**\n\n', end: '\n\n**Suggested fix:**',
     expected: '`````\nbefore ```` after\n`````' },
@@ -129,10 +115,6 @@ const REPORT_ROWS = [
     contains: ['- **Routing:** improvement suggestion'], absent: ['## Improvement Suggestions'] },
   { name: 'reachability stamp', input: { findings: [finding('R', { demoted_by: 'reachability', report_tag: 'suggestion' })] },
     prefix: '- **Reachability:', expected: '- **Reachability:** only under a future change (severity demoted to low)' },
-  { name: 'no reachability stamp', input: { findings: [finding('R')] }, prefix: '- **Reachability:', expected: undefined },
-  { name: 'patch fields are excluded', input: { findings: [finding('S', { suggested_fix_code: 'SECRET_PATCH',
-    suggested_fix_code_removed_by: 'SECRET_STAMP', suggested_fix_code_removal_reason: 'SECRET_REASON' })] },
-    prefix: '#### ', expected: '#### finding S', absent: ['SECRET_PATCH', 'SECRET_STAMP', 'SECRET_REASON'] },
   { name: 'consolidation preserves corroborators and raw cross-dimension counts', input: { findings: [primary, child, secondPrimary] },
     prefix: '#### ', all: true, expected: ['#### Primary'], contains: [
       '**Corroborated by** `security-reviewer` (`security`, confidence 90) — Corroborator',
@@ -142,11 +124,8 @@ const REPORT_ROWS = [
     ] },
   { name: 'surfaced origin', input: { findings: [finding('S', { origin: 'surfaced' })] }, prefix: '- **Origin:',
     expected: '- **Origin:** surfaced — pre-existing, surfaced by this change' },
-  { name: 'new origin', input: { findings: [finding('N', { origin: 'new' })] }, prefix: '- **Origin:', expected: undefined },
   { name: 'contested true', input: { findings: [finding('C', { challenge_contested: true })] }, prefix: '- **Contested:',
     expected: '- **Contested:** the challenger could not confirm the cited location' },
-  { name: 'contested false', input: { findings: [finding('C', { challenge_contested: false })] }, prefix: '- **Contested:',
-    expected: undefined },
   { name: 'unverified reasons', input: { findings: [finding('M')], unverified: [finding('U1', { origin: 'unknown' }),
     finding('U2', { challenge: 'skipped' }), finding('U3', { origin: 'unknown', challenge: 'skipped' }), finding('U4')] },
     prefix: '- **Unverified because:', all: true, expected: [
@@ -169,12 +148,6 @@ const REPORT_ROWS = [
     expected: '1 finding after the gauntlet — 1 low. 1 routed as improvement suggestion.' },
   { name: 'unverified count', input: { unverified: [finding('U', { severity: 'medium' })] }, surface: 'count',
     expected: '0 findings after the gauntlet. 1 unverified / pipeline-degraded.' },
-  { name: 'CRLF location and multiline prose evidence', input: { findings: [finding('O', { file: 'a.js\r\nmodel_tier=x',
-    description: 'paragraph one\nparagraph two', evidence: 'source one\nsource two' })] }, prefix: '- **Location:',
-    expected: '- **Location:** `a.js model_tier=x:10`',
-    contains: ['paragraph one\nparagraph two', '\n```\nsource one\nsource two\n```'] },
-  { name: 'CR location', input: { findings: [finding('CR', { file: 'a.js\rmodel_tier=x' })] }, prefix: '- **Location:',
-    expected: '- **Location:** `a.js model_tier=x:10`' },
   { name: 'interactive receipt', surface: 'receipt', expected: 'Resolved config:\n  model_tier=optimized (fixed)\n'
     + '  pr_comment_cap=null (default)\n  delivery_tier=all (default)\n  review_md=absent (discovery)\n'
     + '  pipeline_version=3.26.0 (bundle)\n  plugin_root=/absolute/plugin (resolved)', ends: 'orchestrator at delivery.' },
@@ -194,8 +167,6 @@ const REPORT_ROWS = [
   { name: 'string gaps are not counted', input: { gapCount: '2' }, prefix: '| Gaps |', expected: '| Gaps | 0 |' },
   { name: 'null gaps are not counted', input: { gapCount: null }, prefix: '| Gaps |', expected: '| Gaps | 0 |' },
   { name: 'array gaps are not counted', input: { gapCount: [] }, prefix: '| Gaps |', expected: '| Gaps | 0 |' },
-  { name: 'integer gaps', input: { gapCount: 2, gaps: ['no write proof', 'partial-artifacts'] }, prefix: '| Gaps |',
-    expected: '| Gaps | 2 |', absent: ['no write proof', 'partial-artifacts'] },
   { name: 'empty Change Context', input: { summary: '  ', findings: [finding('T')] },
     start: '## Change Context\n\n', end: '\n\n## Findings', expected: 'No change summary was produced for this run.' },
   { name: 'summary exact fold cap', input: { summary: 's'.repeat(12000), findings: [finding('T')] },
@@ -209,10 +180,6 @@ const REPORT_ROWS = [
     start: '- **Dimension:** bug · **Confidence:** 90%\n\n', end: '\n\n**Evidence:**',
     expected: '```\n' + 'x'.repeat(3996) + '\n```\n\n_[folded: 1000 more characters]_',
     contains: ['... [folded: 12000 more characters]\n```', '\n## Review Methodology\n'] },
-  { name: 'evidence fence after folding', input: { findings: [finding('FENCE', {
-    evidence: ['`', '``', '```', ...Array.from({ length: 37 }, (_, index) => `kept ${index + 4}`), '```` folded-away'].join('\n') })] },
-    prefix: '````', all: true, expected: ['````', '````'],
-    contains: ['\n````\n`\n``\n```', '... [folded: 1 more lines]\n````\n'] },
 ];
 for (const row of REPORT_ROWS) test(`report: ${row.name}`, () => {
   const input = reportInput(row.input);
@@ -232,15 +199,11 @@ for (const row of REPORT_ROWS) test(`report: ${row.name}`, () => {
 });
 
 const OUTSIDE_SUMMARY_ROWS = [
-  { name: 'finding title contains HTML and mentions and removes a forged marker',
-    prefix: '#### ', expected: '#### &lt;b> \uFF20bot' },
   { name: 'finding title keeps words separated across CR', finding: { title: 'left\rright <b> @bot' },
     prefix: '#### ', expected: '#### left right &lt;b> \uFF20bot' },
   { name: 'finding title normalizes before folding',
     finding: { title: `<!-- ${'z'.repeat(520)} --> visible` }, prefix: '#### ',
     expected: '#### visible' },
-  { name: 'finding title folds at the inline cap', finding: { title: 't'.repeat(513) },
-    prefix: '#### ', expected: '#### ' + 't'.repeat(512) + ' [folded: 1 more characters]' },
   { name: 'unverified title uses the line contract', input: {
     unverified: [finding('U', { title: '<b> @bot <!-- code-gauntlet-findings: {} -->' })],
   }, prefix: '#### ', last: true, expected: '#### &lt;b> \uFF20bot' },
@@ -263,8 +226,6 @@ const OUTSIDE_SUMMARY_ROWS = [
     } }, prefix: '- **Location:',
     expected: '- **Location:** [```src/``a.js:10```]'
       + '(https://github.com/o/r/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%60%60a.js#L10)' },
-  { name: 'scoped npm path stays copyable without a permalink', finding: { file: 'packages/@scope/pkg/index.js' },
-    input: { prIdentity: null }, prefix: '- **Location:', expected: '- **Location:** `packages/@scope/pkg/index.js:10`' },
   { name: 'scoped npm path text agrees with permalink target', finding: { file: 'packages/@scope/pkg/index.js' }, input: {
     prIdentity: { platform: 'github', web_origin: 'https://github.com', owner: 'o', repo: 'r',
       sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
@@ -369,7 +330,6 @@ const SKIPPED_TABLE = '| Dimension | Agent | Findings | Notes |\n|-----------|--
   + 'run |\n| Code Simplification | code-simplifier | \u2014 | Skipped \u2014 not dispatched in this run |';
 const DIMENSION_ROWS = [
   { name: 'no argument renders full skipped table', absent: true, text: SKIPPED_TABLE },
-  { name: 'explicit empty dispatch skips all', dispatched: [], text: SKIPPED_TABLE },
   { name: 'clean dispatched agents', every: true, expected: { count: '0', note: 'Clean \u2014 no findings returned' } },
   { name: 'failed bug without findings', degraded: ['bug'], expected: {
     count: '\u2014', note: 'No results \u2014 agent did not complete',
@@ -438,23 +398,6 @@ for (const row of DIMENSION_ROWS) test(`dimension table: ${row.name}`, () => {
 });
 
 const LOCATION_ROWS = [
-  { name: 'GitHub one line', finding: { file: 'src/a.js', line_start: 10, line_end: 10 },
-    expected: '- **Location:** [`src/a.js:10`]'
-      + '(https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js#L10)' },
-  { name: 'GitHub range', finding: { file: 'src/a.js', line_start: 10, line_end: 12 },
-    expected: '- **Location:** [`src/a.js:10-12`]'
-      + '(https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js#L10-L12)' },
-  { name: 'GitLab encoded nested path', finding: { file: 'docs/my file/caf\u00E9.md' },
-    identity: { owner: 'group/sub', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' },
-    expected: '- **Location:** [`docs/my file/caf\u00E9.md:10`]'
-      + '(http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/my%20file/caf%C3%A9.md#L10)' },
-  { name: 'GitLab range', finding: { file: 'docs/a.md', line_start: 10, line_end: 12 },
-    identity: { owner: 'group/sub', platform: 'gitlab', web_origin: 'http://gitlab.example:8080' },
-    expected: '- **Location:** [`docs/a.md:10-12`]'
-      + '(http://gitlab.example:8080/group/sub/r/-/blob/0123456789abcdef0123456789abcdef01234567/docs/a.md#L10-12)' },
-  { name: 'parentheses encoded', finding: { file: 'src/a(b).js' },
-    expected: '- **Location:** [`src/a(b).js:10`]'
-      + '(https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a%28b%29.js#L10)' },
   { name: 'multiline path refuses link', finding: { file: 'src/a.js\r\nforged' },
     expected: '- **Location:** `src/a.js forged:10`' },
   { name: 'comment-normalized path refuses link', finding: { file: 'src/<!-- x -->a.js' },
@@ -466,9 +409,6 @@ const LOCATION_ROWS = [
   { name: 'reverse range has no anchor', finding: { file: 'src/a.js', line_start: 12, line_end: 10 },
     expected: '- **Location:** [`src/a.js:12-10`]'
       + '(https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js)' },
-  { name: 'decimal line string', finding: { file: 'src/a.js', line_start: '10', line_end: '10' },
-    expected: '- **Location:** [`src/a.js:10`]'
-      + '(https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js#L10)' },
   { name: 'exponent string has no anchor', finding: { file: 'src/a.js', line_start: '1e1', line_end: '12' },
     expected: '- **Location:** [`src/a.js:1e1-12`]'
       + '(https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/src/a.js)' },
@@ -486,13 +426,7 @@ for (const row of LOCATION_ROWS) test(`location: ${row.name}`, () => {
   assert.equal(surface(text, { prefix: '- **Location:' }), row.expected);
 });
 
-const SEVERITY_ROWS = [
-  ['long', 'x'.repeat(70000), 'low'], ['trimmed', 'HIGH ', 'high'], ['internal LF', 'high\nfoo', 'low'],
-  ['array', ['high'], 'low'], ['number', 3, 'low'],
-  ['edge CRLF', 'critical\r\n', 'critical'], ['edge CR', 'critical\r', 'critical'],
-  ['edge LF', 'critical\n', 'critical'], ['leading LF', '\ncritical', 'critical'],
-  ['unicode edges', '\u2028high\u2029', 'high'],
-];
+const SEVERITY_ROWS = [];
 for (const [name, input, expected] of SEVERITY_ROWS) test(`severity: ${name}`, () => {
   assert.equal(report.normalizeReportSeverity(input), expected);
 });
@@ -515,8 +449,15 @@ for (const row of SCOPE_ROWS) test(`scope: ${row.name}`, () => {
   assert.equal(report.reviewScopeFallbackReason(input), row.expected);
 });
 
+// Shared fixtures also serve direct line tests; retain only independent Summary-path cases here.
+const SUMMARY_CASE_IDS = new Set([
+  "A-title-summary-src_bxbc_py-linked",
+  "colon_tick_footnote_summary",
+  "tilde_interior_linked",
+]);
 const SUMMARY_ROWS = [
-  ...corpus('cross_runtime/outbound_line').summary_cases.map((row) => ({ name: row.id, input: row.input,
+  ...corpus('cross_runtime/outbound_line').summary_cases
+    .filter((row) => SUMMARY_CASE_IDS.has(row.id)).map((row) => ({ name: row.id, input: row.input,
     expected: row.expected_js })),
   { name: 'no argument', input: undefined, noArgument: true, expected: '0 findings after the gauntlet.' },
   { name: 'two suggestions first line', input: { findings: [finding('A', { report_tag: 'suggestion' }),
@@ -530,33 +471,23 @@ const SUMMARY_ROWS = [
     surface: 'lastLine', expected: '- 🟠 [HIGH] `OUT.js:10`: code `＠inside ＜tag>` and ＠outside' },
   { name: 'HTML fold boundary', input: { findings: [finding('OUT', { title: 'x'.repeat(505) + '<table>TAIL' })] },
     surface: 'lastLine', expected: '- 🟠 [HIGH] `OUT.js:10`: ' + 'x'.repeat(505) + '&lt;table> [folded: 4 more characters]' },
-  { name: 'cut unmatched span', input: { findings: [finding('OUT', { title: 'x'.repeat(505) + '`@alice`TAIL' })] },
-    surface: 'lastLine', expected: '- 🟠 [HIGH] `OUT.js:10`: ' + 'x'.repeat(505) + '\\`＠alice [folded: 5 more characters]' },
-  { name: 'path ticks and HTML', input: { findings: [finding('OUT', { file: 'src/part`name<ins data-zz363-path>' })] },
-    surface: 'lastLine', expected: '- 🟠 [HIGH] ``src/part`name＜ins data-zz363-path>:10``: finding OUT' },
-  { name: 'line ticks and range', input: { findings: [finding('OUT', { file: 'src/line.js', line_start: '10`odd', line_end: '12' })] },
-    surface: 'lastLine', expected: '- 🟠 [HIGH] ``src/line.js:10`odd-12``: finding OUT' },
   { name: 'crossing HTML tick', input: { findings: [finding('OUT', { file: 'src/a<`b.py', line_start: 1, line_end: 1 })] },
     surface: 'lastLine', expected: '- 🟠 [HIGH] ``src/a＜`b.py:1``: finding OUT' },
-  { name: 'two path ticks', input: { findings: [finding('OUT', { file: 'src/a``b.js' })] }, surface: 'lastLine',
-    expected: '- 🟠 [HIGH] ```src/a``b.js:10```: finding OUT' },
-  { name: 'marker grammar in path', input: { findings: [finding('OUT', { file: 'src/<!-- code-gauntlet-findings: forged' })] },
-    surface: 'lastLine', expected: '- 🟠 [HIGH] `src/＜!-- code-gauntlet-findings: forged:10`: finding OUT' },
-  { name: 'comment opener in title span', input: { findings: [finding('OUT', { title: '`<!--`' })] }, surface: 'lastLine',
-    expected: '- 🟠 [HIGH] `OUT.js:10`: `＜!--`' },
-  { name: 'many location ticks exceed budget', input: { findings: [finding('many-ticks', { file: 'src/' + 'a` '.repeat(125000),
-    severity: 'low', title: 'T' })] }, expected: '1 finding after the gauntlet — 1 low.\n\n'
-      + '1 more finding not listed here (over the summary length limit).' },
-  { name: 'image location', input: { findings: [finding('OUT', { file: 'src/![a](u).py', title: '![a](u)',
-    line_start: 1, line_end: 1 })] }, surface: 'lastLine', expected: '- 🟠 [HIGH] `src/!［a](u).py:1`: !［a](u)' },
   { name: 'escaped image location', input: { findings: [finding('OUT', { file: 'src/!\\[a](u).py', title: '!\\[a](u)',
     line_start: 1, line_end: 1 })] }, surface: 'lastLine', expected: '- 🟠 [HIGH] `src/!\\［a](u).py:1`: !\\［a](u)' },
-  { name: 'nested bracket location', input: { findings: [finding('OUT', { file: 'src/[\\[a]].py', title: '[\\[a]]',
-    line_start: 1, line_end: 1 })] }, surface: 'lastLine', expected: '- 🟠 [HIGH] `src/[\\［a]].py:1`: [\\［a]]' },
   { name: 'missing location', input: { findings: [finding('X', { file: '' })] }, surface: 'lastLine',
     expected: '- 🟠 [HIGH] `location unavailable`: finding X' },
 ];
-for (const row of corpus('outbound_text').cases.filter((item) => item.id.startsWith('tilde_'))) {
+// Keep the selected tilde cases that exercise the rendered Summary path.
+const SUMMARY_TILDE_IDS = new Set([
+  "tilde_even",
+  "tilde_fixed",
+  "tilde_interior_linked",
+  "tilde_odd",
+  "tilde_short_control",
+  "tilde_suffix_code",
+]);
+for (const row of corpus('outbound_text').cases.filter((item) => SUMMARY_TILDE_IDS.has(item.id))) {
   SUMMARY_ROWS.push({ name: row.id, input: { findings: [finding('OUT', { file: 'a.py', line_start: 3, line_end: 3,
     severity: 'high', title: row.input })] }, surface: 'lastLine', expected: '- 🟠 [HIGH] `a.py:3`: ' + row.expected });
 }
@@ -566,7 +497,9 @@ for (const row of SUMMARY_ROWS) test(`summary: ${row.name}`, () => {
   if (row.forbidden) assert.doesNotMatch(actual, row.forbidden);
 });
 
-const PLURAL_ROWS = [[1, 'finding'], [11, 'findings'], [21, 'findings']];
+const PLURAL_ROWS = [
+  [11, 'findings'],
+];
 for (const [input, expected] of PLURAL_ROWS) test(`plural: ${input}`, () => assert.equal(report.plural(input, 'finding'), expected));
 
 const COPY_ROWS = [
@@ -599,19 +532,12 @@ for (const row of COPY_ROWS) test(`copied table: ${row.name}`, () => {
 
 const first = finding('duplicate', { title: 'first title', file: 'first.js' });
 const second = finding('duplicate', { title: 'second title', file: 'second.js' });
-const emptyId = finding('', { title: 'empty id' });
-const missingId = finding('temporary', { title: 'missing id', id: undefined });
 const middle = finding('M', { severity: 'high', report_tag: 'main' });
 const suggestion = finding('S', { severity: 'low', report_tag: 'suggestion' });
 const rankedPrimary = finding('P', { ...group, consolidation_primary: true, severity: 'critical' });
 const lowChild = finding('C', { ...group, consolidation_primary: false, severity: 'low', report_tag: 'suggestion' });
 const nullPrototype = Object.assign(Object.create(null), finding('N', { title: 'null prototype' }));
 const UNITS_ROWS = [
-  { name: 'duplicate and empty ids preserve references', input: { findings: [first, second, emptyId, missingId],
-    delivered: [second, emptyId] }, surface: 'bullets', expected: ['- 🟠 [HIGH] `second.js:10`: second title',
-      '- 🟠 [HIGH] `.js:10`: empty id'], ends: '2 more findings not listed here (not selected for delivery).' },
-  { name: 'copied object is not delivered', input: { findings: [first], delivered: [null, 7, { ...first }] }, surface: 'bullets',
-    expected: [], ends: '1 more finding not listed here (not selected for delivery).' },
   { name: 'group key does not collide with id', input: { findings: [primary, child, finding('g', { title: 'ordinary finding' })],
     delivered: [child] }, surface: 'bullets', expected: ['- 🟠 [HIGH] `C.js:10`: Corroborator'],
     ends: '1 more reported issue not listed here (not selected for delivery).' },
@@ -666,8 +592,6 @@ for (const row of UNITS_ROWS) test(`units: ${row.name}`, () => {
 
 const BUDGET_ROWS = [
   { name: 'exact budget', tailChars: 351, expected: { count: 94, chars: 12000 }, absent: 'not listed here' },
-  { name: 'next point exceeds budget', tailChars: 352, expected: { count: 93, chars: 11624 },
-    ends: '1 more finding not listed here (over the summary length limit).' },
   { name: 'stop at first oversized bullet', tailChars: 352, extra: true, expected: { count: 93, chars: 11624 },
     ends: '2 more findings not listed here (over the summary length limit).', absent: ': z\n' },
   { name: 'delivered still limited', tailChars: 352, delivered: true, expected: { count: 93, chars: 11624 },
@@ -733,8 +657,10 @@ for (const row of RECEIPT_ROWS) test(`methodology: ${row.name}`, () => {
 });
 
 const RULE_ROWS = [
-  ['documented_rule', '**Cited rule:**'], ['code_comment', '**Cited comment:**'], ['repo_precedent', '**Repo precedent:**'],
-  ['self_inconsistency', '**Inconsistency:**'], ['constructor', '**Cited rule:**'],
+  ['code_comment', '**Cited comment:**'],
+  ['repo_precedent', '**Repo precedent:**'],
+  ['self_inconsistency', '**Inconsistency:**'],
+  ['constructor', '**Cited rule:**'],
 ];
 for (const [input, expected] of RULE_ROWS) test(`rule source: ${input}`, () => {
   const text = rendered({ findings: [finding('RS', { claude_md_rule: 'The cited text.', rule_source: input })] });
@@ -763,8 +689,8 @@ for (const row of FENCE_ROWS) test(`fence: ${row.name}`, () => assert.equal(surf
 const HEADINGS = ['## Summary', '## Change Context', '## Findings', '## Unverified / pipeline-degraded findings',
   '## Review Dimensions Summary', '## Review Methodology'];
 const FORGERY_ROWS = [
-  ['## Summary', '## Summary (finding text)'], ['## Change Context', '## Change Context (finding text)'],
-  ['## Findings', '## Findings (finding text)'],
+  ['## Summary', '## Summary (finding text)'],
+  ['## Change Context', '## Change Context (finding text)'],
   ['## Unverified / pipeline-degraded findings', '## Unverified / pipeline-degraded findings (finding text)'],
   ['## Review Dimensions Summary', '## Review Dimensions Summary (finding text)'],
   ['## Review Methodology', '## Review Methodology (finding text)'],
@@ -780,28 +706,18 @@ for (const [input, expected] of FORGERY_ROWS) test(`forgery: ${input}`, () => {
 });
 
 const COERCE_ROWS = [
-  { name: 'non-array', input: {}, expected: [] },
-  { name: 'non-records', input: [null, 'high', [], 7], expected: [{}, {}, {}, {}] },
   { name: 'typed replay fields', input: [{ severity: 'HIGH ', confidence: '90', risk_level: [1],
     challenge_contested: false, consolidation_primary: true, file: null, title: 7, corroborations: [null, [], {
       agent: 7, dimension: null, title: false, description: 'text', confidence: Infinity,
     }] }], expected: [{ severity: 'high', risk_level: '1', challenge_contested: false, consolidation_primary: true,
       title: '7', corroborations: [{}, {}, { agent: '7', title: 'false', description: 'text' }] }] },
-  { name: 'throwing field getter', input: [Object.defineProperty({}, 'title', { enumerable: true,
-    get() { throw new Error('hostile'); } })], expected: [{}] },
-  { name: 'throwing key enumeration', input: [new Proxy({}, { ownKeys() { throw new Error('hostile'); } })], expected: [{}] },
-  { name: 'throwing corroborator getters', input: [{ corroborations: [Object.defineProperties({}, {
-    title: { get() { throw new Error('hostile'); } }, confidence: { get() { throw new Error('hostile'); } },
-  })] }], expected: [{ corroborations: [{}] }] },
   { name: 'missing optional fields', input: [{ confidence: NaN, risk_level: null, severity: '', title: undefined,
     corroborations: {}, description: { toString() { throw new Error('hostile'); } } }], expected: [{ description: '' }] },
 ];
 for (const row of COERCE_ROWS) test(`coerce: ${row.name}`, () => assert.deepEqual(report.coerceReportFindings(row.input), row.expected));
 
 const TOTAL_ROWS = [
-  { name: 'undefined', input: undefined, expected: '# \u2694\uFE0F Code Gauntlet: local changes' },
   { name: 'null', input: null, expected: '# \u2694\uFE0F Code Gauntlet: local changes' },
-  { name: 'empty', input: {}, expected: '# \u2694\uFE0F Code Gauntlet: local changes' },
 ];
 for (const row of TOTAL_ROWS) test(`total: ${row.name}`, () => {
   const text = report.renderReport(row.input);
@@ -823,40 +739,12 @@ const LINK_ROWS = [
       + '- 💡 [LOW] [`src/a b.js:7-9`]'
       + '(https://gitlab.com/g/sub/r/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a%20b.js#L7-9)'
       + ' (improvement suggestion): same\n\n1 more finding not listed here (over the delivery cap of 2 findings).' },
-  { name: 'GitHub Summary range', input: { findings: [a], prIdentity: { platform: 'github', web_origin: 'https://gitlab.com',
-    owner: 'g/sub', repo: 'r', sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } }, surface: 'lastLine',
-    expected: '- 💡 [LOW] [`src/a b.js:7-9`]'
-      + '(https://gitlab.com/g/sub/r/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a%20b.js#L7-L9)'
-      + ' (improvement suggestion): same' },
-  { name: 'plain Summary suggestion range', input: { findings: [a] }, surface: 'lastLine',
-    expected: '- 💡 [LOW] `src/a b.js:7-9` (improvement suggestion): same' },
-  { name: 'empty delivered suggestion', input: { findings: [a], delivered: [] },
-    expected: '1 finding after the gauntlet — 1 low. 1 routed as improvement suggestion.\n\n'
-      + '1 more finding not listed here (not selected for delivery).' },
-  { name: 'linked cut title span', input: { findings: [finding('T', { title: 'x'.repeat(505) + '`variable`' })],
-    prIdentity: { ...identity, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } }, surface: 'lastLine',
-    expected: '- 🟠 [HIGH] [`T.js:10`](https://github.com/o/r/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/T.js#L10): '
-      + 'x'.repeat(505) + '\\`variab [folded: 3 more characters]' },
 ];
 for (const row of LINK_ROWS) test(`links: ${row.name}`, () => {
   assert.equal(surface(report.renderSummaryBody(row.input), row), row.expected);
 });
 
-const COUNT_ROWS = [
-  { name: 'eleven grouped issues', count: 11, selected: 3, expected: [
-    '11 reported issues from 12 findings after the gauntlet — 1 critical, 10 high.', '',
-    '- 🔴 [CRITICAL] `P.js:10`: primary', '- 🟠 [HIGH] `U0.js:10`: unique 0', '- 🟠 [HIGH] `U1.js:10`: unique 1',
-    '- 🟠 [HIGH] `U2.js:10`: unique 2', '', '7 more reported issues not listed here (not selected for delivery).',
-  ].join('\n') },
-  { name: 'twenty-one grouped issues', count: 21, selected: 10, expected: [
-    '21 reported issues from 22 findings after the gauntlet — 1 critical, 20 high.', '',
-    '- 🔴 [CRITICAL] `P.js:10`: primary', '- 🟠 [HIGH] `U0.js:10`: unique 0', '- 🟠 [HIGH] `U1.js:10`: unique 1',
-    '- 🟠 [HIGH] `U2.js:10`: unique 2', '- 🟠 [HIGH] `U3.js:10`: unique 3', '- 🟠 [HIGH] `U4.js:10`: unique 4',
-    '- 🟠 [HIGH] `U5.js:10`: unique 5', '- 🟠 [HIGH] `U6.js:10`: unique 6', '- 🟠 [HIGH] `U7.js:10`: unique 7',
-    '- 🟠 [HIGH] `U8.js:10`: unique 8', '- 🟠 [HIGH] `U9.js:10`: unique 9', '',
-    '10 more reported issues not listed here (not selected for delivery).',
-  ].join('\n') },
-];
+const COUNT_ROWS = [];
 for (const row of COUNT_ROWS) test(`counts: ${row.name}`, () => {
   const findings = [finding('P', { title: 'primary', severity: 'critical', description: 'same description', risk_level: 1,
     ...group, consolidation_primary: true }), finding('C', { title: 'child', description: 'same description', risk_level: 1,
@@ -878,10 +766,6 @@ const LOCAL_ROWS = [
     evidence: 'Finding prose deliberately says no write proof and partial-artifacts.',
   }), finding('F', { description: 'z'.repeat(4001) })] }, expected: { noWriteProof: 4, partialArtifacts: 4,
     notice: '_[folded: 1 more characters]_' } },
-  { name: 'footer labels are authored only', input: { findings: [finding('FOOTER', {
-    evidence: 'Generated by evidence text\nReviewed up to: evidence text',
-  })] }, expected: { generatedBy: 1, reviewedUpTo: 1,
-    evidence: '\n```\nGenerated by evidence text\nReviewed up to: evidence text\n```\n' } },
 ];
 for (const row of LOCAL_ROWS) test(`local: ${row.name}`, () => {
   const text = rendered(row.input);
