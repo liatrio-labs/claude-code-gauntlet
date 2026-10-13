@@ -1,9 +1,10 @@
+import { REVIEW_SCOPE_FALLBACK_RULES } from '../src/registry.js';
 // render_report.test.js — the deterministic report surface (issues #36, #67).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { renderReport, renderSummaryBody, reportExtraFields, dimensionsSummaryTable, tableCell } from '../src/renderReport.js';
-import { reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES, normalizeReportSeverity, plural } from '../src/renderReport.js';
+import { reviewScopeFallbackReason, normalizeReportSeverity, plural } from '../src/renderReport.js';
 import { REPORT_FOLD_LIMITS } from '../src/registry.js';
 import { foldProse, foldEvidence, openProseFence } from '../src/outboundText.js';
 import { normalizeArgs, validateArgs } from '../src/args.js';
@@ -453,7 +454,7 @@ test('S-EDGES: a label with only edge whitespace or line endings keeps its sever
   // Mutation: reject any string containing a line terminator before trimming; the CRLF
   // and LF-prefixed labels then fold into Low.
   assert.deepEqual(
-    ['critical\r\n', 'critical\r', 'critical\n', '\ncritical', '\u2028high\u2029'].map(normalizeReportSeverity),
+    ['critical\r\n', 'critical\r', 'critical\n', '\ncritical', '\u2028high\u2029'].map((severity) => normalizeReportSeverity(severity)),
     ['critical', 'critical', 'critical', 'critical', 'high'],
   );
   const report = rendered({ findings: [finding('CRLF', { severity: 'critical\r\n' })], dimensions: dims });
@@ -877,16 +878,19 @@ test('T-METH-SCOPE-DISJOINT: the non-error fallback rules never overlap, and err
   // are pairwise disjoint over every detector state, so a swap cannot change the rendered reason.
   // This pins that property directly; if a future rule overlaps another, precedence matters again
   // and this test says so before the table's order silently starts carrying meaning.
+  const fires = (rule, detector) => reviewScopeFallbackReason({
+    requested: 'incremental', kind: 'full', detector,
+  }, [rule]) !== 'detection failed: unavailable';
   const [errorRule, ...factRules] = REVIEW_SCOPE_FALLBACK_RULES;
   assert.equal(REVIEW_SCOPE_FALLBACK_RULES.length, 5);
-  assert.equal(errorRule.when({ error: 'x' }), true);
+  assert.equal(fires(errorRule, { error: 'x' }), true);
   const flags = ['previously_reviewed', 'sha_resolvable', 'sha_is_ancestor', 'head_advanced'];
   for (let bits = 0; bits < 16; bits += 1) {
     const detector = { incremental_safe: false, error: null };
     flags.forEach((flag, i) => { detector[flag] = Boolean(bits & (1 << i)); });
-    const firing = factRules.filter((rule) => rule.when(detector));
+    const firing = factRules.filter((rule) => fires(rule, detector));
     assert.ok(firing.length <= 1, `detector ${JSON.stringify(detector)} fires ${firing.length} fact rules`);
-    assert.equal(errorRule.when(detector), false);
+    assert.equal(fires(errorRule, detector), false);
     const errored = { ...detector, error: 'detector unavailable' };
     assert.equal(
       reviewScopeFallbackReason({ requested: 'incremental', kind: 'full', since: null, commits: null, detector: errored }),

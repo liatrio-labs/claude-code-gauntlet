@@ -1,26 +1,54 @@
 // Methodology knobs, receipt validation, and configuration derivation.
-import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE, LIGHT_SCOPE_MAX_CHANGED_LINES } from './registry.js';
-import { dottedValue, isPlainObject } from './wire.js';
+import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE, LIGHT_SCOPE_MAX_CHANGED_LINES, KNOB_VOCAB } from './registry.js';
+import { dottedValue, isPlainObject, deepFreeze } from './wire.js';
 
-export const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
+const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
 
-export const KNOB_REGISTRY = [
-  { key: 'model_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['fixed'] }, rule: { kind: 'enum', values: ['optimized'] }, env: 'CODE_GAUNTLET_MODEL_TIER', reviewMdKey: null, defaults: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'delivery', modes: ['headless'], allowedSources: { headless: ['env', 'review_md', 'default'] }, rule: { kind: 'csv_subset', values: ['chat', 'pr_comments', 'markdown'] }, env: 'CODE_GAUNTLET_DELIVERY', reviewMdKey: 'default_delivery', defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'post_mode', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['dry-run', 'live'] }, env: 'CODE_GAUNTLET_POST_MODE', reviewMdKey: null, defaults: { headless: ['dry-run', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'pr_comment_cap', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, rule: { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, env: 'CODE_GAUNTLET_PR_COMMENT_CAP', reviewMdKey: null, defaults: { headless: ['6', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null', waistPath: 'limits.deliveryCap', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: ['interactive'], resolvedKey: false },
-  { key: 'delivery_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', reviewMdKey: null, defaults: { headless: ['all', 'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: false },
-  { key: 'draft_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['review', 'skip'] }, env: 'CODE_GAUNTLET_DRAFT_POLICY', reviewMdKey: null, defaults: { headless: ['review', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['incremental', 'full', 'skip'] }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' }, derivedFrom: null, deriveWhen: 'priorReviewDetector', nullReceipt: [], resolvedKey: true },
-  { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['local', 'error'] }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'scopeAnswer', waistMap: null, derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [], resolvedKey: false },
-  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [], resolvedKey: false },
-];
+export const KNOB_REGISTRY = deepFreeze([
+  { key: 'model_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.fixed },
+    rule: { kind: 'enum', values: KNOB_VOCAB.modelTiers }, env: 'CODE_GAUNTLET_MODEL_TIER', reviewMdKey: null,
+    defaults: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, type: 'string', waistPath: null, waistMap: null,
+    derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'delivery', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envReviewMdDefault }, rule: { kind: 'csv_subset',
+    values: KNOB_VOCAB.deliveryChannels }, env: 'CODE_GAUNTLET_DELIVERY', reviewMdKey: 'default_delivery',
+    defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null,
+    nullReceipt: [], resolvedKey: true },
+  { key: 'post_mode', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.postModes }, env: 'CODE_GAUNTLET_POST_MODE', reviewMdKey: null, defaults: { headless: ['dry-run', 'default'] },
+    type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'pr_comment_cap', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
+    rule: { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, env: 'CODE_GAUNTLET_PR_COMMENT_CAP',
+    reviewMdKey: null, defaults: { headless: ['6', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null',
+    waistPath: 'limits.deliveryCap', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: KNOB_VOCAB.interactive,
+    resolvedKey: false },
+  { key: 'delivery_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
+    rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', reviewMdKey: null, defaults: { headless: ['all',
+    'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', waistMap: null, derivedFrom: null,
+    deriveWhen: null, nullReceipt: [], resolvedKey: false },
+  { key: 'draft_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.draftPolicies }, env: 'CODE_GAUNTLET_DRAFT_POLICY', reviewMdKey: null, defaults: { headless: ['review', 'default'] },
+    type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'reviewed_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.reviewedPolicies }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full',
+    'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' }, derivedFrom: null,
+    deriveWhen: 'priorReviewDetector', nullReceipt: [], resolvedKey: true },
+  { key: 'pr_not_found_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.prNotFoundPolicies }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error',
+    'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [],
+    resolvedKey: true },
+  { key: 'trivial_scope', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] },
+    type: 'string', waistPath: 'scopeAnswer', waistMap: null, derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [],
+    resolvedKey: false },
+  { key: 'review_md', modes: KNOB_VOCAB.interactive, allowedSources: { interactive: KNOB_VOCAB.discovery }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.reviewMdValues }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string',
+    waistPath: null, waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [], resolvedKey: false },
+]);
 
 export function matchesRule(rule, value, mode) {
-  if (typeof value !== 'string' || rule === null || typeof rule !== 'object' || Array.isArray(rule)) return false;
+  if (typeof value !== 'string' || !isPlainObject(rule)) return false;
   const selected = typeof rule.kind === 'string' ? rule : rule[mode];
-  if (selected === null || typeof selected !== 'object' || Array.isArray(selected)) return false;
+  if (!isPlainObject(selected)) return false;
   if (selected.kind === 'enum') return Array.isArray(selected.values) && selected.values.includes(value);
   if (selected.kind === 'csv_subset') {
     if (!Array.isArray(selected.values) || value === '') return false;
@@ -60,8 +88,8 @@ export function receiptEntryFor(args, descriptor) {
   return entry;
 }
 
-export function receiptEntryForKey(args, key) {
-  const descriptor = KNOB_REGISTRY.find((candidate) => candidate.key === key);
+export function receiptEntryForKey(args, key, descriptors = KNOB_REGISTRY) {
+  const descriptor = descriptors.find((candidate) => candidate.key === key);
   return descriptor ? receiptEntryFor(args, descriptor) : null;
 }
 
@@ -94,11 +122,11 @@ export function mappedReceiptValue(descriptor, value) {
   return typedReceiptValue(descriptor, mapped);
 }
 
-export function isPriorReviewDetector(args) {
+function isPriorReviewDetector(args) {
   return isPlainObject(args?.reviewScope?.detector);
 }
 
-export const DERIVE_WHEN = {
+export const DERIVE_WHEN = deepFreeze({
   lightEligible: {
     holds: (args) => computeLightEligible(args.riskTable, args.changedLines),
     describe: `every changed file is low risk and fewer than ${LIGHT_SCOPE_MAX_CHANGED_LINES} lines changed`,
@@ -107,9 +135,9 @@ export const DERIVE_WHEN = {
     holds: isPriorReviewDetector,
     describe: '`reviewScope.detector` is an object',
   },
-};
+});
 
-export const DERIVED_FROM = {
+export const DERIVED_FROM = deepFreeze({
   reviewMd: {
     fill: (args) => {
       if (Array.isArray(args.reviewMd)) {
@@ -118,16 +146,17 @@ export const DERIVED_FROM = {
       return args.reviewConfigPath != null ? 'present' : 'absent';
     },
     source: 'discovery',
-    describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`',
+    describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, ' +
+      '`present` when `reviewConfigPath` is set, else `absent`',
   },
-};
+});
 
-export function deriveWhenHolds(descriptor, args) {
+export function deriveWhenHolds(descriptor, args, gates = DERIVE_WHEN) {
   return descriptor.deriveWhen === null
-    || (Object.hasOwn(DERIVE_WHEN, descriptor.deriveWhen) && DERIVE_WHEN[descriptor.deriveWhen].holds(args));
+    || (Object.hasOwn(gates, descriptor.deriveWhen) && gates[descriptor.deriveWhen].holds(args));
 }
 
-export function deriveConfigWaist(args) {
+export function deriveConfigWaist(args, descriptors = KNOB_REGISTRY) {
   if (!isPlainObject(args) || !isPlainObject(args.configEcho) || typeof args.mode !== 'string') {
     return { args, derivedPaths: [] };
   }
@@ -135,7 +164,7 @@ export function deriveConfigWaist(args) {
   const configEcho = { ...args.configEcho };
   const derivedPaths = [];
   let configEchoChanged = false;
-  for (const descriptor of KNOB_REGISTRY) {
+  for (const descriptor of descriptors) {
     if (!descriptor.modes.includes(args.mode)) continue;
     if (descriptor.derivedFrom !== null
       && Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)
@@ -168,14 +197,14 @@ export function configEchoValue(args, key) {
   return isPlainObject(entry) && typeof entry.value === 'string' ? entry.value : undefined;
 }
 
-export function validateConfigEcho(args, errors) {
+export function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
   if (args.configEcho === undefined) return;
   if (!isPlainObject(args.configEcho)) {
     errors.push('configEcho must be an object keyed by methodology knob');
     return;
   }
   const mode = args.mode;
-  const descriptors = KNOB_REGISTRY.filter((descriptor) => descriptor.modes.includes(mode));
+  const descriptors = table.filter((descriptor) => descriptor.modes.includes(mode));
   const expected = descriptors.map((descriptor) => descriptor.key);
   const actual = Object.keys(args.configEcho);
   const extra = actual.filter((key) => !expected.includes(key));
@@ -190,12 +219,14 @@ export function validateConfigEcho(args, errors) {
       continue;
     }
     const entryKeys = Object.keys(entry);
-    const entryExtra = entryKeys.filter((key) => key !== 'value' && key !== 'source');
+    const entryExtra = entryKeys.filter((key) => !KNOB_VOCAB.receiptEntryKeys.includes(key));
     if (entryExtra.length) errors.push(`configEcho.${descriptor.key} has unexpected key(s): ${entryExtra.join(', ')}`);
     if (typeof entry.value !== 'string') {
       errors.push(`configEcho.${descriptor.key}.value must be a string`);
     } else {
-      if (!safeReceiptValue(entry.value)) errors.push(`configEcho.${descriptor.key}.value must be single-line and contain no controls or backticks`);
+      if (!safeReceiptValue(entry.value)) {
+        errors.push(`configEcho.${descriptor.key}.value must be single-line and contain no controls or backticks`);
+      }
       if (!matchesRule(descriptor.rule, entry.value, mode)) errors.push(`configEcho.${descriptor.key}.value is invalid for ${mode}`);
     }
     if (typeof entry.source !== 'string' || !descriptor.allowedSources[mode].includes(entry.source)) {

@@ -1,39 +1,39 @@
 // Injection patterns, Unicode folding, and finding sanitization.
-import { WS_TRIM_RE, asText, asConfidence } from './wire.js';
+import { WS_TRIM_RE, asText, asConfidence, deepFreeze } from './wire.js';
 import { INJECTION_STRIPPED_PROSE_FIELDS } from './registry.js';
 
 // --- Filter: injection artifact detection -----------------------------------
 
 
-export const INJECTION_TITLE_PATTERNS = [
+export const INJECTION_TITLE_PATTERNS = deepFreeze([
   /\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\bSample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\bdemo[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\bPlaceholder[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
-];
+]);
 
 // Match opening finding/example tags with attributes and placeholders with a clear noun.
-const INJECTION_BODY_PATTERNS = [
+const INJECTION_BODY_PATTERNS = deepFreeze([
   /<finding(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
   /<example(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
   /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\]/i,
   /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT\b[^\]]*\b(?:FINDING|TITLE|TEXT|PLACEHOLDER|HERE)\b[^\]]*\]/i,
   /lorem[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+ipsum/i,
-];
+]);
 
-const INJECTION_SHELL_PATTERNS = [
+const INJECTION_SHELL_PATTERNS = deepFreeze([
   /\brm[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-[rf]/i,
   /\bcurl[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
   /\bwget[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
   /\bgit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+push\b/i,
   /\bgh[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+api\b/i,
-];
+]);
 
-const INJECTION_URL_PATTERNS = [
+const INJECTION_URL_PATTERNS = deepFreeze([
   /\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
   /\bdownload[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
-];
+]);
 
 // Encoded payload patterns -- base64 or hex blobs in findings are injection
 // artifacts. Each shape is now two directive-gated entries: a before-branch
@@ -43,12 +43,12 @@ const INJECTION_URL_PATTERNS = [
 // identifier) no longer matches either branch -- both measured a false-fire
 // on ordinary review/DevOps prose where a generic verb (run/curl/wget)
 // happened to sit near an unrelated hash-shaped token.
-const INJECTION_ENCODED_PATTERNS = [
+const INJECTION_ENCODED_PATTERNS = deepFreeze([
   /\b(?:decode|base64|atob|b64decode)\b[^\x00]{0,40}[A-Za-z0-9+\/]{40,}={0,2}\b/i,
   /\b[A-Za-z0-9+\/]{40,}={0,2}\b[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:sh|bash|zsh)\b|base64[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-d\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b)/i,
   /\b(?:decode|unhex|xxd|fromhex|unhexlify)\b[^\x00]{0,40}(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)/i,
   /(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:xxd|sh|bash)\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b|-r[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-p\b)/i,
-];
+]);
 
 // Bypass / auto-approve instruction patterns. auto-approve is now two
 // grammatically-gated entries (a determiner + PR/MR/commit object, or an
@@ -56,7 +56,7 @@ const INJECTION_ENCODED_PATTERNS = [
 // phrase false-fired on third-person policy prose ("auto-approve changes to
 // lockfiles should be gated behind review") where "auto-approve" is the
 // grammatical subject, not an imperative.
-const INJECTION_BYPASS_PATTERNS = [
+const INJECTION_BYPASS_PATTERNS = deepFreeze([
   /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+review\b/i,
   /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|these|the|it|my|your)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:pr|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|mr|merge[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|changes?|commit)\b/i,
   /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:merge|skip|bypass|push|deploy|proceed|continue)\b/i,
@@ -65,18 +65,18 @@ const INJECTION_BYPASS_PATTERNS = [
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:auth|authentication|authorization)\b/i,
   /\bmark[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:finding[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?as[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+safe\b/i,
   /\bapprove[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:PR|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|change)\b/i,
-];
+]);
 
-const INJECTION_INSTRUCTIONAL_PATTERNS = [
+const INJECTION_INSTRUCTIONAL_PATTERNS = deepFreeze([
   /\byou[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+should[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b/i,
   /\bexecute[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b/i,
   /\brun[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+command\b/i,
   /\bplease[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b/i,
   /\bpaste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+into[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:your[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?terminal/i,
   /\bcopy[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+paste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b/i,
-];
+]);
 
-const INJECTION_VULN_INTRO_PATTERNS = [
+const INJECTION_VULN_INTRO_PATTERNS = deepFreeze([
   /\badd[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(/i,
   /\buse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(/i,
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:CORS|CSP|content[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]security[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]policy)\b/i,
@@ -86,7 +86,7 @@ const INJECTION_VULN_INTRO_PATTERNS = [
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:TLS|SSL|HTTPS)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b/i,
   /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:certificate|cert)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b/i,
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:check|feature|control)\b/i,
-];
+]);
 
 const MIN_BODY_WORDS = 10;
 
@@ -272,10 +272,11 @@ export const CONFUSABLE_FOLD = new Map();
     CONFUSABLE_FOLD.set(cps[i].codePointAt(0), cps[i + 1]);
   }
 }
+deepFreeze(CONFUSABLE_FOLD);
 
-export const INVISIBLE_STRIP = new Set(
+export const INVISIBLE_STRIP = deepFreeze(new Set(
   [...INVISIBLE_STRIP_PACKED].map((c) => c.codePointAt(0)),
-);
+));
 
 // Fold lookalikes and remove invisible code points before injection scanning.
 export function foldConfusables(text) {
@@ -288,11 +289,11 @@ export function foldConfusables(text) {
   return out;
 }
 
-function firstMatch(patterns, text, folded) {
+function firstMatch(text, folded, patterns = INJECTION_TITLE_PATTERNS) {
   for (const rx of patterns) {
     if (rx.test(text)) return rx.source;
   }
-  if (folded !== undefined && folded !== text) {
+  if (folded !== text) {
     for (const rx of patterns) {
       if (rx.test(folded)) return rx.source;
     }
@@ -300,15 +301,30 @@ function firstMatch(patterns, text, folded) {
   return null;
 }
 
-export const SUGGESTION_SETS = [
-  ['contains shell command pattern', INJECTION_SHELL_PATTERNS],
-  ['contains visit-URL pattern', INJECTION_URL_PATTERNS],
-  ['contains encoded payload pattern', INJECTION_ENCODED_PATTERNS],
-  ['contains bypass/auto-approve instruction', INJECTION_BYPASS_PATTERNS],
-  ['uses instructional tone', INJECTION_INSTRUCTIONAL_PATTERNS],
-  ['recommends introducing vulnerability', INJECTION_VULN_INTRO_PATTERNS],
-  ['matches injection marker', INJECTION_BODY_PATTERNS],
-];
+export const INJECTION_RULES = deepFreeze([
+  { kind: 'pattern', domain: 'combined', label: 'contains shell command pattern',
+    patterns: INJECTION_SHELL_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'contains visit-URL pattern',
+    patterns: INJECTION_URL_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'contains encoded payload pattern',
+    patterns: INJECTION_ENCODED_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'contains bypass/auto-approve instruction',
+    patterns: INJECTION_BYPASS_PATTERNS, prose: true },
+  { kind: 'shortBody', minimumWords: MIN_BODY_WORDS, confidence: HIGH_CONFIDENCE_THRESHOLD,
+    label: 'suspiciously short description ({words} words) with high confidence ({confidence})' },
+  { kind: 'pattern', domain: 'combined', label: 'uses instructional tone',
+    patterns: INJECTION_INSTRUCTIONAL_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'recommends introducing vulnerability',
+    patterns: INJECTION_VULN_INTRO_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'title', label: 'title matches placeholder pattern', patterns: INJECTION_TITLE_PATTERNS },
+  { kind: 'pattern', domain: 'combined', label: 'matches injection marker', patterns: INJECTION_BODY_PATTERNS, prose: true },
+  { kind: 'path', pattern: /<[^\n]*?>|\{[^\n]*?\}/, label: 'file path is empty or contains template markers' },
+  { kind: 'duplicate', label: 'duplicate of finding' },
+]);
+
+export const SUGGESTION_SETS = deepFreeze(
+  INJECTION_RULES.filter((row) => row.prose).map((row) => [row.label, row.patterns]),
+);
 
 // Apply the same normalized line and character bounds used by the delivery fence.
 export const FIX_MAX_LINES = 100;
@@ -320,28 +336,31 @@ function normalizeFixCodeForBound(code) {
   return code.endsWith('\n') ? code.slice(0, -1) : code;
 }
 
-function stripInjectedProseFields(finding) {
+function stripInjectionField(finding, field, reason) {
+  const kept = { ...finding };
+  delete kept[field];
+  kept[`${field}_removed_by`] = 'injection';
+  kept[`${field}_removal_reason`] = reason;
+  return kept;
+}
+
+function stripInjectedProseFields(finding, rules) {
   let kept = finding;
   let firstPatternStrip = null;
   for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
     if (field in kept && typeof kept[field] !== 'string') {
-      kept = { ...kept };
-      delete kept[field];
-      kept[`${field}_removed_by`] = 'injection';
-      kept[`${field}_removal_reason`] = `${field} is not a string`;
+      kept = stripInjectionField(kept, field, `${field} is not a string`);
       continue;
     }
     const value = typeof kept[field] === 'string' ? kept[field] : '';
     if (!value) continue;
     const valueFolded = foldConfusables(value);
-    for (const [phrase, patterns] of SUGGESTION_SETS) {
-      const m = firstMatch(patterns, value, valueFolded);
+    for (const row of rules) {
+      if (!row.prose) continue;
+      const m = firstMatch(value, valueFolded, row.patterns);
       if (m) {
-        kept = { ...kept };
-        delete kept[field];
-        kept[`${field}_removed_by`] = 'injection';
-        kept[`${field}_removal_reason`] = `${field} ${phrase}: ${JSON.stringify(m)}`;
-        if (firstPatternStrip === null) firstPatternStrip = [field, phrase];
+        kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(m)}`);
+        if (firstPatternStrip === null) firstPatternStrip = [field, row.label];
         break;
       }
     }
@@ -353,39 +372,27 @@ function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
   if (!('suggested_fix_code' in finding)) return finding;
   const code = finding.suggested_fix_code;
   if (typeof code !== 'string') {
-    const kept = { ...finding };
-    delete kept.suggested_fix_code;
-    kept.suggested_fix_code_removed_by = 'injection';
-    kept.suggested_fix_code_removal_reason = 'suggested_fix_code is not a string';
-    return kept;
+    return stripInjectionField(finding, 'suggested_fix_code', 'suggested_fix_code is not a string');
   }
   const normalized = normalizeFixCodeForBound(code);
   if (normalized.split('\n').length > FIX_MAX_LINES || [...normalized].length > FIX_MAX_CHARS) {
-    const kept = { ...finding };
-    delete kept.suggested_fix_code;
-    kept.suggested_fix_code_removed_by = 'injection';
-    kept.suggested_fix_code_removal_reason = 'suggested_fix_code exceeds the delivery bound';
-    return kept;
+    return stripInjectionField(finding, 'suggested_fix_code', 'suggested_fix_code exceeds the delivery bound');
   }
   if (firstPatternStrip !== null) {
     // Clear suggested fix code when its accompanying prose was stripped.
     const [propField, propPhrase] = firstPatternStrip;
-    const kept = { ...finding };
-    delete kept.suggested_fix_code;
-    kept.suggested_fix_code_removed_by = 'injection';
-    kept.suggested_fix_code_removal_reason = `${propField} carried ${propPhrase}`;
-    return kept;
+    return stripInjectionField(finding, 'suggested_fix_code', `${propField} carried ${propPhrase}`);
   }
   return finding;
 }
 
-export function applyInjectedProseStrip(finding) {
-  const [stripped, firstPatternStrip] = stripInjectedProseFields(finding);
+export function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
+  const [stripped, firstPatternStrip] = stripInjectedProseFields(finding, rules);
   return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
 }
 
 // Scan folded and raw text in a fixed order, then deduplicate by normalized title and location.
-function injectionScanCore(findings, includeH4) {
+function injectionScanCore(findings, includeH4, rules) {
   const kept = [];
   const eliminated = [];
   const seenSignatures = new Map();
@@ -401,64 +408,46 @@ function injectionScanCore(findings, includeH4) {
 
     const reasons = [];
 
-    let m = firstMatch(INJECTION_SHELL_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains shell command pattern: ${JSON.stringify(m)}`);
-
-    m = firstMatch(INJECTION_URL_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains visit-URL pattern: ${JSON.stringify(m)}`);
-
-    m = firstMatch(INJECTION_ENCODED_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains encoded payload pattern: ${JSON.stringify(m)}`);
-
-    m = firstMatch(INJECTION_BYPASS_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains bypass/auto-approve instruction: ${JSON.stringify(m)}`);
-
-    if (includeH4) {
-      const wordCount = countWords(description);
-      if (wordCount < MIN_BODY_WORDS && confidence >= HIGH_CONFIDENCE_THRESHOLD) {
-        reasons.push(`suspiciously short description (${wordCount} words) with high confidence (${confidence})`);
+    for (const row of rules) {
+      if (row.kind === 'pattern') {
+        const raw = row.domain === 'title' ? title : combined;
+        const folded = row.domain === 'title' ? titleFolded : combinedFolded;
+        const m = firstMatch(raw, folded, row.patterns);
+        if (m) reasons.push(`${row.label}: ${JSON.stringify(m)}`);
+      } else if (row.kind === 'shortBody' && includeH4) {
+        const wordCount = countWords(description);
+        if (wordCount < row.minimumWords && confidence >= row.confidence) {
+          reasons.push(row.label.replace('{words}', wordCount).replace('{confidence}', confidence));
+        }
+      } else if (row.kind === 'path') {
+        if (!filepath || row.pattern.test(filepath)) {
+          reasons.push(`${row.label}: ${JSON.stringify(filepath)}`);
+        }
+      } else if (row.kind === 'duplicate') {
+        const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, finding.line_start]);
+        if (seenSignatures.has(sig)) {
+          reasons.push(`${row.label} ${JSON.stringify(seenSignatures.get(sig))}`);
+        } else {
+          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : title);
+        }
       }
-    }
-
-    m = firstMatch(INJECTION_INSTRUCTIONAL_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`uses instructional tone: ${JSON.stringify(m)}`);
-
-    m = firstMatch(INJECTION_VULN_INTRO_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`recommends introducing vulnerability: ${JSON.stringify(m)}`);
-
-    m = firstMatch(INJECTION_TITLE_PATTERNS, title, titleFolded);
-    if (m) reasons.push(`title matches placeholder pattern: ${JSON.stringify(m)}`);
-
-    m = firstMatch(INJECTION_BODY_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`matches injection marker: ${JSON.stringify(m)}`);
-
-    if (!filepath || /<[^\n]*?>|\{[^\n]*?\}/.test(filepath)) {
-      reasons.push(`file path is empty or contains template markers: ${JSON.stringify(filepath)}`);
-    }
-
-    const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, finding.line_start]);
-    if (seenSignatures.has(sig)) {
-      reasons.push(`duplicate of finding ${JSON.stringify(seenSignatures.get(sig))}`);
-    } else {
-      seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : title);
     }
 
     if (reasons.length) {
       const elim = { ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') };
       eliminated.push(elim);
     } else {
-      const [strippedFinding, firstPatternStrip] = stripInjectedProseFields(finding);
-      kept.push(stripSuggestedFixCodeIfNeeded(strippedFinding, firstPatternStrip));
+      kept.push(applyInjectedProseStrip(finding, rules));
     }
   }
 
   return { kept, eliminated };
 }
 
-export function applyInjectionFilter(findings) {
-  return injectionScanCore(findings, true);
+export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
+  return injectionScanCore(findings, true, rules);
 }
 
-export function applyReplayInjectionScan(findings) {
-  return injectionScanCore(findings, false);
+export function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
+  return injectionScanCore(findings, false, rules);
 }

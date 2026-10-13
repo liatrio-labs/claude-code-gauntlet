@@ -1,6 +1,9 @@
 import { normalizeAbsoluteRoot } from './paths.js';
-import { PR_IDENTITY_FIELDS, ARGS_VERSION, REQUIRED, NONCE_RE, DELIVERY_TIERS, SCOPE_ANSWERS, POLICY_PROVIDERS, CONTROL_RE, NULLABLE_TOP_LEVEL, RISK_LEVELS, LIMIT_DEFAULTS, NULL_TOLERANCE_CONSEQUENCE, LIGHT_SCOPE_MAX_CHANGED_LINES, TRUSTED_SCRIPT_BASENAMES, REVIEW_SETTING_KEYS } from './registry.js';
-import { KNOB_REGISTRY, computeLightEligible, receiptEntryFor, receiptEntryForKey, mappedReceiptValue, DERIVED_FROM, deriveWhenHolds, deriveConfigWaist, configEchoValue, validateConfigEcho } from './knobs.js';
+import { ARGS_VERSION, REQUIRED, NONCE_RE, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE } from './registry.js';
+import { NULLABLE_TOP_LEVEL, RISK_LEVELS, LIMIT_DEFAULTS, NULL_TOLERANCE_CONSEQUENCE, LIGHT_SCOPE_MAX_CHANGED_LINES } from './registry.js';
+import { MODE_VALUES, LIMIT_KEYS, ARGS_SHAPES, validateArgsFields, validatePrIdentity, validateScriptPaths } from './registry.js';
+import { KNOB_REGISTRY, computeLightEligible, receiptEntryFor, receiptEntryForKey, mappedReceiptValue, DERIVED_FROM } from './knobs.js';
+import { deriveWhenHolds, deriveConfigWaist, configEchoValue, validateConfigEcho } from './knobs.js';
 import { dottedValue, isPlainObject } from './wire.js';
 import { buildReviewConfig, loadExclusions } from './reviewConfig.js';
 
@@ -26,44 +29,52 @@ import { buildReviewConfig, loadExclusions } from './reviewConfig.js';
 //     whatever backend it fronts, which could be an unmeasured third-party surface even
 //     while the session itself reads as firstParty.
 
-// Shared with PATH_CONTROL_RE further down (declared locally there because it sits inside
-// validateArgs); duplicated at module scope here so the reviewMd[].path guard above — which
-// runs earlier in validateArgs, before that local const is declared in source order — can
-// reuse the identical charset without a forward reference.
-
-const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
-
-function validatePathSegments(value, label, { separateSlashErrors = false, requireBasename = false } = {}) {
+function validatePathSegments(value, label, reviewFile = false) {
   const errors = [];
-  if (separateSlashErrors) {
+  if (reviewFile) {
     if (value.startsWith('/')) errors.push(`${label} must be repo-relative (must not start with /)`);
     if (value.endsWith('/')) errors.push(`${label} must not have a trailing /`);
   } else if (value.startsWith('/') || value.endsWith('/')) {
     errors.push(`${label} must not have a leading or trailing /`);
   }
   if (value.includes('\\')) errors.push(`${label} must use / separators, not backslashes`);
-  if (REVIEW_MD_PATH_CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
+  if (CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
   const segments = value.split('/');
   if (segments.some((segment) => segment === '')) errors.push(`${label} must not contain an empty path segment`);
   if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label} must not contain . or .. path segments`);
-  if (requireBasename && segments[segments.length - 1] !== 'REVIEW.md') {
+  if (reviewFile && segments[segments.length - 1] !== 'REVIEW.md') {
     errors.push(`${label} must end with exactly REVIEW.md`);
   }
   return errors;
 }
 
+function validateFlatPatterns(value, label, errors, ignore = false) {
+  if (!Array.isArray(value)) {
+    errors.push(`${label} must be an array of flat pattern strings`);
+    return;
+  }
+  for (let i = 0; i < value.length; i++) {
+    if (typeof value[i] !== 'string') {
+      const suffix = ignore ? ' \u2014 parseReviewMd emits strings, never objects' : '';
+      errors.push(`${label}[${i}] must be a flat pattern string (got ${typeof value[i]})${suffix}`);
+    }
+  }
+}
+
 // nullToleranceGap(key) -> the operator-actionable gap line for one dropped null. Names the
 // field, states it was treated as ABSENT, states the consequence, and says to omit it.
 // Pure string building — no host globals (the workflow sandbox has no console/process).
-export function nullToleranceGap(key) {
-  const why = NULL_TOLERANCE_CONSEQUENCE[key] || 'the run proceeds as if the field had not been supplied';
-  return `null_arg: args.${key} arrived as a literal null and was treated as ABSENT — ${why}. Omit ${key} entirely (or stamp a well-formed value); do not stamp null.`;
+export function nullToleranceGap(key, consequences = NULL_TOLERANCE_CONSEQUENCE) {
+  const why = consequences[key] || 'the run proceeds as if the field had not been supplied';
+  return `null_arg: args.${key} arrived as a literal null and was treated as ABSENT — ${why}. Omit ` +
+    `${key} entirely (or stamp a well-formed value); do not stamp null.`;
 }
 
 // nullRespellGap(key) -> the disclosure for a JSON null respelled as a printed receipt token.
 // The receipt and typed configuration stay unchanged; only the receipt spelling crosses the waist.
 export function nullRespellGap(key) {
-  return `null_receipt: args.${key} arrived as a literal null and was spelled as the printed token "null"; the receipt and the configuration are unchanged; stamp the string "null".`;
+  return `null_receipt: args.${key} arrived as a literal null and was spelled as the printed token ` +
+    `"null"; the receipt and the configuration are unchanged; stamp the string "null".`;
 }
 
 // nullToleranceRejectedKeys(cleanArgs, dropped, derivedPaths) -> the subset of `dropped` whose
@@ -81,29 +92,29 @@ export function nullRespellGap(key) {
 // stripped waist, vs the same waist with that null put back). A second hand-maintained list
 // would drift the moment someone adds or removes a shape check. Pure — validateArgs is pure,
 // and the probe objects are shallow copies, so the caller's waist is untouched.
-export function nullToleranceRejectedKeys(cleanArgs, dropped, derivedPaths = []) {
+export function nullToleranceRejectedKeys(cleanArgs, dropped, derivedPaths = [], descriptors = KNOB_REGISTRY) {
   if (!Array.isArray(dropped) || dropped.length === 0) return [];
   const derived = new Set(Array.isArray(derivedPaths) ? derivedPaths : []);
-  const baseline = validateArgs(cleanArgs).errors.length;
+  const baseline = validateArgs(cleanArgs, descriptors).errors.length;
   return dropped
     .filter((key) => !derived.has(key))
-    .filter((key) => validateArgs(withNullAt(cleanArgs, key)).errors.length > baseline);
+    .filter((key) => validateArgs(withNullAt(cleanArgs, key), descriptors).errors.length > baseline);
 }
 
 // The stripped waist with ONE dropped null put back, addressed by the same full dotted
 // path spelling stripNullOptionalsReport reports. Every traversed level is shallow-copied,
 // so an arbitrarily deep optional can be probed without mutating the caller's waist.
 function withNullAt(args, key) {
-  const base = (args && typeof args === 'object' && !Array.isArray(args)) ? args : {};
+  const base = isPlainObject(args) ? args : {};
   const parts = key.split('.');
   const out = { ...base };
   let source = base;
   let target = out;
   for (const part of parts.slice(0, -1)) {
-    const value = source && typeof source === 'object' && !Array.isArray(source)
+    const value = isPlainObject(source)
       ? source[part]
       : undefined;
-    const copy = value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {};
+    const copy = isPlainObject(value) ? { ...value } : {};
     target[part] = copy;
     target = copy;
     source = value;
@@ -120,21 +131,19 @@ function withNullAt(args, key) {
 // itself copied, so a caller holding the original object sees no change (its stamped nulls
 // are still there). Non-object input (undefined, null, a string) passes through as-is with
 // an empty `dropped`; there is nothing to strip.
-export function stripNullOptionalsReport(args) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return { args, dropped: [], respelled: [] };
+export function stripNullOptionalsReport(args, descriptors = KNOB_REGISTRY) {
+  if (!isPlainObject(args)) return { args, dropped: [], respelled: [] };
   const dropped = [];
   const respelled = [];
   const out = { ...args };
   for (const k of NULLABLE_TOP_LEVEL) {
     if (out[k] === null) { delete out[k]; dropped.push(k); }
   }
-  if (out.delivery && typeof out.delivery === 'object' && !Array.isArray(out.delivery)) {
+  if (isPlainObject(out.delivery)) {
     const delivery = { ...out.delivery };
     if (delivery.prIdentity === null) { delete delivery.prIdentity; dropped.push('delivery.prIdentity'); }
     if (
-      delivery.prIdentity
-      && typeof delivery.prIdentity === 'object'
-      && !Array.isArray(delivery.prIdentity)
+      isPlainObject(delivery.prIdentity)
       && delivery.prIdentity.title === null
     ) {
       const id = { ...delivery.prIdentity };
@@ -150,7 +159,7 @@ export function stripNullOptionalsReport(args) {
   // its comment). A provided `challengeCap: 0` is a real cap of zero and must survive
   // untouched, which `=== undefined` (not falsy) guarantees. A non-object `limits` (or one
   // missing entirely) is left for validateArgs to reject — this step does not repair shape.
-  if (out.limits && typeof out.limits === 'object' && !Array.isArray(out.limits)) {
+  if (isPlainObject(out.limits)) {
     const limits = { ...out.limits };
     for (const [k, v] of Object.entries(LIMIT_DEFAULTS)) {
       if (limits[k] === undefined) limits[k] = v;
@@ -161,7 +170,7 @@ export function stripNullOptionalsReport(args) {
   // of printed null, disclosed as a gap while validateConfigEcho remains strict.
   if (isPlainObject(out.configEcho) && typeof out.mode === 'string') {
     const configEcho = { ...out.configEcho };
-    for (const descriptor of KNOB_REGISTRY) {
+    for (const descriptor of descriptors) {
       if (!descriptor.nullReceipt || !descriptor.nullReceipt.includes(out.mode)) continue;
       const entry = configEcho[descriptor.key];
       if (isPlainObject(entry) && entry.value === null) {
@@ -177,41 +186,40 @@ export function stripNullOptionalsReport(args) {
 // normalizeArgsReport(raw) -> { args, dropped, respelled, derivedPaths }
 // `derivedPaths` identifies waist paths the receipt filled because they were absent after null-stripping,
 // whether originally missing or dropped as an explicit null.
-export function normalizeArgsReport(raw) {
+export function normalizeArgsReport(raw, descriptors = KNOB_REGISTRY) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  const report = stripNullOptionalsReport(parsed);
-  const { args, derivedPaths } = deriveConfigWaist(report.args);
+  const report = stripNullOptionalsReport(parsed, descriptors);
+  const { args, derivedPaths } = deriveConfigWaist(report.args, descriptors);
   report.args = args;
   report.derivedPaths = derivedPaths;
   return report;
 }
 
-export function normalizeArgs(raw) {
-  return normalizeArgsReport(raw).args;
+export function normalizeArgs(raw, descriptors = KNOB_REGISTRY) {
+  return normalizeArgsReport(raw, descriptors).args;
 }
 
-export function validateArgs(args) {
+export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   const errors = [];
   if (!args || typeof args !== 'object') return { ok: false, errors: ['args is not an object'] };
   if (args.argsVersion !== ARGS_VERSION) errors.push(`unsupported argsVersion ${args.argsVersion} (expected ${ARGS_VERSION})`);
   for (const k of REQUIRED) if (args[k] === undefined) errors.push(`missing required field: ${k}`);
-  if (args.mode && !['interactive', 'headless'].includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
-  validateConfigEcho(args, errors);
+  if (args.mode && !MODE_VALUES.includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
+  validateConfigEcho(args, errors, descriptors);
   // Only charset-check a present nonce (absence is already a REQUIRED error above).
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
   // Validate consumed path fields before they reach prompts, executor args, or merge.
   // The workflow has no cwd to resolve relative roots against and uses POSIX separators.
-  const PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
-  for (const field of ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot']) {
+  for (const field of ARGS_SHAPES.pathFields) {
     const v = args[field];
     if (v === undefined) continue;
     if (typeof v !== 'string' || v.trim() === '') {
       errors.push(`${field} must be a non-empty string when present`);
       continue;
     }
-    if (PATH_CONTROL_RE.test(v)) {
+    if (CONTROL_RE.test(v)) {
       errors.push(`${field} must not contain a control character`);
       continue;
     }
@@ -240,7 +248,10 @@ export function validateArgs(args) {
   // that still stamps agentFlags is a stale producer (an un-migrated skill build, a bench
   // fixture) — refuse loud rather than silently honour or silently ignore its scope intent.
   if (args.agentFlags !== undefined) {
-    errors.push('agentFlags is no longer accepted — the pipeline derives dimension flags itself from riskTable/scopeAnswer (issue #24). Stamp riskTable (the Phase 2e per-file risk classification) and, only when the light/full gate asked, scopeAnswer; do not stamp agentFlags.');
+    errors.push('agentFlags is no longer accepted — the pipeline derives dimension flags itself from ' +
+      'riskTable/scopeAnswer (issue #24). Stamp riskTable (the Phase 2e per-file risk ' +
+      'classification) and, only when the light/full gate asked, scopeAnswer; do not stamp ' +
+      'agentFlags.');
   }
   // riskTable is the orchestrator's Phase 2e per-file risk classification, REQUIRED (see
   // REQUIRED above) so deriveAgentFlags (discover.js) has a deterministic input instead of a
@@ -255,12 +266,12 @@ export function validateArgs(args) {
       const seenPaths = new Set();
       for (let i = 0; i < args.riskTable.length; i++) {
         const entry = args.riskTable[i];
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        if (!isPlainObject(entry)) {
           errors.push(`riskTable[${i}] must be an object of the form {path, risk}`);
           continue;
         }
         const keys = Object.keys(entry).sort();
-        const extra = keys.filter((k) => k !== 'path' && k !== 'risk');
+        const extra = keys.filter((k) => !ARGS_SHAPES.riskFields.includes(k));
         if (extra.length > 0) {
           errors.push(`riskTable[${i}] has unexpected key(s): ${extra.join(', ')} (only path and risk are allowed)`);
         }
@@ -297,15 +308,19 @@ export function validateArgs(args) {
   // riskTable/changedLines/scopeAnswer are themselves well-formed (the errors pushed above would
   // otherwise be duplicated by a garbage-in eligibility computation here).
   const riskTableWellFormed = Array.isArray(args.riskTable)
-    && args.riskTable.every((e) => e && typeof e === 'object' && RISK_LEVELS.includes(e.risk) && typeof e.path === 'string' && e.path !== '');
+    && args.riskTable.every((e) => e && typeof e === 'object' && RISK_LEVELS.includes(e.risk) && typeof e.path === 'string' &&
+      e.path !== '');
   const scopeAnswerWellFormed = args.scopeAnswer === undefined || SCOPE_ANSWERS.includes(args.scopeAnswer);
   if (riskTableWellFormed && scopeAnswerWellFormed && typeof args.changedLines === 'number') {
     const lightEligible = computeLightEligible(args.riskTable, args.changedLines);
     if ((args.scopeAnswer !== undefined) !== lightEligible) {
       if (args.scopeAnswer !== undefined) {
-        errors.push(`scopeAnswer is "${args.scopeAnswer}" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked; omit scopeAnswer`);
+        errors.push(`scopeAnswer is "${args.scopeAnswer}" but the riskTable/changedLines are not light-eligible ` +
+          `(not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the ` +
+          `orchestrator answered a light/full question the gate never asked; omit scopeAnswer`);
       } else {
-        errors.push('riskTable/changedLines are light-eligible but scopeAnswer is missing — the light/full gate must have asked, and its answer must be stamped as scopeAnswer');
+        errors.push('riskTable/changedLines are light-eligible but scopeAnswer is missing — the light/full gate ' +
+          'must have asked, and its answer must be stamped as scopeAnswer');
       }
     }
   }
@@ -313,27 +328,9 @@ export function validateArgs(args) {
   // vs bare alias — see POLICY_PROVIDERS above for why a typo must not resolve silently).
   // Only the provider field is shape-checked here: tier/subagentModel predate this guard
   // and keep their existing tolerance. Absent provider means 'firstParty' (older waists).
-  if (args.policy && typeof args.policy === 'object' && !Array.isArray(args.policy)
-    && args.policy.provider !== undefined && args.policy.provider !== null
-    && !POLICY_PROVIDERS.includes(args.policy.provider)) {
-    errors.push(`invalid policy.provider: ${args.policy.provider} (expected one of ${POLICY_PROVIDERS.join(', ')})`);
-  }
-  if (isPlainObject(args.policy) && args.policy.tier !== undefined && args.policy.tier !== 'optimized') {
-    errors.push(`invalid policy.tier: ${args.policy.tier} (expected optimized)`);
-  }
-  // policy.gateway gates registry.js's conditionalSchemaActive (issue #218) — a non-boolean
-  // would silently coerce (e.g. the string "false" is truthy), so shape-check it the same
-  // way provider is above. Absent/null both mean "no gateway", same tolerance as provider.
-  if (isPlainObject(args.policy)
-    && args.policy.gateway !== undefined && args.policy.gateway !== null
-    && typeof args.policy.gateway !== 'boolean') {
-    errors.push(`invalid policy.gateway: ${args.policy.gateway} (expected a boolean)`);
-  }
+  if (isPlainObject(args.policy)) validateArgsFields(args.policy, 'policy', errors, 'policy');
   // Type-check the consumed by-value fields (absence is already a REQUIRED error above).
-  if (args.changedFiles !== undefined && !Array.isArray(args.changedFiles))
-    errors.push('changedFiles must be an array of repo-relative paths');
-  if (args.changedLines !== undefined && typeof args.changedLines !== 'number')
-    errors.push('changedLines must be a number');
+  validateArgsFields(args, 'changed', errors);
   // Optional shared-context file size, measured by the skill immediately after it writes
   // {output_dir}/code-gauntlet-context-{head_sha_short}.md. The workflow has no disk, so
   // this is the only path for it. contextReadPlan (contextPlan.js) turns the pair into the
@@ -356,15 +353,7 @@ export function validateArgs(args) {
   // nothing is dispatched. contextReadPlan carries its own chunk ceiling as the last line
   // of defence; this is the fail-loud one, at the waist, where a nonsense measurement is
   // still attributable to the producer that stamped it.
-  const CONTEXT_SIZE_MAX = { contextLines: 5000000, contextChars: 500000000 };
-  for (const k of ['contextLines', 'contextChars']) {
-    if (args[k] === undefined) continue;
-    if (!Number.isSafeInteger(args[k]) || args[k] <= 0) {
-      errors.push(`${k} must be a positive safe integer (the measured size of the shared context file) when present`);
-    } else if (args[k] > CONTEXT_SIZE_MAX[k]) {
-      errors.push(`${k} is ${args[k]}, above the ${CONTEXT_SIZE_MAX[k]} ceiling — that is not a review context, it is a mis-measurement`);
-    }
-  }
+  validateArgsFields(args, 'context', errors);
   if (args.contextChars !== undefined && args.contextLines === undefined) {
     errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
   }
@@ -373,33 +362,12 @@ export function validateArgs(args) {
   // Filter stage resolves the matching layer per finding. Validate every layer here so a
   // malformed pre-parsed scope cannot fail after paid stages have already dispatched.
   if (args.reviewConfig !== undefined) {
-    if (args.reviewConfig === null || typeof args.reviewConfig !== 'object' || Array.isArray(args.reviewConfig)) {
+    if (!isPlainObject(args.reviewConfig)) {
       errors.push('reviewConfig must be an object (the parseReviewMd output shape) when present');
     } else {
       const validateLayer = (layer, label, allowDir) => {
-        for (const key of REVIEW_SETTING_KEYS) {
-          if (!(key in layer)) continue;
-          if (key === 'severity_threshold') {
-            // parseReviewMd's regex alternation emits only these values; this
-            // enum guard is load-bearing for pre-parsed reviewConfig input.
-            if (!['critical', 'high', 'medium', 'low'].includes(layer[key])) {
-              errors.push(`${label}.${key} must be one of critical|high|medium|low when present (pre-parsed REVIEW.md enum)`);
-            }
-          } else if (!Number.isInteger(layer[key]) || layer[key] < 0 || layer[key] > 100) {
-            errors.push(`${label}.${key} must be an integer from 0 through 100 when present`);
-          }
-        }
-        if (layer.ignore !== undefined) {
-          if (!Array.isArray(layer.ignore)) {
-            errors.push(`${label}.ignore must be an array of flat pattern strings`);
-          } else {
-            for (let i = 0; i < layer.ignore.length; i++) {
-              if (typeof layer.ignore[i] !== 'string') {
-                errors.push(`${label}.ignore[${i}] must be a flat pattern string (got ${typeof layer.ignore[i]}) — parseReviewMd emits strings, never objects`);
-              }
-            }
-          }
-        }
+        validateArgsFields(layer, 'review', errors, label);
+        if (layer.ignore !== undefined) validateFlatPatterns(layer.ignore, `${label}.ignore`, errors, true);
         if (!allowDir) return;
         if (typeof layer.dir !== 'string' || layer.dir === '') {
           errors.push(`${label}.dir must be a non-empty string`);
@@ -421,8 +389,7 @@ export function validateArgs(args) {
               errors.push(`${label} must be a plain object`);
               continue;
             }
-            const allowed = new Set(['dir', 'ignore', ...REVIEW_SETTING_KEYS]);
-            const extra = Object.keys(scope).filter((key) => !allowed.has(key)).sort();
+            const extra = Object.keys(scope).filter((key) => !ARGS_SHAPES.scopeLayerFields.includes(key)).sort();
             if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
             validateLayer(scope, label, true);
             if (typeof scope.dir === 'string' && scope.dir !== '') {
@@ -439,17 +406,7 @@ export function validateArgs(args) {
   // concatenated in applyFilterPipeline (filterFindings.js) before the Filter stage builds
   // its regexes — so it is exposed to the same crash class (same live-run L2) and gets the
   // identical present-then-shape-checked treatment: absent is fine, malformed fails loud.
-  if (args.exclusionPatterns !== undefined) {
-    if (!Array.isArray(args.exclusionPatterns)) {
-      errors.push('exclusionPatterns must be an array of flat pattern strings');
-    } else {
-      for (let i = 0; i < args.exclusionPatterns.length; i++) {
-        if (typeof args.exclusionPatterns[i] !== 'string') {
-          errors.push(`exclusionPatterns[${i}] must be a flat pattern string (got ${typeof args.exclusionPatterns[i]})`);
-        }
-      }
-    }
-  }
+  if (args.exclusionPatterns !== undefined) validateFlatPatterns(args.exclusionPatterns, 'exclusionPatterns', errors);
   // Optional reviewMd (issue #24 PR2): the raw, ORDERED discovery of REVIEW.md files
   // as [{path, text}]; layer construction owns depth ordering. This is the RAW-text
   // counterpart to the pre-parsed `reviewConfig` above: resolveReviewConfig (below) builds
@@ -466,22 +423,19 @@ export function validateArgs(args) {
     } else {
       for (let i = 0; i < args.reviewMd.length; i++) {
         const entry = args.reviewMd[i];
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        if (!isPlainObject(entry)) {
           errors.push(`reviewMd[${i}] must be an object of the form {path, text}`);
           continue;
         }
         const keys = Object.keys(entry).sort();
-        const extra = keys.filter((k) => k !== 'path' && k !== 'text');
+        const extra = keys.filter((k) => !ARGS_SHAPES.reviewMdFields.includes(k));
         if (extra.length > 0) {
           errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path and text are allowed)`);
         }
         if (typeof entry.path !== 'string' || entry.path === '') {
           errors.push(`reviewMd[${i}].path must be a non-empty string`);
         } else {
-          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, {
-            separateSlashErrors: true,
-            requireBasename: true,
-          }));
+          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, true));
         }
         if (typeof entry.text !== 'string') {
           errors.push(`reviewMd[${i}].text must be a string`);
@@ -492,7 +446,8 @@ export function validateArgs(args) {
       ));
       const hasReviewConfigPath = args.reviewConfigPath != null;
       if (hasRootReviewMd !== hasReviewConfigPath) {
-        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd contains an entry with path exactly REVIEW.md');
+        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd ' +
+          'contains an entry with path exactly REVIEW.md');
       }
     }
   }
@@ -500,9 +455,7 @@ export function validateArgs(args) {
   // skill discovered (e.g. .reviewignore), consumed by loadExclusions (reviewConfig.js) in
   // resolveReviewConfig below. Empty string is legal (an exclusions file that exists but is
   // empty).
-  if (args.exclusionsText !== undefined && typeof args.exclusionsText !== 'string') {
-    errors.push('exclusionsText must be a string when present');
-  }
+  validateArgsFields(args, 'exclusions', errors);
   // Single-authority guards (issue #24 req 4 analog): a caller must pass EITHER the raw
   // discovery (reviewMd/exclusionsText) OR the pre-parsed shape (reviewConfig/
   // exclusionPatterns), never both for the same axis — two authorities for one piece of
@@ -511,13 +464,14 @@ export function validateArgs(args) {
     errors.push('reviewMd and reviewConfig are both present — pass raw reviewMd or pre-parsed reviewConfig, not both (single authority)');
   }
   if (args.exclusionsText !== undefined && args.exclusionPatterns !== undefined) {
-    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or pre-parsed exclusionPatterns, not both (single authority)');
+    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or ' +
+      'pre-parsed exclusionPatterns, not both (single authority)');
   }
   // Optional delivery selector. Absence is fine; when present it must be an object, and a
   // present tier must be a known value — an unknown tier would otherwise fall through to the
   // 'all' default in selectDelivery, silently ignoring an operator's narrowing intent.
   if (args.delivery !== undefined) {
-    if (args.delivery === null || typeof args.delivery !== 'object' || Array.isArray(args.delivery)) {
+    if (!isPlainObject(args.delivery)) {
       errors.push('delivery must be an object of the form { tier } when present');
     } else {
       if (args.delivery.tier !== undefined && !DELIVERY_TIERS.includes(args.delivery.tier)) {
@@ -528,26 +482,7 @@ export function validateArgs(args) {
       // instead of the bare findings array — Phase 8 consumes it without hand-assembly.
       // ABSENT for local-diff reviews (the waist stays target-agnostic).
       const id = args.delivery.prIdentity;
-      if (id !== undefined) {
-        if (id === null || typeof id !== 'object' || Array.isArray(id)) {
-          const requiredNames = PR_IDENTITY_FIELDS.filter((field) => field.required).map((field) => field.name);
-          const optionalNames = PR_IDENTITY_FIELDS.filter((field) => !field.required).map((field) => field.name);
-          errors.push(`delivery.prIdentity must be an object { ${requiredNames.join(', ')}[, ${optionalNames.join(', ')}] } when present`);
-        } else {
-          for (const field of PR_IDENTITY_FIELDS) {
-            const value = id[field.name];
-            const valid = value !== undefined && field.check(value);
-            if ((value === undefined && field.required) || (value !== undefined && !valid)) {
-              errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
-            }
-            if (valid) {
-              for (const extra of field.extraChecks || []) {
-                if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
-              }
-            }
-          }
-        }
-      }
+      if (id !== undefined) validatePrIdentity(id, errors);
     }
   }
   // Optional persist waist (issue #38, D3.4): { assembleScriptPath }. When present, the
@@ -561,87 +496,31 @@ export function validateArgs(args) {
   // dropped, and disclosed, by stripNullOptionalsReport. The `=== null` arm below is the
   // guard for a caller that skipped normalization entirely.)
   if (args.persist !== undefined) {
-    if (args.persist === null || typeof args.persist !== 'object' || Array.isArray(args.persist)) {
+    if (!isPlainObject(args.persist)) {
       errors.push('persist must be an object of the form { assembleScriptPath, returnPrimaries } when present');
     } else {
-      if (args.persist.assembleScriptPath !== undefined
-        && (typeof args.persist.assembleScriptPath !== 'string' || !args.persist.assembleScriptPath)) {
-        errors.push('persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py');
-      }
-      // `returnPrimaries: true` routes the primaries home in the workflow's RETURN instead
-      // of through the artifact-writer's transcription, and Phase 8 materializes them with
-      // scripts/gauntlet/materialize.py. It is checked for a BOOLEAN rather than
-      // truthiness because writeArtifacts gates on `=== true`: a caller that stamped the
-      // string "false" would otherwise read as opting in here and out there.
-      if (args.persist.returnPrimaries !== undefined && typeof args.persist.returnPrimaries !== 'boolean') {
-        errors.push('persist.returnPrimaries must be a boolean when present');
-      }
+      validateArgsFields(args.persist, 'persist', errors);
     }
   }
 
   // pluginRoot is the trust boundary for every script path the workflow delegates back to
   // Phase 8. A path outside this root would make the receipt identify one plugin while the
   // executor ran another plugin's script.
-  if (typeof args.pluginRoot === 'string' && args.pluginRoot.startsWith('/')) {
-    const root = args.pluginRoot.replace(/\/+$/, '') || '/';
-    const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
-    const expectedPaths = {
-      assemble: `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES.assemble}`,
-      verify: `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES.verify}`,
-    };
-    if (isPlainObject(args.persist) && typeof args.persist.assembleScriptPath === 'string'
-      && args.persist.assembleScriptPath !== expectedPaths.assemble) {
-      errors.push(`persist.assembleScriptPath must equal ${expectedPaths.assemble}`);
-    }
-    if (isPlainObject(args.verify) && typeof args.verify.scriptPath === 'string'
-      && args.verify.scriptPath !== expectedPaths.verify) {
-      errors.push(`verify.scriptPath must equal ${expectedPaths.verify}`);
-    }
-  }
+  errors.push(...validateScriptPaths(args));
   // limits (REQUIRED — see REQUIRED above; the skill always stamps {} at worst, and
   // normalizeArgs fills the LIMIT_DEFAULTS keys before validateArgs ever runs on a
   // real waist). Every OTHER key is a hard error: issue #24's motivating incident was a
   // silent typo (`verifySclieSize: 50`) that never reached the stage it was meant to size
   // and just as silently fell back to a different default — this closes that class by
   // refusing any key this waist does not know about, rather than ignoring it.
-  const LIMIT_KEYS = ['summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize', 'deliveryCap', 'discoveryCap', 'maxLineSpan'];
   if (args.limits !== undefined) {
-    if (args.limits === null || typeof args.limits !== 'object' || Array.isArray(args.limits)) {
+    if (!isPlainObject(args.limits)) {
       errors.push('limits must be an object when present');
     } else {
       for (const k of Object.keys(args.limits)) {
         if (!LIMIT_KEYS.includes(k)) errors.push(`unknown limits key: ${k} (expected one of ${LIMIT_KEYS.join(', ')})`);
       }
-      // summarizeBucketSize / validateBatch / verifySliceSize / maxLineSpan: positive safe
-      // integers — a zero or negative bucket/batch/slice size would divide the work into an
-      // infinite (or negative-length) number of dispatches. maxLineSpan (issue #204): the
-      // effective-limit accessor's `||` fallback treats a falsy 0 as absent and silently
-      // substitutes the default, so an unvalidated 0 would be confusingly overridden rather
-      // than honored — refuse it here instead.
-      for (const k of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan']) {
-        const v = args.limits[k];
-        if (v !== undefined && (!Number.isSafeInteger(v) || v <= 0)) {
-          errors.push(`limits.${k} must be a positive safe integer when present`);
-        }
-      }
-      // challengeCap: non-negative safe integer — 0 is a real, legal cap ("challenge
-      // nothing"; effectiveChallengeCap/challengeStage both honor it).
-      if (args.limits.challengeCap !== undefined
-        && (!Number.isSafeInteger(args.limits.challengeCap) || args.limits.challengeCap < 0)) {
-        errors.push('limits.challengeCap must be a non-negative safe integer when present');
-      }
-      // deliveryCap: absent, null (uncapped — a meaningful value, not a default-pending
-      // hole; see LIMIT_DEFAULTS above), or a non-negative safe integer.
-      if (args.limits.deliveryCap !== undefined && args.limits.deliveryCap !== null
-        && (!Number.isSafeInteger(args.limits.deliveryCap) || args.limits.deliveryCap < 0)) {
-        errors.push('limits.deliveryCap must be null, absent, or a non-negative safe integer when present');
-      }
-      // discoveryCap: absent or a positive safe integer (no null form — unlike
-      // deliveryCap, discoveryCap's absence alone already means "no per-agent ceiling").
-      if (args.limits.discoveryCap !== undefined
-        && (!Number.isSafeInteger(args.limits.discoveryCap) || args.limits.discoveryCap <= 0)) {
-        errors.push('limits.discoveryCap must be a positive safe integer when present');
-      }
+      validateArgsFields(args.limits, 'limits', errors);
     }
   }
 
@@ -655,18 +534,20 @@ export function validateArgs(args) {
       errors.push('reviewScope must be { requested, kind, since, commits, detector }');
     } else {
       const scopeKeys = Object.keys(args.reviewScope);
-      const scopeKeysExpected = ['requested', 'kind', 'since', 'commits', 'detector'];
+      const scopeKeysExpected = ARGS_SHAPES.scopeFields;
       const scopeExtra = scopeKeys.filter((key) => !scopeKeysExpected.includes(key));
       if (scopeExtra.length) errors.push(`reviewScope has unexpected key(s): ${scopeExtra.join(', ')}`);
       const { requested, kind, since, commits, detector } = args.reviewScope;
-      if (!['full', 'incremental'].includes(requested)) {
+      if (!ARGS_SHAPES.scopeKinds.includes(requested)) {
         errors.push('reviewScope.requested must be full or incremental');
       }
-      if (!['full', 'incremental'].includes(kind)) errors.push(`reviewScope.kind must be full or incremental`);
+      if (!ARGS_SHAPES.scopeKinds.includes(kind)) errors.push(`reviewScope.kind must be full or incremental`);
       if (kind === 'incremental') {
         if (requested !== 'incremental') errors.push('reviewScope.kind incremental requires requested incremental');
-        if (typeof since !== 'string' || !NONCE_RE.test(since)) errors.push('reviewScope.since must be a NONCE_RE-safe string for incremental scope');
-        if (commits !== null && (!Number.isSafeInteger(commits) || commits < 0)) errors.push('reviewScope.commits must be a non-negative safe integer or null');
+        if (typeof since !== 'string' ||
+          !NONCE_RE.test(since)) errors.push('reviewScope.since must be a NONCE_RE-safe string for incremental scope');
+        if (commits !== null && (!Number.isSafeInteger(commits) ||
+          commits < 0)) errors.push('reviewScope.commits must be a non-negative safe integer or null');
       } else if (kind === 'full') {
         if (since !== null) errors.push('reviewScope.since must be null for full scope');
         if (commits !== null) errors.push('reviewScope.commits must be null for full scope');
@@ -675,7 +556,7 @@ export function validateArgs(args) {
         if (!isPlainObject(detector)) {
           errors.push('reviewScope.detector must be null or an object copied from detect_prior_review.py');
         } else {
-          const detectorKeys = ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'];
+          const detectorKeys = ARGS_SHAPES.detectorFields;
           const detectorExtra = Object.keys(detector).filter((key) => !detectorKeys.includes(key));
           const detectorMissing = detectorKeys.filter((key) => !Object.hasOwn(detector, key));
           if (detectorExtra.length) errors.push(`reviewScope.detector has unexpected key(s): ${detectorExtra.join(', ')}`);
@@ -704,7 +585,7 @@ export function validateArgs(args) {
   // refusals from also producing the generic waist-path mismatch below.
   const reported = new Set();
   if (isPlainObject(args.configEcho)) {
-    const capEntry = receiptEntryForKey(args, 'pr_comment_cap');
+    const capEntry = receiptEntryForKey(args, 'pr_comment_cap', descriptors);
     if (isPlainObject(args.limits) && capEntry !== null) {
       const capValue = args.limits.deliveryCap;
       const capShapeInvalid = capValue !== undefined && capValue !== null
@@ -722,7 +603,7 @@ export function validateArgs(args) {
       }
     }
 
-    const tierEntry = receiptEntryForKey(args, 'delivery_tier');
+    const tierEntry = receiptEntryForKey(args, 'delivery_tier', descriptors);
     const stampedTier = dottedValue(args, 'delivery.tier');
     if (tierEntry !== null
       && (args.delivery === undefined || args.delivery === null || isPlainObject(args.delivery))
@@ -732,10 +613,12 @@ export function validateArgs(args) {
     }
 
     if (args.mode === 'headless') {
-      const trivialEntry = receiptEntryForKey(args, 'trivial_scope');
+      const trivialEntry = receiptEntryForKey(args, 'trivial_scope', descriptors);
       if (trivialEntry !== null && trivialEntry.value === 'light'
         && !computeLightEligible(args.riskTable, args.changedLines)) {
-        errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked`);
+        errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible ` +
+          `(not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the ` +
+          `orchestrator answered a light/full question the gate never asked`);
         reported.add('scopeAnswer');
       }
       const deliveryEcho = configEchoValue(args, 'delivery');
@@ -749,7 +632,7 @@ export function validateArgs(args) {
   // This is the registry-driven lockstep authority. Keep it after the retained special arms
   // so a malformed receipt or a special absence rule produces only its focused refusal.
   if (isPlainObject(args.configEcho)) {
-    for (const descriptor of KNOB_REGISTRY) {
+    for (const descriptor of descriptors) {
       if (!descriptor.modes.includes(args.mode) || descriptor.waistPath === null) continue;
       if (reported.has(descriptor.waistPath)) continue;
       const entry = receiptEntryFor(args, descriptor);
@@ -766,7 +649,7 @@ export function validateArgs(args) {
         : stamped === expected;
       if (!matches) errors.push(`${descriptor.waistPath} does not match configEcho.${descriptor.key}`);
     }
-    for (const descriptor of KNOB_REGISTRY) {
+    for (const descriptor of descriptors) {
       if (!descriptor.modes.includes(args.mode)
         || descriptor.derivedFrom === null
         || !Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)) continue;

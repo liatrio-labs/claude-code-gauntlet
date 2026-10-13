@@ -1,11 +1,13 @@
 // Line fields use outbound containment, and repository spans preserve copyable normalized text inside dynamic delimiters.
 // Prose keeps local Markdown, while evidence and diagnostic receipts keep their own fence grammars.
 import { rankFindings } from './applyChallenges.js';
-import { PERMALINK_TEMPLATES, PR_IDENTITY_FIELDS, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
+import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
 import { DIMENSIONS, AGENTS, AGENT_LABELS, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI } from './registry.js';
 import { RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, conditionalSchemaActive, resolvePolicy } from './registry.js';
 import { SEVERITY_ORDER, REPORT_EXCLUDED_FIELDS, REPORT_FOLD_LIMITS } from './registry.js';
+import { REPORT_PLACED_FIELDS, REVIEW_SCOPE_FALLBACK_RULES, STAGE_DEFAULTS } from './registry.js';
 import { KNOB_REGISTRY } from './knobs.js';
+import { longestBacktickRun } from './wire.js';
 import { reportAsText, foldInline, foldProse, foldEvidence, oneLine, outboundBase, prepareLine } from './outboundText.js';
 import { prepareSummaryTitle, preparedCodeSpan, outboundTildeRuns } from './outboundText.js';
 
@@ -13,9 +15,9 @@ import { prepareSummaryTitle, preparedCodeSpan, outboundTildeRuns } from './outb
 // count: the discovery contracts pin `dimension` to one of the nine registry names, so
 // an unmapped value here is belt-and-braces, never a live path.
 
-function dimensionOwnerMap() {
+function dimensionOwnerMap(dimensions) {
   const owner = {};
-  for (const d of DIMENSIONS) owner[d.dimension] = d.agentType;
+  for (const d of dimensions) owner[d.dimension] = d.agentType;
   return owner;
 }
 
@@ -41,41 +43,34 @@ function severityBreakdown(rowFindings) {
   return known.map((s) => `${counts.get(s)} ${s}`).join(', ');
 }
 
-export function dimensionsSummaryTable(input) {
+export function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   const inp = input || {};
   const dispatchedSet = new Set((Array.isArray(inp.dispatched) ? inp.dispatched : []).map(reportAsText));
   const degradedSet = new Set((Array.isArray(inp.degraded) ? inp.degraded : []).map(reportAsText));
-  const owner = dimensionOwnerMap();
+  const owner = dimensionOwnerMap(dimensions);
+  const agents = [...new Set(dimensions.map((dimension) => dimension.agentType))];
 
-  const byAgent = new Map(AGENTS.map((a) => [a, []]));
-  const unverifiedByAgent = new Map(AGENTS.map((a) => [a, []]));
-  for (const f of (inp.findings || [])) {
+  const byAgent = new Map(agents.map((agent) => [agent, []]));
+  const unverifiedByAgent = new Map(agents.map((agent) => [agent, []]));
+  const bucketFinding = (buckets, finding) => {
     let dimension;
     try {
-      dimension = f ? f.dimension : undefined;
+      dimension = finding ? finding.dimension : undefined;
     } catch {
       dimension = undefined;
     }
     const agentType = owner[dimension];
-    if (agentType && byAgent.has(agentType)) byAgent.get(agentType).push(f);
-  }
-  for (const f of (inp.unverified || [])) {
-    let dimension;
-    try {
-      dimension = f ? f.dimension : undefined;
-    } catch {
-      dimension = undefined;
-    }
-    const agentType = owner[dimension];
-    if (agentType && unverifiedByAgent.has(agentType)) unverifiedByAgent.get(agentType).push(f);
-  }
+    if (agentType && buckets.has(agentType)) buckets.get(agentType).push(finding);
+  };
+  for (const finding of (inp.findings || [])) bucketFinding(byAgent, finding);
+  for (const finding of (inp.unverified || [])) bucketFinding(unverifiedByAgent, finding);
 
-  const rows = AGENTS.map((agentType) => {
+  const rows = agents.map((agentType) => {
     const rowFindings = byAgent.get(agentType);
     const rowUnverified = unverifiedByAgent.get(agentType);
     const n = rowFindings.length;
     const m = rowUnverified.length;
-    const dims = DIMENSIONS.filter((d) => d.agentType === agentType).map((d) => d.dimension);
+    const dims = dimensions.filter((d) => d.agentType === agentType).map((d) => d.dimension);
     const isDegraded = dims.some((d) => degradedSet.has(d));
     const isDispatched = dispatchedSet.has(agentType);
     const label = AGENT_LABELS[agentType] || agentType;
@@ -151,19 +146,14 @@ function consolidateForReport(findings) {
 
 // Fields with a dedicated placement below. Every other registry-declared field is
 // rendered through reportExtraFields, so declared-but-unrendered cannot recur.
-const REPORT_PLACED_FIELDS = new Set([
-  'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
-  'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
-]);
 
-export function reportExtraFields() {
+export function reportExtraFields(dimensions = DIMENSIONS) {
   const declared = new Set(Object.keys(FINDING_PROP_TYPES));
-  for (const dimension of DIMENSIONS) {
+  for (const dimension of dimensions) {
     for (const key of Object.keys(dimension.schemaExtra || {})) declared.add(key);
   }
   return [...declared]
-    .filter((key) => !REPORT_PLACED_FIELDS.has(key) && !REPORT_EXCLUDED_FIELDS.includes(key))
+    .filter((key) => !REPORT_PLACED_FIELDS.includes(key) && !REPORT_EXCLUDED_FIELDS.includes(key))
     .sort();
 }
 
@@ -205,7 +195,7 @@ function reportCorroboration(value) {
   return out;
 }
 
-function coerceReportFinding(finding) {
+function coerceReportFinding(finding, severities) {
   const out = {};
   let keys;
   try {
@@ -222,7 +212,7 @@ function coerceReportFinding(finding) {
     }
     let value;
     if (key === 'severity') {
-      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw);
+      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw, severities);
     } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
@@ -241,19 +231,19 @@ function coerceReportFinding(finding) {
 
 // Exported for the run seam that ranks the selected delivery before invoking renderReport.
 // Keeping this projection here means replayed malformed findings cannot reach a raw rankKey.
-export function coerceReportFindings(value) {
+export function coerceReportFindings(value, severities = SEVERITY_ORDER) {
   if (!Array.isArray(value)) return [];
   return value.map((finding) => (
     finding && typeof finding === 'object' && !Array.isArray(finding)
-      ? coerceReportFinding(finding)
+      ? coerceReportFinding(finding, severities)
       : {}
   ));
 }
 
-export function normalizeReportSeverity(raw) {
+export function normalizeReportSeverity(raw, severities = SEVERITY_ORDER) {
   if (typeof raw !== 'string') return 'low';
   const normalized = raw.trim().toLowerCase();
-  return SEVERITY_ORDER.includes(normalized) ? normalized : 'low';
+  return severities.includes(normalized) ? normalized : 'low';
 }
 
 // 'failure_scenario' -> 'Failure scenario'
@@ -264,9 +254,7 @@ function fieldLabel(key) {
 
 // A fence at least one backtick longer than the longest run inside text, minimum 3.
 function fenceFor(text) {
-  let longest = 0;
-  for (const match of reportAsText(text).matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
-  return '`'.repeat(Math.max(3, longest + 1));
+  return '`'.repeat(Math.max(3, longestBacktickRun(reportAsText(text)) + 1));
 }
 
 function inline(value, prefixLimit) {
@@ -284,10 +272,7 @@ function safeProse(value) {
   for (let index = 0; index < parts.length; index += 2) {
     const line = parts[index];
     const boundary = parts[index + 1] || '';
-    // The split keeps a terminal CR in the boundary, but strip one here as a
-    // belt-and-braces comparison rule for any line supplied by a future splitter.
-    const withoutTerminalCR = line.endsWith('\r') ? line.slice(0, -1) : line;
-    const comparable = withoutTerminalCR.replace(/[ \t]+$/, '');
+    const comparable = line.replace(/[ \t]+$/, '');
     if (CODE_OWNED_HEADINGS.includes(comparable)) {
       // Preserve original CR bytes on untouched prose. A renamed heading drops
       // only its CR and keeps an LF boundary, so the next model line stays separate.
@@ -317,10 +302,6 @@ function isPresent(value) {
 }
 
 const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)];
-
-function normalizeFindings(value) {
-  return coerceReportFindings(value);
-}
 
 // Evidence and code-owned spans preserve literal bytes; neutralize comment openers everywhere else.
 function reportBuilder() {
@@ -392,7 +373,7 @@ function quotedSummaryLocation(finding) {
   return preparedCodeSpan(display, true);
 }
 
-export function encodeUrlSegment(segment) {
+function encodeUrlSegment(segment) {
   const repaired = reportAsText(segment)
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '\uFFFD')
     .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
@@ -403,11 +384,6 @@ function templateValue(template, values) {
   let output = template;
   for (const [name, value] of Object.entries(values)) output = output.replaceAll(`{${name}}`, value);
   return output;
-}
-
-function identityCheck(identity, name) {
-  const field = PR_IDENTITY_FIELDS.find((entry) => entry.name === name);
-  return Boolean(field && field.check(identity[name]));
 }
 
 function permalinkContext(identity) {
@@ -552,15 +528,11 @@ function renderFinding(builder, finding, unverified, permalinks) {
   });
 }
 
-function severityKey(finding) {
-  return normalizeReportSeverity(finding.severity);
-}
-
 function severityView(findings) {
   const ranked = rankFindings(findings);
   const buckets = new Map();
   for (const finding of ranked) {
-    const key = severityKey(finding);
+    const key = normalizeReportSeverity(finding.severity);
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(finding);
   }
@@ -663,10 +635,10 @@ function summaryIndex(rawFindings, findingsView, input) {
   return { indexed, reasons };
 }
 
-export function summaryBlock(builder, input) {
+function summaryBlock(builder, input) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = normalizeFindings(inp.findings);
-  const rawUnverified = normalizeFindings(inp.unverified);
+  const rawFindings = coerceReportFindings(inp.findings);
+  const rawUnverified = coerceReportFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -712,19 +684,19 @@ export function renderSummaryBody(input) {
   return builder.finish();
 }
 
-function receiptSafe(value, fallback = 'unknown') {
-  if (value === undefined || value === null) return fallback;
+function receiptSafe(value) {
+  if (value === undefined || value === null) return 'unknown';
   const cleaned = oneLine(value).replaceAll('`', '');
-  return cleaned || fallback;
+  return cleaned || 'unknown';
 }
 
-function receiptLines(input) {
+function receiptLines(input, knobs) {
   const mode = input.mode === 'headless' ? 'headless' : 'interactive';
   const echo = input.configEcho && typeof input.configEcho === 'object' && !Array.isArray(input.configEcho)
     ? input.configEcho
     : {};
   const lines = [mode === 'headless' ? 'Headless config:' : 'Resolved config:'];
-  for (const descriptor of KNOB_REGISTRY) {
+  for (const descriptor of knobs) {
     if (!descriptor.modes.includes(mode)) continue;
     const entry = echo[descriptor.key];
     const validEntry = entry && typeof entry === 'object' && !Array.isArray(entry)
@@ -750,28 +722,21 @@ function countSummary(value) {
 // The detector facts are the only source for an incremental-to-full explanation. Keep the
 // precedence in one table: an unresolvable SHA and rewritten history both imply no advanced
 // head, but they are materially different operator outcomes.
-export const REVIEW_SCOPE_FALLBACK_RULES = [
-  { when: (detector) => typeof detector.error === 'string' && detector.error !== '',
-    reason: (detector) => `detection failed: ${inline(detector.error, 120)}` },
-  { when: (detector) => detector.previously_reviewed === false, reason: () => 'no prior review recorded' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === false,
-    reason: () => 'recorded SHA not resolvable' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true
-      && detector.sha_is_ancestor === true && detector.head_advanced === false,
-    reason: () => 'head has not advanced' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true
-      && detector.sha_is_ancestor === false,
-    reason: () => 'history rewritten (recorded SHA is not an ancestor)' },
-];
-
-export function reviewScopeFallbackReason(scope) {
+export function reviewScopeFallbackReason(scope, rules = REVIEW_SCOPE_FALLBACK_RULES) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)
     || scope.kind !== 'full' || scope.requested !== 'incremental'
     || !scope.detector || typeof scope.detector !== 'object' || Array.isArray(scope.detector)) {
     return null;
   }
-  for (const rule of REVIEW_SCOPE_FALLBACK_RULES) {
-    if (rule.when(scope.detector)) return rule.reason(scope.detector);
+  for (const rule of rules) {
+    const detector = scope.detector;
+    if (rule.error) {
+      if (typeof detector.error === 'string' && detector.error !== '') {
+        return `detection failed: ${inline(detector.error, 120)}`;
+      }
+    } else if (Object.entries(rule.facts).every(([key, value]) => detector[key] === value)) {
+      return rule.reason;
+    }
   }
   return 'detection failed: unavailable';
 }
@@ -793,7 +758,7 @@ function methodologyRows(input, rawFindings) {
   }
   const stageTypes = [
     'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
-    'validator', 'challenger', 'executor', 'artifact-writer',
+    ...Object.keys(STAGE_DEFAULTS),
   ];
   const models = stageTypes.map((agentType) => {
     const model = resolvePolicy(`code-gauntlet:${agentType}`, {
@@ -841,11 +806,11 @@ function methodologyRows(input, rawFindings) {
   return rows;
 }
 
-function renderMethodology(builder, input, rawFindings) {
+function renderMethodology(builder, input, rawFindings, knobs) {
   builder.add();
   builder.add('## Review Methodology');
   builder.add();
-  const receipt = receiptLines(input);
+  const receipt = receiptLines(input, knobs);
   const receiptText = receipt.join('\n');
   const fence = fenceFor(receiptText);
   builder.add(`${fence}text`);
@@ -865,10 +830,10 @@ function renderMethodology(builder, input, rawFindings) {
 
 // Complete report.md with no trailing newline. Pure and total for absent/empty input:
 // no clock, dispatch, prompt, schema, segmentation or fallback participates.
-export function renderReport(input) {
+export function renderReport(input, knobs = KNOB_REGISTRY) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = normalizeFindings(inp.findings);
-  const rawUnverified = normalizeFindings(inp.unverified);
+  const rawFindings = coerceReportFindings(inp.findings);
+  const rawUnverified = coerceReportFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -956,6 +921,6 @@ export function renderReport(input) {
   builder.add('## Review Dimensions Summary');
   builder.add();
   builder.add(dimensionsTable);
-  renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings);
+  renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings, knobs);
   return builder.finish();
 }

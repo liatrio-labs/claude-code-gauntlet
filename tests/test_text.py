@@ -424,7 +424,7 @@ def test_markup_idempotence_and_line_parity() -> None:
 import { prepareLine } from './workflows/src/outboundText.js';
 let source = '';
 for await (const chunk of process.stdin) source += chunk;
-process.stdout.write(JSON.stringify(JSON.parse(source).map(prepareLine)));
+process.stdout.write(JSON.stringify(JSON.parse(source).map((value) => prepareLine(value))));
 """,
         ],
         input=json.dumps(sources),

@@ -1,3 +1,5 @@
+import { escapeRegExp } from './wire.js';
+
 function collapseDotSlash(path) {
   let out = path;
   for (;;) {
@@ -70,12 +72,8 @@ function hostPathSpellings(root) {
   return [root, alias];
 }
 
-function hostPathRegexEscape(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function hostPathPattern(root, caseInsensitive) {
-  const source = root.slice(1).split('/').map(hostPathRegexEscape).join('/(?:/|\\./)*');
+  const source = root.slice(1).split('/').map(escapeRegExp).join('/(?:/|\\./)*');
   return new RegExp(`/${source}`, caseInsensitive ? 'iy' : 'y');
 }
 
@@ -236,7 +234,8 @@ export function repoRelativeFindingPath(repoRoot, file) {
   }
   // Controls can obscure any position; shaping characters only hide segment starts.
   if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(file)
-    || file.split('/').some((segment) => /^[\p{Cf}\p{Mn}\p{Me}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
+    || file.split('/').some((segment) =>
+      /^[\p{Cf}\p{Mn}\p{Me}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
     return { reason: 'file path contains a disallowed character' };
   }
   if (relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };

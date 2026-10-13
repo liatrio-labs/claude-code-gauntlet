@@ -60,223 +60,6 @@ function setupContext(inp) {
       : []);
   return { contextLine, contextSizeGap };
 }
-// --- registry.js ---
-const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs reaching http/request/fetch clients without allowlist validation); frame and embedding policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); postMessage handlers that do not validate event.origin or check it with weak substring matching; and string-matching bypass patterns where a security decision uses containment checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains "trusted.com").';
-const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in user-facing strings, messages, and log output; case-sensitivity mistakes in string comparisons (comparing mixed-case values without normalizing case); and copy-paste plural/singular or off-by-one naming mismatches (a field, key, or variable named for one thing but holding another).';
-const DEEP = 'deep';
-const SHA_FULL_RE = /^[0-9a-f]{40}$/;
-const WEB_ORIGIN_RE = /^https?:\/\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\[[0-9A-Fa-f:.]{2,45}\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$/;
-const PERMALINK_TEMPLATES = {
-  github: {
-    blob: '{origin}/{owner}/{repo}/blob/{sha}/{path}',
-    line: '#L{start}',
-    range: '#L{start}-L{end}',
-    ref: '#{number}',
-    refUrl: '{origin}/{owner}/{repo}/pull/{number}',
-  },
-  gitlab: {
-    blob: '{origin}/{owner}/{repo}/-/blob/{sha}/{path}',
-    line: '#L{start}',
-    range: '#L{start}-{end}',
-    ref: '!{number}',
-    refUrl: '{origin}/{owner}/{repo}/-/merge_requests/{number}',
-  },
-};
-const validWebOrigin = (value) => {
-  if (typeof value !== 'string') return false;
-  const match = WEB_ORIGIN_RE.exec(value);
-  if (!match) return false;
-  return match[1].startsWith('[') || match[1].length <= 253;
-};
-const PR_IDENTITY_FIELDS = [
-  { name: 'owner', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string' },
-  { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string', extraChecks: [{ check: (value) => !value.includes('/'), message: 'must not contain "/"' }] },
-  { name: 'pr_number', required: true, check: (value) => Number.isSafeInteger(value) && value > 0, describe: 'a positive safe integer' },
-  { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value), describe: 'a 40-character lowercase hex commit id' },
-  { name: 'platform', required: true, check: (value) => Object.hasOwn(PERMALINK_TEMPLATES, value), describe: 'one of github, gitlab' },
-  { name: 'web_origin', required: true, check: validWebOrigin, describe: 'an http(s) origin: scheme, host and optional port only' },
-  { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0, describe: 'a non-empty string when present' },
-];
-const CODE_OWNED_HEADINGS = [
-  '## Summary',
-  '## Change Context',
-  '## Findings',
-  '## Unverified / pipeline-degraded findings',
-  '## Review Dimensions Summary',
-  '## Review Methodology',
-];
-const FINDING_PROP_TYPES = {
-  id: 'string', file: 'string', line_start: 'number', line_end: 'number',
-  title: 'string', description: 'string', severity: 'string', confidence: 'number',
-  dimension: 'string', origin: 'string', evidence: 'string',
-  suggestion: 'string', claude_md_rule: 'string',
-  suggested_fix_code: 'string',
-  cross_file_refs: { type: 'array', items: { type: 'string' } },
-};
-const FINDING_PATH_ARRAY_FIELDS = ['cross_file_refs', 'affected_consumers'];
-const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
-const DIMENSIONS = [
-  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
-  { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
-    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
-    schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
-    requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: { rule_source: 'string' }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
-    schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
-    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
-    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-];
-const PIPELINE_FINDING_FIELDS = new Set([
-  'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
-  'validation_justification', 'challenge_justification', 'elimination_reason',
-  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
-  'challenge_contested', 'severity_downgraded', 'original_severity',
-  'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
-  'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
-  'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',
-  'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note',
-  'consolidation_key', 'consolidation_primary', 'routed_by', 'promoted_from', 'promotion_reason',
-  ...['suggestion', 'claude_md_rule', 'spec_text', 'suggested_fix_code'].flatMap((field) =>
-    [`${field}_removed_by`, `${field}_removal_reason`]),
-]);
-const FINDING_TEXT_FIELD_NAMES = new Set([
-  ...Object.keys(FINDING_PROP_TYPES),
-  ...DIMENSIONS.flatMap((dimension) => Object.keys(dimension.schemaExtra || {})),
-  ...PIPELINE_FINDING_FIELDS,
-]);
-const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
-const AGENT_LABELS = {
-  'code-gauntlet:bug-detector': 'Correctness & Error Handling',
-  'code-gauntlet:security-reviewer': 'Security',
-  'code-gauntlet:cross-file-impact': 'Cross-file Impact',
-  'code-gauntlet:test-analyzer': 'Test Coverage',
-  'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
-  'code-gauntlet:type-design-analyzer': 'Type Design',
-  'code-gauntlet:code-simplifier': 'Code Simplification',
-};
-const BRAND_MARK = '\u2694\uFE0F';   // CROSSED SWORDS U+2694 + VS16 U+FE0F
-const BRAND_NAME = 'Code Gauntlet';
-const SEVERITY_EMOJI = {
-  critical: '\u{1F534}', high: '\u{1F7E0}', medium: '\u{1F7E1}', low: '\u{1F4A1}',
-};
-const SEVERITY_EMOJI_FALLBACK = SEVERITY_EMOJI.low;
-const RULE_SOURCE_LABELS = {
-  documented_rule: 'Cited rule',
-  code_comment: 'Cited comment',
-  repo_precedent: 'Repo precedent',
-  self_inconsistency: 'Inconsistency',
-};
-const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
-const STAGE_DEFAULTS = {
-  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
-  'artifact-writer': 'sonnet',
-};
-const MODEL_IDS = { sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' };
-const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
-const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
-const conditionalSchemaActive = (policy) => {
-  const p = policy || {};
-  return pinsModelIds(p.provider) && !p.gateway;
-};
-function resolvePolicy(agentType, opts = {}) {
-  if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
-    return { model: toModelId(opts.subagentModelEnv, opts.provider) };
-  }
-  const dim = DIMENSIONS.find((d) => d.agentType === agentType);
-  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider);
-  return { model };
-}
-function modelFor(agentType, policy) {
-  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
-}
-const ARGS_VERSION = 1;
-const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope'];
-const NONCE_RE = /^[A-Za-z0-9._-]+$/;
-const DELIVERY_TIERS = ['all', 'main_only'];
-const SCOPE_ANSWERS = ['light', 'full'];
-const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
-const CONTROL_RE = /[\u0000-\u001F\u007F]/;
-const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist', 'scopeAnswer'];
-const RISK_LEVELS = ['low', 'medium', 'high'];
-const LIMIT_DEFAULTS = {
-  summarizeBucketSize: 20,
-  validateBatch: 25,
-  challengeCap: 40,
-  verifySliceSize: 25,
-  maxLineSpan: 100,
-};
-const NULL_TOLERANCE_CONSEQUENCE = {
-  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
-  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
-  delivery: 'delivery falls back to tier "all" with no PR identity',
-  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
-  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
-  'delivery.prIdentity.title': 'the report title falls back to owner/repo#N (or "local changes")',
-  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
-  persist: 'the artifact-writer takes the legacy full by-value persist path',
-  scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
-};
-const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
-const REVIEW_TARGET_LABEL = {
-  pr_url: 'a GitHub PR URL',
-  mr_url: 'a GitLab MR URL',
-  repo_ref: 'an owner/repo PR reference',
-  pr_number: 'a bare PR/MR number',
-  pr_shorthand: 'a PR/MR reference',
-};
-const TRUSTED_SCRIPT_BASENAMES = {
-  assemble: 'assemble_artifacts.py',
-  verify: 'verify_findings.py',
-};
-const FIELD_RENAMES = { body: 'description', line: 'line_start', blame_tag: 'origin' };
-const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
-const REVIEW_SETTING_KEYS = [
-  'confidence_threshold',
-  'security_min_confidence',
-  'severity_threshold',
-];
-const INJECTION_STRIPPED_PROSE_FIELDS = ['suggestion', 'claude_md_rule', 'spec_text'];
-const AGENT_BUG_DETECTOR = 'bug-detector';
-const AGENT_CONVENTIONS = 'conventions-and-intent';
-const AGENT_TEST_ANALYZER = 'test-analyzer';
-const AGENT_SECURITY_REVIEWER = 'security-reviewer';
-const CONVENTIONS_AGENT = 'conventions-and-intent';
-const REPORT_EXCLUDED_FIELDS = [
-  'suggested_fix_code',
-  'suggested_fix_code_removed_by',
-  'suggested_fix_code_removal_reason',
-];
-const REPORT_FOLD_LIMITS = {
-  proseChars: 4000,
-  summaryChars: 12000,
-  summaryIndexChars: 12000,
-  evidenceLines: 40,
-  evidenceChars: 8000,
-  inlineChars: 512,
-};
-const OUTBOUND_NAMED_ENTITIES = {
-  commat: '@',
-  excl: '!',
-  lbrack: '[',
-  lsqb: '[',
-  rsqb: ']',
-  rbrack: ']',
-  Hat: '^',
-  colon: ':',
-  lpar: '(',
-  rpar: ')',
-  bsol: '\\',
-  nbsp: ' ',
-  NonBreakingSpace: ' ',
-};
 // --- wire.js ---
 function fnv1a32(s) {
   let h = 0x811c9dc5;
@@ -325,7 +108,8 @@ function shellWord(tok) {
   if (s === '' || SHELL_SAFE_RE.test(s)) return s;
   return `'${s.replaceAll("'", `'\\''`)}'`;
 }
-const WS_TRIM_RE = /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g;
+const WIRE_TRIM_CLASS = String.raw`\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff`;
+const WS_TRIM_RE = new RegExp(`^[${WIRE_TRIM_CLASS}]+|[${WIRE_TRIM_CLASS}]+$`, 'g');
 const INT_POLICY = Object.freeze({
   validation: Object.freeze({ trim: null, mode: 'pyInt' }),
   filter: Object.freeze({ trim: WS_TRIM_RE, mode: 'pyInt' }),
@@ -352,7 +136,7 @@ const RETURN_CHAR_BUDGET = 1000000;
 function dottedValue(object, path) {
   let current = object;
   for (const part of path.split('.')) {
-    if (current === null || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    if (!isPlainObject(current)) return undefined;
     current = current[part];
   }
   return current;
@@ -367,6 +151,481 @@ function asText(value) {
 function asConfidence(value) {
   return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
 }
+const rejectFrozenCollectionMutation = () => { throw new TypeError('Cannot modify a frozen collection'); };
+function deepFreeze(value) {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    if (value instanceof Map || value instanceof Set) {
+      if (value instanceof Map) for (const key of value.keys()) deepFreeze(key);
+      for (const child of value.values()) deepFreeze(child);
+      for (const method of ['delete', 'clear', value instanceof Map ? 'set' : 'add']) {
+        Object.defineProperty(value, method, { value: rejectFrozenCollectionMutation });
+      }
+    }
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+function longestBacktickRun(text) {
+  let longest = 0;
+  for (const match of text.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
+  return longest;
+}
+// --- registry.js ---
+const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs ' +
+  'reaching http/request/fetch clients without allowlist validation); frame and embedding ' +
+  'policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); ' +
+  'postMessage handlers that do not validate event.origin or check it with weak substring ' +
+  'matching; and string-matching bypass patterns where a security decision uses containment ' +
+  'checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of ' +
+  'exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains ' +
+  '"trusted.com").';
+const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in ' +
+  'user-facing strings, messages, and log output; case-sensitivity mistakes in string ' +
+  'comparisons (comparing mixed-case values without normalizing case); and copy-paste ' +
+  'plural/singular or off-by-one naming mismatches (a field, key, or variable named for one ' +
+  'thing but holding another).';
+const DEEP = 'deep';
+const SHA_FULL_RE = /^[0-9a-f]{40}$/;
+const WEB_ORIGIN_RE = new RegExp(
+  "^https?:\\/\\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:" +
+  "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\\[[0-9A-Fa-f:.]{2,45}" +
+  "\\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}" +
+  "|655[0-2][0-9]|6553[0-5]))?$"
+);
+const PERMALINK_TEMPLATES = deepFreeze({
+  github: {
+    blob: '{origin}/{owner}/{repo}/blob/{sha}/{path}',
+    line: '#L{start}',
+    range: '#L{start}-L{end}',
+    ref: '#{number}',
+    refUrl: '{origin}/{owner}/{repo}/pull/{number}',
+  },
+  gitlab: {
+    blob: '{origin}/{owner}/{repo}/-/blob/{sha}/{path}',
+    line: '#L{start}',
+    range: '#L{start}-{end}',
+    ref: '!{number}',
+    refUrl: '{origin}/{owner}/{repo}/-/merge_requests/{number}',
+  },
+});
+const validWebOrigin = (value) => {
+  if (typeof value !== 'string') return false;
+  const match = WEB_ORIGIN_RE.exec(value);
+  if (!match) return false;
+  return match[1].startsWith('[') || match[1].length <= 253;
+};
+const PR_IDENTITY_FIELDS = deepFreeze([
+  { name: 'owner', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string' },
+  { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string',
+    extraChecks: [{ check: (value) => !value.includes('/'), message: 'must not contain "/"' }] },
+  { name: 'pr_number', required: true, check: (value) => Number.isSafeInteger(value) && value > 0, describe: 'a positive safe integer' },
+  { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value),
+    describe: 'a 40-character lowercase hex commit id' },
+  { name: 'platform', required: true, check: (value) => Object.hasOwn(PERMALINK_TEMPLATES, value), describe: 'one of github, gitlab' },
+  { name: 'web_origin', required: true, check: validWebOrigin, describe: 'an http(s) origin: scheme, host and optional port only' },
+  { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0,
+    describe: 'a non-empty string when present' },
+]);
+const CODE_OWNED_HEADINGS = deepFreeze([
+  '## Summary',
+  '## Change Context',
+  '## Findings',
+  '## Unverified / pipeline-degraded findings',
+  '## Review Dimensions Summary',
+  '## Review Methodology',
+]);
+const FINDING_PROP_TYPES = deepFreeze({
+  id: 'string', file: 'string', line_start: 'number', line_end: 'number',
+  title: 'string', description: 'string', severity: 'string', confidence: 'number',
+  dimension: 'string', origin: 'string', evidence: 'string',
+  suggestion: 'string', claude_md_rule: 'string',
+  suggested_fix_code: 'string',
+  cross_file_refs: { type: 'array', items: { type: 'string' } },
+});
+const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
+const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
+const DIMENSIONS = deepFreeze([
+  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' },
+    requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' },
+    requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
+  { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
+    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'],
+      requiredWhenDimension: [], modelOverride: null, promptExtra: null },
+  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
+    schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
+    requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
+  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
+    schemaExtra: { rule_source: 'string' }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null,
+    promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
+    schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null,
+      promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {},
+    requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
+    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
+      promptExtra: null },
+  { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
+    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null,
+      promptExtra: null },
+]);
+const PIPELINE_FINDING_FIELDS = deepFreeze([
+  'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
+  'validation_justification', 'challenge_justification', 'elimination_reason',
+  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
+  'challenge_contested', 'severity_downgraded', 'original_severity',
+  'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
+  'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
+  'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',
+  'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note',
+  'consolidation_key', 'consolidation_primary', 'routed_by', 'promoted_from', 'promotion_reason',
+  ...['suggestion', 'claude_md_rule', 'spec_text', 'suggested_fix_code'].flatMap((field) =>
+    [`${field}_removed_by`, `${field}_removal_reason`]),
+]);
+const FINDING_TEXT_FIELD_NAMES = deepFreeze([...new Set([
+  ...Object.keys(FINDING_PROP_TYPES),
+  ...DIMENSIONS.flatMap((dimension) => Object.keys(dimension.schemaExtra || {})),
+  ...PIPELINE_FINDING_FIELDS,
+])]);
+const AGENTS = deepFreeze([...new Set(DIMENSIONS.map((d) => d.agentType))]);
+const AGENT_LABELS = deepFreeze({
+  'code-gauntlet:bug-detector': 'Correctness & Error Handling',
+  'code-gauntlet:security-reviewer': 'Security',
+  'code-gauntlet:cross-file-impact': 'Cross-file Impact',
+  'code-gauntlet:test-analyzer': 'Test Coverage',
+  'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
+  'code-gauntlet:type-design-analyzer': 'Type Design',
+  'code-gauntlet:code-simplifier': 'Code Simplification',
+});
+const BRAND_MARK = '\u2694\uFE0F';   // CROSSED SWORDS U+2694 + VS16 U+FE0F
+const BRAND_NAME = 'Code Gauntlet';
+const SEVERITY_EMOJI = deepFreeze({
+  critical: '\u{1F534}', high: '\u{1F7E0}', medium: '\u{1F7E1}', low: '\u{1F4A1}',
+});
+const SEVERITY_EMOJI_FALLBACK = SEVERITY_EMOJI.low;
+const RULE_SOURCE_LABELS = deepFreeze({
+  documented_rule: 'Cited rule',
+  code_comment: 'Cited comment',
+  repo_precedent: 'Repo precedent',
+  self_inconsistency: 'Inconsistency',
+});
+const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
+const STAGE_DEFAULTS = deepFreeze({
+  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  'artifact-writer': 'sonnet',
+});
+const MODEL_IDS = deepFreeze({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' });
+const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
+const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
+const conditionalSchemaActive = (policy) => {
+  const p = policy || {};
+  return pinsModelIds(p.provider) && !p.gateway;
+};
+function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
+  if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
+    return { model: toModelId(opts.subagentModelEnv, opts.provider) };
+  }
+  const dim = dimensions.find((d) => d.agentType === agentType);
+  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider);
+  return { model };
+}
+function modelFor(agentType, policy, dimensions = DIMENSIONS) {
+  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }, dimensions).model;
+}
+const ARGS_VERSION = 1;
+const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',
+  'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope']);
+const NONCE_RE = /^[A-Za-z0-9._-]+$/;
+const DELIVERY_TIERS = deepFreeze(['all', 'main_only']);
+const SCOPE_ANSWERS = deepFreeze(['light', 'full']);
+const POLICY_PROVIDERS = deepFreeze(['firstParty', 'bedrock', 'vertex', 'foundry']);
+const CONTROL_RE = /[\u0000-\u001F\u007F]/;
+const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
+  'persist', 'scopeAnswer']);
+const RISK_LEVELS = deepFreeze(['low', 'medium', 'high']);
+const LIMIT_DEFAULTS = deepFreeze({
+  summarizeBucketSize: 20,
+  validateBatch: 25,
+  challengeCap: 40,
+  verifySliceSize: 25,
+  maxLineSpan: 100,
+});
+const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
+  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
+    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
+  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
+    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
+  delivery: 'delivery falls back to tier "all" with no PR identity',
+  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
+  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
+  'delivery.prIdentity.title': 'the report title falls back to owner/repo#N (or "local changes")',
+  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
+  persist: 'the artifact-writer takes the legacy full by-value persist path',
+  scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
+});
+const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
+const REVIEW_TARGET_LABEL = deepFreeze({
+  pr_url: 'a GitHub PR URL',
+  mr_url: 'a GitLab MR URL',
+  repo_ref: 'an owner/repo PR reference',
+  pr_number: 'a bare PR/MR number',
+  pr_shorthand: 'a PR/MR reference',
+});
+const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
+  assemble: 'assemble_artifacts.py',
+  verify: 'verify_findings.py',
+});
+const FIELD_RENAMES = deepFreeze({ body: 'description', line: 'line_start', blame_tag: 'origin' });
+const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
+const REVIEW_SETTING_KEYS = deepFreeze([
+  'confidence_threshold',
+  'security_min_confidence',
+  'severity_threshold',
+]);
+const INJECTION_STRIPPED_PROSE_FIELDS = deepFreeze(['suggestion', 'claude_md_rule', 'spec_text']);
+const AGENT_BUG_DETECTOR = 'bug-detector';
+const AGENT_CONVENTIONS = 'conventions-and-intent';
+const AGENT_TEST_ANALYZER = 'test-analyzer';
+const AGENT_SECURITY_REVIEWER = 'security-reviewer';
+const REPORT_EXCLUDED_FIELDS = deepFreeze([
+  'suggested_fix_code',
+  'suggested_fix_code_removed_by',
+  'suggested_fix_code_removal_reason',
+]);
+const REPORT_FOLD_LIMITS = deepFreeze({
+  proseChars: 4000,
+  summaryChars: 12000,
+  summaryIndexChars: 12000,
+  evidenceLines: 40,
+  evidenceChars: 8000,
+  inlineChars: 512,
+});
+const OUTBOUND_NAMED_ENTITIES = deepFreeze({
+  commat: '@',
+  excl: '!',
+  lbrack: '[',
+  lsqb: '[',
+  rsqb: ']',
+  rbrack: ']',
+  Hat: '^',
+  colon: ':',
+  lpar: '(',
+  rpar: ')',
+  bsol: '\\',
+  nbsp: ' ',
+  NonBreakingSpace: ' ',
+});
+const MODE_VALUES = deepFreeze(['interactive', 'headless']);
+const KNOB_VOCAB = deepFreeze({
+  modes: ['headless', 'interactive'],
+  headless: ['headless'],
+  interactive: ['interactive'],
+  envDefault: ['env', 'default'],
+  fixed: ['fixed'],
+  envReviewMdDefault: ['env', 'review_md', 'default'],
+  discovery: ['discovery'],
+  modelTiers: ['optimized'],
+  deliveryChannels: ['chat', 'pr_comments', 'markdown'],
+  postModes: ['dry-run', 'live'],
+  draftPolicies: ['review', 'skip'],
+  reviewedPolicies: ['incremental', 'full', 'skip'],
+  prNotFoundPolicies: ['local', 'error'],
+  reviewMdValues: ['present', 'absent'],
+  receiptEntryKeys: ['value', 'source'],
+});
+const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000 });
+const LIMIT_KEYS = deepFreeze([
+  'summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize',
+  'deliveryCap', 'discoveryCap', 'maxLineSpan',
+]);
+const ARGS_SHAPES = deepFreeze({
+  pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
+  riskFields: ['path', 'risk'],
+  reviewMdFields: ['path', 'text'],
+  scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
+  scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
+  scopeKinds: ['full', 'incremental'],
+  detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
+  scriptFields: [
+    { root: 'persist', key: 'assembleScriptPath', script: 'assemble' },
+    { root: 'verify', key: 'scriptPath', script: 'verify' },
+  ],
+});
+const ARGS_FIELD_CHECKS = deepFreeze({
+  policy: [
+    { key: 'provider', presence: 'nonnull', values: POLICY_PROVIDERS,
+      message: 'invalid {label}: {value} (expected one of {values})' },
+    { key: 'tier', values: KNOB_VOCAB.modelTiers, message: 'invalid {label}: {value} (expected optimized)' },
+    { key: 'gateway', presence: 'nonnull', domain: 'boolean', message: 'invalid {label}: {value} (expected a boolean)' },
+  ],
+  changed: [
+    { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
+    { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
+  ],
+  context: ['contextLines', 'contextChars'].map((key) => ({
+    key, domain: 'safeInteger', minimum: 1, maximum: CONTEXT_SIZE_MAX[key],
+    message: '{label} must be a positive safe integer (the measured size of the shared context file) when present',
+    boundMessage: '{label} is {value}, above the {maximum} ceiling '
+      + '\u2014 that is not a review context, it is a mis-measurement',
+  })),
+  review: REVIEW_SETTING_KEYS.map((key) => key === 'severity_threshold'
+    ? { key, presence: 'in', values: SEVERITY_ORDER, separator: '|',
+      message: '{label} must be one of {values} when present (pre-parsed REVIEW.md enum)' }
+    : { key, presence: 'in', domain: 'integer', minimum: 0, maximum: 100,
+      message: '{label} must be an integer from 0 through 100 when present' }),
+  exclusions: [
+    { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
+  ],
+  persist: [
+    { key: 'assembleScriptPath', domain: 'nonEmptyString',
+      message: 'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py' },
+    { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
+  ],
+  limits: [
+    ...['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan'].map((key) => ({
+      key, domain: 'safeInteger', minimum: 1, message: 'limits.{key} must be a positive safe integer when present',
+    })),
+    { key: 'challengeCap', domain: 'safeInteger', minimum: 0,
+      message: 'limits.challengeCap must be a non-negative safe integer when present' },
+    { key: 'deliveryCap', presence: 'nonnull', domain: 'safeInteger', minimum: 0,
+      message: 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present' },
+    { key: 'discoveryCap', domain: 'safeInteger', minimum: 1,
+      message: 'limits.discoveryCap must be a positive safe integer when present' },
+  ],
+});
+const FIELD_DOMAINS = deepFreeze({
+  array: Array.isArray,
+  number: (value) => typeof value === 'number',
+  boolean: (value) => typeof value === 'boolean',
+  string: (value) => typeof value === 'string',
+  nonEmptyString: (value) => typeof value === 'string' && value !== '',
+  integer: Number.isInteger,
+  safeInteger: Number.isSafeInteger,
+});
+function validateArgsFields(value, group, errors, label = '', checks = ARGS_FIELD_CHECKS) {
+  const prefix = label ? `${label}.` : '';
+  for (const row of checks[group]) {
+    if (row.presence === 'in' && !(row.key in value)) continue;
+    const field = value[row.key];
+    if (row.presence !== 'in' && field === undefined) continue;
+    if (row.presence === 'nonnull' && field === null) continue;
+    const domainInvalid = row.domain && !FIELD_DOMAINS[row.domain](field);
+    const valuesInvalid = row.values && !row.values.includes(field);
+    const minimumInvalid = !domainInvalid && row.minimum !== undefined && field < row.minimum;
+    const maximumInvalid = !domainInvalid && row.maximum !== undefined && field > row.maximum;
+    if (!domainInvalid && !valuesInvalid && !minimumInvalid && !maximumInvalid) continue;
+    const message = !domainInvalid && !minimumInvalid && maximumInvalid && row.boundMessage
+      ? row.boundMessage : row.message;
+    const params = {
+      key: row.key, label: `${prefix}${row.key}`, value: field, maximum: row.maximum,
+      values: row.values?.join(row.separator || ', '),
+    };
+    errors.push(message.replace(/\{(\w+)\}/g, (_, key) => `${params[key]}`));
+  }
+}
+function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
+  const field = fields.find((entry) => entry.name === name);
+  return Boolean(field && field.check(identity[name]));
+}
+function validatePrIdentity(id, errors, fields = PR_IDENTITY_FIELDS) {
+  if (!isPlainObject(id)) {
+    const required = fields.filter((field) => field.required).map((field) => field.name);
+    const optional = fields.filter((field) => !field.required).map((field) => field.name);
+    errors.push(`delivery.prIdentity must be an object { ${required.join(', ')}[, ${optional.join(', ')}] } when present`);
+    return;
+  }
+  for (const field of fields) {
+    const value = id[field.name];
+    const valid = value !== undefined && field.check(value);
+    if ((value === undefined && field.required) || (value !== undefined && !valid)) {
+      errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
+    }
+    if (valid) {
+      for (const extra of field.extraChecks || []) {
+        if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
+      }
+    }
+  }
+}
+const CORE_DIMENSIONS = deepFreeze(['bug', 'security', 'cross_file_impact', 'intent']);
+const SUGGESTION_DIMENSIONS = deepFreeze(['comment_accuracy', 'comment-accuracy']);
+const MAIN_REPORT_AGENTS = deepFreeze([AGENT_BUG_DETECTOR, AGENT_SECURITY_REVIEWER, 'cross-file-impact', 'type-design-analyzer']);
+const SUGGESTION_AGENTS = deepFreeze([AGENT_TEST_ANALYZER, 'code-simplifier']);
+const COMMENT_ACCURACY_DIMENSIONS = deepFreeze(['comment-accuracy', 'documentation', 'doc-accuracy']);
+const REPORT_PLACED_FIELDS = deepFreeze([
+  'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
+  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
+  'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
+]);
+const REVIEW_SCOPE_FALLBACK_RULES = deepFreeze([
+  { error: true },
+  { facts: { previously_reviewed: false }, reason: 'no prior review recorded' },
+  { facts: { previously_reviewed: true, sha_resolvable: false }, reason: 'recorded SHA not resolvable' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: false },
+    reason: 'head has not advanced' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: false },
+    reason: 'history rewritten (recorded SHA is not an ancestor)' },
+]);
+function validateScriptPaths(args, rows = ARGS_SHAPES.scriptFields) {
+  const errors = [];
+  if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
+  const root = args.pluginRoot.replace(/\/+$/, '') || '/';
+  const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
+  for (const row of rows) {
+    const member = args[row.root];
+    const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
+    if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
+      errors.push(`${row.root}.${row.key} must equal ${expected}`);
+    }
+  }
+  return errors;
+}
+const FUNCTIONAL_VIOLATION_KEYWORDS =
+  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
+const TYPE_SAFETY_BUG_KEYWORDS =
+  /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
+const TEST_CORRECTNESS_PATTERNS = deepFreeze([
+  /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
+  /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
+  /\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b/i,
+  /\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b/i,
+  /\bvacuous(?:ly)?\b/i,
+  /\btautolog(?:y|ical)\b/i,
+  /\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b/i,
+  /\bdeadlock\b/i,
+  /\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b/i,
+  /\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b/i,
+  /\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b/i,
+  /\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b/i,
+  /\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b/i,
+  /\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b/i,
+  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b/i,
+  /\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b/i,
+  /\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b/i,
+  /\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b/i,
+  /\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b/i,
+  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
+  /\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b/i,
+  /\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b/i,
+]);
+const FILTER_DIMENSION_ROUTES = deepFreeze({
+  test_coverage: { patterns: TEST_CORRECTNESS_PATTERNS },
+  convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] },
+  type_design: { patterns: [TYPE_SAFETY_BUG_KEYWORDS] },
+});
+const FILTER_SUPPRESSION_RULES = deepFreeze([
+  { agent: AGENT_BUG_DETECTOR, pattern: /\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/,
+    eliminatedBy: 'suppressed:intentional', subject: 'behaviour', conclusion: 'intentional' },
+  { agent: AGENT_TEST_ANALYZER, pattern: /\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/,
+    eliminatedBy: 'suppressed:generated', subject: 'code', conclusion: 'generated/scaffolding' },
+]);
 // --- verifyWire.js ---
 const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
 const VERIFY_INLINE_HEX = '0123456789ABCDEF';
@@ -615,22 +874,50 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
 }
 // --- knobs.js ---
 const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
-const KNOB_REGISTRY = [
-  { key: 'model_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['fixed'] }, rule: { kind: 'enum', values: ['optimized'] }, env: 'CODE_GAUNTLET_MODEL_TIER', reviewMdKey: null, defaults: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'delivery', modes: ['headless'], allowedSources: { headless: ['env', 'review_md', 'default'] }, rule: { kind: 'csv_subset', values: ['chat', 'pr_comments', 'markdown'] }, env: 'CODE_GAUNTLET_DELIVERY', reviewMdKey: 'default_delivery', defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'post_mode', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['dry-run', 'live'] }, env: 'CODE_GAUNTLET_POST_MODE', reviewMdKey: null, defaults: { headless: ['dry-run', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'pr_comment_cap', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, rule: { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, env: 'CODE_GAUNTLET_PR_COMMENT_CAP', reviewMdKey: null, defaults: { headless: ['6', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null', waistPath: 'limits.deliveryCap', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: ['interactive'], resolvedKey: false },
-  { key: 'delivery_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', reviewMdKey: null, defaults: { headless: ['all', 'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: false },
-  { key: 'draft_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['review', 'skip'] }, env: 'CODE_GAUNTLET_DRAFT_POLICY', reviewMdKey: null, defaults: { headless: ['review', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['incremental', 'full', 'skip'] }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' }, derivedFrom: null, deriveWhen: 'priorReviewDetector', nullReceipt: [], resolvedKey: true },
-  { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: ['local', 'error'] }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error', 'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, rule: { kind: 'enum', values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] }, type: 'string', waistPath: 'scopeAnswer', waistMap: null, derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [], resolvedKey: false },
-  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [], resolvedKey: false },
-];
+const KNOB_REGISTRY = deepFreeze([
+  { key: 'model_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.fixed },
+    rule: { kind: 'enum', values: KNOB_VOCAB.modelTiers }, env: 'CODE_GAUNTLET_MODEL_TIER', reviewMdKey: null,
+    defaults: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, type: 'string', waistPath: null, waistMap: null,
+    derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'delivery', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envReviewMdDefault }, rule: { kind: 'csv_subset',
+    values: KNOB_VOCAB.deliveryChannels }, env: 'CODE_GAUNTLET_DELIVERY', reviewMdKey: 'default_delivery',
+    defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null,
+    nullReceipt: [], resolvedKey: true },
+  { key: 'post_mode', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.postModes }, env: 'CODE_GAUNTLET_POST_MODE', reviewMdKey: null, defaults: { headless: ['dry-run', 'default'] },
+    type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'pr_comment_cap', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
+    rule: { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, env: 'CODE_GAUNTLET_PR_COMMENT_CAP',
+    reviewMdKey: null, defaults: { headless: ['6', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null',
+    waistPath: 'limits.deliveryCap', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: KNOB_VOCAB.interactive,
+    resolvedKey: false },
+  { key: 'delivery_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
+    rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', reviewMdKey: null, defaults: { headless: ['all',
+    'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', waistMap: null, derivedFrom: null,
+    deriveWhen: null, nullReceipt: [], resolvedKey: false },
+  { key: 'draft_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.draftPolicies }, env: 'CODE_GAUNTLET_DRAFT_POLICY', reviewMdKey: null, defaults: { headless: ['review', 'default'] },
+    type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'reviewed_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.reviewedPolicies }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full',
+    'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' }, derivedFrom: null,
+    deriveWhen: 'priorReviewDetector', nullReceipt: [], resolvedKey: true },
+  { key: 'pr_not_found_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.prNotFoundPolicies }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error',
+    'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [],
+    resolvedKey: true },
+  { key: 'trivial_scope', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
+    values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] },
+    type: 'string', waistPath: 'scopeAnswer', waistMap: null, derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [],
+    resolvedKey: false },
+  { key: 'review_md', modes: KNOB_VOCAB.interactive, allowedSources: { interactive: KNOB_VOCAB.discovery }, rule: { kind: 'enum',
+    values: KNOB_VOCAB.reviewMdValues }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string',
+    waistPath: null, waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [], resolvedKey: false },
+]);
 function matchesRule(rule, value, mode) {
-  if (typeof value !== 'string' || rule === null || typeof rule !== 'object' || Array.isArray(rule)) return false;
+  if (typeof value !== 'string' || !isPlainObject(rule)) return false;
   const selected = typeof rule.kind === 'string' ? rule : rule[mode];
-  if (selected === null || typeof selected !== 'object' || Array.isArray(selected)) return false;
+  if (!isPlainObject(selected)) return false;
   if (selected.kind === 'enum') return Array.isArray(selected.values) && selected.values.includes(value);
   if (selected.kind === 'csv_subset') {
     if (!Array.isArray(selected.values) || value === '') return false;
@@ -658,8 +945,8 @@ function receiptEntryFor(args, descriptor) {
   if (!descriptor.allowedSources[mode] || !descriptor.allowedSources[mode].includes(entry.source)) return null;
   return entry;
 }
-function receiptEntryForKey(args, key) {
-  const descriptor = KNOB_REGISTRY.find((candidate) => candidate.key === key);
+function receiptEntryForKey(args, key, descriptors = KNOB_REGISTRY) {
+  const descriptor = descriptors.find((candidate) => candidate.key === key);
   return descriptor ? receiptEntryFor(args, descriptor) : null;
 }
 function setDottedValue(object, path, value) {
@@ -691,7 +978,7 @@ function mappedReceiptValue(descriptor, value) {
 function isPriorReviewDetector(args) {
   return isPlainObject(args?.reviewScope?.detector);
 }
-const DERIVE_WHEN = {
+const DERIVE_WHEN = deepFreeze({
   lightEligible: {
     holds: (args) => computeLightEligible(args.riskTable, args.changedLines),
     describe: `every changed file is low risk and fewer than ${LIGHT_SCOPE_MAX_CHANGED_LINES} lines changed`,
@@ -700,8 +987,8 @@ const DERIVE_WHEN = {
     holds: isPriorReviewDetector,
     describe: '`reviewScope.detector` is an object',
   },
-};
-const DERIVED_FROM = {
+});
+const DERIVED_FROM = deepFreeze({
   reviewMd: {
     fill: (args) => {
       if (Array.isArray(args.reviewMd)) {
@@ -710,14 +997,15 @@ const DERIVED_FROM = {
       return args.reviewConfigPath != null ? 'present' : 'absent';
     },
     source: 'discovery',
-    describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`',
+    describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, ' +
+      '`present` when `reviewConfigPath` is set, else `absent`',
   },
-};
-function deriveWhenHolds(descriptor, args) {
+});
+function deriveWhenHolds(descriptor, args, gates = DERIVE_WHEN) {
   return descriptor.deriveWhen === null
-    || (Object.hasOwn(DERIVE_WHEN, descriptor.deriveWhen) && DERIVE_WHEN[descriptor.deriveWhen].holds(args));
+    || (Object.hasOwn(gates, descriptor.deriveWhen) && gates[descriptor.deriveWhen].holds(args));
 }
-function deriveConfigWaist(args) {
+function deriveConfigWaist(args, descriptors = KNOB_REGISTRY) {
   if (!isPlainObject(args) || !isPlainObject(args.configEcho) || typeof args.mode !== 'string') {
     return { args, derivedPaths: [] };
   }
@@ -725,7 +1013,7 @@ function deriveConfigWaist(args) {
   const configEcho = { ...args.configEcho };
   const derivedPaths = [];
   let configEchoChanged = false;
-  for (const descriptor of KNOB_REGISTRY) {
+  for (const descriptor of descriptors) {
     if (!descriptor.modes.includes(args.mode)) continue;
     if (descriptor.derivedFrom !== null
       && Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)
@@ -756,14 +1044,14 @@ function configEchoValue(args, key) {
   const entry = args && isPlainObject(args.configEcho) ? args.configEcho[key] : undefined;
   return isPlainObject(entry) && typeof entry.value === 'string' ? entry.value : undefined;
 }
-function validateConfigEcho(args, errors) {
+function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
   if (args.configEcho === undefined) return;
   if (!isPlainObject(args.configEcho)) {
     errors.push('configEcho must be an object keyed by methodology knob');
     return;
   }
   const mode = args.mode;
-  const descriptors = KNOB_REGISTRY.filter((descriptor) => descriptor.modes.includes(mode));
+  const descriptors = table.filter((descriptor) => descriptor.modes.includes(mode));
   const expected = descriptors.map((descriptor) => descriptor.key);
   const actual = Object.keys(args.configEcho);
   const extra = actual.filter((key) => !expected.includes(key));
@@ -777,12 +1065,14 @@ function validateConfigEcho(args, errors) {
       continue;
     }
     const entryKeys = Object.keys(entry);
-    const entryExtra = entryKeys.filter((key) => key !== 'value' && key !== 'source');
+    const entryExtra = entryKeys.filter((key) => !KNOB_VOCAB.receiptEntryKeys.includes(key));
     if (entryExtra.length) errors.push(`configEcho.${descriptor.key} has unexpected key(s): ${entryExtra.join(', ')}`);
     if (typeof entry.value !== 'string') {
       errors.push(`configEcho.${descriptor.key}.value must be a string`);
     } else {
-      if (!safeReceiptValue(entry.value)) errors.push(`configEcho.${descriptor.key}.value must be single-line and contain no controls or backticks`);
+      if (!safeReceiptValue(entry.value)) {
+        errors.push(`configEcho.${descriptor.key}.value must be single-line and contain no controls or backticks`);
+      }
       if (!matchesRule(descriptor.rule, entry.value, mode)) errors.push(`configEcho.${descriptor.key}.value is invalid for ${mode}`);
     }
     if (typeof entry.source !== 'string' || !descriptor.allowedSources[mode].includes(entry.source)) {
@@ -1073,12 +1363,12 @@ function stripMatchingQuotes(item) {
 function splitReviewLines(text) {
   return text.split(/\r\n|\r|\n/);
 }
-const REVIEW_BLOCK_PATTERNS = [
+const REVIEW_BLOCK_PATTERNS = deepFreeze([
   /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet(?:[^\n]*)?\n([^\x00]*?)```/i,
   /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
   /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review(?:[^\n]*)?\n([^\x00]*?)```/i,
   /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
-];
+]);
 const REVIEW_CONFIDENCE_RE =
   /(?:^|\n)[ \t]*confidence_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
 const REVIEW_SECURITY_RE =
@@ -1093,35 +1383,40 @@ const REVIEW_EXCL_BLOCK_RE =
   /```[^\n]*\n([^\x00]*?)```/;
 const REVIEW_EXCL_BULLET_RE =
   /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[-*][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+([^\n]+)$/;
-function parseReviewMd(text) {
+const REVIEW_CONFIG_RULES = deepFreeze([
+  ...REVIEW_BLOCK_PATTERNS.map((pattern) => ({ kind: 'block', pattern })),
+  { kind: 'numeric', key: REVIEW_SETTING_KEYS[0], pattern: REVIEW_CONFIDENCE_RE },
+  { kind: 'numeric', key: REVIEW_SETTING_KEYS[1], pattern: REVIEW_SECURITY_RE },
+  { kind: 'severity', key: REVIEW_SETTING_KEYS[2], pattern: REVIEW_SEVERITY_RE },
+  { kind: 'ignore', pattern: REVIEW_IGNORE_RE, itemPattern: REVIEW_IGNORE_ITEM_RE },
+]);
+function parseReviewMd(text, rules = REVIEW_CONFIG_RULES) {
   const config = { ignore: [] };
   if (text === undefined || text === null) return config;
   let blockText = '';
-  for (const pattern of REVIEW_BLOCK_PATTERNS) {
-    const m = pattern.exec(text);
+  for (const row of rules) {
+    if (row.kind !== 'block') continue;
+    const m = row.pattern.exec(text);
     if (m) {
       blockText = m[1];
       break;
     }
   }
   if (!blockText) blockText = text;
-  let m = REVIEW_CONFIDENCE_RE.exec(blockText);
-  if (m) {
-    const value = parseInt(m[1], 10);
-    if (value <= 100) config.confidence_threshold = value;
-  }
-  m = REVIEW_SECURITY_RE.exec(blockText);
-  if (m) {
-    const value = parseInt(m[1], 10);
-    if (value <= 100) config.security_min_confidence = value;
-  }
-  m = REVIEW_SEVERITY_RE.exec(blockText);
-  if (m) config.severity_threshold = m[1].toLowerCase();
-  const ignoreSection = REVIEW_IGNORE_RE.exec(blockText);
-  if (ignoreSection) {
-    for (const line of splitReviewLines(ignoreSection[1])) {
-      const item = line.replace(REVIEW_IGNORE_ITEM_RE, '').replace(WS_TRIM_RE, '');
-      if (item) config.ignore.push(stripMatchingQuotes(item));
+  for (const row of rules) {
+    if (row.kind === 'block') continue;
+    const m = row.pattern.exec(blockText);
+    if (!m) continue;
+    if (row.kind === 'numeric') {
+      const value = parseInt(m[1], 10);
+      if (value <= 100) config[row.key] = value;
+    } else if (row.kind === 'severity') {
+      config[row.key] = m[1].toLowerCase();
+    } else if (row.kind === 'ignore') {
+      for (const line of splitReviewLines(m[1])) {
+        const item = line.replace(row.itemPattern, '').replace(WS_TRIM_RE, '');
+        if (item) config.ignore.push(stripMatchingQuotes(item));
+      }
     }
   }
   return config;
@@ -1133,21 +1428,21 @@ function reviewScopeDir(path) {
 function reviewScopeDepth(dir) {
   return dir.split('/').length;
 }
-function mergeReviewLayer(layer, parsed) {
-  for (const key of REVIEW_SETTING_KEYS) {
-    if (parsed[key] !== undefined) layer[key] = parsed[key];
+function mergeReviewLayer(layer, parsed, rules) {
+  for (const row of rules) {
+    if (row.key !== undefined && parsed[row.key] !== undefined) layer[row.key] = parsed[row.key];
   }
   layer.ignore.push(...parsed.ignore);
 }
-function buildReviewConfig(entries) {
+function buildReviewConfig(entries, rules = REVIEW_CONFIG_RULES) {
   const root = { ignore: [] };
   const scopes = [];
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index];
     const dir = reviewScopeDir(entry.path);
-    const parsed = parseReviewMd(entry.text);
+    const parsed = parseReviewMd(entry.text, rules);
     if (dir === '') {
-      mergeReviewLayer(root, parsed);
+      mergeReviewLayer(root, parsed, rules);
       continue;
     }
     let scope = scopes.find((candidate) => candidate.dir === dir);
@@ -1155,7 +1450,7 @@ function buildReviewConfig(entries) {
       scope = { dir, ignore: [], _index: index };
       scopes.push(scope);
     }
-    mergeReviewLayer(scope, parsed);
+    mergeReviewLayer(scope, parsed, rules);
   }
   scopes.sort((a, b) =>
     (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (a._index - b._index));
@@ -1169,10 +1464,10 @@ function scopeMatchesFile(scope, file) {
     && scope.dir !== ''
     && file.startsWith(`${scope.dir}/`);
 }
-function configForFile(config, file) {
+function configForFile(config, file, keys = REVIEW_SETTING_KEYS) {
   const source = config || {};
   const view = { ignore: [...(source.ignore === undefined ? [] : source.ignore)] };
-  for (const key of REVIEW_SETTING_KEYS) {
+  for (const key of keys) {
     if (key in source) view[key] = source[key];
   }
   if (!Array.isArray(source.scopes) || typeof file !== 'string') return view;
@@ -1182,7 +1477,7 @@ function configForFile(config, file) {
     .sort(({ scope: a, index: ai }, { scope: b, index: bi }) =>
       (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (ai - bi));
   for (const { scope } of matching) {
-    for (const key of REVIEW_SETTING_KEYS) {
+    for (const key of keys) {
       if (key in scope) view[key] = scope[key];
     }
     view.ignore.push(...(scope.ignore === undefined ? [] : scope.ignore));
@@ -1206,7 +1501,7 @@ function loadExclusions(text) {
   }
   return patterns;
 }
-function applyExclusions(findings, exclusionPatterns, config = null) {
+function applyExclusions(findings, exclusionPatterns, config = null, keys = REVIEW_SETTING_KEYS) {
   const hasConfig = config !== null && config !== undefined;
   if (!hasConfig && (!exclusionPatterns || !exclusionPatterns.length)) {
     return { kept: findings, eliminated: [] };
@@ -1215,7 +1510,7 @@ function applyExclusions(findings, exclusionPatterns, config = null) {
   const eliminated = [];
   for (const finding of findings) {
     const patterns = hasConfig
-      ? [...configForFile(config, finding.file).ignore, ...(exclusionPatterns || [])]
+      ? [...configForFile(config, finding.file, keys).ignore, ...(exclusionPatterns || [])]
       : (exclusionPatterns || []);
     const title = asText(finding.title);
     const description = asText(finding.description);
@@ -1242,38 +1537,38 @@ function applyExclusions(findings, exclusionPatterns, config = null) {
   return { kept, eliminated };
 }
 // --- injection.js ---
-const INJECTION_TITLE_PATTERNS = [
+const INJECTION_TITLE_PATTERNS = deepFreeze([
   /\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\bSample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\bdemo[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\bPlaceholder[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
-];
-const INJECTION_BODY_PATTERNS = [
+]);
+const INJECTION_BODY_PATTERNS = deepFreeze([
   /<finding(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
   /<example(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
   /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\]/i,
   /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT\b[^\]]*\b(?:FINDING|TITLE|TEXT|PLACEHOLDER|HERE)\b[^\]]*\]/i,
   /lorem[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+ipsum/i,
-];
-const INJECTION_SHELL_PATTERNS = [
+]);
+const INJECTION_SHELL_PATTERNS = deepFreeze([
   /\brm[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-[rf]/i,
   /\bcurl[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
   /\bwget[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
   /\bgit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+push\b/i,
   /\bgh[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+api\b/i,
-];
-const INJECTION_URL_PATTERNS = [
+]);
+const INJECTION_URL_PATTERNS = deepFreeze([
   /\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
   /\bdownload[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
-];
-const INJECTION_ENCODED_PATTERNS = [
+]);
+const INJECTION_ENCODED_PATTERNS = deepFreeze([
   /\b(?:decode|base64|atob|b64decode)\b[^\x00]{0,40}[A-Za-z0-9+\/]{40,}={0,2}\b/i,
   /\b[A-Za-z0-9+\/]{40,}={0,2}\b[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:sh|bash|zsh)\b|base64[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-d\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b)/i,
   /\b(?:decode|unhex|xxd|fromhex|unhexlify)\b[^\x00]{0,40}(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)/i,
   /(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:xxd|sh|bash)\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b|-r[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-p\b)/i,
-];
-const INJECTION_BYPASS_PATTERNS = [
+]);
+const INJECTION_BYPASS_PATTERNS = deepFreeze([
   /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+review\b/i,
   /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|these|the|it|my|your)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:pr|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|mr|merge[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|changes?|commit)\b/i,
   /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:merge|skip|bypass|push|deploy|proceed|continue)\b/i,
@@ -1282,16 +1577,16 @@ const INJECTION_BYPASS_PATTERNS = [
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:auth|authentication|authorization)\b/i,
   /\bmark[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:finding[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?as[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+safe\b/i,
   /\bapprove[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:PR|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|change)\b/i,
-];
-const INJECTION_INSTRUCTIONAL_PATTERNS = [
+]);
+const INJECTION_INSTRUCTIONAL_PATTERNS = deepFreeze([
   /\byou[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+should[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b/i,
   /\bexecute[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b/i,
   /\brun[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+command\b/i,
   /\bplease[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b/i,
   /\bpaste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+into[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:your[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?terminal/i,
   /\bcopy[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+paste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b/i,
-];
-const INJECTION_VULN_INTRO_PATTERNS = [
+]);
+const INJECTION_VULN_INTRO_PATTERNS = deepFreeze([
   /\badd[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(/i,
   /\buse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(/i,
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:CORS|CSP|content[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]security[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]policy)\b/i,
@@ -1301,7 +1596,7 @@ const INJECTION_VULN_INTRO_PATTERNS = [
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:TLS|SSL|HTTPS)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b/i,
   /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:certificate|cert)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b/i,
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:check|feature|control)\b/i,
-];
+]);
 const MIN_BODY_WORDS = 10;
 const HIGH_CONFIDENCE_THRESHOLD = 85;
 const WORD_SPLIT_RE = /[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/;
@@ -1478,9 +1773,10 @@ const CONFUSABLE_FOLD = new Map();
     CONFUSABLE_FOLD.set(cps[i].codePointAt(0), cps[i + 1]);
   }
 }
-const INVISIBLE_STRIP = new Set(
+deepFreeze(CONFUSABLE_FOLD);
+const INVISIBLE_STRIP = deepFreeze(new Set(
   [...INVISIBLE_STRIP_PACKED].map((c) => c.codePointAt(0)),
-);
+));
 function foldConfusables(text) {
   let out = '';
   for (const ch of text) {
@@ -1490,53 +1786,69 @@ function foldConfusables(text) {
   }
   return out;
 }
-function firstMatch(patterns, text, folded) {
+function firstMatch(text, folded, patterns = INJECTION_TITLE_PATTERNS) {
   for (const rx of patterns) {
     if (rx.test(text)) return rx.source;
   }
-  if (folded !== undefined && folded !== text) {
+  if (folded !== text) {
     for (const rx of patterns) {
       if (rx.test(folded)) return rx.source;
     }
   }
   return null;
 }
-const SUGGESTION_SETS = [
-  ['contains shell command pattern', INJECTION_SHELL_PATTERNS],
-  ['contains visit-URL pattern', INJECTION_URL_PATTERNS],
-  ['contains encoded payload pattern', INJECTION_ENCODED_PATTERNS],
-  ['contains bypass/auto-approve instruction', INJECTION_BYPASS_PATTERNS],
-  ['uses instructional tone', INJECTION_INSTRUCTIONAL_PATTERNS],
-  ['recommends introducing vulnerability', INJECTION_VULN_INTRO_PATTERNS],
-  ['matches injection marker', INJECTION_BODY_PATTERNS],
-];
+const INJECTION_RULES = deepFreeze([
+  { kind: 'pattern', domain: 'combined', label: 'contains shell command pattern',
+    patterns: INJECTION_SHELL_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'contains visit-URL pattern',
+    patterns: INJECTION_URL_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'contains encoded payload pattern',
+    patterns: INJECTION_ENCODED_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'contains bypass/auto-approve instruction',
+    patterns: INJECTION_BYPASS_PATTERNS, prose: true },
+  { kind: 'shortBody', minimumWords: MIN_BODY_WORDS, confidence: HIGH_CONFIDENCE_THRESHOLD,
+    label: 'suspiciously short description ({words} words) with high confidence ({confidence})' },
+  { kind: 'pattern', domain: 'combined', label: 'uses instructional tone',
+    patterns: INJECTION_INSTRUCTIONAL_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'combined', label: 'recommends introducing vulnerability',
+    patterns: INJECTION_VULN_INTRO_PATTERNS, prose: true },
+  { kind: 'pattern', domain: 'title', label: 'title matches placeholder pattern', patterns: INJECTION_TITLE_PATTERNS },
+  { kind: 'pattern', domain: 'combined', label: 'matches injection marker', patterns: INJECTION_BODY_PATTERNS, prose: true },
+  { kind: 'path', pattern: /<[^\n]*?>|\{[^\n]*?\}/, label: 'file path is empty or contains template markers' },
+  { kind: 'duplicate', label: 'duplicate of finding' },
+]);
+const SUGGESTION_SETS = deepFreeze(
+  INJECTION_RULES.filter((row) => row.prose).map((row) => [row.label, row.patterns]),
+);
 const FIX_MAX_LINES = 100;
 const FIX_MAX_CHARS = 8000;
 function normalizeFixCodeForBound(code) {
   return code.endsWith('\n') ? code.slice(0, -1) : code;
 }
-function stripInjectedProseFields(finding) {
+function stripInjectionField(finding, field, reason) {
+  const kept = { ...finding };
+  delete kept[field];
+  kept[`${field}_removed_by`] = 'injection';
+  kept[`${field}_removal_reason`] = reason;
+  return kept;
+}
+function stripInjectedProseFields(finding, rules) {
   let kept = finding;
   let firstPatternStrip = null;
   for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
     if (field in kept && typeof kept[field] !== 'string') {
-      kept = { ...kept };
-      delete kept[field];
-      kept[`${field}_removed_by`] = 'injection';
-      kept[`${field}_removal_reason`] = `${field} is not a string`;
+      kept = stripInjectionField(kept, field, `${field} is not a string`);
       continue;
     }
     const value = typeof kept[field] === 'string' ? kept[field] : '';
     if (!value) continue;
     const valueFolded = foldConfusables(value);
-    for (const [phrase, patterns] of SUGGESTION_SETS) {
-      const m = firstMatch(patterns, value, valueFolded);
+    for (const row of rules) {
+      if (!row.prose) continue;
+      const m = firstMatch(value, valueFolded, row.patterns);
       if (m) {
-        kept = { ...kept };
-        delete kept[field];
-        kept[`${field}_removed_by`] = 'injection';
-        kept[`${field}_removal_reason`] = `${field} ${phrase}: ${JSON.stringify(m)}`;
-        if (firstPatternStrip === null) firstPatternStrip = [field, phrase];
+        kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(m)}`);
+        if (firstPatternStrip === null) firstPatternStrip = [field, row.label];
         break;
       }
     }
@@ -1547,35 +1859,23 @@ function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
   if (!('suggested_fix_code' in finding)) return finding;
   const code = finding.suggested_fix_code;
   if (typeof code !== 'string') {
-    const kept = { ...finding };
-    delete kept.suggested_fix_code;
-    kept.suggested_fix_code_removed_by = 'injection';
-    kept.suggested_fix_code_removal_reason = 'suggested_fix_code is not a string';
-    return kept;
+    return stripInjectionField(finding, 'suggested_fix_code', 'suggested_fix_code is not a string');
   }
   const normalized = normalizeFixCodeForBound(code);
   if (normalized.split('\n').length > FIX_MAX_LINES || [...normalized].length > FIX_MAX_CHARS) {
-    const kept = { ...finding };
-    delete kept.suggested_fix_code;
-    kept.suggested_fix_code_removed_by = 'injection';
-    kept.suggested_fix_code_removal_reason = 'suggested_fix_code exceeds the delivery bound';
-    return kept;
+    return stripInjectionField(finding, 'suggested_fix_code', 'suggested_fix_code exceeds the delivery bound');
   }
   if (firstPatternStrip !== null) {
     const [propField, propPhrase] = firstPatternStrip;
-    const kept = { ...finding };
-    delete kept.suggested_fix_code;
-    kept.suggested_fix_code_removed_by = 'injection';
-    kept.suggested_fix_code_removal_reason = `${propField} carried ${propPhrase}`;
-    return kept;
+    return stripInjectionField(finding, 'suggested_fix_code', `${propField} carried ${propPhrase}`);
   }
   return finding;
 }
-function applyInjectedProseStrip(finding) {
-  const [stripped, firstPatternStrip] = stripInjectedProseFields(finding);
+function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
+  const [stripped, firstPatternStrip] = stripInjectedProseFields(finding, rules);
   return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
 }
-function injectionScanCore(findings, includeH4) {
+function injectionScanCore(findings, includeH4, rules) {
   const kept = [];
   const eliminated = [];
   const seenSignatures = new Map();
@@ -1588,59 +1888,51 @@ function injectionScanCore(findings, includeH4) {
     const combinedFolded = foldConfusables(combined);
     const titleFolded = foldConfusables(title);
     const reasons = [];
-    let m = firstMatch(INJECTION_SHELL_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains shell command pattern: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_URL_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains visit-URL pattern: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_ENCODED_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains encoded payload pattern: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_BYPASS_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`contains bypass/auto-approve instruction: ${JSON.stringify(m)}`);
-    if (includeH4) {
-      const wordCount = countWords(description);
-      if (wordCount < MIN_BODY_WORDS && confidence >= HIGH_CONFIDENCE_THRESHOLD) {
-        reasons.push(`suspiciously short description (${wordCount} words) with high confidence (${confidence})`);
+    for (const row of rules) {
+      if (row.kind === 'pattern') {
+        const raw = row.domain === 'title' ? title : combined;
+        const folded = row.domain === 'title' ? titleFolded : combinedFolded;
+        const m = firstMatch(raw, folded, row.patterns);
+        if (m) reasons.push(`${row.label}: ${JSON.stringify(m)}`);
+      } else if (row.kind === 'shortBody' && includeH4) {
+        const wordCount = countWords(description);
+        if (wordCount < row.minimumWords && confidence >= row.confidence) {
+          reasons.push(row.label.replace('{words}', wordCount).replace('{confidence}', confidence));
+        }
+      } else if (row.kind === 'path') {
+        if (!filepath || row.pattern.test(filepath)) {
+          reasons.push(`${row.label}: ${JSON.stringify(filepath)}`);
+        }
+      } else if (row.kind === 'duplicate') {
+        const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, finding.line_start]);
+        if (seenSignatures.has(sig)) {
+          reasons.push(`${row.label} ${JSON.stringify(seenSignatures.get(sig))}`);
+        } else {
+          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : title);
+        }
       }
-    }
-    m = firstMatch(INJECTION_INSTRUCTIONAL_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`uses instructional tone: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_VULN_INTRO_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`recommends introducing vulnerability: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_TITLE_PATTERNS, title, titleFolded);
-    if (m) reasons.push(`title matches placeholder pattern: ${JSON.stringify(m)}`);
-    m = firstMatch(INJECTION_BODY_PATTERNS, combined, combinedFolded);
-    if (m) reasons.push(`matches injection marker: ${JSON.stringify(m)}`);
-    if (!filepath || /<[^\n]*?>|\{[^\n]*?\}/.test(filepath)) {
-      reasons.push(`file path is empty or contains template markers: ${JSON.stringify(filepath)}`);
-    }
-    const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, finding.line_start]);
-    if (seenSignatures.has(sig)) {
-      reasons.push(`duplicate of finding ${JSON.stringify(seenSignatures.get(sig))}`);
-    } else {
-      seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : title);
     }
     if (reasons.length) {
       const elim = { ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') };
       eliminated.push(elim);
     } else {
-      const [strippedFinding, firstPatternStrip] = stripInjectedProseFields(finding);
-      kept.push(stripSuggestedFixCodeIfNeeded(strippedFinding, firstPatternStrip));
+      kept.push(applyInjectedProseStrip(finding, rules));
     }
   }
   return { kept, eliminated };
 }
-function applyInjectionFilter(findings) {
-  return injectionScanCore(findings, true);
+function applyInjectionFilter(findings, rules = INJECTION_RULES) {
+  return injectionScanCore(findings, true, rules);
 }
-function applyReplayInjectionScan(findings) {
-  return injectionScanCore(findings, false);
+function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
+  return injectionScanCore(findings, false, rules);
 }
 // --- filterFindings.js ---
-function normalizeFieldNames(findings) {
+function normalizeFieldNames(findings, renames = FIELD_RENAMES) {
   let normalizedCount = 0;
   for (const finding of findings) {
     let renamed = false;
-    for (const [legacy, canonical] of Object.entries(FIELD_RENAMES)) {
+    for (const [legacy, canonical] of Object.entries(renames)) {
       if (legacy in finding && !(canonical in finding)) {
         finding[canonical] = finding[legacy];
         delete finding[legacy];
@@ -1651,27 +1943,29 @@ function normalizeFieldNames(findings) {
   }
   return normalizedCount;
 }
-const DEFAULT_CONFIDENCE_THRESHOLD = 70;
-const DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55;
-const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
-const DEFAULT_SEVERITY_THRESHOLD = 'low';
+const FILTER_DEFAULTS = deepFreeze({
+  confidenceThreshold: 70,
+  nonsecurityConfidenceThreshold: 55,
+  securityMinConfidence: 70,
+  severityThreshold: 'low',
+});
 const CONTESTATION_DROP_THRESHOLD = 25;
-function applyThresholdFilter(findings, config) {
+function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER) {
   const kept = [];
   const eliminated = [];
   let contestedCount = 0;
   for (const finding of findings) {
     const fileConfig = configForFile(config, finding.file);
     const confidence = asConfidence(pyGet(finding, 'confidence', 0));
-    let severity = (asText(pyGet(finding, 'severity', 'low')) || 'low').toLowerCase();
+    let severity = (asText(finding.severity) || 'low').toLowerCase();
     const dimensions = finding.dimension ? [String(finding.dimension).toLowerCase()] : [];
     const isSecurity = dimensions.includes('security');
     let effectiveThreshold;
     if (isSecurity) {
-      const minConf = cfgGet(fileConfig, 'security_min_confidence', DEFAULT_SECURITY_MIN_CONFIDENCE);
-      effectiveThreshold = Math.min(cfgGet(fileConfig, 'confidence_threshold', DEFAULT_CONFIDENCE_THRESHOLD), minConf);
+      const minConf = cfgGet(fileConfig, 'security_min_confidence', FILTER_DEFAULTS.securityMinConfidence);
+      effectiveThreshold = Math.min(cfgGet(fileConfig, 'confidence_threshold', FILTER_DEFAULTS.confidenceThreshold), minConf);
     } else {
-      effectiveThreshold = cfgGet(fileConfig, 'confidence_threshold', DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD);
+      effectiveThreshold = cfgGet(fileConfig, 'confidence_threshold', FILTER_DEFAULTS.nonsecurityConfidenceThreshold);
     }
     let isContested = false;
     const originalConfidence = 'original_confidence' in finding ? finding.original_confidence : undefined;
@@ -1695,15 +1989,15 @@ function applyThresholdFilter(findings, config) {
       continue;
     }
     if (!isContested) {
-      const severityThreshold = cfgGet(fileConfig, 'severity_threshold', DEFAULT_SEVERITY_THRESHOLD);
-      const sevThresholdIdx = SEVERITY_ORDER.indexOf(severityThreshold);
-      if (!SEVERITY_ORDER.includes(severity)) severity = 'low';
-      const sevIdx = SEVERITY_ORDER.indexOf(severity);
+      const severityThreshold = cfgGet(fileConfig, 'severity_threshold', FILTER_DEFAULTS.severityThreshold);
+      const sevThresholdIdx = severityOrder.indexOf(severityThreshold);
+      if (!severityOrder.includes(severity)) severity = 'low';
+      const sevIdx = severityOrder.indexOf(severity);
       if (sevIdx > sevThresholdIdx) {
         eliminated.push({
           ...finding,
           eliminated_by: 'threshold',
-          elimination_reason: `severity '${severity}' is below threshold '${SEVERITY_ORDER[sevThresholdIdx]}'`,
+          elimination_reason: `severity '${severity}' is below threshold '${severityOrder[sevThresholdIdx]}'`,
         });
         continue;
       }
@@ -1745,76 +2039,50 @@ function lineBucket(line, proximity) {
 }
 const CONSENSUS_BOOST = 10;
 const SINGLETON_PENALTY = 15;
-const CORE_DIMENSIONS = new Set(['bug', 'security', 'cross_file_impact', 'intent']);
-function detectDisagreement(findings) {
-  const locationGroups = new Map();
+function groupFilterFindings(findings, keyFor) {
+  const groups = new Map();
   for (const finding of findings) {
-    const key = JSON.stringify([pyGet(finding, 'file', ''), lineBucket(pyGet(finding, 'line_start', 0), 10)]);
-    if (!locationGroups.has(key)) locationGroups.set(key, []);
-    locationGroups.get(key).push(finding);
+    const key = keyFor(finding);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(finding);
   }
+  return groups;
+}
+function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
+  const locationGroups = groupFilterFindings(findings, (finding) => JSON.stringify([
+    pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10),
+  ]));
   const suppressedIds = new Set();
   const suppressed = [];
   const idKey = (f) => (('id' in f) ? f.id : f);
   for (const group of locationGroups.values()) {
     if (group.length < 2) continue;
-    const agentMap = new Map();
-    for (const f of group) {
-      const agent = pyGet(f, 'agent', '').toLowerCase();
-      if (!agentMap.has(agent)) agentMap.set(agent, []);
-      agentMap.get(agent).push(f);
-    }
-    if (agentMap.has(AGENT_BUG_DETECTOR) && agentMap.has(AGENT_CONVENTIONS)) {
+    const agentMap = groupFilterFindings(group, (f) => pyGet(f, 'agent', '').toLowerCase());
+    for (const row of rules) {
+      if (!agentMap.has(row.agent) || !agentMap.has(AGENT_CONVENTIONS)) continue;
       for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${asText(pyGet(convFinding, 'description', ''))} ${asText(pyGet(convFinding, 'title', ''))}`.toLowerCase();
-        if (/\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/.test(convText)) {
-          for (const bugFinding of agentMap.get(AGENT_BUG_DETECTOR)) {
-            const fid = idKey(bugFinding);
-            if (!suppressedIds.has(fid)) {
-              suppressedIds.add(fid);
-              suppressed.push({
-                ...bugFinding,
-                eliminated_by: 'suppressed:intentional',
-                elimination_reason:
-                  `conventions-and-intent confirms behaviour at ${pyGet(bugFinding, 'file', '?')}:` +
-                  `${pyGet(bugFinding, 'line_start', '?')} is intentional`,
-              });
-            }
-          }
-          break;
+        const convText = `${asText(convFinding.description)} ${asText(convFinding.title)}`.toLowerCase();
+        if (!row.pattern.test(convText)) continue;
+        for (const target of agentMap.get(row.agent)) {
+          const fid = idKey(target);
+          if (suppressedIds.has(fid)) continue;
+          suppressedIds.add(fid);
+          suppressed.push({
+            ...target,
+            eliminated_by: row.eliminatedBy,
+            elimination_reason:
+              `conventions-and-intent confirms ${row.subject} at ${pyGet(target, 'file', '?')}:` +
+              `${pyGet(target, 'line_start', '?')} is ${row.conclusion}`,
+          });
         }
-      }
-    }
-    if (agentMap.has(AGENT_TEST_ANALYZER) && agentMap.has(AGENT_CONVENTIONS)) {
-      for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${asText(pyGet(convFinding, 'description', ''))} ${asText(pyGet(convFinding, 'title', ''))}`.toLowerCase();
-        if (/\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/.test(convText)) {
-          for (const testFinding of agentMap.get(AGENT_TEST_ANALYZER)) {
-            const fid = idKey(testFinding);
-            if (!suppressedIds.has(fid)) {
-              suppressedIds.add(fid);
-              suppressed.push({
-                ...testFinding,
-                eliminated_by: 'suppressed:generated',
-                elimination_reason:
-                  `conventions-and-intent confirms code at ${pyGet(testFinding, 'file', '?')}:` +
-                  `${pyGet(testFinding, 'line_start', '?')} is generated/scaffolding`,
-              });
-            }
-          }
-          break;
-        }
+        break;
       }
     }
   }
   const active = findings.filter((f) => !suppressedIds.has(idKey(f)));
-  const consensusGroups = new Map();
-  for (const finding of active) {
-    const degraded = pyGet(finding, 'origin', '') === 'unknown';
-    const key = JSON.stringify([pyGet(finding, 'file', ''), lineBucket(pyGet(finding, 'line_start', 0), 10), degraded]);
-    if (!consensusGroups.has(key)) consensusGroups.set(key, []);
-    consensusGroups.get(key).push(finding);
-  }
+  const consensusGroups = groupFilterFindings(active, (finding) => JSON.stringify([
+    pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10), pyGet(finding, 'origin', '') === 'unknown',
+  ]));
   let boostedCount = 0;
   for (const group of consensusGroups.values()) {
     const count = group.length;
@@ -1827,7 +2095,7 @@ function detectDisagreement(findings) {
         finding.consensus_count = count;
         finding.consensus_boost = CONSENSUS_BOOST;
         finding.corroborated_by = otherAgents;
-        const originalConf = asConfidence(pyGet(finding, 'confidence', 0));
+        const originalConf = asConfidence(finding.confidence);
         finding.confidence = Math.min(originalConf + CONSENSUS_BOOST, 100);
       }
     } else {
@@ -1836,26 +2104,23 @@ function detectDisagreement(findings) {
       finding.consensus_boost = 0;
       if (!('corroborated_by' in finding)) finding.corroborated_by = [];
       const dimension = pyGet(finding, 'dimension', '').toLowerCase();
-      if (dimension && !CORE_DIMENSIONS.has(dimension)) {
-        const originalConf = asConfidence(pyGet(finding, 'confidence', 0));
+      if (dimension && !CORE_DIMENSIONS.includes(dimension)) {
+        const originalConf = asConfidence(finding.confidence);
         finding.confidence = Math.max(0, originalConf - SINGLETON_PENALTY);
         finding.singleton_penalty = true;
       }
     }
   }
-  const locationGroupsActive = new Map();
-  for (const finding of active) {
-    const key = JSON.stringify([pyGet(finding, 'file', ''), pyGet(finding, 'line_start', 0)]);
-    if (!locationGroupsActive.has(key)) locationGroupsActive.set(key, []);
-    locationGroupsActive.get(key).push(finding);
-  }
+  const locationGroupsActive = groupFilterFindings(active, (finding) => JSON.stringify([
+    pyGet(finding, 'file', ''), pyGet(finding, 'line_start', 0),
+  ]));
   for (const group of locationGroupsActive.values()) {
     if (group.length < 2) {
       if (!('contradiction' in group[0])) group[0].contradiction = false;
       if (!('security_escalation' in group[0])) group[0].security_escalation = false;
       continue;
     }
-    const severities = new Set(group.map((f) => (asText(pyGet(f, 'severity', 'low')) || 'low').toLowerCase()));
+    const severities = new Set(group.map((f) => (asText(f.severity) || 'low').toLowerCase()));
     const agentsHere = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
     const hasContradiction = severities.has('critical') && severities.has('low');
     const hasSecurityEscalation =
@@ -1870,80 +2135,24 @@ function detectDisagreement(findings) {
       }
     }
   }
-  for (const finding of active) {
-    if (!('consensus_count' in finding)) finding.consensus_count = 1;
-    if (!('consensus_boost' in finding)) finding.consensus_boost = 0;
-    if (!('corroborated_by' in finding)) finding.corroborated_by = [];
-    if (!('contradiction' in finding)) finding.contradiction = false;
-    if (!('security_escalation' in finding)) finding.security_escalation = false;
-  }
   return { active, suppressed, boostedCount };
 }
-const SUGGESTION_DIMENSIONS = new Set(['comment_accuracy', 'comment-accuracy']);
-const MAIN_DIMENSIONS = new Set(['bug', 'security', 'cross_file_impact', 'intent']);
-const CONDITIONAL_SUGGESTION_DIMENSIONS = new Set(['test_coverage', 'convention', 'type_design']);
-const FUNCTIONAL_VIOLATION_KEYWORDS =
-  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
-const TYPE_SAFETY_BUG_KEYWORDS =
-  /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
-const TEST_CORRECTNESS_PATTERNS = [
-  /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
-  /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
-  /\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b/i,
-  /\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b/i,
-  /\bvacuous(?:ly)?\b/i,
-  /\btautolog(?:y|ical)\b/i,
-  /\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b/i,
-  /\bdeadlock\b/i,
-  /\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b/i,
-  /\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b/i,
-  /\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b/i,
-  /\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b/i,
-  /\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b/i,
-  /\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b/i,
-  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b/i,
-  /\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b/i,
-  /\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b/i,
-  /\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b/i,
-  /\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b/i,
-  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
-  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
-  /\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b/i,
-  /\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b/i,
-];
-function routeByDimension(finding) {
+function routeByDimension(finding, routes = FILTER_DIMENSION_ROUTES) {
   const dimension = pyGet(finding, 'dimension', '').toLowerCase();
   if (!dimension) return null;
-  if (MAIN_DIMENSIONS.has(dimension)) return 'main';
-  if (SUGGESTION_DIMENSIONS.has(dimension)) return 'suggestion';
-  if (CONDITIONAL_SUGGESTION_DIMENSIONS.has(dimension)) {
-    const combined = `${asText(pyGet(finding, 'title', ''))}\n${asText(pyGet(finding, 'description', ''))}`;
-    if (dimension === 'test_coverage') {
-      return TEST_CORRECTNESS_PATTERNS.some((rx) => rx.test(combined)) ? 'main' : 'suggestion';
-    }
-    if (dimension === 'convention') {
-      return FUNCTIONAL_VIOLATION_KEYWORDS.test(combined) ? 'main' : 'suggestion';
-    }
-    if (dimension === 'type_design') {
-      return TYPE_SAFETY_BUG_KEYWORDS.test(combined) ? 'main' : 'suggestion';
-    }
-  }
-  return null;
+  if (CORE_DIMENSIONS.includes(dimension)) return 'main';
+  if (SUGGESTION_DIMENSIONS.includes(dimension)) return 'suggestion';
+  if (!Object.hasOwn(routes, dimension)) return null;
+  return isTestCorrectnessFinding(finding, routes[dimension].patterns) ? 'main' : 'suggestion';
 }
-function isTestCorrectnessFinding(finding) {
-  const combined = `${asText(pyGet(finding, 'title', ''))}\n${asText(pyGet(finding, 'description', ''))}`;
-  return TEST_CORRECTNESS_PATTERNS.some((rx) => rx.test(combined));
+function isTestCorrectnessFinding(finding, patterns) {
+  const combined = `${asText(finding.title)}\n${asText(finding.description)}`;
+  return patterns.some((rx) => rx.test(combined));
 }
 function groupByProximity(findings, lineProximity = 5) {
-  const groups = new Map();
-  for (const finding of findings) {
-    const key = JSON.stringify([pyGet(finding, 'file', ''), lineBucket(pyGet(finding, 'line_start', 0), lineProximity)]);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(finding);
-  }
-  return groups;
+  return groupFilterFindings(findings, (finding) => JSON.stringify([
+    pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
+  ]));
 }
 function consolidateCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
@@ -1955,9 +2164,9 @@ function consolidateCrossAgent(findings) {
   }
   const winnerKey = (f) => {
     const dim = pyGet(f, 'dimension', '').toLowerCase();
-    const isCore = CORE_DIMENSIONS.has(dim) ? 1 : 0;
-    const conf = asConfidence(pyGet(f, 'confidence', 0));
-    const descLen = asText(pyGet(f, 'description', '')).length;
+    const isCore = CORE_DIMENSIONS.includes(dim) ? 1 : 0;
+    const conf = asConfidence(f.confidence);
+    const descLen = asText(f.description).length;
     return [isCore, conf, descLen];
   };
   const compareWinnerDesc = (a, b) => {
@@ -1974,7 +2183,7 @@ function consolidateCrossAgent(findings) {
     const agentsInGroup = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
     if (group.length < 2 || agentsInGroup.size < 2) continue; // no stamps
     const file = pyGet(group[0], 'file', '');
-    const bucket = lineBucket(pyGet(group[0], 'line_start', 0), LINE_PROXIMITY);
+    const bucket = lineBucket(group[0].line_start, LINE_PROXIMITY);
     const consolidationKey = `${file}:${bucket}`;
     const ranked = [...group].sort(compareWinnerDesc);
     const primary = ranked.find((f) => pyGet(f, 'id', ''));
@@ -1987,31 +2196,28 @@ function consolidateCrossAgent(findings) {
   }
   return { findings, consolidatedCount };
 }
-const MAIN_REPORT_AGENTS = new Set(['bug-detector', 'security-reviewer', 'cross-file-impact', 'type-design-analyzer']);
-const SUGGESTION_AGENTS = new Set(['test-analyzer', 'code-simplifier']);
-const COMMENT_ACCURACY_DIMENSIONS = new Set(['comment-accuracy', 'documentation', 'doc-accuracy']);
-function tagFindings(findings) {
+function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
   const { findings: tagged, consolidatedCount } = consolidateCrossAgent(findings);
   let mainCount = 0;
   let suggestionCount = 0;
   for (const finding of tagged) {
     const agent = pyGet(finding, 'agent', '').toLowerCase();
-    const dimensions = finding.dimension ? new Set([String(finding.dimension).toLowerCase()]) : new Set();
+    const dimension = finding.dimension ? String(finding.dimension).toLowerCase() : '';
     let destination;
     if (finding.demoted_by === 'reachability') {
       destination = 'suggestion';
       finding.routed_by = 'reachability';
     } else {
-      const dimRoute = routeByDimension(finding);
+      const dimRoute = routeByDimension(finding, routes);
       if (dimRoute !== null) {
         destination = dimRoute;
         if (dimRoute === 'suggestion') finding.routed_by = 'dimension';
-      } else if (MAIN_REPORT_AGENTS.has(agent)) {
+      } else if (MAIN_REPORT_AGENTS.includes(agent)) {
         destination = 'main';
-      } else if (agent === CONVENTIONS_AGENT) {
-        destination = [...dimensions].some((d) => COMMENT_ACCURACY_DIMENSIONS.has(d)) ? 'suggestion' : 'main';
-      } else if (SUGGESTION_AGENTS.has(agent)) {
-        if (agent === AGENT_TEST_ANALYZER && isTestCorrectnessFinding(finding)) {
+      } else if (agent === AGENT_CONVENTIONS) {
+        destination = COMMENT_ACCURACY_DIMENSIONS.includes(dimension) ? 'suggestion' : 'main';
+      } else if (SUGGESTION_AGENTS.includes(agent)) {
+        if (agent === AGENT_TEST_ANALYZER && isTestCorrectnessFinding(finding, routes.test_coverage.patterns)) {
           destination = 'main';
           finding.promoted_from = 'test-analyzer';
           finding.promotion_reason =
@@ -2031,7 +2237,7 @@ function tagFindings(findings) {
   }
   return { tagged, consolidatedCount, mainCount, suggestionCount };
 }
-function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
+function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt, proseFields = INJECTION_STRIPPED_PROSE_FIELDS) {
   const total = findings.length;
   normalizeFieldNames(findings);
   applyReachabilityDemotion(findings);
@@ -2048,7 +2254,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
   const proseFieldsRemoved = Object.fromEntries(
-    INJECTION_STRIPPED_PROSE_FIELDS.map((field) => [
+    proseFields.map((field) => [
       `${field}s_removed`,
       afterInjection.filter((f) => f[`${field}_removed_by`] === 'injection').length,
     ]),
@@ -2248,7 +2454,8 @@ function codePointLength(value) {
 function codePointPrefix(value, limit) {
   return Array.from(reportAsText(value)).slice(0, limit).join('');
 }
-function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
+function foldInline(text, limit, limits = REPORT_FOLD_LIMITS) {
+  if (limit === undefined) limit = limits.inlineChars;
   const value = reportAsText(text);
   const length = codePointLength(value);
   if (length <= limit) return value;
@@ -2300,39 +2507,46 @@ function foldProse(text, limit) {
   const length = codePointLength(value);
   if (length <= limit) return value;
   let prefix = '';
+  let prefixLength = 0;
   const lines = value.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
     const next = `${index ? '\n' : ''}${lines[index]}`;
-    const remaining = limit - codePointLength(prefix);
-    if (codePointLength(next) <= remaining) {
+    const remaining = limit - prefixLength;
+    const nextLength = codePointLength(next);
+    if (nextLength <= remaining) {
       prefix += next;
+      prefixLength += nextLength;
       continue;
     }
-    if (codePointLength(lines[index]) > limit) prefix += codePointPrefix(next, remaining);
+    if (codePointLength(lines[index]) > limit) {
+      const partial = codePointPrefix(next, remaining);
+      prefix += partial;
+      prefixLength += codePointLength(partial);
+    }
     break;
   }
-  const omitted = length - codePointLength(prefix);
+  const omitted = length - prefixLength;
   const closer = proseFenceCloser(prefix);
   if (closer) prefix += `${prefix.endsWith('\n') || prefix.endsWith('\r') ? '' : '\n'}${closer}`;
   return `${prefix}\n\n_[folded: ${omitted} more characters]_`;
 }
-function foldEvidence(text) {
+function foldEvidence(text, limits = REPORT_FOLD_LIMITS) {
   const value = reportAsText(text);
   const length = codePointLength(value);
   const separators = [...value.matchAll(/\r\n|\r|\n/g)];
   const lineCount = separators.length + 1;
-  const lineFolded = lineCount > REPORT_FOLD_LIMITS.evidenceLines;
+  const lineFolded = lineCount > limits.evidenceLines;
   const linePrefix = lineFolded
-    ? value.slice(0, separators[REPORT_FOLD_LIMITS.evidenceLines - 1].index)
+    ? value.slice(0, separators[limits.evidenceLines - 1].index)
     : value;
   const linePrefixLength = codePointLength(linePrefix);
-  const charFolded = length > REPORT_FOLD_LIMITS.evidenceChars;
-  if (charFolded && (!lineFolded || REPORT_FOLD_LIMITS.evidenceChars <= linePrefixLength)) {
-    const prefix = codePointPrefix(value, REPORT_FOLD_LIMITS.evidenceChars);
-    return `${prefix}\n... [folded: ${length - REPORT_FOLD_LIMITS.evidenceChars} more characters]`;
+  const charFolded = length > limits.evidenceChars;
+  if (charFolded && (!lineFolded || limits.evidenceChars <= linePrefixLength)) {
+    const prefix = codePointPrefix(value, limits.evidenceChars);
+    return `${prefix}\n... [folded: ${length - limits.evidenceChars} more characters]`;
   }
   if (lineFolded) {
-    return `${linePrefix}\n... [folded: ${lineCount - REPORT_FOLD_LIMITS.evidenceLines} more lines]`;
+    return `${linePrefix}\n... [folded: ${lineCount - limits.evidenceLines} more lines]`;
   }
   return value;
 }
@@ -2341,11 +2555,15 @@ function oneLine(value) {
 }
 const OUTBOUND_INVISIBLES =
   /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/;
-const OUTBOUND_NAMED_ENTITY_PREFIXES = new Set(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
+const OUTBOUND_NAMED_ENTITY_PREFIXES = Object.freeze(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
   Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
 )));
 const entityAt = (start, kind, fields = {}) => ({ start, kind, value: 0, hasDigit: false, name: '', ...fields });
-function normalizeOutboundText(value) {
+function normalizeOutboundText(value, entities = OUTBOUND_NAMED_ENTITIES) {
+  const prefixes = entities === OUTBOUND_NAMED_ENTITIES ? OUTBOUND_NAMED_ENTITY_PREFIXES : Object.keys(entities).flatMap((name) => (
+    Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
+  ));
+  const namedPrefixes = new Set(prefixes);
   let text = reportAsText(value);
   const output = [];
   const push = (character) => {
@@ -2362,7 +2580,7 @@ function normalizeOutboundText(value) {
           entity = entityAt(entity.start, 'numeric');
         } else if (/[A-Za-z]/.test(character)) {
           const name = entity.name + character;
-          entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
+          entity = namedPrefixes.has(name)
             ? entityAt(entity.start, 'named', { name })
             : null;
         } else {
@@ -2400,14 +2618,14 @@ function normalizeOutboundText(value) {
         }
       } else if (entity.kind === 'named') {
         if (character === ';') {
-          if (Object.hasOwn(OUTBOUND_NAMED_ENTITIES, entity.name)) {
-            replacement = OUTBOUND_NAMED_ENTITIES[entity.name];
+          if (Object.hasOwn(entities, entity.name)) {
+            replacement = entities[entity.name];
           } else {
             entity = null;
           }
         } else if (/[A-Za-z]/.test(character)) {
           const name = entity.name + character;
-          entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
+          entity = namedPrefixes.has(name)
             ? entityAt(entity.start, 'named', { name })
             : null;
         } else {
@@ -2446,8 +2664,8 @@ function normalizeOutboundText(value) {
   }
   return output.map((entry) => entry.character).join('');
 }
-function outboundBase(value) {
-  const text = normalizeOutboundText(value);
+function outboundBase(value, entities = OUTBOUND_NAMED_ENTITIES) {
+  const text = normalizeOutboundText(value, entities);
   if (text.trim() === '') return '';
   return text.replace(/(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}/g, '[REDACTED]')
     .replace(/(?:glpat-|glrt-)[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
@@ -2573,22 +2791,20 @@ function outboundContain(line, forceColon = false) {
   output.push(outboundVisible(line.slice(cursor)));
   return outboundDefinitions(output.join(''), forceColon);
 }
-function prepareLine(value, forceColon = false) {
-  const text = outboundBase(value);
+function prepareLine(value, forceColon = false, entities = OUTBOUND_NAMED_ENTITIES) {
+  const text = outboundBase(value, entities);
   return text.trim() === '' ? '' : outboundContain(text, forceColon === true);
 }
-function prepareSummaryTitle(value) {
-  return prepareLine(foldInline(oneLine(outboundBase(value))), true);
+function prepareSummaryTitle(value, entities = OUTBOUND_NAMED_ENTITIES) {
+  return prepareLine(foldInline(oneLine(outboundBase(value, entities))), true, entities);
 }
-function preparedCodeSpan(value, substituteVisible = false) {
-  let display = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' ')));
+function preparedCodeSpan(value, substituteVisible = false, entities = OUTBOUND_NAMED_ENTITIES) {
+  let display = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' '), entities));
   if (substituteVisible) {
     display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
     display = outboundDefinitions(display, true);
   }
-  let longest = 0;
-  for (const match of display.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
-  const delimiter = '`'.repeat(longest + 1);
+  const delimiter = '`'.repeat(longestBacktickRun(display) + 1);
   if (/^[` ]|[` ]$/.test(display)) display = ` ${display} `;
   return `${delimiter}${display}${delimiter}`;
 }
@@ -2626,9 +2842,9 @@ function outboundTildeRuns(line) {
   return parts.join('');
 }
 // --- renderReport.js ---
-function dimensionOwnerMap() {
+function dimensionOwnerMap(dimensions) {
   const owner = {};
-  for (const d of DIMENSIONS) owner[d.dimension] = d.agentType;
+  for (const d of dimensions) owner[d.dimension] = d.agentType;
   return owner;
 }
 function severityBreakdown(rowFindings) {
@@ -2648,39 +2864,32 @@ function severityBreakdown(rowFindings) {
   const known = SEVERITY_ORDER.filter((s) => counts.has(s));
   return known.map((s) => `${counts.get(s)} ${s}`).join(', ');
 }
-function dimensionsSummaryTable(input) {
+function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   const inp = input || {};
   const dispatchedSet = new Set((Array.isArray(inp.dispatched) ? inp.dispatched : []).map(reportAsText));
   const degradedSet = new Set((Array.isArray(inp.degraded) ? inp.degraded : []).map(reportAsText));
-  const owner = dimensionOwnerMap();
-  const byAgent = new Map(AGENTS.map((a) => [a, []]));
-  const unverifiedByAgent = new Map(AGENTS.map((a) => [a, []]));
-  for (const f of (inp.findings || [])) {
+  const owner = dimensionOwnerMap(dimensions);
+  const agents = [...new Set(dimensions.map((dimension) => dimension.agentType))];
+  const byAgent = new Map(agents.map((agent) => [agent, []]));
+  const unverifiedByAgent = new Map(agents.map((agent) => [agent, []]));
+  const bucketFinding = (buckets, finding) => {
     let dimension;
     try {
-      dimension = f ? f.dimension : undefined;
+      dimension = finding ? finding.dimension : undefined;
     } catch {
       dimension = undefined;
     }
     const agentType = owner[dimension];
-    if (agentType && byAgent.has(agentType)) byAgent.get(agentType).push(f);
-  }
-  for (const f of (inp.unverified || [])) {
-    let dimension;
-    try {
-      dimension = f ? f.dimension : undefined;
-    } catch {
-      dimension = undefined;
-    }
-    const agentType = owner[dimension];
-    if (agentType && unverifiedByAgent.has(agentType)) unverifiedByAgent.get(agentType).push(f);
-  }
-  const rows = AGENTS.map((agentType) => {
+    if (agentType && buckets.has(agentType)) buckets.get(agentType).push(finding);
+  };
+  for (const finding of (inp.findings || [])) bucketFinding(byAgent, finding);
+  for (const finding of (inp.unverified || [])) bucketFinding(unverifiedByAgent, finding);
+  const rows = agents.map((agentType) => {
     const rowFindings = byAgent.get(agentType);
     const rowUnverified = unverifiedByAgent.get(agentType);
     const n = rowFindings.length;
     const m = rowUnverified.length;
-    const dims = DIMENSIONS.filter((d) => d.agentType === agentType).map((d) => d.dimension);
+    const dims = dimensions.filter((d) => d.agentType === agentType).map((d) => d.dimension);
     const isDegraded = dims.some((d) => degradedSet.has(d));
     const isDispatched = dispatchedSet.has(agentType);
     const label = AGENT_LABELS[agentType] || agentType;
@@ -2746,18 +2955,13 @@ function consolidateForReport(findings) {
     };
   });
 }
-const REPORT_PLACED_FIELDS = new Set([
-  'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
-  'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
-]);
-function reportExtraFields() {
+function reportExtraFields(dimensions = DIMENSIONS) {
   const declared = new Set(Object.keys(FINDING_PROP_TYPES));
-  for (const dimension of DIMENSIONS) {
+  for (const dimension of dimensions) {
     for (const key of Object.keys(dimension.schemaExtra || {})) declared.add(key);
   }
   return [...declared]
-    .filter((key) => !REPORT_PLACED_FIELDS.has(key) && !REPORT_EXCLUDED_FIELDS.includes(key))
+    .filter((key) => !REPORT_PLACED_FIELDS.includes(key) && !REPORT_EXCLUDED_FIELDS.includes(key))
     .sort();
 }
 function reportOptionalText(value) {
@@ -2794,7 +2998,7 @@ function reportCorroboration(value) {
   if (confidence !== undefined) out.confidence = confidence;
   return out;
 }
-function coerceReportFinding(finding) {
+function coerceReportFinding(finding, severities) {
   const out = {};
   let keys;
   try {
@@ -2811,7 +3015,7 @@ function coerceReportFinding(finding) {
     }
     let value;
     if (key === 'severity') {
-      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw);
+      value = raw === undefined || raw === null || raw === '' ? undefined : normalizeReportSeverity(raw, severities);
     } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
     } else if (key === 'corroborations') {
@@ -2827,27 +3031,25 @@ function coerceReportFinding(finding) {
   }
   return out;
 }
-function coerceReportFindings(value) {
+function coerceReportFindings(value, severities = SEVERITY_ORDER) {
   if (!Array.isArray(value)) return [];
   return value.map((finding) => (
     finding && typeof finding === 'object' && !Array.isArray(finding)
-      ? coerceReportFinding(finding)
+      ? coerceReportFinding(finding, severities)
       : {}
   ));
 }
-function normalizeReportSeverity(raw) {
+function normalizeReportSeverity(raw, severities = SEVERITY_ORDER) {
   if (typeof raw !== 'string') return 'low';
   const normalized = raw.trim().toLowerCase();
-  return SEVERITY_ORDER.includes(normalized) ? normalized : 'low';
+  return severities.includes(normalized) ? normalized : 'low';
 }
 function fieldLabel(key) {
   const words = String(key).replaceAll('_', ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 function fenceFor(text) {
-  let longest = 0;
-  for (const match of reportAsText(text).matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
-  return '`'.repeat(Math.max(3, longest + 1));
+  return '`'.repeat(Math.max(3, longestBacktickRun(reportAsText(text)) + 1));
 }
 function inline(value, prefixLimit) {
   let text = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' ')));
@@ -2860,8 +3062,7 @@ function safeProse(value) {
   for (let index = 0; index < parts.length; index += 2) {
     const line = parts[index];
     const boundary = parts[index + 1] || '';
-    const withoutTerminalCR = line.endsWith('\r') ? line.slice(0, -1) : line;
-    const comparable = withoutTerminalCR.replace(/[ \t]+$/, '');
+    const comparable = line.replace(/[ \t]+$/, '');
     if (CODE_OWNED_HEADINGS.includes(comparable)) {
       const renamedBoundary = boundary === '\r\n' || boundary === '\r' ? '\n' : boundary;
       output += `${comparable} (finding text)${renamedBoundary}`;
@@ -2884,9 +3085,6 @@ function isPresent(value) {
   return true;
 }
 const severityMark = (severity) => SEVERITY_EMOJI[normalizeReportSeverity(severity)];
-function normalizeFindings(value) {
-  return coerceReportFindings(value);
-}
 function reportBuilder() {
   let text = '';
   const protectedRanges = [];
@@ -2963,10 +3161,6 @@ function templateValue(template, values) {
   let output = template;
   for (const [name, value] of Object.entries(values)) output = output.replaceAll(`{${name}}`, value);
   return output;
-}
-function identityCheck(identity, name) {
-  const field = PR_IDENTITY_FIELDS.find((entry) => entry.name === name);
-  return Boolean(field && field.check(identity[name]));
 }
 function permalinkContext(identity) {
   if (!identity) return { repositoryBase: null, blobBase: null, template: null };
@@ -3097,14 +3291,11 @@ function renderFinding(builder, finding, unverified, permalinks) {
     block();
   });
 }
-function severityKey(finding) {
-  return normalizeReportSeverity(finding.severity);
-}
 function severityView(findings) {
   const ranked = rankFindings(findings);
   const buckets = new Map();
   for (const finding of ranked) {
-    const key = severityKey(finding);
+    const key = normalizeReportSeverity(finding.severity);
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(finding);
   }
@@ -3200,8 +3391,8 @@ function summaryIndex(rawFindings, findingsView, input) {
 }
 function summaryBlock(builder, input) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = normalizeFindings(inp.findings);
-  const rawUnverified = normalizeFindings(inp.unverified);
+  const rawFindings = coerceReportFindings(inp.findings);
+  const rawUnverified = coerceReportFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -3245,18 +3436,18 @@ function renderSummaryBody(input) {
   summaryBlock(builder, input);
   return builder.finish();
 }
-function receiptSafe(value, fallback = 'unknown') {
-  if (value === undefined || value === null) return fallback;
+function receiptSafe(value) {
+  if (value === undefined || value === null) return 'unknown';
   const cleaned = oneLine(value).replaceAll('`', '');
-  return cleaned || fallback;
+  return cleaned || 'unknown';
 }
-function receiptLines(input) {
+function receiptLines(input, knobs) {
   const mode = input.mode === 'headless' ? 'headless' : 'interactive';
   const echo = input.configEcho && typeof input.configEcho === 'object' && !Array.isArray(input.configEcho)
     ? input.configEcho
     : {};
   const lines = [mode === 'headless' ? 'Headless config:' : 'Resolved config:'];
-  for (const descriptor of KNOB_REGISTRY) {
+  for (const descriptor of knobs) {
     if (!descriptor.modes.includes(mode)) continue;
     const entry = echo[descriptor.key];
     const validEntry = entry && typeof entry === 'object' && !Array.isArray(entry)
@@ -3277,27 +3468,21 @@ function countSummary(value) {
   });
   return entries.length ? entries.join(', ') : 'none';
 }
-const REVIEW_SCOPE_FALLBACK_RULES = [
-  { when: (detector) => typeof detector.error === 'string' && detector.error !== '',
-    reason: (detector) => `detection failed: ${inline(detector.error, 120)}` },
-  { when: (detector) => detector.previously_reviewed === false, reason: () => 'no prior review recorded' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === false,
-    reason: () => 'recorded SHA not resolvable' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true
-      && detector.sha_is_ancestor === true && detector.head_advanced === false,
-    reason: () => 'head has not advanced' },
-  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true
-      && detector.sha_is_ancestor === false,
-    reason: () => 'history rewritten (recorded SHA is not an ancestor)' },
-];
-function reviewScopeFallbackReason(scope) {
+function reviewScopeFallbackReason(scope, rules = REVIEW_SCOPE_FALLBACK_RULES) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)
     || scope.kind !== 'full' || scope.requested !== 'incremental'
     || !scope.detector || typeof scope.detector !== 'object' || Array.isArray(scope.detector)) {
     return null;
   }
-  for (const rule of REVIEW_SCOPE_FALLBACK_RULES) {
-    if (rule.when(scope.detector)) return rule.reason(scope.detector);
+  for (const rule of rules) {
+    const detector = scope.detector;
+    if (rule.error) {
+      if (typeof detector.error === 'string' && detector.error !== '') {
+        return `detection failed: ${inline(detector.error, 120)}`;
+      }
+    } else if (Object.entries(rule.facts).every(([key, value]) => detector[key] === value)) {
+      return rule.reason;
+    }
   }
   return 'detection failed: unavailable';
 }
@@ -3317,7 +3502,7 @@ function methodologyRows(input, rawFindings) {
   }
   const stageTypes = [
     'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
-    'validator', 'challenger', 'executor', 'artifact-writer',
+    ...Object.keys(STAGE_DEFAULTS),
   ];
   const models = stageTypes.map((agentType) => {
     const model = resolvePolicy(`code-gauntlet:${agentType}`, {
@@ -3360,11 +3545,11 @@ function methodologyRows(input, rawFindings) {
   rows.push(['Dimensions', `dispatched=${dispatched}; degraded=${degraded}`]);
   return rows;
 }
-function renderMethodology(builder, input, rawFindings) {
+function renderMethodology(builder, input, rawFindings, knobs) {
   builder.add();
   builder.add('## Review Methodology');
   builder.add();
-  const receipt = receiptLines(input);
+  const receipt = receiptLines(input, knobs);
   const receiptText = receipt.join('\n');
   const fence = fenceFor(receiptText);
   builder.add(`${fence}text`);
@@ -3380,10 +3565,10 @@ function renderMethodology(builder, input, rawFindings) {
   builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported '
     + 'by the orchestrator at delivery.');
 }
-function renderReport(input) {
+function renderReport(input, knobs = KNOB_REGISTRY) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = normalizeFindings(inp.findings);
-  const rawUnverified = normalizeFindings(inp.unverified);
+  const rawFindings = coerceReportFindings(inp.findings);
+  const rawUnverified = coerceReportFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
@@ -3463,7 +3648,7 @@ function renderReport(input) {
   builder.add('## Review Dimensions Summary');
   builder.add();
   builder.add(dimensionsTable);
-  renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings);
+  renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings, knobs);
   return builder.finish();
 }
 // --- reviewStages.js ---
@@ -3728,11 +3913,8 @@ function hostPathSpellings(root) {
     : `/private${root}`;
   return [root, alias];
 }
-function hostPathRegexEscape(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 function hostPathPattern(root, caseInsensitive) {
-  const source = root.slice(1).split('/').map(hostPathRegexEscape).join('/(?:/|\\./)*');
+  const source = root.slice(1).split('/').map(escapeRegExp).join('/(?:/|\\./)*');
   return new RegExp(`/${source}`, caseInsensitive ? 'iy' : 'y');
 }
 function prepareHostRootPatterns(roots) {
@@ -3872,7 +4054,8 @@ function repoRelativeFindingPath(repoRoot, file) {
     return { reason: 'file path starts with a URI scheme or drive letter' };
   }
   if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(file)
-    || file.split('/').some((segment) => /^[\p{Cf}\p{Mn}\p{Me}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
+    || file.split('/').some((segment) =>
+      /^[\p{Cf}\p{Mn}\p{Me}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u.test(segment))) {
     return { reason: 'file path contains a disallowed character' };
   }
   if (relative !== relative.trim()) return { reason: 'file path has leading or trailing whitespace' };
@@ -4313,51 +4496,64 @@ function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
   return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, inline_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
 }
 // --- args.js ---
-const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
-function validatePathSegments(value, label, { separateSlashErrors = false, requireBasename = false } = {}) {
+function validatePathSegments(value, label, reviewFile = false) {
   const errors = [];
-  if (separateSlashErrors) {
+  if (reviewFile) {
     if (value.startsWith('/')) errors.push(`${label} must be repo-relative (must not start with /)`);
     if (value.endsWith('/')) errors.push(`${label} must not have a trailing /`);
   } else if (value.startsWith('/') || value.endsWith('/')) {
     errors.push(`${label} must not have a leading or trailing /`);
   }
   if (value.includes('\\')) errors.push(`${label} must use / separators, not backslashes`);
-  if (REVIEW_MD_PATH_CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
+  if (CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
   const segments = value.split('/');
   if (segments.some((segment) => segment === '')) errors.push(`${label} must not contain an empty path segment`);
   if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label} must not contain . or .. path segments`);
-  if (requireBasename && segments[segments.length - 1] !== 'REVIEW.md') {
+  if (reviewFile && segments[segments.length - 1] !== 'REVIEW.md') {
     errors.push(`${label} must end with exactly REVIEW.md`);
   }
   return errors;
 }
-function nullToleranceGap(key) {
-  const why = NULL_TOLERANCE_CONSEQUENCE[key] || 'the run proceeds as if the field had not been supplied';
-  return `null_arg: args.${key} arrived as a literal null and was treated as ABSENT — ${why}. Omit ${key} entirely (or stamp a well-formed value); do not stamp null.`;
+function validateFlatPatterns(value, label, errors, ignore = false) {
+  if (!Array.isArray(value)) {
+    errors.push(`${label} must be an array of flat pattern strings`);
+    return;
+  }
+  for (let i = 0; i < value.length; i++) {
+    if (typeof value[i] !== 'string') {
+      const suffix = ignore ? ' \u2014 parseReviewMd emits strings, never objects' : '';
+      errors.push(`${label}[${i}] must be a flat pattern string (got ${typeof value[i]})${suffix}`);
+    }
+  }
+}
+function nullToleranceGap(key, consequences = NULL_TOLERANCE_CONSEQUENCE) {
+  const why = consequences[key] || 'the run proceeds as if the field had not been supplied';
+  return `null_arg: args.${key} arrived as a literal null and was treated as ABSENT — ${why}. Omit ` +
+    `${key} entirely (or stamp a well-formed value); do not stamp null.`;
 }
 function nullRespellGap(key) {
-  return `null_receipt: args.${key} arrived as a literal null and was spelled as the printed token "null"; the receipt and the configuration are unchanged; stamp the string "null".`;
+  return `null_receipt: args.${key} arrived as a literal null and was spelled as the printed token ` +
+    `"null"; the receipt and the configuration are unchanged; stamp the string "null".`;
 }
-function nullToleranceRejectedKeys(cleanArgs, dropped, derivedPaths = []) {
+function nullToleranceRejectedKeys(cleanArgs, dropped, derivedPaths = [], descriptors = KNOB_REGISTRY) {
   if (!Array.isArray(dropped) || dropped.length === 0) return [];
   const derived = new Set(Array.isArray(derivedPaths) ? derivedPaths : []);
-  const baseline = validateArgs(cleanArgs).errors.length;
+  const baseline = validateArgs(cleanArgs, descriptors).errors.length;
   return dropped
     .filter((key) => !derived.has(key))
-    .filter((key) => validateArgs(withNullAt(cleanArgs, key)).errors.length > baseline);
+    .filter((key) => validateArgs(withNullAt(cleanArgs, key), descriptors).errors.length > baseline);
 }
 function withNullAt(args, key) {
-  const base = (args && typeof args === 'object' && !Array.isArray(args)) ? args : {};
+  const base = isPlainObject(args) ? args : {};
   const parts = key.split('.');
   const out = { ...base };
   let source = base;
   let target = out;
   for (const part of parts.slice(0, -1)) {
-    const value = source && typeof source === 'object' && !Array.isArray(source)
+    const value = isPlainObject(source)
       ? source[part]
       : undefined;
-    const copy = value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {};
+    const copy = isPlainObject(value) ? { ...value } : {};
     target[part] = copy;
     target = copy;
     source = value;
@@ -4365,21 +4561,19 @@ function withNullAt(args, key) {
   target[parts.at(-1)] = null;
   return out;
 }
-function stripNullOptionalsReport(args) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return { args, dropped: [], respelled: [] };
+function stripNullOptionalsReport(args, descriptors = KNOB_REGISTRY) {
+  if (!isPlainObject(args)) return { args, dropped: [], respelled: [] };
   const dropped = [];
   const respelled = [];
   const out = { ...args };
   for (const k of NULLABLE_TOP_LEVEL) {
     if (out[k] === null) { delete out[k]; dropped.push(k); }
   }
-  if (out.delivery && typeof out.delivery === 'object' && !Array.isArray(out.delivery)) {
+  if (isPlainObject(out.delivery)) {
     const delivery = { ...out.delivery };
     if (delivery.prIdentity === null) { delete delivery.prIdentity; dropped.push('delivery.prIdentity'); }
     if (
-      delivery.prIdentity
-      && typeof delivery.prIdentity === 'object'
-      && !Array.isArray(delivery.prIdentity)
+      isPlainObject(delivery.prIdentity)
       && delivery.prIdentity.title === null
     ) {
       const id = { ...delivery.prIdentity };
@@ -4390,7 +4584,7 @@ function stripNullOptionalsReport(args) {
     if (delivery.tier === null) { delete delivery.tier; dropped.push('delivery.tier'); }
     out.delivery = delivery;
   }
-  if (out.limits && typeof out.limits === 'object' && !Array.isArray(out.limits)) {
+  if (isPlainObject(out.limits)) {
     const limits = { ...out.limits };
     for (const [k, v] of Object.entries(LIMIT_DEFAULTS)) {
       if (limits[k] === undefined) limits[k] = v;
@@ -4399,7 +4593,7 @@ function stripNullOptionalsReport(args) {
   }
   if (isPlainObject(out.configEcho) && typeof out.mode === 'string') {
     const configEcho = { ...out.configEcho };
-    for (const descriptor of KNOB_REGISTRY) {
+    for (const descriptor of descriptors) {
       if (!descriptor.nullReceipt || !descriptor.nullReceipt.includes(out.mode)) continue;
       const entry = configEcho[descriptor.key];
       if (isPlainObject(entry) && entry.value === null) {
@@ -4411,36 +4605,35 @@ function stripNullOptionalsReport(args) {
   }
   return { args: out, dropped, respelled };
 }
-function normalizeArgsReport(raw) {
+function normalizeArgsReport(raw, descriptors = KNOB_REGISTRY) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  const report = stripNullOptionalsReport(parsed);
-  const { args, derivedPaths } = deriveConfigWaist(report.args);
+  const report = stripNullOptionalsReport(parsed, descriptors);
+  const { args, derivedPaths } = deriveConfigWaist(report.args, descriptors);
   report.args = args;
   report.derivedPaths = derivedPaths;
   return report;
 }
-function normalizeArgs(raw) {
-  return normalizeArgsReport(raw).args;
+function normalizeArgs(raw, descriptors = KNOB_REGISTRY) {
+  return normalizeArgsReport(raw, descriptors).args;
 }
-function validateArgs(args) {
+function validateArgs(args, descriptors = KNOB_REGISTRY) {
   const errors = [];
   if (!args || typeof args !== 'object') return { ok: false, errors: ['args is not an object'] };
   if (args.argsVersion !== ARGS_VERSION) errors.push(`unsupported argsVersion ${args.argsVersion} (expected ${ARGS_VERSION})`);
   for (const k of REQUIRED) if (args[k] === undefined) errors.push(`missing required field: ${k}`);
-  if (args.mode && !['interactive', 'headless'].includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
-  validateConfigEcho(args, errors);
+  if (args.mode && !MODE_VALUES.includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
+  validateConfigEcho(args, errors, descriptors);
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
-  const PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
-  for (const field of ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot']) {
+  for (const field of ARGS_SHAPES.pathFields) {
     const v = args[field];
     if (v === undefined) continue;
     if (typeof v !== 'string' || v.trim() === '') {
       errors.push(`${field} must be a non-empty string when present`);
       continue;
     }
-    if (PATH_CONTROL_RE.test(v)) {
+    if (CONTROL_RE.test(v)) {
       errors.push(`${field} must not contain a control character`);
       continue;
     }
@@ -4463,7 +4656,10 @@ function validateArgs(args) {
     }
   }
   if (args.agentFlags !== undefined) {
-    errors.push('agentFlags is no longer accepted — the pipeline derives dimension flags itself from riskTable/scopeAnswer (issue #24). Stamp riskTable (the Phase 2e per-file risk classification) and, only when the light/full gate asked, scopeAnswer; do not stamp agentFlags.');
+    errors.push('agentFlags is no longer accepted — the pipeline derives dimension flags itself from ' +
+      'riskTable/scopeAnswer (issue #24). Stamp riskTable (the Phase 2e per-file risk ' +
+      'classification) and, only when the light/full gate asked, scopeAnswer; do not stamp ' +
+      'agentFlags.');
   }
   if (args.riskTable !== undefined) {
     if (!Array.isArray(args.riskTable)) {
@@ -4472,12 +4668,12 @@ function validateArgs(args) {
       const seenPaths = new Set();
       for (let i = 0; i < args.riskTable.length; i++) {
         const entry = args.riskTable[i];
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        if (!isPlainObject(entry)) {
           errors.push(`riskTable[${i}] must be an object of the form {path, risk}`);
           continue;
         }
         const keys = Object.keys(entry).sort();
-        const extra = keys.filter((k) => k !== 'path' && k !== 'risk');
+        const extra = keys.filter((k) => !ARGS_SHAPES.riskFields.includes(k));
         if (extra.length > 0) {
           errors.push(`riskTable[${i}] has unexpected key(s): ${extra.join(', ')} (only path and risk are allowed)`);
         }
@@ -4507,73 +4703,35 @@ function validateArgs(args) {
     errors.push(`invalid scopeAnswer: ${args.scopeAnswer} (expected one of ${SCOPE_ANSWERS.join(', ')})`);
   }
   const riskTableWellFormed = Array.isArray(args.riskTable)
-    && args.riskTable.every((e) => e && typeof e === 'object' && RISK_LEVELS.includes(e.risk) && typeof e.path === 'string' && e.path !== '');
+    && args.riskTable.every((e) => e && typeof e === 'object' && RISK_LEVELS.includes(e.risk) && typeof e.path === 'string' &&
+      e.path !== '');
   const scopeAnswerWellFormed = args.scopeAnswer === undefined || SCOPE_ANSWERS.includes(args.scopeAnswer);
   if (riskTableWellFormed && scopeAnswerWellFormed && typeof args.changedLines === 'number') {
     const lightEligible = computeLightEligible(args.riskTable, args.changedLines);
     if ((args.scopeAnswer !== undefined) !== lightEligible) {
       if (args.scopeAnswer !== undefined) {
-        errors.push(`scopeAnswer is "${args.scopeAnswer}" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked; omit scopeAnswer`);
+        errors.push(`scopeAnswer is "${args.scopeAnswer}" but the riskTable/changedLines are not light-eligible ` +
+          `(not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the ` +
+          `orchestrator answered a light/full question the gate never asked; omit scopeAnswer`);
       } else {
-        errors.push('riskTable/changedLines are light-eligible but scopeAnswer is missing — the light/full gate must have asked, and its answer must be stamped as scopeAnswer');
+        errors.push('riskTable/changedLines are light-eligible but scopeAnswer is missing — the light/full gate ' +
+          'must have asked, and its answer must be stamped as scopeAnswer');
       }
     }
   }
-  if (args.policy && typeof args.policy === 'object' && !Array.isArray(args.policy)
-    && args.policy.provider !== undefined && args.policy.provider !== null
-    && !POLICY_PROVIDERS.includes(args.policy.provider)) {
-    errors.push(`invalid policy.provider: ${args.policy.provider} (expected one of ${POLICY_PROVIDERS.join(', ')})`);
-  }
-  if (isPlainObject(args.policy) && args.policy.tier !== undefined && args.policy.tier !== 'optimized') {
-    errors.push(`invalid policy.tier: ${args.policy.tier} (expected optimized)`);
-  }
-  if (isPlainObject(args.policy)
-    && args.policy.gateway !== undefined && args.policy.gateway !== null
-    && typeof args.policy.gateway !== 'boolean') {
-    errors.push(`invalid policy.gateway: ${args.policy.gateway} (expected a boolean)`);
-  }
-  if (args.changedFiles !== undefined && !Array.isArray(args.changedFiles))
-    errors.push('changedFiles must be an array of repo-relative paths');
-  if (args.changedLines !== undefined && typeof args.changedLines !== 'number')
-    errors.push('changedLines must be a number');
-  const CONTEXT_SIZE_MAX = { contextLines: 5000000, contextChars: 500000000 };
-  for (const k of ['contextLines', 'contextChars']) {
-    if (args[k] === undefined) continue;
-    if (!Number.isSafeInteger(args[k]) || args[k] <= 0) {
-      errors.push(`${k} must be a positive safe integer (the measured size of the shared context file) when present`);
-    } else if (args[k] > CONTEXT_SIZE_MAX[k]) {
-      errors.push(`${k} is ${args[k]}, above the ${CONTEXT_SIZE_MAX[k]} ceiling — that is not a review context, it is a mis-measurement`);
-    }
-  }
+  if (isPlainObject(args.policy)) validateArgsFields(args.policy, 'policy', errors, 'policy');
+  validateArgsFields(args, 'changed', errors);
+  validateArgsFields(args, 'context', errors);
   if (args.contextChars !== undefined && args.contextLines === undefined) {
     errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
   }
   if (args.reviewConfig !== undefined) {
-    if (args.reviewConfig === null || typeof args.reviewConfig !== 'object' || Array.isArray(args.reviewConfig)) {
+    if (!isPlainObject(args.reviewConfig)) {
       errors.push('reviewConfig must be an object (the parseReviewMd output shape) when present');
     } else {
       const validateLayer = (layer, label, allowDir) => {
-        for (const key of REVIEW_SETTING_KEYS) {
-          if (!(key in layer)) continue;
-          if (key === 'severity_threshold') {
-            if (!['critical', 'high', 'medium', 'low'].includes(layer[key])) {
-              errors.push(`${label}.${key} must be one of critical|high|medium|low when present (pre-parsed REVIEW.md enum)`);
-            }
-          } else if (!Number.isInteger(layer[key]) || layer[key] < 0 || layer[key] > 100) {
-            errors.push(`${label}.${key} must be an integer from 0 through 100 when present`);
-          }
-        }
-        if (layer.ignore !== undefined) {
-          if (!Array.isArray(layer.ignore)) {
-            errors.push(`${label}.ignore must be an array of flat pattern strings`);
-          } else {
-            for (let i = 0; i < layer.ignore.length; i++) {
-              if (typeof layer.ignore[i] !== 'string') {
-                errors.push(`${label}.ignore[${i}] must be a flat pattern string (got ${typeof layer.ignore[i]}) — parseReviewMd emits strings, never objects`);
-              }
-            }
-          }
-        }
+        validateArgsFields(layer, 'review', errors, label);
+        if (layer.ignore !== undefined) validateFlatPatterns(layer.ignore, `${label}.ignore`, errors, true);
         if (!allowDir) return;
         if (typeof layer.dir !== 'string' || layer.dir === '') {
           errors.push(`${label}.dir must be a non-empty string`);
@@ -4594,8 +4752,7 @@ function validateArgs(args) {
               errors.push(`${label} must be a plain object`);
               continue;
             }
-            const allowed = new Set(['dir', 'ignore', ...REVIEW_SETTING_KEYS]);
-            const extra = Object.keys(scope).filter((key) => !allowed.has(key)).sort();
+            const extra = Object.keys(scope).filter((key) => !ARGS_SHAPES.scopeLayerFields.includes(key)).sort();
             if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
             validateLayer(scope, label, true);
             if (typeof scope.dir === 'string' && scope.dir !== '') {
@@ -4607,39 +4764,26 @@ function validateArgs(args) {
       }
     }
   }
-  if (args.exclusionPatterns !== undefined) {
-    if (!Array.isArray(args.exclusionPatterns)) {
-      errors.push('exclusionPatterns must be an array of flat pattern strings');
-    } else {
-      for (let i = 0; i < args.exclusionPatterns.length; i++) {
-        if (typeof args.exclusionPatterns[i] !== 'string') {
-          errors.push(`exclusionPatterns[${i}] must be a flat pattern string (got ${typeof args.exclusionPatterns[i]})`);
-        }
-      }
-    }
-  }
+  if (args.exclusionPatterns !== undefined) validateFlatPatterns(args.exclusionPatterns, 'exclusionPatterns', errors);
   if (args.reviewMd !== undefined) {
     if (!Array.isArray(args.reviewMd)) {
       errors.push('reviewMd must be an array of {path, text} objects when present');
     } else {
       for (let i = 0; i < args.reviewMd.length; i++) {
         const entry = args.reviewMd[i];
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        if (!isPlainObject(entry)) {
           errors.push(`reviewMd[${i}] must be an object of the form {path, text}`);
           continue;
         }
         const keys = Object.keys(entry).sort();
-        const extra = keys.filter((k) => k !== 'path' && k !== 'text');
+        const extra = keys.filter((k) => !ARGS_SHAPES.reviewMdFields.includes(k));
         if (extra.length > 0) {
           errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path and text are allowed)`);
         }
         if (typeof entry.path !== 'string' || entry.path === '') {
           errors.push(`reviewMd[${i}].path must be a non-empty string`);
         } else {
-          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, {
-            separateSlashErrors: true,
-            requireBasename: true,
-          }));
+          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, true));
         }
         if (typeof entry.text !== 'string') {
           errors.push(`reviewMd[${i}].text must be a string`);
@@ -4650,104 +4794,46 @@ function validateArgs(args) {
       ));
       const hasReviewConfigPath = args.reviewConfigPath != null;
       if (hasRootReviewMd !== hasReviewConfigPath) {
-        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd contains an entry with path exactly REVIEW.md');
+        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd ' +
+          'contains an entry with path exactly REVIEW.md');
       }
     }
   }
-  if (args.exclusionsText !== undefined && typeof args.exclusionsText !== 'string') {
-    errors.push('exclusionsText must be a string when present');
-  }
+  validateArgsFields(args, 'exclusions', errors);
   if (args.reviewMd !== undefined && args.reviewConfig !== undefined) {
     errors.push('reviewMd and reviewConfig are both present — pass raw reviewMd or pre-parsed reviewConfig, not both (single authority)');
   }
   if (args.exclusionsText !== undefined && args.exclusionPatterns !== undefined) {
-    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or pre-parsed exclusionPatterns, not both (single authority)');
+    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or ' +
+      'pre-parsed exclusionPatterns, not both (single authority)');
   }
   if (args.delivery !== undefined) {
-    if (args.delivery === null || typeof args.delivery !== 'object' || Array.isArray(args.delivery)) {
+    if (!isPlainObject(args.delivery)) {
       errors.push('delivery must be an object of the form { tier } when present');
     } else {
       if (args.delivery.tier !== undefined && !DELIVERY_TIERS.includes(args.delivery.tier)) {
         errors.push(`invalid delivery.tier: ${args.delivery.tier} (expected one of ${DELIVERY_TIERS.join(', ')})`);
       }
       const id = args.delivery.prIdentity;
-      if (id !== undefined) {
-        if (id === null || typeof id !== 'object' || Array.isArray(id)) {
-          const requiredNames = PR_IDENTITY_FIELDS.filter((field) => field.required).map((field) => field.name);
-          const optionalNames = PR_IDENTITY_FIELDS.filter((field) => !field.required).map((field) => field.name);
-          errors.push(`delivery.prIdentity must be an object { ${requiredNames.join(', ')}[, ${optionalNames.join(', ')}] } when present`);
-        } else {
-          for (const field of PR_IDENTITY_FIELDS) {
-            const value = id[field.name];
-            const valid = value !== undefined && field.check(value);
-            if ((value === undefined && field.required) || (value !== undefined && !valid)) {
-              errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
-            }
-            if (valid) {
-              for (const extra of field.extraChecks || []) {
-                if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
-              }
-            }
-          }
-        }
-      }
+      if (id !== undefined) validatePrIdentity(id, errors);
     }
   }
   if (args.persist !== undefined) {
-    if (args.persist === null || typeof args.persist !== 'object' || Array.isArray(args.persist)) {
+    if (!isPlainObject(args.persist)) {
       errors.push('persist must be an object of the form { assembleScriptPath, returnPrimaries } when present');
     } else {
-      if (args.persist.assembleScriptPath !== undefined
-        && (typeof args.persist.assembleScriptPath !== 'string' || !args.persist.assembleScriptPath)) {
-        errors.push('persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py');
-      }
-      if (args.persist.returnPrimaries !== undefined && typeof args.persist.returnPrimaries !== 'boolean') {
-        errors.push('persist.returnPrimaries must be a boolean when present');
-      }
+      validateArgsFields(args.persist, 'persist', errors);
     }
   }
-  if (typeof args.pluginRoot === 'string' && args.pluginRoot.startsWith('/')) {
-    const root = args.pluginRoot.replace(/\/+$/, '') || '/';
-    const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
-    const expectedPaths = {
-      assemble: `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES.assemble}`,
-      verify: `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES.verify}`,
-    };
-    if (isPlainObject(args.persist) && typeof args.persist.assembleScriptPath === 'string'
-      && args.persist.assembleScriptPath !== expectedPaths.assemble) {
-      errors.push(`persist.assembleScriptPath must equal ${expectedPaths.assemble}`);
-    }
-    if (isPlainObject(args.verify) && typeof args.verify.scriptPath === 'string'
-      && args.verify.scriptPath !== expectedPaths.verify) {
-      errors.push(`verify.scriptPath must equal ${expectedPaths.verify}`);
-    }
-  }
-  const LIMIT_KEYS = ['summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize', 'deliveryCap', 'discoveryCap', 'maxLineSpan'];
+  errors.push(...validateScriptPaths(args));
   if (args.limits !== undefined) {
-    if (args.limits === null || typeof args.limits !== 'object' || Array.isArray(args.limits)) {
+    if (!isPlainObject(args.limits)) {
       errors.push('limits must be an object when present');
     } else {
       for (const k of Object.keys(args.limits)) {
         if (!LIMIT_KEYS.includes(k)) errors.push(`unknown limits key: ${k} (expected one of ${LIMIT_KEYS.join(', ')})`);
       }
-      for (const k of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan']) {
-        const v = args.limits[k];
-        if (v !== undefined && (!Number.isSafeInteger(v) || v <= 0)) {
-          errors.push(`limits.${k} must be a positive safe integer when present`);
-        }
-      }
-      if (args.limits.challengeCap !== undefined
-        && (!Number.isSafeInteger(args.limits.challengeCap) || args.limits.challengeCap < 0)) {
-        errors.push('limits.challengeCap must be a non-negative safe integer when present');
-      }
-      if (args.limits.deliveryCap !== undefined && args.limits.deliveryCap !== null
-        && (!Number.isSafeInteger(args.limits.deliveryCap) || args.limits.deliveryCap < 0)) {
-        errors.push('limits.deliveryCap must be null, absent, or a non-negative safe integer when present');
-      }
-      if (args.limits.discoveryCap !== undefined
-        && (!Number.isSafeInteger(args.limits.discoveryCap) || args.limits.discoveryCap <= 0)) {
-        errors.push('limits.discoveryCap must be a positive safe integer when present');
-      }
+      validateArgsFields(args.limits, 'limits', errors);
     }
   }
   if (args.reviewScope !== undefined) {
@@ -4755,18 +4841,20 @@ function validateArgs(args) {
       errors.push('reviewScope must be { requested, kind, since, commits, detector }');
     } else {
       const scopeKeys = Object.keys(args.reviewScope);
-      const scopeKeysExpected = ['requested', 'kind', 'since', 'commits', 'detector'];
+      const scopeKeysExpected = ARGS_SHAPES.scopeFields;
       const scopeExtra = scopeKeys.filter((key) => !scopeKeysExpected.includes(key));
       if (scopeExtra.length) errors.push(`reviewScope has unexpected key(s): ${scopeExtra.join(', ')}`);
       const { requested, kind, since, commits, detector } = args.reviewScope;
-      if (!['full', 'incremental'].includes(requested)) {
+      if (!ARGS_SHAPES.scopeKinds.includes(requested)) {
         errors.push('reviewScope.requested must be full or incremental');
       }
-      if (!['full', 'incremental'].includes(kind)) errors.push(`reviewScope.kind must be full or incremental`);
+      if (!ARGS_SHAPES.scopeKinds.includes(kind)) errors.push(`reviewScope.kind must be full or incremental`);
       if (kind === 'incremental') {
         if (requested !== 'incremental') errors.push('reviewScope.kind incremental requires requested incremental');
-        if (typeof since !== 'string' || !NONCE_RE.test(since)) errors.push('reviewScope.since must be a NONCE_RE-safe string for incremental scope');
-        if (commits !== null && (!Number.isSafeInteger(commits) || commits < 0)) errors.push('reviewScope.commits must be a non-negative safe integer or null');
+        if (typeof since !== 'string' ||
+          !NONCE_RE.test(since)) errors.push('reviewScope.since must be a NONCE_RE-safe string for incremental scope');
+        if (commits !== null && (!Number.isSafeInteger(commits) ||
+          commits < 0)) errors.push('reviewScope.commits must be a non-negative safe integer or null');
       } else if (kind === 'full') {
         if (since !== null) errors.push('reviewScope.since must be null for full scope');
         if (commits !== null) errors.push('reviewScope.commits must be null for full scope');
@@ -4775,7 +4863,7 @@ function validateArgs(args) {
         if (!isPlainObject(detector)) {
           errors.push('reviewScope.detector must be null or an object copied from detect_prior_review.py');
         } else {
-          const detectorKeys = ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'];
+          const detectorKeys = ARGS_SHAPES.detectorFields;
           const detectorExtra = Object.keys(detector).filter((key) => !detectorKeys.includes(key));
           const detectorMissing = detectorKeys.filter((key) => !Object.hasOwn(detector, key));
           if (detectorExtra.length) errors.push(`reviewScope.detector has unexpected key(s): ${detectorExtra.join(', ')}`);
@@ -4800,7 +4888,7 @@ function validateArgs(args) {
   }
   const reported = new Set();
   if (isPlainObject(args.configEcho)) {
-    const capEntry = receiptEntryForKey(args, 'pr_comment_cap');
+    const capEntry = receiptEntryForKey(args, 'pr_comment_cap', descriptors);
     if (isPlainObject(args.limits) && capEntry !== null) {
       const capValue = args.limits.deliveryCap;
       const capShapeInvalid = capValue !== undefined && capValue !== null
@@ -4817,7 +4905,7 @@ function validateArgs(args) {
         reported.add('limits.deliveryCap');
       }
     }
-    const tierEntry = receiptEntryForKey(args, 'delivery_tier');
+    const tierEntry = receiptEntryForKey(args, 'delivery_tier', descriptors);
     const stampedTier = dottedValue(args, 'delivery.tier');
     if (tierEntry !== null
       && (args.delivery === undefined || args.delivery === null || isPlainObject(args.delivery))
@@ -4826,10 +4914,12 @@ function validateArgs(args) {
       if (tierEntry.value !== 'all') errors.push('configEcho.delivery_tier does not match delivery.tier');
     }
     if (args.mode === 'headless') {
-      const trivialEntry = receiptEntryForKey(args, 'trivial_scope');
+      const trivialEntry = receiptEntryForKey(args, 'trivial_scope', descriptors);
       if (trivialEntry !== null && trivialEntry.value === 'light'
         && !computeLightEligible(args.riskTable, args.changedLines)) {
-        errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the orchestrator answered a light/full question the gate never asked`);
+        errors.push(`configEcho.trivial_scope is "light" but the riskTable/changedLines are not light-eligible ` +
+          `(not every file is low risk, or changedLines >= ${LIGHT_SCOPE_MAX_CHANGED_LINES}) — the ` +
+          `orchestrator answered a light/full question the gate never asked`);
         reported.add('scopeAnswer');
       }
       const deliveryEcho = configEchoValue(args, 'delivery');
@@ -4840,7 +4930,7 @@ function validateArgs(args) {
     }
   }
   if (isPlainObject(args.configEcho)) {
-    for (const descriptor of KNOB_REGISTRY) {
+    for (const descriptor of descriptors) {
       if (!descriptor.modes.includes(args.mode) || descriptor.waistPath === null) continue;
       if (reported.has(descriptor.waistPath)) continue;
       const entry = receiptEntryFor(args, descriptor);
@@ -4857,7 +4947,7 @@ function validateArgs(args) {
         : stamped === expected;
       if (!matches) errors.push(`${descriptor.waistPath} does not match configEcho.${descriptor.key}`);
     }
-    for (const descriptor of KNOB_REGISTRY) {
+    for (const descriptor of descriptors) {
       if (!descriptor.modes.includes(args.mode)
         || descriptor.derivedFrom === null
         || !Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)) continue;
@@ -5630,7 +5720,9 @@ function checkpointFindingShapeErrors(finding, path) {
     } else {
       finding.corroborations.forEach((corroboration, idx) => {
         if (!isPlainCheckpointObject(corroboration)) {
-          violations.push(`checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`);
+          violations.push(
+            `checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`,
+          );
         }
       });
     }
@@ -5663,7 +5755,9 @@ function checkpointShapeErrors(resolvedCheckpoints) {
       arrVal.forEach((el, idx) => {
         if (!isPlainCheckpointObject(el)) {
           if (fields[field] === CHECKPOINT_ARRAY_STRICT) {
-            violations.push(`checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`);
+            violations.push(
+              `checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`,
+            );
           }
           return;
         }
@@ -5735,7 +5829,7 @@ function beltPartitionList(list) {
   return { list: splicedList, eliminated: eliminatedOut };
 }
 function stripEliminatedList(list) {
-  return list.map(applyInjectedProseStrip);
+  return list.map((finding) => applyInjectedProseStrip(finding));
 }
 function normalizePhaseFindings(name, out, replayed, args) {
   if (!out || typeof out !== 'object') return;
@@ -5825,7 +5919,7 @@ function hostPathTextFields(value, patterns) {
       return;
     }
     for (const [key, entry] of Object.entries(value)) {
-      const name = field ?? (FINDING_TEXT_FIELD_NAMES.has(key) ? key : 'other');
+      const name = field ?? (FINDING_TEXT_FIELD_NAMES.includes(key) ? key : 'other');
       visit(key, name);
       visit(entry, name);
     }
@@ -5879,7 +5973,7 @@ async function runWith(ctx, rawArgs) {
     derivedPaths,
   } = normalizeArgsReport(entry.waist);
   const nullArgGaps = [
-    ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map(nullToleranceGap),
+    ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map((key) => nullToleranceGap(key)),
     ...respelledNulls.map(nullRespellGap),
   ];
   const check = validateArgs(A);

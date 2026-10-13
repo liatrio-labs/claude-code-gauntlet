@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ARGS_VERSION, LIMIT_DEFAULTS, REQUIRED, LIGHT_SCOPE_MAX_CHANGED_LINES } from '../src/registry.js';
-import { normalizeArgs, validateArgs, stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, nullRespellGap, resolveReviewConfig, nullToleranceRejectedKeys } from '../src/args.js';
+import { normalizeArgs, validateArgs, stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap } from '../src/args.js';
+import { nullRespellGap, resolveReviewConfig, nullToleranceRejectedKeys } from '../src/args.js';
 import { parseEntryArgs } from '../src/entry.js';
-import { computeLightEligible, KNOB_REGISTRY, safeReceiptValue, DERIVE_WHEN, DERIVED_FROM, matchesRule, isPriorReviewDetector } from '../src/knobs.js';
+import { computeLightEligible, KNOB_REGISTRY, receiptEntryFor, DERIVE_WHEN, DERIVED_FROM, matchesRule } from '../src/knobs.js';
+import { deriveWhenHolds } from '../src/knobs.js';
 
 const good = {
   argsVersion: 1, mode: 'interactive', repoRoot: '/r', outputDir: '/r/.code-gauntlet',
@@ -84,7 +86,8 @@ test('validateArgs accepts a well-formed waist', () => {
 test('T182-ARGS: required receipt has the registry-defined mode key sets and render order', () => {
   assert.deepEqual(
     KNOB_REGISTRY.filter((d) => d.modes.includes('headless')).map((d) => d.key),
-    ['model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy', 'reviewed_policy', 'pr_not_found_policy', 'trivial_scope'],
+    ['model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy', 'reviewed_policy', 'pr_not_found_policy',
+      'trivial_scope'],
   );
   assert.deepEqual(
     KNOB_REGISTRY.filter((d) => d.modes.includes('interactive')).map((d) => d.key),
@@ -121,7 +124,12 @@ test('T182-ARGS: configEcho entry shape and value type are rejected directly', (
 
 test('T182-ARGS: safeReceiptValue rejects control and backtick suffixes on an enum-valid value', () => {
   for (const value of ['optimized\n', 'optimized`']) {
-    assert.equal(safeReceiptValue(value), false, JSON.stringify(value));
+    const descriptor = {
+      ...KNOB_REGISTRY.find(({ key }) => key === 'model_tier'),
+      rule: { kind: 'enum', values: [value] },
+    };
+    const args = { ...good, configEcho: { ...good.configEcho, model_tier: { value, source: 'fixed' } } };
+    assert.equal(receiptEntryFor(args, descriptor) !== null, false, JSON.stringify(value));
   }
 });
 
@@ -129,7 +137,8 @@ test('T182-ARGS: every registry receipt value rule and source rule is focused', 
   const headless = {
     ...good,
     mode: 'headless',
-    delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', platform: 'github', web_origin: 'https://github.com' } },
+    delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      platform: 'github', web_origin: 'https://github.com' } },
     configEcho: {
       model_tier: { value: 'optimized', source: 'env' },
       delivery: { value: 'chat,pr_comments,markdown', source: 'review_md' },
@@ -149,7 +158,8 @@ test('T182-ARGS: every registry receipt value rule and source rule is focused', 
   assert.equal(validateArgs(missingKey).ok, false);
   const extraKey = { ...headless, configEcho: { ...headless.configEcho, unexpected: { value: 'x', source: 'default' } } };
   assert.equal(validateArgs(extraKey).ok, false);
-  const malformedEntry = { ...headless, configEcho: { ...headless.configEcho, model_tier: { value: 'optimized', source: 'env', extra: true } } };
+  const malformedEntry = { ...headless, configEcho: { ...headless.configEcho, model_tier: { value: 'optimized', source: 'env',
+    extra: true } } };
   assert.equal(validateArgs(malformedEntry).ok, false);
 
   const invalidValues = new Map([
@@ -162,7 +172,8 @@ test('T182-ARGS: every registry receipt value rule and source rule is focused', 
     ['pr_comment_cap', 'env'], ['delivery_tier', 'default'], ['draft_policy', 'env'],
     ['reviewed_policy', 'default'], ['pr_not_found_policy', 'env'], ['trivial_scope', 'default'],
   ]);
-  const expectedHeadless = ['model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy', 'reviewed_policy', 'pr_not_found_policy', 'trivial_scope'];
+  const expectedHeadless = ['model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy', 'reviewed_policy',
+    'pr_not_found_policy', 'trivial_scope'];
   assert.deepEqual([...invalidValues.keys()], expectedHeadless);
   for (const value of ['optimized\n', 'optimized`']) {
     const result = validateArgs({ ...headless, configEcho: { ...headless.configEcho, model_tier: { value, source: 'env' } } });
@@ -233,16 +244,22 @@ test('T182-ARGS: every registry receipt value rule and source rule is focused', 
       assert.ok(sourceResult.errors.some((error) => error.includes(`configEcho.${key}.source`)), sourceResult.errors.join('; '));
     }
   }
-  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, pr_comment_cap: { value: 'null', source: 'env' } } }).ok, false);
-  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, pr_comment_cap: { value: '1', source: 'default' } } }).ok, false);
-  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, model_tier: { value: 'optimized', source: 'env' } } }).ok, false);
-  assert.equal(validateArgs({ ...interactive, reviewMd: [], reviewConfigPath: null, configEcho: { ...interactive.configEcho, review_md: { value: 'present', source: 'discovery' } } }).ok, false);
-  const interactiveInvalid = validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, review_md: { value: 'other', source: 'discovery' } } });
+  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, pr_comment_cap: { value: 'null',
+    source: 'env' } } }).ok, false);
+  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, pr_comment_cap: { value: '1',
+    source: 'default' } } }).ok, false);
+  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, model_tier: { value: 'optimized',
+    source: 'env' } } }).ok, false);
+  assert.equal(validateArgs({ ...interactive, reviewMd: [], reviewConfigPath: null, configEcho: { ...interactive.configEcho,
+    review_md: { value: 'present', source: 'discovery' } } }).ok, false);
+  const interactiveInvalid = validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, review_md: { value: 'other',
+    source: 'discovery' } } });
   assert.ok(interactiveInvalid.errors.some((error) => error.includes('configEcho.review_md.value')));
 });
 
 test('registry rule metadata has the complete projected row shape', () => {
-  const rowKeys = ['key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'waistMap', 'derivedFrom', 'deriveWhen', 'nullReceipt', 'resolvedKey'];
+  const rowKeys = ['key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'waistMap',
+    'derivedFrom', 'deriveWhen', 'nullReceipt', 'resolvedKey'];
   const resolvedKeys = new Map([
     ['model_tier', true], ['delivery', true], ['post_mode', true], ['draft_policy', true],
     ['reviewed_policy', true], ['pr_not_found_policy', true], ['pr_comment_cap', false],
@@ -266,7 +283,8 @@ test('registry rule metadata has the complete projected row shape', () => {
         ? {
           ...good,
           mode,
-          delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', platform: 'github', web_origin: 'https://github.com' } },
+          delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            platform: 'github', web_origin: 'https://github.com' } },
           configEcho: {
             model_tier: { value: 'optimized', source: 'default' },
             delivery: { value: 'markdown', source: 'default' },
@@ -430,7 +448,8 @@ test('T305-ARGS: registry rule interpreter is exact, canonical, and fail-closed'
       ? {
         ...good,
         mode,
-        delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', platform: 'github', web_origin: 'https://github.com' } },
+        delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          platform: 'github', web_origin: 'https://github.com' } },
         configEcho: {
           model_tier: { value: 'optimized', source: 'default' },
           delivery: { value: 'markdown', source: 'default' },
@@ -483,6 +502,7 @@ test('T305-ARGS: registry rule interpreter is exact, canonical, and fail-closed'
 });
 
 test('T305-ARGS: normalizeArgs derives typed waist fields from the receipt once', () => {
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
   const interactive = {
     ...good,
     configEcho: {
@@ -491,11 +511,11 @@ test('T305-ARGS: normalizeArgs derives typed waist fields from the receipt once'
       delivery_tier: { value: 'main_only', source: 'env' },
     },
   };
-  const normalizedInteractive = normalizeArgs(interactive);
+  const normalizedInteractive = normalizeArgs(interactive, knobRows);
   assert.deepEqual(normalizedInteractive.limits.deliveryCap, 7);
   assert.deepEqual(normalizedInteractive.delivery, { tier: 'main_only' });
   assert.deepEqual(normalizedInteractive.configEcho.review_md, { value: 'absent', source: 'discovery' });
-  assert.deepEqual(validateArgs(normalizedInteractive), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs(normalizedInteractive, knobRows), { ok: true, errors: [] });
 
   const headless = {
     ...good,
@@ -513,19 +533,19 @@ test('T305-ARGS: normalizeArgs derives typed waist fields from the receipt once'
       trivial_scope: { value: 'light', source: 'default' },
     },
   };
-  const normalizedHeadless = normalizeArgs(headless);
+  const normalizedHeadless = normalizeArgs(headless, knobRows);
   assert.equal(normalizedHeadless.limits.deliveryCap, 6);
   assert.deepEqual(normalizedHeadless.delivery, { tier: 'all' });
   assert.equal(normalizedHeadless.scopeAnswer, 'light');
-  assert.deepEqual(validateArgs(normalizedHeadless), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs(normalizedHeadless, knobRows), { ok: true, errors: [] });
   const fullHeadless = normalizeArgs({
     ...headless,
     configEcho: { ...headless.configEcho, trivial_scope: { value: 'full', source: 'default' } },
-  });
+  }, knobRows);
   assert.equal(fullHeadless.scopeAnswer, 'full');
-  assert.deepEqual(validateArgs(fullHeadless), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs(fullHeadless, knobRows), { ok: true, errors: [] });
 
-  const scopeDescriptor = KNOB_REGISTRY.find(({ key }) => key === 'trivial_scope');
+  const scopeDescriptor = knobRows.find(({ key }) => key === 'trivial_scope');
   const originalDeriveWhen = scopeDescriptor.deriveWhen;
   const ineligibleHeadless = {
     ...headless,
@@ -533,9 +553,9 @@ test('T305-ARGS: normalizeArgs derives typed waist fields from the receipt once'
   };
   try {
     scopeDescriptor.deriveWhen = null;
-    assert.equal(normalizeArgs(ineligibleHeadless).scopeAnswer, 'light');
+    assert.equal(normalizeArgs(ineligibleHeadless, knobRows).scopeAnswer, 'light');
     scopeDescriptor.deriveWhen = originalDeriveWhen;
-    assert.equal(normalizeArgs(ineligibleHeadless).scopeAnswer, undefined);
+    assert.equal(normalizeArgs(ineligibleHeadless, knobRows).scopeAnswer, undefined);
   } finally {
     scopeDescriptor.deriveWhen = originalDeriveWhen;
   }
@@ -544,7 +564,7 @@ test('T305-ARGS: normalizeArgs derives typed waist fields from the receipt once'
     ...interactive,
     limits: { ...interactive.limits, deliveryCap: 3 },
     delivery: { tier: 'all' },
-  });
+  }, knobRows);
   assert.equal(stamped.limits.deliveryCap, 3);
   assert.equal(stamped.delivery.tier, 'all');
   assert.equal(interactive.delivery, undefined);
@@ -565,26 +585,28 @@ test('T309-ARGS: headless PR review scope derives requested through the registry
     assert.equal(normalized.reviewScope.requested, expected, policy);
     assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] }, policy);
     assert.deepEqual(input, before, `${policy} normalization must not mutate the caller object`);
-    assert.equal(isPriorReviewDetector(input), true);
+    assert.equal(deriveWhenHolds({ deriveWhen: 'priorReviewDetector' }, input), true);
   }
 });
 
 test('T309-ARGS: review policy waistMap drives derivation and caller lockstep together', () => {
-  const descriptor = KNOB_REGISTRY.find(({ key }) => key === 'reviewed_policy');
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
+  const descriptor = knobRows.find(({ key }) => key === 'reviewed_policy');
   const original = descriptor.waistMap;
   try {
     descriptor.waistMap = { skip: 'incremental' };
     const omitted = headlessArgs('skip', { kind: 'full', since: null, commits: null });
     delete omitted.reviewScope.requested;
-    assert.equal(normalizeArgs(omitted).reviewScope.requested, 'incremental');
+    assert.equal(normalizeArgs(omitted, knobRows).reviewScope.requested, 'incremental');
     const stamped = headlessArgs('skip', { requested: 'incremental', kind: 'full', since: null, commits: null });
-    assert.deepEqual(validateArgs(stamped), { ok: true, errors: [] });
+    assert.deepEqual(validateArgs(stamped, knobRows), { ok: true, errors: [] });
   } finally {
     descriptor.waistMap = original;
   }
 });
 
 test('T309-ARGS: interactive review policy receipts never derive reviewScope.requested', () => {
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
   const input = {
     ...good,
     configEcho: {
@@ -595,10 +617,10 @@ test('T309-ARGS: interactive review policy receipts never derive reviewScope.req
       kind: 'full', since: null, commits: null, detector: priorReviewDetector,
     },
   };
-  assert.equal(normalizeArgs(input).reviewScope.requested, undefined);
-  assert.equal(isPriorReviewDetector(input), true);
+  assert.equal(normalizeArgs(input, knobRows).reviewScope.requested, undefined);
+  assert.equal(deriveWhenHolds({ deriveWhen: 'priorReviewDetector' }, input), true);
 
-  const descriptor = KNOB_REGISTRY.find(({ key }) => key === 'reviewed_policy');
+  const descriptor = knobRows.find(({ key }) => key === 'reviewed_policy');
   const originalModes = descriptor.modes;
   const originalSources = descriptor.allowedSources;
   try {
@@ -607,7 +629,7 @@ test('T309-ARGS: interactive review policy receipts never derive reviewScope.req
       ...originalSources,
       interactive: ['env', 'default'],
     };
-    assert.equal(normalizeArgs(input).reviewScope.requested, 'incremental');
+    assert.equal(normalizeArgs(input, knobRows).reviewScope.requested, 'incremental');
   } finally {
     descriptor.modes = originalModes;
     descriptor.allowedSources = originalSources;
@@ -658,6 +680,7 @@ test('T309-ARGS: malformed reviewed policy receipt derives nothing and reports t
 });
 
 test('T4: unknown deriveWhen names fail closed without throwing', () => {
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
   const descriptors = ['nonsense', 'toString'].map((deriveWhen, index) => ({
     key: `unknown_${index}`,
     modes: ['headless'],
@@ -678,16 +701,16 @@ test('T4: unknown deriveWhen names fail closed without throwing', () => {
   for (const descriptor of descriptors) {
     input.configEcho[descriptor.key] = { value: 'value', source: 'default' };
   }
-  const originalLength = KNOB_REGISTRY.length;
+  const originalLength = knobRows.length;
   try {
-    KNOB_REGISTRY.push(...descriptors);
+    knobRows.push(...descriptors);
     const unstampedInput = headlessArgs();
     for (const descriptor of descriptors) {
       unstampedInput.configEcho[descriptor.key] = { value: 'value', source: 'default' };
     }
     let unstampedReport;
     assert.doesNotThrow(() => {
-      unstampedReport = normalizeArgsReport(unstampedInput);
+      unstampedReport = normalizeArgsReport(unstampedInput, knobRows);
     });
     // Mutation: bypass the unknown-name guard in deriveConfigWaist only. Neither
     // unknown deriveWhen name may derive its waist path from a receipt.
@@ -699,22 +722,23 @@ test('T4: unknown deriveWhen names fail closed without throwing', () => {
     for (const descriptor of descriptors) {
       input[descriptor.waistPath.split('.')[0]] = { field: 'value' };
     }
-    const normalized = normalizeArgsReport(input).args;
+    const normalized = normalizeArgsReport(input, knobRows).args;
     for (const descriptor of descriptors) {
       assert.deepEqual(normalized[descriptor.waistPath.split('.')[0]], { field: 'value' }, descriptor.deriveWhen);
     }
     // Mutation: remove the Object.hasOwn() half of deriveWhenHolds. Both an unknown
     // own name and inherited Object.prototype.toString must still be accepted here.
-    assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
+    assert.deepEqual(validateArgs(normalized, knobRows), { ok: true, errors: [] });
   } finally {
-    KNOB_REGISTRY.length = originalLength;
+    knobRows.length = originalLength;
   }
 });
 
 test('T315-ARGS: a newly registered waist row is validated against its mapped receipt', () => {
-  const originalLength = KNOB_REGISTRY.length;
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
+  const originalLength = knobRows.length;
   try {
-    KNOB_REGISTRY.push({
+    knobRows.push({
       key: 'lockstep_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
       rule: { kind: 'enum', values: ['raw'] }, env: null, reviewMdKey: null,
       defaults: { headless: ['raw', 'default'] }, type: 'string', waistPath: 'probeWaist.field',
@@ -724,13 +748,13 @@ test('T315-ARGS: a newly registered waist row is validated against its mapped re
     const base = headlessArgs();
     base.configEcho.lockstep_probe = { value: 'raw', source: 'default' };
     assert.deepEqual(
-      validateArgs({ ...base, probeWaist: { field: 'raw' } }).errors,
+      validateArgs({ ...base, probeWaist: { field: 'raw' } }, knobRows).errors,
       ['probeWaist.field does not match configEcho.lockstep_probe'],
     );
     // Mutation: delete the generic pass, or compare entry.value without applying waistMap.
-    assert.deepEqual(validateArgs({ ...base, probeWaist: { field: 'mapped' } }), { ok: true, errors: [] });
+    assert.deepEqual(validateArgs({ ...base, probeWaist: { field: 'mapped' } }, knobRows), { ok: true, errors: [] });
   } finally {
-    KNOB_REGISTRY.length = originalLength;
+    knobRows.length = originalLength;
   }
 });
 
@@ -791,9 +815,10 @@ test('T315-ARGS: every real waist row and mode has one exact lockstep oracle pai
 });
 
 test('T315-ARGS: derivedFrom rows reject a receipt that disagrees with their source', () => {
-  const originalLength = KNOB_REGISTRY.length;
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
+  const originalLength = knobRows.length;
   try {
-    KNOB_REGISTRY.push({
+    knobRows.push({
       key: 'derived_probe', modes: ['interactive'],
       allowedSources: { interactive: ['discovery'] },
       rule: { kind: 'enum', values: ['present', 'absent'] }, env: null, reviewMdKey: null,
@@ -806,16 +831,17 @@ test('T315-ARGS: derivedFrom rows reject a receipt that disagrees with their sou
       configEcho: { ...good.configEcho, derived_probe: { value: 'present', source: 'discovery' } },
     };
     // Mutation: delete the generic derivedFrom loop.
-    assert.deepEqual(validateArgs(args).errors, ['configEcho.derived_probe does not match reviewMd']);
+    assert.deepEqual(validateArgs(args, knobRows).errors, ['configEcho.derived_probe does not match reviewMd']);
   } finally {
-    KNOB_REGISTRY.length = originalLength;
+    knobRows.length = originalLength;
   }
 });
 
 test('T315-ARGS: an unhandled registry type is accepted without a false lockstep violation', () => {
-  const originalLength = KNOB_REGISTRY.length;
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
+  const originalLength = knobRows.length;
   try {
-    KNOB_REGISTRY.push({
+    knobRows.push({
       key: 'bool_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
       rule: { kind: 'enum', values: ['true'] }, env: null, reviewMdKey: null,
       defaults: { headless: ['true', 'default'] }, type: 'bool', waistPath: 'boolProbe.value',
@@ -825,16 +851,17 @@ test('T315-ARGS: an unhandled registry type is accepted without a false lockstep
     args.configEcho.bool_probe = { value: 'true', source: 'default' };
     args.boolProbe = { value: false };
     // Mutation: remove the expected === undefined guard.
-    assert.deepEqual(validateArgs(args), { ok: true, errors: [] });
+    assert.deepEqual(validateArgs(args, knobRows), { ok: true, errors: [] });
   } finally {
-    KNOB_REGISTRY.length = originalLength;
+    knobRows.length = originalLength;
   }
 });
 
 test('T315-ARGS: csv_list lockstep equality is ordered and element-wise', () => {
-  const originalLength = KNOB_REGISTRY.length;
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
+  const originalLength = knobRows.length;
   try {
-    KNOB_REGISTRY.push({
+    knobRows.push({
       key: 'csv_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
       rule: { kind: 'csv_subset', values: ['a', 'b'] }, env: null, reviewMdKey: null,
       defaults: { headless: ['a,b', 'default'] }, type: 'csv_list', waistPath: 'csvProbe.items',
@@ -843,20 +870,21 @@ test('T315-ARGS: csv_list lockstep equality is ordered and element-wise', () => 
     const base = headlessArgs();
     base.configEcho.csv_probe = { value: 'a,b', source: 'default' };
     for (const [value, expected] of [[['a', 'b'], true], [['b', 'a'], false], [['a'], false]]) {
-      const result = validateArgs({ ...base, csvProbe: { items: value } });
+      const result = validateArgs({ ...base, csvProbe: { items: value } }, knobRows);
       // Mutation: replace element-wise comparison with === or an always-true branch.
       assert.equal(result.ok, expected, JSON.stringify(value));
       if (!expected) assert.deepEqual(result.errors, ['csvProbe.items does not match configEcho.csv_probe']);
     }
   } finally {
-    KNOB_REGISTRY.length = originalLength;
+    knobRows.length = originalLength;
   }
 });
 
 test('T315-ARGS: a stamped null is data and is compared by the generic pass', () => {
-  const originalLength = KNOB_REGISTRY.length;
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
+  const originalLength = knobRows.length;
   try {
-    KNOB_REGISTRY.push({
+    knobRows.push({
       key: 'null_probe', modes: ['headless'], allowedSources: { headless: ['default'] },
       rule: { kind: 'enum', values: ['value'] }, env: null, reviewMdKey: null,
       defaults: { headless: ['value', 'default'] }, type: 'string', waistPath: 'nullProbe.value',
@@ -866,9 +894,9 @@ test('T315-ARGS: a stamped null is data and is compared by the generic pass', ()
     args.configEcho.null_probe = { value: 'value', source: 'default' };
     args.nullProbe = { value: null };
     // Mutation: change the undefined skip to a nullish skip.
-    assert.deepEqual(validateArgs(args).errors, ['nullProbe.value does not match configEcho.null_probe']);
+    assert.deepEqual(validateArgs(args, knobRows).errors, ['nullProbe.value does not match configEcho.null_probe']);
   } finally {
-    KNOB_REGISTRY.length = originalLength;
+    knobRows.length = originalLength;
   }
 });
 
@@ -904,9 +932,10 @@ test('T315-ARGS: special cap arms report one fault and suppress the generic temp
 });
 
 test('T315-ARGS: a mode twin is not lockstep-validated outside its declared modes', () => {
-  const originalLength = KNOB_REGISTRY.length;
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
+  const originalLength = knobRows.length;
   try {
-    KNOB_REGISTRY.push({
+    knobRows.push({
       key: 'mode_twin_probe', modes: ['headless'],
       allowedSources: { headless: ['default'], interactive: ['default'] },
       rule: { kind: 'enum', values: ['value'] }, env: null, reviewMdKey: null,
@@ -914,13 +943,14 @@ test('T315-ARGS: a mode twin is not lockstep-validated outside its declared mode
       type: 'string', waistPath: 'modeTwinProbe.value', waistMap: null, derivedFrom: null,
       deriveWhen: null, nullReceipt: [], resolvedKey: false,
     });
-    const args = { ...good, configEcho: { ...good.configEcho, mode_twin_probe: { value: 'value', source: 'default' } }, modeTwinProbe: { value: 'wrong' } };
-    const result = validateArgs(args);
+    const args = { ...good, configEcho: { ...good.configEcho, mode_twin_probe: { value: 'value', source: 'default' } },
+      modeTwinProbe: { value: 'wrong' } };
+    const result = validateArgs(args, knobRows);
     // Mutation: removing descriptor.modes.includes(args.mode) from the lockstep pass turns it red.
     assert.equal(result.errors.some((error) => error.includes('configEcho has unexpected key(s): mode_twin_probe')), true);
     assert.equal(result.errors.some((error) => /does not match configEcho/.test(error)), false);
   } finally {
-    KNOB_REGISTRY.length = originalLength;
+    knobRows.length = originalLength;
   }
 });
 
@@ -946,13 +976,15 @@ test('T316-ARGS: any present scopeAnswer is refused when the light gate was inel
   headless.scopeAnswer = 'full';
   const result = validateArgs(headless);
   assert.equal(result.errors.filter((error) => /scopeAnswer/.test(error)).length, 1);
-  assert.match(result.errors.find((error) => /scopeAnswer is/.test(error)), /the orchestrator answered a light\/full question the gate never asked/);
+  assert.match(result.errors.find((error) => /scopeAnswer is/.test(error)),
+    /the orchestrator answered a light\/full question the gate never asked/);
 });
 
 test('T316-ARGS: eligible scope accepts both values and a headless receipt derives either value', () => {
   for (const scopeAnswer of ['light', 'full']) {
     // Mutation: implement the biconditional as scopeAnswer === "light" iff eligible.
-    assert.deepEqual(validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 10, scopeAnswer }), { ok: true, errors: [] });
+    assert.deepEqual(validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 10, scopeAnswer }), { ok: true,
+      errors: [] });
   }
   const derived = normalizeArgs({
     ...headlessArgs(), riskTable: [{ path: 'a.js', risk: 'low' }], changedLines: 10,
@@ -1104,18 +1136,19 @@ function derivedWaistFixture(mode) {
 }
 
 test('T10: every waist row derives in each declared mode and not in its mode twin', () => {
-  for (const descriptor of KNOB_REGISTRY.filter(({ waistPath }) => waistPath !== null)) {
+  const knobRows = KNOB_REGISTRY.map((row) => ({ ...row }));
+  for (const descriptor of knobRows.filter(({ waistPath }) => waistPath !== null)) {
     for (const mode of descriptor.modes) {
       const input = derivedWaistFixture(mode);
       deleteDottedFixtureValue(input, descriptor.waistPath);
-      const normalized = normalizeArgs(input);
+      const normalized = normalizeArgs(input, knobRows);
       assert.notEqual(dottedFixtureValue(normalized, descriptor.waistPath), undefined, `${descriptor.key}/${mode}`);
     }
   }
 
-  const originalLength = KNOB_REGISTRY.length;
+  const originalLength = knobRows.length;
   try {
-    KNOB_REGISTRY.push({
+    knobRows.push({
       key: 'twin_probe',
       modes: ['headless'],
       allowedSources: { headless: ['default'], interactive: ['default'] },
@@ -1133,9 +1166,9 @@ test('T10: every waist row derives in each declared mode and not in its mode twi
     });
     const twin = derivedWaistFixture('interactive');
     twin.configEcho.twin_probe = { value: 'v', source: 'default' };
-    assert.equal(normalizeArgs(twin).twinProbe, undefined);
+    assert.equal(normalizeArgs(twin, knobRows).twinProbe, undefined);
   } finally {
-    KNOB_REGISTRY.length = originalLength;
+    knobRows.length = originalLength;
   }
 });
 
@@ -1183,7 +1216,8 @@ test('T182-ARGS: receipt lockstep rejects mismatches before any stage can dispat
 
   const nullDeletedDelivery = normalizeArgs({ ...good, delivery: null });
   assert.equal(validateArgs(nullDeletedDelivery).ok, true, 'null delivery uses effective tier all');
-  assert.equal(validateArgs({ ...nullDeletedDelivery, configEcho: { ...good.configEcho, delivery_tier: { value: 'main_only', source: 'default' } } }).ok, false);
+  assert.equal(validateArgs({ ...nullDeletedDelivery, configEcho: { ...good.configEcho, delivery_tier: { value: 'main_only',
+    source: 'default' } } }).ok, false);
 
   const scopeMismatch = validateArgs({
     ...good,
@@ -1227,23 +1261,28 @@ test('T182-ARGS: pluginRoot enforces path trust and script coherence', () => {
   }
   assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/other/scripts/assemble_artifacts.py' } }).ok, false);
   assert.equal(validateArgs({ ...good, verify: { scriptPath: '/other/scripts/verify_findings.py' } }).ok, false);
-  assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, verify: { scriptPath: '/plugin/scripts/verify_findings.py' } }).ok, true);
+  assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' },
+    verify: { scriptPath: '/plugin/scripts/verify_findings.py' } }).ok, true);
   assert.equal(validateArgs({ ...good, verify: { scriptPath: '/plugin/scripts/../verify_findings.py' } }).ok, false);
-  assert.equal(validateArgs({ ...good, pluginRoot: '/plugin/', persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, verify: { scriptPath: '/plugin/scripts/verify_findings.py' } }).ok, true);
+  assert.equal(validateArgs({ ...good, pluginRoot: '/plugin/', persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' },
+    verify: { scriptPath: '/plugin/scripts/verify_findings.py' } }).ok, true);
   assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/plugin/scripts/nested/assemble_artifacts.py' } }).ok, false);
 
 });
 
 test('T182-ARGS: incremental reviewScope accepts only a safe detector-backed scope', () => {
-  const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null };
+  const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true,
+    error: null };
   const incremental = { requested: 'incremental', kind: 'incremental', since: 'abc-1._x', commits: null, detector };
   assert.equal(validateArgs({ ...good, reviewScope: incremental }).ok, true);
   assert.equal(validateArgs({ ...good, reviewScope: { ...incremental, since: 'bad sha!' } }).ok, false);
-  assert.ok(validateArgs({ ...good, reviewScope: { ...incremental, since: 'bad sha!' } }).errors.some((error) => error.includes('reviewScope.since')));
+  assert.ok(validateArgs({ ...good, reviewScope: { ...incremental,
+    since: 'bad sha!' } }).errors.some((error) => error.includes('reviewScope.since')));
 });
 
 test('T182-ARGS: reviewScope requested/kind and incremental detector safety stay in lockstep', () => {
-  const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null };
+  const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true,
+    error: null };
   const incremental = { requested: 'incremental', kind: 'incremental', since: 'abc-1._x', commits: null, detector };
   assert.equal(validateArgs({ ...good, reviewScope: incremental }).ok, true);
   const mismatch = validateArgs({ ...good, reviewScope: { ...incremental, requested: 'full' } });
@@ -1260,8 +1299,10 @@ test('T182-ARGS: reviewScope requested/kind and incremental detector safety stay
 });
 
 test('T182-ARGS: reviewScope incremental commits validation is standalone', () => {
-  const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null };
-  const result = validateArgs({ ...good, reviewScope: { requested: 'incremental', kind: 'incremental', since: 'abc', commits: -1, detector } });
+  const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true,
+    error: null };
+  const result = validateArgs({ ...good, reviewScope: { requested: 'incremental', kind: 'incremental', since: 'abc', commits: -1,
+    detector } });
   assert.equal(result.ok, false);
   assert.ok(result.errors.some((error) => error.includes('reviewScope.commits')));
 });
@@ -1285,9 +1326,11 @@ test('T182-ARGS: reviewScope full commits validation is standalone', () => {
 });
 
 test('T182-ARGS: reviewScope requested enum and fallback detector requirement are standalone', () => {
-  const badRequested = validateArgs({ ...good, reviewScope: { requested: 'skip', kind: 'full', since: null, commits: null, detector: null } });
+  const badRequested = validateArgs({ ...good, reviewScope: { requested: 'skip', kind: 'full', since: null, commits: null,
+    detector: null } });
   assert.ok(badRequested.errors.some((error) => error.includes('reviewScope.requested')));
-  const missingDetector = validateArgs({ ...good, reviewScope: { requested: 'incremental', kind: 'full', since: null, commits: null, detector: null } });
+  const missingDetector = validateArgs({ ...good, reviewScope: { requested: 'incremental', kind: 'full', since: null, commits: null,
+    detector: null } });
   assert.ok(missingDetector.errors.some((error) => error.includes('fallback requires detector')));
 });
 
@@ -1305,10 +1348,14 @@ test('T182-ARGS: reviewScope detector shape is strict and independently checked'
     ['scalar', 1, 'must be null or an object'],
     ['array', [], 'must be null or an object'],
     ['missing key', { previously_reviewed: false }, 'is missing key'],
-    ['wrong boolean', { previously_reviewed: 'no', sha_resolvable: false, head_advanced: false, sha_is_ancestor: false, incremental_safe: false, error: null }, 'previously_reviewed must be a boolean'],
-    ['extra key', { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false, incremental_safe: false, error: null, extra: true }, 'unexpected key'],
-    ['bad error', { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false, incremental_safe: false, error: 2 }, 'error must be a string or null'],
-    ['unsafe error', { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false, incremental_safe: false, error: 'line\nbreak' }, 'error must be single-line'],
+    ['wrong boolean', { previously_reviewed: 'no', sha_resolvable: false, head_advanced: false, sha_is_ancestor: false,
+      incremental_safe: false, error: null }, 'previously_reviewed must be a boolean'],
+    ['extra key', { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false,
+      incremental_safe: false, error: null, extra: true }, 'unexpected key'],
+    ['bad error', { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false,
+      incremental_safe: false, error: 2 }, 'error must be a string or null'],
+    ['unsafe error', { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false,
+      incremental_safe: false, error: 'line\nbreak' }, 'error must be single-line'],
   ];
   for (const [label, detector, message] of cases) {
     const result = validateArgs({ ...good, reviewScope: { ...base, detector } });
@@ -1318,8 +1365,10 @@ test('T182-ARGS: reviewScope detector shape is strict and independently checked'
 });
 
 test('T182-ARGS: reviewScope extra keys are rejected independently', () => {
-  const detector = { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false, incremental_safe: false, error: null };
-  const result = validateArgs({ ...good, reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector, reason: 'old free-text fallback reason' } });
+  const detector = { previously_reviewed: false, sha_resolvable: false, head_advanced: false, sha_is_ancestor: false,
+    incremental_safe: false, error: null };
+  const result = validateArgs({ ...good, reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector,
+    reason: 'old free-text fallback reason' } });
   assert.equal(result.ok, false);
   assert.ok(result.errors.some((error) => error.includes('reviewScope has unexpected key')));
 });
@@ -1424,7 +1473,8 @@ test('validateArgs treats the delivery selector as optional (absent is fine)', (
 });
 test('validateArgs accepts delivery.tier "all" and "main_only"', () => {
   assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'all' } }), { ok: true, errors: [] });
-  assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'main_only' }, configEcho: { ...good.configEcho, delivery_tier: { value: 'main_only', source: 'default' } } }), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'main_only' }, configEcho: { ...good.configEcho,
+    delivery_tier: { value: 'main_only', source: 'default' } } }), { ok: true, errors: [] });
 });
 test('validateArgs accepts an empty delivery object (tier defaults to all downstream)', () => {
   assert.deepEqual(validateArgs({ ...good, delivery: {} }), { ok: true, errors: [] });
@@ -1473,7 +1523,8 @@ test('validateArgs rejects a non-object delivery field', () => {
 });
 // delivery.prIdentity (live-run L3): optional PR identity for the post_review-ready wrapper.
 test('validateArgs accepts a well-formed delivery.prIdentity and its absence (local-diff reviews)', () => {
-  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
+  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github',
+    web_origin: 'https://github.com' };
   // Mutation: remove bracketed IPv6 origins from WEB_ORIGIN_RE; the accepted twin turns red.
   assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'all', prIdentity: id } }), { ok: true, errors: [] });
   assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'all' } }), { ok: true, errors: [] });
@@ -1484,16 +1535,23 @@ test('validateArgs accepts a well-formed delivery.prIdentity and its absence (lo
 });
 test('validateArgs rejects a malformed delivery.prIdentity (shape-checked when present)', () => {
   // Mutation: delete the PR_IDENTITY_FIELDS validation loop; every negative row turns red.
-  const valid = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
+  const valid = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github',
+    web_origin: 'https://github.com' };
   const cases = [
     [{ ...valid, platform: undefined }, 'delivery.prIdentity.platform must be one of github, gitlab'],
     [{ ...valid, platform: 'bitbucket' }, 'delivery.prIdentity.platform must be one of github, gitlab'],
-    [{ ...valid, web_origin: 'github.com' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, web_origin: 'https://github.com/x' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, web_origin: 'https://user@github.com' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, web_origin: 'https://git.example:0' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, web_origin: 'https://git.example:65536' }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
-    [{ ...valid, web_origin: `https://${'a'.repeat(64)}.example` }, 'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: 'github.com' },
+      'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: 'https://github.com/x' },
+      'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: 'https://user@github.com' },
+      'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: 'https://git.example:0' },
+      'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: 'https://git.example:65536' },
+      'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
+    [{ ...valid, web_origin: `https://${'a'.repeat(64)}.example` },
+      'delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only'],
     [{ ...valid, sha_full: 'd'.repeat(39) }, 'delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id'],
     [{ ...valid, sha_full: 'D'.repeat(40) }, 'delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id'],
     [{ ...valid, sha_full: 'not-hex' }, 'delivery.prIdentity.sha_full must be a 40-character lowercase hex commit id'],
@@ -1515,7 +1573,8 @@ test('validateArgs rejects a malformed delivery.prIdentity (shape-checked when p
   ]);
 });
 test('T-ARGS: prIdentity.title is optional, shape-checked, and null-stripped without caller mutation', () => {
-  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github', web_origin: 'https://github.com' };
+  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'dddddddddddddddddddddddddddddddddddddddd', platform: 'github',
+    web_origin: 'https://github.com' };
   assert.deepEqual(
     validateArgs({ ...good, delivery: { prIdentity: { ...id, title: 'A useful title' } } }),
     { ok: true, errors: [] },
@@ -1965,7 +2024,8 @@ test('T303-ARGS: an absent receipt value is not respelled', () => {
 test('T303-ARGS: nullRespellGap keeps its complete operator disclosure', () => {
   assert.equal(
     nullRespellGap('pr_comment_cap'),
-    'null_receipt: args.pr_comment_cap arrived as a literal null and was spelled as the printed token "null"; the receipt and the configuration are unchanged; stamp the string "null".',
+    'null_receipt: args.pr_comment_cap arrived as a literal null and was spelled as the printed ' +
+      'token "null"; the receipt and the configuration are unchanged; stamp the string "null".',
   );
 });
 
@@ -2296,7 +2356,8 @@ test('validateArgs rejects a zero/negative/non-integer discoveryCap when present
 // --- reviewMd / exclusionsText (issue #24 PR2) -------------------------------
 
 test('validateArgs accepts a well-formed reviewMd array', () => {
-  const r = validateArgs({ ...good, reviewConfigPath: '/r/REVIEW.md', reviewMd: [{ path: 'REVIEW.md', text: '' }, { path: 'src/REVIEW.md', text: 'ignore:\n  - foo' }], configEcho: { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } } });
+  const r = validateArgs({ ...good, reviewConfigPath: '/r/REVIEW.md', reviewMd: [{ path: 'REVIEW.md', text: '' }, { path: 'src/REVIEW.md',
+    text: 'ignore:\n  - foo' }], configEcho: { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } } });
   assert.deepEqual(r, { ok: true, errors: [] });
 });
 test('validateArgs accepts an empty reviewMd array (authoritative "found nothing")', () => {
@@ -2313,7 +2374,8 @@ test('validateArgs rejects a reviewMd entry with an extra key', () => {
   assert.match(r.errors.join(' '), /unexpected key/);
 });
 test('validateArgs rejects a reviewMd entry missing path or text', () => {
-  const base = { ...good, reviewConfigPath: '/r/REVIEW.md', configEcho: { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } } };
+  const base = { ...good, reviewConfigPath: '/r/REVIEW.md', configEcho: { ...good.configEcho, review_md: { value: 'present',
+    source: 'discovery' } } };
   const missingPath = validateArgs({ ...base, reviewMd: [{ text: 'x' }] });
   assert.ok(missingPath.errors.includes('reviewMd[0].path must be a non-empty string'));
   const missingText = validateArgs({ ...base, reviewMd: [{ path: 'REVIEW.md' }] });
@@ -2322,7 +2384,8 @@ test('validateArgs rejects a reviewMd entry missing path or text', () => {
 
 test('validateArgs enforces reviewMd root and reviewConfigPath coherence', () => {
   const presentEcho = { ...good.configEcho, review_md: { value: 'present', source: 'discovery' } };
-  const coherenceError = 'reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd contains an entry with path exactly REVIEW.md';
+  const coherenceError = 'reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd ' +
+    'contains an entry with path exactly REVIEW.md';
 
   assert.deepEqual(validateArgs({
     ...good, reviewMd: [{ path: 'REVIEW.md', text: '' }], reviewConfigPath: '/r/REVIEW.md', configEcho: presentEcho,
@@ -2649,7 +2712,8 @@ test('resolveReviewConfig: deeper entry overrides an earlier entry\'s security_m
   assert.equal(out.reviewConfig.security_min_confidence, 60);
   assert.equal(out.reviewConfig.scopes[0].security_min_confidence, 85);
 });
-test('resolveReviewConfig: reviewMd + exclusionsText together — reviewConfig from reviewMd, exclusions actually parsed from exclusionsText', () => {
+test('resolveReviewConfig: reviewMd + exclusionsText together — reviewConfig from reviewMd, ' +
+  'exclusions actually parsed from exclusionsText', () => {
   const text = '```yaml code-gauntlet\nconfidence_threshold: 80\n```';
   const out = resolveReviewConfig({
     reviewMd: [{ path: 'REVIEW.md', text }],
@@ -2669,7 +2733,8 @@ test('resolveReviewConfig: reviewMd present + exclusionsText absent falls back t
   assert.deepEqual(out.exclusionPatterns, ['legacy.js']);
   assert.equal(out.exclusionsSource, 'preParsed');
 });
-test('resolveReviewConfig: exclusionsText-only (no reviewMd) echoes reviewConfigSource "preParsed" when reviewConfig was also stamped, never "reviewMd"', () => {
+test('resolveReviewConfig: exclusionsText-only (no reviewMd) echoes reviewConfigSource ' +
+  '"preParsed" when reviewConfig was also stamped, never "reviewMd"', () => {
   const out = resolveReviewConfig({ exclusionsText: '- foo.js\n', reviewConfig: { confidence_threshold: 70 } });
   assert.equal(out.reviewConfigSource, 'preParsed');
   assert.equal(out.exclusionsSource, 'exclusionsText');
@@ -2697,8 +2762,10 @@ const PERSIST_VALIDATION_ROWS = [
   ['script', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, true, null],
   ['return true', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: true }, true, null],
   ['return false', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: false }, true, null],
-  ['return string rejected', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: 'false' }, false, /returnPrimaries must be a boolean/],
-  ['null persist', null, false, /persist must be an object/], ['string persist', 'scripts/assemble_artifacts.py', false, /persist must be an object/],
+  ['return string rejected', { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: 'false' }, false,
+    /returnPrimaries must be a boolean/],
+  ['null persist', null, false, /persist must be an object/], ['string persist', 'scripts/assemble_artifacts.py', false,
+    /persist must be an object/],
   ['array persist', [], false, /persist must be an object/], ['numeric persist', 3, false, /persist must be an object/],
   ['empty script', { assembleScriptPath: '' }, false, /persist.assembleScriptPath/],
   ['numeric script', { assembleScriptPath: 42 }, false, /persist.assembleScriptPath/],

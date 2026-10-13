@@ -824,7 +824,7 @@ def test_added_knob(registry_tree, invoke):
         "waistPath: 'nested.added', waistMap: null, derivedFrom: null, deriveWhen: null, "
         "nullReceipt: [], resolvedKey: false },\n"
     )
-    path.write_text(source.replace("\n];", "\n" + row + "];", 1), encoding="utf-8")
+    path.write_text(source.replace("\n]);", "\n" + row + "]);", 1), encoding="utf-8")
     args = ["--repo-root", str(registry_tree)]
     stale = invoke("generate_contract_requirements", [*args, "--check"], registry_tree)
     assert stale.returncode == 1

@@ -72,7 +72,8 @@ export function shellWord(tok) {
 }
 
 // Trim the union whitespace class at both ends of titles and review lines.
-export const WS_TRIM_RE = /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g;
+const WIRE_TRIM_CLASS = String.raw`\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff`;
+export const WS_TRIM_RE = new RegExp(`^[${WIRE_TRIM_CLASS}]+|[${WIRE_TRIM_CLASS}]+$`, 'g');
 
 // One integer parser for the three boundaries that read a number a model wrote. `mode`
 // selects rounding, boolean handling and the string grammar; `trim` is the class stripped
@@ -115,7 +116,7 @@ export const RETURN_CHAR_BUDGET = 1000000;
 export function dottedValue(object, path) {
   let current = object;
   for (const part of path.split('.')) {
-    if (current === null || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    if (!isPlainObject(current)) return undefined;
     current = current[part];
   }
   return current;
@@ -136,4 +137,29 @@ export function asText(value) {
 
 export function asConfidence(value) {
   return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
+}
+
+// Freeze nested row data too, since freezing a table alone still permits rule changes.
+const rejectFrozenCollectionMutation = () => { throw new TypeError('Cannot modify a frozen collection'); };
+
+export function deepFreeze(value) {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    if (value instanceof Map || value instanceof Set) {
+      // Object.freeze does not lock a collection's internal entries.
+      if (value instanceof Map) for (const key of value.keys()) deepFreeze(key);
+      for (const child of value.values()) deepFreeze(child);
+      for (const method of ['delete', 'clear', value instanceof Map ? 'set' : 'add']) {
+        Object.defineProperty(value, method, { value: rejectFrozenCollectionMutation });
+      }
+    }
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export function longestBacktickRun(text) {
+  let longest = 0;
+  for (const match of text.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
+  return longest;
 }

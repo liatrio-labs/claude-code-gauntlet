@@ -1,3 +1,4 @@
+import { deepFreeze, isPlainObject } from './wire.js';
 // registry.js — single point of extension. Adding a dimension = one entry here + one agent .md.
 //
 // `promptExtra` is an optional per-agent prompt-extension string appended verbatim to that
@@ -7,8 +8,19 @@
 // on dimension iteration order). Hill-climb iter 5 uses it for two discovery-breadth
 // sweeps grounded in the subset diagnosis (~21 never-discovered goldens): a security sweep
 // on security-reviewer, and a typo/naming sweep on bug-detector and conventions-and-intent.
-const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs reaching http/request/fetch clients without allowlist validation); frame and embedding policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); postMessage handlers that do not validate event.origin or check it with weak substring matching; and string-matching bypass patterns where a security decision uses containment checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains "trusted.com").';
-const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in user-facing strings, messages, and log output; case-sensitivity mistakes in string comparisons (comparing mixed-case values without normalizing case); and copy-paste plural/singular or off-by-one naming mismatches (a field, key, or variable named for one thing but holding another).';
+const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs ' +
+  'reaching http/request/fetch clients without allowlist validation); frame and embedding ' +
+  'policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); ' +
+  'postMessage handlers that do not validate event.origin or check it with weak substring ' +
+  'matching; and string-matching bypass patterns where a security decision uses containment ' +
+  'checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of ' +
+  'exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains ' +
+  '"trusted.com").';
+const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in ' +
+  'user-facing strings, messages, and log output; case-sensitivity mistakes in string ' +
+  'comparisons (comparing mixed-case values without normalizing case); and copy-paste ' +
+  'plural/singular or off-by-one naming mismatches (a field, key, or variable named for one ' +
+  'thing but holding another).';
 
 // `conditionalFlag` is the SCOPE-GATING key for a dimension (consumed by agentActive in
 // discover.js). Semantics are OPT-OUT, never opt-in, so the default full-scope run is
@@ -29,9 +41,14 @@ const DEEP = 'deep';
 // One ordered contract owns validation, rendering, producer documentation, and
 // generated reference fences. Consumers must use each field's check predicate.
 export const SHA_FULL_RE = /^[0-9a-f]{40}$/;
-export const WEB_ORIGIN_RE = /^https?:\/\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\[[0-9A-Fa-f:.]{2,45}\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$/;
+export const WEB_ORIGIN_RE = new RegExp(
+  "^https?:\\/\\/((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:" +
+  "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\\[[0-9A-Fa-f:.]{2,45}" +
+  "\\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}" +
+  "|655[0-2][0-9]|6553[0-5]))?$"
+);
 
-export const PERMALINK_TEMPLATES = {
+export const PERMALINK_TEMPLATES = deepFreeze({
   github: {
     blob: '{origin}/{owner}/{repo}/blob/{sha}/{path}',
     line: '#L{start}',
@@ -46,7 +63,7 @@ export const PERMALINK_TEMPLATES = {
     ref: '!{number}',
     refUrl: '{origin}/{owner}/{repo}/-/merge_requests/{number}',
   },
-};
+});
 
 const validWebOrigin = (value) => {
   if (typeof value !== 'string') return false;
@@ -55,24 +72,27 @@ const validWebOrigin = (value) => {
   return match[1].startsWith('[') || match[1].length <= 253;
 };
 
-export const PR_IDENTITY_FIELDS = [
+export const PR_IDENTITY_FIELDS = deepFreeze([
   { name: 'owner', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string' },
-  { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string', extraChecks: [{ check: (value) => !value.includes('/'), message: 'must not contain "/"' }] },
+  { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string',
+    extraChecks: [{ check: (value) => !value.includes('/'), message: 'must not contain "/"' }] },
   { name: 'pr_number', required: true, check: (value) => Number.isSafeInteger(value) && value > 0, describe: 'a positive safe integer' },
-  { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value), describe: 'a 40-character lowercase hex commit id' },
+  { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value),
+    describe: 'a 40-character lowercase hex commit id' },
   { name: 'platform', required: true, check: (value) => Object.hasOwn(PERMALINK_TEMPLATES, value), describe: 'one of github, gitlab' },
   { name: 'web_origin', required: true, check: validWebOrigin, describe: 'an http(s) origin: scheme, host and optional port only' },
-  { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0, describe: 'a non-empty string when present' },
-];
+  { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0,
+    describe: 'a non-empty string when present' },
+]);
 
-export const CODE_OWNED_HEADINGS = [
+export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',
   '## Findings',
   '## Unverified / pipeline-degraded findings',
   '## Review Dimensions Summary',
   '## Review Methodology',
-];
+]);
 
 // --- The canonical finding schema ------------------------------------------
 //
@@ -94,7 +114,7 @@ export const CODE_OWNED_HEADINGS = [
 // `origin` is the one canonical field NO agent emits: verify_findings.py stamps it during
 // blame classification. Everything else here must appear in every discovery contract's output
 // block, and the lockstep test asserts exactly that (declared − instructed == {origin}).
-export const FINDING_PROP_TYPES = {
+export const FINDING_PROP_TYPES = deepFreeze({
   // confidence is a NUMBER end-to-end: agents emit a numeric 0-100 score per their .md
   // contracts, so declaring it `number` here makes StructuredOutput return the number at
   // EVERY by-value boundary (discovery included) — the string form "85" the schema used to
@@ -124,10 +144,10 @@ export const FINDING_PROP_TYPES = {
   // sibling artifact instead — see report-format.md.
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string' } },
-};
+});
 
 // Structural references need the same confinement as file before reaching artifacts.
-export const FINDING_PATH_ARRAY_FIELDS = ['cross_file_refs', 'affected_consumers'];
+export const FINDING_PATH_ARRAY_FIELDS = deepFreeze(['cross_file_refs', 'affected_consumers']);
 
 // FINDING_REQUIRED stays the flat canonical list shared by every dispatch schema — it names
 // only fields every dimension emits, so it can never itself carry a single-dimension name.
@@ -148,7 +168,7 @@ export const FINDING_PATH_ARRAY_FIELDS = ['cross_file_refs', 'affected_consumers
 // unconditional WITHIN their own dimension — and go through `requiredWhenDimension` below,
 // which does spend the measured nested if/then construct, gated behind
 // conditionalSchemaActive so it never reaches an unmeasured provider.
-export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
+export const FINDING_REQUIRED = deepFreeze(['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension']);
 
 // `schemaExtra` declares the per-dimension finding fields BEYOND the canonical schema above —
 // the extras each agent's .md output contract actually emits (findingItemSchema in discover.js
@@ -212,30 +232,39 @@ export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'descripti
 // conditionalSchemaActive(policy) is true (first-party-direct, no gateway) — third-party
 // providers and gateway sessions keep today's flat schema, contract prose is the floor
 // everywhere. See agentSpecs' conditionalRequired derivation in discover.js.
-export const DIMENSIONS = [
-  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
+export const DIMENSIONS = deepFreeze([
+  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' },
+    requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' },
+    requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
-    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
+    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'],
+      requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
     // criticality is a 1-10 IMPACT scale (agents/test-analyzer.md); bound it in the schema
     // fragment so StructuredOutput rejects 0/-5/999 the same way items is required on arrays.
     // confidence stays unbound here and is clamped later — validators adjust it at runtime.
     schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
     requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: { rule_source: 'string' }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
+    schemaExtra: { rule_source: 'string' }, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null,
+    promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
-    schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+    schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null,
+      promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {},
+    requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
-    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
+    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null,
+      promptExtra: null },
   { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
-    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
-];
+    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null,
+      promptExtra: null },
+]);
 
 // Pipeline stamps belong here so disclosure names remain code-owned.
 // A stamped field missing from this set prints as `other` in a host-path-text gap, which is the safe fallback.
-export const PIPELINE_FINDING_FIELDS = new Set([
+const PIPELINE_FINDING_FIELDS = deepFreeze([
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
@@ -249,13 +278,13 @@ export const PIPELINE_FINDING_FIELDS = new Set([
     [`${field}_removed_by`, `${field}_removal_reason`]),
 ]);
 
-export const FINDING_TEXT_FIELD_NAMES = new Set([
+export const FINDING_TEXT_FIELD_NAMES = deepFreeze([...new Set([
   ...Object.keys(FINDING_PROP_TYPES),
   ...DIMENSIONS.flatMap((dimension) => Object.keys(dimension.schemaExtra || {})),
   ...PIPELINE_FINDING_FIELDS,
-]);
+])]);
 
-export const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
+export const AGENTS = deepFreeze([...new Set(DIMENSIONS.map((d) => d.agentType))]);
 
 // Per-agent display label for the Review Dimensions Summary table (issue #89):
 // dimensionsSummaryTable (renderReport.js) renders ONE row per discovery agent — a
@@ -268,7 +297,7 @@ export const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 // the report's dimensions section. Review Methodology follows it as the report's last section.
 // Extending: one
 // entry here when AGENTS gains a member — registry.test.js pins the key set to AGENTS.
-export const AGENT_LABELS = {
+export const AGENT_LABELS = deepFreeze({
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',
   'code-gauntlet:security-reviewer': 'Security',
   'code-gauntlet:cross-file-impact': 'Cross-file Impact',
@@ -276,7 +305,7 @@ export const AGENT_LABELS = {
   'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
   'code-gauntlet:type-design-analyzer': 'Type Design',
   'code-gauntlet:code-simplifier': 'Code Simplification',
-};
+});
 
 // --- Product identity -------------------------------------------------------
 // The generator projects this presentation identity into gauntlet.registry and the
@@ -288,19 +317,19 @@ export const AGENT_LABELS = {
 // separately, on purpose.
 export const BRAND_MARK = '\u2694\uFE0F';   // CROSSED SWORDS U+2694 + VS16 U+FE0F
 export const BRAND_NAME = 'Code Gauntlet';
-export const SEVERITY_EMOJI = {
+export const SEVERITY_EMOJI = deepFreeze({
   critical: '\u{1F534}', high: '\u{1F7E0}', medium: '\u{1F7E1}', low: '\u{1F4A1}',
-};
+});
 // Severity stays `string` in the schema by the recorded fail-open decision. The renderer
 // maps any value outside the four labels to `low`.
 export const SEVERITY_EMOJI_FALLBACK = SEVERITY_EMOJI.low;
 
-export const RULE_SOURCE_LABELS = {
+export const RULE_SOURCE_LABELS = deepFreeze({
   documented_rule: 'Cited rule',
   code_comment: 'Cited comment',
   repo_precedent: 'Repo precedent',
   self_inconsistency: 'Inconsistency',
-};
+});
 // Unknown or absent rule-source values use the neutral cited-rule label.
 export const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 
@@ -310,10 +339,10 @@ export const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 // resolvePolicy's own 'sonnet' fallback — this is the one place to change when one should.
 // Keys are matched against `agentType.split(':').pop()`, so they must be the FULL
 // suffix — 'artifact-writer', not 'artifact' — or the tunable never binds.
-export const STAGE_DEFAULTS = {
+export const STAGE_DEFAULTS = deepFreeze({
   validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
-};
+});
 
 // Explicit full model IDs. Aliases like 'sonnet' resolve against the SESSION's model
 // variant at dispatch time — a child session pinned to 'sonnet[1m]' cascades the [1m]
@@ -329,7 +358,7 @@ export const STAGE_DEFAULTS = {
 // deployment mapping (ANTHROPIC_DEFAULT_*_MODEL). The [1m]-cascade the pin exists to stop
 // was measured on first-party variants; on a third-party provider alias resolution is the
 // correct behavior, not the bug. So: pin full IDs first-party, emit bare aliases elsewhere.
-const MODEL_IDS = { sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' };
+const MODEL_IDS = deepFreeze({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' });
 // policy.provider === 'firstParty' (or absent — older waists predate the field) pins;
 // ANY other value emits the alias untouched. Unknown values are deliberately not an error
 // here: the alias is the one spelling that resolves on every provider, so alias-through is
@@ -351,7 +380,7 @@ export const conditionalSchemaActive = (policy) => {
   return pinsModelIds(p.provider) && !p.gateway;
 };
 
-export function resolvePolicy(agentType, opts = {}) {
+export function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
   if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
     // The override maps through the same full-ID pin: a bare alias pins the plain full ID
     // (it can no longer inherit the session variant — intended; see headless-mode.md).
@@ -361,7 +390,7 @@ export function resolvePolicy(agentType, opts = {}) {
     // resolvedPolicy.subagentModel (null = no override), not restated here.
     return { model: toModelId(opts.subagentModelEnv, opts.provider) };
   }
-  const dim = DIMENSIONS.find((d) => d.agentType === agentType);
+  const dim = dimensions.find((d) => d.agentType === agentType);
   // Single benchmarked policy: discovery on sonnet with security-reviewer's opus
   // override, stage agents per STAGE_DEFAULTS. Alternate model modes (fable) are
   // roadmap work (issue #17 V3.2) and land behind their own paired measurement.
@@ -371,8 +400,8 @@ export function resolvePolicy(agentType, opts = {}) {
 
 // Resolve the dispatch model for an agent type from the args-waist policy object —
 // the single place the policy shape maps onto resolvePolicy's opts.
-export function modelFor(agentType, policy) {
-  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
+export function modelFor(agentType, policy, dimensions = DIMENSIONS) {
+  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }, dimensions).model;
 }
 
 export const ARGS_VERSION = 1;
@@ -382,7 +411,8 @@ export const ARGS_VERSION = 1;
 // re-check against its own enum below — it is provenance/telemetry the skill always stamps.
 // `repoRoot` is REQUIRED for discover-entry and checkpoint-replay path normalization. changedFilesPath
 // is on-disk provenance the workflow never opens.
-export const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope'];
+export const REQUIRED = deepFreeze(['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles',
+  'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope']);
 
 // The nonce is interpolated into the verify executor command argv (the verify stage
 // derives one per slice as `${nonce}.${i}`), so it must be a single AST-safe,
@@ -392,10 +422,10 @@ export const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 
 // The optional Phase 8 delivery selector: { tier }. Absent is fine (the workflow defaults
 // the tier to 'all' — post every challenge-survivor). A present tier must be a known value.
-export const DELIVERY_TIERS = ['all', 'main_only'];
+export const DELIVERY_TIERS = deepFreeze(['all', 'main_only']);
 
 // The headless scope selector and the interactive scope answer share these literals.
-export const SCOPE_ANSWERS = ['light', 'full'];
+export const SCOPE_ANSWERS = deepFreeze(['light', 'full']);
 
 // Known values for policy.provider. The enum exists because the two arms diverge silently:
 // a typo ('first-party', 'aws') would flip a first-party session onto bare aliases —
@@ -407,7 +437,7 @@ export const SCOPE_ANSWERS = ['light', 'full'];
 // policy.gateway BOOLEAN (issue #218, validated below) — it rides alongside provider rather
 // than inside this enum because it answers a different question (does input_schema reach an
 // unmeasured backend verbatim?), not which model-ID arm resolvePolicy takes.
-export const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
+const POLICY_PROVIDERS = deepFreeze(['firstParty', 'bedrock', 'vertex', 'foundry']);
 
 // The single code-owned methodology receipt registry. It owns the mode-specific key set,
 // source vocabulary, validation rule, and render order. Add a knob here once; args validation
@@ -436,12 +466,13 @@ export const CONTROL_RE = /[\u0000-\u001F\u007F]/;
 // nullToleranceGap): degraded-but-disclosed, the contract this pipeline uses everywhere else.
 // A drop that validateArgs would have accepted anyway (`checkpoints`) tolerated nothing and
 // is deliberately NOT disclosed — see nullToleranceRejectedKeys.
-export const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist', 'scopeAnswer'];
+export const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
+  'persist', 'scopeAnswer']);
 
 // Issue #24 req 1/2 (PR3): the risk classification a plain string. Matches the three-tier
 // scale documented in skills/code-gauntlet/references/phase2-triage.md 2e — that table is now
 // the single contract for these literals; riskTable values must stay in lockstep with it.
-export const RISK_LEVELS = ['low', 'medium', 'high'];
+export const RISK_LEVELS = deepFreeze(['low', 'medium', 'high']);
 
 // The one home of the benchmarked default limits. normalizeArgs fills a limits object from
 // this constant, and every stage and capacity helper reads that object, so no literal default
@@ -452,7 +483,7 @@ export const RISK_LEVELS = ['low', 'medium', 'high'];
 // value waiting on a default — see the "meaningful nulls" note above (limits.deliveryCap:
 // null means "uncapped"). Defaulting either here would silently cap a caller who asked for
 // none.
-export const LIMIT_DEFAULTS = {
+export const LIMIT_DEFAULTS = deepFreeze({
   summarizeBucketSize: 20,
   validateBatch: 25,
   challengeCap: 40,
@@ -460,14 +491,16 @@ export const LIMIT_DEFAULTS = {
   // measured 15.7k-42.4k chars for 14-38 findings (~1.1k chars/finding), so 25 findings is about 28k.
   verifySliceSize: 25,
   maxLineSpan: 100,
-};
+});
 
 // What the operator actually loses when a stamped null is treated as absent, per key. Used
 // only to word the disclosure gap — no control flow reads it.
-export const NULL_TOLERANCE_CONSEQUENCE = {
-  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+export const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
+  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
+    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
   exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
-  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
+    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
   exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
   delivery: 'delivery falls back to tier "all" with no PR identity',
   'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
@@ -476,41 +509,41 @@ export const NULL_TOLERANCE_CONSEQUENCE = {
   checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
   persist: 'the artifact-writer takes the legacy full by-value persist path',
   scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
-};
+});
 
 export const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
 
-export const REVIEW_TARGET_LABEL = {
+export const REVIEW_TARGET_LABEL = deepFreeze({
   pr_url: 'a GitHub PR URL',
   mr_url: 'a GitLab MR URL',
   repo_ref: 'an owner/repo PR reference',
   pr_number: 'a bare PR/MR number',
   pr_shorthand: 'a PR/MR reference',
-};
+});
 
-export const TRUSTED_SCRIPT_BASENAMES = {
+const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
   assemble: 'assemble_artifacts.py',
   verify: 'verify_findings.py',
-};
+});
 
 // --- Field normalization (BF-14) --------------------------------------------
 
-export const FIELD_RENAMES = { body: 'description', line: 'line_start', blame_tag: 'origin' };
+export const FIELD_RENAMES = deepFreeze({ body: 'description', line: 'line_start', blame_tag: 'origin' });
 
 // --- REVIEW.md parser ---------------------------------------------------
 
 // Single owner of SEVERITY_ORDER: the bundle shares one scope, so a second top-level
 // declaration in an importer would be a duplicate-declaration SyntaxError.
-export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
+export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 
-export const REVIEW_SETTING_KEYS = [
+export const REVIEW_SETTING_KEYS = deepFreeze([
   'confidence_threshold',
   'security_min_confidence',
   'severity_threshold',
-];
+]);
 
 // Strip only prose fields matching the suggestion patterns; keep the finding itself.
-export const INJECTION_STRIPPED_PROSE_FIELDS = ['suggestion', 'claude_md_rule', 'spec_text'];
+export const INJECTION_STRIPPED_PROSE_FIELDS = deepFreeze(['suggestion', 'claude_md_rule', 'spec_text']);
 
 // --- Disagreement detection --------------------------------------------
 
@@ -522,27 +555,25 @@ export const AGENT_TEST_ANALYZER = 'test-analyzer';
 
 export const AGENT_SECURITY_REVIEWER = 'security-reviewer';
 
-export const CONVENTIONS_AGENT = 'conventions-and-intent';
-
 // Omit fields that the report renderer cannot present safely.
-export const REPORT_EXCLUDED_FIELDS = [
+export const REPORT_EXCLUDED_FIELDS = deepFreeze([
   'suggested_fix_code',
   'suggested_fix_code_removed_by',
   'suggested_fix_code_removal_reason',
-];
+]);
 
 // Display limits, not a whole-report or return-budget mechanism. The summary index
 // admits whole bullets; findings.json keeps unfolded values and unbounded cardinality.
-export const REPORT_FOLD_LIMITS = {
+export const REPORT_FOLD_LIMITS = deepFreeze({
   proseChars: 4000,
   summaryChars: 12000,
   summaryIndexChars: 12000,
   evidenceLines: 40,
   evidenceChars: 8000,
   inlineChars: 512,
-};
+});
 
-export const OUTBOUND_NAMED_ENTITIES = {
+export const OUTBOUND_NAMED_ENTITIES = deepFreeze({
   commat: '@',
   excl: '!',
   lbrack: '[',
@@ -556,4 +587,240 @@ export const OUTBOUND_NAMED_ENTITIES = {
   bsol: '\\',
   nbsp: ' ',
   NonBreakingSpace: ' ',
-};
+});
+
+export const MODE_VALUES = deepFreeze(['interactive', 'headless']);
+
+export const KNOB_VOCAB = deepFreeze({
+  modes: ['headless', 'interactive'],
+  headless: ['headless'],
+  interactive: ['interactive'],
+  envDefault: ['env', 'default'],
+  fixed: ['fixed'],
+  envReviewMdDefault: ['env', 'review_md', 'default'],
+  discovery: ['discovery'],
+  modelTiers: ['optimized'],
+  deliveryChannels: ['chat', 'pr_comments', 'markdown'],
+  postModes: ['dry-run', 'live'],
+  draftPolicies: ['review', 'skip'],
+  reviewedPolicies: ['incremental', 'full', 'skip'],
+  prNotFoundPolicies: ['local', 'error'],
+  reviewMdValues: ['present', 'absent'],
+  receiptEntryKeys: ['value', 'source'],
+});
+
+const CONTEXT_SIZE_MAX = deepFreeze({ contextLines: 5000000, contextChars: 500000000 });
+
+export const LIMIT_KEYS = deepFreeze([
+  'summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize',
+  'deliveryCap', 'discoveryCap', 'maxLineSpan',
+]);
+
+export const ARGS_SHAPES = deepFreeze({
+  pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
+  riskFields: ['path', 'risk'],
+  reviewMdFields: ['path', 'text'],
+  scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
+  scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
+  scopeKinds: ['full', 'incremental'],
+  detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
+  scriptFields: [
+    { root: 'persist', key: 'assembleScriptPath', script: 'assemble' },
+    { root: 'verify', key: 'scriptPath', script: 'verify' },
+  ],
+});
+
+const ARGS_FIELD_CHECKS = deepFreeze({
+  policy: [
+    { key: 'provider', presence: 'nonnull', values: POLICY_PROVIDERS,
+      message: 'invalid {label}: {value} (expected one of {values})' },
+    { key: 'tier', values: KNOB_VOCAB.modelTiers, message: 'invalid {label}: {value} (expected optimized)' },
+    { key: 'gateway', presence: 'nonnull', domain: 'boolean', message: 'invalid {label}: {value} (expected a boolean)' },
+  ],
+  changed: [
+    { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
+    { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
+  ],
+  context: ['contextLines', 'contextChars'].map((key) => ({
+    key, domain: 'safeInteger', minimum: 1, maximum: CONTEXT_SIZE_MAX[key],
+    message: '{label} must be a positive safe integer (the measured size of the shared context file) when present',
+    boundMessage: '{label} is {value}, above the {maximum} ceiling '
+      + '\u2014 that is not a review context, it is a mis-measurement',
+  })),
+  review: REVIEW_SETTING_KEYS.map((key) => key === 'severity_threshold'
+    ? { key, presence: 'in', values: SEVERITY_ORDER, separator: '|',
+      message: '{label} must be one of {values} when present (pre-parsed REVIEW.md enum)' }
+    : { key, presence: 'in', domain: 'integer', minimum: 0, maximum: 100,
+      message: '{label} must be an integer from 0 through 100 when present' }),
+  exclusions: [
+    { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
+  ],
+  persist: [
+    { key: 'assembleScriptPath', domain: 'nonEmptyString',
+      message: 'persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py' },
+    { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
+  ],
+  // The check order differs from the key-list order because focused errors precede cap errors.
+  limits: [
+    ...['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan'].map((key) => ({
+      key, domain: 'safeInteger', minimum: 1, message: 'limits.{key} must be a positive safe integer when present',
+    })),
+    { key: 'challengeCap', domain: 'safeInteger', minimum: 0,
+      message: 'limits.challengeCap must be a non-negative safe integer when present' },
+    { key: 'deliveryCap', presence: 'nonnull', domain: 'safeInteger', minimum: 0,
+      message: 'limits.deliveryCap must be null, absent, or a non-negative safe integer when present' },
+    { key: 'discoveryCap', domain: 'safeInteger', minimum: 1,
+      message: 'limits.discoveryCap must be a positive safe integer when present' },
+  ],
+});
+
+const FIELD_DOMAINS = deepFreeze({
+  array: Array.isArray,
+  number: (value) => typeof value === 'number',
+  boolean: (value) => typeof value === 'boolean',
+  string: (value) => typeof value === 'string',
+  nonEmptyString: (value) => typeof value === 'string' && value !== '',
+  integer: Number.isInteger,
+  safeInteger: Number.isSafeInteger,
+});
+
+export function validateArgsFields(value, group, errors, label = '', checks = ARGS_FIELD_CHECKS) {
+  const prefix = label ? `${label}.` : '';
+  for (const row of checks[group]) {
+    if (row.presence === 'in' && !(row.key in value)) continue;
+    const field = value[row.key];
+    if (row.presence !== 'in' && field === undefined) continue;
+    if (row.presence === 'nonnull' && field === null) continue;
+    const domainInvalid = row.domain && !FIELD_DOMAINS[row.domain](field);
+    const valuesInvalid = row.values && !row.values.includes(field);
+    const minimumInvalid = !domainInvalid && row.minimum !== undefined && field < row.minimum;
+    const maximumInvalid = !domainInvalid && row.maximum !== undefined && field > row.maximum;
+    if (!domainInvalid && !valuesInvalid && !minimumInvalid && !maximumInvalid) continue;
+    const message = !domainInvalid && !minimumInvalid && maximumInvalid && row.boundMessage
+      ? row.boundMessage : row.message;
+    const params = {
+      key: row.key, label: `${prefix}${row.key}`, value: field, maximum: row.maximum,
+      values: row.values?.join(row.separator || ', '),
+    };
+    errors.push(message.replace(/\{(\w+)\}/g, (_, key) => `${params[key]}`));
+  }
+}
+
+export function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
+  const field = fields.find((entry) => entry.name === name);
+  return Boolean(field && field.check(identity[name]));
+}
+
+export function validatePrIdentity(id, errors, fields = PR_IDENTITY_FIELDS) {
+  if (!isPlainObject(id)) {
+    const required = fields.filter((field) => field.required).map((field) => field.name);
+    const optional = fields.filter((field) => !field.required).map((field) => field.name);
+    errors.push(`delivery.prIdentity must be an object { ${required.join(', ')}[, ${optional.join(', ')}] } when present`);
+    return;
+  }
+  for (const field of fields) {
+    const value = id[field.name];
+    const valid = value !== undefined && field.check(value);
+    if ((value === undefined && field.required) || (value !== undefined && !valid)) {
+      errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
+    }
+    if (valid) {
+      for (const extra of field.extraChecks || []) {
+        if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
+      }
+    }
+  }
+}
+
+export const CORE_DIMENSIONS = deepFreeze(['bug', 'security', 'cross_file_impact', 'intent']);
+
+export const SUGGESTION_DIMENSIONS = deepFreeze(['comment_accuracy', 'comment-accuracy']);
+
+export const MAIN_REPORT_AGENTS = deepFreeze([AGENT_BUG_DETECTOR, AGENT_SECURITY_REVIEWER, 'cross-file-impact', 'type-design-analyzer']);
+
+export const SUGGESTION_AGENTS = deepFreeze([AGENT_TEST_ANALYZER, 'code-simplifier']);
+
+export const COMMENT_ACCURACY_DIMENSIONS = deepFreeze(['comment-accuracy', 'documentation', 'doc-accuracy']);
+
+export const REPORT_PLACED_FIELDS = deepFreeze([
+  'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
+  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
+  'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
+]);
+
+export const REVIEW_SCOPE_FALLBACK_RULES = deepFreeze([
+  { error: true },
+  { facts: { previously_reviewed: false }, reason: 'no prior review recorded' },
+  { facts: { previously_reviewed: true, sha_resolvable: false }, reason: 'recorded SHA not resolvable' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: false },
+    reason: 'head has not advanced' },
+  { facts: { previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: false },
+    reason: 'history rewritten (recorded SHA is not an ancestor)' },
+]);
+
+export function validateScriptPaths(args, rows = ARGS_SHAPES.scriptFields) {
+  const errors = [];
+  if (typeof args.pluginRoot !== 'string' || !args.pluginRoot.startsWith('/')) return errors;
+  const root = args.pluginRoot.replace(/\/+$/, '') || '/';
+  const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
+  for (const row of rows) {
+    const member = args[row.root];
+    const expected = `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES[row.script]}`;
+    if (isPlainObject(member) && typeof member[row.key] === 'string' && member[row.key] !== expected) {
+      errors.push(`${row.root}.${row.key} must equal ${expected}`);
+    }
+  }
+  return errors;
+}
+
+// Keywords that promote convention/type_design findings from suggestion to main.
+const FUNCTIONAL_VIOLATION_KEYWORDS =
+  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
+
+// Keywords that promote type_design findings specifically.
+const TYPE_SAFETY_BUG_KEYWORDS =
+  /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
+
+// Keyword patterns indicating a test-analyzer finding describes a functional
+// correctness bug that EXISTS TODAY (vs. a coverage gap). Shared by routeByDimension's
+// test_coverage branch and isTestCorrectnessFinding's promotion check.
+const TEST_CORRECTNESS_PATTERNS = deepFreeze([
+  /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
+  /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
+  /\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b/i,
+  /\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b/i,
+  /\bvacuous(?:ly)?\b/i,
+  /\btautolog(?:y|ical)\b/i,
+  /\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b/i,
+  /\bdeadlock\b/i,
+  /\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b/i,
+  /\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b/i,
+  /\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b/i,
+  /\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b/i,
+  /\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b/i,
+  /\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b/i,
+  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b/i,
+  /\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b/i,
+  /\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b/i,
+  /\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b/i,
+  /\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b/i,
+  /\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b/i,
+  /\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b/i,
+  /\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b/i,
+]);
+
+export const FILTER_DIMENSION_ROUTES = deepFreeze({
+  test_coverage: { patterns: TEST_CORRECTNESS_PATTERNS },
+  convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] },
+  type_design: { patterns: [TYPE_SAFETY_BUG_KEYWORDS] },
+});
+
+export const FILTER_SUPPRESSION_RULES = deepFreeze([
+  { agent: AGENT_BUG_DETECTOR, pattern: /\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/,
+    eliminatedBy: 'suppressed:intentional', subject: 'behaviour', conclusion: 'intentional' },
+  { agent: AGENT_TEST_ANALYZER, pattern: /\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/,
+    eliminatedBy: 'suppressed:generated', subject: 'code', conclusion: 'generated/scaffolding' },
+]);

@@ -1,5 +1,6 @@
 // Outbound text normalization, containment, and display folding.
 import { REPORT_FOLD_LIMITS, OUTBOUND_NAMED_ENTITIES } from './registry.js';
+import { longestBacktickRun } from './wire.js';
 
 // Replayed checkpoints are object-shaped but may predate the finding schema's field types.
 // Coerce at this renderer boundary so every downstream report read sees the same safe view:
@@ -24,7 +25,8 @@ function codePointPrefix(value, limit) {
   return Array.from(reportAsText(value)).slice(0, limit).join('');
 }
 
-export function foldInline(text, limit = REPORT_FOLD_LIMITS.inlineChars) {
+export function foldInline(text, limit, limits = REPORT_FOLD_LIMITS) {
+  if (limit === undefined) limit = limits.inlineChars;
   const value = reportAsText(text);
   const length = codePointLength(value);
   if (length <= limit) return value;
@@ -85,41 +87,48 @@ export function foldProse(text, limit) {
   if (length <= limit) return value;
 
   let prefix = '';
+  let prefixLength = 0;
   const lines = value.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
     const next = `${index ? '\n' : ''}${lines[index]}`;
-    const remaining = limit - codePointLength(prefix);
-    if (codePointLength(next) <= remaining) {
+    const remaining = limit - prefixLength;
+    const nextLength = codePointLength(next);
+    if (nextLength <= remaining) {
       prefix += next;
+      prefixLength += nextLength;
       continue;
     }
-    if (codePointLength(lines[index]) > limit) prefix += codePointPrefix(next, remaining);
+    if (codePointLength(lines[index]) > limit) {
+      const partial = codePointPrefix(next, remaining);
+      prefix += partial;
+      prefixLength += codePointLength(partial);
+    }
     break;
   }
-  const omitted = length - codePointLength(prefix);
+  const omitted = length - prefixLength;
   const closer = proseFenceCloser(prefix);
   if (closer) prefix += `${prefix.endsWith('\n') || prefix.endsWith('\r') ? '' : '\n'}${closer}`;
   return `${prefix}\n\n_[folded: ${omitted} more characters]_`;
 }
 
-export function foldEvidence(text) {
+export function foldEvidence(text, limits = REPORT_FOLD_LIMITS) {
   const value = reportAsText(text);
   const length = codePointLength(value);
   const separators = [...value.matchAll(/\r\n|\r|\n/g)];
   const lineCount = separators.length + 1;
-  const lineFolded = lineCount > REPORT_FOLD_LIMITS.evidenceLines;
+  const lineFolded = lineCount > limits.evidenceLines;
   const linePrefix = lineFolded
-    ? value.slice(0, separators[REPORT_FOLD_LIMITS.evidenceLines - 1].index)
+    ? value.slice(0, separators[limits.evidenceLines - 1].index)
     : value;
   const linePrefixLength = codePointLength(linePrefix);
-  const charFolded = length > REPORT_FOLD_LIMITS.evidenceChars;
+  const charFolded = length > limits.evidenceChars;
 
-  if (charFolded && (!lineFolded || REPORT_FOLD_LIMITS.evidenceChars <= linePrefixLength)) {
-    const prefix = codePointPrefix(value, REPORT_FOLD_LIMITS.evidenceChars);
-    return `${prefix}\n... [folded: ${length - REPORT_FOLD_LIMITS.evidenceChars} more characters]`;
+  if (charFolded && (!lineFolded || limits.evidenceChars <= linePrefixLength)) {
+    const prefix = codePointPrefix(value, limits.evidenceChars);
+    return `${prefix}\n... [folded: ${length - limits.evidenceChars} more characters]`;
   }
   if (lineFolded) {
-    return `${linePrefix}\n... [folded: ${lineCount - REPORT_FOLD_LIMITS.evidenceLines} more lines]`;
+    return `${linePrefix}\n... [folded: ${lineCount - limits.evidenceLines} more lines]`;
   }
   return value;
 }
@@ -132,13 +141,17 @@ export function oneLine(value) {
 const OUTBOUND_INVISIBLES =
   /[\u0000-\u0008\u000b-\u000d\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/;
 
-const OUTBOUND_NAMED_ENTITY_PREFIXES = new Set(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
+const OUTBOUND_NAMED_ENTITY_PREFIXES = Object.freeze(Object.keys(OUTBOUND_NAMED_ENTITIES).flatMap((name) => (
   Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
 )));
 
 const entityAt = (start, kind, fields = {}) => ({ start, kind, value: 0, hasDigit: false, name: '', ...fields });
 
-export function normalizeOutboundText(value) {
+export function normalizeOutboundText(value, entities = OUTBOUND_NAMED_ENTITIES) {
+  const prefixes = entities === OUTBOUND_NAMED_ENTITIES ? OUTBOUND_NAMED_ENTITY_PREFIXES : Object.keys(entities).flatMap((name) => (
+    Array.from({ length: name.length }, (_, index) => name.slice(0, index + 1))
+  ));
+  const namedPrefixes = new Set(prefixes);
   let text = reportAsText(value);
   const output = [];
   const push = (character) => {
@@ -155,7 +168,7 @@ export function normalizeOutboundText(value) {
           entity = entityAt(entity.start, 'numeric');
         } else if (/[A-Za-z]/.test(character)) {
           const name = entity.name + character;
-          entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
+          entity = namedPrefixes.has(name)
             ? entityAt(entity.start, 'named', { name })
             : null;
         } else {
@@ -193,14 +206,14 @@ export function normalizeOutboundText(value) {
         }
       } else if (entity.kind === 'named') {
         if (character === ';') {
-          if (Object.hasOwn(OUTBOUND_NAMED_ENTITIES, entity.name)) {
-            replacement = OUTBOUND_NAMED_ENTITIES[entity.name];
+          if (Object.hasOwn(entities, entity.name)) {
+            replacement = entities[entity.name];
           } else {
             entity = null;
           }
         } else if (/[A-Za-z]/.test(character)) {
           const name = entity.name + character;
-          entity = OUTBOUND_NAMED_ENTITY_PREFIXES.has(name)
+          entity = namedPrefixes.has(name)
             ? entityAt(entity.start, 'named', { name })
             : null;
         } else {
@@ -243,8 +256,8 @@ export function normalizeOutboundText(value) {
   return output.map((entry) => entry.character).join('');
 }
 
-export function outboundBase(value) {
-  const text = normalizeOutboundText(value);
+export function outboundBase(value, entities = OUTBOUND_NAMED_ENTITIES) {
+  const text = normalizeOutboundText(value, entities);
   if (text.trim() === '') return '';
   return text.replace(/(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}/g, '[REDACTED]')
     .replace(/(?:glpat-|glrt-)[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
@@ -379,24 +392,22 @@ function outboundContain(line, forceColon = false) {
   return outboundDefinitions(output.join(''), forceColon);
 }
 
-export function prepareLine(value, forceColon = false) {
-  const text = outboundBase(value);
+export function prepareLine(value, forceColon = false, entities = OUTBOUND_NAMED_ENTITIES) {
+  const text = outboundBase(value, entities);
   return text.trim() === '' ? '' : outboundContain(text, forceColon === true);
 }
 
-export function prepareSummaryTitle(value) {
-  return prepareLine(foldInline(oneLine(outboundBase(value))), true);
+export function prepareSummaryTitle(value, entities = OUTBOUND_NAMED_ENTITIES) {
+  return prepareLine(foldInline(oneLine(outboundBase(value, entities))), true, entities);
 }
 
-export function preparedCodeSpan(value, substituteVisible = false) {
-  let display = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' ')));
+export function preparedCodeSpan(value, substituteVisible = false, entities = OUTBOUND_NAMED_ENTITIES) {
+  let display = oneLine(outboundBase(reportAsText(value).replace(/\r/g, ' '), entities));
   if (substituteVisible) {
     display = outboundVisible(display.replace(/<(?=`+[A-Za-z/!?])/g, '\uFF1C'), true);
     display = outboundDefinitions(display, true);
   }
-  let longest = 0;
-  for (const match of display.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
-  const delimiter = '`'.repeat(longest + 1);
+  const delimiter = '`'.repeat(longestBacktickRun(display) + 1);
   if (/^[` ]|[` ]$/.test(display)) display = ` ${display} `;
   return `${delimiter}${display}${delimiter}`;
 }
