@@ -76,7 +76,8 @@ def test_bundle_runtime_shape(bundle_text: str) -> None:
 
 
 def test_bundle_body_compiles_as_async_function(bundle_text: str) -> None:
-    # The host wraps the body in an async function; compile without invoking runtime globals.
+    # The host wraps the body in an async function; compilation catches top-level
+    # declaration collisions without invoking runtime globals.
     body = "\n".join(
         line
         for line in bundle_text.splitlines()

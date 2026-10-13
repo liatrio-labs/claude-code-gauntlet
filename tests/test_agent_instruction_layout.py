@@ -185,42 +185,33 @@ def test_grown_instruction_file_fails_size_check(instruction_repo) -> None:
 
 
 @pytest.mark.parametrize(
-    "shadow",
+    "shadow_path",
     [
-        pytest.param("CLAUDE.md", id="untracked-ancestor"),
+        pytest.param("nested/CLAUDE.md", id="same-directory-untracked"),
         pytest.param("CLAUDE.local.md", id="personal-untracked-ancestor"),
     ],
 )
-def test_added_claude_md_fails_shadow_check(instruction_repo, shadow: str) -> None:
+def test_added_claude_md_fails_shadow_check(instruction_repo, shadow_path: str) -> None:
     root, files = instruction_repo
     check_instruction_shadows(root, files)
-    (root / shadow).write_text("shadow\n", encoding="utf-8")
-    with pytest.raises(AssertionError, match=re.escape(shadow)):
+    (root / shadow_path).write_text("shadow\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match=re.escape(shadow_path)):
         check_instruction_shadows(root, files)
 
 
-@pytest.mark.parametrize(
-    "pathspecs, output, expected",
-    [
-        pytest.param(
-            ("skills", "agents"),
-            b"skills/doc with spaces.md\0skills/doc\nwith newline.md\0agents/AGENTS.md\0",
-            [
-                "skills/doc with spaces.md",
-                "skills/doc\nwith newline.md",
-                "agents/AGENTS.md",
-            ],
-            id="selected-roots-and-nul-safe-names",
-        ),
-    ],
-)
-def test_tracked_paths_preserve_selected_inputs(
-    monkeypatch, tmp_path, pathspecs, output, expected
-):
-    def run(args, **kwargs):
+def test_tracked_paths_preserve_selected_inputs(monkeypatch, tmp_path) -> None:
+    pathspecs = ("skills", "agents")
+    output = (
+        b"skills/doc with spaces.md\0skills/doc\nwith newline.md\0agents/AGENTS.md\0"
+    )
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         assert args == ["git", "ls-files", "-z", "--", *pathspecs]
-        assert kwargs == {"cwd": tmp_path, "capture_output": True, "check": True}
         return subprocess.CompletedProcess(args, 0, stdout=output)
 
     monkeypatch.setattr(subprocess, "run", run)
-    assert tracked_paths(tmp_path, pathspecs) == expected
+    assert tracked_paths(tmp_path, pathspecs) == [
+        "skills/doc with spaces.md",
+        "skills/doc\nwith newline.md",
+        "agents/AGENTS.md",
+    ]

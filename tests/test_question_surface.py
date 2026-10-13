@@ -9,10 +9,6 @@ SKILLS = REPO / "skills"
 # Changing the question surface requires an explicit count change.
 EXPECTED_QUESTION_SITES = 9
 
-PINNED_SITES = {
-    "Delivery": "skills/code-gauntlet/references/phase8-delivery.md",
-}
-
 MAX_HEADER_CHARS = 12
 MIN_OPTIONS = 2
 MAX_OPTIONS = 4
@@ -179,10 +175,12 @@ def test_every_site_conforms_to_the_schema(question_sites):
     assert len(question_sites) == EXPECTED_QUESTION_SITES, "question surface changed"
     questions = [site["question"] for site in question_sites]
     assert len(set(questions)) == len(questions), "duplicated question text"
-    for header, expected_path in PINNED_SITES.items():
-        matches = [site for site in question_sites if site["header"] == header]
-        assert len(matches) == 1, f"expected one {header} site"
-        assert matches[0]["path"] == expected_path
+    delivery_sites = [site for site in question_sites if site["header"] == "Delivery"]
+    assert len(delivery_sites) == 1, "expected one Delivery site"
+    assert (
+        delivery_sites[0]["path"]
+        == "skills/code-gauntlet/references/phase8-delivery.md"
+    )
     for site in question_sites:
         assert site["question"], site
         assert site["header"] and len(site["header"]) <= MAX_HEADER_CHARS, site

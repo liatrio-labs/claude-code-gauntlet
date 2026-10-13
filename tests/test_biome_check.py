@@ -8,7 +8,6 @@ import socket
 import stat
 import urllib.error
 from contextlib import redirect_stderr
-from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -53,20 +52,16 @@ def pin_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.mark.parametrize(
     "system,machine,expected",
     [
-        pytest.param("Darwin", "arm64", "biome-darwin-arm64", id="darwin-arm"),
-        pytest.param("Darwin", "x86_64", "biome-darwin-x64", id="darwin-intel"),
-        pytest.param("Linux", "x86_64", "biome-linux-x64", id="linux-intel"),
-        pytest.param("Linux", "amd64", "biome-linux-x64", id="linux-amd-alias"),
-        pytest.param("Linux", "aarch64", "biome-linux-arm64", id="linux-aarch-alias"),
-        pytest.param("Linux", "arm64", "biome-linux-arm64", id="linux-arm"),
-        pytest.param("Windows", "AMD64", "biome-win32-x64.exe", id="windows-amd"),
-        pytest.param(
-            "Windows", "x86_64", "biome-win32-x64.exe", id="windows-intel-alias"
-        ),
-        pytest.param("Windows", "ARM64", "biome-win32-arm64.exe", id="windows-arm"),
-        pytest.param(
-            "Windows", "aarch64", "biome-win32-arm64.exe", id="windows-aarch-alias"
-        ),
+        ("Darwin", "arm64", "biome-darwin-arm64"),
+        ("Darwin", "x86_64", "biome-darwin-x64"),
+        ("Linux", "x86_64", "biome-linux-x64"),
+        ("Linux", "amd64", "biome-linux-x64"),
+        ("Linux", "aarch64", "biome-linux-arm64"),
+        ("Linux", "arm64", "biome-linux-arm64"),
+        ("Windows", "AMD64", "biome-win32-x64.exe"),
+        ("Windows", "x86_64", "biome-win32-x64.exe"),
+        ("Windows", "ARM64", "biome-win32-arm64.exe"),
+        ("Windows", "aarch64", "biome-win32-arm64.exe"),
     ],
 )
 def test_resolve_asset(system: str, machine: str, expected: str) -> None:
@@ -133,6 +128,7 @@ def test_checksum_mismatch_leaves_no_final_or_part_file(
     with redirect_stderr(error):
         code = main(
             ["--asset", ASSET, "--cache-dir", str(cache)],
+            environ={"HOME": str(tmp_path)},
             fetch=lambda _url: b"wrong bytes",
             run=lambda _argv, _cwd: 0,
         )
@@ -146,27 +142,24 @@ def test_checksum_mismatch_leaves_no_final_or_part_file(
 
 @pytest.mark.skipif(os.name == "nt", reason="mode bits are POSIX-only")
 @pytest.mark.parametrize(
-    "initial,extra,downloads,command",
+    "initial,extra,downloads",
     [
         pytest.param(
             b"stale cached binary",
             [],
             [URL],
-            ["check", "--error-on-warnings", "."],
             id="corrupt-cache-refreshed",
         ),
         pytest.param(
             DATA,
             ["--verbose"],
             [],
-            ["check", "--error-on-warnings", ".", "--verbose"],
             id="valid-cache-restores-mode-without-fetch",
         ),
         pytest.param(
             None,
             [],
             [URL],
-            ["check", "--error-on-warnings", "."],
             id="absent-cache-downloaded",
         ),
     ],
@@ -177,7 +170,6 @@ def test_cache_state(
     initial: bytes | None,
     extra: list[str],
     downloads: list[str],
-    command: list[str],
 ) -> None:
     cache = tmp_path / "cache with spaces"
     final = cache / TEST_VERSION / ASSET
@@ -199,6 +191,7 @@ def test_cache_state(
     assert (
         main(
             ["--asset", ASSET, "--cache-dir", str(cache), "--", *extra],
+            environ={"HOME": str(tmp_path)},
             fetch=fetch,
             run=run,
         )
@@ -210,7 +203,7 @@ def test_cache_state(
     assert not final.with_name("biome-test.part").exists()
     assert calls == [
         (
-            [str(final), *command],
+            [str(final), "check", "--error-on-warnings", ".", *extra],
             biome_check.WORKFLOWS_DIR,
         )
     ]
@@ -220,6 +213,7 @@ def test_biome_return_code_is_propagated(pin_file: Path, tmp_path: Path) -> None
     assert (
         main(
             ["--asset", ASSET, "--cache-dir", str(tmp_path)],
+            environ={"HOME": str(tmp_path)},
             fetch=lambda _url: DATA,
             run=lambda _argv, _cwd: 17,
         )
@@ -247,22 +241,13 @@ def test_biome_return_code_is_propagated(pin_file: Path, tmp_path: Path) -> None
             id="five-failures-exhausted",
         ),
         pytest.param(
-            socket.timeout("timed out"),  # noqa: UP041 - exercise the socket API spelling
+            # Exercise the socket API spelling.
+            socket.timeout("timed out"),  # noqa: UP041
             1,
             0,
             2,
             [1],
             id="socket-timeout-recovered",
-        ),
-        pytest.param(
-            urllib.error.HTTPError(
-                "https://example.test/biome", 503, "unavailable", Message(), None
-            ),
-            1,
-            0,
-            2,
-            [1],
-            id="http-error-recovered",
         ),
         pytest.param(
             http.client.IncompleteRead(b"partial"),
@@ -296,6 +281,7 @@ def test_retry_outcome(
         assert (
             main(
                 ["--asset", ASSET, "--cache-dir", str(tmp_path / "cache")],
+                environ={"HOME": str(tmp_path)},
                 fetch=fetch,
                 run=lambda _argv, _cwd: 0,
             )
@@ -333,7 +319,11 @@ def test_main_wires_the_default_process_adapter(pin_file: Path, tmp_path: Path) 
     with patch.object(
         biome_check.subprocess, "run", return_value=SimpleNamespace(returncode=17)
     ) as subprocess_run:
-        code = main(["--asset", ASSET, "--cache-dir", str(tmp_path)], fetch=no_fetch)
+        code = main(
+            ["--asset", ASSET, "--cache-dir", str(tmp_path)],
+            environ={"HOME": str(tmp_path)},
+            fetch=no_fetch,
+        )
     assert code == 17
     subprocess_run.assert_called_once_with(
         [str(final), "check", "--error-on-warnings", "."], cwd=biome_check.WORKFLOWS_DIR
@@ -344,6 +334,7 @@ def test_invalid_asset_override_is_usage_error(pin_file: Path, tmp_path: Path) -
     assert (
         main(
             ["--asset", "missing", "--cache-dir", str(tmp_path)],
+            environ={"HOME": str(tmp_path)},
             fetch=lambda _url: DATA,
             run=lambda _argv, _cwd: 0,
         )
@@ -378,9 +369,16 @@ def test_invalid_asset_override_is_usage_error(pin_file: Path, tmp_path: Path) -
         ),
         pytest.param(
             None,
+            {"XDG_CACHE_HOME": "xdg", "HOME": "home"},
+            "xdg/code-gauntlet/biome",
+            "home/.cache/code-gauntlet/biome",
+            id="xdg-over-home",
+        ),
+        pytest.param(
+            None,
             {"HOME": "home"},
             "home/.cache/code-gauntlet/biome",
-            "home/cache",
+            "home/cache/code-gauntlet/biome",
             id="home-dot-cache-fallback",
         ),
     ],

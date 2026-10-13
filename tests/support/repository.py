@@ -31,7 +31,8 @@ def copy_generator_tree(root: Path, destination: Path, targets: Iterable[str]) -
 
 @cache
 def workflow_header(root: Path) -> dict:
-    # Only the hoisted declaration is a module; the workflow body has a top-level return.
+    # Only the hoisted declaration is a module; the workflow body has a top-level
+    # return.
     script = (
         f"import {{ build }} from {json.dumps((root / 'workflows/build.js').as_uri())};"
         "const header = build().split('\\n')[0];"

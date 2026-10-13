@@ -2,8 +2,6 @@ import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
-import pytest
-
 from tests.support.repository import tracked_paths
 
 REPO = Path(__file__).resolve().parents[1]
@@ -41,39 +39,25 @@ def test_tracked_tooling_files_stay_outside_the_vendored_scorer():
     assert paths.count(EXEMPT_PATH) == 1
 
 
-@pytest.mark.parametrize(
-    "rejected, exempt",
-    [
-        pytest.param(
-            [
-                "dir/package.json",
-                "dir/package-lock.json",
-                "dir/npm-shrinkwrap.json",
-                "dir/yarn.lock",
-                "dir/pnpm-lock.yaml",
-                "dir/bun.lock",
-                "dir/bun.lockb",
-                "dir/uv.lock",
-                "dir/poetry.lock",
-                "dir/Pipfile",
-                "dir/Pipfile.lock",
-                "nested/node_modules/package.json",
-            ],
-            [],
-            id="every-forbidden-basename-and-nested-manifest",
-        ),
-        pytest.param(
-            [
-                "x/y/node_modules/z.js",
-                "bench/vendor/other/package.json",
-                "bench/vendor/code-review-benchmark/package-lock.json",
-            ],
-            ["bench/vendor/code-review-benchmark/uv.lock"],
-            id="source-and-vendor-rejections-with-exact-exemption",
-        ),
-    ],
-)
-def test_every_forbidden_basename_is_detected(rejected, exempt):
+def test_every_forbidden_basename_is_detected():
+    rejected = [
+        "package.json",
+        "dir/package.json",
+        "dir/package-lock.json",
+        "dir/npm-shrinkwrap.json",
+        "dir/yarn.lock",
+        "dir/pnpm-lock.yaml",
+        "dir/bun.lock",
+        "dir/bun.lockb",
+        "dir/uv.lock",
+        "dir/poetry.lock",
+        "dir/Pipfile",
+        "dir/Pipfile.lock",
+        "nested/node_modules/package.json",
+        "x/y/node_modules/z.js",
+        "bench/vendor/other/package.json",
+        "bench/vendor/code-review-benchmark/package-lock.json",
+    ]
     # A table derived from the policy would hide a deleted policy arm.
     assert set(FORBIDDEN_BASENAMES) == {
         "package.json",
@@ -88,7 +72,7 @@ def test_every_forbidden_basename_is_detected(rejected, exempt):
         "Pipfile",
         "Pipfile.lock",
     }
-    assert violations([*rejected, *exempt]) == rejected
+    assert violations([*rejected, EXEMPT_PATH]) == rejected
 
 
 def test_uv_lock_is_ignored_for_local_ci_tooling():

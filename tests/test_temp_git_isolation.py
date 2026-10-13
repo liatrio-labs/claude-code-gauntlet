@@ -73,6 +73,7 @@ def _repository_facts(outer: Path) -> dict[str, str]:
 def test_suite_is_hermetic_to_a_temp_root_inside_a_work_tree(
     outer_repository: Path,
 ) -> None:
+    # A hook-inherited GIT_DIR plus a temp root inside a work tree can redirect writes.
     outer = outer_repository
     before = _repository_facts(outer)
     child_env = dict(os.environ)
@@ -90,8 +91,7 @@ def test_suite_is_hermetic_to_a_temp_root_inside_a_work_tree(
         capture_output=True,
         timeout=CHILD_TIMEOUT_SECONDS,
     )
-    # Capture every fact even if the child failed, so its mutations remain visible.
     after = _repository_facts(outer)
-    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    assert after["is-bare"] != "true"
     assert after == before
+    assert after["is-bare"] != "true"
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
